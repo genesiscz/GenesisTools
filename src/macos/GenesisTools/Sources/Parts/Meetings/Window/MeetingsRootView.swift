@@ -3,8 +3,18 @@ import SwiftUI
 /// The pane map: full-height sidebar (Needs you, All meetings, Projects) | the meetings of that place | one meeting.
 struct MeetingsRootView: View {
     @Bindable var model: MeetingsWindowModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        VStack(spacing: 0) {
+            panes
+            MeetingsPlayerBar(playback: model.playback,
+                              title: model.playback.meeting.flatMap { model.meeting($0)?.displayTitle })
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.playback.state == .idle)
+    }
+
+    private var panes: some View {
         NavigationSplitView {
             MeetingsSidebar(model: model)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
@@ -23,17 +33,7 @@ struct MeetingsRootView: View {
             }
             .heightFromWindow()
         }
-        .background(shortcuts)
-    }
-
-    /// ⌘1 Needs you, ⌘2 All meetings, ⌘R reload: hidden buttons, so the keys work wherever focus is.
-    private var shortcuts: some View {
-        ZStack {
-            Button("Needs you") { model.go(.needs) }.keyboardShortcut("1", modifiers: .command)
-            Button("All meetings") { model.go(.all) }.keyboardShortcut("2", modifiers: .command)
-            Button("Reload") { model.load(); model.detail?.refreshLoaded() }.keyboardShortcut("r", modifiers: .command)
-        }
-        .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
+        // ⌘1 Needs you, ⌘2 All meetings and ⌘R Reload are View menu items (MeetingsMenu), so they work wherever focus is.
     }
 }
 
@@ -117,7 +117,9 @@ private struct MeetingsListPane: View {
             }
             content
         }
-        .navigationTitle(title)
+        // The window's title is the open meeting, so the title bar, Mission Control and the Window menu name it.
+        .navigationTitle(openTitle ?? title)
+        .navigationSubtitle(openTitle == nil ? "" : title)
         .toolbar {
             ToolbarItem {
                 MenuButton(items: {
@@ -131,6 +133,10 @@ private struct MeetingsListPane: View {
                 .instantTooltip("How many days back the list reaches")
             }
         }
+    }
+
+    private var openTitle: String? {
+        model.detail.map { model.meeting($0.id)?.displayTitle ?? "Meeting" }
     }
 
     private var title: String {
@@ -232,15 +238,37 @@ struct MeetingRow: View, Equatable {
 /// The badges of a meeting, each a word and a colour, so the state never rests on colour alone.
 struct MeetingBadgesView: View {
     let meeting: OverviewMeeting
+    /// Opens the tab a badge counts (the detail's header); nil in a list row, where the row opens the meeting.
+    var open: ((MeetingDetailModel.Tab) -> Void)? = nil
 
     var body: some View {
         let badges = meeting.badges
         if meeting.live { Badge("Recording", color: KitPalette.removed, symbol: "record.circle") }
         if badges.noProject { Badge("No project", color: KitPalette.modified) }
-        if badges.openQuestions > 0 { Badge(Plural.count(badges.openQuestions, "question"), color: KitPalette.renamed, symbol: "ear") }
-        if badges.unclearSpeakers > 0 { Badge("Unclear speakers", color: KitPalette.modified, symbol: "person.fill.questionmark") }
-        if badges.recordingOnly { Badge("Recording only", color: KitPalette.dim, symbol: "rectangle.on.rectangle") }
+        if badges.openQuestions > 0 {
+            badge(Badge(Plural.count(badges.openQuestions, "question"), color: KitPalette.renamed, symbol: "ear"),
+                  opens: .items, tooltip: "Answer them in Items")
+        }
+        if badges.unclearSpeakers > 0 {
+            badge(Badge("Unclear speakers", color: KitPalette.modified, symbol: "person.fill.questionmark"),
+                  opens: .speakers, tooltip: "Name them in Speakers")
+        }
+        if badges.recordingOnly {
+            badge(Badge("Recording only", color: KitPalette.dim, symbol: "rectangle.on.rectangle"),
+                  opens: .screen, tooltip: "Show the screen recording")
+        }
         if badges.transcriptOnly { Badge("Transcript only", color: KitPalette.dim, symbol: "text.alignleft") }
+    }
+
+    @ViewBuilder
+    private func badge(_ badge: Badge, opens tab: MeetingDetailModel.Tab, tooltip: String) -> some View {
+        if let open {
+            Button { open(tab) } label: { badge }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip(tooltip)
+        } else {
+            badge
+        }
     }
 }
 
@@ -255,7 +283,8 @@ private struct NeedsYouList: View {
         if needs.total == 0 {
             EmptyState(symbol: "checkmark.circle", text: "Nothing needs you", detail: "Every meeting of the last \(Plural.count(model.days, "day")) has a project, and no question waits.")
         } else {
-            List(selection: Binding(get: { model.needsSelection }, set: { tag in Task { @MainActor in model.select(needsTag: tag) } })) {
+            List(selection: Binding(get: { needs.row(for: model.needsSelection) },
+                                    set: { tag in Task { @MainActor in model.select(needsTag: tag) } })) {
                 if !needs.noProject.isEmpty {
                     Section("Without a project") {
                         ForEach(needs.noProject, id: \.self) { id in
@@ -285,7 +314,47 @@ private struct NeedsYouList: View {
                 }
             }
             .listStyle(.inset)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let id = model.selectedMeetingID, needs.row(for: id) == nil, let meeting = model.meeting(id) {
+                    NotInPlaceNote(title: meeting.displayTitle, place: "Needs you") { model.go(.all) }
+                }
+            }
         }
+    }
+}
+
+extension MeetingsOverview.NeedsYou {
+    /// The row of the open meeting. A meeting with questions or suggestions has rows tagged "q:<id>" and "s:<id>", and
+    /// a meeting opened by its id (a link, a launch from a terminal) named none of them, so no row was selected.
+    func row(for selection: String?) -> String? {
+        guard let selection else { return nil }
+        let tags = noProject + questions.map { "q:" + $0.id } + suggestions.map { "s:" + $0.id }
+        if tags.contains(selection) { return selection }
+        let id = selection.hasPrefix("q:") || selection.hasPrefix("s:") ? String(selection.dropFirst(2)) : selection
+        return tags.first { $0 == id || $0 == "q:" + id || $0 == "s:" + id }
+    }
+}
+
+/// Above a list that does not hold the open meeting: which meeting is open, and the way to the list that has it.
+private struct NotInPlaceNote: View {
+    let title: String
+    let place: String
+    let showAll: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "info.circle").foregroundStyle(.secondary).accessibilityHidden(true)
+                Text("\(title) is open; it is not in \(place).").font(.system(size: 12)).foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: 6)
+                Button("Show in All meetings", action: showAll).buttonStyle(.genHoverPlain()).font(.system(size: 12))
+                    .instantTooltip("Every meeting of the chosen days, with this one selected")
+            }
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            Divider()
+        }
+        .background(.background)
     }
 }
 
@@ -336,6 +405,7 @@ private struct ProjectSummary: View {
                     .instantTooltip("Open Settings → Meetings → Dictionary")
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14).padding(.vertical, 10)
     }
 

@@ -6,6 +6,18 @@ import { localTime } from "@genesiscz/utils/transcribe/render";
 import { recordingSummary } from "./screen";
 import { TOOL } from "./shared";
 
+/** A source block as a person reads it: the source meeting and its folders, not the raw JSON (MC24). */
+function sourceLine(block: Record<string, unknown>): string {
+    const id = typeof block.meetingId === "string" ? block.meetingId : undefined;
+
+    if (!id) {
+        return truncateDisplay(SafeJSON.stringify(block), 140);
+    }
+
+    const folders = Array.isArray(block.folders) ? block.folders.filter((one) => typeof one === "string") : [];
+    return `meeting ${id}, ${folders.length > 0 ? `folders ${folders.join(", ")}` : "in no folder"}`;
+}
+
 /** What `tools meetings show` prints: the record's facts, context, renames, item counts and recent history. */
 export function showText(record: MeetingRecord): string {
     const when = record.end ? `${localTime(record.start)}–${localTime(record.end).slice(11)}` : localTime(record.start);
@@ -16,9 +28,7 @@ export function showText(record: MeetingRecord): string {
             ? `project: ${record.project}`
             : `project: none (set it: ${TOOL} set ${record.id} --project <name>)`,
         ...(record.labels.length > 0 ? [`labels: ${record.labels.join(", ")}`] : []),
-        ...Object.entries(record.sources).map(
-            ([source, block]) => `${source}: ${truncateDisplay(SafeJSON.stringify(block), 140)}`
-        ),
+        ...Object.entries(record.sources).map(([source, block]) => `${source}: ${sourceLine(block)}`),
     ];
 
     if (record.calendar) {

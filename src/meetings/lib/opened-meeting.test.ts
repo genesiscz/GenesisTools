@@ -31,6 +31,7 @@ function fakeSource(options: { evidence?: MeetingEvidence | null; clock?: string
         id: "wisprflow",
         label: "Fake",
         load: async () => meeting,
+        revision: async () => null,
         describe: () => ({ meetingId: "abc" }),
         dictionary: async () => [],
         recordingClock: async () =>
@@ -282,7 +283,11 @@ test("CLI suggestions use the shared runner and render its warnings", async () =
     const { registerItemCommands } = await import("../commands/items");
     const { record } = await newRecord();
     const resolve = spyOn(MeetingStore.prototype, "resolve").mockReturnValue(record);
-    const run = spyOn(runner, "runSuggest").mockResolvedValue({ fresh: [], warnings: ["context fixture warning"] });
+    const run = spyOn(runner, "runSuggest").mockResolvedValue({
+        fresh: [],
+        retired: [],
+        warnings: ["context fixture warning"],
+    });
     const warn = spyOn(ui, "warn").mockImplementation(() => {});
     const result = spyOn(out, "result").mockImplementation(() => {});
     try {

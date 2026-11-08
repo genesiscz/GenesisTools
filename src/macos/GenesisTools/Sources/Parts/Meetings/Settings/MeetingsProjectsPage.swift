@@ -7,7 +7,7 @@ struct MeetingsProjectsPage: View {
     @State private var newProject = ""
 
     var body: some View {
-        MeetingsSettingsFrame(model: model) { settings in
+        MeetingsSettingsFrame(model: model, reads: .preview) { settings in
             let assign = settings.global.assign
             NativeSettingsCard("Ask each time", subtitle: "A meeting with no project after its sources link gets one question in the decision inbox, with ranked proposals.") {
                 NativeSettingsToggle("Ask about each meeting without a project", identifier: "meetings.assign.ask",
@@ -79,6 +79,10 @@ struct MeetingsProjectsPage: View {
                     TextField("Project name (letters, digits, . _ -)", text: $newProject)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(add)
+                        // Clears once the project is saved; a refused name stays to be corrected.
+                        .onChange(of: settings.projectNames) { _, names in
+                            if names.contains(newProject.trimmingCharacters(in: .whitespaces)) { newProject = "" }
+                        }
                     Button("Add a project", action: add)
                         .buttonStyle(.bordered).nativeSettingsPointer()
                         .disabled(newProject.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -89,7 +93,6 @@ struct MeetingsProjectsPage: View {
 
     private func add() {
         model.addProject(newProject)
-        newProject = ""
     }
 }
 
@@ -142,7 +145,71 @@ private struct ProjectCard: View {
                     Button("Choose…") { model.chooseExportFolder(name) }.buttonStyle(.bordered).nativeSettingsPointer()
                 }
             }
+            Divider()
+            NativeSettingsRow("The project", detail: "Rename it everywhere it is named, or remove it; its settings go into a backup first.") {
+                HStack(spacing: 8) {
+                    RenameProjectButton(model: model, name: name)
+                    RemoveProjectButton(model: model, name: name)
+                }
+            }
         }
+    }
+}
+
+/// "Rename…": a popover with the new name. The field keeps what was typed until the CLI saved the rename.
+private struct RenameProjectButton: View {
+    @Bindable var model: MeetingsSettingsModel
+    let name: String
+    @State private var open = false
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Button("Rename…") { text = name; open = true }
+            .buttonStyle(.bordered).nativeSettingsPointer()
+            .disabled(model.isWriting("project.rename.\(name)"))
+            .instantTooltip("Rename \(name) in its settings, its pairings and its meetings")
+            .popover(isPresented: $open, arrowEdge: .bottom) {
+                HStack {
+                    TextField("New name (letters, digits, . _ -)", text: $text)
+                        .textFieldStyle(.roundedBorder).frame(width: 220)
+                        .focused($focused)
+                        .onSubmit(rename)
+                    Button("Rename", action: rename).keyboardShortcut(.defaultAction).disabled(!changed)
+                }
+                .padding(12)
+                .onAppear { focused = true }
+            }
+    }
+
+    private var changed: Bool {
+        let typed = text.trimmingCharacters(in: .whitespaces)
+        return !typed.isEmpty && typed != name
+    }
+
+    private func rename() {
+        guard changed else { return }
+        model.renameProject(name, to: text) { open = false }
+    }
+}
+
+/// "Remove…" with a confirmation that says where the settings go and what happens to the project's meetings.
+private struct RemoveProjectButton: View {
+    @Bindable var model: MeetingsSettingsModel
+    let name: String
+    @State private var asking = false
+
+    var body: some View {
+        Button("Remove…", role: .destructive) { asking = true }
+            .buttonStyle(.bordered).nativeSettingsPointer()
+            .disabled(model.isWriting("project.remove.\(name)"))
+            .instantTooltip("Remove \(name); its settings go into a backup first")
+            .confirmationDialog("Remove the project \(name)?", isPresented: $asking) {
+                Button("Remove", role: .destructive) { model.removeProject(name) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Its rules, labels, dictionary and pairings go into a backup first. While meetings have it, it stays, and you can then leave them without a project.")
+            }
     }
 }
 
@@ -250,6 +317,10 @@ struct TokenList: View {
                 .textFieldStyle(.roundedBorder).frame(maxWidth: 260)
                 .onSubmit(add)
                 .onExitCommand { text = "" }
+                // Clears once the saved list holds the value; a refused write keeps it in the field.
+                .onChange(of: values) { _, now in
+                    if now.contains(text.trimmingCharacters(in: .whitespaces)) { text = "" }
+                }
         }
     }
 
@@ -260,7 +331,6 @@ struct TokenList: View {
             return
         }
         commit(values + [value])
-        text = ""
     }
 }
 
@@ -295,7 +365,7 @@ private struct FillersCard: View {
     let fillers: MeetingsSettings.Language.Fillers?
 
     var body: some View {
-        NativeSettingsCard("Filler words", subtitle: "What cutting the fillers of a recording removes, for a meeting held in \(language).") {
+        NativeSettingsCard("Filler words", subtitle: "What cutting the fillers of a recording removes, for a meeting held in \(MeetingsLanguage.name(language)).") {
             TokenList(title: "Sounds", detail: "Never real words (ehm, um): cut by default.",
                       values: fillers?.sounds ?? [], placeholder: "Add a sound") { values in write("sounds", values) }
             Divider()
@@ -318,9 +388,11 @@ struct MeetingsDictionaryPage: View {
     @State private var spoken = ""
     @State private var caseSensitive = false
     @State private var editing: DictionaryEntry?
+    /// The value of an Add or Save in flight: the form clears once the dictionary holds it, so a refusal keeps it.
+    @State private var pendingValue: String?
 
     var body: some View {
-        MeetingsSettingsFrame(model: model) { settings in
+        MeetingsSettingsFrame(model: model, reads: .dictionary) { settings in
             NativeSettingsCard("Scope", subtitle: "A project's dictionary applies over the global one in its meetings.") {
                 NativeSettingsPicker("Dictionary", identifier: "meetings.dictionary.scope",
                                      options: [NativeSettingsOption("", "Global")] + settings.projectNames.map { NativeSettingsOption($0, $0) },
@@ -387,7 +459,7 @@ struct MeetingsDictionaryPage: View {
                                        substitution: substitution.trimmingCharacters(in: .whitespaces),
                                        spoken: MeetingsDictionaryRules.spokenForms(spoken), meaning: meaning,
                                        caseSensitive: caseSensitive, replacing: editing?.value)
-                        clear()
+                        pendingValue = trimmed
                     }
                     .buttonStyle(.borderedProminent).nativeSettingsPointer()
                     .disabled(!canSave)
@@ -421,6 +493,11 @@ struct MeetingsDictionaryPage: View {
                     .liveRow()
                 }
             }
+        }
+        .onChange(of: model.dictionary.value?.entries ?? []) { _, entries in
+            guard let pendingValue, entries.contains(where: { $0.value == pendingValue }) else { return }
+            self.pendingValue = nil
+            clear()
         }
     }
 

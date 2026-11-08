@@ -25,6 +25,8 @@ final class MeetingDetailModel {
     let id: String
     weak var window: MeetingsWindowModel?
     var tab: Tab = .transcript
+    /// The tab is the one the meeting opened on by itself, not one a request named or the reader picked.
+    var tabIsDefault = false
     private(set) var record: Loadable<MeetingRecordView> = .idle
     private(set) var transcript: Loadable<MeetingTranscript> = .idle
     private(set) var timeline: Loadable<ScreenTimeline> = .idle
@@ -40,6 +42,22 @@ final class MeetingDetailModel {
     private var timelineGeneration = 0
     private var speakersGeneration = 0
     private var proposalsGeneration = 0
+    @ObservationIgnored private var refreshGeneration = 0
+    /// The read in flight per part. A new read of a part cancels the one before it, which stops its process or server
+    /// call; `cancelReads()` stops them all.
+    @ObservationIgnored private var inFlight: [AnyKeyPath: Task<Void, Never>] = [:]
+    /// The window let this meeting go (another one opened): no read starts, and one that still lands is ignored.
+    @ObservationIgnored private(set) var isDropped = false
+    /// Opened before the list showed the meeting: whether proposals read waits for its record.
+    @ObservationIgnored private var proposalsAwaitRecord = false
+    /// The first tab read waits for the list (`firstReadWaitsForList`).
+    @ObservationIgnored private var tabAwaitsList = false
+
+    /// A part of the pane with a `meetings revisions` token.
+    enum RevisionPart: Hashable { case record, transcript, speakers, timeline }
+    /// The token each part was read at. A return to the window reads a part again only when its token changed; a part
+    /// read without one (the first open) reads on the first return and keeps a token from then on.
+    @ObservationIgnored private var readAt: [RevisionPart: String] = [:]
 
     init(id: String, window: MeetingsWindowModel?) {
         self.id = id
@@ -48,12 +66,59 @@ final class MeetingDetailModel {
 
     func load() {
         reloadRecord()
-        loadProposals()
+        if let meeting = window?.meeting(id) {
+            if Self.readsProposalsAtOpen(project: meeting.project) { loadProposals() }
+        } else {
+            // Opened by id before the list shows it (a launch, `tools meetings window <id>`): the record decides.
+            proposalsAwaitRecord = true
+        }
+        if Self.firstReadWaitsForList(rowKnown: window?.meeting(id) != nil, listLoaded: window?.overview.value != nil,
+                                      tabIsDefault: tabIsDefault, tab: tab) {
+            tabAwaitsList = true
+        } else {
+            loadTab(tab)
+        }
+    }
+
+    /// Opened by id before the list landed, on the default Transcript tab: the first tab read waits for the list,
+    /// which moves a recording-only meeting to Screen. A launch on one read its transcript first, as a process that
+    /// failed (448 ms, 2026-11-07). A tab the request named, and a list that is already here, read at once.
+    static func firstReadWaitsForList(rowKnown: Bool, listLoaded: Bool, tabIsDefault: Bool, tab: Tab) -> Bool {
+        !rowKnown && !listLoaded && tabIsDefault && tab == .transcript
+    }
+
+    /// The list landed or failed: a first tab read that waited for it runs now, on the tab the list chose.
+    func listResolved() {
+        guard tabAwaitsList else { return }
+        tabAwaitsList = false
+        listLanded(window?.meeting(id))
         loadTab(tab)
+    }
+
+    /// The proposals feed only the project picker. A meeting with no project reads them at once, since choosing a
+    /// project is its next step; any other reads them when the pointer reaches the picker or the picker opens
+    /// (`ensureProposals`). That is one `assign proposals` process, about 600 ms of CPU and a Calendar read, less per
+    /// open of a meeting with a project.
+    static func readsProposalsAtOpen(project: String?) -> Bool {
+        project == nil
+    }
+
+    /// The first record of a meeting opened before the list showed it: its project decides whether proposals read now.
+    private func recordLanded(_ record: MeetingRecordView) {
+        guard proposalsAwaitRecord else { return }
+        proposalsAwaitRecord = false
+        if Self.readsProposalsAtOpen(project: record.project) { ensureProposals() }
+    }
+
+    /// The project picker is about to be used: its proposals read now if nothing read them yet.
+    func ensureProposals() {
+        if proposals == .idle { loadProposals() }
     }
 
     func show(_ tab: Tab) {
         self.tab = tab
+        tabIsDefault = false
+        HubMainBusy.measure("meetings.tab.\(tab.rawValue)")
         loadTab(tab)
     }
 
@@ -66,86 +131,77 @@ final class MeetingDetailModel {
         }
     }
 
-    func reloadRecord() {
-        recordGeneration += 1
-        let generation = recordGeneration
-        record = .loading(previous: record.value)
-        Task {
-            do {
-                let value = try await MeetingsCLI.json(MeetingRecordView.self, ["show", id, "--json"])
-                guard generation == recordGeneration else { return }
-                record = .loaded(value)
-            } catch {
-                guard generation == recordGeneration else { return }
-                record = .failed(asFailure(error), previous: record.value)
-            }
+    func reloadRecord() { readRecord(quiet: false) }
+    func loadTranscript() { readTranscript(quiet: false) }
+    func loadTimeline() { readTimeline(quiet: false) }
+    func loadSpeakers() { readSpeakers(quiet: false) }
+    func loadProposals() { readProposals(quiet: false) }
+
+    private func readRecord(quiet: Bool) {
+        read(\.record, generation: \.recordGeneration, ["show", id, "--json"], quiet: quiet, revision: .record) { [weak self] record in
+            self?.recordLanded(record)
         }
     }
 
-    func loadTranscript() {
-        transcriptGeneration += 1
-        let generation = transcriptGeneration
-        transcript = .loading(previous: transcript.value)
-        Task {
-            do {
-                let value = try await MeetingsCLI.json(MeetingTranscript.self, ["transcript", id, "--format", "json"], timeoutSeconds: 120)
-                guard generation == transcriptGeneration else { return }
-                transcript = .loaded(value)
-            } catch {
-                guard generation == transcriptGeneration else { return }
-                transcript = .failed(asFailure(error), previous: transcript.value)
-            }
-        }
+    private func readTranscript(quiet: Bool) {
+        read(\.transcript, generation: \.transcriptGeneration, ["transcript", id, "--format", "json"], timeoutSeconds: 120,
+             quiet: quiet, revision: .transcript)
     }
 
-    func loadTimeline() {
-        timelineGeneration += 1
-        let generation = timelineGeneration
-        timeline = .loading(previous: timeline.value)
+    private func readTimeline(quiet: Bool) {
         let all = MeetingsPreferences.timelineLines() == .all
-        Task {
+        read(\.timeline, generation: \.timelineGeneration, ["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []),
+             timeoutSeconds: 120, quiet: quiet, revision: .timeline)
+    }
+
+    private func readSpeakers(quiet: Bool) {
+        read(\.speakers, generation: \.speakersGeneration, ["speakers", "stats", id, "--json"], timeoutSeconds: 120,
+             quiet: quiet, revision: .speakers)
+    }
+
+    private func readProposals(quiet: Bool) {
+        read(\.proposals, generation: \.proposalsGeneration, ["assign", "proposals", id, "--json"], quiet: quiet)
+    }
+
+    /// One read of a part. A `quiet` read (a refresh) keeps what the pane shows until the answer lands, and an answer
+    /// equal to the shown one is not set again, so an unchanged pane redraws nothing. A failed read forgets the part's
+    /// revision token, so the next return reads it again.
+    private func read<Value: Decodable & Equatable>(
+        _ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>,
+        generation: ReferenceWritableKeyPath<MeetingDetailModel, Int>,
+        _ args: [String], timeoutSeconds: Int = 60, quiet: Bool, revision: RevisionPart? = nil,
+        then landed: ((Value) -> Void)? = nil
+    ) {
+        guard !isDropped else { return }
+        self[keyPath: generation] += 1
+        let current = self[keyPath: generation]
+        if !quiet { self[keyPath: part] = .loading(previous: self[keyPath: part].value) }
+        inFlight[part]?.cancel()
+        inFlight[part] = Task { [weak self] in
             do {
-                let value = try await MeetingsCLI.json(
-                    ScreenTimeline.self, ["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []), timeoutSeconds: 120)
-                guard generation == timelineGeneration else { return }
-                timeline = .loaded(value)
+                let value = try await MeetingsCLI.json(Value.self, args, timeoutSeconds: timeoutSeconds)
+                guard let self, !self.isDropped, current == self[keyPath: generation] else { return }
+                self.settle(part, .loaded(value))
+                landed?(value)
             } catch {
-                guard generation == timelineGeneration else { return }
-                timeline = .failed(asFailure(error), previous: timeline.value)
+                guard let self, !Task.isCancelled, !self.isDropped, current == self[keyPath: generation] else { return }
+                if let revision { self.readAt[revision] = nil }
+                self.settle(part, .failed(asFailure(error), previous: self[keyPath: part].value))
             }
         }
     }
 
-    func loadSpeakers() {
-        speakersGeneration += 1
-        let generation = speakersGeneration
-        speakers = .loading(previous: speakers.value)
-        Task {
-            do {
-                let value = try await MeetingsCLI.json(SpeakerStats.self, ["speakers", "stats", id, "--json"], timeoutSeconds: 120)
-                guard generation == speakersGeneration else { return }
-                speakers = .loaded(value)
-            } catch {
-                guard generation == speakersGeneration else { return }
-                speakers = .failed(asFailure(error), previous: speakers.value)
-            }
-        }
+    /// Sets a part only when it changes: `@Observable` redraws every view that reads a property on each set, equal or not.
+    private func settle<Value: Equatable>(_ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>, _ new: Loadable<Value>) {
+        if self[keyPath: part] != new { self[keyPath: part] = new }
     }
 
-    func loadProposals() {
-        proposalsGeneration += 1
-        let generation = proposalsGeneration
-        proposals = .loading(previous: proposals.value)
-        Task {
-            do {
-                let value = try await MeetingsCLI.json(AssignProposals.self, ["assign", "proposals", id, "--json"])
-                guard generation == proposalsGeneration else { return }
-                proposals = .loaded(value)
-            } catch {
-                guard generation == proposalsGeneration else { return }
-                proposals = .failed(asFailure(error), previous: proposals.value)
-            }
-        }
+    /// The window let this meeting go: every read in flight stops (its process ends, the server drops its call), and
+    /// none starts again.
+    func cancelReads() {
+        isDropped = true
+        for task in inFlight.values { task.cancel() }
+        inFlight.removeAll()
     }
 
     // MARK: - Actions
@@ -202,14 +258,42 @@ final class MeetingDetailModel {
         }
     }
 
-    /// The window came back: what a terminal changed since (a correction, a dictionary entry, a rename) shows in every
-    /// tab already read; a tab not read yet reads when it shows.
-    func refreshLoaded() {
-        reloadRecord()
-        loadProposals()
-        if transcript != .idle { loadTranscript() }
-        if speakers != .idle { loadSpeakers() }
-        if timeline != .idle { loadTimeline() }
+    /// The window came back: a part already read reads again only when `meetings revisions` says what it reads changed
+    /// (a correction or a confirm in the terminal, a new frame), and quietly. Proposals already read read again each
+    /// time: they depend on the Calendar, which has no revision. Without revisions (an older CLI, a failed read) every
+    /// part read before reads again, as before.
+    /// `force` (the menu's Reload): every part read before reads again, whatever its token says, so a Reload repairs
+    /// what a revision missed. `proposals: false` (a live meeting's rounds) leaves the proposals as they are.
+    func refreshLoaded(force: Bool = false, proposals: Bool = true) {
+        guard !isDropped else { return }
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        let id = id
+        let key: AnyKeyPath = \MeetingDetailModel.refreshGeneration
+        inFlight[key]?.cancel()
+        inFlight[key] = Task { [weak self] in
+            let revisions = try? await MeetingsCLI.json(MeetingRevisions.self, ["revisions", id, "--json"])
+            guard let self, !Task.isCancelled, !self.isDropped, generation == self.refreshGeneration else { return }
+            if self.mustRead(.record, revisions?.show) || force { self.readRecord(quiet: true) }
+            if self.transcript != .idle, self.mustRead(.transcript, revisions?.transcript) || force { self.readTranscript(quiet: true) }
+            if self.speakers != .idle, self.mustRead(.speakers, revisions?.speakers) || force { self.readSpeakers(quiet: true) }
+            if self.timeline != .idle, self.mustRead(.timeline, revisions?.timeline) || force { self.readTimeline(quiet: true) }
+            if proposals, self.proposals != .idle { self.readProposals(quiet: true) }
+        }
+    }
+
+    /// Whether a part reads again on this return, keeping the new token for the next one. The token was taken before
+    /// the read starts, so the answer is at least as new as the token it keeps.
+    private func mustRead(_ part: RevisionPart, _ token: String?) -> Bool {
+        let seen = readAt[part]
+        readAt[part] = token
+        return Self.mustRead(seen: seen, now: token)
+    }
+
+    /// A part reads again unless both tokens are known and equal.
+    static func mustRead(seen: String?, now: String?) -> Bool {
+        guard let seen, let now else { return true }
+        return seen != now
     }
 
     func toggleLabel(_ label: String, on: Bool) {
@@ -317,12 +401,14 @@ final class MeetingDetailModel {
     }
 
     func removeContext(_ ref: MeetingContextRef) {
-        change("context.remove.\(ref.id)", ["context", "remove", id, ref.id], done: "Removed \(MeetingsWords.contextTitle(ref))")
+        change("context.remove.\(ref.id)", ["context", "remove", id, ref.id], done: "Removed \(MeetingsWords.contextTitle(ref))",
+               undo: (title: "Undo", args: Self.readdArgs(meeting: id, ref)))
     }
 
-    /// Plays the meeting's audio from a transcript time in the meetings player (VLC, else ffplay).
+    /// Plays the meeting's audio from a transcript time in the player that Settings → Meetings → Window picks; the bar
+    /// under the window shows where it is and stops it.
     func play(at seconds: Double) {
-        change("play", ["play", id, "--at", String(Int(seconds.rounded(.down)))], done: nil)
+        window?.playback.play(meeting: id, at: seconds, player: MeetingsPreferences.player().cliPlayer)
     }
 
     func openInRecorder() {
@@ -430,7 +516,8 @@ enum MeetingsWords {
     static func itemTitle(_ item: MeetingItem) -> String {
         switch item.kind {
         case "speaker-range":
-            let range = "\(MeetingsFormat.clock(item.fromSec ?? 0))–\(MeetingsFormat.clock(item.toSec ?? 0))"
+            let from = MeetingsFormat.clock(item.fromSec ?? 0), to = MeetingsFormat.clock(item.toSec ?? 0)
+            let range = from == to ? "at \(from)" : "from \(from) to \(to)"
             return "\(item.label ?? "?") \(range) is \(item.speaker ?? "someone else")"
         case "label": return "\(item.label ?? "?") holds several voices"
         case "join": return "Join the line at \(MeetingsFormat.clock(item.atSec ?? 0))"
@@ -484,5 +571,214 @@ enum MeetingsWords {
             return ["calendar entry", source.title.map { "“\($0)”" }, when].compactMap { $0 }.joined(separator: " ")
         }
         return source.note.map { "by hand: \($0)" } ?? "by hand"
+    }
+}
+
+// MARK: - Bulk decide
+
+extension MeetingDetailModel {
+    /// The suggestions "confirm all at or above" decides: the CLI's own pick (`confirm --min-confidence`), less what it
+    /// skips and leaves for the reader (a question, a speaker range with no speaker, a term with no spelling).
+    static func confirmable(_ items: [MeetingItem], atOrAbove threshold: Double) -> [MeetingItem] {
+        items.filter { item in
+            item.status == "suggested" && item.kind != "question" && (item.confidence ?? 0) >= threshold
+                && !(item.kind == "speaker-range" && item.speaker == nil) && !item.needsSpelling
+        }
+    }
+
+    /// The note after a bulk confirm: how many, at which line, and how many wait for the reader.
+    static func bulkNote(_ result: DecideResult, threshold: Double) -> String {
+        let line = threshold > 0 ? " at \(MeetingsWords.confidence(threshold) ?? "") or more" : ""
+        let confirmed = result.decided.isEmpty ? "Nothing to confirm\(line)" : "Confirmed \(Plural.count(result.decided.count, "item"))\(line)"
+        return result.skipped.isEmpty ? confirmed : "\(confirmed); \(Plural.count(result.skipped.count, "item")) still \(result.skipped.count == 1 ? "waits" : "wait") for you"
+    }
+
+    /// Confirms every suggestion at or above `threshold` in one `tools meetings confirm --min-confidence`, with one Undo
+    /// for all of them.
+    func confirmAll(atOrAbove threshold: Double) {
+        let key = "confirm.all"
+        guard !busy.contains(key) else { return }
+        busy.insert(key)
+        Task {
+            defer { busy.remove(key) }
+            do {
+                let result = try await MeetingsCLI.json(
+                    DecideResult.self, ["confirm", id, "--min-confidence", String(threshold), "--json"], timeoutSeconds: 120)
+                for itemID in result.decided { mark(itemID, status: "confirmed") }
+                reloadRecord()
+                window?.loadOverview()
+                var note = MeetingsNotice(text: Self.bulkNote(result, threshold: threshold), tone: .success)
+                note.more = result.skipped.isEmpty ? nil : result.skipped.map { "\($0.id): \($0.reason)" }.joined(separator: "\n")
+                if !result.decided.isEmpty {
+                    note.actionTitle = "Undo"
+                    note.actionSymbol = "arrow.uturn.backward"
+                    note.action = { [weak model = self] in model?.reopenAll(result.decided, token: result.token) }
+                }
+                notice = note
+                scheduleUndoExpiry(for: note.id)
+                if !result.decided.isEmpty, Self.reloadsTranscript(after: .decision) {
+                    transcript = .idle
+                    if tab == .transcript { loadTranscript() }
+                }
+            } catch {
+                notice = .failure(error) { [weak model = self] in model?.confirmAll(atOrAbove: threshold) }
+            }
+        }
+    }
+
+    /// `reopen`'s arguments for several items: one token took them all, so one Undo gives them all back.
+    static func reopenArgs(meeting: String, items: [String], token: String?) -> [String] {
+        ["reopen", meeting] + items + (token.map { ["--token", $0] } ?? [])
+    }
+
+    /// The Undo of a bulk confirm.
+    func reopenAll(_ items: [String], token: String?) {
+        let key = "reopen.all"
+        guard !busy.contains(key) else { return }
+        busy.insert(key)
+        Task {
+            defer { busy.remove(key) }
+            do {
+                _ = try await MeetingsCLI.run(Self.reopenArgs(meeting: id, items: items, token: token))
+                notice = MeetingsNotice(text: "Suggested again: \(Plural.count(items.count, "item"))", tone: .success)
+            } catch let failure as MeetingsCLI.Failure where failure.code == "item-changed" {
+                notice = MeetingsNotice(text: "Not undone: some of these items were decided again in another window or the terminal.",
+                                        more: failure.detail, tone: .error)
+            } catch {
+                notice = .failure(error) { [weak model = self] in model?.reopenAll(items, token: token) }
+            }
+            reloadRecord()
+            window?.loadOverview()
+            transcript = .idle
+            if tab == .transcript { loadTranscript() }
+        }
+    }
+}
+
+// MARK: - A meeting with no transcript source
+
+extension MeetingDetailModel {
+    /// The empty state of a pane the CLI refuses with `[no-transcript-source]`; its button opens the screen recording.
+    func noTranscriptSource(_ what: String) -> NoTranscriptSource {
+        let screen = window?.meeting(id)?.hasRecording ?? (record.value?.recording != nil)
+        return NoTranscriptSource(what: what, showScreen: screen ? { [weak self] in self?.show(.screen) } : nil)
+    }
+
+    /// The tab a meeting opens on: its screen recording when it has nothing else, since the transcript, speakers and
+    /// items all need a source with audio.
+    static func firstTab(for meeting: OverviewMeeting?) -> Tab {
+        guard let meeting, meeting.badges.recordingOnly || (!meeting.hasTranscript && meeting.hasRecording) else { return .transcript }
+        return .screen
+    }
+}
+
+// MARK: - Suggest
+
+extension MeetingDetailModel {
+    /// Runs the rules on the transcript (`tools meetings suggest`), from the Items tab's empty state.
+    func suggest() {
+        change("suggest", ["suggest", id], done: "The rules ran on the transcript")
+    }
+}
+
+// MARK: - Context: links and notes
+
+extension MeetingDetailModel {
+    enum ContextAddition: Equatable {
+        case link(String)
+        case note(String)
+    }
+
+    static func contextAddArgs(meeting: String, _ addition: ContextAddition, title: String?) -> [String] {
+        var args = ["context", "add", meeting]
+        switch addition {
+        case .link(let url): args.append(url)
+        case .note(let text): args += ["--note", text]
+        }
+        if let title { args += ["--title", title] }
+        return args
+    }
+
+    /// Adds a link or a note; `added` runs once the CLI saved it, so a composer clears its fields only then.
+    func addContext(_ addition: ContextAddition, title: String?, added: @escaping () -> Void) {
+        let (key, name): (String, String)
+        switch addition {
+        case .link(let url): (key, name) = ("context.add.link", title ?? url)
+        case .note: (key, name) = ("context.add.note", title ?? "the note")
+        }
+        change(key, Self.contextAddArgs(meeting: id, addition, title: title), done: "Added \(name)", applied: added)
+    }
+
+    /// What adds a removed entry back, for the Undo of a remove: a note is its text, a file or a link its reference.
+    static func readdArgs(meeting: String, _ ref: MeetingContextRef) -> [String] {
+        var args = ["context", "add", meeting]
+        if ref.kind == "note" {
+            args += ["--note", ref.ref]
+        } else {
+            args.append(ref.ref)
+            if let note = ref.note { args += ["--note", note] }
+        }
+        if let title = ref.title { args += ["--title", title] }
+        return args
+    }
+}
+
+extension MeetingsWords {
+    /// The signs about one label, as sentences under it.
+    static func speakerHints(_ hints: [SpeakerHint], for label: String) -> [String] {
+        hints.filter { $0.label == label }.map { hint in
+            hintSentence(hint) + (hint.strength.map { " (\($0) sign)" } ?? "")
+        }
+    }
+
+    /// What one sign means for the label it sits under. A kind this build does not know shows its name.
+    private static func hintSentence(_ hint: SpeakerHint) -> String {
+        let lines = hint.ranges?.reduce(0) { $0 + $1.lines } ?? 0
+        let linesAre = "\(Plural.count(lines, "line")) \(lines == 1 ? "is" : "are")"
+        switch hint.kind {
+        case "several-people":
+            return "May hold several people"
+        case "label-drift":
+            let span = hint.fromSec.flatMap { from in hint.toSec.map { " from \(MeetingsFormat.clock(from)) to \(MeetingsFormat.clock($0))" } }
+            return "Silent\(span ?? "") while in the call, so the voice is under other labels"
+        case "absent-speaker":
+            return "Speaks while not in the call, so \(linesAre) someone else"
+        case "sole-attendee":
+            let you = hint.isSelf == true
+            let who = you ? "you" : hint.person ?? "one person"
+            return "Only \(who) \(you ? "were" : "was") in the call, so its \(linesAre) \(who)"
+        case "leave-then-continues":
+            return "Says goodbye and speaks again \(Plural.count(hint.leaves?.count ?? 1, "time")), so another voice may follow"
+        case "split-voice":
+            return "One turn next to \(hint.neighbour ?? "another label"), maybe one voice split in two"
+        default:
+            let words = hint.kind.replacingOccurrences(of: "-", with: " ")
+            return words.prefix(1).uppercased() + words.dropFirst()
+        }
+    }
+
+    /// "0:12 to 25:40": where a label speaks first and last.
+    static func speakerSpan(_ speaker: SpeakerStat) -> String? {
+        guard let first = speaker.firstSec, let last = speaker.lastSec else { return nil }
+        return "\(MeetingsFormat.clock(first)) to \(MeetingsFormat.clock(last))"
+    }
+}
+
+extension MeetingDetailModel {
+    /// The meeting's list row arrived after it opened (a launch by its id): a meeting with only a screen recording
+    /// moves to Screen, unless a request named a tab or the reader picked one.
+    func listLanded(_ meeting: OverviewMeeting?) {
+        guard tabIsDefault, meeting != nil else { return }
+        let first = Self.firstTab(for: meeting)
+        if first != tab { show(first) }
+    }
+}
+
+extension MeetingsWords {
+    /// The line under a context entry: a titled note's own text (its title alone hid it), or the note kept with a file
+    /// or a link.
+    static func contextNote(_ ref: MeetingContextRef) -> String? {
+        if ref.kind == "note" { return ref.title?.isEmpty == false ? ref.ref : nil }
+        return ref.note
     }
 }

@@ -6,6 +6,11 @@ import GenesisToolsHost
 struct MeetingDetailView: View {
     @Bindable var detail: MeetingDetailModel
     let window: MeetingsWindowModel
+    /// Below this width the header's two actions become icon buttons and the tabs share the width. At the window's
+    /// minimum (900 pt) this column gets about 438 pt, and the labelled buttons and five 84 pt tabs needed more, so
+    /// the split view drew the column wider than the window and cut Export, the last tab and the ends of lines.
+    static let narrowWidth: CGFloat = 600
+    @State private var narrow = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,6 +30,8 @@ struct MeetingDetailView: View {
             tabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.narrowWidth }) { narrow = $0 }
+        .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")
     }
 
@@ -40,17 +47,22 @@ struct MeetingDetailView: View {
                     .font(.system(size: 17, weight: .semibold)).lineLimit(2).textSelection(.enabled)
                 Spacer(minLength: 8)
                 if overview?.hasRecording == true, AppParts.isLinked("recorder") {
-                    GhostButton("Open in the recorder editor", symbol: "film", tooltip: "Open the screen recording as an editor project, with the transcript as captions",
-                                identifier: "meetings.detail.recorder") { detail.openInRecorder() }
+                    headerAction("Open in the recorder editor", symbol: "film",
+                                 tooltip: "Open the screen recording as an editor project, with the transcript as captions",
+                                 identifier: "meetings.detail.recorder") { detail.openInRecorder() }
                         .disabled(detail.isBusy("recorder"))
                 }
-                GhostButton("Export", symbol: "square.and.arrow.up", tooltip: exportTooltip(record),
-                            identifier: "meetings.detail.export") { detail.export() }
+                headerAction("Export", symbol: "square.and.arrow.up", tooltip: exportTooltip(record),
+                             identifier: "meetings.detail.export") { detail.export() }
                     .disabled(record == nil || detail.isBusy("export"))
             }
             WrapLayout(spacing: 8, lineSpacing: 8) {
                 Text(verbatim: whenLine(overview)).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
-                if let overview { MeetingBadgesView(meeting: overview) }
+                if let overview { MeetingBadgesView(meeting: overview, open: { detail.show($0) }) }
+                if let reason = record?.recording?.stopReason, reason == "failed" || reason == "error" {
+                    Badge("Recording failed", color: KitPalette.removed, symbol: "exclamationmark.triangle")
+                        .instantTooltip("The screen recording stopped by itself (\(reason)); the frames until then are kept.")
+                }
             }
             HStack(spacing: 10) {
                 projectPicker(record)
@@ -69,10 +81,25 @@ struct MeetingDetailView: View {
                            }])
             }
             GenSegmentedTabs("Meeting tab", items: MeetingDetailModel.Tab.allCases.map { GenSegmentedTabs.Item($0, tabTitle($0, record)) },
-                             selection: Binding(get: { detail.tab }, set: { detail.show($0) }), minSegmentWidth: 84,
-                             identifier: "meetings.detail.tabs")
+                             selection: Binding(get: { detail.tab }, set: { detail.show($0) }), minSegmentWidth: narrow ? 0 : 84,
+                             identifier: "meetings.detail.tabs", fillsWidth: narrow)
+                .frameProbe("meetings.detail.tabs")
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
+        .frameProbe("meetings.detail.header")
+    }
+
+    /// A labelled action, or its icon with the same words as tooltip and label when the column is narrow.
+    @ViewBuilder
+    private func headerAction(_ title: String, symbol: String, tooltip: String, identifier: String,
+                              action: @escaping () -> Void) -> some View {
+        if narrow {
+            IconButton(systemName: symbol, tooltip: "\(title): \(tooltip)", action: action)
+                .accessibilityLabel(title)
+                .accessibilityIdentifier(identifier)
+        } else {
+            GhostButton(title, symbol: symbol, tooltip: tooltip, identifier: identifier, action: action)
+        }
     }
 
     private func whenLine(_ meeting: OverviewMeeting?) -> String {
@@ -106,6 +133,12 @@ struct MeetingDetailView: View {
         let known = window.settings.value?.projectNames ?? []
         return MenuButton(items: {
             var items: [MenuButtonItem] = []
+            // A meeting with a project reads its proposals only now (or on the hover before): say so in the menu.
+            detail.ensureProposals()
+            if proposed.isEmpty, detail.proposals.isLoading {
+                items.append(.note("Reading the proposed projects…"))
+                items.append(.divider)
+            }
             if !proposed.isEmpty {
                 items.append(.note("Proposed"))
                 items += proposed.map { proposal in
@@ -125,6 +158,7 @@ struct MeetingDetailView: View {
             pickerLabel(symbol: "folder", text: current ?? "No project", warn: current == nil)
         }
         .disabled(record == nil || detail.isBusy("project"))
+        .onHover { if $0 { detail.ensureProposals() } }
         .instantTooltip("The meeting's project: its dictionary, labels and export folder apply")
         .accessibilityLabel("Project: \(current ?? "none")")
     }
@@ -149,7 +183,7 @@ struct MeetingDetailView: View {
                 .instantTooltip(on ? "Remove the label \(label)" : "Add the label \(label)")
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
-            AddLabelButton(enabled: record?.project != nil) { detail.toggleLabel($0, on: true) }
+            AddLabelButton(enabled: record?.project != nil, labels: record?.labels ?? []) { detail.toggleLabel($0, on: true) }
         }
     }
 
@@ -181,9 +215,13 @@ struct MeetingDetailView: View {
 /// "+ Label": a popover with one field; Return adds, Esc closes. A new label joins the project's labels.
 private struct AddLabelButton: View {
     let enabled: Bool
+    /// The meeting's labels: the field clears and the popover closes once the new one is among them, so a refused
+    /// label keeps what was typed.
+    let labels: [String]
     let add: (String) -> Void
     @State private var open = false
     @State private var text = ""
+    @State private var pending: String?
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -206,15 +244,31 @@ private struct AddLabelButton: View {
             .padding(12)
             .onAppear { focused = true }
         }
+        .onChange(of: labels) { _, now in
+            guard let pending, now.contains(pending) else { return }
+            self.pending = nil
+            text = ""
+            open = false
+        }
     }
 
     private func commit() {
         let label = text.trimmingCharacters(in: .whitespaces)
         guard !label.isEmpty else { return }
+        pending = label
         add(label)
-        text = ""
-        open = false
     }
+}
+
+/// What a pane says for a meeting with no source that has a transcript or audio, where the CLI answers
+/// `[no-transcript-source]`: an empty state, not the refusal as an error.
+struct NoTranscriptSource {
+    /// What the pane would list ("transcript", "speakers").
+    let what: String
+    /// Opens the Screen tab; nil when the meeting has no screen recording either.
+    let showScreen: (() -> Void)?
+
+    static let code = "no-transcript-source"
 }
 
 /// A pane's read state in one place: the content, a spinner with what is being read, or the error with Retry.
@@ -222,9 +276,20 @@ struct LoadablePane<Value: Equatable, Content: View>: View {
     let state: Loadable<Value>
     let reading: String
     let retry: () -> Void
+    var noSource: NoTranscriptSource? = nil
     @ViewBuilder let content: (Value) -> Content
 
     var body: some View {
+        if let noSource, state.failure?.code == NoTranscriptSource.code {
+            EmptyState(symbol: "waveform.slash", text: "This meeting has no \(noSource.what)",
+                       detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Linking its Wispr Flow meeting brings both.",
+                       actionTitle: noSource.showScreen == nil ? nil : "Show the screen recording", action: noSource.showScreen)
+        } else {
+            pane
+        }
+    }
+
+    private var pane: some View {
         VStack(spacing: 0) {
             if let failure = state.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,

@@ -569,9 +569,12 @@ export function resolveDictionary(
 /** Where a dictionary level lives in the config. */
 export type DictionaryScope = { kind: "global" } | { kind: "project"; project: string };
 
-function formatIssues(error: z.ZodError, path: string): string {
+function formatIssues(error: z.ZodError, path: string, refused = false): string {
     const issues = error.issues.map((issue) => `  ${issue.path.join(".") || "(root)"}: ${issue.message}`);
-    return `Invalid meetings config at ${path}:\n${issues.join("\n")}`;
+    // A refused change is no broken file: say that nothing was written, not that the file is invalid (MC24).
+    return refused
+        ? `The change would make the meetings config invalid, so nothing was written (${path}):\n${issues.join("\n")}`
+        : `Invalid meetings config at ${path}:\n${issues.join("\n")}`;
 }
 
 /** `~/.genesis-tools/meetings/config.json`: read with every default filled in, changed only through `update()`. */
@@ -629,7 +632,7 @@ export class MeetingsConfigStore {
             const parsed = meetingsConfigSchema.safeParse(raw);
 
             if (!parsed.success) {
-                throw new Error(formatIssues(parsed.error, this.path));
+                throw new Error(formatIssues(parsed.error, this.path, true));
             }
 
             validated = parsed.data;
@@ -686,7 +689,7 @@ export class MeetingsConfigStore {
             if (present) {
                 throw new MeetingsConflictError(
                     "dictionary-exists",
-                    `${String(present.value)} is in the ${scope.kind === "project" ? `project ${scope.project}` : "global"} dictionary again; it was left as it is`
+                    `${String(present.value)} is in the ${scope.kind === "project" ? `project ${scope.project}` : "global"} dictionary already; it was left as it is`
                 );
             }
 

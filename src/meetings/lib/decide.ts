@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { questionIdOf, questionLabel } from "./questions";
+import { inputNeeded, questionIdOf, questionLabel } from "./questions";
 import { TOOL } from "./shared";
 import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 
@@ -13,8 +13,11 @@ import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 export interface DecideResult {
     decided: string[];
     token?: string;
-    /** `needs`: what decides it, a `speaker` or `proposed` value, or an answer by ear (`listen`). */
-    skipped: Array<{ id: string; reason: string; needs: "speaker" | "proposed" | "listen" }>;
+    /**
+     * `needs`: what decides it, a `speaker` or `proposed` value, or an answer by ear (`listen`); `nothing` when it is
+     * decided that way already, which is no failure.
+     */
+    skipped: Array<{ id: string; reason: string; needs: "speaker" | "proposed" | "listen" | "nothing" }>;
 }
 
 /** Picks the items a decision names: ids, or every suggested item at or above a confidence. */
@@ -59,11 +62,24 @@ export async function decideItems(options: {
 
     // A question is named by its number as people see it (Q12) as well as by its id.
     const ids = options.ids.map((id) => (/^q\d+$/i.test(id) ? questionIdOf(record, id) : id));
-    const picked = pickItems(record, ids, minConfidence);
+    // The record on disk now: a caller (the window) may hold one it read before another decision.
+    const picked = pickItems(store.read(record.id) ?? record, ids, minConfidence);
     const skipped: DecideResult["skipped"] = [];
 
+    // Deciding an item the same way again changes nothing, so it mints no token that would void the first Undo (MC16).
+    for (const item of picked) {
+        const changes =
+            status === "confirmed" &&
+            ((item.kind === "speaker-range" && speaker !== undefined && speaker !== item.speaker) ||
+                (item.kind === "term" && proposed !== undefined && proposed !== item.proposed));
+
+        if (item.status === status && !changes) {
+            skipped.push({ id: item.id, reason: `it is ${status} already`, needs: "nothing" });
+        }
+    }
+
     if (status === "confirmed") {
-        for (const item of picked) {
+        for (const item of picked.filter((one) => !skipped.some((skip) => skip.id === one.id))) {
             if (item.kind === "question") {
                 const label = questionLabel(record, item.id);
                 skipped.push({
@@ -71,10 +87,10 @@ export async function decideItems(options: {
                     reason: `${label} is a question; answer it by ear: ${TOOL} listen ${record.id} --item ${label}`,
                     needs: "listen",
                 });
-            } else if (item.kind === "speaker-range" && !item.speaker && !speaker) {
+            } else if (item.kind === "speaker-range" && inputNeeded(item) === "speaker" && !speaker) {
                 const candidates = item.candidates?.length ? ` Candidates: ${item.candidates.join(", ")}.` : "";
                 skipped.push({ id: item.id, reason: `it has no speaker yet.${candidates}`, needs: "speaker" });
-            } else if (item.kind === "term" && !item.proposed && !item.meaning && !item.quote && !proposed) {
+            } else if (item.kind === "term" && inputNeeded(item) === "proposed" && !proposed) {
                 skipped.push({ id: item.id, reason: `"${item.heard}" has no spelling yet.`, needs: "proposed" });
             }
         }

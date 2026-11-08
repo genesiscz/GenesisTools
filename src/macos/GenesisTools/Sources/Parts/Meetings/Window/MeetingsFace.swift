@@ -11,10 +11,19 @@ import SwiftUI
 private let meetingsInstance = SingleInstance(
     name: "meetings",
     lockFile: NativePreview.hubFile("meetings.lock"),
-    notificationPrefix: NativePreview.namespace + ".meetings",
+    notificationPrefix: meetingsNotificationPrefix(),
     retryHint: "close the Meetings window, then try again.",
     log: { HubPerf.log($0) }
 )
+
+/// The names of the forwarded request and its answer. They are distributed notifications, which every process of the
+/// login session sees, while the lock is per home: a window started on a sandbox (`GENESIS_TOOLS_HOME`) followed every
+/// `tools meetings window` request meant for the real window. A sandbox home carries its path in the name; the real
+/// home keeps the old name, so a window from an older build still takes the request.
+func meetingsNotificationPrefix(home: String = genesisHome(), realHome: String = NSHomeDirectory()) -> String {
+    let base = NativePreview.namespace + ".meetings"
+    return home == realHome ? base : base + ".home:" + home
+}
 
 struct MeetingsRequest {
     var place: MeetingsWindowModel.Place?
@@ -67,6 +76,8 @@ package func runMeetings(_ args: [String]) -> Never {
     MainActor.assumeIsolated {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
+        MeetingsMenuTarget.shared.model = MeetingsWindow.shared.model
+        MeetingsMenu.install()
         HangWatch.start()
         meetingsInstance.serve { forwarded in
             let next = MeetingsRequest.parse(forwarded)
@@ -103,22 +114,36 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
 
     func apply(_ request: MeetingsRequest, to model: MeetingsWindowModel) {
         if let place = request.place { model.go(place) }
-        if let meeting = request.meeting { model.select(meeting) }
-        if let tab = request.tab { model.detail?.show(tab) }
+        if let meeting = request.meeting {
+            model.select(meeting, tab: request.tab)
+        } else if let tab = request.tab {
+            model.detail?.show(tab)
+        }
     }
+
+    /// The smallest window the layout is made for (the detail column narrows its header and tabs to fit it).
+    static let minimumSize = NSSize(width: 900, height: 560)
+
+    /// The hosting view sets the window's minimum back to zero as it lays out, so `minSize` alone let the window
+    /// shrink until the detail column was cut off. The delegate holds the floor on every live resize.
+    static func floored(_ size: NSSize) -> NSSize {
+        NSSize(width: max(size.width, minimumSize.width), height: max(size.height, minimumSize.height))
+    }
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize { Self.floored(frameSize) }
 
     static func makeWindow(model: MeetingsWindowModel, size: NSSize) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Meetings"
-        window.minSize = NSSize(width: 900, height: 560)
         window.appearance = NSAppearance(named: .darkAqua)
         window.isReleasedWhenClosed = false
         let hosting = NSHostingView(rootView: MeetingsRootView(model: model))
-        // The window keeps the size the reader gives it, and `minSize` above is its only floor: with the default options,
+        // The window keeps the size the reader gives it, and `minimumSize` is its only floor: with the default options,
         // and still with `.minSize`, each notice grew the window to the content's height (900 to 1982 pt in one session).
         hosting.sizingOptions = []
         window.contentView = hosting
+        window.minSize = minimumSize
         window.center()
         return window
     }
@@ -126,6 +151,11 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         // A meeting changed elsewhere (a confirm in a terminal, a new recording) shows when the window comes back.
         if case .loaded = model.overview { model.refreshAfterReturn() }
+    }
+
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        // A live meeting refreshes only while the window can be seen (MeetingsWindowModel.windowVisible).
+        model.windowVisible = (notification.object as? NSWindow)?.occlusionState.contains(.visible) ?? true
     }
 
     /// The window is the face: closing it ends the process, as the hub's window does.
@@ -151,6 +181,9 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
         NSApp.setActivationPolicy(.prohibited)
         Task {
             let model = MeetingsWindowModel()
+            // The requested meeting is the selection before the list lands, so the list's first meeting is never read
+            // for nothing; the request applies once the list is there, so a recording-only meeting opens on Screen.
+            model.selectedMeetingID = request.meeting
             model.load()
             guard await waitUntil(40, { model.overview.value != nil || model.overview.failure != nil }) else {
                 FileHandle.standardError.write(Data("meetings snapshot timed out loading overview\n".utf8))

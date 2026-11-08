@@ -27,6 +27,7 @@ import {
     DEV_GLOSSARY,
     findSuspectTerms,
     findUnknownWords,
+    isEnglishWord,
     keepsHeardWords,
     type RawTermEvidence,
     rawTermEvidence,
@@ -46,6 +47,113 @@ export type SuggestRule = (typeof SUGGEST_RULES)[number];
 
 export function isSuggestRule(value: string): value is SuggestRule {
     return (SUGGEST_RULES as readonly string[]).includes(value);
+}
+
+/** Prefixes a Czech verb or adjective puts before its stem ("na|mokovat", "ne|mokovaný"), folded. */
+const CZECH_PREFIXES = ["pre", "roz", "pri", "na", "ne", "za", "vy"] as const;
+/** How many letters of the stem name a word family. */
+const FAMILY_LETTERS = 4;
+/** Czech endings that make a verb, an adjective or a person of an English root ("mok|ovat", "backend|isti"), folded. */
+const CZECH_DERIVATIONS = [
+    "ovanejch",
+    "ovanejm",
+    "ovanyma",
+    "ovanych",
+    "ovanym",
+    "ovanou",
+    "ovany",
+    "ovana",
+    "ovane",
+    "ovani",
+    "ovat",
+    "ujete",
+    "ujeme",
+    "ujem",
+    "ujou",
+    "uje",
+    "istum",
+    "istou",
+    "isti",
+    "ista",
+    "istu",
+    "acky",
+    "ackem",
+    "ak",
+    "aci",
+] as const;
+
+function folded(word: string): string {
+    return word.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+/**
+ * The family of a word: the first letters of its stem after one Czech prefix. The inflected forms of one word share
+ * it ("mokovaný", "mokovanejm", "namokovat", "nemokovaný": `moko`), and a mishearing seldom comes in several forms.
+ */
+export function wordFamily(word: string): string {
+    const plain = folded(word);
+    const prefix = CZECH_PREFIXES.find(
+        (one) => plain.startsWith(one) && plain.length - one.length >= FAMILY_LETTERS + 1
+    );
+    return plain.slice(prefix?.length ?? 0, (prefix?.length ?? 0) + FAMILY_LETTERS);
+}
+
+/** The English words a Czech-made word may be built on: "mok" is "mock", "komponent" is "component". */
+function englishRoots(word: string): string[] {
+    const plain = folded(word);
+    const prefix = CZECH_PREFIXES.find((one) => plain.startsWith(one) && plain.length - one.length >= 6);
+    const stem = plain.slice(prefix?.length ?? 0);
+    const ending = CZECH_DERIVATIONS.find((one) => stem.endsWith(one) && stem.length - one.length >= 3);
+
+    if (!ending) {
+        return [];
+    }
+
+    const root = stem.slice(0, stem.length - ending.length);
+    return [root, `${root}e`, root.replace(/k$/, "ck"), root.replace(/^k/, "c"), root.replace(/k/g, "c")];
+}
+
+/**
+ * The unknown words a person said on purpose: the forms of one word family heard in two or more forms (a mishearing
+ * seldom repeats in another inflection), and a Czech form of a known English word ("mokovat", "testovat"). These are
+ * slang or a new term, not a mistake, so they get no item and no question (MC3, 2026-11-06: the latest meeting had 40
+ * such items at 30 %, and 8 of its 12 questions asked about them).
+ */
+export function spokenOnPurpose(words: string[], known: (word: string) => boolean): Set<string> {
+    const families = new Map<string, Set<string>>();
+
+    for (const word of words) {
+        const forms = families.get(wordFamily(word)) ?? new Set<string>();
+        forms.add(word.toLowerCase());
+        families.set(wordFamily(word), forms);
+    }
+
+    return new Set(
+        words
+            .filter(
+                (word) =>
+                    (families.get(wordFamily(word))?.size ?? 0) >= 2 ||
+                    englishRoots(word).some((root) => root.length >= 3 && known(root))
+            )
+            .map((word) => word.toLowerCase())
+    );
+}
+
+/** The words the dictionary settles: kept, fixed as one word, or a term's spoken form; lower case. */
+export function dictionaryKeeps(dictionary: Pick<ResolvedDictionary, "entries">): Set<string> {
+    return new Set(
+        dictionary.entries.flatMap((entry) => {
+            if (entry.type === "keep") {
+                return [entry.value.toLowerCase()];
+            }
+
+            if (entry.type === "fix") {
+                return entry.value.toLowerCase().split(/\s+/).length === 1 ? [entry.value.toLowerCase()] : [];
+            }
+
+            return entry.type === "term" ? (entry.spoken ?? []).map((form) => form.toLowerCase()) : [];
+        })
+    );
 }
 
 /** Confidence per rule, 0 to 1. RA is attendance (evidence); a goodbye nobody answered is only an intention. */
@@ -351,28 +459,61 @@ function documentEvidence(options: TermSources): DocumentEvidence {
     };
 }
 
+/**
+ * The suggested term items a dictionary entry or the slang rule now settles, and the open questions that decide only
+ * those: a later `suggest` retires them (MC5: a `keep` entry added after a run still left its word asked).
+ */
+export function settledTermItems(options: {
+    record: MeetingRecord;
+    dictionary: Pick<ResolvedDictionary, "entries">;
+    known?: (word: string) => boolean;
+}): Map<string, string> {
+    const { record } = options;
+    const keep = dictionaryKeeps(options.dictionary);
+    const keptFamilies = new Set([...keep].map(wordFamily));
+    const terms = record.items.filter(
+        (item): item is Extract<MeetingItem, { kind: "term" }> => item.kind === "term" && item.status === "suggested"
+    );
+    const unknownWords = terms.filter((item) => item.rules.includes(MeetingRule.UnknownWord)).map((item) => item.heard);
+    const onPurpose = spokenOnPurpose(unknownWords, options.known ?? isEnglishWord);
+    const settled = new Map<string, string>();
+
+    for (const item of terms) {
+        const heard = item.heard.toLowerCase();
+
+        if (keep.has(heard)) {
+            settled.set(item.id, `the dictionary settles "${item.heard}"`);
+        } else if (item.rules.includes(MeetingRule.UnknownWord) && keptFamilies.has(wordFamily(item.heard))) {
+            settled.set(item.id, `the dictionary keeps a form of "${item.heard}"`);
+        } else if (item.rules.includes(MeetingRule.UnknownWord) && onPurpose.has(heard)) {
+            settled.set(item.id, `"${item.heard}" is said on purpose (a word family or an English root)`);
+        }
+    }
+
+    for (const item of record.items) {
+        if (
+            item.kind === "question" &&
+            item.status === "suggested" &&
+            item.decides.length > 0 &&
+            item.decides.every((id) => settled.has(id))
+        ) {
+            settled.set(item.id, "every item it decides is settled");
+        }
+    }
+
+    return settled;
+}
+
 function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] {
     const { meeting, dictionary, wordCheck } = options;
     const vocab = termVocabulary(options);
     // A word the dictionary keeps, or already replaces (a fix, a term's spoken form), needs no item and no question.
-    const keep = new Set(
-        dictionary.entries.flatMap((entry) => {
-            if (entry.type === "keep") {
-                return [entry.value.toLowerCase()];
-            }
-
-            if (entry.type === "fix") {
-                return entry.value.toLowerCase().split(/\s+/).length === 1 ? [entry.value.toLowerCase()] : [];
-            }
-
-            return entry.type === "term" ? (entry.spoken ?? []).map((form) => form.toLowerCase()) : [];
-        })
-    );
+    const keep = dictionaryKeeps(dictionary);
     const context = termsFromText(meeting.title, "title");
     const suspects = findSuspectTerms({ entries: meeting.transcript, vocab, context, wordCheck }).filter(
         (suspect) => !keep.has(suspect.heard.toLowerCase())
     );
-    const unknown = wordCheck
+    const heardUnknown = wordCheck
         ? findUnknownWords({
               entries: meeting.transcript,
               vocab,
@@ -381,8 +522,23 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
               skip: new Set([...keep, ...suspects.map((suspect) => suspect.heard.toLowerCase())]),
           })
         : [];
+    // A keep entry covers the forms of its word ("mokovaný" keeps "mokovanejm" too), and slang is said on purpose.
+    const keptFamilies = new Set([...keep].map(wordFamily));
+    const onPurpose = spokenOnPurpose(
+        heardUnknown.map((word) => word.heard),
+        (root) => isEnglishWord(root) || wordCheck?.verdict(root).class !== "unknown"
+    );
+    const unknown = heardUnknown.filter(
+        (word) => !onPurpose.has(word.heard.toLowerCase()) && !keptFamilies.has(wordFamily(word.heard))
+    );
     log.debug(
-        { vocab: vocab.length, suspects: suspects.length, unknown: unknown.length, kept: keep.size },
+        {
+            vocab: vocab.length,
+            suspects: suspects.length,
+            unknown: unknown.length,
+            onPurpose: onPurpose.size,
+            kept: keep.size,
+        },
         "term suggestions"
     );
 
@@ -454,14 +610,12 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
                 },
             ];
         }),
+        // Its candidates are all below the suspect threshold ("namokovat" scored "Nomic"): evidence, never a proposal.
         ...unknown.map((word): NewItem => {
-            const best = word.candidates[0];
-
             return {
                 kind: "term",
                 status: "suggested",
                 heard: word.heard,
-                ...(best ? { proposed: best.term } : {}),
                 ...(word.examples[0]?.atSec !== undefined ? { atSec: word.examples[0].atSec } : {}),
                 confidence: CONFIDENCE.unknownWord,
                 rules: [MeetingRule.UnknownWord],
@@ -1143,6 +1297,11 @@ function itemKey(item: NewItem | MeetingItem): string {
         return `label|${item.label}|${Math.round(item.fromSec)}|${Math.round(item.toSec)}`;
     }
 
+    // An unknown word is one item whatever an older run proposed for it, so a rerun adds no second one.
+    if (item.rules.includes(MeetingRule.UnknownWord)) {
+        return `term-unknown|${item.heard.toLowerCase()}`;
+    }
+
     const scope = item.scope ?? (item.quote || item.meaning ? "line" : "everywhere");
     const place = `|${scope}${scope === "line" ? `|${item.meaning ?? ""}|${item.atSec ?? 0}` : ""}`;
     return `term|${item.heard.toLowerCase()}|${item.proposed ?? ""}${place}`;
@@ -1284,11 +1443,30 @@ export function suggestItems(options: {
         .filter((item) => !askedItems.has(item.id))
         .flatMap((item) => questionFor(item, context) ?? []);
 
-    // One budget for speakers and terms together: the most valuable first, none under the floor.
+    // One budget for speakers and terms together, for the meeting and not per run: a question still open counts, so a
+    // second suggest asks nothing new until some are answered (MC4: a second run added 11, 23 open of a cap of 12).
+    const open = record.items.filter((item) => item.kind === "question" && item.status === "suggested").length;
+    const budget = Math.max(0, (options.questionBudget ?? Number.POSITIVE_INFINITY) - open);
+    const wordLines = new Set<number>();
     const worth = selectQuestions(candidates, taken)
         .filter((question) => (question.priority ?? 0) >= (options.minPriority ?? 0))
         .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
-        .slice(0, options.questionBudget ?? Number.POSITIVE_INFINITY);
+        .filter((question) => {
+            // One unknown word asked per line: four words of one line are one listen, not four.
+            if (question.about !== "term" || !question.rules.includes(MeetingRule.UnknownWord)) {
+                return true;
+            }
+
+            const line = Math.round(question.fromSec);
+
+            if (wordLines.has(line)) {
+                return false;
+            }
+
+            wordLines.add(line);
+            return true;
+        })
+        .slice(0, budget);
 
     for (const question of worth) {
         if (known.has(questionKey(question))) {

@@ -61,8 +61,10 @@ class MemoryInbox implements AssignInbox {
         return this.forms.get(id) ?? null;
     }
 
-    async cancel(id: string): Promise<void> {
+    async cancel(id: string): Promise<boolean> {
+        const open = this.forms.get(id)?.status === "pending";
         this.forms.set(id, { status: "cancelled", answers: {} });
+        return open;
     }
 
     answer(id: string, answers: AskAnswer[]): void {
@@ -98,6 +100,7 @@ function setup(
         id: "wisprflow",
         label: "Fake",
         load: async () => meeting,
+        revision: async () => null,
         describe: () => ({}),
         dictionary: async () => [],
         recordingClock: async () => null,
@@ -659,6 +662,7 @@ test("folder questions persist before posting and recover the same choices and i
                 load: async () => {
                     throw new Error("unused");
                 },
+                revision: async () => null,
                 describe: () => ({}),
                 dictionary: async () => [],
                 recordingClock: async () => null,
@@ -672,7 +676,7 @@ test("folder questions persist before posting and recover the same choices and i
         }),
         inbox: {
             read: async () => answer,
-            cancel: async () => {},
+            cancel: async () => true,
             post: async (input) => {
                 forms.push(input);
                 const saved = new MeetingStore(storage).read(record.id)!;
@@ -698,6 +702,21 @@ test("folder questions persist before posting and recover the same choices and i
 });
 
 describe("assign apply", () => {
+    test("an answer given without the inbox withdraws the open inbox question (MC17)", async () => {
+        const { store, deps, inbox, create } = setup();
+        const record = await create("Standup", "2026-11-04T09:00:00.000Z", {
+            assign: {
+                ask: { formId: "form-open", askedAt: "2026-11-04T09:31:00.000Z", outcome: "pending", proposals: [] },
+            },
+        });
+        inbox.forms.set("form-open", { status: "pending", answers: {} });
+
+        await applyAnswer({ store, record, deps, answer: { project: "work", labels: [] } });
+
+        expect(inbox.forms.get("form-open")?.status).toBe("cancelled");
+        expect(store.read(record.id)?.assign?.ask?.outcome).toBe("applied");
+    });
+
     test("an explicit no project removes the project the meeting already has", async () => {
         const { store, deps, create } = setup();
         const record = await create("Standup", "2026-11-04T09:00:00.000Z", { project: "work" });
@@ -741,7 +760,7 @@ test("an inbox answer for a replaced question, or after the project was set mean
         now: () => Date.parse("2026-11-05T12:00:00.000Z"),
         calendars: async () => [],
         source: async () => undefined,
-        inbox: { read: async () => null, cancel: async () => {}, post: async (input) => ({ id: input.id! }) },
+        inbox: { read: async () => null, cancel: async () => false, post: async (input) => ({ id: input.id! }) },
     };
     const ask = {
         formId: "form-2",
