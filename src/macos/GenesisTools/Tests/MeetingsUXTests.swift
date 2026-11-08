@@ -275,6 +275,17 @@ final class MeetingsUXTests: XCTestCase {
                        "any confidence takes an item with none, as the CLI does")
     }
 
+    func testReturnConfirmsOnlyWhatAPlainConfirmCanApply() throws {
+        let items = try JSONDecoder().decode([MeetingItem].self, from: Self.itemsJSON())
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        XCTAssertFalse(ItemsTab.keyActs(on: try XCTUnwrap(byID["t1"]), confirm: true), "a term with no spelling waits for an answer by ear")
+        XCTAssertTrue(ItemsTab.keyActs(on: try XCTUnwrap(byID["t1"]), confirm: false), "Delete still rejects it")
+        XCTAssertFalse(ItemsTab.keyActs(on: try XCTUnwrap(byID["r2"]), confirm: true), "a range with no speaker waits for its menu")
+        XCTAssertFalse(ItemsTab.keyActs(on: try XCTUnwrap(byID["q1"]), confirm: false), "a question is answered, not decided")
+        XCTAssertFalse(ItemsTab.keyActs(on: try XCTUnwrap(byID["c1"]), confirm: true), "a decided item is reopened first")
+        XCTAssertEqual(items.filter(\.canConfirm).map(\.id), ["r1", "t2", "l1", "n1"])
+    }
+
     func testABulkConfirmSaysHowManyAndWhatWaits() {
         let both = DecideResult(decided: ["r1", "t2"], token: "tok", skipped: [.init(id: "r2", reason: "it has no speaker yet.")])
         XCTAssertEqual(MeetingDetailModel.bulkNote(both, threshold: 0.8), "Confirmed 2 items at 80 % or more; 1 item still waits for you")

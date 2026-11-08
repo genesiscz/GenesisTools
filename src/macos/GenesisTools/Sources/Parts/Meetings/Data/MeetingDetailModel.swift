@@ -581,8 +581,7 @@ extension MeetingDetailModel {
     /// skips and leaves for the reader (a question, a speaker range with no speaker, a term with no spelling).
     static func confirmable(_ items: [MeetingItem], atOrAbove threshold: Double) -> [MeetingItem] {
         items.filter { item in
-            item.status == "suggested" && item.kind != "question" && (item.confidence ?? 0) >= threshold
-                && !(item.kind == "speaker-range" && item.speaker == nil) && !item.needsSpelling
+            item.canConfirm && (item.confidence ?? 0) >= threshold
         }
     }
 
