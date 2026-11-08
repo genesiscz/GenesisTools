@@ -21,6 +21,9 @@ struct RecentCache<Key: Hashable, Value> {
         return value
     }
 
+    /// The value for `key`, without counting it as used.
+    func peek(_ key: Key) -> Value? { values[key] }
+
     /// Keeps `value` for `key` and drops the entry used longest ago once there are more than `limit`.
     mutating func set(_ value: Value, for key: Key) {
         if values.updateValue(value, forKey: key) != nil {
