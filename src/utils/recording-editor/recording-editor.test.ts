@@ -1208,6 +1208,20 @@ describe("edit project (edit.json)", () => {
         expect([lengthened.shapes?.[0]?.startUs, lengthened.shapes?.[0]?.endUs]).toEqual([8_500_000, 10_000_000]);
     });
 
+    // Regression test: unified review 2026-11-08 ED-too-short-ignores-speed.
+    test("too short to read is measured in played time, and Lengthen reaches 1.5 s of played time", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        let fast = applyOp(wholeProject(source), { op: "speed", from: 4, to: 8, factor: 8 });
+        fast = applyOp(fast, { op: "text", from: 4, to: 6, text: "Saved" });
+        const [issue] = checkProject(fast, facts).filter((found) => found.kind === "too-short");
+        expect(issue?.message).toContain("0.3 s");
+        const lengthened = (issue?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), fast);
+        expect([lengthened.texts?.[0]?.startUs, lengthened.texts?.[0]?.endUs]).toEqual([4_000_000, 9_000_000]);
+        let slow = applyOp(wholeProject(source), { op: "speed", from: 2, to: 4, factor: 0.25 });
+        slow = applyOp(slow, { op: "text", from: 2, to: 2.2, text: "Saved" });
+        expect(checkProject(slow, facts).filter((found) => found.kind === "too-short")).toEqual([]);
+    });
+
     // Regression test: deep test 2026-11-06 RE5 — `tools recorder fix` printed "fixed" four times for an op that changed nothing.
     test("fix reports nothing fixed for an item that already spans the whole movie", () => {
         const short = { ...source, durationUs: 300_000 };
