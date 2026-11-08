@@ -748,12 +748,16 @@ struct EditRenderer {
             }
             let look = zoom.look(atOutput: outUs)
             let view = look.view
+            var result: CIImage
             if let mark = look.transition, let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent) {
-                let other = Looks.redact(mark.otherRedactions, on: still).cropped(to: extent)
-                image = TransitionLook.blend(live: image, still: other, mark: mark)
+                // Each side is hidden by its own parts before the blend; only the spotlights dim the blended frame.
+                image = TransitionLook.compose(live: image, liveRedactions: look.redactions, still: still, mark: mark)
+                result = Looks.redact(look.redactions.filter { $0.style == .spotlight }, on: image,
+                                      spotlightFade: look.spotlightFade).cropped(to: extent)
+            } else {
+                result = Looks.redact(look.redactions, on: image, spotlightFade: look.spotlightFade).cropped(to: extent)
+                result = RedactionTrack.leaveVisible(look.redactions, original: image, on: result).cropped(to: extent) // fx B
             }
-            var result = Looks.redact(look.redactions, on: image, spotlightFade: look.spotlightFade).cropped(to: extent)
-            result = RedactionTrack.leaveVisible(look.redactions, original: image, on: result).cropped(to: extent) // fx B
             for drawn in look.shapes {
                 result = Looks.drawShape(drawn.shape, drawn: drawn.drawn, opacity: drawn.opacity, on: result).cropped(to: extent)
             }

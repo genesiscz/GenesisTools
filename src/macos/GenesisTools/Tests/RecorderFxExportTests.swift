@@ -14,7 +14,10 @@ final class RecorderFxExportTests: XCTestCase {
     /// Shows from 3.0 to 5.0 s, the end of the first clip, under a redaction that ends exactly at the join.
     static let hiddenSecret = CGRect(x: 192, y: 18, width: 96, height: 54)
 
-    private func makeMovie(at url: URL) async throws {
+    /// Shows from 6.2 s on, in the middle of the picture, under a redaction for the whole second clip.
+    static let incomingSecret = CGRect(x: 112, y: 63, width: 96, height: 54)
+
+    private func makeMovie(at url: URL, incoming: Bool = false) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: Self.size.width, AVVideoHeightKey: Self.size.height,
@@ -39,6 +42,7 @@ final class RecorderFxExportTests: XCTestCase {
             var white: [CGRect] = []
             if (177..<186).contains(frame) { white.append(Self.cutSecret) }
             if (90..<150).contains(frame) { white.append(Self.hiddenSecret) }
+            if incoming, frame >= 186 { white.append(Self.incomingSecret) }
             for block in white {
                 for y in Int(block.minY)..<Int(block.maxY) {
                     memset(base + y * row + Int(block.minX) * 4, 255, Int(block.width) * 4)
@@ -49,6 +53,35 @@ final class RecorderFxExportTests: XCTestCase {
         }
         input.markAsFinished()
         await writer.finishWriting()
+    }
+
+    /// Per frame of `movie`, the brightest value anywhere in the picture (every fourth pixel of every fourth row).
+    private func framePeaks(_ movie: URL) async throws -> [(seconds: Double, peak: Int)] {
+        let asset = AVURLAsset(url: movie)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        reader.add(output)
+        reader.startReading()
+        var frames: [(Double, Int)] = []
+        while let sample = output.copyNextSampleBuffer() {
+            guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+            CVPixelBufferLockBaseAddress(buffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+            guard let address = CVPixelBufferGetBaseAddress(buffer) else { continue }
+            let base = address.assumingMemoryBound(to: UInt8.self)
+            let row = CVPixelBufferGetBytesPerRow(buffer)
+            var peak = 0
+            for y in stride(from: 0, to: CVPixelBufferGetHeight(buffer), by: 4) {
+                for x in stride(from: 0, to: CVPixelBufferGetWidth(buffer), by: 4) {
+                    let pixel = base + y * row + x * 4
+                    peak = max(peak, Int(pixel[0]), Int(pixel[1]), Int(pixel[2]))
+                }
+            }
+            frames.append((CMSampleBufferGetPresentationTimeStamp(sample).seconds, peak))
+        }
+        return frames
     }
 
     /// Per frame of `movie`, the brightest value inside each block (three points across it).
@@ -99,6 +132,35 @@ final class RecorderFxExportTests: XCTestCase {
         XCTAssertNoThrow(try EditRenderer.checkSize(.init(width: 1920, height: 1080), source: source, aspect: .wide))
         XCTAssertThrowsError(try EditRenderer.checkSize(.init(width: 1920, height: 1080), source: source, aspect: nil),
                              "1920×1080 is not a 2940×1912 movie's shape")
+    }
+
+    /// Round 3 (2026-11-08): the live side of a transition is hidden by its own parts before the blend, as the still
+    /// side is. They were laid over the blended frame, where the zoom transition draws the live picture grown (1.4x at
+    /// the join), so the edges of a hidden block showed around its part, and the still's own picture under the live
+    /// side's part was hidden too.
+    func testTheLiveSideOfATransitionIsHiddenBeforeTheBlend() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("fx-live-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie, incoming: true)
+        var project = EditProject.whole(video: movie.path, durationUs: 10_000_000, width: Self.size.width, height: Self.size.height,
+                                        cursor: nil, recording: nil)
+        project.clips = [.init(id: "a", fromUs: 0, toUs: 2_900_000), .init(id: "b", fromUs: 6_200_000, toUs: 10_000_000)]
+        let hidden = normalized(Self.incomingSecret)
+        project.redactions = [EditProject.Redaction(id: "r", startUs: 6_200_000, endUs: 10_000_000, x: hidden.x, y: hidden.y,
+                                                    width: hidden.width, height: hidden.height, style: .black)]
+        for kind in [EditProject.TransitionKind.zoom, .crossfade] {
+            project.transitions = EditProject.Transitions(default: .init(kind: kind, ms: 600))
+            let out = folder.appendingPathComponent("\(kind.rawValue).mp4")
+            _ = try await EditExporter.export(project: project, to: out) { _ in }
+            let frames = try await framePeaks(out)
+            XCTAssertGreaterThan(frames.count, 150, "\(kind): the export has its frames")
+            // The white block dissolved half into the grey outgoing side is about 178. The moving edge of the black
+            // part makes the encoder overshoot the grey by up to about 20 (117 to 120 measured), which is no block.
+            let leaks = frames.filter { $0.peak > 150 }
+            XCTAssertTrue(leaks.isEmpty, "\(kind): the hidden block shows at \(leaks.map { String(format: "%.3f s %d", $0.seconds, $0.peak) })")
+        }
     }
 
     func testNoTransitionShowsACutOrRedactedSecretInTheExport() async throws {

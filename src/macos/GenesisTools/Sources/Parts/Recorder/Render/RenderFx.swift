@@ -75,6 +75,20 @@ enum TransitionLook {
     static func smooth(_ t: Double) -> Double { t * t * (3 - 2 * t) }
 
     /// The live frame and the still of the other side, blended by `mark`; both are the source picture.
+    /// One transition frame: the live picture hidden by its own parts and the still hidden by the parts at its own
+    /// source time, each before the blend. Round 3 (2026-11-08): the live side's parts were laid over the BLENDED frame,
+    /// so the zoom transition's grown live picture showed the edges of a hidden block around its part, and the still's
+    /// own picture under the live side's parts was hidden too. Spotlights are not hiding parts and stay for the caller.
+    static func compose(live: CIImage, liveRedactions: [EditProject.Redaction], still: CIImage, mark: Mark) -> CIImage {
+        let extent = live.extent
+        let hidden = { (parts: [EditProject.Redaction], picture: CIImage) -> CIImage in
+            let hiding = parts.filter { $0.style != .spotlight }
+            let covered = Looks.redact(hiding, on: picture).cropped(to: extent)
+            return RedactionTrack.leaveVisible(hiding, original: picture, on: covered).cropped(to: extent)
+        }
+        return blend(live: hidden(liveRedactions, live), still: hidden(mark.otherRedactions, still), mark: mark)
+    }
+
     static func blend(live: CIImage, still: CIImage, mark: Mark) -> CIImage {
         let extent = live.extent
         let outgoing = mark.incoming ? still : live
