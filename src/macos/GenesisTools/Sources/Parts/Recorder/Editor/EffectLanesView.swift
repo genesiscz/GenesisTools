@@ -298,6 +298,15 @@ struct EffectLaneView: View {
 
 /// One item on a lane: a click selects it and opens its panel, a drag moves it in time with snapping, an edge trims
 /// it, and a right-click offers Edit, Duplicate, Move to Lane and Delete. A speed item is its clip: it does not move.
+/// What VoiceOver says for an item on an effect lane: its own label when that already names it ("Zoom 160%", a shape's
+/// "Circle" under the "Arrow or Box" family), else the kind and the label ("Text, Title").
+func laneItemName(kindTitle: String, label: String) -> String {
+    if label.localizedCaseInsensitiveContains(kindTitle) || kindTitle.contains(" or ") {
+        return label
+    }
+    return "\(kindTitle), \(label)"
+}
+
 struct EffectSegment: View {
     @Bindable var model: EditorModel
     let item: EffectItem
@@ -348,7 +357,7 @@ struct EffectSegment: View {
                 .instantTooltip(movable ? "\(item.label): click to edit, drag to move, drag an edge to trim, right-click for more"
                                         : "\(item.label): this clip plays at another speed; click to edit it")
                 .accessibilityElement()
-                .accessibilityLabel("\(item.kind.title), \(item.label), \(editRange(model.project, fromUs: item.startUs, toUs: item.endUs).edit)")
+                .accessibilityLabel("\(laneItemName(kindTitle: item.kind.title, label: item.label)), \(editRange(model.project, fromUs: item.startUs, toUs: item.endUs).edit)")
                 .accessibilityAddTraits(.isButton)
                 .accessibilityIdentifier("recorder.\(item.kind.rawValue).\(item.id)")
                 // A tap gesture alone gives the element no AXPress, so VoiceOver and agents could not select it.

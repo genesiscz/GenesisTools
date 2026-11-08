@@ -20,6 +20,8 @@ enum RecorderProtocol {
         let path: String
         let project: EditProject
         let revision: Int
+        /// The undo steps the edit keeps; absent from a service older than 2026-11-06.
+        let undoDepth: Int?
     }
 
     /// `edit.apply`, `edit.undo`, `edit.redo` and `gesture.commit`.
@@ -53,6 +55,8 @@ enum RecorderProtocol {
         let path: String
         let revision: Int
         let by: String
+        /// "undo" or "redo" when the change took one back or made it again; nil for an edit (and from an older service).
+        var action: String?
     }
 
     struct WindowRow: Codable, Equatable {

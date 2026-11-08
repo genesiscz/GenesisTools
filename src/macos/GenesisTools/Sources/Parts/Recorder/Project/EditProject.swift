@@ -41,9 +41,100 @@ struct EditProject: Codable, Equatable {
     /// Moments marked while editing (the range popover's Add Marker), in source order; nil is none. The recording's
     /// own markers stay in recording.json. Written by the `marker` op (src/utils/recording-editor/project.ts).
     var markers: [Marker]?
+    /// Round 4 fx-render: transitions at the joins of two clips (Render/RenderFx.swift); nil is a hard cut everywhere.
+    var transitions: Transitions?
+    /// Round 4 fx-render: magnifier lenses over source ranges; nil is none.
+    var lens: Lens?
+    /// Round 4 fx-render: the 3D tilt of the framed picture; nil is flat.
+    var tilt: Tilt?
+    // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups (private-data.ts, cursor-smooth.ts and
+    // waits.ts in src/utils/recording-editor). Optional, so an older file decodes; nil is off.
+    /// The private hits a `hidePrivate` op already hid.
+    var privacy: Privacy?
+    /// The smooth cursor; nil keeps `cursor.smoothing` and `cursor.hideAfterMs`.
+    var cursorSmooth: CursorSmooth?
+    /// The "⏩ 6x" badge over sped-up parts; nil is no badge.
+    var autoSpeed: AutoSpeed?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
+    // R4 6 animated captions
+    /// How the captions animate (karaoke colours each word as it is said); nil shows each line at once.
+    var captionsStyle: CaptionsStyle?
+    // R4 10 progress bar and chapter strip
+    /// A bar along the bottom showing the share played, divided at the markers; nil is none.
+    var progress: ProgressBar?
+    // R4 9 intro and end cards
+    /// A title card before the movie and an end card after it, played by the export only; nil is none.
+    var cards: Cards?
+    // R5 5 redaction edges
+    /// How the hiding parts close small holes (Render/RedactionEdges.swift); nil is `RedactionJoins()`.
+    var redactionJoins: RedactionJoins?
+
+    struct RedactionJoins: Codable, Equatable {
+        /// A hiding part that ends this close before a cut is drawn up to the cut, one that starts this close after a
+        /// cut is drawn from it, and two hiding parts with a gap this short meet; 0 leaves every part as placed.
+        var snapMs = 250
+    }
+
+    struct Cards: Codable, Equatable {
+        var intro: IntroCard?
+        var end: EndCard?
+    }
+
+    struct IntroCard: Codable, Equatable {
+        var title: String
+        var subtitle: String?
+        /// A picture file, absolute.
+        var logo: String?
+        var date: String?
+        var seconds = 3.0
+    }
+
+    struct EndCard: Codable, Equatable {
+        var text: String
+        var link: String?
+        /// A QR code of `link` under it.
+        var qr = false
+        var seconds = 3.0
+    }
+
+    /// `height` is a share of the canvas's short side; each chapter's name shows for `chapterMs` when it starts.
+    struct ProgressBar: Codable, Equatable {
+        var show = true
+        var color = "#FFFFFF"
+        var height = 0.008
+        var chapters = true
+        var chapterMs = 2000
+        // R6 8 chapter label place: nil is auto (the frame's free area).
+        var chapterPlace: ChapterPlace?
+    }
+
+    // R6 8 chapter label place
+    enum ChapterPlace: String, Codable, CaseIterable {
+        case auto, topLeft, topRight, bottomLeft, bottomRight
+    }
+
+    // R4 6 animated captions and texts
+    enum CaptionKind: String, Codable, CaseIterable {
+        case line, karaoke
+    }
+
+    struct CaptionsStyle: Codable, Equatable {
+        var kind: CaptionKind = .karaoke
+        /// #RRGGBB of the words said so far.
+        var color = "#FFD60A"
+    }
+
+    enum TextAnimation: String, Codable, CaseIterable {
+        case fade, typewriter, slideUp
+    }
+
+    /// How a text comes in over `ms`; nil on a text is the 0.2 s fade.
+    struct TextAnimate: Codable, Equatable {
+        var kind: TextAnimation
+        var ms = 600
+    }
 
     /// A moment marked while editing, at SOURCE microseconds; `id` is what the `unmarker` op takes.
     struct Marker: Codable, Equatable, Identifiable {
@@ -72,7 +163,11 @@ struct EditProject: Codable, Equatable {
         var speed: Double = 1
 
         var sourceDurationUs: Int64 { max(0, toUs - fromUs) }
-        var outputDurationUs: Int64 { Int64((Double(sourceDurationUs) / speed).rounded()) }
+        /// A speed the decoder would refuse (0, negative, or not finite) plays at 1 rather than trapping on Int64(inf).
+        var outputDurationUs: Int64 {
+            guard speed.isFinite, speed > 0 else { return sourceDurationUs }
+            return Int64((Double(sourceDurationUs) / speed).rounded())
+        }
     }
 
     enum ZoomMode: String, Codable, CaseIterable {
@@ -96,6 +191,14 @@ struct EditProject: Codable, Equatable {
         var easeOutMs = 450
         /// The effect lane it sits on (EffectLanes.swift); nil is the first lane that holds its kind.
         var lane: String?
+        // R5 4 canvas zoom
+        /// `.canvas` zooms the whole framed export (its focus is 0...1 of the canvas); nil zooms inside the picture.
+        var target: ZoomTarget?
+    }
+
+    // R5 4 canvas zoom
+    enum ZoomTarget: String, Codable, CaseIterable {
+        case picture, canvas
     }
 
     struct AudioSettings: Codable, Equatable {
@@ -109,6 +212,43 @@ struct EditProject: Codable, Equatable {
         /// Noise reduction on export, applied by the TypeScript export (src/utils/recording-editor/denoise.ts); kept
         /// here so a save from the editor does not drop it. nil is none.
         var denoise: Denoise?
+        // R4 voiceover clips
+        /// Extra sound files played from source times, in source order; nil is none.
+        var voiceovers: [Voiceover]?
+        // R4 8 music ducking
+        /// How far the music drops under speech; nil keeps `Music.duck` (src/utils/recording-editor/voiceovers.ts).
+        var ducking: Ducking?
+    }
+
+    // R4 voiceover clips
+    /// A sound file (a narration) that plays from SOURCE time `atUs` at its own speed for `durationUs`, measured
+    /// when it was added; `id` is what the `unvoiceover` op takes.
+    struct Voiceover: Codable, Equatable, Identifiable {
+        /// The card a voiceover plays over instead of the movie (voiceovers.ts `VOICEOVER_CARDS`).
+        enum Card: String, Codable, Equatable {
+            case intro
+            case end
+        }
+
+        var id: String
+        /// A source time, or with `card` the time from that card's first frame.
+        var atUs: Int64
+        /// Round 3 (2026-11-08): it plays over this card in the export; the preview has no cards and leaves it out.
+        var card: Card?
+        var file: String
+        var durationUs: Int64
+        /// 0 to 2.
+        var volume = 1.0
+        var label: String?
+    }
+
+    // R4 8 music ducking
+    /// The music drops `db` under the transcript's lines and the voiceovers (each switchable), over `fadeMs`.
+    struct Ducking: Codable, Equatable {
+        var db = 12.0
+        var fadeMs = 300
+        var transcript = true
+        var voiceovers = true
     }
 
     /// The export's noise reduction: `afftdn` turns the noise down by `reductionDb` on the chosen audio tracks.
@@ -205,6 +345,63 @@ struct EditProject: Codable, Equatable {
         var cutout: SpotlightCutout?
         /// The effect lane it sits on (EffectLanes.swift); nil is the first lane that holds its kind.
         var lane: String?
+        // fx B (round 4)
+        /// Keyframes of the rectangle (a part that follows its text through a scroll); nil keeps x, y, width, height.
+        var track: [TrackKey]?
+        /// Areas the part leaves visible (a toast over the text); nil is none.
+        var exclude: [Box]?
+        // R5 5 redaction edges
+        /// A spotlight's dim fades in and out over this many ms (capped at a third of its length); 0 is a hard cut,
+        /// nil is 200. The hiding styles never fade: they cover fully from their first frame to their last.
+        var fadeMs: Int?
+        /// A pixelate block's side in source pixels (2 to 256); nil is 1.8 % of the picture's height, at least 8.
+        var cell: Double?
+        // R6 1 moving text, R6 7 the request
+        /// A part hideText or hidePrivate made: its hit, how sure its place is and the request; nil on a hand-made part.
+        var hide: Hide?
+        // R8 11
+        /// A spotlight's soft edge: the dim rises from none at the lit shape to full at this distance (a share of the
+        /// picture's short side, 0...0.5); nil or 0 is a sharp edge.
+        var dimAround: Double?
+    }
+
+    /// R6 1, R6 7: where a hidden part came from (hideText or hidePrivate) and how sure its place is. The editor keeps
+    /// it as it is, so a save from the window does not drop it.
+    struct Hide: Codable, Equatable {
+        var by: String
+        var hit: String
+        /// The band a moving text may cross where it could not be followed, not the text's own place.
+        var uncertain: Bool?
+        var movingSeconds: Double?
+        var keysPerSecond: Double?
+        var request: Request?
+
+        struct Request: Codable, Equatable {
+            var text: String?
+            var pattern: String?
+            var texts: [String]?
+            var patterns: [String]?
+            var unit: String?
+            var kinds: [String]?
+            var names: [String]?
+        }
+    }
+
+    /// fx B (round 4): a rectangle as fractions of the picture from its top left.
+    struct Box: Codable, Equatable {
+        var x: Double
+        var y: Double
+        var width: Double
+        var height: Double
+    }
+
+    /// fx B (round 4): one keyframe of a tracked hidden part, at SOURCE microseconds.
+    struct TrackKey: Codable, Equatable {
+        var atUs: Int64
+        var x: Double
+        var y: Double
+        var width: Double
+        var height: Double
     }
 
     /// The fixed words of a transcript line by its start in source milliseconds; an empty text hides the line.
@@ -240,6 +437,22 @@ struct EditProject: Codable, Equatable {
         var style: TextStyle = .plate
         /// The effect lane it sits on (EffectLanes.swift); nil is the first lane that holds its kind.
         var lane: String?
+        // R4 6 animated texts
+        var animate: TextAnimate?
+        // R5 10 multi-line texts
+        /// Where its lines wrap and how they align; nil is 0.8 of the canvas, centred. "\n" in `text` starts a line.
+        var block: TextBlock?
+    }
+
+    // R5 10 multi-line texts
+    enum TextAlign: String, Codable, CaseIterable {
+        case left, center, right
+    }
+
+    struct TextBlock: Codable, Equatable {
+        /// The wrap width as a share of the canvas's width (0.15 to 0.95); nil is 0.8.
+        var width: Double?
+        var align: TextAlign?
     }
 
     enum ShapeKind: String, Codable, CaseIterable {
@@ -333,6 +546,30 @@ struct EditProject: Codable, Equatable {
         /// As a fraction of the output height.
         var cornerRadius = 0.012
         var shadow = true
+        // R5 4 frame layouts
+        /// Where the picture sits and how big; nil is centred at its fitted size.
+        var layout: FrameLayout?
+    }
+
+    // R5 4 frame layouts
+    enum FrameAlign: String, Codable, CaseIterable {
+        case center, left, right, top, bottom
+    }
+
+    struct FrameLayout: Codable, Equatable {
+        /// Against one edge of the room inside the padding, or centred.
+        var align = FrameAlign.center
+        /// Times the fitted size (0.5 to 3); above 1 the picture grows inside the room and is cropped to it.
+        var scale = 1.0
+        // R7 9 phone layouts: the part of a grown picture that stays in view.
+        /// 0...1 of the picture from its top left; nil is its centre.
+        var focus: FocusPoint?
+    }
+
+    // R7 9 phone layouts
+    struct FocusPoint: Codable, Equatable {
+        var x = 0.5
+        var y = 0.5
     }
 
     enum Codec: String, Codable, CaseIterable {
@@ -351,6 +588,16 @@ struct EditProject: Codable, Equatable {
         var subtitles: SubtitleFormat?
         /// The recording's markers as chapters inside an MP4; nil is on.
         var chapters: Bool?
+        // R5 3 export size
+        /// The exported picture's exact pixels (one side, the other following its shape, or both in its shape); nil
+        /// follows `maxHeight`. It wins over `maxHeight` and over the H.264 frame-rate budget.
+        var size: OutputSize?
+    }
+
+    // R5 3 export size
+    struct OutputSize: Codable, Equatable {
+        var width: Int?
+        var height: Int?
     }
 
     enum SubtitleFormat: String, Codable, CaseIterable {
@@ -359,6 +606,62 @@ struct EditProject: Codable, Equatable {
 
     enum ExportFormat: String, Codable, CaseIterable {
         case mp4, gif, webm
+
+        /// The name as people write it ("WebM", beside "WebVTT"), not the file extension in capitals.
+        var title: String {
+            switch self {
+            case .mp4: "MP4"
+            case .gif: "GIF"
+            case .webm: "WebM"
+            }
+        }
+    }
+
+    // MARK: Round 4 fx-render (src/utils/recording-editor/fx.ts)
+
+    enum TransitionKind: String, Codable, CaseIterable {
+        case none, crossfade, zoom, blur
+    }
+
+    /// One join's transition: `ms` is its whole length, centred on the join.
+    struct Transition: Codable, Equatable {
+        var kind: TransitionKind = .none
+        var ms = 300
+    }
+
+    /// Every join takes `default` unless `joins` has its own, keyed by the id of the clip that starts there.
+    struct Transitions: Codable, Equatable {
+        var `default` = Transition()
+        var joins: [String: Transition]?
+    }
+
+    /// A round loupe from `startUs` to `endUs` of the source: it follows the cursor, or stays at x/y (0...1 of the
+    /// source picture). `radius` is a fraction of the picture's short side.
+    struct LensItem: Codable, Equatable, Identifiable {
+        var id: String
+        var startUs: Int64
+        var endUs: Int64
+        var radius = 0.12
+        var magnification = 2.0
+        var follow = true
+        var x = 0.5
+        var y = 0.5
+        /// #RRGGBB.
+        var ring = "#FFFFFF"
+    }
+
+    struct Lens: Codable, Equatable {
+        var items: [LensItem] = []
+    }
+
+    /// The framed picture tilts slightly in 3D (strength 0...1), drifts slowly, tilts in at the start and out at the end.
+    struct Tilt: Codable, Equatable {
+        var strength = 0.5
+        var drift = true
+        var tiltIn = true
+        var tiltOut = true
+        var inMs = 1200
+        var outMs = 1200
     }
 }
 
@@ -367,9 +670,13 @@ extension EditProject {
     static func whole(video: String, durationUs: Int64, width: Int, height: Int, cursor: String?, recording: String?) -> EditProject {
         EditProject(
             source: Source(video: video, cursor: cursor, recording: recording, durationUs: durationUs, width: width, height: height),
-            clips: [Clip(id: newID("c"), fromUs: 0, toUs: durationUs)]
+            clips: [Clip(id: wholeClipID, fromUs: 0, toUs: durationUs)]
         )
     }
+
+    /// A new edit's one clip has the same id in every process (WHOLE_CLIP_ID in src/utils/recording-editor/project.ts),
+    /// so an op this window sends for an edit not saved yet names the clip the recorder service made for it too.
+    static let wholeClipID = "c00000000"
 
     static func newID(_ prefix: String) -> String {
         prefix + String(UUID().uuidString.prefix(8)).lowercased()
@@ -395,6 +702,7 @@ extension EditProject {
         guard var root = object as? [String: Any] else { throw ProjectError.notAnObject }
         root = try migrate(root)
         let project = try JSONDecoder().decode(EditProject.self, from: JSONSerialization.data(withJSONObject: root))
+        try project.validate()
         guard let url else { return project }
         return project.inItsFolder(url.deletingLastPathComponent())
     }
@@ -428,15 +736,56 @@ extension EditProject {
         return try encoder.encode(self)
     }
 
+    /// The ranges `tools recorder apply` keeps (src/utils/recording-editor/project.ts, clipSchema). A file edited by
+    /// hand or by another writer can hold anything; a clip speed of 0 made every duration Int64(infinity), which traps,
+    /// and a negative one asked AVFoundation for a negative duration. Refused here with the clip named instead.
+    func validate() throws {
+        guard source.durationUs >= 0 else { throw ProjectError.badValue("source.durationUs is \(source.durationUs); it must be 0 or more") }
+        for (index, clip) in clips.enumerated() {
+            guard clip.speed.isFinite, (0.25...16).contains(clip.speed) else {
+                throw ProjectError.badValue("clip \(index + 1) (\(clip.id)) has speed \(clip.speed); it must be 0.25 to 16")
+            }
+            guard clip.fromUs >= 0, clip.toUs >= 0 else {
+                throw ProjectError.badValue("clip \(index + 1) (\(clip.id)) runs from \(clip.fromUs) to \(clip.toUs) µs; times must be 0 or more")
+            }
+        }
+    }
+
     enum ProjectError: LocalizedError {
         case notAnObject
         case newerVersion(Int)
+        case badValue(String)
 
         var errorDescription: String? {
             switch self {
             case .notAnObject: "the edit file is not a JSON object"
             case let .newerVersion(version): "the edit file has version \(version); this build reads up to \(EditProject.currentVersion)"
+            case let .badValue(detail): "the edit file is not valid: \(detail)"
             }
         }
+    }
+}
+
+// fx B (round 4)
+extension EditProject {
+    struct Privacy: Codable, Equatable {
+        var applied: [String] = []
+    }
+
+    /// The drawn cursor glides along an average up to ±400 ms × `strength`, moves under `jitterPx` points are dropped,
+    /// and it fades after `idleFadeSeconds` without a move (0 keeps it). Clicks stay exact.
+    struct CursorSmooth: Codable, Equatable {
+        var strength = 0.6
+        var jitterPx = 3.0
+        var idleFadeSeconds = 2.0
+    }
+
+    struct AutoSpeed: Codable, Equatable {
+        var badge = true
+        var position = SpeedBadgePosition.topRight
+    }
+
+    enum SpeedBadgePosition: String, Codable, CaseIterable {
+        case topRight = "top-right", topLeft = "top-left", bottomRight = "bottom-right", bottomLeft = "bottom-left"
     }
 }

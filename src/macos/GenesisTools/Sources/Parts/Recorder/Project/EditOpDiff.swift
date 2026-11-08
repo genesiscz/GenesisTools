@@ -29,6 +29,43 @@ enum EditOpDiff {
         if old.motion != new.motion { ops.append(.motion(EditOp.Motion(blur: (new.motion ?? EditProject.Motion()).blur))) }
         if old.camera != new.camera, let op = camera(old.camera, new.camera) { ops.append(.camera(op)) }
         if old.transcript != new.transcript { ops += fixes(old.transcript?.fixes ?? [:], new.transcript?.fixes ?? [:]) }
+        // R4 6 animated captions
+        if old.captionsStyle != new.captionsStyle {
+            ops.append(.captionsStyle(new.captionsStyle.map { EditOp.CaptionsStyle(kind: $0.kind, color: $0.color, enabled: true) }
+                ?? EditOp.CaptionsStyle(enabled: false)))
+        }
+        // R4 10 progress bar
+        if old.progress != new.progress {
+            ops.append(.progress(new.progress.map {
+                EditOp.ProgressBar(show: $0.show, color: $0.color, height: $0.height, chapters: $0.chapters, chapterMs: $0.chapterMs, enabled: true,
+                                   chapterPlace: $0.chapterPlace ?? .auto)
+            } ?? EditOp.ProgressBar(enabled: false)))
+        }
+        // R4 9 intro and end cards
+        if old.cards?.intro != new.cards?.intro {
+            ops.append(.introCard(new.cards?.intro.map {
+                EditOp.IntroCard(title: $0.title, subtitle: $0.subtitle ?? "", logo: $0.logo ?? "", date: $0.date ?? "", seconds: $0.seconds)
+            } ?? EditOp.IntroCard(enabled: false)))
+        }
+        if old.cards?.end != new.cards?.end {
+            ops.append(.endCard(new.cards?.end.map {
+                EditOp.EndCard(text: $0.text, link: $0.link ?? "", qr: $0.qr, seconds: $0.seconds)
+            } ?? EditOp.EndCard(enabled: false)))
+        }
+        // fx B (round 4): the smooth cursor and the speed badge (nil is off; the badge has no op that removes it).
+        if old.cursorSmooth != new.cursorSmooth {
+            ops.append(.cursorSmooth(new.cursorSmooth.map {
+                EditOp.CursorSmooth(enabled: true, strength: $0.strength, jitterPx: $0.jitterPx, idleFadeSeconds: $0.idleFadeSeconds)
+            } ?? EditOp.CursorSmooth(enabled: false)))
+        }
+        if old.autoSpeed != new.autoSpeed {
+            let speed = new.autoSpeed ?? EditProject.AutoSpeed(badge: false)
+            ops.append(.autoSpeed(EditOp.AutoSpeed(badge: speed.badge, position: speed.position)))
+        }
+        // R5 5 redaction edges
+        if old.redactionJoins != new.redactionJoins {
+            ops.append(.redactionJoins(EditOp.RedactionJoins(snapMs: (new.redactionJoins ?? .init()).snapMs)))
+        }
         return ops
     }
 
@@ -64,6 +101,11 @@ enum EditOpDiff {
         if a.follow != b.follow { op.follow = b.follow ?? false }
         if a.cutout != b.cutout { op.cutout = b.cutout ?? .rounded }
         if a.dim != b.dim { op.dim = b.dim ?? Looks.spotlightDim }
+        // R5 5 redaction edges
+        if a.fadeMs != b.fadeMs { op.fadeMs = b.fadeMs ?? -1 }
+        if a.cell != b.cell { op.cell = b.cell ?? 0 }
+        // R8 11
+        if a.dimAround != b.dimAround { op.dimAround = b.dimAround ?? 0 }
         let set: [EditOp] = op == EditOp.SetRedaction(id: b.id) ? [] : [.setRedaction(op)]
         return set + retime(b.id, from: (a.startUs, a.endUs), to: (b.startUs, b.endUs))
     }
@@ -75,6 +117,10 @@ enum EditOpDiff {
         if a.y != b.y { op.y = b.y }
         if a.size != b.size { op.size = b.size }
         if a.style != b.style { op.style = b.style }
+        // R4 6 animated texts: no animation is the fade.
+        if a.animate != b.animate { op.animate = EditOp.Animate(kind: b.animate?.kind ?? .fade, ms: b.animate?.ms) }
+        // R5 10 multi-line texts: both fields, so a block taken away goes back to the defaults.
+        if a.block != b.block { op.block = EditProject.TextBlock(width: b.block?.width ?? 0.8, align: b.block?.align ?? .center) }
         let set: [EditOp] = op == EditOp.SetText(id: b.id) ? [] : [.setText(op)]
         return set + retime(b.id, from: (a.startUs, a.endUs), to: (b.startUs, b.endUs))
     }
@@ -106,6 +152,29 @@ enum EditOpDiff {
                 ops.append(.music(EditOp.Music(enabled: false)))
             }
         }
+        // R4 voiceover clips: the window moves a clip or changes its volume; adding or removing one sends its own op.
+        if a.voiceovers != b.voiceovers {
+            let before = a.voiceovers ?? []
+            for clip in b.voiceovers ?? [] {
+                guard let old = before.first(where: { $0.id == clip.id }), old != clip else { continue }
+                var op = EditOp.Voiceover(id: clip.id)
+                if old.atUs != clip.atUs { op.at = seconds(clip.atUs) }
+                if old.card != clip.card, let card = clip.card { op.card = card }
+                if old.file != clip.file { op.file = clip.file }
+                if old.volume != clip.volume { op.volume = clip.volume }
+                if old.label != clip.label { op.label = clip.label ?? "" }
+                ops.append(.voiceover(op))
+            }
+        }
+        // R4 8 music ducking
+        if a.ducking != b.ducking {
+            if let ducking = b.ducking {
+                ops.append(.ducking(EditOp.Ducking(db: ducking.db, fadeMs: ducking.fadeMs, transcript: ducking.transcript,
+                                                   voiceovers: ducking.voiceovers, enabled: true)))
+            } else {
+                ops.append(.ducking(EditOp.Ducking(enabled: false)))
+            }
+        }
         if a.denoise != b.denoise {
             if let denoise = b.denoise {
                 ops.append(.denoise(EditOp.Denoise(enabled: true, method: denoise.method, reductionDb: denoise.reductionDb,
@@ -125,6 +194,8 @@ enum EditOpDiff {
         if a.format != b.format { op.format = b.format ?? .mp4 }
         if a.subtitles != b.subtitles { op.subtitles = b.subtitles?.rawValue ?? "none" }
         if a.chapters != b.chapters { op.chapters = b.chapters ?? true }
+        // R5 3 export size
+        if a.size != b.size { op.size = b.size ?? EditProject.OutputSize() }
         return op
     }
 
@@ -138,8 +209,11 @@ enum EditOpDiff {
         guard let frame else { return EditOp.Frame(enabled: false) }
         let background = EditOp.Frame.Background(kind: frame.background.kind, colors: frame.background.colors,
                                                  image: frame.background.image, blur: frame.background.blur)
+        // R5 4 frame layouts: always sent, so a layout taken away goes back to centred at the fitted size.
+        let layout = frame.layout ?? .init()
         return EditOp.Frame(enabled: true, aspect: frame.aspect ?? .source, fit: frame.fit ?? .contain, background: background,
-                            padding: frame.padding, cornerRadius: frame.cornerRadius, shadow: frame.shadow)
+                            padding: frame.padding, cornerRadius: frame.cornerRadius, shadow: frame.shadow,
+                            layout: EditOp.Frame.Layout(align: layout.align, scale: layout.scale, focus: layout.focus))
     }
 
     private static func cursor(_ cursor: EditProject.Cursor) -> EditOp.Cursor {

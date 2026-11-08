@@ -24,6 +24,17 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         /// Review comments not yet resolved (comments.jsonl beside it), and where the first one is, in source µs.
         var openComments = 0
         var firstOpenCommentUs: Int64?
+        /// Why the recording made no movie (`recording.json` says `outcome: failed` and no movie is there): its first
+        /// warning, so the card says "Failed" with the reason instead of passing for a frames recording.
+        var failure: String?
+        /// It still records (a live entry in `recordings/live` names this folder): until it ends there is no movie to
+        /// open, and its folder must not move.
+        var recording = false
+    }
+
+    /// The folders of the recordings that run now, as `readRecents` compares them.
+    nonisolated static func liveFolders(_ store: LiveRecordingStore = .live) -> Set<String> {
+        Set(store.load().compactMap { $0.folder.map { URL(fileURLWithPath: $0).standardizedFileURL.path } })
     }
 
     private var item: NSStatusItem?
@@ -46,15 +57,25 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     /// Opens a recording in the editor. A frames-only one (a meeting's screen, say) goes through
     /// `tools recorder open`, which makes its proxy movie first and then opens the editor.
     static func open(_ recent: Recent, atSourceSeconds: Double? = nil) {
+        if recent.recording {
+            RecorderNotice.outlets.note("“\(recent.title)” is still recording",
+                                        "It opens once it stops: the red menu bar item, or tools recorder stop.")
+            return
+        }
+        if let failure = recent.failure {
+            RecorderNotice.failure("“\(recent.title)” did not record, so there is nothing to open.", more: failure)
+            return
+        }
         if recent.hasMovie {
             EditorWindows.shared.open(path: recent.folder.path, atSourceSeconds: atSourceSeconds)
             return
         }
-        HubPerf.log("recorder: open frames-only \(recent.folder.path) through tools recorder open")
+        HubPerf.log("recorder: open frames-only \(recent.folder.path) through tools recorder edit")
         do {
-            try ToolsRunner.detached(["recorder", "open", recent.folder.path]) { status, tail in
-                RecorderNotice.failure("“\(recent.title)” did not open: making its movie failed (exit \(status)).",
-                                       more: tail.isEmpty ? "tools recorder open \(recent.folder.path)" : tail)
+            // `edit` makes proxy.mp4 for a frames-only recording, then opens the editor (there never was an `open`).
+            try ToolsRunner.detached(["recorder", "edit", recent.folder.path]) { status, output in
+                RecorderNotice.failure("“\(recent.title)” did not open: making its movie failed (exit \(status))",
+                                       output: output, fallback: "tools recorder edit \(recent.folder.path)")
             }
         } catch {
             RecorderNotice.failure("“\(recent.title)” did not open.", more: error.localizedDescription)
@@ -83,6 +104,42 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             item.isVisible = true
         }
         HubPerf.log("recorder: menu bar item installed (saved choice \(saved), visible \(item.isVisible))")
+        // The bar lays the item out after this turn; look once it had time to.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.checkOnScreen() }
+    }
+
+    enum Placement: String, Equatable {
+        case shown
+        /// The user hid it (System Settings → Menu Bar, or ⌘-drag off the bar): their choice, nothing to say.
+        case hiddenByChoice
+        /// `isVisible` says yes, but no window of it is on a screen: macOS keeps it off the bar (no room beside the
+        /// notch, or the bar's own setting).
+        case offScreen
+    }
+
+    nonisolated static func placement(itemVisible: Bool, window: CGRect?, windowShown: Bool, screens: [CGRect]) -> Placement {
+        guard itemVisible else { return .hiddenByChoice }
+        guard let window, windowShown, screens.contains(where: { $0.intersects(window) }) else { return .offScreen }
+        return .shown
+    }
+
+    /// The menu, its toggles and Recent live only in this item. When macOS keeps it off the bar, say so once on this
+    /// Mac and name the other ways in, instead of a menu that silently cannot be reached (review 2026-11-06).
+    private func checkOnScreen(defaults: UserDefaults = .standard) {
+        guard let item else { return }
+        let window = item.button?.window
+        let placement = Self.placement(itemVisible: item.isVisible, window: window?.frame,
+                                       windowShown: window?.isVisible == true && window?.occlusionState.contains(.visible) == true,
+                                       screens: NSScreen.screens.map(\.frame))
+        HubPerf.log("recorder: menu bar item is \(placement.rawValue) (window \(window.map { "\($0.frame)" } ?? "none"))")
+        let key = "recorder.statusItemOffScreenNoted"
+        guard placement == .offScreen, !defaults.bool(forKey: key) else { return }
+        defaults.set(true, forKey: key)
+        let picker = RecorderShortcutBinding.load(.picker, defaults: defaults)
+        let way = picker.enabled ? "with \(picker.chord.label) or from the widget" : "from the widget"
+        RecorderNotice.outlets.note("The recorder's menu bar item is not on screen",
+                                    "macOS keeps it off the bar (no room beside the notch, or System Settings → Menu Bar). "
+                                        + "Open the capture picker \(way).")
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -126,6 +183,13 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
                 row.image = recent.thumbnail.flatMap { thumbnails[$0] } ?? NSImage(systemSymbolName: "video", accessibilityDescription: nil)
                 row.toolTip = "\(recent.folder.lastPathComponent)\(recent.hasMovie ? "" : " (frames only)")"
                 row.isEnabled = true
+                if recent.recording {
+                    row.title = "\(recent.title) (recording)"
+                    row.toolTip = "Still recording; stop it from the red menu bar item or with tools recorder stop"
+                    row.isEnabled = false
+                    menu.addItem(row)
+                    continue
+                }
                 if Self.recentActions {
                     // A row with a submenu opens it on hover; Open in Editor is its first entry.
                     row.submenu = MenuButtonPresenter.menu(RecordingActions.menuItems(for: recent) { [weak self] in self?.report($0) })
@@ -173,11 +237,14 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     }
 
     nonisolated static func readRecents(_ folders: [URL]) -> [Recent] {
-        folders.flatMap { readRecents($0, isMeeting: $0.standardizedFileURL == meetingsFolder.standardizedFileURL) }
-            .sorted { $0.started > $1.started }
+        let live = liveFolders()
+        return folders.flatMap {
+            readRecents($0, isMeeting: $0.standardizedFileURL == meetingsFolder.standardizedFileURL, liveFolders: live)
+        }
+        .sorted { $0.started > $1.started }
     }
 
-    nonisolated static func readRecents(_ folder: URL, isMeeting: Bool = false) -> [Recent] {
+    nonisolated static func readRecents(_ folder: URL, isMeeting: Bool = false, liveFolders: Set<String> = []) -> [Recent] {
         let manager = FileManager.default
         let names = (try? manager.contentsOfDirectory(atPath: folder.path)) ?? []
         var list: [Recent] = []
@@ -191,13 +258,18 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             let movie = RecordingMovie.own(in: dir)
             let hasMovie = movie != nil
             let firstFrame = ((root["frames"] as? [[String: Any]])?.first?["file"] as? String).map { dir.appendingPathComponent($0) }
-            let video = (root["settings"] as? [String: Any])?["video"] as? [String: Any]
+            let settings = root["settings"] as? [String: Any]
+            let video = settings?["video"] as? [String: Any]
+            let failure = !hasMovie && settings?["outcome"] as? String == "failed"
+                ? (root["warnings"] as? [String])?.first ?? "The recording failed before it recorded anything"
+                : nil
             let open = ReviewComments.read(dir.appendingPathComponent("comments.jsonl")).filter { !$0.isResolved }
             list.append(Recent(folder: dir, title: (root["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name,
                                started: started, thumbnail: movie ?? firstFrame, hasMovie: hasMovie,
                                edited: manager.fileExists(atPath: dir.appendingPathComponent("edit.json").path),
                                durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue, isMeeting: isMeeting,
-                               openComments: open.count, firstOpenCommentUs: open.first?.atUs))
+                               openComments: open.count, firstOpenCommentUs: open.first?.atUs, failure: failure,
+                               recording: liveFolders.contains(dir.standardizedFileURL.path)))
         }
         return list.sorted { $0.started > $1.started }
     }
@@ -313,9 +385,9 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     func startRecording(arguments args: [String]) {
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
         do {
-            try ToolsRunner.detached(args) { status, tail in
-                RecorderNotice.failure("The recording stopped at once (exit \(status)).",
-                                       more: tail.isEmpty ? "See ~/.genesis-tools/logs/recorder-start.log" : tail)
+            try ToolsRunner.detached(args) { status, output in
+                RecorderNotice.failure("The recording stopped at once (exit \(status))", output: output,
+                                       fallback: "See ~/.genesis-tools/logs/recorder-start.log")
             }
         } catch {
             RecorderNotice.failure("The recording did not start.", more: error.localizedDescription)

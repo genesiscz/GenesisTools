@@ -14,7 +14,7 @@ import { callTimeoutFor } from "@genesiscz/utils/screen-recorder/live";
 import { RECORDING_EVENT, RECORDINGS_CHANGED } from "@genesiscz/utils/screen-recorder/service-link";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
-import { editPathOf, editProject, setEditOwner, undoEdit, withEditCancel } from "./edit";
+import { editPathOf, editProject, redoEdit, setEditOwner, undoEdit, withEditCancel } from "./edit";
 import { type EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import { ConnectedAppHost, type HeadlessDeps, HeadlessHost, type HostCallContext, type RecorderHost } from "./host";
 import { listLibrary } from "./library";
@@ -59,8 +59,8 @@ interface ConnectionState {
     id: number;
     role?: ServiceRole;
     pid?: number;
-    /** The edit paths this connection holds sessions of. */
-    holds: Set<string>;
+    /** The edit paths this connection holds sessions of, each with its holders (editor windows); "" is the connection. */
+    holds: Map<string, Set<string>>;
     /** The gestures this connection began and has not ended: the session's key of each, to its edit path. */
     gestures: Map<string, string>;
     /** A `recording` connection: the ids of the live recordings it registered. */
@@ -186,11 +186,16 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     });
 
     /** An edit saved to the file with no open session: subscribers hear it as they hear a session's change. */
-    const fileChanged = (saved: { path: string; project: EditProject }, connection: Connection): void => {
+    const fileChanged = (
+        saved: { path: string; project: EditProject },
+        connection: Connection,
+        action?: ProjectChanged["action"]
+    ): void => {
         const change: ProjectChanged = {
             path: saved.path,
             revision: saved.project.revision,
             by: saved.project.updatedBy ?? byOf(connection),
+            ...(action ? { action } : {}),
         };
         server?.emit("project.changed", { ...change });
     };
@@ -338,11 +343,14 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         },
         "session.open": async (params, { connection, context }: HandlerContext) => {
             const path = editPathOf(params.path);
+            const holder = params.holder ?? "";
 
-            if (connection.state.holds.has(path)) {
-                return { path, ...sessionOf(path).current };
+            if (connection.state.holds.get(path)?.has(holder)) {
+                const held = sessionOf(path);
+                return { path, ...held.current, undoDepth: held.undoDepth };
             }
 
+            // One hold per holder, so one editor window's close leaves another window's session of the same edit.
             const session = await sessions.hold(params.path);
 
             // The caller went or cancelled, or the service stopped, while the session opened: no one would release it.
@@ -351,14 +359,27 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
                 throw new RpcError(RPC_ERRORS.cancelled, `the session of ${session.path} opened after its caller left`);
             }
 
-            connection.state.holds.add(session.path);
-            return { path: session.path, ...session.current };
+            const holders = connection.state.holds.get(session.path) ?? new Set<string>();
+
+            // The same holder's other session.open finished first and holds it already.
+            if (holders.has(holder)) {
+                sessions.release(session.path);
+            }
+
+            holders.add(holder);
+            connection.state.holds.set(session.path, holders);
+            return { path: session.path, ...session.current, undoDepth: session.undoDepth };
         },
         "session.close": (params, { connection }: HandlerContext) => {
             const path = editPathOf(params.path);
+            const holders = connection.state.holds.get(path);
 
-            if (!connection.state.holds.delete(path)) {
+            if (!holders?.delete(params.holder ?? "")) {
                 return { closed: false };
+            }
+
+            if (holders.size === 0) {
+                connection.state.holds.delete(path);
             }
 
             sessions.release(path);
@@ -412,7 +433,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             const undone = await undoEdit(params.path);
 
             if (undone.saved) {
-                fileChanged(undone, connection);
+                fileChanged(undone, connection, "undo");
             }
 
             return { revision: undone.project.revision, project: undone.project, undone: undone.undone ?? [] };
@@ -421,7 +442,13 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             const session = sessions.get(editPathOf(params.path));
 
             if (!session) {
-                throw new RpcError(RPC_ERRORS.nothingToRedo, "redo needs an open session of the edit (session.open)");
+                const redone = await redoEdit(params.path);
+
+                if (redone.saved) {
+                    fileChanged(redone, connection, "redo");
+                }
+
+                return { revision: redone.project.revision, project: redone.project, redone: redone.redone ?? [] };
             }
 
             const answer = await session.redo({ by: byOf(connection) });
@@ -639,7 +666,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
         const listening = new RpcSocketServer<ConnectionState>({
             socket,
-            state: () => ({ id: ++lastConnectionId, holds: new Set(), gestures: new Map(), recordings: new Set() }),
+            state: () => ({ id: ++lastConnectionId, holds: new Map(), gestures: new Map(), recordings: new Set() }),
             // A cancelled request's edit never lands: every edit it makes checks this request's signal before it saves.
             call: ({ method, params, connection, context }) =>
                 withEditCancel(context.signal, () => answer(method, params, connection, context)),
@@ -655,8 +682,10 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
                 connection.state.gestures.clear();
 
-                for (const path of connection.state.holds) {
-                    sessions.release(path);
+                for (const [path, holders] of connection.state.holds) {
+                    for (const _holder of holders) {
+                        sessions.release(path);
+                    }
                 }
 
                 connection.state.holds.clear();

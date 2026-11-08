@@ -50,12 +50,20 @@ struct RecorderRequest {
     /// `--sheet <edit> --times <s,s,…> --out <png>`: those frames of the edit on one picture, each with its time.
     var sheet: String?
     var times: [Double] = []
+    /// `--columns <n>` with `--sheet`: the grid's columns (absent: by the frames' shape).
+    var columns: Int?
+    // R6 10 effects sheet
+    /// `--cut-cells 2,5` with `--sheet`: those cells (0-based) show a time the edit cuts, marked as cut.
+    var cutCells: Set<Int> = []
     /// `--full` with `--still`: the frame at the export's size (a poster), not the 1080 pixel preview.
     var full = false
     /// `--picker`: the capture picker (with `--snapshot`, a picture of it over made-up targets).
     var picker = false
     /// `--shortcuts` with `--picker --snapshot`: the Shortcuts section open.
     var shortcuts = false
+    // R5 3 export size
+    /// `--size 1280x720` (or `1280x`, `x720`) with `--export`: the picture's exact pixels.
+    var exportSize: EditProject.OutputSize?
 
     static func parse(_ args: [String]) -> RecorderRequest {
         var request = RecorderRequest()
@@ -95,6 +103,12 @@ struct RecorderRequest {
             case "--picker": request.picker = true
             case "--shortcuts": request.shortcuts = true
             case "--times": request.times = (value() ?? "").split(separator: ",").compactMap { Double($0) }
+            // R5 3 export size: "1280x720", "1280x" or "x720".
+            case "--size":
+                let sides = (value() ?? "").split(separator: "x", omittingEmptySubsequences: false).map { Int($0) }
+                if sides.count == 2 { request.exportSize = EditProject.OutputSize(width: sides[0], height: sides[1]) }
+            case "--columns": request.columns = value().flatMap { Int($0) }
+            case "--cut-cells": request.cutCells = Set((value() ?? "").split(separator: ",").compactMap { Int($0) })
             default: break
             }
             index += 1
@@ -110,13 +124,13 @@ struct RecorderRequest {
 package func runRecorder(_ args: [String]) -> Never {
     let request = RecorderRequest.parse(args)
     if let export = request.export {
-        runHeadlessExport(source: export, out: request.out, json: request.json)
+        runHeadlessExport(source: export, out: request.out, size: request.exportSize, json: request.json)
     }
     if let still = request.still {
         runHeadlessStill(source: still, atSeconds: request.atSeconds ?? 0, out: request.out, full: request.full)
     }
     if let sheet = request.sheet {
-        runHeadlessSheet(source: sheet, times: request.times, out: request.out)
+        runHeadlessSheet(source: sheet, times: request.times, out: request.out, columns: request.columns, cut: request.cutCells)
     }
     if let snapshot = request.snapshot {
         runSnapshot(request, to: snapshot)
@@ -174,7 +188,8 @@ final class EditorWindows: NSObject, NSWindowDelegate {
                 model.seek(TimelineMap.outputTime(ofSource: sourceUs, in: model.project) ?? 0)
             }
         }
-        if let existing = open.values.first(where: { $0.1.store.url.deletingLastPathComponent().path == URL(fileURLWithPath: path).deletingLastPathComponent().path || $0.1.project.source.video == path }) {
+        // The same matcher as `close`: the recording's folder, its edit file or its movie bring the open window back.
+        if let existing = open.values.first(where: { Self.names($0.1, path) }) {
             place(existing.1)
             if wanted { focus(existing.0) }
             opened?(.success(existing.0))
@@ -187,7 +202,10 @@ final class EditorWindows: NSObject, NSWindowDelegate {
                 let (store, project) = try await ProjectStore.open(path: path)
                 span.end()
                 let model = EditorModel(project: project, store: store)
-                opened?(.success(show(model, focus: wanted)))
+                // Not inside `opened?(…)`: with no `opened` (the library's Open in Editor) Swift skips the arguments,
+                // so the window was never made.
+                let window = show(model, focus: wanted)
+                opened?(.success(window))
                 // The player item lands in the background; seek after it, as the snapshot face does.
                 if let place = pendingPlacement.removeValue(forKey: path) {
                     try? await Task.sleep(for: .milliseconds(400))
@@ -359,7 +377,7 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         if let monitor = entry.2 { NSEvent.removeMonitor(monitor) }
         open[ObjectIdentifier(window)] = nil
         writeOpenState(front: nil)
-        if open.isEmpty { NSApp.setActivationPolicy(.accessory) }
+        if open.isEmpty { RecorderActivation.windowClosed(window) }
     }
 }
 
@@ -402,9 +420,9 @@ private struct ExportSummary: View {
         let part = model.exportPart
         VStack(alignment: .leading, spacing: 8) {
             Text("Export").font(.system(size: 14, weight: .semibold))
-            row("Format", format == .mp4 ? "MP4 · \(settings.codec == .h264 ? "H.264" : "HEVC")" : format.rawValue.uppercased())
+            row("Format", format == .mp4 ? "MP4 · \(settings.codec == .h264 ? "H.264" : "HEVC")" : format.title)
             if format != .gif { row("Size", "\(Int(size.width)) × \(Int(size.height))") }
-            row("Part", part.map { "\(formatClock($0.fromUs, tenths: true)) – \(formatClock($0.toUs, tenths: true))" }
+            row("Part", part.map { formatClockRange($0.fromUs, $0.toUs) }
                 ?? "Everything (\(formatClock(model.durationUs, tenths: true)))")
             row("File", EditExporter.outputURL(for: model.project, format: format).lastPathComponent)
             HStack {
@@ -447,43 +465,30 @@ private struct DocumentEditedMark: NSViewRepresentable {
     }
 }
 
-/// The editor's keys, for the key window only and never while a text field edits.
+/// The editor's keys, for the key window only and never while a text field edits. A key runs the command the menu bar
+/// lists for it (`EditorMenu`'s tables), so the key does what its menu item says; the monitor runs before the menu.
+@MainActor
 enum EditorKeys {
-    @MainActor
+    /// Every command with a key, in the menu bar's order.
+    static let keyed: [EditorCommand] = (EditorMenu.file + EditorMenu.edit + EditorMenu.timeline + EditorMenu.tabs).filter { !$0.key.isEmpty }
+
+    /// The command a key press runs, or nil to let the key through. `key` is the event's characters without modifiers;
+    /// with Single-Key Shortcuts off, a key with no modifier (S, Z, Space) runs nothing.
+    static func command(key: String, modifiers: NSEvent.ModifierFlags, singleKeys: Bool) -> EditorCommand? {
+        let pressed = modifiers.intersection([.command, .option, .shift, .control])
+        // ⌫ types DEL and ⌦ a function key; the menu names both by backspace.
+        let typed = key == "\u{7f}" || key == String(UnicodeScalar(NSDeleteFunctionKey)!) ? "\u{8}" : key.lowercased()
+        guard let command = keyed.first(where: { $0.key == typed && $0.modifiers == pressed }) else { return nil }
+        if !singleKeys, EditorMenuTarget.isSingleKey(command) { return nil }
+        return command
+    }
+
     static func install(model: EditorModel, window: NSWindow) -> Any? {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.window === window, !(window.firstResponder is NSText) else { return event }
-            let command = event.modifierFlags.contains(.command)
-            let shift = event.modifierFlags.contains(.shift)
-            switch (event.charactersIgnoringModifiers?.lowercased() ?? "", command) {
-            case (" ", false): model.togglePlay()
-            case ("s", false): model.splitAtPlayhead()
-            case ("[", false): model.trimToPlayhead(.start)
-            case ("]", false): model.trimToPlayhead(.end)
-            case ("z", false): model.addZoom()
-            case ("t", false): model.addText()
-            case ("a", false): model.addShape(.arrow)
-            case ("m", false): model.commentPrompt()
-            case ("z", true): shift ? model.redo() : model.undo()
-            case ("s", true): model.saveNow()
-            case ("e", true): model.tab = .export; model.export()
-            case ("j", false), ("k", false), ("l", false):
-                model.shuttle(Character(event.charactersIgnoringModifiers?.lowercased() ?? "k"))
-            case ("d", true): model.duplicateSelection()
-            case ("i", false): model.markIn()
-            case ("o", false): model.markOut()
-            default:
-                switch event.keyCode {
-                case 51 where shift: model.cutPart()
-                case 51, 117: model.deleteSelection()
-                case 123: model.step(frames: shift ? -60 : -1)
-                case 124: model.step(frames: shift ? 60 : 1)
-                case 115: model.seek(0)
-                case 119: model.seek(model.durationUs)
-                case 53: model.selection = .none; model.timelineRange = nil
-                default: return event
-                }
-            }
+            guard event.window === window, !(window.firstResponder is NSText),
+                  let command = command(key: event.charactersIgnoringModifiers ?? "", modifiers: event.modifierFlags,
+                                        singleKeys: EditorMenuTarget.singleKeysOn) else { return event }
+            command.run(model)
             return nil
         }
     }
@@ -519,10 +524,10 @@ private func runHeadlessStill(source: String, atSeconds: Double, out: String?, f
     runHeadlessJSON { try await RecorderRenders.still(source: source, atSeconds: atSeconds, out: out, full: full) }
 }
 
-/// Frames of the edit as it exports, on one picture in rows of three, each labelled with its output time: one look
-/// at a whole edit for an agent. The movie is built once and every frame comes from the same generator.
-private func runHeadlessSheet(source: String, times: [Double], out: String?) -> Never {
-    runHeadlessJSON { try await RecorderRenders.sheet(source: source, times: times, out: out) }
+/// Frames of the edit as it exports, on one grid picture, each labelled with its time: one look at a whole edit for
+/// an agent. The movie is built once and every frame comes from the same generator.
+private func runHeadlessSheet(source: String, times: [Double], out: String?, columns: Int?, cut: Set<Int>) -> Never {
+    runHeadlessJSON { try await RecorderRenders.sheet(source: source, times: times, out: out, columns: columns, cut: cut) }
 }
 
 /// Runs one render with no window, prints its answer (or `{ ok: false, error }`) as one JSON line, and exits.
@@ -544,17 +549,31 @@ private func runHeadlessJSON(_ render: @escaping () async throws -> [String: Any
     exit(0)
 }
 
-/// A grid of frames, each with its output time on a dark plate in its corner.
+/// A grid of frames, each with its time on a dark plate in its corner.
 enum ContactSheet {
-    static let columns = 3
-    /// Each tile's width; the height follows the movie's shape.
+    /// The widest a tile gets; a sheet of many cells uses smaller tiles so the whole sheet stays readable when scaled.
     static let tileWidth = 640
+    /// The narrowest a tile gets, so 48 cells still show their content.
+    static let minTileWidth = 240
+    /// The sheet's widest side in pixels: a viewer scales a larger picture down until its text is unreadable.
+    static let maxSheetWidth = 3840
     static let gap = 8
 
-    static func draw(frames: [(seconds: Double, image: CGImage)]) -> CGImage {
+    /// The columns of a sheet of `count` frames of this shape: `requested`, else as close to a 16:9 sheet as whole
+    /// rows allow. Three fixed columns made 12 portrait frames 1952 x 5616 pixels, unreadable once scaled (round 5).
+    static func columns(count: Int, frameWidth: Int, frameHeight: Int, requested: Int? = nil) -> Int {
+        if let requested { return min(count, max(1, requested)) }
+        let aspect = Double(max(1, frameHeight)) / Double(max(1, frameWidth))
+        let ideal = (16.0 / 9.0 * Double(count) * aspect).squareRoot()
+        return min(count, max(1, Int(ideal.rounded())))
+    }
+
+    /// `cut` (R6 10): the cells whose time the edit cuts; each gets a red border and "cut" after its time.
+    static func draw(frames: [(seconds: Double, image: CGImage)], columns requested: Int? = nil, cut: Set<Int> = []) -> CGImage {
         let first = frames[0].image
+        let columns = Self.columns(count: frames.count, frameWidth: first.width, frameHeight: first.height, requested: requested)
+        let tileWidth = max(minTileWidth, min(Self.tileWidth, (maxSheetWidth - (columns + 1) * gap) / columns))
         let tileHeight = max(1, Int((Double(tileWidth) * Double(first.height) / Double(max(1, first.width))).rounded()))
-        let columns = min(columns, frames.count)
         let rows = (frames.count + columns - 1) / columns
         let width = columns * tileWidth + (columns + 1) * gap
         let height = rows * tileHeight + (rows + 1) * gap
@@ -572,7 +591,16 @@ enum ContactSheet {
             let rect = CGRect(x: gap + column * (tileWidth + gap), y: height - (row + 1) * (tileHeight + gap),
                               width: tileWidth, height: tileHeight)
             context.draw(frame.image, in: rect)
-            let text = NSAttributedString(string: formatClock(Int64((frame.seconds * 1_000_000).rounded()), tenths: true), attributes: [
+            let isCut = cut.contains(index)
+            if isCut {
+                context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.45))
+                context.fill(rect)
+                context.setStrokeColor(CGColor(red: 1, green: 0.27, blue: 0.27, alpha: 1))
+                context.setLineWidth(6)
+                context.stroke(rect.insetBy(dx: 3, dy: 3))
+            }
+            let clock = formatClock(Int64((frame.seconds * 1_000_000).rounded()), tenths: true)
+            let text = NSAttributedString(string: isCut ? "\(clock)  cut" : clock, attributes: [
                 NSAttributedString.Key(kCTFontAttributeName as String): font,
                 NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),
             ])
@@ -580,7 +608,7 @@ enum ContactSheet {
             var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
             let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
             let plate = CGRect(x: rect.minX + 8, y: rect.minY + 8, width: width + 14, height: ascent + descent + leading + 6)
-            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.7))
+            context.setFillColor(isCut ? CGColor(red: 0.75, green: 0.1, blue: 0.1, alpha: 0.9) : CGColor(red: 0, green: 0, blue: 0, alpha: 0.7))
             context.addPath(CGPath(roundedRect: plate, cornerWidth: 5, cornerHeight: 5, transform: nil))
             context.fillPath()
             context.textPosition = CGPoint(x: plate.minX + 7, y: plate.minY + 3 + descent + leading)
@@ -590,14 +618,14 @@ enum ContactSheet {
     }
 }
 
-private func runHeadlessExport(source: String, out: String?, json: Bool) -> Never {
+private func runHeadlessExport(source: String, out: String?, size: EditProject.OutputSize?, json: Bool) -> Never {
     MainActor.assumeIsolated {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         Task {
             do {
                 var lastTenth = -1
-                let result = try await RecorderRenders.export(source: source, out: out) { progress in
+                let result = try await RecorderRenders.export(source: source, out: out, size: size) { progress in
                     let tenth = Int(progress * 10)
                     if tenth != lastTenth, !json {
                         lastTenth = tenth

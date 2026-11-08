@@ -206,7 +206,7 @@ const HEADLESS: HeadlessTable = {
     "render.export": async (deps, params, context) =>
         faceResult({
             method: "render.export",
-            run: await deps.runFace(exportArgv(params.path, params.out), context.signal),
+            run: await deps.runFace(exportArgv(params.path, params.out, params.size), context.signal),
             schema: exportAnswerSchema,
             what: "export",
         }),

@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
-import type { ApiDescriptor, HandleDescriptor, MethodDescriptor } from "./descriptor";
+import { type ApiDescriptor, effectLabel, type HandleDescriptor, type MethodDescriptor } from "./descriptor";
 
 const { log } = logger.scoped("api-descriptor");
 
@@ -182,7 +182,7 @@ export function methodSignature(owner: string, method: MethodDescriptor, depth =
 }
 
 function renderMethods(owner: string, methods: readonly MethodDescriptor[]): string[] {
-    return methods.map((method) => `- ${methodSignature(owner, method)} [${method.effect}]\n  ${method.doc}`);
+    return methods.map((method) => `- ${methodSignature(owner, method)} [${effectLabel(method)}]\n  ${method.doc}`);
 }
 
 function renderHandle(handle: HandleDescriptor): string[] {
@@ -239,7 +239,7 @@ export function toMcpTools(api: ApiDescriptor): McpToolShape[] {
         annotations: {
             readOnlyHint: method.effect === "read",
             destructiveHint: method.effect === "destructive",
-            openWorldHint: method.mcp?.openWorld ?? method.effect !== "read",
+            openWorldHint: method.mcp?.openWorld ?? (method.effect !== "read" || (method.reaches?.length ?? 0) > 0),
         },
     }));
 }

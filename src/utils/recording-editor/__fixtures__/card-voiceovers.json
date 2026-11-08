@@ -1,0 +1,104 @@
+{
+    "about": "An edit with voiceovers on the intro card, in the movie and on the end card (src/utils/recording-editor/voiceovers.ts). A card voiceover's atUs counts from the start of its card. spans are where each plays in the exported file (microseconds from its first frame): a card line may run on into what follows it, a movie line stops at the movie's end. recording-editor.test.ts computes them with voiceoverExportSpans(); the Swift export lays the clips at the same places (Tests/RecorderEditTests.swift, VoiceoverMix.exportPlacements).",
+    "edit": {
+        "version": 1,
+        "source": {
+            "video": "/rec/screen.mp4",
+            "durationUs": 10000000,
+            "width": 1920,
+            "height": 1080
+        },
+        "clips": [
+            {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+            },
+            {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+            }
+        ],
+        "zooms": [],
+        "audio": {
+            "include": true,
+            "volume": 1,
+            "mutedTracks": [],
+            "voiceovers": [
+                {
+                    "id": "vintro",
+                    "atUs": 400000,
+                    "file": "/voice/intro.mp3",
+                    "durationUs": 4000000,
+                    "volume": 1,
+                    "label": "Intro",
+                    "card": "intro"
+                },
+                {
+                    "id": "vmovie",
+                    "atUs": 1000000,
+                    "file": "/voice/one.mp3",
+                    "durationUs": 2000000,
+                    "volume": 1
+                },
+                {
+                    "id": "vlate",
+                    "atUs": 9500000,
+                    "file": "/voice/late.mp3",
+                    "durationUs": 2000000,
+                    "volume": 1
+                },
+                {
+                    "id": "vend",
+                    "atUs": 500000,
+                    "file": "/voice/end.mp3",
+                    "durationUs": 1500000,
+                    "volume": 0.8,
+                    "card": "end"
+                }
+            ]
+        },
+        "export": {
+            "codec": "h264",
+            "maxHeight": 0,
+            "output": ""
+        },
+        "revision": 1,
+        "cards": {
+            "intro": {
+                "title": "Demo",
+                "seconds": 3
+            },
+            "end": {
+                "text": "Thanks",
+                "qr": false,
+                "seconds": 3
+            }
+        }
+    },
+    "spans": [
+        {
+            "id": "vintro",
+            "startUs": 400000,
+            "playUs": 4000000
+        },
+        {
+            "id": "vmovie",
+            "startUs": 4000000,
+            "playUs": 2000000
+        },
+        {
+            "id": "vlate",
+            "startUs": 10500000,
+            "playUs": 500000
+        },
+        {
+            "id": "vend",
+            "startUs": 11500000,
+            "playUs": 1500000
+        }
+    ]
+}

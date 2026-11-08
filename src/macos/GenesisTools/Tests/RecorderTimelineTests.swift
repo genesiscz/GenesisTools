@@ -136,6 +136,17 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertFalse(model.noticeIsError)
     }
 
+    // Regression test: deep test 2026-11-06 RE15 — a marker answered only on a 14 pt strip at its flag; a click on its
+    // label moved the playhead instead of selecting it.
+    func testAClickOnAMarkersLabelSelectsTheMarker() {
+        let model = model(markers: [.init(id: "m1", atUs: 3_000_000, label: "Login")])
+        let width: CGFloat = 1000
+        let window = host(model, width: width)
+        let x = scale(model, width: width).x(3_000_000)
+        click(window, x: x + 17, y: TimelineLayout(model: model).marksTop + TimelineView.marksLaneHeight / 2)
+        XCTAssertEqual(model.selection, .marker(id: "m1", atUs: 3_000_000))
+    }
+
     func testAClickOnTheZoomLaneStartsTheZoomUnderThePointer() {
         for (width, pointsPerSecond) in [(CGFloat(640), 0.0), (1000, 0), (1440, 0), (900, 120)] {
             let model = model()
@@ -616,6 +627,124 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertTrue(EditorWindows.names(model, model.store.url.path))
         XCTAssertTrue(EditorWindows.names(model, model.project.source.video))
         XCTAssertFalse(EditorWindows.names(model, folder + "-other"))
+    }
+
+    // Regression test: deep test 2026-11-06 RE13 — VoiceOver read a circle as "Arrow or Box, Circle", a zoom as
+    // "Zoom, Zoom 160%" and a spotlight as "Spotlight, Spotlight".
+    func testATimelineItemIsReadOnceByItsName() {
+        XCTAssertEqual(laneItemName(kindTitle: "Arrow or Box", label: "Circle"), "Circle")
+        XCTAssertEqual(laneItemName(kindTitle: "Zoom", label: "Zoom 160%"), "Zoom 160%")
+        XCTAssertEqual(laneItemName(kindTitle: "Spotlight", label: "Spotlight"), "Spotlight")
+        XCTAssertEqual(laneItemName(kindTitle: "Text", label: "Title"), "Text, Title")
+    }
+
+    // Regression test: deep test 2026-11-06 RE7 — a text added at the playhead faded in from there, so the paused frame
+    // at the playhead showed none of it.
+    func testATextAddedAtThePlayheadShowsFullyAtThePlayhead() throws {
+        let model = model()
+        model.seek(2_000_000)
+        model.addText()
+        let note = try XCTUnwrap(model.project.texts?.first)
+        XCTAssertEqual(ZoomState.texts(atSourceUs: 2_000_000, project: model.project).first?.opacity, 1)
+        XCTAssertEqual(note.endUs - note.startUs, 3_000_000, "it keeps its 3 s")
+    }
+
+    // Regression test: deep test 2026-11-06 RE2 and RE3 — ⌥← stepped the playhead instead of moving the selection, B
+    // and C did nothing, and with Single-Key Shortcuts off S still split the clip: the key monitor kept its own copy
+    // of the menu's keys.
+    func testEachKeyRunsItsMenuCommandAndSingleKeyShortcutsOffLetsLettersThrough() {
+        let left = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
+        let right = String(UnicodeScalar(NSRightArrowFunctionKey)!)
+        let up = String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        func title(_ key: String, _ modifiers: NSEvent.ModifierFlags = [], singleKeys: Bool = true) -> String? {
+            EditorKeys.command(key: key, modifiers: modifiers, singleKeys: singleKeys)?.title
+        }
+
+        XCTAssertEqual(title(left, .option), "Move Selection Earlier")
+        XCTAssertEqual(title(right, [.option, .shift]), "Move Selection a Second Later")
+        XCTAssertEqual(title(left, [.option, .numericPad, .function]), "Move Selection Earlier", "an arrow key carries these flags")
+        XCTAssertEqual(title(left), "Back One Frame (Shape: Nudge Left)")
+        XCTAssertEqual(title(up), "Nudge Shape Up")
+        XCTAssertEqual(title("b"), "Add Box at Playhead")
+        XCTAssertEqual(title("c"), "Add Circle at Playhead")
+        XCTAssertEqual(title("\u{7f}"), "Delete Selection", "the ⌫ key types DEL")
+        XCTAssertEqual(title(String(UnicodeScalar(NSDeleteFunctionKey)!)), "Delete Selection", "and ⌦ deletes too")
+        XCTAssertEqual(title("\u{7f}", .shift), "Delete In to Out")
+        XCTAssertEqual(title("Z", [.command, .shift]), "Redo")
+        XCTAssertNil(title("q", .command), "a key the editor has no command for goes on to the menu")
+
+        XCTAssertNil(title("s", singleKeys: false), "Single-Key Shortcuts off: S is not Split")
+        XCTAssertNil(title(" ", singleKeys: false))
+        XCTAssertEqual(title(left, .shift, singleKeys: false), "Back One Second (Shape: Nudge More)", "⇧← stays")
+        XCTAssertEqual(title("z", .command, singleKeys: false), "Undo")
+    }
+
+    // Regression test: deep test 2026-11-06 RE4 — in a reopened window ⌘Z did nothing, though the service still held
+    // the steps of the edit.
+    func testUndoInAReopenedWindowUndoesTheStepsTheServiceKeptAndRedoBringsThemBack() {
+        let first = model()
+        first.addZoom(atOutput: 2_000_000)
+        XCTAssertEqual(service.project.zooms.count, 1)
+        first.close()
+
+        let reopened = EditorModel.on(service, store: ProjectStore(url: first.store.url))
+        XCTAssertTrue(reopened.canUndo, "the service's step is this window's to undo")
+        reopened.undo()
+        XCTAssertEqual(service.count("edit.undo"), 1, "the undo reaches the service")
+        XCTAssertTrue(reopened.project.zooms.isEmpty)
+        XCTAssertFalse(reopened.canUndo, "the service held one step")
+        reopened.undo()
+        XCTAssertEqual(service.count("edit.undo"), 1, "with no step left nothing is sent")
+        reopened.redo()
+        XCTAssertEqual(reopened.project.zooms.count, 1, "redo brings it back")
+    }
+
+    // Regression test: deep test 2026-11-06 RE11 — at the window's minimum height the rail's ten tabs asked for 442 pt,
+    // more than the row above the timeline had: the selected tab was cut off above, and the timeline below.
+    func testTheTabRailFitsARowShorterThanItsTabs() {
+        let rail = NSHostingController(rootView: IconRail(model: model()))
+        let size = rail.sizeThatFits(in: CGSize(width: 54, height: 200))
+        XCTAssertLessThanOrEqual(size.height, 200, "the rail scrolls instead of asking for every tab's height")
+    }
+
+    // Regression test: deep test 2026-11-06 RE10 (live re-check) — an agent's undo saves the file at once, and the
+    // window's file watcher took that version before the notification's refetch answered: the banner said "agent" and
+    // "⌘Z puts it back", and ⇧⌘Z could not make the step again.
+    func testAnOutsideUndoThatTheFileWatcherSeesFirstStaysAnUndo() throws {
+        let window = model()
+        let path = window.store.url.path
+        try service.outside("edit.apply", ops: [["op": "zoom", "from": 2.0, "to": 4.0]], path: path)
+        XCTAssertEqual(window.project.zooms.count, 1, "the agent's zoom is on the timeline")
+
+        service.holdAnswers = true
+        try service.outside("edit.undo", path: path, action: "undo")
+        window.fileChanged(service.project)
+        service.deliver()
+
+        XCTAssertTrue(window.project.zooms.isEmpty, "the undo took the zoom back")
+        XCTAssertTrue(window.canRedo, "⇧⌘Z makes the agent's step again")
+        XCTAssertEqual(window.changes.last?.title, "Undo by agent")
+    }
+
+    // Regression test: deep test 2026-11-06 RE1 — two editor windows of one edit held it as one on the app's
+    // connection, so closing the second window ended the first window's session.
+    func testEachEditorSessionHoldsTheEditUnderItsOwnHolderAndRereadsUnderIt() {
+        let service = FakeServiceLink(project: .whole(video: "/fixture/movie.mp4", durationUs: 1_000_000, width: 1920, height: 1080,
+                                                      cursor: nil, recording: nil))
+        let first = EditorSession(path: "/fixture/rec/edit.json", host: { service })
+        let second = EditorSession(path: "/fixture/rec/edit.json", host: { service })
+        first.start()
+        second.start()
+        first.refetch { _ in }
+        second.stop()
+
+        let holders = { (method: String) in service.calls.filter { $0.method == method }.map { $0.params["holder"] as? String } }
+        let opens = holders("session.open")
+        XCTAssertEqual(opens.count, 3)
+        XCTAssertNotNil(opens.first ?? nil)
+        XCTAssertNotEqual(opens[0], opens[1], "each window holds the edit under its own holder")
+        XCTAssertEqual(opens[2], opens[0], "a reread is the same window's holder, so it adds no hold")
+        XCTAssertEqual(holders("session.close"), [opens[1]])
     }
 
     // Regression test: 2026-11-05 review of the editor gaps, R1.1, on the edit path. The undo's answer took the last

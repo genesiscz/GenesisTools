@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
@@ -17,6 +17,7 @@ import {
     RpcError,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
+import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import type { z } from "zod";
 import goldenFixture from "./__fixtures__/editor-golden.json";
@@ -27,11 +28,11 @@ import * as edits from "./edit";
 import { editProject, readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
-import { EDITOR_TABS } from "./library";
-import { applyEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
+import { EDITOR_TABS, shortRecordingId } from "./library";
+import { applyEdit, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
-import { hostCloseEditor, hostStill, ServiceHost } from "./service-client";
+import { hostCloseEditor, hostStill, ServiceConnectionLost, ServiceHost, withServiceClient } from "./service-client";
 import {
     HOST_METHODS,
     hostApi,
@@ -426,6 +427,68 @@ describe("the recorder service", () => {
         expect(service.sessions.size).toBe(0);
     });
 
+    // Regression test: deep test 2026-11-06 RE4 — a reopened window could not tell that the service kept undo steps.
+    test("session.open says how many undo steps the edit keeps, after a close and a reopen too", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 0 });
+        const path = editFixture("rs-undo-depth-");
+        const window = await connect(service.entry);
+        await window.call<unknown>("hello", hello("host"));
+        expect(await window.call<{ undoDepth?: number }>("session.open", { path })).toMatchObject({ undoDepth: 0 });
+        await window.call<unknown>("edit.apply", { path, ops: [{ op: "volume", volume: 0.5 }] });
+        await window.call<unknown>("session.close", { path });
+        await Bun.sleep(20);
+
+        expect(await window.call<{ undoDepth?: number }>("session.open", { path })).toMatchObject({ undoDepth: 1 });
+    });
+
+    // Regression test: deep test 2026-11-06 RE10 — an undo from outside reached the window as a plain edit.
+    test("project.changed says when a change is an undo or a redo, with a session or without one", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const held = editFixture("rs-action-held-");
+        const loose = editFixture("rs-action-loose-");
+        const watcher = await connect(service.entry);
+        const heard: RpcNotification[] = [];
+        watcher.onNotification((notification) => heard.push(notification));
+        await watcher.call<unknown>("subscribe", { events: ["project.changed"] });
+        const agent = await connect(service.entry);
+        await agent.call<unknown>("hello", hello("client"));
+        await agent.call<unknown>("session.open", { path: held });
+        await agent.call<unknown>("edit.apply", { path: held, ops: [{ op: "volume", volume: 0.4 }] });
+        await agent.call<unknown>("edit.undo", { path: held });
+        await agent.call<unknown>("edit.redo", { path: held });
+        await agent.call<unknown>("edit.apply", { path: loose, ops: [{ op: "volume", volume: 0.4 }] });
+        await agent.call<unknown>("edit.undo", { path: loose });
+        await waitUntil("every project.changed", () => heard.length === 5, 1_000);
+
+        expect(heard.map((notification) => Reflect.get(Object(notification.params), "action"))).toEqual([
+            undefined,
+            "undo",
+            "redo",
+            undefined,
+            "undo",
+        ]);
+    });
+
+    // Regression test: deep test 2026-11-06 RE1 — a second editor window's close ended the first window's session.
+    test("two windows on one connection hold a session apart, so one window's close leaves the other's", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-two-windows-");
+        const app = await connect(service.entry);
+        await app.call<unknown>("hello", hello("host"));
+        await app.call<unknown>("session.open", { path, holder: "window-1" });
+        await app.call<unknown>("session.open", { path, holder: "window-2" });
+        // A window reads the edit again with session.open; that is no second hold.
+        await app.call<unknown>("session.open", { path, holder: "window-1" });
+
+        await app.call<unknown>("session.close", { path, holder: "window-2" });
+        await Bun.sleep(20);
+        expect(service.sessions.size).toBe(1);
+
+        await app.call<unknown>("session.close", { path, holder: "window-1" });
+        await Bun.sleep(20);
+        expect(service.sessions.size).toBe(0);
+    });
+
     // Regression test: 2026-11-05 recorder service review, finding 12 — a service edit without an open session told nobody
     test("an edit and an undo through the service without an open session tell every subscriber; no change tells none", async () => {
         const { service } = await serviceFixture();
@@ -652,6 +715,18 @@ describe("the recorder service", () => {
     });
 });
 
+describe("finishing an export", () => {
+    // Regression test: deep test 2026-11-06 RC16 — `tools recorder finish` with a movie that does not exist exited 0.
+    test("refuses a movie that does not exist, and says so", async () => {
+        const path = editFixture("rs-finish-");
+        const movie = join(path.slice(0, path.lastIndexOf("/")), "never-exported.mp4");
+
+        await expect(edits.finishExport({ value: path, answer: { ok: true, path: movie } })).rejects.toThrow(
+            `${movie} does not exist`
+        );
+    });
+});
+
 describe("the REPL's and the CLI's way to the service", () => {
     /** A saved edit as text, with its folder and its random ids out, so two copies compare. */
     function comparable(path: string): unknown {
@@ -687,6 +762,32 @@ describe("the REPL's and the CLI's way to the service", () => {
         expect((await undoLastEdit(remote, { dir })).undone).toEqual(["volume", "mute", "text", "marker"]);
         expect((await undoLastEdit(local, { dir: nobody })).undone).toEqual(["volume", "mute", "text", "marker"]);
         expect(comparable(remote)).toEqual(comparable(local));
+    });
+
+    // Regression test: deep test 2026-11-07 R2-RE1 — an agent's undo from the CLI could not be made again: there was no
+    // redo command, and the service refused edit.redo for an edit no window held.
+    test("redo makes an undone CLI step again, in process and through the service, and a new edit drops it", async () => {
+        const ops = [{ op: "marker", at: 2, label: "Step one" }] as const;
+        const nobody = mkdtempSync(join(tmpdir(), "rs-none-"));
+        const local = editFixture("rs-redo-local-");
+        await applyEdit(local, [...ops], { dir: nobody });
+        await undoLastEdit(local, { dir: nobody });
+        const redone = await redoLastEdit(local, { dir: nobody });
+        expect(redone.redone).toEqual(["marker"]);
+        expect(redone.project.markers?.map((marker) => marker.label)).toEqual(["Step one"]);
+        expect((await undoLastEdit(local, { dir: nobody })).undone).toEqual(["marker"]);
+
+        const { dir } = await serviceFixture();
+        const remote = editFixture("rs-redo-remote-");
+        await applyEdit(remote, [...ops], { dir });
+        await undoLastEdit(remote, { dir });
+        expect((await redoLastEdit(remote, { dir })).project.markers?.map((marker) => marker.label)).toEqual([
+            "Step one",
+        ]);
+
+        await undoLastEdit(remote, { dir });
+        await applyEdit(remote, [{ op: "volume", volume: 0.5 }], { dir });
+        await expect(redoLastEdit(remote, { dir })).rejects.toThrow("nothing to redo");
     });
 
     test("the REPL's still reaches the connected host over the service and its answer comes back", async () => {
@@ -765,6 +866,51 @@ describe("the REPL's and the CLI's way to the service", () => {
         await expect(client.call<unknown>("window.close", {})).rejects.toMatchObject({
             code: RPC_ERRORS.invalidParams,
         });
+    });
+
+    // Round 2 (recorder-capture): callerPath resolved every value against the cwd, so `apply <id>` asked the service
+    // for "<cwd>/<id>" and was refused while a service ran; a folder path worked.
+    test("an edit, an undo and a REPL Movie's edit by a full or short library id reach the service's recording", async () => {
+        const id = "video-2026-11-07_00-10-00-5eb1ce11-0000-4000-8000-000000000001";
+        const folder = recordingsLibraryDir(id);
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id,
+                title: "by id",
+                startedAt: "2026-11-06T23:10:00Z",
+                displays: [],
+                frames: [],
+            })
+        );
+        writeFileSync(join(folder, "screen.mp4"), "");
+        const path = join(folder, "edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(folder, "screen.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
+        );
+
+        try {
+            const { dir } = await serviceFixture();
+            expect((await applyEdit(shortRecordingId(id), [{ op: "volume", volume: 0.5 }], { dir })).path).toBe(path);
+            expect(readProject(path).audio.volume).toBe(0.5);
+            expect((await undoLastEdit(id, { dir })).undone).toEqual(["volume"]);
+            expect(readProject(path).audio.volume).toBe(1);
+            const methods = moviesApi.handles.find((handle) => handle.name === "Movie")?.methods ?? [];
+            // Its own volume() throws: only a call that went to the service, whose Movie runs it, passes.
+            const local = {
+                recording: shortRecordingId(id),
+                volume: async (_volume: number): Promise<unknown> => {
+                    throw new Error("ran in the caller's process");
+                },
+            };
+            await serviceRoutedMovie(local, methods, { dir }).volume(0.25);
+            expect(readProject(path).audio.volume).toBe(0.25);
+        } finally {
+            rmSync(folder, { recursive: true, force: true });
+        }
     });
 
     test("a REPL Movie's edit goes into the window's open session through the service, and runs locally without one", async () => {
@@ -1191,3 +1337,112 @@ describe("the inspector tabs", () => {
 });
 
 export type { RecorderService };
+
+describe("a connection to the service that closes under a call", () => {
+    /** A server that answers hello, then closes the connection at the next request. */
+    function droppingServer(): { socket: string; stop: () => void } {
+        const socket = join(mkdtempSync(join(tmpdir(), "rs-drop-")), "s.sock");
+        const server = Bun.listen({
+            unix: socket,
+            socket: {
+                data: (connection, chunk) => {
+                    for (const line of chunk.toString().split("\n").filter(Boolean)) {
+                        const request = SafeJSON.parse(line, { strict: true }) as { id: number; method: string };
+
+                        if (request.method === "hello") {
+                            connection.write(`${SafeJSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} })}\n`);
+                        } else {
+                            connection.end();
+                        }
+                    }
+                },
+            },
+        });
+        return { socket, stop: () => server.stop(true) };
+    }
+
+    function editFile(): string {
+        const folder = mkdtempSync(join(tmpdir(), "rs-drop-edit-"));
+        const path = join(folder, "screen.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(folder, "screen.mp4"), durationUs: 5_000_000, width: 64, height: 64 })
+        );
+        return path;
+    }
+
+    const entryOf = (socket: string) => ({ socket }) as Parameters<typeof withServiceClient>[0];
+
+    test("withServiceClient says whether the call left: a refused socket is not sent, a close under a call is", async () => {
+        const missing = await withServiceClient(entryOf(join(tmpdir(), "no-such.sock")), async () => 1).catch(
+            (error: unknown) => error
+        );
+        expect(missing).toBeInstanceOf(ServiceConnectionLost);
+        expect(missing).toMatchObject({ sent: false });
+        const server = droppingServer();
+
+        try {
+            const dropped = await withServiceClient(entryOf(server.socket), (client) => client.call("movie.cut")).catch(
+                (error: unknown) => error
+            );
+            expect(dropped).toBeInstanceOf(ServiceConnectionLost);
+            expect(dropped).toMatchObject({ sent: true });
+        } finally {
+            server.stop();
+        }
+    });
+
+    test("sendOnce sends an edit again when the edit did not move, and refuses with a clear error when it did", async () => {
+        const path = editFile();
+        const nowhere = mkdtempSync(join(tmpdir(), "rs-none-"));
+        const entry = entryOf(join(nowhere, "gone.sock"));
+        let localRuns = 0;
+        const again = await sendOnce({
+            what: "movie.cut",
+            recording: path,
+            dir: nowhere,
+            entry,
+            send: async () => {
+                throw new ServiceConnectionLost(true, "the recorder service closed the connection");
+            },
+            local: async () => {
+                localRuns++;
+                return "done here";
+            },
+        });
+        expect(again).toBe("done here");
+        expect(localRuns).toBe(1);
+
+        const moved = sendOnce({
+            what: "movie.cut",
+            recording: path,
+            dir: nowhere,
+            entry,
+            send: async () => {
+                // The service saved the edit, then the connection closed before its answer.
+                writeProject(path, readProject(path));
+                throw new ServiceConnectionLost(true, "the recorder service closed the connection");
+            },
+            local: async () => {
+                localRuns++;
+                return "twice";
+            },
+        });
+        await expect(moved).rejects.toThrow("so it was not sent again: info() shows whether it took effect");
+        expect(localRuns).toBe(1);
+
+        const twice = sendOnce({
+            what: "movie.cut",
+            recording: path,
+            dir: nowhere,
+            entry,
+            send: async () => {
+                throw new ServiceConnectionLost(false, "ECONNREFUSED");
+            },
+            local: async () => {
+                throw new ServiceConnectionLost(false, "ECONNREFUSED again");
+            },
+        });
+        await expect(twice).rejects.toThrow("closed twice (ECONNREFUSED; then ECONNREFUSED again)");
+    });
+});

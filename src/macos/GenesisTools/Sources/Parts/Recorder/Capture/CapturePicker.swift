@@ -8,6 +8,12 @@ import SwiftUI
 final class CapturePicker {
     static let shared = CapturePicker()
 
+    /// The keys under the list, named as the user's layout prints them (⌘4 on a US keyboard, ⌘Č on a Czech one).
+    static var footerHint: String {
+        "↑ ↓ choose · Return records · \(RecordingPickerKey.label(RecordingPickerKey.area)) an area · Esc cancels · "
+            + "\(RecordingPickerKey.tabLabels) tabs"
+    }
+
     let model = CapturePickerModel()
     private let panel = RecordingPickerPanel()
     private var load: RecordingTargetPicker.Load = .loading
@@ -52,6 +58,7 @@ final class CapturePicker {
     }
 
     private func present() {
+        model.tab = filter?.tab ?? RecordingPickerTab.of(initial)
         let view = RecordingTargetPicker(
             load: load, title: "Record", initial: initial,
             onChoose: { [weak self] target in self?.choose(.target(target)) },
@@ -63,11 +70,17 @@ final class CapturePicker {
                 Task { await self.refresh(preferredPid: nil) }
             },
             restoring: filter,
-            onFilterChange: { [weak self] tab, query in self?.filter = (tab, query) },
+            onFilterChange: { [weak self] tab, query in
+                self?.filter = (tab, query)
+                self?.model.tab = tab
+            },
             accessory: AnyView(CaptureOptionsView(model: model, onArea: { [weak self] in self?.selectArea() })),
-            footerHint: "↑ ↓ choose · Return records · ⌘4 an area · Esc cancels · ⌘1 ⌘2 ⌘3 tabs")
+            footerHint: Self.footerHint)
             .onKeyPress(phases: .down) { [weak self] press in
-                guard press.modifiers == .command, press.characters == "4" else { return .ignored }
+                // By the key's position: a Czech layout types č on the 4 key with ⌘ held.
+                guard RecordingPickerKey.matches(modifiers: press.modifiers, eventCode: RecordingPickerKey.eventCode(),
+                                                 character: press.characters.first, code: RecordingPickerKey.area)
+                else { return .ignored }
                 self?.selectArea()
                 return .handled
             }
@@ -167,11 +180,12 @@ final class CapturePicker {
             frontmostPid: 501)
         let model = CapturePickerModel(persist: false)
         model.shortcutsOpen = shortcutsOpen
+        model.tab = RecordingPickerTab.of(targets.defaultTarget(preferredPid: 501))
         let view = RecordingTargetPicker(
             load: .loaded(targets), title: "Record", initial: targets.defaultTarget(preferredPid: 501),
             onChoose: { _ in }, onCancel: {},
             accessory: AnyView(CaptureOptionsView(model: model, onArea: {})),
-            footerHint: "↑ ↓ choose · Return records · ⌘4 an area · Esc cancels · ⌘1 ⌘2 ⌘3 tabs")
+            footerHint: Self.footerHint)
         let hosting = NSHostingView(rootView: view.fixedSize())
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
@@ -240,6 +254,8 @@ final class CapturePickerModel: ObservableObject {
         }
     }
 
+    /// The picker's tab, so the options can say what a window or an app movie leaves out.
+    @Published var tab: RecordingPickerTab = .displays
     @Published var bindings: [RecorderShortcutAction: RecorderShortcutBinding] = CapturePickerModel.loadBindings()
     @Published var shortcutsOpen = false
     @Published var alwaysHeld = RecorderShortcuts.alwaysHeld {
@@ -290,7 +306,8 @@ struct CaptureOptionsView: View {
                     Image(systemName: "rectangle.dashed").frame(width: 18)
                     Text("Select an area…").font(.system(size: 12, weight: .medium))
                     Spacer(minLength: 0)
-                    Text(verbatim: "⌘4").font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
+                    Text(verbatim: RecordingPickerKey.label(RecordingPickerKey.area)).font(.system(size: 11))
+                        .foregroundStyle(SessionPalette.secondary)
                 }
                 .padding(.horizontal, 8).padding(.vertical, 5)
                 .contentShape(Rectangle())
@@ -325,16 +342,20 @@ struct CaptureOptionsView: View {
                     "\($0 == $0.rounded() ? String(Int($0)) : String($0)) %"
                 }
             }
-            row("System audio", detail: "What the Mac plays, as its own track") {
+            if let note = CaptureOptions.notRecorded(on: model.tab) {
+                InfoStrip(note)
+                    .accessibilityIdentifier("recorder.capture.windowNote")
+            }
+            row("System audio", detail: "What the Mac plays, as its own track; a display or an area only (a window movie has no audio)") {
                 toggle($model.options.systemAudio, "recorder.capture.audio.system")
             }
-            row("Microphone", detail: "Your voice, as its own track") {
+            row("Microphone", detail: "Your voice, as its own track; a display or an area only (a window movie has no audio)") {
                 toggle($model.options.microphone, "recorder.capture.audio.mic")
             }
-            row("Draw the cursor", detail: "The editor draws it smoothed and at any size; off keeps the system cursor") {
+            row("Draw the cursor", detail: "The editor draws it smoothed and at any size; off keeps the system cursor. A window movie has no cursor track") {
                 toggle($model.options.drawCursor, "recorder.capture.drawCursor")
             }
-            row("Shortcuts overlay", detail: "Keeps ⌘ and ⌃ shortcuts for the editor's overlay; plain typing never") {
+            row("Shortcuts overlay", detail: "Keeps ⌘ and ⌃ shortcuts for the editor's overlay; plain typing never. Not for a window movie") {
                 toggle($model.options.shortcutsOverlay, "recorder.capture.shortcuts")
             }
             row("Camera bubble", detail: "Records the camera beside the screen; drag the bubble to place it") {

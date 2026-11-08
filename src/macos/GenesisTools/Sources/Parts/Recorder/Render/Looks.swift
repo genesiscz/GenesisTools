@@ -157,9 +157,9 @@ enum Looks {
         return result
     }
 
-    /// How much black a spotlight lays over the picture around its rectangle (in linear light: 0.7 leaves white at
-    /// about 58 % of sRGB white, which reads as clearly dimmed while the picture stays readable).
-    static let spotlightDim = 0.7
+    /// How much black a spotlight lays over the picture around its rectangle. R8 11: 0.5 (0.7 before greyed the whole
+    /// screen until nothing around the rectangle could be read); a part's `dim` sets its own.
+    static let spotlightDim = 0.5
 
     /// Hides each rectangle with a blur, big pixels or black, or dims everything around a spotlight's rectangle. The
     /// blur reads the picture clamped at the rectangle's edges, so nothing from outside bleeds in and its edge stays sharp.
@@ -185,7 +185,7 @@ enum Looks {
                 patch = image.cropped(to: rect).clampedToExtent().applyingGaussianBlur(sigma: max(6, extent.height * 0.012))
             case .pixelate:
                 patch = image.cropped(to: rect).clampedToExtent()
-                    .applyingFilter("CIPixellate", parameters: [kCIInputScaleKey: max(8, extent.height * 0.018),
+                    .applyingFilter("CIPixellate", parameters: [kCIInputScaleKey: pixelCell(redaction, pictureHeight: extent.height),
                                                                 kCIInputCenterKey: CIVector(x: rect.minX, y: rect.minY)])
             case .black:
                 patch = CIImage(color: CIColor(red: 0.04, green: 0.04, blue: 0.05))
@@ -203,11 +203,38 @@ enum Looks {
             var mask = CIImage(color: .clear).cropped(to: extent)
             for (spot, rect) in lit {
                 mask = spotlightMask(spot.cutout ?? .rounded, in: rect).composited(over: mask)
+                // R8 11: a soft edge lights a ring around the shape that fades out over dimAround.
+                if let around = spot.dimAround, around > 0 {
+                    let reach = around * min(extent.width, extent.height)
+                    let soft = spotlightMask(spot.cutout ?? .rounded, in: rect.insetBy(dx: -reach / 2, dy: -reach / 2))
+                        .applyingGaussianBlur(sigma: reach / 4).cropped(to: extent)
+                    mask = soft.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: mask])
+                }
             }
             result = result.applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: dimmed, kCIInputMaskImageKey: mask])
                 .cropped(to: extent)
         }
         return result
+    }
+
+    // R5 4 canvas zoom
+    /// The part of the canvas `view` shows (0...1 from the top left), scaled up to the whole canvas.
+    static func zoomCanvas(_ image: CIImage, view: ZoomCurve.View, size: CGSize) -> CIImage {
+        let rect = view.rect
+        let crop = CGRect(x: rect.minX * size.width, y: (1 - rect.maxY) * size.height, width: rect.width * size.width,
+                          height: rect.height * size.height)
+        return image.cropped(to: crop)
+            .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+            .transformed(by: CGAffineTransform(scaleX: size.width / crop.width, y: size.height / crop.height))
+            .cropped(to: CGRect(origin: .zero, size: size))
+    }
+
+    // R5 5 redaction edges
+    /// A pixelate block's side in source pixels: the part's `cell` (2 to 256), else 1.8 % of the picture's height and at
+    /// least 8 (about 19 px on a 1080 p movie, 39 px on a 2160 p one).
+    static func pixelCell(_ redaction: EditProject.Redaction, pictureHeight: CGFloat) -> CGFloat {
+        if let cell = redaction.cell { return CGFloat(min(256, max(2, cell))) }
+        return max(8, pictureHeight * 0.018)
     }
 
     /// The lit shape of one spotlight, white where it lights: a rectangle, a rectangle with corners of 12 % of its
@@ -332,12 +359,35 @@ enum Looks {
         let unit = min(size.width, size.height)
         let padding = frame.padding * unit
         let room = CGSize(width: max(2, size.width - 2 * padding), height: max(2, size.height - 2 * padding))
-        let crop = frame.fit == .cover ? coverCrop(picture: picture, room: room, focus: focus) : nil
+        var crop = frame.fit == .cover ? coverCrop(picture: picture, room: room, focus: focus) : nil
         let shown = crop?.size ?? picture
-        let scale = max(0.05, min(room.width / shown.width, room.height / shown.height))
-        let inner = CGRect(x: (size.width - shown.width * scale) / 2, y: (size.height - shown.height * scale) / 2,
-                           width: shown.width * scale, height: shown.height * scale)
-        return FramePlacement(crop: crop, scale: scale, inner: inner)
+        // R5 4 frame layouts: the fitted size times the layout's scale, against the edge it names (Core Image y up).
+        let layout = frame.layout ?? .init()
+        let scale = max(0.05, min(room.width / shown.width, room.height / shown.height)) * CGFloat(min(3, max(0.5, layout.scale)))
+        var width = shown.width * scale, height = shown.height * scale
+        // R7 9: a picture grown past the room stays inside it, cropped around the layout's focus (its centre by
+        // default), so a phone gets wider while the free side shrinks; before, the canvas cut its top and bottom.
+        if width > room.width + 0.5 || height > room.height + 0.5 {
+            let boxWidth = min(width, room.width), boxHeight = min(height, room.height)
+            let base = crop ?? CGRect(origin: .zero, size: picture)
+            let visible = CGSize(width: boxWidth / scale, height: boxHeight / scale)
+            let keep = layout.focus ?? .init()
+            let centerX = min(max(base.minX + CGFloat(keep.x) * base.width, base.minX + visible.width / 2), base.maxX - visible.width / 2)
+            // Core Image counts y from the bottom; the focus counts it from the top.
+            let centerY = min(max(base.maxY - CGFloat(keep.y) * base.height, base.minY + visible.height / 2), base.maxY - visible.height / 2)
+            crop = CGRect(x: centerX - visible.width / 2, y: centerY - visible.height / 2, width: visible.width, height: visible.height)
+            width = boxWidth
+            height = boxHeight
+        }
+        var x = (size.width - width) / 2, y = (size.height - height) / 2
+        switch layout.align {
+        case .center: break
+        case .left: x = padding
+        case .right: x = size.width - padding - width
+        case .top: y = size.height - padding - height
+        case .bottom: y = padding
+        }
+        return FramePlacement(crop: crop, scale: scale, inner: CGRect(x: x, y: y, width: width, height: height))
     }
 
     /// The picture fitted inside the canvas less the padding, centred, masked to a rounded rectangle, over a shadow
@@ -350,24 +400,34 @@ enum Looks {
     }
 
     static func applyFrame(_ frame: EditProject.Frame, to image: CIImage, canvas size: CGSize, placement: FramePlacement) -> CIImage {
+        let layers = frameLayers(frame, to: image, canvas: size, placement: placement)
+        return layers.picture.composited(over: layers.background).cropped(to: CGRect(origin: .zero, size: size))
+    }
+
+    /// The frame in two layers: the rounded picture over its shadow (on clear, exactly `rect` large, so the tilt can
+    /// turn it as one), and the background. Round 4 fx-render split it out of applyFrame for the tilt.
+    static func frameLayers(_ frame: EditProject.Frame, to image: CIImage, canvas size: CGSize, placement: FramePlacement)
+        -> (picture: CIImage, background: CIImage, rect: CGRect) {
         let unit = min(size.width, size.height)
         let inner = placement.inner
         let placed = placement.place(image)
         let radius = frame.cornerRadius * unit
         let mask = roundedRect(inner, radius: radius, color: .white)
-        let clipped = placed.applyingFilter("CIBlendWithMask", parameters: [
+        var picture = placed.applyingFilter("CIBlendWithMask", parameters: [
             kCIInputBackgroundImageKey: CIImage.empty(),
             kCIInputMaskImageKey: mask,
         ])
-        var canvas = background(frame.background, size: size)
+        let blur = unit * 0.018
         if frame.shadow {
-            let blur = unit * 0.018
             let shadow = roundedRect(inner, radius: radius, color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.55))
                 .transformed(by: CGAffineTransform(translationX: 0, y: -unit * 0.008))
                 .applyingGaussianBlur(sigma: blur)
-            canvas = shadow.composited(over: canvas)
+            picture = picture.composited(over: shadow)
         }
-        return clipped.composited(over: canvas).cropped(to: CGRect(origin: .zero, size: size))
+        // Whole pixels: Core Image rounds a crop's extent out, and the tilt maps the layer's own extent.
+        let rect = inner.insetBy(dx: -blur * 3, dy: -blur * 3 - unit * 0.008).intersection(CGRect(origin: .zero, size: size)).integral
+        let layer = picture.composited(over: CIImage(color: .clear).cropped(to: rect)).cropped(to: rect)
+        return (layer, background(frame.background, size: size), rect)
     }
 
     /// The part of the picture (Core Image coordinates, y up) with the room's shape, as large as fits, centred on

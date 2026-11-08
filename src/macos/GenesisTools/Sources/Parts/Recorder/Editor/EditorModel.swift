@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import Observation
+import SwiftUI
 import UniformTypeIdentifiers
 
 /// The playhead, kept apart from the model so that only the views that show the time re-render 30 times a second
@@ -110,6 +111,9 @@ final class EditorModel {
     /// edit's real undo stack, and each step here mirrors one change this window made or took from outside.
     @ObservationIgnored var undoStack: [UndoStep] = []
     @ObservationIgnored var redoStack: [UndoStep] = []
+    /// Undo steps the service kept from before this window opened (an edit's steps outlive a close): ⌘Z takes them
+    /// once the window's own steps are used up, so an undo survives a reopen.
+    @ObservationIgnored var earlierSteps = 0
     /// Counts the new steps (a change, an outside edit, a display switch); an undo or redo that fails puts its step
     /// back on the redo list only when no new step came since (a new step empties that list).
     @ObservationIgnored var historyGeneration = 0
@@ -132,6 +136,8 @@ final class EditorModel {
     var selection: EditorSelection = .none
     /// The banners of the last edits written from outside the window (EditorChangeFeed.swift).
     var changes: [EditChange] = []
+    /// Each banner's removal, cancelled while the pointer rests on it (`holdBanner`).
+    @ObservationIgnored var bannerTimers: [UUID: Task<Void, Never>] = [:]
     /// A counter per zoom, hidden part, text or shape id: its timeline segment flashes each time it rises.
     var flashes: [String: Int] = [:]
     /// Rises when an outside edit changed the whole picture, so the preview flashes.
@@ -145,6 +151,9 @@ final class EditorModel {
     var exportProgress: Double?
     var notice: String?
     var noticeIsError = false
+    /// Why the preview has no picture (the movie cannot be read, the edit keeps nothing); the preview shows it in place
+    /// of the picture with Try Again. Nil while the preview plays.
+    var previewProblem: PreviewProblem?
     /// A `tools recorder apply` step runs (Remove Still Parts); its button shows progress and does not start another.
     private(set) var isRemovingIdle = false
     /// `tools recorder apply` measures the loudness (Normalize).
@@ -168,6 +177,8 @@ final class EditorModel {
     var screenHits: [ScreenHit]?
     var isSearchingScreen = false
     var screenSearchFailure: String?
+    /// Whether the recording kept text off its screens (`hasScreenText`); nil until the Find tab first asks.
+    var screenTextKnown: Bool?
     /// The moment last clicked in the Find tab.
     var selectedScreenHit: Int?
     @ObservationIgnored var screenSearchRevision = 0
@@ -195,14 +206,13 @@ final class EditorModel {
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.clock.outUs = Int64((time.seconds * 1_000_000).rounded())
-                self.isPlaying = self.player.rate != 0
+                self.playbackTick(outUs: Int64((time.seconds * 1_000_000).rounded()), playing: self.player.rate != 0)
             }
         }
         store.onExternalChange = { [weak self] next in self?.fileChanged(next) }
         store.watch()
         session.onOpened = { [weak self] next in self?.sessionOpened(next) }
-        session.onOutsideChange = { [weak self] _ in self?.outsideChanged() }
+        session.onOutsideChange = { [weak self] changed in self?.outsideChanged(action: changed.action) }
         session.start()
         commentsStore.onChange = { [weak self] comments in self?.reviewComments = comments }
         commentsStore.watch()
@@ -230,6 +240,25 @@ final class EditorModel {
     var durationUs: Int64 { project.outputDurationUs }
 
     // MARK: - Playback
+
+    /// The player's time, 30 times a second while it plays. Each write of `clock.outUs` runs a SwiftUI update and a
+    /// layout of the whole window, so a playing tick writes only when the screen would
+    /// show it: the clock's tenth of a second, or the playhead a point further at the timeline's scale. A fitted 37-minute
+    /// meeting moves its playhead a point every 1.7 s, so 2 ticks in 3 drew nothing. A pause, a seek and a stopped
+    /// player always write the exact time.
+    func playbackTick(outUs: Int64, playing: Bool) {
+        let scale = pointsPerSecond > 0 ? pointsPerSecond : fittedPointsPerSecond
+        if !playing || isPlaying != playing || Self.tickShows(from: clock.outUs, to: outUs, pointsPerSecond: scale) {
+            clock.outUs = outUs
+        }
+        isPlaying = playing
+    }
+
+    /// True when the clock label (tenths of a second, rounded down) or the playhead (a point at `pointsPerSecond`) moves.
+    nonisolated static func tickShows(from old: Int64, to new: Int64, pointsPerSecond: Double) -> Bool {
+        if max(0, old) / 100_000 != max(0, new) / 100_000 { return true }
+        return abs(Double(new - old)) / 1_000_000 * pointsPerSecond >= 1
+    }
 
     func togglePlay() {
         if player.rate != 0 {
@@ -419,6 +448,10 @@ final class EditorModel {
         if a.lanes != b.lanes { parts.append("lanes") }
         if a.camera != b.camera { parts.append("camera") }
         if a.markers != b.markers { parts.append("markers") }
+        // Round 4 fx-render.
+        if a.transitions != b.transitions { parts.append("transitions") }
+        if a.lens != b.lens { parts.append("lens") }
+        if a.tilt != b.tilt { parts.append("tilt") }
         // A count change (an add or a delete) is its own step, never part of a drag.
         if (a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count, a.markers?.count)
             != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count, b.markers?.count)
@@ -462,6 +495,10 @@ final class EditorModel {
         case "captions": return ("Captions", .captions)
         case "keys": return ("Shortcuts", .captions)
         case "transcript": return ("Caption Fix", .captions)
+        // Round 4 fx-render.
+        case "transitions": return ("Transitions", .style)
+        case "lens": return ("Lens", .style)
+        case "tilt": return ("3D Tilt", .style)
         default: return ("Changes", nil)
         }
         if part == "clips" { return (counts.1 > counts.0 ? "Split" : counts.1 < counts.0 ? "Delete Clip" : "Clip Change", .clip) }
@@ -515,7 +552,7 @@ final class EditorModel {
     }
 
     func refreshUndoState() {
-        canUndo = !undoStack.isEmpty
+        canUndo = !undoStack.isEmpty || earlierSteps > 0
         canRedo = !redoStack.isEmpty
     }
 
@@ -677,7 +714,9 @@ final class EditorModel {
 
     /// A text at the top middle for 3 s from the playhead; the Text tab then writes and places it.
     func addText(_ text: String = "Title", atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
-        let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
+        // A text fades in from its start (`ZoomState.texts`): it starts that much earlier, so the paused frame at the
+        // playhead shows it whole.
+        let start = max(0, TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project) - ZoomState.textFadeUs(lengthUs: durationUs))
         let op = EditOp.Text(from: EditOpDiff.seconds(start), to: EditOpDiff.seconds(start + durationUs), text: text, lane: lane)
         edit([.text(op)]) { [weak self] before, after in
             guard let self, let id = Self.addedID(before, after, { ($0.texts ?? []).map(\.id) }) else { return }
@@ -792,7 +831,7 @@ final class EditorModel {
     }
 
     /// Reads the markers the recorder wrote into the recording's manifest; a plain movie has none.
-    static func readMarkers(video: String) -> [(us: Int64, label: String)] {
+    nonisolated static func readMarkers(video: String) -> [(us: Int64, label: String)] {
         let manifest = URL(fileURLWithPath: video).deletingLastPathComponent().appendingPathComponent("recording.json")
         guard let data = try? Data(contentsOf: manifest),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1149,10 +1188,12 @@ final class EditorModel {
                 item.videoComposition = rendered.videoComposition
                 item.audioMix = rendered.audioMix
                 self.player.replaceCurrentItem(with: item)
+                self.previewProblem = nil
                 self.seek(min(keep, self.durationUs))
             } catch {
                 span.end()
-                self?.show("The preview could not be built: \(error.localizedDescription)", error: true)
+                guard !(error is CancellationError), !Task.isCancelled, let self else { return }
+                self.previewFailed(error)
             }
         }
     }
@@ -1446,16 +1487,31 @@ final class EditorModel {
                     ?? stdout.split(separator: "\n").last.flatMap { line in
                         (try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])?["fixed"] as? [Any]
                     }?.count
-                self.show(fixed.map { "Fixed \(Plural.count($0, "thing")). ⌘Z undoes them all." } ?? "Fixed. ⌘Z undoes it.", error: false)
+                self.show(Self.fixAllNotice(fixed: fixed), error: false)
             case let .failure(failure): self.show("Fix All did not work: \(failure.reason)", error: true)
             }
         }
+    }
+
+    /// What Fix All says: the count it fixed, or that no fix changed the edit (nothing was saved, so ⌘Z has nothing).
+    nonisolated static func fixAllNotice(fixed: Int?) -> String {
+        switch fixed {
+        case 0?: "Nothing to fix: no fix the check offers changes the edit."
+        case let count?: "Fixed \(Plural.count(count, "thing")). ⌘Z undoes them all."
+        case nil: "Fixed. ⌘Z undoes it."
+        }
+    }
+
+    /// What an issue's action says once it ran: done, or that the edit stayed the same (no new undo step).
+    nonisolated static func actionNotice(label: String, changed: Bool) -> String {
+        changed ? "\(label): done. ⌘Z undoes it." : "\(label) changed nothing."
     }
 
     /// Runs the edit ops the check gave an issue (`tools recorder apply`, the REPL's fix), then takes the saved edit,
     /// so ⌘Z undoes it as one step.
     func runAction(_ issue: EditIssue) {
         guard let ops = issue.actionOps, let label = issue.action?.label else { return }
+        let revision = project.revision
         applyOps(ops) { [weak self] result in
             guard let self else { return }
             if case let .failure(failure) = result {
@@ -1463,7 +1519,7 @@ final class EditorModel {
                 return
             }
             if let selection = issue.selection { self.selection = selection }
-            self.show("\(label): done. ⌘Z undoes it.", error: false)
+            self.show(Self.actionNotice(label: label, changed: self.project.revision != revision), error: false)
         }
     }
 
@@ -1541,7 +1597,7 @@ final class EditorModel {
     /// the movie when noise reduction is on) and converts with ffmpeg, then prints `{ ok, path }`.
     private func exportThroughTools(_ format: EditProject.ExportFormat) {
         exportProgress = 0
-        show(format == .mp4 ? "Exporting an MP4 with the cleaned sound…" : "Exporting a \(format.rawValue.uppercased())…", error: false)
+        show(format == .mp4 ? "Exporting an MP4 with the cleaned sound…" : "Exporting a \(format.title)…", error: false)
         var argv = ["recorder", "export", store.url.path, "--format", format.rawValue, "--json"]
         var params: [String: Any] = ["format": format.rawValue]
         if let part = exportPart {
@@ -1559,7 +1615,7 @@ final class EditorModel {
             }
             guard let path = answer?["path"] as? String else {
                 let reason: String = if case let .failure(failure) = result { failure.reason } else { (answer?["error"] as? String) ?? "no movie was written" }
-                self.show("The \(format.rawValue.uppercased()) export failed: \(reason)", error: true)
+                self.show("The \(format.title) export failed: \(reason)", error: true)
                 return
             }
             let bytes = (answer?["bytes"] as? NSNumber)?.int64Value ?? 0
@@ -1582,5 +1638,66 @@ final class EditorModel {
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         timeObserver = nil
+    }
+}
+
+// MARK: - Preview problem
+
+/// Why the preview shows no picture, in the editor's words: what happened, what to do, and the system's own text for
+/// the Details disclosure.
+struct PreviewProblem: Equatable {
+    let title: String
+    let advice: String
+    let detail: String
+}
+
+extension EditorModel {
+    /// The preview could not be built: the old picture goes, the reason shows in its place, and VoiceOver hears it.
+    func previewFailed(_ error: Error) {
+        HubPerf.log("recorder.editor.render failed: \(error.localizedDescription)")
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        let problem = Self.previewProblem(error, video: project.source.video,
+                                          fileExists: FileManager.default.fileExists(atPath: project.source.video))
+        previewProblem = problem
+        AccessibilityNotification.Announcement("\(problem.title). \(problem.advice)").post()
+    }
+
+    /// Reads the movie again and builds the preview anew (the Try Again button).
+    func retryPreview() {
+        previewProblem = nil
+        reloadMovie()
+    }
+
+    /// Each cause its own sentence. AVFoundation answers a cut-short or damaged file with "Cannot Open" (-11829) or
+    /// "unknown error" (-11800), which say nothing to a person, so they go to Details only.
+    nonisolated static func previewProblem(_ error: Error, video: String, fileExists: Bool) -> PreviewProblem {
+        let name = URL(fileURLWithPath: video).lastPathComponent
+        let nsError = error as NSError
+        var detail = "\(error.localizedDescription) (\(nsError.domain) \(nsError.code))"
+        if let reason = nsError.localizedFailureReason { detail += "\n\(reason)" }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            detail += "\n\(underlying.localizedDescription) (\(underlying.domain) \(underlying.code))"
+        }
+        detail += "\n\(video)"
+        guard fileExists else {
+            return PreviewProblem(title: "The movie file is missing", advice: "\(name) was moved or deleted. Put it back, then try again.",
+                                  detail: detail)
+        }
+        switch error as? EditRenderer.RenderError {
+        case .noVideoTrack:
+            return PreviewProblem(title: "This movie has no picture", advice: "\(name) holds no video track, so there is nothing to show.",
+                                  detail: detail)
+        case .emptyEdit:
+            return PreviewProblem(title: "The edit keeps nothing of the movie", advice: "Every part is cut. ⌘Z brings the last cut back.",
+                                  detail: detail)
+        case .badComposition:
+            return PreviewProblem(title: "The preview cannot show this movie",
+                                  advice: "Its frame rate or picture size is not one the preview can play.", detail: detail)
+        case nil:
+            return PreviewProblem(title: "This movie cannot be read",
+                                  advice: "\(name) may be cut short, damaged or still being written. Try again once it is complete.",
+                                  detail: detail)
+        }
     }
 }

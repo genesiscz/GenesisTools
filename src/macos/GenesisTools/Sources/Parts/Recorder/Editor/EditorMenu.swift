@@ -315,9 +315,15 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
     /// On by default: the keys without ⌘ (S splits, Z zooms…). Off for a user who presses them by mistake.
     static let singleKeysKey = "recorder.editor.singleKeys"
 
+    static var singleKeysOn: Bool { UserDefaults.standard.object(forKey: singleKeysKey) as? Bool ?? true }
+
+    /// A key with no modifier at all (S, Z, Space): it runs only while Single-Key Shortcuts is on; ⇧←, ← and Esc stay.
+    static func isSingleKey(_ command: EditorCommand) -> Bool {
+        command.modifiers.isEmpty && command.key.count == 1 && (command.key.first?.isLetter == true || command.key == " ")
+    }
+
     @objc func toggleSingleKeys(_ sender: Any?) {
-        let on = UserDefaults.standard.object(forKey: Self.singleKeysKey) as? Bool ?? true
-        UserDefaults.standard.set(!on, forKey: Self.singleKeysKey)
+        UserDefaults.standard.set(!Self.singleKeysOn, forKey: Self.singleKeysKey)
     }
 
     @objc func toggleSnapHaptic(_ sender: Any?) {
@@ -380,7 +386,7 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
             return true
         }
         if item.action == #selector(toggleSingleKeys(_:)) {
-            item.state = (UserDefaults.standard.object(forKey: Self.singleKeysKey) as? Bool ?? true) ? .on : .off
+            item.state = Self.singleKeysOn ? .on : .off
             return true
         }
         if item.action == #selector(toggleSnapHaptic(_:)) {
@@ -394,11 +400,7 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         guard let box = item.representedObject as? CommandBox else { return true }
         // A key with no ⌘ (Space, S, ←) belongs to a text field while one edits; a disabled item lets it through.
         if box.command.modifiers.isDisjoint(with: [.command, .control]), NSApp.keyWindow?.firstResponder is NSText { return false }
-        // A key with no modifier at all (S, Z, Space) only while Single-Key Shortcuts is on; ⇧← and Esc stay.
-        if box.command.modifiers.isEmpty, box.command.key.count == 1, box.command.key.first?.isLetter == true || box.command.key == " ",
-           !(UserDefaults.standard.object(forKey: Self.singleKeysKey) as? Bool ?? true) {
-            return false
-        }
+        if Self.isSingleKey(box.command), !Self.singleKeysOn { return false }
         guard let model = EditorWindows.shared.frontModel() else { return false }
         switch box.command.title {
         case "Undo":

@@ -110,6 +110,11 @@ final class CameraFeed: @unchecked Sendable {
             return nil
         }
         let time = CMSampleBufferGetPresentationTimeStamp(sample)
+        // A sample without a time (an unfinished camera.mov) has NaN seconds, and Int64(NaN) traps on a render thread.
+        guard time.isNumeric, time.seconds.isFinite else {
+            finished = true
+            return nil
+        }
         var image = CIImage(cvPixelBuffer: buffer)
         let longest = max(image.extent.width, image.extent.height)
         if longest > CGFloat(Self.maxSide) {

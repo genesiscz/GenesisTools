@@ -71,7 +71,7 @@ extension EditorModel {
         let from = range?.fromUs ?? clock.outUs
         let alert = NSAlert()
         alert.messageText = range == nil ? "Comment at \(formatClock(from, tenths: true))"
-            : "Comment on \(formatClock(from, tenths: true)) – \(formatClock(range?.toUs ?? from, tenths: true))"
+            : "Comment on \(formatClockRange(from, range?.toUs ?? from))"
         alert.informativeText = "It shows as a marker on the timeline, and tools recorder comments lists it. A board annotation's link, or the board's link and the annotation's number, makes it open that annotation."
         let field = NSTextField(string: "")
         field.placeholderString = "What should change here?"

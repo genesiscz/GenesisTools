@@ -64,6 +64,8 @@ final class CameraBubble {
     private var awaitingSince: Date?
     /// Live recordings already looked at, by id: whether each asked for the camera.
     private var asked: [String: Bool] = [:]
+    /// The live entries whose skip is logged already: one line per entry and reason, not one per update.
+    private var skipsLogged = Set<String>()
 
     /// The preview's window, for `--exclude-window-ids`; empty while it is not on screen.
     var windowIDs: [Int] {
@@ -123,8 +125,20 @@ final class CameraBubble {
             if entry.isPaused { writer?.pause() } else if entry.isRecording { writer?.resume() }
             return
         }
-        for entry in recordings where entry.isRecording && asked[entry.id] == nil {
-            guard let folder = entry.folder.map({ URL(fileURLWithPath: $0, isDirectory: true) }) else { continue }
+        for entry in recordings where asked[entry.id] == nil {
+            // Each skip says why, so a recording that asked for the camera and got none can be traced in the log.
+            guard entry.isRecording else {
+                if skipsLogged.insert("\(entry.id) state").inserted {
+                    HubPerf.log("recorder: camera skips \(entry.id) for now: it is not recording yet")
+                }
+                continue
+            }
+            guard let folder = entry.folder.map({ URL(fileURLWithPath: $0, isDirectory: true) }) else {
+                if skipsLogged.insert("\(entry.id) folder").inserted {
+                    HubPerf.log("recorder: camera skips \(entry.id): the live entry names no folder")
+                }
+                continue
+            }
             let manifest = Self.manifestSettings(folder)
             let wants = (manifest?["camera"] as? [String: Any])?["requested"] as? Bool == true
             asked[entry.id] = wants
@@ -167,6 +181,8 @@ final class CameraBubble {
         if source == nil {
             // 720p is plenty for a bubble at most 60% of a 1080p canvas's height, and keeps the encoder light.
             source = CameraFrameSource(preset: .hd1280x720, outputMaxSide: nil)
+            // A camera movie with no frames said nothing about why (review 2026-11-06); each state change does now.
+            source?.onStateChange = { state in HubPerf.log("recorder: camera source is \(state)") }
         }
         source?.setMode(.continuous(fps: 30))
     }

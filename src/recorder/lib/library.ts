@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -12,6 +12,24 @@ import { recordingStores } from "@genesiscz/utils/screen-recorder/recording-stor
 import { z } from "zod";
 
 const { log } = logger.scoped("recorder-library");
+
+/**
+ * What a recorder writes into a manifest's `settings` when its recording ends: the outcome, the movie's length and
+ * its frame count.
+ */
+const recordingEndSchema = z.object({
+    outcome: z.string().optional(),
+    video: z.object({ durationMs: z.number().optional(), frames: z.number().optional() }).optional(),
+});
+
+/** A library id with its whole uuid: `video-2026-11-06_20-50-38-0eb8dd5f-7cec-4561-9379-63bc9cbfa33b`. */
+const LONG_RECORDING_ID =
+    /^([a-z]+-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-[0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The id a table shows: the stamp and the uuid's first block. Every command takes it (`resolveRecording`). */
+export function shortRecordingId(id: string): string {
+    return LONG_RECORDING_ID.exec(id)?.[1] ?? id;
+}
 
 /**
  * The movie a recording folder holds, in the order the editor looks for one: the recorder's movie, then the proxy
@@ -34,13 +52,106 @@ export interface LibraryRow {
     endedAt?: string;
     /** The movie the editor opens, when the recording has one. */
     movie?: string;
+    /** The stills a frames recording kept (0 for a movie: see `movieFrames`). */
     frames: number;
+    /** The frames a movie holds, when the recorder wrote the count. */
+    movieFrames?: number;
     /** `edit.json` exists: the recording was edited. */
     edited: boolean;
+    /** How the recording ended (`done`, `failed`, `discarded`), when its recorder wrote it. */
+    outcome?: string;
+    /** The movie's length, when the recorder wrote it. */
+    durationMs?: number;
+    /** Why a failed recording made no movie: its first warning. */
+    reason?: string;
 }
 
 export function movieOf(folder: string): string | undefined {
     return RECORDING_MOVIES.map((name) => join(folder, name)).find((path) => existsSync(path));
+}
+
+/**
+ * Pause on a paused recording and resume on a running one have nothing to do: an agent that repeats them gets this
+ * answer and exit 0, not "the recording is paused" and exit 1. Undefined when the call has work to do.
+ */
+export function alreadyInState(
+    method: "stop" | "pause" | "resume" | "status",
+    state: string | undefined
+): string | undefined {
+    if (method === "pause" && state === "paused") {
+        return "already paused";
+    }
+
+    if (method === "resume" && state === "recording") {
+        return "already recording";
+    }
+
+    return undefined;
+}
+
+/** Why a marker label is refused, as the live recording's own rule has it (1 to 80 characters after trimming). */
+export function markerLabelProblem(label: string): string | undefined {
+    const length = label.trim().length;
+    return length >= 1 && length <= 80 ? undefined : "A marker label is 1 to 80 characters.";
+}
+
+/** What a live recording is for an agent: its live id (stop, mark), its library id and folder, after a stop its movie. */
+export interface LiveRecordingRef {
+    liveId: string;
+    id?: string;
+    folder?: string;
+    movie?: string;
+}
+
+/** The shortest prefix of a library id that names one recording (a short id is far longer). */
+const SHORT_ID_MIN_LENGTH = 12;
+
+/**
+ * The running recording an id names: its live id or the end of it (`list --live`), or its library id, whole or a
+ * prefix such as the short id (`start`'s started event and `list` print those).
+ */
+export function findLiveEntry<T extends { id: string; folder?: string }>(entries: T[], id: string): T | undefined {
+    return entries.find((entry) => {
+        if (entry.id === id || entry.id.endsWith(id)) {
+            return true;
+        }
+
+        const library = entry.folder ? basename(entry.folder) : undefined;
+        return (
+            library !== undefined && (library === id || (id.length >= SHORT_ID_MIN_LENGTH && library.startsWith(id)))
+        );
+    });
+}
+
+/** The running recordings for an error: each live id, with its short library id when it has one. */
+export function describeLiveEntries(entries: Array<{ id: string; folder?: string }>): string {
+    return entries
+        .map((entry) => (entry.folder ? `${entry.id} (${shortRecordingId(basename(entry.folder))})` : entry.id))
+        .join(", ");
+}
+
+export function liveRecordingRef(
+    entry: { id: string; folder?: string },
+    { stopped = false }: { stopped?: boolean } = {}
+): LiveRecordingRef {
+    if (!entry.folder) {
+        return { liveId: entry.id };
+    }
+
+    const movie = stopped ? movieOf(entry.folder) : undefined;
+    return { liveId: entry.id, id: basename(entry.folder), folder: entry.folder, ...(movie ? { movie } : {}) };
+}
+
+/**
+ * The FRAMES cell of `tools recorder list`: a movie's frame count, a frames recording's stills, or "—" for a movie
+ * whose count was never written (it read 0 for every movie, review 2026-11-07).
+ */
+export function framesCell(row: LibraryRow): string {
+    if (row.movieFrames !== undefined) {
+        return String(row.movieFrames);
+    }
+
+    return row.durationMs === undefined ? String(row.frames) : "—";
 }
 
 /** Every library recording, newest first. */
@@ -68,32 +179,69 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
         if (rows.length >= Math.max(0, limit)) {
             break;
         }
-        const folder = join(root, name);
-        const manifest = readRecordingManifest(folder);
+        const row = libraryRow(join(root, name));
 
-        if (!manifest) {
-            continue;
+        if (row) {
+            rows.push(row);
         }
-
-        rows.push({
-            id: manifest.id,
-            title: manifest.title,
-            folder,
-            startedAt: manifest.startedAt,
-            endedAt: manifest.endedAt,
-            movie: movieOf(folder),
-            frames: manifest.frames.length,
-            edited: existsSync(join(folder, "edit.json")),
-        });
     }
 
     return rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+/** One recording folder as `list --json` gives it (`tools recorder show`); undefined without a readable manifest. */
+export function libraryRow(folder: string): LibraryRow | undefined {
+    const manifest = readRecordingManifest(folder);
+
+    if (!manifest) {
+        return undefined;
+    }
+
+    const end = recordingEndSchema.safeParse(manifest.settings).data ?? {};
+    return {
+        id: manifest.id,
+        title: manifest.title,
+        folder,
+        startedAt: manifest.startedAt,
+        endedAt: manifest.endedAt,
+        movie: movieOf(folder),
+        frames: manifest.frames.length,
+        edited: existsSync(join(folder, "edit.json")),
+        ...(end.outcome ? { outcome: end.outcome } : {}),
+        ...(end.video?.durationMs === undefined ? {} : { durationMs: end.video.durationMs }),
+        ...(end.video?.frames === undefined ? {} : { movieFrames: end.video.frames }),
+        ...(end.outcome === "failed" && manifest.warnings[0] ? { reason: manifest.warnings[0] } : {}),
+    };
 }
 
 /**
  * What a recording argument names: a library id (`library-…`), `last` (the newest), a meeting id (its folder), or a
  * path to a movie, a recording folder or an edit file. Throws with the ids it knows when nothing matches.
  */
+/**
+ * The recording an edit file names before anything wrote it (projectPathFor): a recording folder's `edit.json`, or
+ * `<name>.edit.json` beside a plain movie. The editor holds that path from its first open, so the service's
+ * session.open gets it for a recording that was never edited.
+ */
+function recordingOfUnwrittenEdit(path: string): string | undefined {
+    const folder = dirname(path);
+    const file = basename(path);
+
+    if (file === "edit.json") {
+        return existsSync(join(folder, "recording.json")) ? folder : undefined;
+    }
+
+    if (!file.endsWith(".edit.json") || !existsSync(folder)) {
+        return undefined;
+    }
+
+    const name = file.slice(0, -".edit.json".length);
+    const movie = readdirSync(folder).find(
+        (entry) => !entry.endsWith(".json") && basename(entry, extname(entry)) === name
+    );
+    return movie ? join(folder, movie) : undefined;
+}
+
 export function resolveRecording(value: string, { alive }: { alive?: (pid: number) => boolean } = {}): string {
     if (value === "open") {
         const state = readEditorOpenState({ alive });
@@ -127,6 +275,12 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
         return path;
     }
 
+    const unwritten = recordingOfUnwrittenEdit(path);
+
+    if (unwritten) {
+        return unwritten;
+    }
+
     // A store's id, the library first; a meeting's folder holds its frames (and, once the editor opened it,
     // recording.json).
     for (const store of recordingStores()) {
@@ -135,6 +289,23 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
         if (existsSync(store.framesOf(value)) && statSync(folder).isDirectory()) {
             return folder;
         }
+    }
+
+    // A short id, as `tools recorder list` shows it: the one library folder whose name starts with it.
+    const library = recordingsLibraryDir();
+    const matches =
+        value.length >= SHORT_ID_MIN_LENGTH && existsSync(library)
+            ? readdirSync(library).filter((name) => name.startsWith(value))
+            : [];
+
+    if (matches.length === 1) {
+        return join(library, matches[0]);
+    }
+
+    if (matches.length > 1) {
+        throw new Error(
+            `${matches.length} recordings start with "${value}": ${matches.join(", ")}. Give more of the id.`
+        );
     }
 
     const known = listLibrary({ limit: 5 }).map((row) => row.id);
@@ -154,6 +325,26 @@ export async function ensureRecorderPart(onStep?: (line: string) => void): Promi
     onStep?.("GenesisTools.app has no recorder part yet: building it (about a minute)");
     log.info({ parts: status.parts }, "recorder: adding the recorder part");
     await buildApp({ onStep, parts: { add: ["recorder"] } });
+}
+
+/**
+ * The REPL's check for the recorder part: it refuses instead of building, because a build takes about a minute, the
+ * turn's limit kills it halfway, and the build went on as an orphan holding the app's build lock (R2-NR3).
+ */
+export function requireRecorderPart(doing: string): void {
+    const status = appStatus();
+
+    if (status.built && status.parts.includes("recorder")) {
+        return;
+    }
+
+    const missing = status.built
+        ? "the installed GenesisTools.app has no recorder part"
+        : "GenesisTools.app is not installed";
+    log.debug({ doing, built: status.built, parts: status.parts }, "recorder: refused, no recorder part");
+    throw new Error(
+        `${doing} needs the recorder part of GenesisTools.app, and ${missing}. Nothing was started. Add it from a shell (a build of about a minute, longer than a turn): ${toolCommand("macos permissions build --add-part recorder")}`
+    );
 }
 
 /** One editor window: its recording folder, title and (from a build with the recorder host) its window number. */
@@ -452,21 +643,46 @@ export const sheetAnswerSchema = z.object({
     width: z.number().optional(),
     height: z.number().optional(),
     times: z.array(z.number()).optional(),
+    /** The grid columns the face drew; absent from a face built before round 5. */
+    columns: z.number().optional(),
     error: z.string().optional(),
 });
 export type SheetAnswer = z.infer<typeof sheetAnswerSchema>;
 
-export function sheetArgv({ path, times, out }: { path: string; times: number[]; out?: string }): string[] {
-    return ["--recorder", "--sheet", path, "--times", times.join(","), ...(out ? ["--out", resolve(out)] : [])];
+export interface SheetRequest {
+    path: string;
+    times: number[];
+    out?: string;
+    /** The grid columns; absent: the face picks them by the frames' shape (as close to a 16:9 sheet as it can). */
+    columns?: number;
+    // R6 10 effects sheet
+    /** Per time: true where the edit cuts it, so the cell is marked as cut. */
+    cut?: boolean[];
 }
 
-/** Several frames of an edit (OUTPUT seconds) on one picture in rows of three, each labelled with its time. */
-export function sheetOfEdit(request: { path: string; times: number[]; out: string }) {
+export function sheetArgv({ path, times, out, columns, cut }: SheetRequest): string[] {
+    const cutCells = (cut ?? []).flatMap((isCut, index) => (isCut ? [index] : []));
+    return [
+        "--recorder",
+        "--sheet",
+        path,
+        "--times",
+        times.join(","),
+        ...(out ? ["--out", resolve(out)] : []),
+        ...(columns ? ["--columns", String(columns)] : []),
+        ...(cutCells.length > 0 ? ["--cut-cells", cutCells.join(",")] : []),
+    ];
+}
+
+/** Several frames of an edit (OUTPUT seconds) on one grid picture, each labelled with its time. */
+export function sheetOfEdit(request: SheetRequest & { out: string }) {
     return runRecorderFace({ argv: sheetArgv(request), schema: sheetAnswerSchema, what: "sheet" });
 }
 
-export function exportArgv(path: string, out?: string): string[] {
-    return ["--recorder", "--export", path, "--json", ...(out ? ["--out", resolve(out)] : [])];
+export function exportArgv(path: string, out?: string, size?: { width?: number; height?: number }): string[] {
+    // R5 3 export size: "--size 1280x720", "--size 1280x" or "--size x720".
+    const sized = size ? ["--size", `${size.width ?? ""}x${size.height ?? ""}`] : [];
+    return ["--recorder", "--export", path, "--json", ...(out ? ["--out", resolve(out)] : []), ...sized];
 }
 
 /**

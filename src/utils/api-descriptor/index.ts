@@ -2,11 +2,15 @@ export {
     type ApiDescriptor,
     defineApi,
     defineMethod,
+    effectLabel,
     type HandleDescriptor,
     METHOD_EFFECTS,
+    METHOD_REACHES,
     type MethodDescriptor,
     type MethodEffect,
+    type MethodReach,
 } from "./descriptor";
+export { assertReach, runInMethodScope, UndeclaredReachError } from "./reach";
 export {
     jsonSchemaOf,
     type McpToolShape,

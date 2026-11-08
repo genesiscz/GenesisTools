@@ -71,6 +71,8 @@ export const helloAnswerSchema = z.object({
 });
 
 const path = z.string().min(1);
+/** What holds a session inside one connection (an editor window); absent is the connection itself. */
+const holder = z.string().min(1).optional();
 const ops = z.array(editOpSchema).min(1);
 /** Output seconds as `{ from, to }`, `[from, to]` or `"from-to"`, as the host's `--snapshot` takes `part` and `range`. */
 export const spanSchema = z.union([
@@ -104,16 +106,17 @@ export const serviceApi = defineApi({
         }),
         defineMethod({
             name: "session.open",
-            params: z.object({ path }),
-            result: z.object({ path, ...project }),
-            doc: "Opens (or holds once more) the edit session of a recording; the connection holds it until session.close or its end.",
+            params: z.object({ path, holder }),
+            // undoDepth: the undo steps the edit keeps (they outlive a close), so a reopened window can undo them.
+            result: z.object({ path, ...project, undoDepth: z.number().int().nonnegative().optional() }),
+            doc: "Opens (or holds once more) the edit session of a recording; the connection's holder holds it until session.close or the connection's end. Opening it again for the same holder reads it and adds no hold.",
             effect: "read",
         }),
         defineMethod({
             name: "session.close",
-            params: z.object({ path }),
+            params: z.object({ path, holder }),
             result: z.object({ closed: z.boolean() }),
-            doc: "Lets go of the connection's hold; the last hold saves and closes the session.",
+            doc: "Lets go of the holder's hold; another holder of the same connection keeps its own, and the last hold saves and closes the session.",
             effect: "read",
         }),
         defineMethod({
@@ -134,7 +137,7 @@ export const serviceApi = defineApi({
             name: "edit.redo",
             params: z.object({ path }),
             result: editAnswer.extend({ redone: z.array(z.string()) }),
-            doc: "Makes the last undone change again; it needs an open session.",
+            doc: "Makes the last undone change again: the open session's, else the last undo saved to the file.",
             effect: "reversible",
         }),
         defineMethod({
@@ -258,20 +261,38 @@ export const hostApi = defineApi({
         }),
         defineMethod({
             name: "render.sheet",
-            params: z.object({ path, times: z.array(z.number().nonnegative()).min(1), out: z.string().optional() }),
+            params: z.object({
+                path,
+                times: z.array(z.number().nonnegative()).min(1),
+                out: z.string().optional(),
+                columns: z.number().int().min(1).max(48).optional(),
+                // R6 10 effects sheet
+                cut: z.array(z.boolean()).optional(),
+            }),
             result: z.object({
                 ok: z.literal(true),
                 path: z.string(),
                 width: z.number(),
                 height: z.number(),
                 times: z.array(z.number()).optional(),
+                columns: z.number().optional(),
             }),
-            doc: "Those frames of the edit (output seconds) on one picture.",
+            doc: "Those frames of the edit (output seconds) on one grid picture; columns (absent: by the frames' shape, as close to a 16:9 sheet as whole rows allow); cut (one per time) marks the cells whose time the edit cuts.",
             effect: "read",
         }),
         defineMethod({
             name: "render.export",
-            params: z.object({ path, out: z.string().optional() }),
+            params: z.object({
+                path,
+                out: z.string().optional(),
+                // R5 3 export size: the picture's exact pixels, one side (the other follows its shape) or both.
+                size: z
+                    .object({
+                        width: z.number().int().min(16).max(8192).optional(),
+                        height: z.number().int().min(16).max(8192).optional(),
+                    })
+                    .optional(),
+            }),
             result: z.object({ ok: z.literal(true), path: z.string(), bytes: z.number(), seconds: z.number() }),
             doc: 'Renders the edit as a movie; the host sends $/progress { id, fraction, label: "export" } and stops on $/cancel.',
             effect: "reversible",
@@ -385,7 +406,13 @@ const requestId = z.union([z.number().int(), z.string()]);
 
 /** Each notification's params: the two events and the transport's progress and cancel (`utils/rpc/peer.ts`). */
 export const NOTIFICATION_SCHEMAS = {
-    "project.changed": z.object({ path: z.string(), revision: z.number().int().nonnegative(), by: z.string() }),
+    "project.changed": z.object({
+        path: z.string(),
+        revision: z.number().int().nonnegative(),
+        by: z.string(),
+        /** The change undid or redid one before it; absent for an edit. */
+        action: z.enum(["undo", "redo"]).optional(),
+    }),
     "window.changed": windowStateSchema,
     "$/progress": z.object({
         id: requestId,

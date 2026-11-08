@@ -6,7 +6,9 @@ import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
+import { cursorSmoothSchema } from "./cursor-smooth";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
+import { applyFxOp, describeFx, fxOpSchemas, lensSchema, tiltSchema, transitionsSchema } from "./fx";
 import { recordingItemId, withItemIds } from "./item-ids";
 import {
     clipSpeed,
@@ -37,7 +39,30 @@ import {
     setLanes,
     withLane,
 } from "./lanes";
+import {
+    applyCaptionsStyle,
+    applyCard,
+    applyProgress,
+    CAPTION_KINDS,
+    CHAPTER_PLACES,
+    captionsStyleSchema,
+    cardsLeadUs,
+    cardsSchema,
+    progressSchema,
+    TEXT_ANIMATIONS,
+    textAnimateOf,
+    textAnimateSchema,
+} from "./overlays";
 import { outputTimeSchema, sourceTimeSchema, timeSchema, timeToUs } from "./plan";
+import {
+    describeTextQuery,
+    HIDE_UNITS,
+    PRIVATE_KINDS,
+    PRIVATE_STYLES,
+    type PrivateHit,
+    privacySchema,
+    redactionBoxAt,
+} from "./private-data";
 import {
     cutRanges,
     FILLER_LEVELS,
@@ -47,6 +72,15 @@ import {
     type TranscriptSegment,
     wordCuts,
 } from "./transcript-cuts";
+import {
+    applyDucking,
+    applyVoiceover,
+    duckingSchema,
+    removeVoiceover,
+    VOICEOVER_CARDS,
+    voiceoverSchema,
+} from "./voiceovers";
+import { autoSpeedSchema, SPEED_BADGE_POSITIONS, type WaitStretch } from "./waits";
 
 const { log } = logger.scoped("recording-editor-project");
 
@@ -56,21 +90,32 @@ const { log } = logger.scoped("recording-editor-project");
  * SOURCE movie, so a cut never moves a zoom. The window watches the file and takes an agent's save as it lands.
  */
 export const EDIT_PROJECT_VERSION = 1;
+/**
+ * Microseconds as an edit file keeps them: whole numbers. A fraction (a build before round 7 saved 39133333.333 for a
+ * part the motion placed at 30 frames a second) is rounded when the file loads, instead of refusing the whole edit.
+ */
+function wholeUs<T extends z.ZodType<number>>(schema: T) {
+    return z.preprocess(
+        (value) => (typeof value === "number" && Number.isFinite(value) ? Math.round(value) : value),
+        schema
+    );
+}
+
 /** The shortest clip a split or a cut leaves: one frame at 60 fps (TimelineMap.minimumClipUs). */
 export const MINIMUM_CLIP_US = 16_667;
 const MINIMUM_ZOOM_US = 200_000;
 
 const clipSchema = z.object({
     id: z.string(),
-    fromUs: z.number().int().nonnegative(),
-    toUs: z.number().int().nonnegative(),
+    fromUs: wholeUs(z.number().int().nonnegative()),
+    toUs: wholeUs(z.number().int().nonnegative()),
     speed: z.number().min(0.25).max(16).default(1),
 });
 
 const zoomSchema = z.object({
     id: z.string(),
-    startUs: z.number().int().nonnegative(),
-    endUs: z.number().int().nonnegative(),
+    startUs: wholeUs(z.number().int().nonnegative()),
+    endUs: wholeUs(z.number().int().nonnegative()),
     scale: z.number().min(1).max(4).default(1.5),
     mode: z.enum(["manual", "follow"]).default("manual"),
     focusX: z.number().min(0).max(1).default(0.5),
@@ -79,6 +124,13 @@ const zoomSchema = z.object({
     easeOutMs: z.number().int().nonnegative().default(450),
     /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
     lane: z.string().optional(),
+    // R5 4 canvas zoom
+    /**
+     * What it zooms: "picture" (absent) zooms inside the movie, the frame and its background staying still; "canvas"
+     * zooms the whole framed export (picture, frame, background), so a phone placed in a 16:9 frame can fill it.
+     * Its focus is then 0...1 of the canvas. A canvas zoom may overlap a picture zoom; two of one kind may not.
+     */
+    target: z.enum(["picture", "canvas"]).optional(),
 });
 
 export const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
@@ -104,6 +156,10 @@ export const clicksSchema = z.object({
  */
 export const CANVAS_ASPECTS = ["source", "16:9", "4:3", "1:1", "9:16"] as const;
 
+// R5 4 frame layouts
+/** Where a framed picture sits on its canvas. */
+export const FRAME_ALIGNS = ["center", "left", "right", "top", "bottom"] as const;
+
 export const BACKGROUND_KINDS = ["none", "color", "gradient", "image"] as const;
 
 /** The movie on a background, scaled in by `padding`, with rounded corners and a shadow. Absent is the plain movie. */
@@ -125,7 +181,50 @@ export const frameSchema = z.object({
     /** As a fraction of the output height. */
     cornerRadius: z.number().min(0).max(0.1).default(0.012),
     shadow: z.boolean().default(true),
+    // R5 4 frame layouts
+    /** Where the picture sits on the canvas and how big; absent is centred at its fitted size. */
+    layout: z
+        .object({
+            /**
+             * "center", or against one edge (inside the padding): "left" or "right" leaves the other side of a wide
+             * canvas free for texts beside a phone; "top" or "bottom" does the same on a tall canvas.
+             */
+            align: z.enum(FRAME_ALIGNS).default("center"),
+            /**
+             * Times the fitted size (0.5 to 3). Above 1 the picture grows inside the room within the padding and is
+             * cropped to it (round 7: a phone grows wider, its free side shrinks, and `focus` picks the part in view).
+             */
+            scale: z.number().min(0.5).max(3).default(1),
+            // R7 9 phone layouts
+            /** The part of a grown picture that stays in view, 0..1 of the picture from its top left; absent: centre. */
+            focus: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).optional(),
+        })
+        .optional(),
 });
+
+// R5 4 frame layouts
+/**
+ * Ready frames for a phone recording: "phone-left" and "phone-right" put the phone against one side of a 16:9 canvas
+ * with the other side (about three quarters of it) free for texts, and layout.scale above 1 makes the phone bigger;
+ * "phone-portrait" fills a 9:16 canvas (Shorts, Reels) from the top and leaves its bottom eighth for captions. Each
+ * sets the aspect, padding, corner radius and layout; the op's own fields still win.
+ */
+export const FRAME_PRESETS = ["phone-left", "phone-right", "phone-portrait"] as const;
+export type FramePreset = (typeof FRAME_PRESETS)[number];
+
+export const FRAME_PRESET_VALUES: Record<
+    FramePreset,
+    {
+        aspect: (typeof CANVAS_ASPECTS)[number];
+        padding: number;
+        cornerRadius: number;
+        layout: { align: (typeof FRAME_ALIGNS)[number]; scale: number };
+    }
+> = {
+    "phone-left": { aspect: "16:9", padding: 0.04, cornerRadius: 0.035, layout: { align: "left", scale: 1 } },
+    "phone-right": { aspect: "16:9", padding: 0.04, cornerRadius: 0.035, layout: { align: "right", scale: 1 } },
+    "phone-portrait": { aspect: "9:16", padding: 0.04, cornerRadius: 0.03, layout: { align: "top", scale: 0.88 } },
+};
 
 /**
  * The cursor the editor draws for a movie recorded without the system cursor (`tools recorder start` does that by
@@ -154,11 +253,20 @@ export const REDACTION_STYLES = ["blur", "pixelate", "black", "spotlight"] as co
 /** A spotlight's lit shape: "rounded" (absent means this), "rect" or "circle" (an ellipse in its rectangle). */
 export const SPOTLIGHT_CUTOUTS = ["rounded", "rect", "circle"] as const;
 
+// fx B (round 4): a rectangle as fractions of the picture, and one keyframe of a tracked hidden part.
+const boxSchema = z.object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().min(0).max(1),
+    height: z.number().min(0).max(1),
+});
+const trackKeySchema = boxSchema.extend({ atUs: wholeUs(z.number().int().nonnegative()) });
+
 /** A part of the SOURCE picture hidden for a time: an address, a token, a notification. It moves with a zoom. */
 export const redactionSchema = z.object({
     id: z.string(),
-    startUs: z.number().int().nonnegative(),
-    endUs: z.number().int().positive(),
+    startUs: wholeUs(z.number().int().nonnegative()),
+    endUs: wholeUs(z.number().int().positive()),
     /** The rectangle, 0...1 of the source picture from its top left. */
     x: z.number().min(0).max(1),
     y: z.number().min(0).max(1),
@@ -169,13 +277,80 @@ export const redactionSchema = z.object({
     label: z.string().max(60).optional(),
     /** The rectangle keeps its size and moves with the drawn cursor (centred on it, inside the picture). */
     follow: z.boolean().optional(),
-    /** A spotlight's dim around it, 0.2 to 0.95 black; absent is 0.7. */
+    /** A spotlight's dim around it, 0.2 to 0.95 black; absent is 0.5 (R8 11; 0.7 before). */
     dim: z.number().min(0.2).max(0.95).optional(),
     cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
     /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
     lane: z.string().optional(),
+    // fx B (round 4): a hidden part that follows its text, and the areas it leaves visible.
+    /**
+     * Keyframes of the rectangle at SOURCE microseconds, in time order: between two the rectangle moves straight from
+     * one to the next, before the first and after the last it holds. Absent is the fixed x, y, width, height.
+     */
+    track: z.array(trackKeySchema).optional(),
+    /** Areas of the picture (fractions from its top left) the part leaves visible: a toast, a tab bar over the text. */
+    exclude: z.array(boxSchema).optional(),
+    // R5 5 redaction edges
+    /**
+     * A spotlight's dim fades in and out over this many ms (at most a third of its length); 0 is a hard cut, absent is
+     * 200. The hiding styles never fade: they cover fully from their first frame to their last.
+     */
+    fadeMs: z.number().int().min(0).max(2000).optional(),
+    /** A pixelate block's side in source pixels (2 to 256); absent is 1.8 % of the picture's height, at least 8. */
+    cell: z.number().min(2).max(256).optional(),
+    // R6 1 moving text
+    /** A part hideText or hidePrivate made: the hit it hides and how sure its place is. Absent on a hand-made part. */
+    hide: z
+        .object({
+            /** The op that made it. */
+            by: z.enum(["hideText", "hidePrivate"]),
+            /** The hit's id (findText, privateData). */
+            hit: z.string(),
+            /** The band a moving text may cross where it could not be followed, not the text's own place. */
+            uncertain: z.boolean().optional(),
+            /** Seconds it showed while the picture moved, and its places a second then (read or followed). */
+            movingSeconds: z.number().nonnegative().optional(),
+            keysPerSecond: z.number().nonnegative().optional(),
+            // R6 7: the request that made it, so info() says why it is there and unhide() can take it back.
+            request: z
+                .object({
+                    text: z.string().optional(),
+                    pattern: z.string().optional(),
+                    texts: z.array(z.string()).optional(),
+                    patterns: z.array(z.string()).optional(),
+                    unit: z.enum(HIDE_UNITS).optional(),
+                    kinds: z.array(z.string()).optional(),
+                    names: z.array(z.string()).optional(),
+                })
+                .optional(),
+        })
+        .optional(),
+    // R8 11
+    /** A spotlight's soft edge: the dim rises from none at the lit shape to full at this distance (a share of the picture's short side, 0 to 0.5); absent or 0 is a sharp edge. */
+    dimAround: z.number().min(0).max(0.5).optional(),
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
+
+// R5 5 redaction edges
+/**
+ * How the export closes small holes around the hiding parts (blur, pixelate, black; not spotlights): one that ends
+ * up to snapMs before a cut is drawn to the cut, one that starts up to snapMs after a cut is drawn from it, and two
+ * with a gap up to snapMs meet. 0 draws every part exactly as placed. The export also keeps a part on while a frame
+ * from its time stays on screen (a screen recording writes no frame while nothing moves), whatever snapMs says.
+ */
+export const redactionJoinsSchema = z.object({ snapMs: z.number().int().min(0).max(2000).default(250) });
+export const REDACTION_SNAP_MS = 250;
+
+// R5 3 export size
+export const exportSizeSchema = z.object({
+    width: z.number().int().min(16).max(8192).optional(),
+    height: z.number().int().min(16).max(8192).optional(),
+});
+
+/** `{ size }` when it names a side, else nothing (an empty size is "follow maxHeight"). */
+function exportSizeOf(size: z.infer<typeof exportSizeSchema> | undefined) {
+    return size && (size.width !== undefined || size.height !== undefined) ? { size } : {};
+}
 
 /**
  * Corrections to the cached transcript, kept in the edit so a new transcription does not lose them: the fixed text
@@ -227,7 +402,7 @@ export function replaceWordsInLines(
  */
 export const editMarkerSchema = z.object({
     id: z.string(),
-    atUs: z.number().int().nonnegative(),
+    atUs: wholeUs(z.number().int().nonnegative()),
     label: z.string().trim().min(1).max(80),
 });
 export type EditMarker = z.infer<typeof editMarkerSchema>;
@@ -238,11 +413,21 @@ export const TEXT_STYLES = ["plate", "plain"] as const;
  * A line of text over the picture for a time (a title, a step's name, a note), in the CANVAS: it stays where it is
  * through a zoom. `x`/`y` are its centre, 0...1 of the canvas from the top left; it fades in and out over 0.2 s.
  */
+// R5 10 multi-line texts
+/** A text's length limit; "\n" starts a new line, and a long line wraps at the block's width. */
+export const TEXT_MAX_CHARS = 500;
+export const TEXT_ALIGNS = ["left", "center", "right"] as const;
+/** The box a text wraps in: its width as a share of the canvas's width, and how its lines align. */
+export const textBlockSchema = z.object({
+    width: z.number().min(0.15).max(0.95).optional(),
+    align: z.enum(TEXT_ALIGNS).optional(),
+});
+
 export const textNoteSchema = z.object({
     id: z.string(),
-    startUs: z.number().int().nonnegative(),
-    endUs: z.number().int().positive(),
-    text: z.string().min(1).max(200),
+    startUs: wholeUs(z.number().int().nonnegative()),
+    endUs: wholeUs(z.number().int().positive()),
+    text: z.string().min(1).max(TEXT_MAX_CHARS),
     x: z.number().min(0).max(1).default(0.5),
     y: z.number().min(0).max(1).default(0.12),
     /** The text height, as a fraction of the canvas's short side. */
@@ -251,6 +436,12 @@ export const textNoteSchema = z.object({
     style: z.enum(TEXT_STYLES).default("plate"),
     /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
     lane: z.string().optional(),
+    // R4 6 animated texts
+    /** How it comes in (overlays.ts); absent is the 0.2 s fade. */
+    animate: textAnimateSchema.optional(),
+    // R5 10 multi-line texts
+    /** Where its lines wrap (width, 0.8 of the canvas) and how they align ("center"); absent is both defaults. */
+    block: textBlockSchema.optional(),
 });
 export type EditTextNote = z.infer<typeof textNoteSchema>;
 
@@ -266,8 +457,8 @@ export const SHAPE_APPEARS = ["draw", "fade", "none"] as const;
  */
 export const shapeSchema = z.object({
     id: z.string(),
-    startUs: z.number().int().nonnegative(),
-    endUs: z.number().int().positive(),
+    startUs: wholeUs(z.number().int().nonnegative()),
+    endUs: wholeUs(z.number().int().positive()),
     kind: z.enum(SHAPE_KINDS),
     x1: z.number().min(0).max(1),
     y1: z.number().min(0).max(1),
@@ -339,7 +530,7 @@ export const editProjectSchema = z.object({
         video: z.string(),
         cursor: z.string().optional(),
         recording: z.string().optional(),
-        durationUs: z.number().int().positive(),
+        durationUs: wholeUs(z.number().int().positive()),
         width: z.number().int().positive(),
         height: z.number().int().positive(),
     }),
@@ -354,6 +545,12 @@ export const editProjectSchema = z.object({
             music: musicSchema.optional(),
             /** Noise reduction of the sound on export (`denoise.ts`); absent is none. */
             denoise: denoiseSchema.optional(),
+            // R4 voiceover clips
+            /** Extra sound files played from source times (voiceovers.ts); absent is none. */
+            voiceovers: z.array(voiceoverSchema).optional(),
+            // R4 8 music ducking
+            /** How far the music drops under speech (voiceovers.ts); absent keeps `music.duck`. */
+            ducking: duckingSchema.optional(),
         })
         .default({ include: true, volume: 1, mutedTracks: [] }),
     export: z
@@ -367,6 +564,12 @@ export const editProjectSchema = z.object({
             subtitles: z.enum(["srt", "vtt"]).optional(),
             /** The recording's markers as chapters inside an MP4; absent is on. */
             chapters: z.boolean().optional(),
+            // R5 3 export size
+            /**
+             * The exported picture's exact pixels: one side (the other follows the canvas's shape) or both in that
+             * shape. It wins over maxHeight and the H.264 frame-rate budget; absent follows maxHeight.
+             */
+            size: exportSizeSchema.optional(),
         })
         .default({ codec: "h264", maxHeight: 0, output: "" }),
     clicks: clicksSchema.optional(),
@@ -390,15 +593,46 @@ export const editProjectSchema = z.object({
     camera: cameraBubbleSchema.optional(),
     /** Moments marked while editing, in source order; absent is none (the recording's own are in recording.json). */
     markers: z.array(editMarkerSchema).optional(),
+    /** Round 4 fx-render: transitions at the joins of two clips (fx.ts); absent is a hard cut everywhere. */
+    transitions: transitionsSchema.optional(),
+    /** Round 4 fx-render: magnifier lenses over source ranges (fx.ts); absent is none. */
+    lens: lensSchema.optional(),
+    /** Round 4 fx-render: the 3D tilt of the framed picture (fx.ts); absent is flat. */
+    tilt: tiltSchema.optional(),
+    // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups. Absent is off.
+    /** The private data hidden from the screen text scan (private-data.ts); absent is none. */
+    privacy: privacySchema.optional(),
+    /** The smooth cursor (cursor-smooth.ts); absent keeps the cursor's own smoothing. */
+    cursorSmooth: cursorSmoothSchema.optional(),
+    /** The speed badge over sped-up parts (waits.ts); absent is no badge. */
+    autoSpeed: autoSpeedSchema.optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
+    // R4 6 animated captions
+    /** How the captions animate (overlays.ts); absent shows each line at once. */
+    captionsStyle: captionsStyleSchema.optional(),
+    // R4 10 progress bar and chapter strip
+    /** A bar along the bottom showing the share played, divided at the markers (overlays.ts); absent is none. */
+    progress: progressSchema.optional(),
+    // R4 9 intro and end cards
+    /** A title card before the movie and an end card after it, in the export only (overlays.ts); absent is none. */
+    cards: cardsSchema.optional(),
+    // R5 5 redaction edges
+    /** How the hiding parts close small holes at cuts and between each other; absent is snapMs 250. */
+    redactionJoins: redactionJoinsSchema.optional(),
+    // R5 11 clamps visible in check()
+    /**
+     * What edit calls did that check() keeps naming: `clamped` holds the warnings of ops whose time lay past the end
+     * of the source (the newest 20). An undo takes a note back with its edit; a reset clears them.
+     */
+    notes: z.object({ clamped: z.array(z.string()).max(20).optional() }).optional(),
 });
 
 export type EditProject = z.infer<typeof editProjectSchema>;
 export type EditClip = EditProject["clips"][number];
 export type EditZoom = EditProject["zooms"][number];
 
-export function newId(prefix: "c" | "z" | "r" | "t" | "s" | "m"): string {
+export function newId(prefix: "c" | "z" | "r" | "t" | "s" | "m" | "v"): string {
     return recordingItemId(prefix);
 }
 
@@ -413,9 +647,25 @@ export function projectPathFor(video: string): string {
     return join(folder, `${basename(video, extname(video))}.edit.json`);
 }
 
+/**
+ * The id of a new edit's one clip. It is the same in every process (here and the editor's EditProject.whole), so a
+ * clip id that `tools recorder project` printed for an edit not saved yet still names that clip in the next command;
+ * a random one changed on every call ("clipSpeed refused: no clip c1…; clips: c2…"). Later clips get random ids.
+ */
+export const WHOLE_CLIP_ID = "c00000000";
+
 /** A project that keeps the whole movie, as a new edit starts. */
 export function wholeProject(source: EditProject["source"]): EditProject {
-    return editProjectSchema.parse({ source, clips: [{ id: newId("c"), fromUs: 0, toUs: source.durationUs }] });
+    return editProjectSchema.parse({ source, clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: source.durationUs }] });
+}
+
+// R6 10 effects sheet
+/**
+ * The edit with every effect kept and its clips replaced by the whole recording at speed 1, so an output second is
+ * the same source second: a sheet of source times drawn through the edit's zooms, hidden parts, texts and frame.
+ */
+export function effectsOnSourceTime(project: EditProject): EditProject {
+    return { ...project, clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: project.source.durationUs, speed: 1 }] };
 }
 
 /** Reads an edit file; refuses a newer version instead of reading it wrongly. */
@@ -479,6 +729,47 @@ export function outputTimeOf(project: EditProject, sourceUs: number): number | u
     return undefined;
 }
 
+/**
+ * Where each voiceover plays in the exported file, in microseconds from its first frame (the intro card's), in that
+ * order: a movie line from its output time after the intro, cut at the movie's end; a card line from its card's start
+ * plus `atUs`, running on to the end of the file at most. A line whose start is cut, or whose card is gone, is left out.
+ * The Swift export lays the clips at the same places (VoiceoverMix.exportPlacements).
+ */
+export function voiceoverExportSpans(project: EditProject): Array<{ id: string; startUs: number; playUs: number }> {
+    const leadUs = cardsLeadUs(project);
+    const movieUs = outputDurationUs(project);
+    const tailUs = Math.round((project.cards?.end?.seconds ?? 0) * 1_000_000);
+    const totalUs = leadUs + movieUs + tailUs;
+    const spans: Array<{ id: string; startUs: number; playUs: number }> = [];
+
+    for (const clip of project.audio.voiceovers ?? []) {
+        if (clip.card !== undefined) {
+            if (!project.cards?.[clip.card]) {
+                continue;
+            }
+
+            const startUs = (clip.card === "intro" ? 0 : leadUs + movieUs) + clip.atUs;
+            const playUs = Math.min(clip.durationUs, totalUs - startUs);
+
+            if (playUs > 0) {
+                spans.push({ id: clip.id, startUs, playUs });
+            }
+
+            continue;
+        }
+
+        const outUs = outputTimeOf(project, clip.atUs);
+
+        if (outUs === undefined || outUs >= movieUs) {
+            continue;
+        }
+
+        spans.push({ id: clip.id, startUs: leadUs + outUs, playUs: Math.min(clip.durationUs, movieUs - outUs) });
+    }
+
+    return spans.sort((a, b) => a.startUs - b.startUs);
+}
+
 function checkRange(project: EditProject, fromUs: number, toUs: number): void {
     const seconds = (us: number) => Math.round(us / 1000) / 1000;
 
@@ -533,6 +824,258 @@ export function keepRange(project: EditProject, fromUs: number, toUs: number): E
     }
 
     return next;
+}
+
+// R6 5 export time
+/** A moment of the export file as output microseconds (what plays, after the intro card); undefined inside a card. */
+export function exportToOutputUs(project: EditProject, exportUs: number): number | undefined {
+    const outUs = exportUs - cardsLeadUs(project);
+    return outUs >= 0 && outUs <= outputDurationUs(project) ? outUs : undefined;
+}
+
+// R7 3 verifyHidden fixes
+/**
+ * Where a text verifyHidden read on the export sits in the SOURCE picture (fractions of the source movie's picture) from
+ * `fromUs` to `toUs` (SOURCE microseconds): the source's own tracked hits of the same kind that show then (the same
+ * masked value first), as one rectangle over their places in that time. With none, the export's box itself when the
+ * export shows the source picture as it is (no frame, no zoom then); else null.
+ */
+export function leakSourceBox(
+    project: EditProject,
+    options: {
+        fromUs: number;
+        toUs: number;
+        label: string;
+        masked: string;
+        /** The leak's box on the export frame (fractions of the export's picture). */
+        canvasBox: { x: number; y: number; width: number; height: number };
+        sourceHits: readonly PrivateHit[];
+    }
+): { x: number; y: number; width: number; height: number } | null {
+    const slackUs = 300_000;
+    const showing = options.sourceHits.filter(
+        (hit) => hit.fromUs <= options.toUs + slackUs && hit.toUs >= options.fromUs - slackUs
+    );
+    // The same value first (a few characters of it at an edge carry its mask too), else any of the same kind.
+    const same = showing.filter((hit) => hit.masked === options.masked);
+    const chosen = same.length > 0 ? same : showing.filter((hit) => hit.label === options.label);
+
+    if (chosen.length > 0) {
+        const boxes = chosen.flatMap((hit) => {
+            const keys = hit.keys.filter(
+                (key) => key.atUs >= options.fromUs - slackUs && key.atUs <= options.toUs + slackUs
+            );
+            return keys.length > 0 ? keys : [hit.box];
+        });
+        const x = Math.min(...boxes.map((box) => box.x));
+        const y = Math.min(...boxes.map((box) => box.y));
+        const right = Math.max(...boxes.map((box) => box.x + box.width));
+        const bottom = Math.max(...boxes.map((box) => box.y + box.height));
+        return { x, y, width: right - x, height: bottom - y };
+    }
+
+    const zoomed = project.zooms.some((zoom) => zoom.startUs < options.toUs && zoom.endUs > options.fromUs);
+    return !project.frame && !zoomed ? { ...options.canvasBox } : null;
+}
+
+/**
+ * R8 4: a leak's place in the SOURCE picture at each export frame it was read (`keys`: EXPORT microseconds and boxes on
+ * the export frame): the export's own box where the export shows the source picture as it is (no frame, no zoom then),
+ * else the place then of the source's own hit of the same value (the same masked value first, else the same label)
+ * nearest to it. A frame inside a card, or with no such hit, has no key. Source seconds and fractions, in time order.
+ */
+export function leakSourceKeys(
+    project: EditProject,
+    options: {
+        keys: ReadonlyArray<{ atUs: number; x: number; y: number; width: number; height: number }>;
+        label: string;
+        masked: string;
+        sourceHits: readonly PrivateHit[];
+    }
+): Array<{ at: number; x: number; y: number; width: number; height: number }> {
+    const slackUs = 300_000;
+    const centre = (box: { x: number; y: number; width: number; height: number }) => ({
+        x: box.x + box.width / 2,
+        y: box.y + box.height / 2,
+    });
+    return options.keys.flatMap((key) => {
+        const outUs = exportToOutputUs(project, key.atUs);
+
+        if (outUs === undefined) {
+            return [];
+        }
+
+        const sourceUs = sourceTimeOf(project, outUs);
+        const at = Math.round(sourceUs / 1000) / 1000;
+        const { atUs: _atUs, ...canvas } = key;
+        const zoomed = project.zooms.some((zoom) => zoom.startUs <= sourceUs && zoom.endUs > sourceUs);
+
+        if (!project.frame && !zoomed) {
+            return [{ at, ...canvas }];
+        }
+
+        const showing = options.sourceHits.filter(
+            (hit) => hit.fromUs <= sourceUs + slackUs && hit.toUs >= sourceUs - slackUs
+        );
+        const same = showing.filter((hit) => hit.masked === options.masked);
+        const chosen = same.length > 0 ? same : showing.filter((hit) => hit.label === options.label);
+        const read = centre(canvas);
+        const nearest = chosen
+            .map((hit) => redactionBoxAt({ ...hit.box, track: hit.keys }, sourceUs))
+            .sort(
+                (a, b) =>
+                    Math.hypot(centre(a).x - read.x, centre(a).y - read.y) -
+                    Math.hypot(centre(b).x - read.x, centre(b).y - read.y)
+            )[0];
+        return nearest ? [{ at, ...nearest }] : [];
+    });
+}
+
+/**
+ * R8 4: the redact op that covers each leak in SOURCE time and space, one per leak: `sourceKeys` (its place in the source
+ * picture at each frame it was read) as the op's track, each with half a line of margin (kept inside the picture), from
+ * 0.1 s before its first read to 0.1 s after its last; one key is a still box. A leak with no source time (inside a
+ * card) or no place in the source gets no op: verifyHidden notes it instead, never a box over the whole frame.
+ */
+export function leakFixOps(
+    leaks: ReadonlyArray<{
+        label: string;
+        /** Source seconds. */
+        source: { at: number; until: number } | null;
+        /** Source seconds and source fractions, one per frame it was read. */
+        sourceKeys?: ReadonlyArray<{ at: number; x: number; y: number; width: number; height: number }>;
+        /** Source fractions. */
+        sourceBox: { x: number; y: number; width: number; height: number } | null;
+    }>
+): EditOp[] {
+    const round = (value: number) => Math.round(value * 1000) / 1000;
+    const margin = (box: { x: number; y: number; width: number; height: number }) => {
+        const pad = box.height / 3;
+        const x = Math.max(0, box.x - pad);
+        const y = Math.max(0, box.y - pad);
+        return {
+            x: round(x),
+            y: round(y),
+            width: round(Math.max(0.005, Math.min(1, box.x + box.width + pad) - x)),
+            height: round(Math.max(0.005, Math.min(1, box.y + box.height + pad) - y)),
+        };
+    };
+    return leaks.flatMap((leak) => {
+        const keys =
+            leak.sourceKeys ?? (leak.source && leak.sourceBox ? [{ at: leak.source.at, ...leak.sourceBox }] : []);
+
+        if (!leak.source || keys.length === 0) {
+            return [];
+        }
+
+        const first = keys[0];
+        const last = keys[keys.length - 1];
+        const from = round(Math.max(0, Math.min(first.at, leak.source.at) - 0.1));
+        const to = round(Math.max(first.at + 0.05, last.at, leak.source.until) + 0.1);
+        const placed = keys.map((key) => ({ at: round(key.at), ...margin(key) }));
+        // A redact op holds its edge keys; a moving leak keeps moving through the margins, so its edges get keys
+        // along the speed of the two nearest reads.
+        const along = (a: (typeof placed)[number], b: (typeof placed)[number], at: number) => {
+            const edge = at < a.at ? a : b;
+            const f = b.at > a.at ? (at - a.at) / (b.at - a.at) : 0;
+            const y = Math.min(1 - edge.height, Math.max(0, a.y + (b.y - a.y) * f));
+            const x = Math.min(1 - edge.width, Math.max(0, a.x + (b.x - a.x) * f));
+            return { ...edge, at, x: round(x), y: round(y) };
+        };
+        const track =
+            placed.length > 1
+                ? [
+                      ...(from < placed[0].at ? [along(placed[0], placed[1], from)] : []),
+                      ...placed,
+                      ...(to > placed[placed.length - 1].at
+                          ? [along(placed[placed.length - 2], placed[placed.length - 1], to)]
+                          : []),
+                  ]
+                : undefined;
+        return [
+            editOpSchema.parse({
+                op: "redact",
+                from,
+                to,
+                rect: margin(first),
+                label: `${leak.label} (verifyHidden)`.slice(0, 60),
+                ...(track && new Set(track.map((key) => key.at)).size === track.length ? { track } : {}),
+            }),
+        ];
+    });
+}
+
+// R7 4 verifyHidden sampling
+/**
+ * The stretches of the export (EXPORT microseconds, the intro card included) where verifyHidden reads every frame:
+ * `aroundUs` (0.2 s) on each side of every cut, of every transition (its whole span), of the start and end of every
+ * zoom and hidden part that plays, and of every scene change in `sceneUs` (SOURCE microseconds). Sorted and merged.
+ */
+export function boundaryWindows(
+    project: EditProject,
+    options: { aroundUs?: number; sceneUs?: readonly number[] } = {}
+): Array<[number, number]> {
+    const aroundUs = options.aroundUs ?? 200_000;
+    const leadUs = cardsLeadUs(project);
+    const endUs = leadUs + outputDurationUs(project);
+    const windows: Array<[number, number]> = [];
+    const add = (fromOutUs: number, toOutUs: number) => {
+        const from = Math.max(0, leadUs + fromOutUs - aroundUs);
+        const to = Math.min(endUs, leadUs + toOutUs + aroundUs);
+
+        if (to > from) {
+            windows.push([from, to]);
+        }
+    };
+    const transitions = transitionsSchema.parse(project.transitions ?? {});
+    let at = 0;
+    let previous: EditProject["clips"][number] | undefined;
+
+    for (const clip of project.clips) {
+        const length = clipOutputUs(clip);
+
+        if (length <= 0) {
+            continue;
+        }
+
+        if (previous && previous.toUs !== clip.fromUs) {
+            const chosen = transitions.joins?.[clip.id] ?? transitions.default;
+            const halfUs = chosen.kind === "none" ? 0 : chosen.ms * 500;
+            add(at - halfUs, at + halfUs);
+        }
+
+        at += length;
+        previous = clip;
+    }
+
+    const sourcePoints = [
+        ...project.zooms.flatMap((zoom) => [zoom.startUs, zoom.endUs]),
+        ...(project.redactions ?? []).flatMap((part) => [part.startUs, part.endUs]),
+        ...(options.sceneUs ?? []),
+    ];
+
+    for (const sourceUs of sourcePoints) {
+        const outUs = outputTimeOf(project, sourceUs);
+
+        if (outUs !== undefined) {
+            add(outUs, outUs);
+        }
+    }
+
+    windows.sort((a, b) => a[0] - b[0]);
+    const merged: Array<[number, number]> = [];
+
+    for (const window of windows) {
+        const last = merged.at(-1);
+
+        if (last && window[0] <= last[1]) {
+            last[1] = Math.max(last[1], window[1]);
+        } else {
+            merged.push([...window]);
+        }
+    }
+
+    return merged;
 }
 
 /** The source time that plays at an output time; the end of the edit maps to the last clip's end. */
@@ -592,6 +1135,9 @@ export interface ZoomOptions {
     follow?: boolean;
     easeInMs?: number;
     easeOutMs?: number;
+    // R5 4 canvas zoom
+    /** "canvas" zooms the whole framed export; absent zooms inside the picture. */
+    target?: "picture" | "canvas";
 }
 
 /** Adds a zoom over a source range; one that overlaps another zoom is refused with the zoom it meets. */
@@ -602,19 +1148,22 @@ export interface ZoomOptions {
 export function placeZoom(
     project: EditProject,
     fromUs: number,
-    toUs: number
+    toUs: number,
+    // R5 4 canvas zoom: a zoom only moves past zooms of its own target.
+    target: "picture" | "canvas" = "picture"
 ): { startUs: number; endUs: number } | undefined {
     const length = Math.max(toUs - fromUs, 500_000);
     let startUs = Math.max(0, fromUs);
+    const same = project.zooms.filter((zoom) => (zoom.target ?? "picture") === target);
 
-    for (const zoom of [...project.zooms].sort((a, b) => a.startUs - b.startUs)) {
+    for (const zoom of [...same].sort((a, b) => a.startUs - b.startUs)) {
         if (startUs < zoom.endUs && startUs + length > zoom.startUs) {
             startUs = zoom.endUs;
         }
     }
 
     const endUs = Math.min(project.source.durationUs, startUs + length);
-    const meets = project.zooms.some((zoom) => startUs < zoom.endUs && endUs > zoom.startUs);
+    const meets = same.some((zoom) => startUs < zoom.endUs && endUs > zoom.startUs);
     return endUs - startUs >= MINIMUM_ZOOM_US && !meets ? { startUs, endUs } : undefined;
 }
 
@@ -625,7 +1174,7 @@ export function addZoom(
     options: ZoomOptions = {}
 ): { project: EditProject; zoom: EditZoom } {
     checkRange(project, fromUs, toUs);
-    const span = placeZoom(project, fromUs, toUs);
+    const span = placeZoom(project, fromUs, toUs, options.target);
 
     if (!span) {
         throw new RangeError("no room for a zoom here; zooms cannot overlap");
@@ -642,6 +1191,7 @@ export function addZoom(
         focusY: options.focus?.y,
         easeInMs: options.easeInMs,
         easeOutMs: options.easeOutMs,
+        ...(options.target === "canvas" ? { target: "canvas" } : {}),
     });
     const zooms = [...project.zooms, zoom].sort((a, b) => a.startUs - b.startUs);
     return { project: { ...project, zooms }, zoom };
@@ -659,6 +1209,11 @@ export function addRedaction(
         follow?: boolean;
         dim?: number;
         cutout?: EditRedaction["cutout"];
+        // R5 5 redaction edges
+        fadeMs?: number;
+        cell?: number;
+        // R8 11
+        dimAround?: number;
     }
 ): EditProject {
     checkRange(project, options.fromUs, options.toUs);
@@ -673,10 +1228,11 @@ export function addRedaction(
         );
     }
 
+    // R7 1: the one place a hidden part's times are written; the motion places parts on thirds of a millisecond.
     const redaction: EditRedaction = {
         id: newId("r"),
-        startUs: options.fromUs,
-        endUs: Math.min(project.source.durationUs, options.toUs),
+        startUs: Math.round(options.fromUs),
+        endUs: Math.round(Math.min(project.source.durationUs, options.toUs)),
         x,
         y,
         width,
@@ -688,6 +1244,9 @@ export function addRedaction(
         ...(options.style === "spotlight" && options.cutout && options.cutout !== "rounded"
             ? { cutout: options.cutout }
             : {}),
+        ...(options.style === "spotlight" && options.fadeMs !== undefined ? { fadeMs: options.fadeMs } : {}),
+        ...(options.style === "pixelate" && options.cell !== undefined ? { cell: options.cell } : {}),
+        ...(options.style === "spotlight" && options.dimAround ? { dimAround: options.dimAround } : {}),
     };
     return { ...project, redactions: [...(project.redactions ?? []), redaction] };
 }
@@ -972,8 +1531,14 @@ export const editOpSchema = z.discriminatedUnion("op", [
             scale: z.number().min(1).max(4).optional(),
             focus: focusSchema.optional(),
             follow: z.boolean().optional(),
+            /** How long it takes to grow and to shrink back (450 ms each when absent); a long ease in is a slow push. */
+            easeInMs: z.number().int().nonnegative().optional(),
+            easeOutMs: z.number().int().nonnegative().optional(),
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
+            // R5 4 canvas zoom
+            /** "canvas" zooms the whole framed export (focus is 0...1 of the canvas); absent zooms the picture. */
+            target: z.enum(["picture", "canvas"]).optional(),
         })
         .strict(),
     z.object({ op: z.literal("unzoom"), id: z.string() }).strict(),
@@ -989,11 +1554,33 @@ export const editOpSchema = z.discriminatedUnion("op", [
             label: z.string().max(60).optional(),
             /** Moves with the drawn cursor, centred on it; rect gives its size. */
             follow: z.boolean().optional(),
-            /** Style "spotlight" only: the dim around it (0.7) and its lit shape ("rounded"). */
+            /** Style "spotlight" only: the dim around it (0.5) and its lit shape ("rounded"). */
             dim: z.number().min(0.2).max(0.95).optional(),
             cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
+            // R5 5 redaction edges
+            /** Style "pixelate" only: a block's side in source pixels (2 to 256); absent is 1.8 % of the height. */
+            cell: z.number().min(2).max(256).optional(),
+            // R8 4 fixOps: keyframes
+            /**
+             * Its place at source times (`at`, seconds), in order: between two keys it moves straight from one to the
+             * next, before the first and after the last it holds (verifyHidden's fixOps follow a leak frame by frame).
+             */
+            track: z
+                .array(
+                    z
+                        .object({
+                            at: sourceTimeSchema,
+                            x: z.number().min(0).max(1),
+                            y: z.number().min(0).max(1),
+                            width: z.number().positive().max(1),
+                            height: z.number().positive().max(1),
+                        })
+                        .strict()
+                )
+                .min(2)
+                .optional(),
         })
         .strict(),
     z
@@ -1005,12 +1592,18 @@ export const editOpSchema = z.discriminatedUnion("op", [
             rect: rectSchema,
             label: z.string().max(60).optional(),
             follow: z.boolean().optional(),
-            /** How dark the rest gets, 0.2 to 0.95 black (0.7). */
+            /** How dark the rest gets, 0.2 to 0.95 black (0.5). */
             dim: z.number().min(0.2).max(0.95).optional(),
             /** The lit shape: "rounded" (default), "rect" or "circle". */
             cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
+            // R5 5 redaction edges
+            /** The dim's fade in and out in ms (200; at most a third of its length); 0 is a hard cut. */
+            fadeMs: z.number().int().min(0).max(2000).optional(),
+            // R8 11
+            /** A spotlight's soft edge: the dim rises from none at the lit shape to full at this distance (a share of the picture's short side, 0 to 0.5); absent or 0 is a sharp edge. */
+            dimAround: z.number().min(0).max(0.5).optional(),
         })
         .strict(),
     z.object({ op: z.literal("unredact"), id: z.string() }).strict(),
@@ -1019,7 +1612,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             op: z.literal("text"),
             from: sourceTimeSchema,
             to: sourceTimeSchema,
-            text: z.string().trim().min(1).max(200),
+            /** "\n" starts a new line; a long line wraps at block.width. */
+            text: z.string().trim().min(1).max(TEXT_MAX_CHARS),
             /** The centre, 0...1 of the canvas from the top left; 0.5, 0.12 (top middle) by default. */
             x: z.number().min(0).max(1).optional(),
             y: z.number().min(0).max(1).optional(),
@@ -1027,6 +1621,15 @@ export const editOpSchema = z.discriminatedUnion("op", [
             style: z.enum(TEXT_STYLES).optional(),
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
+            // R4 6 animated texts
+            /** How it comes in: "fade" (default), "typewriter" or "slideUp", over ms (600). */
+            animate: z
+                .object({ kind: z.enum(TEXT_ANIMATIONS), ms: z.number().int().min(100).max(5000).optional() })
+                .strict()
+                .optional(),
+            // R5 10 multi-line texts
+            /** Where its lines wrap (width 0.15 to 0.95 of the canvas, 0.8) and how they align ("center"). */
+            block: textBlockSchema.strict().optional(),
         })
         .strict(),
     z.object({ op: z.literal("untext"), id: z.string() }).strict(),
@@ -1142,6 +1745,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             subtitles: z.enum(["srt", "vtt", "none"]).optional(),
             /** The markers as chapters inside an MP4 (on unless set to false). */
             chapters: z.boolean().optional(),
+            // R5 3 export size
+            /** The picture's exact pixels, one side or both in the canvas's shape; {} goes back to maxHeight. */
+            size: exportSizeSchema.optional(),
         })
         .strict(),
     z.object({ op: z.literal("reset") }).strict(),
@@ -1208,6 +1814,22 @@ export const editOpSchema = z.discriminatedUnion("op", [
             padding: z.number().min(0).max(0.3).optional(),
             cornerRadius: z.number().min(0).max(0.1).optional(),
             shadow: z.boolean().optional(),
+            // R5 4 frame layouts
+            /** Where the picture sits ("center", "left", "right", "top", "bottom") and its size (0.5 to 3 times fitted). */
+            layout: z
+                .object({
+                    align: z.enum(FRAME_ALIGNS).optional(),
+                    scale: z.number().min(0.5).max(3).optional(),
+                    // R7 9 phone layouts
+                    focus: z
+                        .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+                        .strict()
+                        .optional(),
+                })
+                .strict()
+                .optional(),
+            /** A ready frame for a phone recording ("phone-left", "phone-right", "phone-portrait"); fields here win. */
+            preset: z.enum(FRAME_PRESETS).optional(),
         })
         .strict(),
     cameraOpSchema,
@@ -1338,6 +1960,14 @@ export const editOpSchema = z.discriminatedUnion("op", [
             follow: z.boolean().optional(),
             dim: z.number().optional(),
             cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
+            // R5 5 redaction edges
+            /** A spotlight's fade in ms (0 is a hard cut); -1 goes back to the default 200. */
+            fadeMs: z.number().int().min(-1).max(2000).optional(),
+            /** A pixelate block's side in source pixels (2 to 256); 0 goes back to the default. */
+            cell: z.number().min(0).max(256).optional(),
+            // R8 11
+            /** A spotlight's soft edge (0 to 0.5 of the picture's short side); 0 makes it sharp again. */
+            dimAround: z.number().min(0).max(0.5).optional(),
         })
         .strict(),
     /** Changes a text that exists: its words, its centre (0...1 of the canvas), its size and its style. */
@@ -1345,11 +1975,19 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .object({
             op: z.literal("setText"),
             id: z.string(),
-            text: z.string().max(200).optional(),
+            // R5 10: the length is checked when it is set, with a message, instead of cut without a word.
+            text: z.string().optional(),
             x: z.number().optional(),
             y: z.number().optional(),
             size: z.number().optional(),
             style: z.enum(TEXT_STYLES).optional(),
+            // R4 6 animated texts
+            animate: z
+                .object({ kind: z.enum(TEXT_ANIMATIONS), ms: z.number().int().min(100).max(5000).optional() })
+                .strict()
+                .optional(),
+            // R5 10 multi-line texts: merged into the text's block; {} keeps it.
+            block: textBlockSchema.strict().optional(),
         })
         .strict(),
     /** Changes a shape that exists: its kind, its two points (held inside the picture), colour, width, appearance. */
@@ -1379,6 +2017,83 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("removeClickCircles") }).strict(),
     /** Names a lane; "" gives it its default title back. */
     z.object({ op: z.literal("renameLane"), id: z.string(), name: z.string().max(200) }).strict(),
+    // R4 voiceover clips
+    /** Adds a sound file that plays from source time `at`; with `id` it changes that clip instead. */
+    z
+        .object({
+            op: z.literal("voiceover"),
+            id: z.string().optional(),
+            at: sourceTimeSchema.optional(),
+            /** "intro" or "end": it plays over that card, and `at` counts from the card's first frame. */
+            card: z.enum(VOICEOVER_CARDS).optional(),
+            file: z.string().min(1).optional(),
+            volume: z.number().min(0).max(2).optional(),
+            label: z.string().max(200).optional(),
+        })
+        .strict(),
+    z.object({ op: z.literal("unvoiceover"), id: z.string() }).strict(),
+    // R4 8 music ducking
+    z
+        .object({
+            op: z.literal("ducking"),
+            db: z.number().min(0).max(40).optional(),
+            fadeMs: z.number().int().min(0).max(5000).optional(),
+            transcript: z.boolean().optional(),
+            voiceovers: z.boolean().optional(),
+            /** false removes it: the music's older `duck` share applies again. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
+    // R4 6 animated captions
+    z
+        .object({
+            op: z.literal("captionsStyle"),
+            kind: z.enum(CAPTION_KINDS).optional(),
+            color: hexColor.optional(),
+            /** false removes it: each line shows at once again. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
+    // R4 10 progress bar and chapter strip
+    z
+        .object({
+            op: z.literal("progress"),
+            show: z.boolean().optional(),
+            color: hexColor.optional(),
+            height: z.number().min(0.002).max(0.03).optional(),
+            chapters: z.boolean().optional(),
+            chapterMs: z.number().int().min(500).max(10_000).optional(),
+            // R6 8 chapter label place
+            chapterPlace: z.enum(CHAPTER_PLACES).optional(),
+            /** false removes it. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
+    // R4 9 intro and end cards
+    z
+        .object({
+            op: z.literal("introCard"),
+            title: z.string().trim().min(1).max(120).optional(),
+            subtitle: z.string().max(200).optional(),
+            /** A picture file; "" removes the logo. */
+            logo: z.string().optional(),
+            date: z.string().max(60).optional(),
+            seconds: z.number().min(0.5).max(15).optional(),
+            /** false removes the card. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
+    z
+        .object({
+            op: z.literal("endCard"),
+            text: z.string().trim().min(1).max(200).optional(),
+            link: z.string().max(300).optional(),
+            qr: z.boolean().optional(),
+            seconds: z.number().min(0.5).max(15).optional(),
+            /** false removes the card. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
     /**
      * What the editor's range popover does to a range dragged on the frames lane, over OUTPUT times (what plays, as
      * the ruler shows them): cut it, play it at `factor` (2), zoom over it (`scale`), hide or spotlight the middle of
@@ -1394,6 +2109,104 @@ export const editOpSchema = z.discriminatedUnion("op", [
             scale: z.number().min(1).max(4).optional(),
             text: z.string().trim().min(1).max(200).optional(),
             lane: z.string().optional(),
+        })
+        .strict(),
+    // Round 4 fx-render: transition, lens, setLens, unlens, tilt (fx.ts).
+    ...fxOpSchemas,
+    // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups.
+    /**
+     * Hides the private data the screen text holds (emails, tokens and keys, phone numbers, IBANs, card numbers):
+     * one hidden part per hit for as long as it shows. `ids` from privateData() picks hits (absent: all), `kinds`
+     * picks kinds; a hit hidden before is skipped. The CLI and the REPL read the screen text (Vision OCR, local).
+     */
+    z
+        .object({
+            op: z.literal("hidePrivate"),
+            ids: z.array(z.string()).optional(),
+            kinds: z.array(z.enum([...PRIVATE_KINDS, "name"])).optional(),
+            style: z.enum(PRIVATE_STYLES).optional(),
+            /** People or company names to hide as well, matched without case. */
+            names: z.array(z.string().trim().min(2).max(120)).max(50).optional(),
+            /** Areas left visible and never searched: a toast, a tab bar over the content. */
+            exclude: z.array(boxSchema).max(20).optional(),
+            /** Leaves visible what stays still while the content under it scrolls (found from the picture). */
+            excludeFixed: z.boolean().optional(),
+        })
+        .strict(),
+    /**
+     * Hides every place a text is on the screen (OCR, local): `text` (without case) or `pattern` (a regular
+     * expression), between `from` and `to` (source seconds; absent: all), each as a hidden part that follows the text
+     * while it scrolls and starts and ends when it shows. exclude and excludeFixed as for hidePrivate.
+     */
+    z
+        .object({
+            op: z.literal("hideText"),
+            text: z.string().trim().min(1).max(200).optional(),
+            pattern: z.string().min(1).max(200).optional(),
+            from: sourceTimeSchema.optional(),
+            to: sourceTimeSchema.optional(),
+            style: z.enum(PRIVATE_STYLES).optional(),
+            exclude: z.array(boxSchema).max(20).optional(),
+            excludeFixed: z.boolean().optional(),
+            label: z.string().max(60).optional(),
+            // R6 2: "line" hides the whole OCR line that holds a match (a name and the number beside it); absent is "match".
+            unit: z.enum(HIDE_UNITS).optional(),
+            // R6 3: several texts and patterns in one scan of the screen.
+            texts: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+            patterns: z.array(z.string().min(1).max(200)).max(50).optional(),
+        })
+        .strict(),
+    /** The smooth cursor: strength (0.6), jitterPx (3), idleFadeSeconds (2); enabled: false turns it off. */
+    z
+        .object({
+            op: z.literal("cursorSmooth"),
+            enabled: z.boolean().optional(),
+            strength: z.number().min(0).max(1).optional(),
+            jitterPx: z.number().min(0).max(20).optional(),
+            idleFadeSeconds: z.number().min(0).max(30).optional(),
+        })
+        .strict(),
+    /**
+     * Speeds up the typing and waiting stretches waits() lists (only a small part of the picture changes, or none,
+     * for minSeconds): each at its proposed 4x to 8x, or at `speed`; `ids` picks stretches (absent: all). Turns the
+     * speed badge on.
+     */
+    z
+        .object({
+            op: z.literal("speedUpWaits"),
+            ids: z.array(z.string()).optional(),
+            minSeconds: z.number().min(1).max(600).optional(),
+            maxArea: z.number().min(0).max(0.5).optional(),
+            speed: z.number().min(1.5).max(16).optional(),
+        })
+        .strict(),
+    /** The "⏩ 6x" badge over sped-up parts: badge on or off, position (top-right). */
+    z
+        .object({
+            op: z.literal("autoSpeed"),
+            badge: z.boolean().optional(),
+            position: z.enum(SPEED_BADGE_POSITIONS).optional(),
+        })
+        .strict(),
+    // R5 5 redaction edges
+    /**
+     * How the export closes small holes around the hiding parts: snapMs (250) draws a part that ends that close before
+     * a cut up to the cut, one that starts that close after a cut from it, and two parts with a gap that short meet.
+     * 0 draws every part exactly as placed.
+     */
+    z.object({ op: z.literal("redactionJoins"), snapMs: z.number().int().min(0).max(2000) }).strict(),
+    // R6 6 unhide
+    /**
+     * Takes back what hideText or hidePrivate hid, and forgets it, so the same hide runs again: the parts a request
+     * with `text` or `pattern` (or `kinds` of private data) made, or `ids` (part ids or hit ids), or `all`.
+     */
+    z
+        .object({
+            op: z.literal("unhide"),
+            text: z.string().trim().min(1).max(200).optional(),
+            pattern: z.string().min(1).max(200).optional(),
+            ids: z.array(z.string()).min(1).max(500).optional(),
+            all: z.boolean().optional(),
         })
         .strict(),
 ]);
@@ -1454,10 +2267,35 @@ export interface OpFacts {
     fillerLists?: FillerLists;
     /** The movie's integrated loudness at volume 1; null when it has no unmuted audio. */
     loudnessLufs?: number | null;
+    /** The source movie's audio tracks (`denoise`); absent when nobody counted them. */
+    audioTracks?: number;
+    // R4 voiceover clips
+    /** The length of a `voiceover` op's file, measured with ffprobe. */
+    voiceoverDurationUs?: number;
+    // fx B (round 4)
+    /** The private data on the screen (`hidePrivate`), from the screen text scan. */
+    privateHits?: readonly PrivateHit[];
+    /** The places of a text on the screen (`hideText`), tracked over time. */
+    textHits?: readonly PrivateHit[];
+    /** The typing and waiting stretches (`speedUpWaits`), from the picture's change steps. */
+    waits?: readonly WaitStretch[];
 }
 
 /** A `zoom` op whose zoom went past a zoom it met (`placeZoom`), as a sentence a caller can return. */
 export function opPlacementWarnings(op: EditOp, before: EditProject, after: EditProject): string[] {
+    // R6 1: a hide that could not follow a moving text says where, so its ok is not a guess.
+    if (op.op === "hideText" || op.op === "hidePrivate") {
+        return hidingOf(before, after).uncertain.map(
+            (stretch) =>
+                `${op.op}: a moving text could not be followed from ${stretch.from} to ${stretch.to} s; the band it may cross is hidden there (uncertain in the result and in check())`
+        );
+    }
+
+    // R7 6
+    if (op.op === "unhide" && op.all && !(before.redactions ?? []).some((part) => part.hide)) {
+        return ["unhide: nothing hidden (no part was made by hideText or hidePrivate)"];
+    }
+
     if (op.op !== "zoom") {
         return [];
     }
@@ -1615,6 +2453,24 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
     throw new Error(`no zoom, hidden part, text, shape or camera part ${op.id}; ids: ${ids.join(", ") || "none"}`);
 }
 
+/** The start of the transcript line spoken at `atUs` (source time); a time between lines is refused. */
+function lineStartUs(segments: readonly TranscriptSegment[], atUs: number): number {
+    const seconds = atUs / 1_000_000;
+    const line = segments.find((segment) => segment.start <= seconds + 0.0005 && seconds < segment.end);
+
+    if (!line) {
+        const near = segments
+            .map((segment) => segment.start)
+            .sort((a, b) => Math.abs(a - seconds) - Math.abs(b - seconds))
+            .slice(0, 3);
+        throw new Error(
+            `no line is spoken at ${seconds} s, nothing was saved; the nearest lines start at ${near.join(", ")} s`
+        );
+    }
+
+    return Math.round(line.start * 1_000_000);
+}
+
 export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {
     facts.generatedIds ??= [];
     const next = withItemIds(facts.generatedIds, () => applyOpItself(project, op, facts));
@@ -1683,6 +2539,47 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             return removeClickCircles(project, readCursorTrack(project.source.cursor));
         case "renameLane":
             return renameLane(project, op.id, op.name);
+        // R4 voiceover clips
+        case "voiceover": {
+            const { op: _op, at, ...rest } = op;
+            return applyVoiceover(project, { ...rest, ...(at === undefined ? {} : { atUs: timeToUs(at) }) }, facts);
+        }
+        case "unvoiceover":
+            return removeVoiceover(project, op.id);
+        // R4 8 music ducking
+        case "ducking": {
+            const { op: _op, ...change } = op;
+            return applyDucking(project, change);
+        }
+        // R4 6 animated captions
+        case "captionsStyle": {
+            const { op: _op, ...change } = op;
+            return applyCaptionsStyle(project, change);
+        }
+        // R4 10 progress bar and chapter strip
+        case "progress": {
+            const { op: _op, ...change } = op;
+            return applyProgress(project, change);
+        }
+        // R4 9 intro and end cards
+        case "introCard":
+        case "endCard": {
+            const { op: kind, ...change } = op;
+            return applyCard(project, kind === "introCard" ? "intro" : "end", change, { exists: existsSync, resolve });
+        }
+        // fx B (round 4)
+        case "hidePrivate":
+            return hidePrivate(project, op, facts.privateHits);
+        case "hideText":
+            return hideText(project, op, facts.textHits);
+        case "cursorSmooth":
+            return smoothCursor(project, op);
+        case "speedUpWaits":
+            return speedUpWaits(project, op, facts.waits);
+        case "autoSpeed": {
+            const { op: _op, ...change } = op;
+            return { ...project, autoSpeed: autoSpeedSchema.parse({ ...project.autoSpeed, ...change }) };
+        }
         case "removeIdle": {
             if (!facts.idleUs) {
                 throw new Error("removeIdle needs the movie's idle stretches; run it through editProject or the CLI");
@@ -1724,18 +2621,44 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 scale: op.scale,
                 focus: op.focus,
                 follow: op.follow,
+                easeInMs: op.easeInMs,
+                easeOutMs: op.easeOutMs,
+                target: op.target,
             }).project;
         case "unzoom":
             return removeZoom(project, op.id);
-        case "redact":
-            return addRedaction(project, {
+        case "redact": {
+            const added = addRedaction(project, {
                 fromUs: timeToUs(op.from),
                 toUs: timeToUs(op.to),
                 rect: op.rect,
                 style: op.style ?? "blur",
                 label: op.label,
                 follow: op.follow,
+                cell: op.cell,
             });
+            const part = added.redactions?.at(-1);
+
+            // R8 4: a part with keys follows them, as a hide's part does.
+            if (!op.track || !part) {
+                return added;
+            }
+
+            const keys = op.track
+                .map(({ at, ...box }) => ({ atUs: timeToUs(at), ...box }))
+                .sort((a, b) => a.atUs - b.atUs);
+            // The op holds the first place before the first key and the last after the last one. Both renderers keep
+            // the speed of the two edge keys beyond them (a hide's keys want that), so the holds are written as keys
+            // at the part's own edges; without them a box over a scroll that came to rest slid off its text.
+            const first = keys[0];
+            const last = keys[keys.length - 1];
+            const track = [
+                ...(first.atUs > part.startUs ? [{ ...first, atUs: part.startUs }] : []),
+                ...keys,
+                ...(last.atUs < part.endUs ? [{ ...last, atUs: part.endUs }] : []),
+            ];
+            return { ...added, redactions: [...(added.redactions ?? []).slice(0, -1), { ...part, track }] };
+        }
         case "spotlight":
             return addRedaction(project, {
                 fromUs: timeToUs(op.from),
@@ -1746,6 +2669,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 follow: op.follow,
                 dim: op.dim,
                 cutout: op.cutout,
+                fadeMs: op.fadeMs,
+                dimAround: op.dimAround,
             });
         case "unredact": {
             const list = project.redactions ?? [];
@@ -1756,15 +2681,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
-            // Like `untext` and `unshape` (and the editor window): the last one gone removes the key.
-            const redactions = list.filter((redaction) => redaction.id !== op.id);
-
-            if (redactions.length === 0) {
-                const { redactions: _redactions, ...rest } = project;
-                return rest;
-            }
-
-            return { ...project, redactions };
+            // Like `untext` and `unshape` (and the editor window): the last one gone removes the key. R6 6: a part a
+            // hide made is forgotten as hidden too, so hiding the same text again works.
+            return withoutParts(project, new Set([op.id]));
         }
         case "text": {
             const fromUs = timeToUs(op.from);
@@ -1780,6 +2699,10 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 ...(op.y === undefined ? {} : { y: op.y }),
                 ...(op.size === undefined ? {} : { size: op.size }),
                 ...(op.style === undefined ? {} : { style: op.style }),
+                // R4 6 animated texts
+                ...(textAnimateOf(op.animate) ? { animate: textAnimateOf(op.animate) } : {}),
+                // R5 10 multi-line texts
+                ...(op.block && Object.keys(op.block).length > 0 ? { block: op.block } : {}),
             });
             return { ...project, texts: [...(project.texts ?? []), note] };
         }
@@ -1834,7 +2757,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             return rest.length ? { ...project, shapes: rest } : without;
         }
         case "fixLine": {
-            const key = String(Math.round(timeToUs(op.from) / 1000));
+            // A time copied from find() or the subtitles lies inside a line; a fix is keyed by the line's start.
+            const fromUs = facts.transcript ? lineStartUs(facts.transcript, timeToUs(op.from)) : timeToUs(op.from);
+            const key = String(Math.round(fromUs / 1000));
             const fixes = { ...(project.transcript?.fixes ?? {}), [key]: op.text.trim() };
             return { ...project, transcript: { fixes } };
         }
@@ -1940,6 +2865,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 return { ...project, audio };
             }
 
+            // Saved, it would make every export fail at the cleaning step.
+            if (facts.audioTracks === 0) {
+                throw new Error("this movie has no sound to clean (it has no audio track)");
+            }
+
             if (op.track !== undefined) {
                 return denoiseTrack(project, op);
             }
@@ -1995,6 +2925,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                     ...((op.chapters ?? project.export.chapters) === undefined
                         ? {}
                         : { chapters: op.chapters ?? project.export.chapters }),
+                    // R5 3 export size: an empty size goes back to maxHeight.
+                    ...exportSizeOf(op.size ?? project.export.size),
                     ...(op.subtitles === "none"
                         ? {}
                         : (op.subtitles ?? project.export.subtitles)
@@ -2112,8 +3044,16 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
+            // R5 4 frame layouts: a preset first, then the op's own fields.
+            const preset = op.preset ? FRAME_PRESET_VALUES[op.preset] : undefined;
+            const layout =
+                preset || op.layout ? { ...current.layout, ...preset?.layout, ...op.layout } : current.layout;
             const { aspect, fit, ...frame } = frameSchema.parse({
                 ...current,
+                ...(preset
+                    ? { aspect: preset.aspect, padding: preset.padding, cornerRadius: preset.cornerRadius }
+                    : {}),
+                ...(layout ? { layout } : {}),
                 ...(op.aspect === undefined ? {} : { aspect: op.aspect }),
                 ...(op.fit === undefined ? {} : { fit: op.fit }),
                 ...(op.padding === undefined ? {} : { padding: op.padding }),
@@ -2121,17 +3061,116 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 ...(op.shadow === undefined ? {} : { shadow: op.shadow }),
                 background,
             });
-            // The editor window's JSON: the source shape and the whole movie (`contain`) are written as absent.
+            // The editor window's JSON: the source shape and the whole movie (`contain`) are written as absent, and
+            // so is a centred picture at its fitted size.
+            const { layout: placed, ...rest } = frame;
             return {
                 ...project,
                 frame: {
-                    ...frame,
+                    ...rest,
+                    ...(placed && (placed.align !== "center" || placed.scale !== 1 || placed.focus)
+                        ? { layout: placed }
+                        : {}),
                     ...(aspect && aspect !== "source" ? { aspect } : {}),
                     ...(fit === "cover" ? { fit } : {}),
                 },
             };
         }
+        // Round 4 fx-render (fx.ts).
+        case "transition":
+        case "lens":
+        case "setLens":
+        case "unlens":
+        case "tilt":
+            return applyFxOp(project, op);
+        // R5 5 redaction edges
+        case "redactionJoins":
+            return { ...project, redactionJoins: { snapMs: op.snapMs } };
+        // R6 6 unhide
+        case "unhide":
+            return unhide(project, op);
     }
+}
+
+// R6 6 unhide
+/**
+ * The edit without `removed` hidden parts, with every hit no part hides any more dropped from `privacy.applied`, so
+ * the next hideText or hidePrivate hides it again instead of answering "nothing changed".
+ */
+function withoutParts(project: EditProject, removed: ReadonlySet<string>): EditProject {
+    const redactions = (project.redactions ?? []).filter((part) => !removed.has(part.id));
+    const kept = new Set(redactions.flatMap((part) => (part.hide ? [part.hide.hit] : [])));
+    const gone = new Set(
+        (project.redactions ?? []).flatMap((part) => (removed.has(part.id) && part.hide ? [part.hide.hit] : []))
+    );
+    const applied = (project.privacy?.applied ?? []).filter((hit) => kept.has(hit) || !gone.has(hit));
+    const { redactions: _redactions, privacy: _privacy, ...rest } = project;
+    return {
+        ...rest,
+        ...(redactions.length > 0 ? { redactions } : {}),
+        ...(project.privacy ? { privacy: privacySchema.parse({ ...project.privacy, applied }) } : {}),
+    };
+}
+
+function unhide(project: EditProject, op: Extract<EditOp, { op: "unhide" }>): EditProject {
+    if (!op.text && !op.pattern && !op.ids && !op.all) {
+        throw new Error("unhide needs text, pattern, ids (hidden part ids or hit ids) or all: true");
+    }
+
+    const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+    const made = (project.redactions ?? []).filter((part) => part.hide);
+
+    // R7 6: taking back everything when nothing is hidden is done already (the answer says "nothing hidden").
+    if (op.all && made.length === 0) {
+        return project;
+    }
+    const picked = made.filter((part) => {
+        const request = part.hide?.request;
+
+        if (op.all) {
+            return true;
+        }
+
+        if (op.ids && (op.ids.includes(part.id) || (part.hide && op.ids.includes(part.hide.hit)))) {
+            return true;
+        }
+
+        if (op.text) {
+            const texts = [request?.text, ...(request?.texts ?? [])].filter((text): text is string => Boolean(text));
+            return texts.some((text) => fold(text) === fold(op.text ?? ""));
+        }
+
+        if (op.pattern) {
+            return [request?.pattern, ...(request?.patterns ?? [])].includes(op.pattern);
+        }
+
+        return false;
+    });
+
+    if (picked.length === 0) {
+        const asked = op.ids ? `ids ${op.ids.join(", ")}` : op.text ? `"${op.text}"` : `/${op.pattern}/`;
+        const requests = [
+            ...new Set(
+                made.map((part) => {
+                    const request = part.hide?.request;
+                    const said = [
+                        request?.text,
+                        ...(request?.texts ?? []),
+                        request?.pattern,
+                        ...(request?.patterns ?? []),
+                    ]
+                        .filter(Boolean)
+                        .join(", ");
+                    return `${part.hide?.by}${said ? ` ${said}` : ""}`;
+                })
+            ),
+        ];
+        throw new Error(
+            `no hidden part was made for ${asked}; ${requests.length ? `hidden by: ${requests.join("; ")}` : "no part was made by hideText or hidePrivate"}`
+        );
+    }
+
+    return withoutParts(project, new Set(picked.map((part) => part.id)));
 }
 
 /** What an agent reads back after an edit: seconds, not microseconds. */
@@ -2157,6 +3196,8 @@ export function describeProject(project: EditProject, path: string) {
             scale: zoom.scale,
             mode: zoom.mode,
             focus: { x: zoom.focusX, y: zoom.focusY },
+            // R5 4 canvas zoom
+            ...(zoom.target === "canvas" ? { target: "canvas" as const } : {}),
         })),
         audio: project.audio.music
             ? {
@@ -2164,10 +3205,34 @@ export function describeProject(project: EditProject, path: string) {
                   // Ducking reads the transcript's lines; without a cached transcript the music plays level.
                   music: {
                       ...project.audio.music,
-                      ducks: project.audio.music.duck > 0 && existsSync(transcriptCachePath(project.source.video)),
+                      // R4 8 music ducking: the dB object decides the amount and what it ducks under.
+                      ducks:
+                          (project.audio.ducking ? project.audio.ducking.db > 0 : project.audio.music.duck > 0) &&
+                          (((project.audio.ducking?.transcript ?? true) &&
+                              existsSync(transcriptCachePath(project.source.video))) ||
+                              ((project.audio.ducking?.voiceovers ?? true) &&
+                                  (project.audio.voiceovers?.length ?? 0) > 0)),
                   },
               }
             : project.audio,
+        // R4 voiceover clips: where each plays in the edit (null when its start is cut).
+        voiceovers: (project.audio.voiceovers ?? []).map((clip) => {
+            // A card's line has no movie time: `at` counts from its card, and it plays only in the export.
+            const plays = clip.card === undefined ? outputTimeOf(project, clip.atUs) : undefined;
+            const exported = voiceoverExportSpans(project).find((span) => span.id === clip.id);
+            return {
+                id: clip.id,
+                at: seconds(clip.atUs),
+                ...(clip.card ? { card: clip.card } : {}),
+                seconds: seconds(clip.durationUs),
+                plays: plays === undefined ? null : seconds(plays),
+                // R5 7: where it plays in the exported file, after the intro card.
+                exportPlays: exported === undefined ? null : seconds(exported.startUs),
+                file: clip.file,
+                volume: clip.volume,
+                ...(clip.label ? { label: clip.label } : {}),
+            };
+        }),
         export: project.export,
         clicks: project.clicks ?? null,
         frame: project.frame ?? null,
@@ -2180,8 +3245,21 @@ export function describeProject(project: EditProject, path: string) {
             ...(redaction.label ? { label: redaction.label } : {}),
             ...(redaction.follow ? { follow: true } : {}),
             ...(redaction.style === "spotlight"
-                ? { dim: redaction.dim ?? 0.7, cutout: redaction.cutout ?? "rounded" }
+                ? {
+                      dim: redaction.dim ?? 0.5,
+                      cutout: redaction.cutout ?? "rounded",
+                      ...(redaction.dimAround ? { dimAround: redaction.dimAround } : {}),
+                  }
                 : {}),
+            // fx B (round 4): how many keyframes it follows, and the areas it leaves visible.
+            ...(redaction.track ? { keyframes: redaction.track.length } : {}),
+            ...(redaction.exclude ? { exclude: redaction.exclude } : {}),
+            // R5 5 redaction edges
+            ...(redaction.style === "spotlight" ? { fadeMs: redaction.fadeMs ?? 200 } : {}),
+            ...(redaction.cell !== undefined ? { cell: redaction.cell } : {}),
+            // R6 7: a hidden part or a spotlight, and the hide request that made it (hideText, hidePrivate).
+            kind: redaction.style === "spotlight" ? ("spotlight" as const) : ("hidden" as const),
+            ...(redaction.hide ? { hide: redaction.hide } : {}),
         })),
         /** null: the system cursor is in the picture, so there is nothing to change. */
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
@@ -2208,7 +3286,18 @@ export function describeProject(project: EditProject, path: string) {
             at: { x: note.x, y: note.y },
             size: note.size,
             style: note.style,
+            // R4 6 animated texts
+            ...(note.animate ? { animate: note.animate } : {}),
+            // R5 10 multi-line texts: the lines it was written with (a long one also wraps at the block's width).
+            lines: note.text.split("\n").length,
+            ...(note.block ? { block: note.block } : {}),
         })),
+        // R4 6 animated captions
+        captionsStyle: project.captionsStyle ?? null,
+        // R4 10 progress bar and chapter strip
+        progress: project.progress ?? null,
+        // R4 9 intro and end cards: the export plays them around the movie; outputSeconds is the movie alone.
+        cards: project.cards ?? null,
         /** The timeline's effect lanes top to bottom, each with the ids of the items on it. */
         lanes: resolveLanes(project).map(({ lane, items, automatic }) => ({
             id: lane.id,
@@ -2217,7 +3306,271 @@ export function describeProject(project: EditProject, path: string) {
             ...(automatic ? { automatic: true } : {}),
             items: items.map((item) => item.id),
         })),
+        // Round 4 fx-render: transitions (with every join), lenses, tilt.
+        ...describeFx(project),
+        // fx B (round 4)
+        cursorSmooth: project.cursorSmooth ?? null,
+        autoSpeed: project.autoSpeed ?? null,
+        privateHidden: project.privacy?.applied.length ?? 0,
+        // R5 5 redaction edges
+        redactionJoins: { snapMs: project.redactionJoins?.snapMs ?? REDACTION_SNAP_MS },
+        // R5 7 export time: the export plays the intro card before the movie and the end card after it, so a moment
+        // at output time t is at t + introSeconds in the exported file; outputSeconds and plays are the movie alone.
+        exportTime: {
+            introSeconds: seconds(cardsLeadUs(project)),
+            endSeconds: project.cards?.end?.seconds ?? 0,
+            exportSeconds: seconds(
+                outputDurationUs(project) + cardsLeadUs(project) + Math.round((project.cards?.end?.seconds ?? 0) * 1e6)
+            ),
+        },
     };
+}
+
+// fx B (round 4): the ops of private data, the smooth cursor and the typing and waiting speed-ups.
+
+/** Picks the facts' items by `ids` (absent: all); an unknown id is refused with the ids there are. */
+function pickById<T extends { id: string }>(
+    items: readonly T[],
+    ids: readonly string[] | undefined,
+    what: string
+): T[] {
+    if (!ids) {
+        return [...items];
+    }
+
+    const unknown = ids.filter((id) => !items.some((item) => item.id === id));
+
+    if (unknown.length > 0) {
+        const known = items.length ? `${what}s: ${items.map((item) => item.id).join(", ")}` : `there is no ${what}`;
+        throw new Error(`no ${what} ${unknown.join(", ")}; ${known}`);
+    }
+
+    return items.filter((item) => ids.includes(item.id));
+}
+
+function hidePrivate(
+    project: EditProject,
+    op: Extract<EditOp, { op: "hidePrivate" }>,
+    hits: readonly PrivateHit[] | undefined
+): EditProject {
+    if (!hits) {
+        throw new Error("hidePrivate needs the screen text's private data; run it through editProject or the CLI");
+    }
+
+    const picked = pickById(hits, op.ids, "private hit").filter(
+        (hit) => !op.kinds || (hit.kind !== "text" && op.kinds.includes(hit.kind))
+    );
+    return hideHits(project, picked, {
+        style: op.style,
+        exclude: op.exclude,
+        by: "hidePrivate",
+        request: requestOf({ kinds: op.kinds, names: op.names }),
+    });
+}
+
+function hideText(
+    project: EditProject,
+    op: Extract<EditOp, { op: "hideText" }>,
+    hits: readonly PrivateHit[] | undefined
+): EditProject {
+    if (!hits) {
+        throw new Error("hideText needs the screen text's places of the text; run it through editProject or the CLI");
+    }
+
+    const fromUs = op.from === undefined ? 0 : timeToUs(op.from);
+    const toUs = op.to === undefined ? project.source.durationUs : timeToUs(op.to);
+    const picked = hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs);
+
+    if (picked.length === 0) {
+        throw new Error(
+            `the screen does not show ${describeTextQuery(op)}${op.from === undefined && op.to === undefined ? "" : " in that range"}; nothing was hidden`
+        );
+    }
+
+    return hideHits(project, picked, {
+        style: op.style,
+        exclude: op.exclude,
+        label: op.label,
+        by: "hideText",
+        request: requestOf({
+            text: op.text,
+            pattern: op.pattern,
+            texts: op.texts,
+            patterns: op.patterns,
+            unit: op.unit,
+        }),
+    });
+}
+
+/** A hide request as a part keeps it (R6 7): only the keys the op was given. */
+function requestOf(request: NonNullable<NonNullable<EditRedaction["hide"]>["request"]>) {
+    const kept = Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined));
+    return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
+/**
+ * One hidden part per hit for as long as it shows: a hit that moved keeps its keyframes (`track`), so the part follows
+ * the text; the areas to leave visible are the op's and the hit's own. A hit hidden before is skipped.
+ */
+function hideHits(
+    project: EditProject,
+    hits: readonly PrivateHit[],
+    options: {
+        style?: EditRedaction["style"];
+        exclude?: ReadonlyArray<z.infer<typeof boxSchema>>;
+        label?: string;
+        by: NonNullable<EditRedaction["hide"]>["by"];
+        request?: NonNullable<EditRedaction["hide"]>["request"];
+    }
+): EditProject {
+    const applied = new Set(project.privacy?.applied ?? []);
+    const picked = hits.filter((hit) => !applied.has(hit.id));
+    let next = project;
+    const seconds = (us: number) => Math.round(us / 10_000) / 100;
+    /** Adds one part and sets what addRedaction does not take (its keys, the areas left visible, where it came from). */
+    const add = (
+        part: { fromUs: number; toUs: number; rect: z.infer<typeof boxSchema>; label: string },
+        extra: Partial<EditRedaction>
+    ) => {
+        const fromUs = Math.max(0, Math.min(part.fromUs, project.source.durationUs - MINIMUM_CLIP_US));
+        const toUs = Math.min(project.source.durationUs, Math.max(part.toUs, fromUs + MINIMUM_CLIP_US));
+        next = addRedaction(next, {
+            fromUs,
+            toUs,
+            rect: part.rect,
+            style: options.style ?? "blur",
+            label: part.label,
+        });
+        const added = next.redactions?.at(-1);
+
+        if (added) {
+            next = { ...next, redactions: [...(next.redactions ?? []).slice(0, -1), { ...added, ...extra }] };
+        }
+    };
+
+    for (const hit of picked) {
+        const first = hit.keys[0] ?? hit.box;
+        const exclude = [...(options.exclude ?? []), ...(hit.exclude ?? [])];
+        const label = options.label ?? `${hit.label} (auto)`;
+        const moving = hit.follow && hit.follow.movingUs > 0 ? hit.follow : undefined;
+        add(
+            {
+                fromUs: hit.fromUs,
+                toUs: hit.toUs,
+                rect: { x: first.x, y: first.y, width: first.width, height: first.height },
+                label,
+            },
+            {
+                ...(hit.keys.length > 1
+                    ? { track: hit.keys.map((key) => ({ ...key, atUs: Math.round(key.atUs) })) }
+                    : {}),
+                ...(exclude.length > 0 ? { exclude } : {}),
+                hide: {
+                    by: options.by,
+                    hit: hit.id,
+                    ...(options.request ? { request: options.request } : {}),
+                    ...(moving
+                        ? {
+                              movingSeconds: seconds(moving.movingUs),
+                              keysPerSecond:
+                                  Math.round((moving.keysInMotion / (moving.movingUs / 1_000_000)) * 10) / 10,
+                          }
+                        : {}),
+                },
+            }
+        );
+
+        // R6 1: where the moving text could not be followed, the band it may cross is hidden as well.
+        for (const stretch of hit.uncertain ?? []) {
+            add(
+                { fromUs: stretch.fromUs, toUs: stretch.toUs, rect: stretch.box, label: `${label} (uncertain)` },
+                {
+                    hide: {
+                        by: options.by,
+                        hit: hit.id,
+                        uncertain: true,
+                        ...(options.request ? { request: options.request } : {}),
+                    },
+                }
+            );
+        }
+
+        applied.add(hit.id);
+    }
+
+    return picked.length === 0 ? project : { ...next, privacy: privacySchema.parse({ applied: [...applied] }) };
+}
+
+/** What a hideText or hidePrivate added to the edit: its parts, how well they follow moving text, and where not. */
+export interface Hiding {
+    /** Hidden parts added (bands included). */
+    parts: number;
+    /** Parts that follow a moving text, with the seconds it moved and the fewest places a second any of them has. */
+    moving: { parts: number; seconds: number; minKeysPerSecond: number | null };
+    /** Source seconds where a moving text could not be followed: the band it may cross is hidden instead. */
+    uncertain: Array<{ from: number; to: number }>;
+}
+
+/** The hidden parts in `after` and not in `before` that a hide op made, summed up (R6 1). */
+export function hidingOf(before: EditProject, after: EditProject): Hiding {
+    const had = new Set((before.redactions ?? []).map((part) => part.id));
+    const added = (after.redactions ?? []).filter((part) => !had.has(part.id) && part.hide);
+    const seconds = (us: number) => Math.round(us / 10_000) / 100;
+    const moving = added.filter((part) => !part.hide?.uncertain && (part.hide?.movingSeconds ?? 0) > 0);
+    const rates = moving.map((part) => part.hide?.keysPerSecond ?? 0);
+    return {
+        parts: added.length,
+        moving: {
+            parts: moving.length,
+            seconds: Math.round(moving.reduce((all, part) => all + (part.hide?.movingSeconds ?? 0), 0) * 100) / 100,
+            minKeysPerSecond: rates.length > 0 ? Math.min(...rates) : null,
+        },
+        uncertain: added
+            .filter((part) => part.hide?.uncertain)
+            .map((part) => ({ from: seconds(part.startUs), to: seconds(part.endUs) }))
+            .sort((a, b) => a.from - b.from),
+    };
+}
+
+function smoothCursor(project: EditProject, op: Extract<EditOp, { op: "cursorSmooth" }>): EditProject {
+    const { op: _op, enabled, ...change } = op;
+
+    if (enabled === false) {
+        const { cursorSmooth: _off, ...rest } = project;
+        return rest;
+    }
+
+    if (!trackDrawsCursor(project.source.cursor)) {
+        throw new Error(
+            "this movie has the system cursor in its picture, so the editor cannot smooth it; record without --system-cursor to get a drawn cursor"
+        );
+    }
+
+    return { ...project, cursorSmooth: cursorSmoothSchema.parse({ ...project.cursorSmooth, ...change }) };
+}
+
+function speedUpWaits(
+    project: EditProject,
+    op: Extract<EditOp, { op: "speedUpWaits" }>,
+    waits: readonly WaitStretch[] | undefined
+): EditProject {
+    if (!waits) {
+        throw new Error(
+            "speedUpWaits needs the movie's typing and waiting stretches; run it through editProject or the CLI"
+        );
+    }
+
+    let next = project;
+
+    for (const wait of pickById(waits, op.ids, "stretch")) {
+        const toUs = Math.min(wait.toUs, project.source.durationUs);
+
+        if (toUs - wait.fromUs >= MINIMUM_CLIP_US) {
+            next = speedRange(next, wait.fromUs, toUs, op.speed ?? wait.speed);
+        }
+    }
+
+    return next === project ? project : { ...next, autoSpeed: autoSpeedSchema.parse(project.autoSpeed ?? {}) };
 }
 
 /** The `range` op: the OUTPUT range mapped to the source, then the op that does the action there. */

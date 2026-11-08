@@ -66,13 +66,20 @@ enum RecorderHostMethods {
                 let params = Params(request)
                 let times = (request.object["times"] as? [Any])?.compactMap { ($0 as? NSNumber)?.doubleValue } ?? []
                 guard !times.isEmpty else { throw invalid("render.sheet needs times: a list of output seconds") }
-                return try await RecorderRenders.sheet(source: try params.path("path"), times: times, out: try params.optionalPath("out"))
+                // R6 10 effects sheet: `cut` marks the cells whose time the edit cuts.
+                let cut = (request.object["cut"] as? [Any])?.enumerated().compactMap { ($1 as? NSNumber)?.boolValue == true ? $0 : nil } ?? []
+                return try await RecorderRenders.sheet(source: try params.path("path"), times: times, out: try params.optionalPath("out"),
+                                                       columns: params.int("columns"), cut: Set(cut))
             },
             "render.export": method { request in
                 let params = Params(request)
                 var percent = -1
+                // R5 3 export size
+                let size = (request.object["size"] as? [String: Any]).map {
+                    EditProject.OutputSize(width: ($0["width"] as? NSNumber)?.intValue, height: ($0["height"] as? NSNumber)?.intValue)
+                }
                 let result = try await RecorderRenders.export(source: try params.path("path"), out: try params.optionalPath("out"),
-                                                              isCancelled: { request.isCancelled }) { fraction in
+                                                              size: size, isCancelled: { request.isCancelled }) { fraction in
                     let now = Int(fraction * 100)
                     guard now != percent else { return }
                     percent = now

@@ -12,7 +12,13 @@ import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-rec
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
-import { type NativeRecorderOptions, nativeSegmentRecorder, segmentCaptureSpec } from "./recording-native";
+import {
+    audioTitlesArgv,
+    audioTrackTitles,
+    type NativeRecorderOptions,
+    nativeSegmentRecorder,
+    segmentCaptureSpec,
+} from "./recording-native";
 import {
     concatCopyArgv,
     concatListLine,
@@ -97,7 +103,15 @@ interface FakeRun {
  * A recorder that writes a small file per run and finishes it when the session aborts the run. A run aborted before
  * it armed writes no movie, as the real recorder cancelled while arming does.
  */
-function fakeRecorder(options: { failFirst?: boolean; armLater?: boolean; prepares?: boolean } = {}) {
+function fakeRecorder(
+    options: {
+        failFirst?: boolean;
+        armLater?: boolean;
+        prepares?: boolean;
+        /** What each run reports when a stop or pause ends it (ax-tool's capturedFrames). */
+        frames?: { frames: number };
+    } = {}
+) {
     const runs: FakeRun[] = [];
     const recorder: SegmentRecorder = {
         record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing }) {
@@ -129,7 +143,7 @@ function fakeRecorder(options: { failFirst?: boolean; armLater?: boolean; prepar
                     "abort",
                     () =>
                         void (armed
-                            ? end({ ok: true, endedBy: "stop", durationMs: 1000 })
+                            ? end({ ok: true, endedBy: "stop", durationMs: 1000, ...options.frames })
                             : end({ ok: false, endedBy: "stop", error: "cancelled while arming" }, false)),
                     { once: true }
                 );
@@ -679,6 +693,43 @@ describe("RecordingSession", () => {
         expect(joined[0].map((segment) => segment.durationMs)).toEqual([3000, 2000]);
     });
 
+    it("the limit counts the movie each run made, and leaves out a refill shorter than a second", async () => {
+        // The recorder's own deadline runs from its launch, so its movie is longer than the session's wall time.
+        const longer = fakeRecorder();
+        const recording = session(longer.recorder, { maxSeconds: 10 });
+        await recording.start();
+        clock += 9800;
+        await longer.runs[0].end({ ok: true, endedBy: "deadline", durationMs: 10_059 });
+        await Bun.sleep(0);
+        expect(longer.runs).toHaveLength(1);
+        expect(states()).toEqual(["recording:user:app", "paused:limit:app"]);
+
+        events = [];
+        const shorter = fakeRecorder();
+        const second = session(shorter.recorder, { maxSeconds: 10 });
+        await second.start();
+        clock += 9300;
+        await shorter.runs[0].end({ ok: true, endedBy: "deadline", durationMs: 9300 });
+        await Bun.sleep(0);
+        expect(shorter.runs).toHaveLength(1);
+        expect(states()).toEqual(["recording:user:app", "paused:limit:app"]);
+    });
+
+    it("the done event says how many frames the movie holds and its average rate", async () => {
+        // The defect: a 60 fps movie that got 42 fps said nothing of it (review 2026-11-06).
+        const { recorder } = fakeRecorder({ frames: { frames: 50 } });
+        const recording = session(recorder, { maxSeconds: 60 });
+        await recording.start();
+        clock += 1000;
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        clock += 1000;
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("done");
+        // Two runs of 1000 ms with 50 frames each: 100 frames over 2 s.
+        expect(events.find((event) => event.event === "done")).toMatchObject({ frames: 100, averageFps: 50 });
+    });
+
     it("a first run that fails without a movie ends the session with the refusal code", async () => {
         const { recorder } = fakeRecorder({ failFirst: true });
         const recording = session(recorder);
@@ -893,6 +944,45 @@ describe("joining segments with their audio and cursor tracks", () => {
         expect(graph).toEndWith("[v0][a0_0][v1][a1_0]concat=n=2:v=1:a=1[out][aout0]");
         expect(argv).toContain("[aout0]");
         expect(argv[argv.indexOf("-c:a") + 1]).toBe("aac");
+    });
+
+    it("names each audio track as its source, in the order --audio gave them", () => {
+        // The defect: both tracks read "Core Media Audio", so a player showed Track 1 and Track 2 (review 2026-11-06).
+        const titles = audioTrackTitles(["mic", "system"]);
+        expect(titles).toEqual(["Microphone", "System audio"]);
+        const copied = concatCopyArgv({ list: "/s/list.txt", output: "/o.mp4", audioTitles: titles });
+        expect(copied.slice(copied.indexOf("-metadata:s:a:0"), copied.indexOf("-metadata:s:a:0") + 4)).toEqual([
+            "-metadata:s:a:0",
+            "title=Microphone",
+            "-metadata:s:a:0",
+            "handler_name=Microphone",
+        ]);
+        expect(copied).toContain("title=System audio");
+        expect(copied.at(-1)).toBe("/o.mp4");
+        const joined = joinSegmentsArgv({
+            inputs: ["/a.mp4", "/b.mp4"],
+            width: 1280,
+            height: 720,
+            output: "/o.mp4",
+            audioTracks: 2,
+            audioTitles: titles,
+        });
+        expect(joined[joined.indexOf("-metadata:s:a:1") + 1]).toBe("title=System audio");
+        expect(
+            concatCopyArgv({ list: "/s/list.txt", output: "/o.mp4" }).some((arg) => arg.startsWith("-metadata"))
+        ).toBe(false);
+        // A movie of one segment is moved, not joined: its tracks get their titles by one stream copy.
+        const single = audioTitlesArgv({ input: "/m/screen.mp4", output: "/m/screen.mp4.titled.mp4", titles });
+        expect(single.slice(single.indexOf("-i"), single.indexOf("-i") + 6)).toEqual([
+            "-i",
+            "/m/screen.mp4",
+            "-map",
+            "0",
+            "-c",
+            "copy",
+        ]);
+        expect(single).toContain("title=Microphone");
+        expect(single.at(-1)).toBe("/m/screen.mp4.titled.mp4");
     });
 
     it("moves each segment's cursor samples by the length of the segments before it", () => {

@@ -16,10 +16,13 @@ final class Filmstrip {
 
     private(set) var tiles: [Tile] = []
     private(set) var spacingUs: Int64 = 1_000_000
+    /// Every tile of the last load arrived (or failed); a bench waits for it.
+    @ObservationIgnored private(set) var loaded = false
     private var task: Task<Void, Never>?
 
     func load(video: URL, durationUs: Int64, count: Int = 60) {
         task?.cancel()
+        loaded = false
         let spacing = max(100_000, durationUs / Int64(max(1, count)))
         spacingUs = spacing
         task = Task.detached(priority: .utility) { [weak self] in
@@ -50,7 +53,10 @@ final class Filmstrip {
             made.sort { $0.sourceUs < $1.sourceUs }
             span.end()
             let tiles = made
-            await MainActor.run { self?.tiles = tiles }
+            await MainActor.run {
+                self?.tiles = tiles
+                self?.loaded = true
+            }
         }
     }
 
@@ -94,7 +100,14 @@ final class Waveform {
             ])
             output.alwaysCopiesSampleData = false
             reader.add(output)
-            guard reader.startReading() else { return }
+            // A reader that cannot start still ends the load: the lane waits for `loaded`, and stayed blank for good.
+            guard reader.startReading() else {
+                await MainActor.run {
+                    self?.hasAudio = false
+                    self?.loaded = true
+                }
+                return
+            }
             let total = max(1, Int(duration.seconds * 8000))
             let perBucket = max(1, total / buckets)
             var peaks = [Float](repeating: 0, count: buckets)

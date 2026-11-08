@@ -18,12 +18,20 @@ export const outputTimeSchema = timeSchema.meta({ title: "OutputTime" });
 
 /** Microseconds of a time value, rounded to a whole microsecond. */
 export function timeToUs(value: TimeValue): number {
-    if (typeof value === "number") {
-        return Math.round(value * 1_000_000);
+    const seconds =
+        typeof value === "number"
+            ? value
+            : value
+                  .replace(/s$/, "")
+                  .split(":")
+                  .map((part) => (part.trim() === "" ? Number.NaN : Number(part)))
+                  .reduce((total, part) => total * 60 + part, 0);
+
+    // A word ("nope") reached the edit as NaN: "NaN s is past the end; this is the last moment, NaN s".
+    if (!Number.isFinite(seconds)) {
+        throw new Error(`"${value}" is not a time: give seconds (12.5), m:ss (0:12) or h:mm:ss`);
     }
 
-    const parts = value.replace(/s$/, "").split(":").map(Number);
-    const seconds = parts.reduce((total, part) => total * 60 + part, 0);
     return Math.round(seconds * 1_000_000);
 }
 

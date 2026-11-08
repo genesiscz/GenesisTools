@@ -43,6 +43,10 @@ final class CursorTrack: @unchecked Sendable {
     /// The times the pointer moved or clicked: what keeps a cursor that hides when idle on screen.
     let moveTimes: [Double]
 
+    /// The tracks without jitter, one per threshold (the smooth cursor); built once, read by every frame.
+    private let smoothLock = NSLock()
+    private var smoothTracks: [Int: CursorTrack] = [:]
+
     /// The movie has no system cursor in it, so the editor draws one.
     var drawsCursor: Bool { !shapeChanges.isEmpty && !shapes.isEmpty }
 
@@ -124,7 +128,12 @@ final class CursorTrack: @unchecked Sendable {
     /// The drawn cursor's place: a Gaussian average of the path over up to ±120 ms × `smoothing` (0...1). The window
     /// narrows near a click, so the cursor sits exactly where it clicked.
     func drawnPoint(atMs ms: Double, smoothing: Double) -> (x: Double, y: Double)? {
-        var half = max(0, min(1, smoothing)) * 120
+        drawnPoint(atMs: ms, halfMs: max(0, min(1, smoothing)) * 120)
+    }
+
+    /// The path averaged over ±`halfMs`, narrowed near a click so the cursor sits exactly where it clicked.
+    func drawnPoint(atMs ms: Double, halfMs: Double) -> (x: Double, y: Double)? {
+        var half = halfMs
         if let nearest = nearestClickDistance(ms) { half = min(half, nearest * 0.8) }
         return averagedPoint(atMs: ms, halfMs: half)
     }
@@ -200,5 +209,49 @@ final class CursorTrack: @unchecked Sendable {
             if samples[mid].ms < ms { low = mid + 1 } else { high = mid }
         }
         return low
+    }
+}
+
+// fx B (round 4): the smooth cursor (EditProject.CursorSmooth, src/utils/recording-editor/cursor-smooth.ts).
+extension CursorTrack {
+    /// The widest average the smooth cursor uses, at strength 1.
+    static let smoothMaxHalfMs = 400.0
+
+    /// The track without its jitter: a sample closer than `points` (recorded points) to the last one kept is dropped,
+    /// so the cursor holds still where the hand only trembled. A click, a shape change or a shortcut is always kept.
+    /// `aspect` is the picture's height over its width, so a step up counts as much as the same step across.
+    func dejittered(points: Double, aspect: Double) -> CursorTrack {
+        guard points > 0, !samples.isEmpty else { return self }
+        let key = Int((points * 100).rounded()) &* 31 &+ Int((aspect * 1000).rounded())
+        smoothLock.lock()
+        if let cached = smoothTracks[key] {
+            smoothLock.unlock()
+            return cached
+        }
+        smoothLock.unlock()
+        // A recording without its width in points is taken as a 1440-point display.
+        let threshold = points / (pointWidth ?? 1440)
+        var kept: [Sample] = []
+        for sample in samples {
+            if let last = kept.last, sample.click == nil, sample.shape == nil, sample.key == nil,
+               hypot(sample.x - last.x, (sample.y - last.y) * aspect) < threshold {
+                continue
+            }
+            kept.append(sample)
+        }
+        let track = CursorTrack(samples: kept, shapes: shapes, pointWidth: pointWidth)
+        smoothLock.lock()
+        smoothTracks[key] = track
+        smoothLock.unlock()
+        return track
+    }
+
+    /// Where the smooth cursor is drawn and how visible it is: on the track without jitter, averaged over up to
+    /// ±400 ms × strength (exact at a click), fading after `idleFadeSeconds` without a move.
+    func smoothMark(atMs ms: Double, settings: EditProject.CursorSmooth, aspect: Double) -> (x: Double, y: Double, opacity: Double)? {
+        let track = dejittered(points: settings.jitterPx, aspect: aspect)
+        guard let point = track.drawnPoint(atMs: ms, halfMs: max(0, min(1, settings.strength)) * Self.smoothMaxHalfMs) else { return nil }
+        let opacity = track.visibility(atMs: ms, hideAfterMs: Int((settings.idleFadeSeconds * 1000).rounded()))
+        return (point.x, point.y, opacity)
     }
 }

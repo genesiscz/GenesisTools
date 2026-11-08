@@ -4,6 +4,16 @@ function seconds(us: number): string {
     return (us / 1_000_000).toFixed(6);
 }
 
+/**
+ * The ffmpeg filter that samples a movie `fps` times a second on the editor's time base: slot n is the frame the editor
+ * shows at n / fps, the latest frame whose time is at or before it. ffmpeg's default (`round=near`) takes the nearest
+ * frame instead, up to half a step LATER, so a 1 fps survey of a variable-frame-rate movie placed screen text up to
+ * 0.5 s early (round 5, item 1). `start_time=0` keeps slot 0 at the start of the input (or of its `-ss` seek point).
+ */
+export function sampleFpsFilter(fps: number): string {
+    return `fps=${fps}:round=up:start_time=0`;
+}
+
 /** `atempo` takes 0.5 to 2 per instance, so a larger change is a chain of them. */
 export function atempoChain(factor: number): string {
     const parts: number[] = [];
@@ -82,6 +92,8 @@ function encodeArgs(format: "mp4" | "gif" | "webm", audio: boolean): string[] {
         case "mp4":
             return ["-vf", EVEN, ...H264, ...(audio ? ["-c:a", "aac"] : ["-an"]), "-movflags", "+faststart"];
         case "webm":
+            // Rows in parallel at speed 3, and CRF 32 for the detail speed 3 loses: on 10 s of 1440p60 a third less
+            // CPU than one row at a time at CRF 34, SSIM 0.99911 against 0.99900, the file 5 % larger (deep test RE8).
             return [
                 "-vf",
                 EVEN,
@@ -90,7 +102,13 @@ function encodeArgs(format: "mp4" | "gif" | "webm", audio: boolean): string[] {
                 "-b:v",
                 "0",
                 "-crf",
-                "34",
+                "32",
+                "-row-mt",
+                "1",
+                "-deadline",
+                "good",
+                "-cpu-used",
+                "3",
                 ...(audio ? ["-c:a", "libopus"] : ["-an"]),
             ];
         case "gif":

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { logger } from "@genesiscz/utils/logger";
 import { audioStreamCount, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { probeVideo } from "@genesiscz/utils/video/probe";
@@ -8,6 +8,7 @@ import type { CaptureSpec } from "./capture-plan";
 import { CaptureRunError, runCapturePlanWithSignal } from "./capture-runner";
 import { captureFromFlags, validateCaptureOptions } from "./native-record";
 import {
+    audioTitleArgs,
     concatCopyArgv,
     concatListLine,
     cursorTrackPath,
@@ -190,10 +191,14 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 sessionDir = result.sessionDir;
                 const envelope = result.capture as {
                     error?: unknown;
-                    data?: { stats?: { durationMs?: unknown } };
+                    data?: { stats?: { durationMs?: unknown; capturedFrames?: unknown } };
                 } | null;
                 const reported = envelope?.data?.stats?.durationMs;
                 const durationMs = typeof reported === "number" && reported > 0 ? reported : undefined;
+                // A movie holds every frame ax-tool captured (capturedFrames: 152 frames in a 5 s movie, checked with
+                // ffprobe); its keptFrames and droppedFrames are the stills of a frames recording, not the movie's.
+                const captured = envelope?.data?.stats?.capturedFrames;
+                const frameStats = typeof captured === "number" ? { frames: captured } : {};
                 const endedBy = signal.aborted ? "stop" : result.captureFailed ? "failure" : "deadline";
                 const error =
                     typeof envelope?.error === "string" ? envelope.error : result.warnings.at(-1) || undefined;
@@ -201,7 +206,7 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 // time, so a failed run's movie is probed whatever ended it: an unfinished one would break every save.
                 const ok = existsSync(output) && (!result.captureFailed || (await playable(output)));
                 if (!result.captureFailed) {
-                    return { ok, endedBy, durationMs };
+                    return { ok, endedBy, durationMs, ...frameStats };
                 }
 
                 const code = error ? refusalCode(error) : undefined;
@@ -250,7 +255,72 @@ async function playable(path: string): Promise<boolean> {
  * else is re-encoded at the first segment's size, keeping the audio when every segment has a track. The segments'
  * cursor tracks become `<output>.cursor.jsonl`.
  */
-export const ffmpegSegmentJoiner: SegmentJoiner = async ({ segments, output }) => {
+const AUDIO_TRACK_TITLES: Record<"system" | "mic", string> = { system: "System audio", mic: "Microphone" };
+
+/** The title of each audio track: ax-tool writes one track per `--audio` source, in the order given. */
+export function audioTrackTitles(sources: ("system" | "mic")[] = []): string[] {
+    return sources.map((source) => AUDIO_TRACK_TITLES[source]);
+}
+
+/** One stream copy of `input` into `output` with the audio tracks titled; nothing is decoded. */
+export function audioTitlesArgv({
+    input,
+    output,
+    titles,
+}: {
+    input: string;
+    output: string;
+    titles: string[];
+}): string[] {
+    return [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        input,
+        "-map",
+        "0",
+        "-c",
+        "copy",
+        ...audioTitleArgs(titles),
+        "-movflags",
+        "+faststart",
+        output,
+    ];
+}
+
+/**
+ * Titles the audio tracks of a movie of one segment, which the session moves instead of joining, so the joiner's
+ * titles never reach it (ax-tool writes "Core Media Audio" on each track).
+ */
+export async function titleAudioTracks(movie: string, titles: string[]): Promise<void> {
+    if (titles.length === 0) {
+        return;
+    }
+
+    const temporary = `${movie}.titled.mp4`;
+    await runVideoCommand({
+        command: audioTitlesArgv({ input: movie, output: temporary, titles }),
+        timeoutMs: 120_000,
+    });
+    await rename(temporary, movie);
+}
+
+/** The joiner of a recording whose tracks are `audioTitles` (`audioTrackTitles(options.audio)`). */
+export function segmentJoiner(audioTitles: string[] = []): SegmentJoiner {
+    return (input) => joinSegments({ ...input, audioTitles });
+}
+
+export const ffmpegSegmentJoiner: SegmentJoiner = (input) => joinSegments({ ...input, audioTitles: [] });
+
+const joinSegments = async ({
+    segments,
+    output,
+    audioTitles,
+}: Parameters<SegmentJoiner>[0] & { audioTitles: string[] }): Promise<{ durationMs: number }> => {
     const facts = await Promise.all(segments.map((segment) => readMediaFacts({ input: segment.path })));
     const videos = facts.map(primaryVideo);
     const first = videos[0];
@@ -272,7 +342,8 @@ export const ffmpegSegmentJoiner: SegmentJoiner = async ({ segments, output }) =
         const list = `${output}.concat.txt`;
         await writeFile(list, `${segments.map((segment) => concatListLine(segment.path)).join("\n")}\n`);
         try {
-            await runVideoCommand({ command: concatCopyArgv({ list, output }), timeoutMs });
+            const titles = audioTitles.length === audioCounts[0] ? audioTitles : [];
+            await runVideoCommand({ command: concatCopyArgv({ list, output, audioTitles: titles }), timeoutMs });
         } finally {
             await rm(list, { force: true });
         }
@@ -284,11 +355,12 @@ export const ffmpegSegmentJoiner: SegmentJoiner = async ({ segments, output }) =
             height: probe.displayHeight,
             output,
             audioTracks: audioCounts[0] ?? 0,
+            audioTitles: audioTitles.length === audioCounts[0] ? audioTitles : [],
         });
         await runVideoCommand({ command: argv, timeoutMs });
     }
 
-    log.info(
+    log.debug(
         { segments: segments.length, output, copied: sameShape, audioTracks: audioCounts[0] ?? 0 },
         sameShape ? "segments joined by stream copy" : "segments joined by re-encoding"
     );
