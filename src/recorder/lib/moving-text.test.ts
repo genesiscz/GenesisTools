@@ -363,13 +363,14 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
 
 describe("frame reads refuse a rate that never advances", () => {
     test("gridRead and verifyHidden name the bad interval instead of looping", async () => {
-        for (const fps of [0, -2, Number.NaN]) {
+        for (const fps of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
             expect(() => gridRead({ video: "/nowhere/movie.mp4", fromUs: 0, toUs: 1_000_000, fps })).toThrow(
                 "a positive number of times a second"
             );
         }
 
-        for (const everySeconds of [0, -1, Number.NaN, 30]) {
+        // "0,5" (a decimal comma) parses as NaN; 0.05 and 6 are just outside the REPL schema's bounds.
+        for (const everySeconds of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 0.05, 6, 30]) {
             await expect(verifyHidden("/nowhere/edit.json", { everySeconds })).rejects.toThrow(
                 "every 0.1 to 5 seconds"
             );
