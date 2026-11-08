@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
-import { sampleFpsFilter } from "./ffmpeg";
+import { framePresentationUs, gridRead } from "./frame-grid";
 
 const { log } = logger.scoped("recording-editor-waits");
 
@@ -296,29 +296,25 @@ export async function measureChangeSteps(options: {
     const width = WAIT_SAMPLE_WIDTH;
     const height = Math.max(2, Math.round((width * options.height) / options.width / 2) * 2);
     const frameBytes = width * height;
-    const command = [
-        "ffmpeg",
-        "-nostdin",
-        "-v",
-        "error",
-        "-i",
-        options.video,
-        "-map",
-        "0:v:0",
-        "-vf",
-        `${sampleFpsFilter(WAIT_SAMPLE_FPS)},scale=${width}:${height}:flags=area,format=gray`,
-        "-f",
-        "rawvideo",
-        "-pix_fmt",
-        "gray",
-        "-",
-    ];
-    log.debug({ command }, "measuring the picture's change steps");
+    // R8 2: the frame the editor shows at each step, picked by its own presentation time; ffmpeg's clock ran a
+    // simulator recording 1.95 s behind the editor after its first seconds.
+    const times = framePresentationUs(options.video);
+    const plan = gridRead({
+        video: options.video,
+        fromUs: 0,
+        toUs: (times[times.length - 1] ?? 0) + 1_000_000 / WAIT_SAMPLE_FPS,
+        fps: WAIT_SAMPLE_FPS,
+        extra: `scale=${width}:${height}:flags=area,format=gray`,
+    });
+    const command = ["ffmpeg", "-nostdin", "-v", "error", ...plan.args, "-f", "rawvideo", "-pix_fmt", "gray", "-"];
+    log.debug({ command: command.join(" ").slice(0, 400) }, "measuring the picture's change steps");
     const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const timer = setTimeout(() => child.kill(), options.timeoutMs ?? 15 * 60_000);
     const steps: ChangeStep[] = [];
     let previous: Uint8Array | undefined;
     let pending = new Uint8Array(0);
+    let ordinal = 0;
+    let slot = 0;
 
     try {
         for await (const chunk of child.stdout) {
@@ -331,11 +327,17 @@ export async function measureChangeSteps(options: {
                 const frame = joined.slice(offset, offset + frameBytes);
                 offset += frameBytes;
 
-                if (previous) {
-                    steps.push(compareFrames(previous, frame, width, height));
+                // Every step this frame shows on (more than one inside a gap of the recording).
+                while (slot < plan.slots.length && plan.slots[slot].frame === ordinal) {
+                    if (previous) {
+                        steps.push(compareFrames(previous, frame, width, height));
+                    }
+
+                    previous = frame;
+                    slot++;
                 }
 
-                previous = frame;
+                ordinal++;
             }
 
             pending = joined.slice(offset);

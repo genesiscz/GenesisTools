@@ -1200,9 +1200,17 @@ export async function changeStepsOf(
     }
 
     // v3: sampled on the editor time base (sampleFpsFilter); v2 caches took the nearest frame.
-    return cachedAnalysis({
-        ...analysisOf(video, "waits", `fps=${WAIT_SAMPLE_FPS},v3`, stepsCacheSchema),
-        compute: () => measureChangeSteps({ video, width: project.source.width, height: project.source.height }),
+    const key = movieKey(video, `fps=${WAIT_SAMPLE_FPS},v3,pts`);
+    const cached = readCache(path, key, stepsCacheSchema);
+
+    if (cached) {
+        return cached;
+    }
+
+    const measured = await measureChangeSteps({
+        video,
+        width: project.source.width,
+        height: project.source.height,
     });
 }
 
