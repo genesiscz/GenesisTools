@@ -1099,6 +1099,41 @@ describe("edit project (edit.json)", () => {
         });
     });
 
+    // 2026-11-08: a title and a subtitle at one x in one left-aligned block were each centred on x, so their left
+    // edges did not line up. x is the block's centre; the alignment puts a plate against the block's edge.
+    test("textBox puts a left- or right-aligned plate against its block's edge and centres a centred one on x", () => {
+        const canvas = { width: 16 / 9, height: 1 };
+        const title = { text: "Invoices", size: 0.06, x: 0.62, y: 0.3 };
+        const subtitle = { text: "Send, track and get paid", size: 0.035, x: 0.62, y: 0.42 };
+        const left = [
+            textBox({ ...title, block: { width: 0.4, align: "left" } }, canvas),
+            textBox({ ...subtitle, block: { width: 0.4, align: "left" } }, canvas),
+        ];
+        expect(left[0]?.right).not.toBeCloseTo(left[1]?.right ?? 0, 2);
+        for (const box of left) {
+            expect(box.left).toBeCloseTo((0.62 - 0.2) * canvas.width, 5);
+        }
+
+        for (const box of [
+            textBox({ ...title, block: { width: 0.4, align: "right" } }, canvas),
+            textBox({ ...subtitle, block: { width: 0.4, align: "right" } }, canvas),
+        ]) {
+            expect(box.right).toBeCloseTo((0.62 + 0.2) * canvas.width, 5);
+        }
+
+        for (const box of [
+            textBox({ ...title, block: { width: 0.4, align: "center" } }, canvas),
+            textBox(subtitle, canvas),
+        ]) {
+            expect((box.left + box.right) / 2).toBeCloseTo(0.62 * canvas.width, 5);
+        }
+
+        // A block that reaches past the canvas's edge keeps its plate inside the canvas.
+        expect(textBox({ ...title, x: 0.1, block: { width: 0.4, align: "left" } }, canvas).left).toBe(0);
+        const nearRight = textBox({ ...title, x: 0.95, block: { width: 0.4, align: "right" } }, canvas);
+        expect(nearRight.right).toBeCloseTo(canvas.width, 5);
+    });
+
     // R7 10: a 1.2x zoom on a phone cut the side labels in half, and check() said nothing.
     test("check names a zoom whose view cuts screen text at its edge, with a smaller zoom that keeps it whole", () => {
         const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };

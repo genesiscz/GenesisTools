@@ -1,5 +1,13 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { applyOp, type EditOp, type EditProject, outputDurationUs, outputTimeOf } from "./project";
+import {
+    applyOp,
+    type EditOp,
+    type EditProject,
+    type EditTextNote,
+    outputDurationUs,
+    outputTimeOf,
+    type TEXT_ALIGNS,
+} from "./project";
 
 /**
  * "fix": the export will be wrong or something never shows; "check": it works but may not be what was meant; "note"
@@ -409,24 +417,33 @@ export function canvasShape(project: EditProject): { width: number; height: numb
 const CHAR_WIDTH = 0.58;
 /** One line's height as a share of the font size. */
 const LINE_HEIGHT = 1.2;
+/** A plate's left edge before the canvas clamp, from the block's centre and width and the plate's width. */
+const PLATE_LEFT: Record<
+    (typeof TEXT_ALIGNS)[number],
+    (at: { centre: number; block: number; plate: number }) => number
+> = {
+    left: ({ centre, block }) => centre - block / 2,
+    center: ({ centre, plate }) => centre - plate / 2,
+    right: ({ centre, block, plate }) => centre + block / 2 - plate,
+};
 
 /**
  * A text's plate on the canvas (units of the canvas's short side, y from the top), as the renderer draws it
- * (Captions.swift drawText): the font size is `size` of the short side, lines wrap at the block's width (0.8 of the
- * canvas) less the plate's inset (0.7 × size each side, 0.38 × size above and below), and the plate is centred on
- * x, y and kept inside the canvas. The widths are estimated from the characters, so they are close, not exact.
+ * (Captions.swift drawText and textOrigin): the font size is `size` of the short side, lines wrap at the block's width
+ * (0.8 of the canvas) less the plate's inset (0.7 × size each side, 0.38 × size above and below), and the plate is
+ * kept inside the canvas. x, y is the block's centre: a centred plate is centred on it, a left-aligned plate starts at
+ * the block's left edge and a right-aligned one ends at its right edge, so texts with the same x and block line up.
+ * The widths are estimated from the characters, so they are close, not exact.
  */
 export function textBox(
-    note: { text: string; size: number; x: number; y: number; block?: { width?: number } },
+    note: { text: string; size: number; x: number; y: number; block?: EditTextNote["block"] },
     canvas: { width: number; height: number }
 ): { left: number; top: number; right: number; bottom: number } {
     const font = note.size;
     const insetX = font * 0.7;
     const insetY = font * 0.38;
-    const wrap = Math.max(
-        font * 4,
-        canvas.width * Math.min(0.95, Math.max(0.15, note.block?.width ?? 0.8)) - 2 * insetX
-    );
+    const block = canvas.width * Math.min(0.95, Math.max(0.15, note.block?.width ?? 0.8));
+    const wrap = Math.max(font * 4, block - 2 * insetX);
     let lines = 0;
     let widest = 0;
 
@@ -438,7 +455,8 @@ export function textBox(
 
     const width = widest + 2 * insetX;
     const height = lines * LINE_HEIGHT * font + 2 * insetY;
-    const left = Math.min(Math.max(0, note.x * canvas.width - width / 2), Math.max(0, canvas.width - width));
+    const start = PLATE_LEFT[note.block?.align ?? "center"]({ centre: note.x * canvas.width, block, plate: width });
+    const left = Math.min(Math.max(0, start), Math.max(0, canvas.width - width));
     const top = Math.min(Math.max(0, note.y * canvas.height - height / 2), Math.max(0, canvas.height - height));
     return { left, top, right: left + width, bottom: top + height };
 }

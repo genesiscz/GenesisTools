@@ -134,7 +134,7 @@ final class TextPlates: @unchecked Sendable {
 }
 
 extension Looks {
-    /// A text note centred at its point of the canvas (kept inside it), faded by `opacity`. `sinceUs` (source time since
+    /// A text note in its block (textOrigin, kept inside the canvas), faded by `opacity`. `sinceUs` (source time since
     /// its start) drives its `animate`: a typewriter shows the letters typed so far from the full text's left edge, a
     /// slide-up rises into place while it fades in (TextMotion in Overlays.swift).
     static func drawText(_ note: EditProject.TextNote, opacity: Double, plates: TextPlates, on image: CIImage, size: CGSize,
@@ -144,7 +144,7 @@ extension Looks {
         // R4 6 animated texts
         let motion = TextMotion.at(sinceUs: sinceUs, note: note)
         // R5 10 multi-line texts: the block's wrap width and line alignment.
-        let wrap = size.width * CGFloat(min(0.95, max(0.15, note.block?.width ?? 0.8)))
+        let wrap = textBlockWidth(note, canvasWidth: size.width)
         let alignment = textAlignment(note.block?.align)
         guard let full = plates.plate(note.text, fontSize: fontSize, maxWidth: wrap, weight: .semibold,
                                       plain: note.style == .plain, alignment: alignment) else { return image }
@@ -160,15 +160,37 @@ extension Looks {
             plate = plate.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(shown))])
         }
         // Placed by the full text's box, so a typed line grows to the right and a risen one lands where it rests.
-        let width = full.extent.width, height = full.extent.height
-        // The project counts y from the top; Core Image from the bottom.
-        let x = min(max(0, note.x * size.width - width / 2), max(0, size.width - width))
-        let y = min(max(0, (1 - note.y) * size.height - height / 2), max(0, size.height - height)) - motion.drop * height
+        let origin = textOrigin(note, plate: full.extent.size, size: size)
+        let height = full.extent.height
+        let y = origin.y - motion.drop * height
         let top = y + (height - plate.extent.height)
-        return plate.transformed(by: CGAffineTransform(translationX: x.rounded(), y: top.rounded())).composited(over: image)
+        return plate.transformed(by: CGAffineTransform(translationX: origin.x.rounded(), y: top.rounded())).composited(over: image)
     }
 
     // R5 10 multi-line texts
+    /// The block's width in pixels: `block.width` of the canvas's width (0.15 to 0.95, 0.8 when absent).
+    static func textBlockWidth(_ note: EditProject.TextNote, canvasWidth: CGFloat) -> CGFloat {
+        canvasWidth * CGFloat(min(0.95, max(0.15, note.block?.width ?? 0.8)))
+    }
+
+    /// The lower-left corner (Core Image space) of a text's plate of size `plate` on a canvas of `size`, kept inside it.
+    /// `x`, `y` is the centre of the text's block: a centred plate is centred on it, a left-aligned plate starts at the
+    /// block's left edge and a right-aligned one ends at its right edge, so texts with the same x and block line up.
+    /// check.ts `textBox` estimates the same box for `check()`.
+    static func textOrigin(_ note: EditProject.TextNote, plate: CGSize, size: CGSize) -> CGPoint {
+        let centre = CGFloat(note.x) * size.width
+        let block = textBlockWidth(note, canvasWidth: size.width)
+        let left: CGFloat = switch note.block?.align ?? .center {
+        case .left: centre - block / 2
+        case .center: centre - plate.width / 2
+        case .right: centre + block / 2 - plate.width
+        }
+        let x = min(max(0, left), max(0, size.width - plate.width))
+        // The project counts y from the top; Core Image from the bottom.
+        let y = min(max(0, (1 - note.y) * size.height - plate.height / 2), max(0, size.height - plate.height))
+        return CGPoint(x: x, y: y)
+    }
+
     static func textAlignment(_ align: EditProject.TextAlign?) -> NSTextAlignment {
         switch align ?? .center {
         case .left: .left
