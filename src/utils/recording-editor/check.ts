@@ -1,5 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { applyOp, type EditOp, type EditProject } from "./project";
+import { applyOp, type EditOp, type EditProject, outputDurationUs, outputTimeOf } from "./project";
 
 /**
  * "fix": the export will be wrong or something never shows; "check": it works but may not be what was meant; "note"
@@ -199,6 +199,22 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                 fix: `movie.voiceover({ id: "${clip.id}", at: <a kept second> })`,
                 at: tenths(clip.atUs),
             });
+        } else {
+            // The renderer mixes a clip into the movie only (Voiceovers.swift): the end card does not carry it, so
+            // the words after the movie's last frame are cut off.
+            const startUs = outputTimeOf(project, clip.atUs);
+            const overUs = startUs === undefined ? 0 : startUs + clip.durationUs - outputDurationUs(project);
+
+            if (overUs > SHORTENED_US) {
+                issues.push({
+                    severity: "fix",
+                    kind: "voiceover-cut-at-end",
+                    item: name,
+                    message: `The voiceover at ${tenths(clip.atUs)} s runs ${tenths(overUs)} s past the movie's end; the end card does not carry it, so its last ${tenths(overUs)} s are cut off`,
+                    fix: `keep ${tenths(overUs)} s more of the movie after it, or movie.voiceover({ id: "${clip.id}", at: <an earlier second> })`,
+                    at: tenths(clip.atUs),
+                });
+            }
         }
     }
 

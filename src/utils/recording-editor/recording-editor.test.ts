@@ -829,6 +829,30 @@ describe("edit project (edit.json)", () => {
         expect(() => autoZoom(manual, [{ ms: 1, x: 0, y: 0 }])).toThrow("no clicks");
     });
 
+    test("check names a voiceover that runs past the movie's end, where the export cuts it off", () => {
+        // The renderer mixes a voice clip into the movie only: an end card does not carry it, so the words after the
+        // movie's last frame are lost. A clip that ends inside the movie is no issue.
+        const whole = wholeProject(source);
+        const voiced = applyOp(
+            {
+                ...whole,
+                audio: {
+                    ...whole.audio,
+                    voiceovers: [
+                        { id: "v1", atUs: 1_000_000, file: "/voice/one.mp3", durationUs: 1_500_000, volume: 1 },
+                        { id: "v2", atUs: 8_000_000, file: "/voice/two.mp3", durationUs: 3_000_000, volume: 1 },
+                    ],
+                },
+            },
+            { op: "cut", from: 3, to: 5 }
+        );
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const late = checkProject(voiced, facts).filter((issue) => issue.kind === "voiceover-cut-at-end");
+        expect(late).toHaveLength(1);
+        expect(late[0]).toMatchObject({ severity: "fix", item: "voiceover v2", at: 8 });
+        expect(late[0]?.message).toContain("1 s");
+    });
+
     test("check finds what never shows, what is missing and what flashes past, fixes first", () => {
         let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 2, scale: 2 });
         project = applyOp(project, { op: "text", from: 3, to: 5, text: "Step one" });
