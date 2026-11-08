@@ -52,6 +52,8 @@ final class MeetingDetailModel {
     @ObservationIgnored private var proposalsAwaitRecord = false
     /// The first tab read waits for the list (`firstReadWaitsForList`).
     @ObservationIgnored private var tabAwaitsList = false
+    /// A change made the transcript stale while its tab was hidden: the next show reads it quietly over the old lines.
+    @ObservationIgnored private var transcriptStale = false
 
     /// A part of the pane with a `meetings revisions` token.
     enum RevisionPart: Hashable { case record, transcript, speakers, timeline }
@@ -124,7 +126,8 @@ final class MeetingDetailModel {
 
     func loadTab(_ tab: Tab) {
         switch tab {
-        case .transcript: if case .idle = transcript { loadTranscript() }
+        case .transcript:
+            if case .idle = transcript { loadTranscript() } else if transcriptStale { readTranscript(quiet: true) }
         case .screen: if case .idle = timeline { loadTimeline() }
         case .speakers: if case .idle = speakers { loadSpeakers() }
         case .items, .context: break
@@ -144,6 +147,7 @@ final class MeetingDetailModel {
     }
 
     private func readTranscript(quiet: Bool) {
+        transcriptStale = false
         read(\.transcript, generation: \.transcriptGeneration, ["transcript", id, "--format", "json"], timeoutSeconds: 120,
              quiet: quiet, revision: .transcript)
     }
@@ -218,7 +222,7 @@ final class MeetingDetailModel {
                 applied?()
                 reloadRecord()
                 window?.loadOverview()
-                if reloadTranscript { loadTranscript() }
+                if reloadTranscript { transcriptChanged() }
                 if let done {
                     var note = MeetingsNotice(text: done, tone: .success)
                     if let undo {
@@ -237,6 +241,24 @@ final class MeetingDetailModel {
     }
 
     func isBusy(_ key: String) -> Bool { busy.contains(key) }
+
+    /// What a change that makes the transcript stale does to it. A transcript never read waits for its first show; a
+    /// shown one reads quietly, so its lines and the scroll place stay until the answer lands; a hidden one keeps its
+    /// lines and reads quietly when it shows again.
+    enum TranscriptRefresh: Equatable { case none, readQuietly, markStale }
+
+    static func transcriptRefresh(read: Bool, showing: Bool) -> TranscriptRefresh {
+        guard read else { return .none }
+        return showing ? .readQuietly : .markStale
+    }
+
+    private func transcriptChanged() {
+        switch Self.transcriptRefresh(read: transcript != .idle, showing: tab == .transcript) {
+        case .none: break
+        case .readQuietly: readTranscript(quiet: true)
+        case .markStale: transcriptStale = true
+        }
+    }
 
     /// The changes that make the corrected transcript stale besides the record: it applies the project's dictionary,
     /// the confirmed items (a reject can take away an unclear mark), the renames and the answers.
@@ -309,20 +331,52 @@ final class MeetingDetailModel {
             defer { busyItems.remove(item.id) }
             do {
                 let result = try await MeetingsCLI.json(DecideResult.self, args)
+                let token: String?
+                switch Self.decideOutcome(result, item: item.id) {
+                case .decided(let undoToken):
+                    token = undoToken
+                case .skipped(let reason):
+                    // Another window or the terminal decided it first: show why, and read what is saved now.
+                    notice = MeetingsNotice(text: Self.skipNote(title: MeetingsWords.itemTitle(item), confirm: confirm, reason: reason),
+                                            tone: .warning)
+                    reloadRecord()
+                    window?.loadOverview()
+                    return
+                }
                 mark(item.id, status: confirm ? "confirmed" : "rejected")
                 reloadRecord()
                 window?.loadOverview()
                 var note = MeetingsNotice(text: "\(confirm ? "Confirmed" : "Rejected") \(MeetingsWords.itemTitle(item))", tone: .success)
-                note.actionTitle = "Undo"
-                note.actionSymbol = "arrow.uturn.backward"
-                note.action = { [weak model = self] in model?.reopen(item, token: result.token) }
+                if let token {
+                    note.actionTitle = "Undo"
+                    note.actionSymbol = "arrow.uturn.backward"
+                    note.action = { [weak model = self] in model?.reopen(item, token: token) }
+                }
                 notice = note
-                scheduleUndoExpiry(for: note.id)
-                if Self.reloadsTranscript(after: .decision) { transcript = .idle; if tab == .transcript { loadTranscript() } }
+                if token != nil { scheduleUndoExpiry(for: note.id) }
+                if Self.reloadsTranscript(after: .decision) { transcriptChanged() }
             } catch {
                 notice = .failure(error) { [weak model = self] in model?.decide(item, confirm: confirm, speaker: speaker) }
             }
         }
+    }
+
+    /// What one confirm or reject did to its item. `decided` carries the token an Undo needs: without one (an older
+    /// CLI) `reopen` would take back whatever decision the item holds then, so no Undo is offered. `skipped` is a
+    /// decision the CLI did not make, most often because another window or the terminal made it first.
+    enum DecideOutcome: Equatable {
+        case decided(undoToken: String?)
+        case skipped(reason: String)
+    }
+
+    static func decideOutcome(_ result: DecideResult, item: String) -> DecideOutcome {
+        if result.decided.contains(item) { return .decided(undoToken: result.token) }
+        return .skipped(reason: result.skipped.first { $0.id == item }?.reason ?? "the command decided nothing")
+    }
+
+    /// The note for a skipped decision, in the CLI's own words.
+    static func skipNote(title: String, confirm: Bool, reason: String) -> String {
+        "\(title) was not \(confirm ? "confirmed" : "rejected"): \(reason)\(reason.hasSuffix(".") ? "" : ".")"
     }
 
     /// `reopen`'s arguments: the token names the decision this Undo takes back, so the CLI refuses it once another
@@ -349,8 +403,7 @@ final class MeetingDetailModel {
             }
             reloadRecord()
             window?.loadOverview()
-            transcript = .idle
-            if tab == .transcript { loadTranscript() }
+            transcriptChanged()
         }
     }
 
@@ -608,17 +661,14 @@ extension MeetingDetailModel {
                 window?.loadOverview()
                 var note = MeetingsNotice(text: Self.bulkNote(result, threshold: threshold), tone: .success)
                 note.more = result.skipped.isEmpty ? nil : result.skipped.map { "\($0.id): \($0.reason)" }.joined(separator: "\n")
-                if !result.decided.isEmpty {
+                if !result.decided.isEmpty, let token = result.token {
                     note.actionTitle = "Undo"
                     note.actionSymbol = "arrow.uturn.backward"
-                    note.action = { [weak model = self] in model?.reopenAll(result.decided, token: result.token) }
+                    note.action = { [weak model = self] in model?.reopenAll(result.decided, token: token) }
                 }
                 notice = note
                 scheduleUndoExpiry(for: note.id)
-                if !result.decided.isEmpty, Self.reloadsTranscript(after: .decision) {
-                    transcript = .idle
-                    if tab == .transcript { loadTranscript() }
-                }
+                if !result.decided.isEmpty, Self.reloadsTranscript(after: .decision) { transcriptChanged() }
             } catch {
                 notice = .failure(error) { [weak model = self] in model?.confirmAll(atOrAbove: threshold) }
             }
@@ -648,8 +698,7 @@ extension MeetingDetailModel {
             }
             reloadRecord()
             window?.loadOverview()
-            transcript = .idle
-            if tab == .transcript { loadTranscript() }
+            transcriptChanged()
         }
     }
 }
