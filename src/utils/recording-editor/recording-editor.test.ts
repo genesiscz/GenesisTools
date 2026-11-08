@@ -21,6 +21,7 @@ import {
     groupIssues,
     issueSummary,
     textBox,
+    textBoxes,
     zoomView,
 } from "@genesiscz/utils/recording-editor/check";
 import {
@@ -1135,6 +1136,64 @@ describe("edit project (edit.json)", () => {
         expect(textBox({ ...title, x: 0.1, block: { width: 0.4, align: "left" } }, canvas).left).toBe(0);
         const nearRight = textBox({ ...title, x: 0.95, block: { width: 0.4, align: "right" } }, canvas);
         expect(nearRight.right).toBeCloseTo(canvas.width, 5);
+    });
+
+    // 2026-11-09: a plain title (0.06) and a plain subtitle (0.035) in one left-aligned block had their letters 20 px
+    // apart at 1080p, because the plate, which a plain text does not draw, stood at the block's edge and its inset
+    // (0.7 x size) grows with the size. A plate text lines up its plate; a plain text lines up its letters.
+    test("textBoxes puts a plain text's letters against its block's edge and keeps a plate text's plate there", () => {
+        const canvas = { width: 16 / 9, height: 1 };
+        const title = { text: "Invoices", size: 0.06, x: 0.62, y: 0.3, style: "plain" as const };
+        const subtitle = {
+            text: "Send, track and get paid on time",
+            size: 0.035,
+            x: 0.62,
+            y: 0.42,
+            style: "plain" as const,
+        };
+        const blockLeft = (0.62 - 0.2) * canvas.width;
+        const blockRight = (0.62 + 0.2) * canvas.width;
+        const left = { width: 0.4, align: "left" as const };
+        const right = { width: 0.4, align: "right" as const };
+
+        for (const note of [title, subtitle]) {
+            const atLeft = textBoxes({ ...note, block: left }, canvas);
+            expect(atLeft.letters?.left).toBeCloseTo(blockLeft, 5);
+            // The plate, which nobody sees, reaches past the block's edge by its inset.
+            expect(atLeft.plate.left).toBeCloseTo(blockLeft - (Math.round(note.size * 1080) * 0.7) / 1080, 5);
+            expect(textBoxes({ ...note, block: right }, canvas).letters?.right).toBeCloseTo(blockRight, 5);
+            const centred = textBoxes({ ...note, block: { width: 0.4, align: "center" } }, canvas);
+            expect(((centred.letters?.left ?? 0) + (centred.letters?.right ?? 0)) / 2).toBeCloseTo(
+                0.62 * canvas.width,
+                2
+            );
+        }
+
+        // Two plain texts of different sizes share the letters' edge.
+        expect(textBoxes({ ...title, block: left }, canvas).letters?.left).toBeCloseTo(
+            textBoxes({ ...subtitle, block: left }, canvas).letters?.left ?? 0,
+            5
+        );
+        expect(textBoxes({ ...title, block: right }, canvas).letters?.right).toBeCloseTo(
+            textBoxes({ ...subtitle, block: right }, canvas).letters?.right ?? 0,
+            5
+        );
+
+        // A plate text keeps its plate against the block's edge, its letters an inset inside it.
+        for (const note of [title, subtitle]) {
+            const plate = { ...note, style: "plate" as const };
+            expect(textBox({ ...plate, block: left }, canvas).left).toBeCloseTo(blockLeft, 5);
+            expect(textBox({ ...plate, block: right }, canvas).right).toBeCloseTo(blockRight, 5);
+        }
+
+        // Near the canvas's edge a plain text keeps its letters inside the canvas, not its invisible inset: the letters
+        // touch the edge and the plate reaches past it.
+        const nearLeft = textBoxes({ ...title, x: 0.1, block: left }, canvas);
+        expect(nearLeft.letters?.left).toBeCloseTo(0, 5);
+        expect(nearLeft.plate.left).toBeLessThan(0);
+        const nearRight = textBoxes({ ...title, x: 0.95, block: right }, canvas);
+        expect(nearRight.letters?.right).toBeCloseTo(canvas.width, 5);
+        expect(nearRight.plate.right).toBeGreaterThan(canvas.width);
     });
 
     // 2026-11-08: check() said a title and its subtitle overlap while the export showed them apart. At 0.58 em a

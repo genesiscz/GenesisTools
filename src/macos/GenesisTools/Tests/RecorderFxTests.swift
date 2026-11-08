@@ -1,4 +1,6 @@
+import AppKit
 import CoreImage
+import CoreText
 import XCTest
 @testable import GenesisToolsRecorder
 
@@ -363,27 +365,97 @@ final class RecorderTextBlockTests: XCTestCase {
         XCTAssertEqual(Looks.textOrigin(note(.right, x: 0.95), plate: plate, size: size).x, 1920 - 300, "kept inside on the right")
     }
 
-    /// Drawn, a short title and a longer subtitle with one x and one left-aligned block start at the same column: the
-    /// block's left edge. Before 2026-11-08 each was centred on x, so their left edges did not line up.
-    func testLeftAlignedTextsWithOneBlockStartAtTheSameColumn() throws {
+    /// A title (0.06) and a subtitle (0.035) as the demos place them: one x, one block of 0.4.
+    private func pair(_ align: EditProject.TextAlign, style: EditProject.TextStyle, x: Double = 0.62) -> [EditProject.TextNote] {
+        [("Invoices", 0.06, 0.3), ("Send, track and get paid on time", 0.035, 0.42)].map { text, size, y in
+            EditProject.TextNote(id: "t", startUs: 0, endUs: 1_000_000, text: text, x: x, y: y, size: size, style: style,
+                                 block: .init(width: 0.4, align: align))
+        }
+    }
+
+    /// The first and the last column of `size`'s picture with a pixel that passes `lit`, over every row.
+    private func columns(_ image: CIImage, size: CGSize, lit: (UInt8) -> Bool) throws -> (first: Int, last: Int) {
+        let width = Int(size.width), height = Int(size.height)
+        var pixels = [UInt8](repeating: 0, count: 4 * width * height)
+        CIContext().render(image, toBitmap: &pixels, rowBytes: 4 * width, bounds: CGRect(origin: .zero, size: size),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        var first = width, last = -1
+        for row in 0..<height {
+            for column in 0..<width where lit(pixels[4 * (row * width + column)]) {
+                first = min(first, column)
+                last = max(last, column)
+            }
+        }
+        XCTAssertGreaterThanOrEqual(last, 0, "something was drawn")
+        return (first, last)
+    }
+
+    /// How far the ink of a one-line text starts right of its pen (the first glyph's side bearing) and ends left of its
+    /// advance (the last glyph's), in pixels of the font TextPlates sets it in.
+    private func bearings(_ text: String, fontSize: CGFloat) -> (left: CGFloat, right: CGFloat) {
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        return (ink.minX, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)) - ink.maxX)
+    }
+
+    /// Drawn, a title and a subtitle on plates with one x and one block start at the block's left edge (left) or end at
+    /// its right edge (right): the plates line up, whatever the text's size. Before 2026-11-08 each was centred on x.
+    func testAlignedPlatesWithOneBlockLineUpAtTheBlocksEdge() throws {
         let size = CGSize(width: 1920, height: 1080)
         let plates = TextPlates()
         let white = CIImage(color: .white).cropped(to: CGRect(origin: .zero, size: size))
-        let context = CIContext()
-        var starts: [Int] = []
-        for text in ["Invoices", "Send, track and get paid"] {
-            let note = EditProject.TextNote(id: "t", startUs: 0, endUs: 1_000_000, text: text, x: 0.62, y: 0.5, size: 0.05,
-                                            block: .init(width: 0.4, align: .left))
-            let drawn = Looks.drawText(note, opacity: 1, plates: plates, on: white, size: size)
-            var row = [UInt8](repeating: 0, count: 4 * Int(size.width))
-            context.render(drawn, toBitmap: &row, rowBytes: 4 * Int(size.width), bounds: CGRect(x: 0, y: 540, width: size.width, height: 1),
-                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
-            // The plate darkens the white canvas (to about 145: Core Image blends in linear light): its first column.
-            starts.append(try XCTUnwrap(stride(from: 0, to: row.count, by: 4).first { row[$0] < 200 }) / 4)
+        for align: EditProject.TextAlign in [.left, .right] {
+            for note in pair(align, style: .plate) {
+                let drawn = Looks.drawText(note, opacity: 1, plates: plates, on: white, size: size)
+                // The plate darkens the white canvas (to about 145: Core Image blends in linear light); its letters stay
+                // light inside it.
+                let plate = try columns(drawn, size: size) { $0 < 200 }
+                if align == .left {
+                    XCTAssertEqual(Double(plate.first), (0.62 - 0.2) * 1920, accuracy: 1, "\(note.text): the plate starts at the block's left edge")
+                } else {
+                    XCTAssertEqual(Double(plate.last + 1), (0.62 + 0.2) * 1920, accuracy: 1, "\(note.text): the plate ends at the block's right edge")
+                }
+            }
         }
-        let blockLeft = Int(((0.62 - 0.2) * 1920).rounded())
-        for start in starts {
-            XCTAssertEqual(Double(start), Double(blockLeft), accuracy: 1, "the plate starts at the block's left edge")
+    }
+
+    /// A plain text draws no plate, only its letters, so it lines up its letters: a left-aligned one starts its letters
+    /// at the block's left edge and a right-aligned one ends them at its right edge. Seen 2026-11-09: a plain title
+    /// (0.06) and subtitle (0.035) in one left-aligned block started 20 px apart at 1080p, because their invisible
+    /// plates stood at the block's edge and the plate's inset (0.7 x the font size) grows with the size. The letters
+    /// are white over a black canvas; the first and last glyphs' own side bearings (CoreText's, 1 to 4 px here) are
+    /// taken off, so what is compared is where the line's pen starts and its advance ends.
+    func testPlainTextsWithOneBlockLineUpTheirLettersAtTheBlocksEdge() throws {
+        let size = CGSize(width: 1920, height: 1080)
+        let plates = TextPlates()
+        let black = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: size))
+        func letters(_ note: EditProject.TextNote) throws -> (first: CGFloat, last: CGFloat) {
+            let drawn = Looks.drawText(note, opacity: 1, plates: plates, on: black, size: size)
+            // Half covered: Core Image blends in linear light, so a pixel half covered by white over black reads about
+            // 188, and the first and last such columns sit at the ink's edges to half a pixel.
+            let lit = try columns(drawn, size: size) { $0 >= 188 }
+            let ink = bearings(note.text, fontSize: Looks.textPlateStyle(note, size: size).fontSize)
+            // Where the pen starts and where the advance ends: the edges the alignment puts at the block's edge.
+            return (CGFloat(lit.first) - ink.left, CGFloat(lit.last + 1) + ink.right)
         }
+        let blockLeft: CGFloat = (0.62 - 0.2) * 1920, blockRight: CGFloat = (0.62 + 0.2) * 1920
+        let left = try pair(.left, style: .plain).map(letters)
+        for (note, edges) in zip(pair(.left, style: .plain), left) {
+            XCTAssertEqual(edges.first, blockLeft, accuracy: 2, "\(note.text): its letters start at the block's left edge")
+        }
+        XCTAssertEqual(left[0].first, left[1].first, accuracy: 2, "the title's and the subtitle's letters start at one column")
+        let right = try pair(.right, style: .plain).map(letters)
+        for (note, edges) in zip(pair(.right, style: .plain), right) {
+            XCTAssertEqual(edges.last, blockRight, accuracy: 2, "\(note.text): its letters end at the block's right edge")
+        }
+        XCTAssertEqual(right[0].last, right[1].last, accuracy: 2, "the title's and the subtitle's letters end at one column")
+
+        // A block past the canvas's edge keeps the letters inside the canvas, not the inset nobody sees: the letters
+        // touch the edge.
+        let nearLeft = try letters(pair(.left, style: .plain, x: 0.1)[0])
+        XCTAssertEqual(nearLeft.first, 0, accuracy: 2, "kept inside on the left by its letters")
+        let nearRight = try letters(pair(.right, style: .plain, x: 0.95)[0])
+        XCTAssertEqual(nearRight.last, 1920, accuracy: 2, "kept inside on the right by its letters")
     }
 }

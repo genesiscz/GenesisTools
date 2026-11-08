@@ -102,6 +102,43 @@ final class RecorderTextGripTests: XCTestCase {
         }
     }
 
+    /// The box of the pixels a plain text's white letters lit on a black canvas, in Core Image space (y up). A plain text
+    /// draws no plate, so its letters are all a viewer sees of it.
+    private func drawnLetters(_ note: EditProject.TextNote) throws -> CGRect {
+        let black = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: size))
+        let drawn = Looks.drawText(note, opacity: 1, plates: TextPlates(), on: black, size: size, sinceUs: 5_000_000)
+        let width = Int(size.width), height = Int(size.height)
+        var pixels = [UInt8](repeating: 0, count: 4 * width * height)
+        context.render(drawn, toBitmap: &pixels, rowBytes: 4 * width, bounds: CGRect(origin: .zero, size: size), format: .RGBA8,
+                       colorSpace: CGColorSpaceCreateDeviceRGB())
+        var minX = width, maxX = -1, minRow = height, maxRow = -1
+        for row in 0..<height {
+            for column in 0..<width where pixels[4 * (row * width + column)] > 100 {
+                minX = min(minX, column)
+                maxX = max(maxX, column)
+                minRow = min(minRow, row)
+                maxRow = max(maxRow, row)
+            }
+        }
+        XCTAssertGreaterThanOrEqual(maxX, 0, "the letters were drawn")
+        // The bitmap's first row is the picture's top.
+        return CGRect(x: minX, y: height - 1 - maxRow, width: maxX - minX + 1, height: maxRow - minRow + 1)
+    }
+
+    /// A plain text lines up its letters, not its plate (textOrigin), and the grip follows: it sits on the letters for
+    /// every alignment and at the canvas's edges, where the plate nobody sees reaches past the picture.
+    func testTheGripOfAPlainTextSitsOnItsLetters() throws {
+        for (name, plate) in cases.filter({ $0.name != "taller than twice the canvas" }) {
+            var note = plate
+            note.style = .plain
+            let letters = try drawnLetters(note)
+            let point = gripPixel(note, canvas: size)
+            XCTAssertTrue(letters.contains(point), "\(name): the grip at \(point) is off the letters drawn at \(letters)")
+            let rect = try XCTUnwrap(Looks.textPlateRect(note, size: size), name)
+            XCTAssertTrue(rect.contains(letters), "\(name): the letters at \(letters) are outside the plate rect \(rect)")
+        }
+    }
+
     /// A plate that runs out of the canvas keeps its grip on the part the preview shows: the overlay is not clipped to
     /// the picture, so a grip at the whole plate's centre drew above the preview.
     func testTheGripOfAnOverflowingPlateStaysOnThePicture() throws {
