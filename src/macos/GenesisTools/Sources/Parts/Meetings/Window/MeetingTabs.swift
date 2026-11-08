@@ -443,10 +443,16 @@ struct ItemsTab: View {
 
     /// Return confirms and Delete rejects the selected suggestion (a range with no speaker waits for its menu).
     private func act(on record: MeetingRecordView, confirm: Bool) -> KeyPress.Result {
-        guard let id = selected, let item = record.items.first(where: { $0.id == id }), item.status == "suggested",
-              item.kind != "question", !(confirm && item.kind == "speaker-range" && item.speaker == nil) else { return .ignored }
+        guard let id = selected, let item = record.items.first(where: { $0.id == id }), Self.keyActs(on: item, confirm: confirm)
+        else { return .ignored }
         detail.decide(item, confirm: confirm)
         return .handled
+    }
+
+    /// Whether Return (confirm) or Delete (reject) decides the item: the same rule as its buttons, so Return never
+    /// confirms a term with no spelling or a range with no speaker.
+    static func keyActs(on item: MeetingItem, confirm: Bool) -> Bool {
+        confirm ? item.canConfirm : item.isDecidable
     }
 }
 
@@ -587,7 +593,7 @@ private struct ItemRow: View, Equatable {
                         }
                     } else {
                         LiveButton(tooltip: needsSpelling ? "It has no spelling yet: answer it by ear" : "Confirm: transcripts apply it",
-                                   enabled: !needsSpelling, action: { decide(true, nil) }) {
+                                   enabled: item.canConfirm, action: { decide(true, nil) }) {
                             Text("Confirm").font(.system(size: 12))
                         }
                     }
@@ -607,7 +613,7 @@ private struct ItemRow: View, Equatable {
         // One element per item with its actions, instead of a node per text, badge and button: with 425 suggestions a
         // walk ran out of its budget after 887 nodes (2026-11-06).
         .accessibilityElement(children: .combine)
-        .accessibilityAction(named: "Confirm") { if let decide, !needsSpeaker, !needsSpelling { decide(true, nil) } }
+        .accessibilityAction(named: "Confirm") { if let decide, item.canConfirm { decide(true, nil) } }
         .accessibilityAction(named: "Reject") { decide?(false, nil) }
         .accessibilityAction(named: "Reopen") { reopen?() }
         .accessibilityAction(named: "Play") { if let seconds = item.seconds { play(seconds) } }

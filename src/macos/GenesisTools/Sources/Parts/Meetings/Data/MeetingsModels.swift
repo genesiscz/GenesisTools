@@ -98,6 +98,11 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     var seconds: Double? { fromSec ?? atSec }
     /// A term with nothing to confirm yet: no spelling, meaning or quoted line (the CLI's own rule in decide.ts).
     var needsSpelling: Bool { kind == "term" && proposed == nil && meaning == nil && quote == nil }
+    /// A suggestion the reader decides here; a question is answered by ear, not decided.
+    var isDecidable: Bool { status == "suggested" && kind != "question" }
+    /// A plain confirm applies it: a range needs its speaker and a term its spelling. The button, the accessibility
+    /// action, Return and "confirm all" all ask this, so none of them sends a confirm the CLI refuses.
+    var canConfirm: Bool { isDecidable && !(kind == "speaker-range" && speaker == nil) && !needsSpelling }
     var reason: String? {
         if case .string(let text)? = evidence?["reason"] { return text }
         return nil
