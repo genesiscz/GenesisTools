@@ -153,9 +153,16 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   `markers()` and `tools recorder markers` list both kinds (an edit marker with its `id`); the chapters and the marks
   lane show both.
 - `texts` (optional): lines of text over the picture (a title, a step's name) from `startUs` to `endUs`: `text`,
-  `x`/`y` its centre as 0 to 1 of the CANVAS (so it stays put through a zoom; 0.5, 0.12 by default), `size` 0.02 to
-  0.15 of the short side (0.055), `style` `plate` or `plain`. Each fades in and out over 0.2 s. Ops `text` and
-  `untext`; the editor's Text tab.
+  `x`/`y` its centre (the centre of its block) as 0 to 1 of the CANVAS (so it stays put through a zoom; 0.5, 0.12 by
+  default), `size` 0.02 to 0.15 of the short side (0.055), `style` `plate` or `plain`. Each fades in and out over
+  0.2 s. Ops `text` and `untext`; the editor's Text tab.
+  - `block` (optional) `{ width, align }` is the box the text sits in, centred on `x`: `width` is 0.15 to 0.95 of the
+    canvas's width (0.8), and the lines wrap at it. `align` (`left`, `center` by default, or `right`) lines up the
+    lines and places the plate in the box: `left` puts the plate's left edge at the block's left edge
+    (`x - width / 2`), `right` puts its right edge at the block's right edge (`x + width / 2`), and `center` centres
+    it on `x`. The plate always stays inside the canvas.
+  - So texts with the same `x` and block line up whatever their lengths. Example: a title and its subtitle at `x`
+    0.62 with `block: { width: 0.35, align: "left" }` beside a `phone-left` frame both start at 0.445 of the width.
 - `shapes` (optional): an `arrow` from (`x1`, `y1`) to its head at (`x2`, `y2`), or a `box` or `circle` between those
   corners, over the SOURCE picture (it moves with a zoom) from `startUs` to `endUs`, `color` (#FF3B30) and `width`
   (0.006 of the short side). It draws itself on over 0.3 s and fades out over 0.2 s. Ops `shape {from, to, kind,
