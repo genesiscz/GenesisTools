@@ -123,6 +123,7 @@ import {
     verifyHidden,
     waits,
 } from "./fx-analysis";
+import { type ImportMovieOptions, importMovie } from "./import";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -1574,6 +1575,26 @@ export const moviesApi = defineApi({
             doc: 'One call gives a finished demo: records the screen (record: the options of record()), runs each step ({ caption, run: async () => …, holdSeconds? }) between a marker at its start and a hold after it (holdSeconds, 1: the result stays on screen and is never cut), stops, cuts the waiting (still, silent stretches while the code of a step runs, and the time before the first and after the last step), adds the caption of each step while it plays, and exports (export: false skips it). A step that throws is listed in failed and the next one runs. edit takes cutIdle (true), idleMinSeconds (1), cutWaits (true), minWaitSeconds (0.8), keepSeconds (0.3), leadSeconds (0.5), tailSeconds (1), captions (true), captionPosition "bottom" | "top", captionMinSeconds (1.8), markers (true). Save a demo that worked with presets.save(name, script) to run it again.',
             effect: "reversible",
             reaches: ["user"],
+        }),
+        defineMethod({
+            name: "import",
+            params: z.object({
+                path: z.string().min(1),
+                options: z
+                    .object({
+                        title: z.string().trim().min(1).max(120).optional(),
+                        markers: z
+                            .array(z.object({ at: sourceTimeSchema, label: z.string().trim().min(1).max(80) }).strict())
+                            .optional(),
+                    })
+                    .strict()
+                    .optional(),
+            }),
+            positional: ["path", "options"],
+            result: z.unknown(),
+            resultName: "Movie",
+            doc: `Makes a library recording of a movie file that exists already (a render, an export, a movie from another app: .mp4, .m4v or .mov) and returns it as a Movie to edit, as open() does: info() gives its title and folder, the folder's name is its library id. The library gets an APFS clone of the file (no extra disk; the file stays as it is), titled options.title or the file's name. options.markers ([{ at: SourceTime, label }]) are moments of the movie as it plays: movie.markers() lists them and the editor shows them; a marker outside the movie is refused. A movie with sound keeps it (the editor plays, exports and transcribes it). A file the editor does not play is refused, and nothing is made. ${toolCommand("recorder trash")} <id> removes the recording again.`,
+            effect: "reversible",
         }),
     ],
     handles: [
@@ -3309,6 +3330,11 @@ export class MoviesToolset extends ReplToolset {
                 },
                 record: (options: RecordOptions = {}) => record({ options, ctx, deps: { ...REAL_DEPS, ...this.deps } }),
                 demo: (options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }) => recordDemo(options, ctx),
+                // The recording the import made, as open() gives it: the next call is an edit.
+                import: async (path: string, options: ImportMovieOptions = {}) => {
+                    const imported = await importMovie(path, options);
+                    return serviceRoutedMovie(new Movie(imported.folder, ctx), movieMethods);
+                },
                 search: (text: string) => searchLibrary(text),
             },
         };

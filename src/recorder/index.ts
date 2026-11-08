@@ -5,6 +5,7 @@ import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { acceptJsonEverywhere, suggestOnlySafeCommands } from "@genesiscz/utils/cli/commander-hints";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
+import { formatCount } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -41,6 +42,7 @@ import {
     stepDisplaySwitch,
 } from "./lib/frames-movie";
 import { framesDoneLine, framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "./lib/frames-recording";
+import { importMovie, parseImportMarker } from "./lib/import";
 import {
     alreadyInState,
     describeLiveEntries,
@@ -495,6 +497,43 @@ program
         try {
             const manifest = renameRecording(resolveRecording(value), title);
             out.result({ id: manifest.id, title: manifest.title });
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("import")
+    .description(
+        "Make a library recording of a movie file (.mp4, .m4v or .mov): an APFS clone of it (no extra disk; the file stays as it is), titled --title or the file's name, with a marker at each --marker; prints its folder, and the editor, movies.open() and every command take its id"
+    )
+    .argument("<movie>", "the movie file")
+    .option("--title <title>", "the library's title (1 to 120 characters); default the file's name")
+    .option(
+        "--marker <time=label>",
+        "a marker at a time of the movie (seconds or m:ss): 0:12=Login done; repeat it for more",
+        (value: string, previous: string[]) => [...previous, value],
+        [] as string[]
+    )
+    .option("--json", "print the whole answer as JSON")
+    .action(async (movie: string, flags: { title?: string; marker: string[]; json?: boolean }) => {
+        try {
+            const answer = await importMovie(movie, {
+                title: flags.title,
+                markers: flags.marker.map(parseImportMarker),
+            });
+
+            if (flags.json) {
+                out.result(answer);
+                return;
+            }
+
+            const sound = answer.audioTracks > 0 ? "with its sound" : "no sound";
+            out.println(answer.folder);
+            out.printlnErr(
+                `"${answer.title}" is ${answer.id} in the library: ${answer.seconds} s, ${sound}, ${formatCount(answer.markers.length, "marker")}. ${toolCommand("recorder edit", answer.id)} opens it in the editor.`
+            );
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
