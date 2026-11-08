@@ -843,6 +843,22 @@ describe("edit project (edit.json)", () => {
         expect(() => autoZoom(manual, [{ ms: 1, x: 0, y: 0 }])).toThrow("no clicks");
     });
 
+    test("check names a zoom whose ease out starts before a cut, so its last frames before the cut snap out", () => {
+        // The zoom runs into the cut at 5 s, but its 450 ms ease out starts at 4.75 s: the 0.25 s before the cut
+        // show the fast start of the ease out, a snap. Ending it at 5.5 s puts the whole ease out in the cut.
+        let project = applyOp(wholeProject(source), { op: "cut", from: 5, to: 7 });
+        project = applyOp(project, { op: "zoom", from: 2, to: 5.2, scale: 1.5 });
+        project = applyOp(project, { op: "zoom", from: 7.5, to: 9, scale: 1.5 });
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const snaps = checkProject(project, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut");
+        expect(snaps).toHaveLength(1);
+        expect(snaps[0]).toMatchObject({ severity: "check", at: 5 });
+        expect(snaps[0]?.message).toContain("0.25 s");
+        expect(snaps[0]?.action?.ops).toEqual([{ op: "retime", id: project.zooms[0]?.id, to: 5.5 }]);
+        const fixed = applyOp(project, { op: "retime", id: project.zooms[0]?.id ?? "", to: 5.5 });
+        expect(checkProject(fixed, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut")).toEqual([]);
+    });
+
     test("check names a voiceover that runs past the movie's end, where the export cuts it off", () => {
         // The renderer mixes a voice clip into the movie only: an end card does not carry it, so the words after the
         // movie's last frame are lost. A clip that ends inside the movie is no issue.

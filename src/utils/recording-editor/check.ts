@@ -220,6 +220,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
 
     // R5 5 redaction edges
     issues.push(...redactionEdgeIssues(project));
+    issues.push(...zoomEaseAtCutIssues(project));
     // R7 10 zoom edge text
     issues.push(...zoomEdgeIssues(project, facts.screenText ?? []));
     // R6 1 moving text
@@ -448,6 +449,40 @@ function cutEdgesOf(project: EditProject): { ends: number[]; starts: number[] } 
         .filter((clip, index) => clip.fromUs > 0 && clips[index - 1]?.toUs !== clip.fromUs)
         .map((clip) => clip.fromUs);
     return { ends, starts };
+}
+
+/**
+ * A zoom that runs into a cut but starts its ease out before it: the renderer's ease out leaves fast (ZoomCurve), so
+ * the frames between the start of the ease out and the cut show the view snapping out. Ending the zoom one ease out
+ * after the cut puts the whole ease out inside the cut.
+ */
+function zoomEaseAtCutIssues(project: EditProject): EditIssue[] {
+    const issues: EditIssue[] = [];
+    const ends = cutEdgesOf(project).ends;
+    const seconds = (us: number) => Math.round(us / 1000) / 1000;
+
+    for (const zoom of project.zooms) {
+        const easeUs = zoom.easeOutMs * 1000;
+        const cut = ends.find((end) => end > zoom.endUs - easeUs && end < zoom.endUs);
+
+        if (cut === undefined || easeUs <= 0) {
+            continue;
+        }
+
+        const to = seconds(cut + easeUs + 50_000);
+        issues.push({
+            severity: "check",
+            kind: "zoom-eases-out-at-cut",
+            item: `zoom ${zoom.id}`,
+            message: `The zoom at ${tenths(zoom.startUs)} s starts its ease out ${seconds(cut - (zoom.endUs - easeUs))} s before the cut at ${seconds(cut)} s, so its last frames before the cut snap out`,
+            fix: `movie.retime({ id: "${zoom.id}", to: ${to} })`,
+            at: tenths(cut),
+            target: { list: "zooms", id: zoom.id },
+            action: { label: "End in the Cut", ops: [{ op: "retime", id: zoom.id, to }] },
+        });
+    }
+
+    return issues;
 }
 
 /**
