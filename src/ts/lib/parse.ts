@@ -522,6 +522,86 @@ function collectSideEffects(statement: SgNode, into: SideEffect[]): void {
     }
 }
 
+/** `import("x")` and `require("x")` anywhere in the file, marked dynamic when they do not run at load. */
+function callImportSites(root: SgNode): ImportSite[] {
+    const sites: ImportSite[] = [];
+
+    for (const call of root.findAll({ rule: { kind: "call_expression" } })) {
+        const callee = calleeText(call);
+
+        if (callee !== "require" && callee !== "import") {
+            continue;
+        }
+
+        const args = field(call, "arguments");
+        const first = args?.children().find((c) => c.kind() === "string");
+
+        if (!first) {
+            continue;
+        }
+
+        const specifier = stringValue(first);
+
+        if (specifier === null) {
+            continue;
+        }
+
+        const dynamic = callee === "import";
+        const deferred = dynamic || !runsAtModuleScope(call);
+        const awaited = dynamic && isAwaitedAtModuleScope(call);
+        sites.push({
+            specifier,
+            kind: dynamic || deferred ? "dynamic" : "require",
+            typeOnly: false,
+            names: ["*"],
+            locals: [],
+            line: lineOf(call),
+            ...(awaited ? { awaited: true } : {}),
+        });
+    }
+
+    return sites;
+}
+
+/** A file with no `import(` or `require(` text cannot hold a call site, so the tree walk is skipped. */
+const IMPORT_CALL_HINT = /\b(?:import|require)\s*\(/;
+
+/**
+ * Only the import sites of a module, the same sites `parseModule` reports, without the side-effect
+ * and module-scope-use passes. A whole-tree import index parses thousands of files, and those two
+ * passes cost more than the parse itself: on 6594 files (2026-11-08, one process, a loaded Mac)
+ * this took 5.0 s and `parseModule` 12.1 s.
+ */
+export function parseImports(source: string, file: string): ImportSite[] {
+    const lang = languageFor(file) ?? Lang.TypeScript;
+    const root = parse(lang, source).root();
+    const imports: ImportSite[] = [];
+
+    for (const statement of root.children()) {
+        const kind = statement.kind();
+
+        if (kind === "import_statement") {
+            const site = readImportStatement(statement);
+
+            if (site) {
+                imports.push(site);
+            }
+        } else if (kind === "export_statement" && statement.children().some((c) => c.kind() === "string")) {
+            const site = readReexport(statement);
+
+            if (site) {
+                imports.push(site);
+            }
+        }
+    }
+
+    if (IMPORT_CALL_HINT.test(source)) {
+        imports.push(...callImportSites(root));
+    }
+
+    return imports;
+}
+
 /**
  * Static facts about one JS/TS module: every import edge with its names, what it re-exports,
  * what it runs at module scope, and which imported bindings it touches at module scope. One
@@ -608,39 +688,7 @@ export function parseModule(source: string, file: string): ParsedModule {
         collectSideEffects(statement, sideEffects);
     }
 
-    for (const call of root.findAll({ rule: { kind: "call_expression" } })) {
-        const callee = calleeText(call);
-
-        if (callee !== "require" && callee !== "import") {
-            continue;
-        }
-
-        const args = field(call, "arguments");
-        const first = args?.children().find((c) => c.kind() === "string");
-
-        if (!first) {
-            continue;
-        }
-
-        const specifier = stringValue(first);
-
-        if (specifier === null) {
-            continue;
-        }
-
-        const dynamic = callee === "import";
-        const deferred = dynamic || !runsAtModuleScope(call);
-        const awaited = dynamic && isAwaitedAtModuleScope(call);
-        imports.push({
-            specifier,
-            kind: dynamic || deferred ? "dynamic" : "require",
-            typeOnly: false,
-            names: ["*"],
-            locals: [],
-            line: lineOf(call),
-            ...(awaited ? { awaited: true } : {}),
-        });
-    }
+    imports.push(...callImportSites(root));
 
     const locals = new Set<string>();
 

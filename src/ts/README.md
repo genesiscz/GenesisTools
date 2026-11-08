@@ -2,14 +2,19 @@
 
 > **What is in this TypeScript file, what is written twice, where does the startup time of an entry point go, and what does type-checking cost?**
 
-Six command groups. `skeleton` prints a file's API. `duplicates` finds code written more than
-once. `refactors` ranks what to change. `imports` answers the startup-cost question. `profile` answers where
-the CPU time of a whole run goes. `program` answers what a TypeScript program costs to check, and which code makes it
-cost that.
+Eight command groups. `skeleton` prints a file's API. `duplicates` finds code written more than
+once. `refactors` ranks what to change. `areas` draws the import graph between folders. `depth` finds shallow
+modules. `imports` answers the startup-cost question, for one entry or (`imports startup`) for many at once.
+`profile` answers where the CPU time of a whole run goes. `program` answers what a TypeScript program costs to check,
+and which code makes it cost that.
 
-`skeleton`, `duplicates` and `refactors` take `--format text|md|json|json-compact|toon`, with
-`--md`, `--json`, `--json-compact` and `--toon` as shorthands. Asking for two different formats is
-a usage error. `imports` keeps its own `--json` and does not take `--format`.
+`skeleton`, `duplicates`, `refactors`, `areas`, `depth` and `imports startup` take
+`--format text|md|json|json-compact|toon`, with `--md`, `--json`, `--json-compact` and `--toon` as shorthands.
+Asking for two different formats is a usage error. The other `imports` subcommands keep their own `--json` and do
+not take `--format`.
+
+Nothing here is tied to one repository: no root, alias table or folder name is built in. The scanned paths and the
+cwd decide the areas, and imports resolve through Bun's resolver, which reads the nearest `tsconfig.json` `paths`.
 
 Measured 2026-09-22 with Anthropic's tokenizer on `skeleton src/utils`: `--json` 643k tokens,
 `--json-compact` 428k, `--toon` 433k. TOON is built from the object rows, so it is a table with
@@ -148,6 +153,84 @@ functions score 2%. One body threshold cannot separate those. On signatures — 
 represented. A skeleton lists declarations, so a file built from chained expression statements or
 long function bodies will show a low percentage. Below 60% the figure turns yellow. Read the file
 when you need a body, a string literal, a comment, control flow or a nested closure.
+
+---
+
+## `tools ts areas <paths...>`
+
+The static import graph between areas, for an architecture review. An area is the first folder under each scanned
+path (`src/hub`, `src/question`); a file directly in a scanned path belongs to `<path>/(root)`.
+
+```bash
+tools ts areas src --split src/utils                         # src/utils/ai, src/utils/cli, src/utils/(root) ...
+tools ts areas src --split src/utils --forbid "src/utils->src/" --json
+tools ts areas src --split src/utils --mermaid --min-edges 20 > areas.mmd
+```
+
+Per area: files, lines (as `wc -l` counts them), fan-in and fan-out (distinct areas importing it and imported by
+it), and the import sites in, out and inside. Then the **mutual pairs** (two areas importing each other, both counts),
+the **cross-area edges** heaviest first, and one block per `--forbid` rule.
+
+- **An edge is one import site**: an import or re-export statement, a side-effect import, a `require()` or an
+  `import()`. It is resolved with Bun's resolver, so tsconfig `paths` aliases count the way the runtime resolves them.
+  Packages and builtins are not edges.
+- **Dynamic edges are counted and marked.** `import()` and a `require()` inside a function load lazily, so each edge
+  and each mutual pair says how many of its sites are dynamic. In `--mermaid`, an edge whose every site is dynamic is
+  dashed.
+- **Type-only imports count** as static coupling and are reported apart (`typeOnly`), since nothing loads at run time.
+- `--forbid "<from>-><to>"` (repeatable): an edge breaks the rule when its source area starts with `<from>`, its
+  target starts with `<to>`, and the target does not start with `<from>`. So `"src/utils->src/"` lists every utils
+  area importing a tool, with each site's `file:line`. The command exits 1 when a rule is broken, so it can guard CI.
+
+| Flag | Effect |
+|------|--------|
+| `--split <dir>` | Group one level deeper inside this folder; repeatable, the deepest one wins |
+| `--depth <n>` | Folder levels below a scanned path (or a `--split` folder) that make one area (default 1) |
+| `--forbid <rule>` | A direction that must not exist; repeatable |
+| `--limit <n>` | Rows per table in text and markdown (default 40); JSON always has every row |
+| `--mermaid` | Print a Mermaid flowchart instead: mutual edges red, dynamic-only edges dashed (`--md` fences it) |
+| `--min-edges <n>` | With `--mermaid`, draw only edges with at least this many sites (default 5) |
+| `--tests`, `--ignore` | As everywhere: tests are skipped unless `--tests` |
+
+Checked on this repository on 2026-11-08 against the regex probe it replaces: `src/utils/agent-sessions` and
+`src/utils/ai` import each other 88 and 40 times, and `src/hub` imports `src/question` 61 times, the same counts in
+both. The probe put every import of a folder's `index.ts` (`@genesiscz/utils/env`) into `src/utils/(root)`; the
+resolver puts it into `src/utils/env`, which is why the `(root)` edges are smaller here and some areas gained edges.
+
+## `tools ts depth <paths...>`
+
+The shallow-module finder. A module is **deep** when much behaviour sits behind a small interface, and **shallow**
+when the interface is nearly as big as the implementation. A module is a folder (`--by folder`, the default: the
+first folder under each path, as in `areas`) or one file (`--by file`).
+
+```bash
+tools ts depth src/utils
+tools ts depth src/utils --within src --json        # count importers from the whole of src
+tools ts depth src/utils/ai --by file --limit 40
+```
+
+| Column | Meaning |
+|--------|---------|
+| `EXPORTS` | Exported names; a re-export statement counts one per name it lists, `export *` counts one |
+| `IFACE` | **Characters** of every exported signature, whitespace collapsed, plus the non-private members of an exported class, interface, enum, namespace or object API |
+| `CODE` | Characters of the module's text with comments removed and whitespace collapsed |
+| `SHARE` | `IFACE / CODE`, at most 1: how much of the module a caller must read to use it |
+| `RE-EXP` | Share of exports re-exported from another module (`export … from`): pass-through |
+| `THIN` | Exported functions whose body is at most 3 lines, out of all exported functions: forwarders |
+| `IMPORTERS` | Distinct files outside the module, and inside `--within`, that import it |
+| `AREAS` | Distinct areas those importers sit in |
+
+The ranking:
+
+- `shallow = 0.6 × SHARE + 0.4 × (re-exports + thin exports) / exports`, from 0 to 1. Modules with fewer than
+  `--min-exports` names (default 2) and modules whose every export is a type or an interface are left out: a types
+  file holds no behaviour to hide, so it would top the list without telling you anything.
+- `deep = code lines per export × log2(1 + importer files)`. The deep table lists the top `--deep` (default 10)
+  modules with at least one importer: much behaviour behind few names, used widely.
+
+`--within <path>` (repeatable) sets where importers are counted; the default is the scanned paths, so
+`depth src/utils` counts only importers inside `src/utils`. `--split` groups importers and folder modules one level
+deeper, as in `areas`. The JSON forms carry every module under `modules`, beside the two ranked tables.
 
 ---
 
@@ -311,6 +394,9 @@ each fix type-only, measured with `own` before and after:
 | `imports lazy <entry>` | Static imports whose bindings are only used inside functions, ranked by the startup time `await import()` would save |
 | `imports barrels <entry>` | `import { a } from "<barrel>"` sites where the barrel re-exports far more than `a` needs, priced in real ms |
 | `imports cycles <entry>` | Import cycles on the startup path, with the edges that close them |
+| `imports startup [entries...]` | Cold import cost of many entries in one table, then the heavy modules two or more of them pay for |
+| `areas <paths...>` | Static import graph between areas: size, fan-in, fan-out, mutual pairs, forbidden directions, Mermaid |
+| `depth <paths...>` | Shallow and deep modules: interface size against code, pass-through exports, importers |
 | `profile <entry> [-- args...]` | CPU profile of a whole run: hot functions, repository functions, a repository call tree, optionally every thread |
 | `program cost\|files\|own\|closure\|sites\|trace [tsconfig]` | Type-check cost: heap per phase, checker work per file and folder, one file's own cost, one folder's closure and duplicate packages, the costliest calls and types by what they call, trace hot spots |
 
@@ -326,6 +412,7 @@ tools ts imports lazy src/notify/index.ts --min-ms 1
 tools ts imports barrels src/claude/index.ts
 tools ts imports cycles src/utils/logger.ts
 tools ts imports analyze src/du/index.ts --json > /tmp/du-imports.json
+tools ts imports startup --tools src --runs 2 --md              # every tool entry, one table
 ```
 
 ## How the numbers are made
@@ -390,11 +477,28 @@ For `import { a, b } from "<barrel>"`, the names are traced to the re-export tar
 
 Tarjan's strongly connected components over load-time edges (static, require, module-scope `await import()`). A cycle is where "X is not a function" at import time comes from: whichever member evaluates first sees the others' exports as `undefined` until they finish. Deferred `import()` is not an edge here, even with `--include-dynamic`; it never cycles at load time.
 
+## `imports startup`: which dependency taxes every tool?
+
+`tools ts imports startup <entries...>` measures each entry the way `analyze` does and prints one row per entry:
+the cold import, the module count, and the `--top` (default 3) heaviest modules by self time. An entry is a file or a
+folder with an `index.ts` or `index.tsx`; `--tools <dir>` (repeatable) adds the index of every folder directly
+inside `<dir>`.
+
+The second table is the point: a module or package whose self time is at least `--min-ms` (default 20) in two or more
+entries, with how many entries pay it, the summed and the largest ms, and which entries. A package is one row
+(`pkg:<name>`) however many of its files are imported. That table shows a dependency whose cost leaks across many
+tools; one fix to it pays back in each of them.
+
+Entries are measured one after another by default, because parallel measurements slow each other down and inflate
+every number; `--concurrency <n>` trades that accuracy for time. `--runs`, `--timeout`, `--walk-packages` and
+`--include-dynamic` mean what they mean for `analyze`. An entry whose worker timed out is marked `PARTIAL`, and the
+command exits 1 when any entry failed or was partial.
+
 ## Options
 
 | Option | Commands | Meaning |
 |--------|----------|---------|
-| `--json` | all | Machine-readable result on stdout (nothing else goes there) |
+| `--json` | analyze, lazy, barrels, cycles | Machine-readable result on stdout (nothing else goes there); `startup` takes the `--format` set instead |
 | `--runs <n>` | all | Fresh processes per mode, minimum kept (default 3) |
 | `--timeout <seconds>` | all | Kill a worker after this long; partial results survive (default 60) |
 | `--min-ms <ms>` | all | Hide rows below this (default 0.5) |
@@ -412,7 +516,7 @@ src/ts/
 ├── index.ts                 commander entry (`tools ts`)
 ├── commands/
 │   ├── options.ts           the --format and scan flags every subcommand shares
-│   ├── imports.ts  skeleton.ts  duplicates.ts  refactors.ts  profile.ts  program.ts
+│   ├── imports.ts  startup.ts  skeleton.ts  duplicates.ts  refactors.ts  areas.ts  depth.ts  profile.ts  program.ts
 └── lib/
     ├── collect.ts           walk paths to source files, honouring --tests and --ignore
     ├── load.ts              one read of every file, shared by skeleton/duplicates/refactors
@@ -423,6 +527,10 @@ src/ts/
     ├── refactors/           one file per analyser, plus the registry
     ├── parse.ts             ast-grep: imports with names, re-exports, module-scope work, scope uses
     ├── graph.ts             resolve + walk, post-order, reachability
+    ├── import-index.ts      the whole-tree static import index behind `areas` and `depth`: lines and resolved imports
+    ├── areas.ts             files to areas (--split, --depth), the area report, --forbid, the Mermaid flowchart
+    ├── depth.ts             interface against code per module, pass-through, importers, the shallow and deep scores
+    ├── startup.ts           `imports startup`: entries, the measurement per entry, recurring heavy modules
     ├── measure-worker.ts    the process that imports and times; no repo imports on purpose
     ├── measure.ts           spawns the worker per run/mode, keeps the minimum
     ├── analyze.ts           graph + measure + totals + attribution → AnalysisResult
@@ -445,3 +553,7 @@ src/ts/
   not resolve types, so two helpers with the same signature over different types read as alike.
 - `unused-exports` cannot see a consumer outside the scanned paths, a name reached through
   `export *`, or a name reached by a string key. It is evidence, never a verdict.
+- `areas` and `depth` read top-level import statements and every `import()` / `require()` call. An import inside
+  a `declare module` block is not an edge, and a specifier built at run time (`import(name)`) cannot be resolved.
+- `depth` strips comments with a regular expression that keeps string literals; a comment marker inside a regular
+  expression literal or a nested template can be misread. The scores rank modules; they are not a gate.
