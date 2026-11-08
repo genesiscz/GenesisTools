@@ -764,7 +764,7 @@ struct EditRenderer {
             var result: CIImage
             if let mark = look.transition, let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent) {
                 // Each side is hidden by its own parts before the blend; only the spotlights dim the blended frame.
-                image = TransitionLook.compose(live: image, liveRedactions: look.redactions, still: still, mark: mark)
+                image = TransitionLook.compose(live: image, liveRedactions: look.redactions, still: still, mark: mark, liveView: view)
                 result = Looks.redact(look.redactions.filter { $0.style == .spotlight }, on: image,
                                       spotlightFade: look.spotlightFade).cropped(to: extent)
             } else {

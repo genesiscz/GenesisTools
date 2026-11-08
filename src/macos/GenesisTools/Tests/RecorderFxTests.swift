@@ -69,6 +69,35 @@ final class RecorderFxTests: XCTestCase {
         XCTAssertEqual(after.otherRedactions.map(\.id), ["outgoing"], "the outgoing clip's last frame is hidden on the blend")
     }
 
+    /// A zoom that runs into a crossfade keeps its view on the outgoing still after the join, where the live side is the
+    /// unzoomed incoming clip (v29 at 13.2 s jumped to the whole frame mid-fade).
+    func testATransitionStillKeepsItsOwnZoomAcrossTheJoin() throws {
+        var project = cutProject(EditProject.Transitions(default: .init(kind: .crossfade, ms: 400)))
+        project.zooms = [.init(id: "z", startUs: 2_000_000, endUs: 4_800_000, scale: 2, focusX: 0.75, focusY: 0.5)]
+        let zoom = ZoomState(project: project, cursor: nil)
+        let after = zoom.look(atOutput: 4_100_000)
+        XCTAssertEqual(after.view.scale, 1, accuracy: 0.001, "the live side is the incoming clip, not zoomed")
+        let mark = try XCTUnwrap(after.transition)
+        XCTAssertGreaterThan(mark.otherView.scale, 1.5, "the outgoing still keeps the zoom it ran into the cut with")
+
+        // Black left half, white right half: the still's own view (2× on the right half) shows only white, and the
+        // live side's whole-frame crop must show that too.
+        let extent = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let picture = CIImage(color: .white).cropped(to: CGRect(x: 100, y: 0, width: 100, height: 100))
+            .composited(over: CIImage(color: .black).cropped(to: extent))
+        let own = ZoomCurve.View(scale: 2, centerX: 0.75, centerY: 0.5)
+        let framed = TransitionLook.reframe(picture, from: own, to: .whole, extent: extent)
+        XCTAssertEqual(framed.extent, extent)
+        XCTAssertEqual(gray(framed, 10, 50), 255, "the left edge shows source x 100, the zoomed view's left edge")
+        // Both sides zoomed alike: nothing moves.
+        XCTAssertEqual(gray(TransitionLook.reframe(picture, from: own, to: own, extent: extent), 10, 50), 0)
+        // The live side zoomed in on the left half: its crop (source x 0...100) shows the still's own view.
+        let left = ZoomCurve.View(scale: 2, centerX: 0.25, centerY: 0.5)
+        XCTAssertEqual(gray(TransitionLook.reframe(picture, from: own, to: left, extent: extent), 10, 50), 255)
+        XCTAssertEqual(gray(TransitionLook.reframe(picture, from: .whole, to: left, extent: extent), 90, 50), 255,
+                       "a whole-frame still under a zoomed live crop: source x 90 shows the still's x 180")
+    }
+
     func testEachTransitionBlendsBothSidesAtTheJoin() {
         let extent = CGRect(x: 0, y: 0, width: 200, height: 100)
         let black = CIImage(color: .black).cropped(to: extent)

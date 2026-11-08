@@ -33,6 +33,11 @@ enum TransitionLook {
         var otherSourceUs: Int64
         /// The redactions showing at the still's own source time.
         var otherRedactions: [EditProject.Redaction]
+        /// The zoom at the still's own source time. The renderer crops the blended frame by the live side's zoom, so
+        /// the still is reframed to show this view through that crop. Before 2026-11-08 the still took the live view:
+        /// a zoom that ran into a crossfade jumped to the whole frame at the join, where the live side turns into the
+        /// unzoomed incoming clip (v29 at 13.2 s).
+        var otherView: ZoomCurve.View = .whole
     }
 
     /// Every join with a transition: the start of a clip whose source does not continue the clip before it (a split
@@ -69,7 +74,7 @@ enum TransitionLook {
         let redactions = (drawn ?? project.redactions ?? []).filter { other >= $0.startUs && other < $0.endUs }
             .map { ZoomState.placed($0, atSourceUs: other, track: track) }
         return Mark(kind: join.transition.kind, progress: min(1, max(0, progress)), incoming: incoming, otherSourceUs: other,
-                    otherRedactions: redactions)
+                    otherRedactions: redactions, otherView: ZoomCurve.view(atSource: other, zooms: project.zooms, cursor: track))
     }
 
     static func smooth(_ t: Double) -> Double { t * t * (3 - 2 * t) }
@@ -79,14 +84,32 @@ enum TransitionLook {
     /// source time, each before the blend. Round 3 (2026-11-08): the live side's parts were laid over the BLENDED frame,
     /// so the zoom transition's grown live picture showed the edges of a hidden block around its part, and the still's
     /// own picture under the live side's parts was hidden too. Spotlights are not hiding parts and stay for the caller.
-    static func compose(live: CIImage, liveRedactions: [EditProject.Redaction], still: CIImage, mark: Mark) -> CIImage {
+    static func compose(live: CIImage, liveRedactions: [EditProject.Redaction], still: CIImage, mark: Mark,
+                        liveView: ZoomCurve.View = .whole) -> CIImage {
         let extent = live.extent
         let hidden = { (parts: [EditProject.Redaction], picture: CIImage) -> CIImage in
             let hiding = parts.filter { $0.style != .spotlight }
             let covered = Looks.redact(hiding, on: picture).cropped(to: extent)
             return RedactionTrack.leaveVisible(hiding, original: picture, on: covered).cropped(to: extent)
         }
-        return blend(live: hidden(liveRedactions, live), still: hidden(mark.otherRedactions, still), mark: mark)
+        let framed = reframe(hidden(mark.otherRedactions, still), from: mark.otherView, to: liveView, extent: extent)
+        return blend(live: hidden(liveRedactions, live), still: framed, mark: mark)
+    }
+
+    /// The still moved so that the live side's zoom crop shows it as its own zoom `from` would: each side of the
+    /// transition keeps its own view through the whole blend.
+    static func reframe(_ still: CIImage, from own: ZoomCurve.View, to live: ZoomCurve.View, extent: CGRect) -> CIImage {
+        guard own != live else { return still }
+        // The map from a view's crop (Core Image counts y from the bottom) onto the whole extent.
+        let fill = { (view: ZoomCurve.View) -> CGAffineTransform in
+            let rect = view.rect
+            let crop = CGRect(x: extent.minX + rect.minX * extent.width, y: extent.minY + (1 - rect.maxY) * extent.height,
+                              width: rect.width * extent.width, height: rect.height * extent.height)
+            return CGAffineTransform(translationX: -crop.minX, y: -crop.minY)
+                .concatenating(CGAffineTransform(scaleX: extent.width / crop.width, y: extent.height / crop.height))
+                .concatenating(CGAffineTransform(translationX: extent.minX, y: extent.minY))
+        }
+        return still.clampedToExtent().transformed(by: fill(own).concatenating(fill(live).inverted())).cropped(to: extent)
     }
 
     static func blend(live: CIImage, still: CIImage, mark: Mark) -> CIImage {
