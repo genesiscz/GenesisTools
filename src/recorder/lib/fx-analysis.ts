@@ -30,7 +30,7 @@ import {
     nearestEvent,
     type Tap,
 } from "@genesiscz/utils/recording-editor/events";
-import { sampleFpsFilter } from "@genesiscz/utils/recording-editor/ffmpeg";
+import { gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
 import {
     MOTION_FPS,
     MOVING_SHARE,
@@ -295,6 +295,14 @@ export async function ocrVideo(options: {
     const fromUs = options.fromUs ?? 0;
     const stepUs = 1_000_000 / options.fps;
     const folder = mkdtempSync(join(tmpdir(), "gt-screen-text-"));
+    // R8 2: the frame the editor shows at each time, picked by its own presentation time; an input seek or ffmpeg's
+    // own clock put a simulator recording's frames up to 2 s off.
+    const plan = gridRead({
+        video: options.video,
+        fromUs,
+        toUs: Math.max(fromUs + 50_000, options.toUs),
+        fps: options.fps,
+    });
 
     try {
         await runVideoCommand({
@@ -303,32 +311,28 @@ export async function ocrVideo(options: {
                 "-nostdin",
                 "-v",
                 "error",
-                ...(fromUs > 0 ? ["-ss", String(fromUs / 1_000_000)] : []),
-                "-i",
-                options.video,
-                "-t",
-                String(Math.max(0.05, (options.toUs - fromUs) / 1_000_000)),
-                "-map",
-                "0:v:0",
-                "-vf",
-                sampleFpsFilter(options.fps),
+                ...plan.args,
                 "-start_number",
                 "0",
                 join(folder, "%06d.png"),
             ],
             timeoutMs: 20 * 60_000,
         });
-        const files = readdirSync(folder)
-            .filter((file) => file.endsWith(".png"))
-            .sort();
+        const written = new Set(readdirSync(folder).filter((file) => file.endsWith(".png")));
         const frames: ScreenTextFrame[] = [];
         let previousDigest = "";
         let previousLines: ScreenTextFrame["lines"] = [];
 
-        for (const [index, file] of files.entries()) {
+        for (const [index, slot] of plan.slots.entries()) {
+            const file = `${String(slot.frame).padStart(6, "0")}.png`;
+
+            if (!written.has(file)) {
+                break;
+            }
+
             const path = join(folder, file);
             const digest = createHash("sha1").update(readFileSync(path)).digest("hex");
-            const atUs = Math.round(fromUs + Number(file.replace(".png", "")) * stepUs);
+            const atUs = slot.atUs;
 
             const known = options.cache?.get(atUs);
 
@@ -355,7 +359,7 @@ export async function ocrVideo(options: {
             }
 
             frames.push({ atUs, untilUs: Math.min(options.toUs, Math.round(atUs + stepUs)), lines: previousLines });
-            options.onFrame?.(index + 1, files.length);
+            options.onFrame?.(index + 1, plan.slots.length);
         }
 
         log.debug(
@@ -395,12 +399,8 @@ export function cachedScreenText(project: EditProject): ScreenTextFrame[] | unde
         return undefined;
     }
 
-    return readAnalysis(analysisOf(video, "screen-text", screenTextKey(project), screenFramesSchema));
-}
-
-/** How the screen text is read. editor-time: sampled on the editor time base (sampleFpsFilter). */
-function screenTextKey(project: EditProject): string {
-    return `every=${screenTextEverySeconds(project.source.durationUs)},editor-time`;
+    const key = movieKey(video, `every=${screenTextEverySeconds(project.source.durationUs)},editor-time,pts`);
+    return readCache(cachePath(video, "screen-text"), key, screenFramesSchema);
 }
 
 /**
@@ -422,21 +422,20 @@ export async function screenTextOf(
         throw new Error(`the movie ${video} is not there, so its screen text cannot be read`);
     }
 
-    let read = false;
-    const frames = await cachedAnalysis({
-        ...analysisOf(video, "screen-text", screenTextKey(project), screenFramesSchema),
-        compute: async () => {
-            const started = Date.now();
-            const movieFrames = await movieScreenText(project);
-            log.debug(
-                { video, frames: movieFrames.length, ms: Date.now() - started },
-                "movie screen text read with Vision"
-            );
-            read = true;
-            return movieFrames;
-        },
-    });
-    return { frames, source: "movie", cached: !read };
+    const path = cachePath(video, "screen-text");
+    // editor-time: sampled on the editor time base (sampleFpsFilter); older caches took the nearest frame.
+    const key = movieKey(video, `every=${screenTextEverySeconds(project.source.durationUs)},editor-time,pts`);
+    const cached = readCache(path, key, screenFramesSchema);
+
+    if (cached) {
+        return { frames: cached, source: "movie", cached: true };
+    }
+
+    const started = Date.now();
+    const frames = await movieScreenText(project);
+    log.debug({ video, frames: frames.length, ms: Date.now() - started }, "movie screen text read with Vision");
+    writeCache(path, key, frames);
+    return { frames, source: "movie", cached: false };
 }
 
 /** Frames a second around a hit's edges and while it moves: a scrolling line is placed every 0.2 s. */
@@ -455,6 +454,9 @@ async function denseScreenText(
     { twice = false }: { twice?: boolean } = {}
 ): Promise<ScreenTextFrame[]> {
     const video = project.source.video;
+    const path = cachePath(video, "screen-text-dense");
+    const key = movieKey(video, `dense=${DENSE_FPS},pts`);
+    const cache: Record<string, ScreenTextFrame["lines"]> = { ...(readCache(path, key, denseSchema) ?? {}) };
     const stepUs = 1_000_000 / DENSE_FPS;
     let read = false;
 
@@ -587,12 +589,11 @@ async function motionWindows(
     stretches: ReadonlyArray<[number, number]>
 ): Promise<MotionWindow[]> {
     const video = project.source.video;
-    const names = stretches.map(([fromUs, toUs]) => `${Math.round(fromUs)}-${Math.round(toUs)}`);
-    const cache = await cachedAnalysis({
-        ...analysisOf(video, "motion", `motion=${MOTION_FPS},v2`, motionCacheSchema),
-        complete: (cached) => names.every((name) => cached[name]),
-        compute: async (cached) => {
-            const known = { ...(cached ?? {}) };
+    const path = cachePath(video, "motion");
+    const key = movieKey(video, `motion=${MOTION_FPS},v2,pts`);
+    const cache = { ...(readCache(path, key, motionCacheSchema) ?? {}) };
+    const windows: MotionWindow[] = [];
+    let measured = false;
 
             for (const [index, [fromUs, toUs]] of stretches.entries()) {
                 const name = names[index];

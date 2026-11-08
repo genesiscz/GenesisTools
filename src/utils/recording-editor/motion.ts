@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import { sampleFpsFilter } from "./ffmpeg";
+import { gridRead } from "./frame-grid";
 import type { Carried, FractionBox, MotionModel, TrackKey } from "./private-data";
 import { type ChangeStep, maskCells } from "./waits";
 
@@ -314,8 +314,8 @@ export function blockShifts(options: {
 }
 
 /**
- * The block shifts of a movie from `fromUs` to `toUs`: ffmpeg writes grey copies at MOTION_FPS on the editor's time
- * base to stdout, and each picture is matched with the one before as it arrives (two pictures are kept, never more).
+ * The block shifts of a movie from `fromUs` to `toUs`: ffmpeg writes grey copies of the frames the editor shows at
+ * MOTION_FPS (gridRead: picked by their own times) to stdout, and each step's picture is matched with the one before.
  */
 export async function measureMotion(options: {
     video: string;
@@ -330,71 +330,59 @@ export async function measureMotion(options: {
     const stepUs = 1_000_000 / MOTION_FPS;
     const fromUs = Math.max(0, Math.floor(options.fromUs / stepUs) * stepUs);
     const frameBytes = width * height;
-    const command = [
-        "ffmpeg",
-        "-nostdin",
-        "-v",
-        "error",
-        ...(fromUs > 0 ? ["-ss", (fromUs / 1_000_000).toFixed(6)] : []),
-        "-i",
-        options.video,
-        "-t",
-        (Math.max(stepUs * 2, options.toUs - fromUs + stepUs) / 1_000_000).toFixed(6),
-        "-map",
-        "0:v:0",
-        "-vf",
-        `${sampleFpsFilter(MOTION_FPS)},scale=${width}:${height}:flags=area,format=gray`,
-        "-f",
-        "rawvideo",
-        "-pix_fmt",
-        "gray",
-        "-",
-    ];
-    log.debug({ command }, "measuring the content's motion");
+    // R8 2: the frame the editor shows at each step, picked by its own presentation time (an input seek or ffmpeg's
+    // own clock put a simulator recording's frames up to 2 s off). A step inside a gap repeats the frame before it.
+    const plan = gridRead({
+        video: options.video,
+        fromUs,
+        toUs: fromUs + Math.max(stepUs * 2, options.toUs - fromUs + stepUs),
+        fps: MOTION_FPS,
+        extra: `scale=${width}:${height}:flags=area,format=gray`,
+    });
+    const command = ["ffmpeg", "-nostdin", "-v", "error", ...plan.args, "-f", "rawvideo", "-pix_fmt", "gray", "-"];
+    log.debug({ command: command.join(" ").slice(0, 400) }, "measuring the content's motion");
     const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const timer = setTimeout(() => child.kill(), options.timeoutMs ?? 10 * 60_000);
     const dx: Float32Array[] = [];
     const dy: Float32Array[] = [];
     const ok: Uint8Array[] = [];
-    let previous: Uint8Array | undefined;
-    let pending = new Uint8Array(0);
 
     try {
-        for await (const chunk of child.stdout) {
-            const joined = new Uint8Array(pending.length + chunk.length);
-            joined.set(pending);
-            joined.set(chunk, pending.length);
-            let offset = 0;
-
-            while (joined.length - offset >= frameBytes) {
-                const frame = joined.slice(offset, offset + frameBytes);
-                offset += frameBytes;
-
-                if (previous) {
-                    const last = ok.length - 1;
-                    const shifts = blockShifts({
-                        previous,
-                        current: frame,
-                        width,
-                        height,
-                        guess: last >= 0 ? { dx: dx[last], dy: dy[last], ok: ok[last] } : undefined,
-                    });
-                    dx.push(shifts.dx);
-                    dy.push(shifts.dy);
-                    ok.push(shifts.ok);
-                }
-
-                previous = frame;
-            }
-
-            pending = joined.slice(offset);
-        }
-
-        const status = await child.exited;
+        const [bytes, status] = await Promise.all([
+            new Response(child.stdout).arrayBuffer().then((buffer) => new Uint8Array(buffer)),
+            child.exited,
+        ]);
 
         if (status !== 0) {
             const stderr = await new Response(child.stderr).text();
             throw new Error(`ffmpeg could not read ${options.video} (exit ${status}): ${stderr.trim().slice(-500)}`);
+        }
+
+        const written = Math.floor(bytes.length / frameBytes);
+        let previous: Uint8Array | undefined;
+
+        for (const slot of plan.slots) {
+            if (slot.frame >= written) {
+                break;
+            }
+
+            const frame = bytes.subarray(slot.frame * frameBytes, (slot.frame + 1) * frameBytes);
+
+            if (previous) {
+                const last = ok.length - 1;
+                const shifts = blockShifts({
+                    previous,
+                    current: frame,
+                    width,
+                    height,
+                    guess: last >= 0 ? { dx: dx[last], dy: dy[last], ok: ok[last] } : undefined,
+                });
+                dx.push(shifts.dx);
+                dy.push(shifts.dy);
+                ok.push(shifts.ok);
+            }
+
+            previous = frame;
         }
     } finally {
         clearTimeout(timer);

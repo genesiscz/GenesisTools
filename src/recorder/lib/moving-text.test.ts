@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { framePresentationUs, gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
 import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
 import { applyOp, editOpSchema, wholeProject } from "@genesiscz/utils/recording-editor/project";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
@@ -251,5 +252,67 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
             toUs: 2_000_000,
         });
         expect(exportRangeOf(project, {})).toBeUndefined();
+    }, 60_000);
+
+    test("a stretch is read by the frames' own times, never after an input seek, a gap keeping the frame before it (round 8)", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-grid-read-"));
+        const movie = join(folder, "vfr.mp4");
+        // 120 frames a second for 2 s, then nothing for 0.7 s, then on (a simulator recording's gap).
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=s=160x120:r=120:d=4",
+                "-vf",
+                "setpts='if(gte(N,240),PTS+0.7/TB,PTS)',format=yuv420p",
+                "-fps_mode",
+                "vfr",
+                "-bf",
+                "3",
+                movie,
+            ],
+        });
+        const plan = gridRead({ video: movie, fromUs: 2_500_000, toUs: 3_000_000, fps: 10, extra: "format=gray" });
+        expect(plan.args).not.toContain("-ss");
+        expect(plan.slots.map((slot) => slot.atUs)).toEqual([2_500_000, 2_600_000, 2_700_000, 2_800_000, 2_900_000]);
+        // 2.5 and 2.6 s are inside the gap: the last frame before it (index 239) shows then.
+        const times = framePresentationUs(movie);
+        const selected = (slot: number) => plan.slots[slot].frame;
+        expect(selected(0)).toBe(selected(1));
+        expect(times[239]).toBeLessThan(2_000_000);
+        const child = Bun.spawn(["ffmpeg", "-nostdin", "-v", "error", ...plan.args, "-f", "rawvideo", "-"], {
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const bytes = new Uint8Array(await new Response(child.stdout).arrayBuffer());
+        const size = 160 * 120;
+        expect(bytes.length).toBe(4 * size);
+        // The same frames a decode from the start gives at those times.
+        const whole = Bun.spawn(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-i",
+                movie,
+                "-vf",
+                "select='eq(n\\,239)+eq(n\\,240)',format=gray",
+                "-fps_mode",
+                "passthrough",
+                "-f",
+                "rawvideo",
+                "-",
+            ],
+            { stdout: "pipe", stderr: "pipe" }
+        );
+        const pair = new Uint8Array(await new Response(whole.stdout).arrayBuffer());
+        expect(bytes.subarray(0, size)).toEqual(pair.subarray(0, size));
+        expect(bytes.subarray(size, 2 * size)).toEqual(pair.subarray(size, 2 * size));
     }, 60_000);
 });
