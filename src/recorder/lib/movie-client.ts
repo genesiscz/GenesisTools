@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { MethodDescriptor } from "@genesiscz/utils/api-descriptor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -26,6 +27,56 @@ const EDIT_CALL_TIMEOUT_MS = 10 * 60_000;
  * the service refused every edit by id while it ran (round 2, from recorder-capture).
  */
 const callerPath = (value: string): string => resolveRecording(value);
+
+/**
+ * The params that name a file, per Movie method and per edit op of the same name, beyond `file` (a file in every
+ * one): the service resolves a relative path against its own folder, so each is resolved here first (CLI-F3).
+ * A new path param goes into this table.
+ */
+const PATH_PARAMS: Readonly<Record<string, readonly string[]>> = {
+    duplicate: ["to"],
+    introCard: ["logo"],
+    frame: ["background.image"],
+};
+
+/** A file path as the caller means it: `~/` is the home folder, a relative path is against this cwd; "" stays "". */
+function callerFile(value: string): string {
+    return value === "" ? value : resolve(value.replace(/^~(?=[/\\])/, homedir()));
+}
+
+/**
+ * `params` of the Movie method or edit op `name` with every path in it resolved against the caller's cwd, and the
+ * ops of `apply` the same way, before they go to the service. Other values stay as they are (a `to` of trim is a time).
+ */
+export function callerParams(name: string, params: Record<string, unknown>): Record<string, unknown> {
+    const next: Record<string, unknown> = { ...params };
+
+    for (const key of ["file", ...(PATH_PARAMS[name] ?? [])]) {
+        const [head, field] = key.split(".");
+        const value = next[head];
+
+        if (!field && typeof value === "string") {
+            next[head] = callerFile(value);
+        } else if (field && typeof value === "object" && value !== null) {
+            const inner: Record<string, unknown> = { ...value };
+
+            if (typeof inner[field] === "string") {
+                inner[field] = callerFile(inner[field]);
+                next[head] = inner;
+            }
+        }
+    }
+
+    if (name === "apply" && Array.isArray(next.ops)) {
+        next.ops = next.ops.map((op: unknown) => (isOp(op) ? callerParams(op.op, op) : op));
+    }
+
+    return next;
+}
+
+function isOp(value: unknown): value is Record<string, unknown> & { op: string } {
+    return typeof value === "object" && value !== null && "op" in value && typeof value.op === "string";
+}
 
 interface ServiceEditAnswer {
     project: OpenedProject["project"];
@@ -141,9 +192,7 @@ export async function applyEdit(
                         "edit.apply",
                         {
                             path: callerPath(value),
-                            ops: ops.map((op) =>
-                                "file" in op && typeof op.file === "string" ? { ...op, file: resolve(op.file) } : op
-                            ),
+                            ops: ops.map((op) => callerParams(op.op, { ...op })),
                         },
                         { timeoutMs: EDIT_CALL_TIMEOUT_MS }
                     )
@@ -248,11 +297,8 @@ export function serviceRoutedMovie<T extends { recording: string }>(
                     return Reflect.apply(value, target, args);
                 }
 
-                const { params, signal } = paramsOf(method, args);
-
-                if (typeof params.file === "string") {
-                    params.file = resolve(params.file);
-                }
+                const { params: raw, signal } = paramsOf(method, args);
+                const params = callerParams(method.name, raw);
                 log.debug(
                     { method: method.name, recording: target.recording },
                     "movie call through the recorder service"

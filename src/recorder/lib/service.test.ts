@@ -946,6 +946,51 @@ describe("the REPL's and the CLI's way to the service", () => {
         await offline.volume(0.75);
         expect(readProject(alone).audio.volume).toBe(0.75);
     });
+
+    // Review CLI-F3: only `file` was resolved, so duplicate({ to }), introCard({ logo }) and a frame's background image
+    // went to the service as relative paths and landed in, or were looked up in, the service's own folder.
+    test("every path a REPL Movie's call or an apply names reaches the service resolved against the caller's cwd", async () => {
+        const { dir } = await serviceFixture();
+        const path = editFixture("rs-paths-");
+        // duplicate() copies the movie too.
+        writeFileSync(readProject(path).source.video, "");
+        const methods = moviesApi.handles.find((handle) => handle.name === "Movie")?.methods ?? [];
+        const cwd = realpathSync(mkdtempSync(join(tmpdir(), "rs-caller-cwd-")));
+        writeFileSync(join(cwd, "logo.png"), "");
+        writeFileSync(join(cwd, "bg.png"), "");
+        const before = process.cwd();
+        const spy = spyOn(RpcSocketClient.prototype, "call");
+        const movie = serviceRoutedMovie(new Movie(path), methods, { dir });
+        process.chdir(cwd);
+
+        try {
+            await movie.duplicate({ to: "cut-copy" });
+            await movie.introCard({ title: "Demo", logo: "logo.png" });
+            await movie.frame({ background: { kind: "image", image: "bg.png" } });
+            await movie.apply([{ op: "introCard", logo: "" }]);
+            await applyEdit(path, [{ op: "introCard", title: "Demo", logo: "logo.png" }], { dir });
+        } finally {
+            process.chdir(before);
+        }
+
+        const sent = spy.mock.calls
+            .filter(([method]) => method.startsWith("movie.") || method === "edit.apply")
+            .map(([method, params]) => ({ method, params }));
+        spy.mockRestore();
+        expect(sent.map((call) => call.method)).toEqual([
+            "movie.duplicate",
+            "movie.introCard",
+            "movie.frame",
+            "movie.apply",
+            "edit.apply",
+        ]);
+        expect(sent[0].params).toMatchObject({ to: join(cwd, "cut-copy") });
+        expect(sent[1].params).toMatchObject({ title: "Demo", logo: join(cwd, "logo.png") });
+        expect(sent[2].params).toMatchObject({ background: { kind: "image", image: join(cwd, "bg.png") } });
+        // "" removes the logo: it stays "".
+        expect(sent[3].params).toMatchObject({ ops: [{ op: "introCard", logo: "" }] });
+        expect(sent[4].params).toMatchObject({ ops: [{ op: "introCard", logo: join(cwd, "logo.png") }] });
+    });
 });
 
 describe("edits that run at the same time", () => {
