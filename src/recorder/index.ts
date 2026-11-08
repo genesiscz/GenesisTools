@@ -535,7 +535,7 @@ program
 program
     .command("trash")
     .description(
-        "Move library recordings through the removal policy, all in one call (tools rm trash lists the restore command). Run by an agent, or for a recording the policy does not allow, it asks the user: every such recording goes into ONE request they confirm with tools rm approve <id>. A meeting's screen recording is refused, and then nothing is moved"
+        `Move library recordings through the removal policy, all in one call (${toolCommand("rm trash")} lists the restore command). Run by an agent, or for a recording the policy does not allow, it asks the user: every such recording goes into ONE request they confirm with ${toolCommand("rm approve")} <id>. A meeting's screen recording is refused, and then nothing is moved`
     )
     .argument("<recording...>", "library ids, `last` or recording folders")
     .option("--no-aside", "keep the folders in the library while a request waits, instead of moving them aside")

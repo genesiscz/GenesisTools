@@ -9,6 +9,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { cloneOrCopy } from "@genesiscz/utils/fs/clone";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -225,7 +226,7 @@ function backupReadme(options: { from: MeetingRecord; into: MeetingRecord; root:
     return [
         `# Merge of ${from.id} into ${into.id}`,
         "",
-        `Written by \`tools meetings merge\` at ${localStamp(new Date())} (local time).`,
+        `Written by \`${toolCommand("meetings merge")}\` at ${localStamp(new Date())} (local time).`,
         "",
         `- \`before/${from.id}/\` and \`before/${into.id}/\`: clones of both meeting folders before the merge.`,
         `- \`moved/${from.id}/\`: what was left of ${from.id} after its frames, sound and rows moved.`,
@@ -234,12 +235,12 @@ function backupReadme(options: { from: MeetingRecord; into: MeetingRecord; root:
         "Restore (both records as they were):",
         "",
         "```sh",
-        `tools rm ${join(root, into.id)} ${join(root, from.id)}`,
+        toolCommand("rm", join(root, into.id), join(root, from.id)),
         `cp -cR ${join(folder, "before", into.id)} ${join(root, into.id)}`,
         `cp -cR ${join(folder, "before", from.id)} ${join(root, from.id)}`,
         "```",
         "",
-        `After a finished merge the second path of \`tools rm\` is gone already, and \`tools rm\` says so.`,
+        `After a finished merge the second path of \`${toolCommand("rm")}\` is gone already, and \`${toolCommand("rm")}\` says so.`,
         "",
     ].join("\n");
 }

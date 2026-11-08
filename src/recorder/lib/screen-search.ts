@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -161,7 +162,7 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
     // A movie keeps no frames, so "no frame shows it" would read as "it was never on the screen".
     if (manifest.frames.length === 0) {
         throw new Error(
-            `${folder} has no screen text: only a frames recording (tools recorder start --frames) or a meeting keeps the text it read off its screens`
+            `${folder} has no screen text: only a frames recording (${toolCommand("recorder start", "--frames")}) or a meeting keeps the text it read off its screens`
         );
     }
 

@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { TemporaryArtifacts } from "@genesiscz/utils/fs/temporary-artifacts";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -224,7 +225,7 @@ export function runTimeoutFor(toolsets: readonly string[]): number {
 /** What `run` adds to a turn's timeout error: the two flags that let a long script finish. */
 export function runTimeoutHint(timeoutMs: number): string {
     const longer = Math.max(LONG_RUN_TIMEOUT_MS, timeoutMs * 4);
-    return `Give the turn more time with --timeout <ms> (--timeout ${longer} is ${Math.round(longer / 60_000)} min), and put a long script in a file: tools node-repl run --file script.js --timeout ${longer}. The mcp server keeps bindings between calls and takes timeout_ms per call.`;
+    return `Give the turn more time with --timeout <ms> (--timeout ${longer} is ${Math.round(longer / 60_000)} min), and put a long script in a file: ${toolCommand("node-repl run", "--file", "script.js", "--timeout", String(longer))}. The mcp server keeps bindings between calls and takes timeout_ms per call.`;
 }
 
 /** The MCP server's line for a turn's timeout error. */

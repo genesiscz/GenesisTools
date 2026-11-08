@@ -1110,7 +1110,7 @@ const movieMethods = [
             .strict(),
         result: z.unknown(),
         resultName: `${editResult.replace(" }", ", voiceover: { id, file, seconds } }")}`,
-        doc: 'Speaks `text` into a sound file with `tools say --output` (provider "xai" by default, voice and rate as tools say takes them; it costs a cloud call) in the recording\'s voiceovers/ folder, then adds it as a voiceover at SOURCE time `at`, like voiceover(). Nothing plays aloud. A cloud failure throws (no fallback to the macOS voice).',
+        doc: `Speaks \`text\` into a sound file with \`${toolCommand("say", "--output")}\` (provider "xai" by default, voice and rate as ${toolCommand("say")} takes them; it costs a cloud call) in the recording's voiceovers/ folder, then adds it as a voiceover at SOURCE time \`at\`, like voiceover(). Nothing plays aloud. A cloud failure throws (no fallback to the macOS voice).`,
         effect: "reversible",
     }),
     // R4 8 music ducking
@@ -1946,12 +1946,12 @@ export class Movie {
         }
 
         args.push(options.text);
-        log.info({ provider, file, chars: options.text.length }, "movie.say: tools say --output");
+        log.info({ provider, file, chars: options.text.length }, `movie.say: ${toolCommand("say", "--output")}`);
         const result = await execTool(args, { timeout: 120_000 });
 
         if (!result.success || !existsSync(file) || statSync(file).size === 0) {
             throw new Error(
-                `tools say --provider ${provider} wrote no sound (exit ${result.exitCode}): ${(result.stderr || result.stdout).slice(-400)}`
+                `${toolCommand("say", "--provider", provider)} wrote no sound (exit ${result.exitCode}): ${(result.stderr || result.stdout).slice(-400)}`
             );
         }
 

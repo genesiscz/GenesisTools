@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { TabDriver } from "@app/chrome-devtools/lib/tab-driver";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { z } from "zod";
@@ -83,8 +84,7 @@ export class BrowserToolset extends ReplToolset {
         id: "browser",
         global: "browser",
         title: "Browser",
-        summary:
-            "Open, read, navigate, screenshot and close browser tabs through Chrome DevTools; tools chrome-devtools has click, fill and snapshot.",
+        summary: `Open, read, navigate, screenshot and close browser tabs through Chrome DevTools; ${toolCommand("chrome-devtools")} has click, fill and snapshot.`,
         methods: [tabs, open, evaluate, navigate, close, screenshot],
     });
     private readonly drivers = new Map<number, TabDriver>();
