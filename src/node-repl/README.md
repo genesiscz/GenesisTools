@@ -22,7 +22,9 @@ job with progress). A toolset is a `ReplToolset` subclass (`@genesiscz/utils/rep
 effect of `read`, `reversible` or `destructive`). The kernel builds the toolsets once per worker with a `preload`
 request that has its own budget (120 s), not the turn's; after a timeout kill or `js_reset` the new worker
 preloads them again, and reset, exit and the end of a `run` dispose them. Each worker gets a private scratch
-folder for its toolsets, removed when the worker stops.
+folder for its toolsets (a browser screenshot, a still), removed when the worker stops. The `editor` toolset's
+frames, grids, trims and speed changes are not scratch: they stay under `~/.genesis-tools/recordings/edits/<source>/`
+at full size, also for a scratch source, until removed (`tools rm`); `export` writes where its `output` says.
 
 `movies` (`src/recorder/lib/toolset.ts`) records the screen as a movie (`record` returns a handle with status, pause,
 resume and stop) and edits a recording's `edit.json`: `open(id)` returns a Movie with split, cut, keep, speed, zoom,
@@ -94,7 +96,7 @@ tools node-repl preset rm settings-demo
 
 Inside a turn the global `nodeRepl` offers `write(value)` (append to the turn's text output),
 `await emitImage({ bytes, mimeType })` (an MCP image block plus a file under the temp dir, whose
-path is also returned as text), `cwd`, `homeDir` and `tmpDir`.
+path is also returned as text; bytes that are not a PNG, JPEG, GIF or WebP are refused, as `show()` refuses them), `cwd`, `homeDir` and `tmpDir`.
 
 ## A call sequence
 
@@ -104,7 +106,7 @@ js { "code": "let counter = 41;\ncounter" }                       // -> 41
 // 2. a later, separate call sees it
 js { "code": "counter + 1" }                                       // -> 42
 // 3. make a project's node_modules importable
-js_add_node_module_dir { "path": "/Users/martin/proj" }            // -> "module directory registered: ..."
+js_add_node_module_dir { "path": "/path/to/project" }              // -> "module directory registered: ..." (it must hold node_modules)
 js { "code": "const { default: dayjs } = await import('dayjs');\ndayjs().year()" }
 // 4. hand back an image: any PNG bytes, from a file or an encoder
 js { "code": "await nodeRepl.emitImage({ bytes: await Bun.file('/tmp/chart.png').bytes(), mimeType: 'image/png' });\n'sent'" }
@@ -130,17 +132,32 @@ TypeScript is stripped first with `Bun.Transpiler`.
 starves the event loop with microtasks and defeats every in-process timer, including a
 `setTimeout` race in the same process. So the REPL scope is the global scope of
 `lib/worker.ts`, a child of the MCP server, and `lib/engine.ts` enforces `timeout_ms` from the
-parent by killing and respawning it. A killed turn reports that every binding is gone.
+parent by killing and respawning it. A killed turn reports that every binding is gone, and the processes it
+started (a `Bun.spawn`, a build) get SIGTERM with the worker, because nothing holds their handles any more.
 `js_reset` is the same operation on purpose. There is no separate `vm` context: the process is
 the sandbox, and a second realm only makes `Bun.inspect` print every object with its prototype.
 
 ## Imports
 
-Every `import()` inside a turn passes through one callback, which is the trust chokepoint.
-`~/.genesis-tools/node-repl/trust.json` may set `allowBuiltins`, `allowRepoDeps`, `allowPaths`
-and `allowBare`; the defaults allow `node:` builtins, absolute paths, the server's own
-dependencies and any directory added with `js_add_node_module_dir`. The policy is read when the
-worker starts and never changed by a turn.
+Every `import()` inside a turn passes through one callback, which is the trust chokepoint for
+imports. It covers `import()` only: `Bun.file`, `Bun.spawn` and `fetch` stay open to a turn.
+`~/.genesis-tools/node-repl/trust.json` may set these keys:
+
+```json
+{
+    "allowBuiltins": true,
+    "allowRepoDeps": true,
+    "allowPaths": true,
+    "allowBare": ["left-pad"]
+}
+```
+
+`allowBuiltins` (`node:` builtins), `allowRepoDeps` (bare names the server's own dependencies resolve) and
+`allowPaths` (absolute paths and `file:` URLs) are `true` or `false`; `allowBare` is an array of exact bare names.
+The defaults allow builtins, absolute paths, the server's own dependencies and any directory added with
+`js_add_node_module_dir`. The policy is read when the worker starts and never changed by a turn. A file that is not
+valid JSON, or a key of the wrong type, stops the worker, and every turn's error quotes the reason
+(`"allowPaths" must be true or false`).
 
 ## Registering it
 
@@ -154,5 +171,5 @@ tools mcp-manager list                                                          
 By hand it is the same shape as every other server this repo owns:
 
 ```json
-{ "command": "/Users/Martin/projects/GenesisTools/tools", "args": ["node-repl", "mcp"] }
+{ "command": "tools", "args": ["node-repl", "mcp"] }
 ```

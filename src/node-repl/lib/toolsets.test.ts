@@ -1,9 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { RecordingSession, type SegmentRecorder } from "@app/control/lib/recording-session";
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
+import type { AppStatus } from "@app/macos/lib/permissions/app";
+import * as appModule from "@app/macos/lib/permissions/app";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { ReplEngine } from "@app/node-repl/lib/engine";
@@ -19,6 +21,7 @@ import {
     undoEdit,
 } from "@app/recorder/lib/edit";
 import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "@app/recorder/lib/frames-recording";
+import { requireRecorderPart } from "@app/recorder/lib/library";
 import {
     chapterMetadata,
     chaptersOf,
@@ -27,16 +30,28 @@ import {
     recordingFolderOf,
     spreadTimes,
 } from "@app/recorder/lib/moments";
+import { forwardsToService } from "@app/recorder/lib/movie-client";
 import {
     DEFAULT_COUNTDOWN_SECONDS,
     parseStartFlags,
     readStartArgs,
+    refuseTargetOffScreen,
     type StartRequest,
 } from "@app/recorder/lib/start-options";
-import { Movie, type MovieRecorderDeps, MoviesToolset, moviesApi } from "@app/recorder/lib/toolset";
+import {
+    fixOutcome,
+    laneRemovalReason,
+    Movie,
+    type MovieRecorderDeps,
+    MoviesToolset,
+    moviesApi,
+    silentMovieReason,
+    withLength,
+} from "@app/recorder/lib/toolset";
 import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
+import * as cli from "@genesiscz/utils/cli";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as ocr from "@genesiscz/utils/macos/ocr";
@@ -49,7 +64,7 @@ import { readProject, wholeProject, writeProject } from "@genesiscz/utils/record
 import { searchMethods } from "@genesiscz/utils/repl/discovery";
 import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
-import { type Clip, EditorToolset, editorApi, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
+import { type Clip, EditorToolset, editorApi, editSourceOf, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
 import {
     RecordingHandle,
     recorderApi,
@@ -210,10 +225,20 @@ describe("toolset method names", () => {
         expect(() => movies.opn).toThrow(
             'movies has no "opn" (did you mean open?); it has: list, search, open, record'
         );
-        const movie = movies.open("anything");
+        // NR11: a name that matches nothing used to answer a Movie; it is refused at once now (intended change).
+        expect(() => movies.open("nr11-no-such-recording")).toThrow();
+        const project = join(mkdtempSync(join(tmpdir(), "missing-method-")), "edit.json");
+        writeProject(
+            project,
+            wholeProject({ video: join(dirname(project), "screen.mp4"), durationUs: 1_000_000, width: 10, height: 10 })
+        );
+        const movie = movies.open(project);
         expect(() => Reflect.get(movie, "trim")).toThrow('movies.Movie has no "trim"');
         expect(Reflect.get(movie, "then")).toBeUndefined();
-        expect(Bun.inspect(movie)).toContain("Movie");
+        // NR11: printing a Movie showed the worker's context, its scratch path and a private method.
+        expect(Bun.inspect(movie)).toBe(
+            `Movie ${SafeJSON.stringify(project)} (info() reads its edit; help() lists its methods)`
+        );
 
         // A bad argument of an async method rejects, so `.catch()` sees it, with one line per problem.
         const clicks = Reflect.get(movie, "clicks") as (options: unknown) => Promise<unknown>;
@@ -227,8 +252,13 @@ describe("toolset method names", () => {
             wholeProject({ video: join(folder, "screen.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
         );
         const opened = movies.open(path);
-        const cut = Reflect.get(opened, "cut") as (...args: unknown[]) => Promise<{ clips: unknown[] }>;
-        expect((await cut({ from: 1, to: 2 })).clips).toHaveLength(2);
+        const cut = Reflect.get(opened, "cut") as (...args: unknown[]) => Promise<Record<string, unknown>>;
+        // NR23: an edit answers one summary line and where it is, not the whole edit (about 1,500 characters); info() has it.
+        const answer = await cut({ from: 1, to: 2 });
+        expect(Object.keys(answer).sort()).toEqual(["changed", "outputSeconds", "path", "revision", "summary"]);
+        expect(String(answer.summary)).toContain("2 clips");
+        const info = Reflect.get(opened, "info") as () => Promise<{ clips: unknown[] }>;
+        expect((await info()).clips).toHaveLength(2);
         await expect(cut({ start: 1, to: 2 })).rejects.toThrow("Invalid arguments for movies.Movie.cut");
 
         // itemsAt names what plays at an output time: after the 1 s cut, output 2 s is source 3 s.
@@ -239,6 +269,64 @@ describe("toolset method names", () => {
         expect(now).toMatchObject({ output: 2, source: 3, zoom: null, caption: null });
         expect(now.texts).toMatchObject([{ text: "Hello", from: 2.5, to: 4, plays: { from: 1.5, to: 3 } }]);
         expect((await itemsAt(60)).warnings).toEqual(["60 s is past the end; this is the last moment, 9 s"]);
+    });
+});
+
+// NR1 (deep test 2026-11-06): find() ran tools transcribe on a movie with no transcript and no sound; a vault-key
+// dialog stayed on the user's screen after the turn timed out. The spy throws, so a path that reaches it fails loudly.
+describe("a read call never starts the paid transcription", () => {
+    test("find() reads the cached transcript only, while transcript() still reaches tools transcribe", async () => {
+        const spawned: string[][] = [];
+        const run = spyOn(cli, "execTool").mockImplementation(async (args: readonly string[]) => {
+            spawned.push([...args]);
+            throw new Error(`execTool reached: ${args.join(" ")}`);
+        });
+
+        try {
+            const { movies } = (await new MoviesToolset().load(ctx)) as {
+                movies: { open(recording: string): Record<string, (...args: unknown[]) => Promise<unknown>> };
+            };
+            const folder = mkdtempSync(join(tmpdir(), "gt-find-no-transcript-"));
+            const path = join(folder, "edit.json");
+            writeProject(
+                path,
+                wholeProject({ video: join(folder, "screen.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
+            );
+            const movie = movies.open(path);
+
+            await expect(movie.find("anything")).rejects.toThrow("this movie has no transcript yet");
+            expect(spawned).toEqual([]);
+
+            // The negative control: the method that declares the paid run still starts it.
+            await expect(movie.transcript()).rejects.toThrow("execTool reached: transcribe");
+            expect(spawned.map((args) => args[0])).toEqual(["transcribe"]);
+
+            writeFileSync(
+                join(folder, "screen.transcript.json"),
+                SafeJSON.stringify({ segments: [{ text: " hello there", start: 1, end: 2 }] })
+            );
+            expect(await movie.find("hello")).toMatchObject([{ text: "hello there" }]);
+            expect(spawned).toHaveLength(1);
+        } finally {
+            run.mockRestore();
+        }
+    });
+
+    test("the methods whose effect stopped being read keep running in the caller, not in the recorder service", () => {
+        const methods = moviesApi.handles?.find((handle) => handle.name === "Movie")?.methods ?? [];
+        const routed = (name: string) => {
+            const method = methods.find((candidate) => candidate.name === name);
+            return method ? forwardsToService(method) : undefined;
+        };
+
+        expect(["transcript", "still", "sheet", "reveal", "copy"].map(routed)).toEqual([
+            false,
+            false,
+            false,
+            false,
+            false,
+        ]);
+        expect(routed("cut")).toBe(true);
     });
 });
 
@@ -349,6 +437,164 @@ describe("the clicks of a movie, grouped", () => {
     });
 });
 
+// NR11: editor.open() of a video recording's folder read it as frames, and the first use threw "holds no frames".
+test("editor.open of a video recording's folder opens its movie, a frames folder stays, a missing path throws at once", () => {
+    const folder = mkdtempSync(join(tmpdir(), "gt-video-recording-"));
+    writeFileSync(
+        join(folder, "recording.json"),
+        SafeJSON.stringify({
+            version: 1,
+            id: "rec",
+            title: "Rec",
+            startedAt: "2026-11-05T10:00:00.000Z",
+            displays: [],
+            frames: [],
+            settings: { kind: "video" },
+        })
+    );
+    writeFileSync(join(folder, "screen.mp4"), "not really a movie");
+    expect(editSourceOf(folder)).toEqual({ file: join(folder, "screen.mp4") });
+
+    const frames = mkdtempSync(join(tmpdir(), "gt-frames-folder-"));
+    expect(editSourceOf(frames)).toEqual({ file: frames });
+    expect(() => editSourceOf(join(frames, "nope.mp4"))).toThrow("No such file or folder");
+});
+
+// NR33: movies.list() gave no length and no size, so an agent that wanted a short recording opened each one.
+test("a library row carries its length and its movie's size", () => {
+    const folder = mkdtempSync(join(tmpdir(), "gt-library-length-"));
+    const movie = join(folder, "screen.mp4");
+    writeFileSync(movie, "x".repeat(1234));
+    const row = {
+        id: "rec",
+        title: "Rec",
+        folder,
+        startedAt: "2026-11-05T10:00:00.000Z",
+        endedAt: "2026-11-05T10:01:30.400Z",
+        movie,
+        frames: 0,
+        edited: false,
+    };
+    expect(withLength(row)).toMatchObject({ seconds: 90, bytes: 1234 });
+    expect(withLength({ ...row, endedAt: undefined, movie: undefined })).toMatchObject({ seconds: null, bytes: null });
+});
+
+// NR37: removeLane('zooms') removed the built-in zoom lane, and the movie had no lane for zooms after it.
+test("the last lane that holds zooms cannot be removed; another lane for zooms lets it go", () => {
+    expect(laneRemovalReason([{ id: "zooms", kinds: ["zoom"] }], "zooms")).toContain(
+        "the zooms lane is the only lane that holds zooms"
+    );
+    expect(laneRemovalReason([{ id: "zooms", kinds: ["zoom"] }, { id: "all" }], "zooms")).toBeUndefined();
+    expect(
+        laneRemovalReason(
+            [
+                { id: "zooms", kinds: ["zoom"] },
+                { id: "texts", kinds: ["text"] },
+            ],
+            "texts"
+        )
+    ).toBeUndefined();
+    expect(laneRemovalReason([{ id: "zooms", kinds: ["zoom"] }], "nope")).toBeUndefined();
+});
+
+// NR35: switchDisplay on a video recording said "has no frames to make a movie of".
+test("switchDisplay on a video recording says it needs a frames recording", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "gt-video-switch-"));
+    writeFileSync(
+        join(folder, "recording.json"),
+        SafeJSON.stringify({
+            version: 1,
+            id: "rec",
+            title: "Rec",
+            startedAt: "2026-11-05T10:00:00.000Z",
+            displays: [],
+            frames: [],
+            settings: { kind: "video" },
+        })
+    );
+    const path = join(folder, "screen.edit.json");
+    writeProject(
+        path,
+        wholeProject({ video: join(folder, "screen.mp4"), durationUs: 2_000_000, width: 10, height: 10 })
+    );
+    await expect(new Movie(path).switchDisplay({ from: 0, to: 1, display: 2 })).rejects.toThrow(
+        "this is a video recording: it has no display frames to switch between"
+    );
+});
+
+// NR43: fix() counted an action that changed nothing as fixed.
+test("fix() reports an issue check() still finds after its action as unchanged, never as fixed", () => {
+    const issue = (message: string, fixable = true) => ({
+        severity: "fix" as const,
+        item: "text",
+        message,
+        ...(fixable ? { action: { label: "fix it", ops: [] } } : {}),
+    });
+    const before = [issue("text t1 is too short to read"), issue("zoom z1 never shows"), issue("no transcript", false)];
+    const after = [issue("text t1 is too short to read"), issue("no transcript", false)];
+    expect(fixOutcome(before, after)).toEqual({
+        fixed: ["zoom z1 never shows"],
+        unchanged: ["text t1 is too short to read"],
+    });
+});
+
+// NR36 and NR34: denoise() on a movie without sound saved, check() said ok and every export failed; mute(0) did nothing.
+describe("an edit of the sound on a movie without sound", () => {
+    const video = (types: string[]) => ({
+        path: "/movies/demo/screen.mp4",
+        bytes: 1,
+        durationSec: 2,
+        streams: types.map((type) => ({ type, codec: "x", attachedPicture: false })),
+    });
+
+    test("is refused with the reason when the video has no audio track, and allowed when it has one or is unknown", () => {
+        expect(silentMovieReason(video(["video"]), "clean")).toBe(
+            "this movie has no sound to clean: its video screen.mp4 has no audio track"
+        );
+        expect(silentMovieReason(video(["video", "audio"]), "clean")).toBeUndefined();
+        expect(silentMovieReason(undefined, "mute")).toBeUndefined();
+    });
+});
+
+describe("a movie method that needs the recorder part of the app", () => {
+    const app = (built: boolean, parts: string[]): AppStatus => ({
+        bundlePath: "/Applications/GenesisTools.app",
+        launcherPath: "/Applications/GenesisTools.app/Contents/MacOS/GenesisTools",
+        built,
+        stale: false,
+        parts,
+        identityStable: true,
+    });
+
+    test("refuses with the command that adds it and starts no build: a build outlives the turn (R2-NR3)", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-no-part-"));
+        const path = join(folder, "screen.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(folder, "screen.mp4"), durationUs: 4_000_000, width: 100, height: 100 })
+        );
+        const build = spyOn(appModule, "buildApp").mockImplementation(() => {
+            throw new Error("a REPL method started an app build");
+        });
+        const status = spyOn(appModule, "appStatus").mockReturnValue(app(true, []));
+
+        try {
+            await expect(new Movie(path).still(1)).rejects.toThrow(
+                "movie.still() needs the recorder part of GenesisTools.app, and the installed GenesisTools.app has no recorder part. Nothing was started."
+            );
+            await expect(new Movie(path).export()).rejects.toThrow("macos permissions build --add-part recorder");
+            status.mockReturnValue(app(false, []));
+            await expect(new Movie(path).show()).rejects.toThrow("and GenesisTools.app is not installed");
+            expect(build).not.toHaveBeenCalled();
+            status.mockReturnValue(app(true, ["recorder"]));
+            expect(() => requireRecorderPart("movie.still()")).not.toThrow();
+        } finally {
+            build.mockRestore();
+            status.mockRestore();
+        }
+    });
+});
+
 describe("what a cut costs, in the answer of the call", () => {
     test("a cut that hides a marker or shortens a text says so once in its answer, and check() names them", async () => {
         const folder = mkdtempSync(join(tmpdir(), "gt-cut-losses-"));
@@ -387,6 +633,36 @@ describe("what a cut costs, in the answer of the call", () => {
             `text ${text}`,
             'recorded marker "Recorded"',
         ]);
+    });
+});
+
+describe("the answer of fix() with nothing to fix and of undo()", () => {
+    // R2-NR4: both answered the whole edit (clips, zooms, audio, export, lanes: about 2,500 chars) where every other
+    // edit answers one line and where it is.
+    test("is the short answer of every edit, plus what each did", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-short-answer-"));
+        const path = join(folder, "screen.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(folder, "screen.mp4"), durationUs: 6_000_000, width: 100, height: 100 })
+        );
+        const movie = new Movie(path);
+        await movie.cut(1, 2);
+        const fixed = await movie.fix();
+        expect(Object.keys(fixed).sort()).toEqual(
+            ["fixed", "outputSeconds", "path", "revision", "summary", "unchanged", "warnings"].sort()
+        );
+        expect(fixed).toMatchObject({
+            fixed: [],
+            warnings: ["check() found nothing that fix() can fix"],
+            outputSeconds: 5,
+        });
+        const undone = await movie.undo();
+        expect(Object.keys(undone).sort()).toEqual(
+            ["outputSeconds", "path", "revision", "stepsLeft", "summary", "undone"].sort()
+        );
+        expect(undone).toMatchObject({ undone: ["cut"], stepsLeft: 0, outputSeconds: 6, path });
+        expect(undone.summary).toStartWith("6 s long");
     });
 });
 
@@ -884,6 +1160,50 @@ describe("recorder and editor toolsets", () => {
         }
     }, 30_000);
 
+    // NR41: js_reset right after recorder.start left an empty recording in the library without a word.
+    test("reset names an owned recording that stopped with no frames", async () => {
+        class EmptyRecorder extends FakeRecorder {
+            override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+                mkdirSync(request.outDir, { recursive: true });
+                await new Promise<void>((resolve) =>
+                    signal?.addEventListener("abort", () => resolve(), { once: true })
+                );
+                return { startedAtMs: Date.now(), frames: [] };
+            }
+        }
+        const engine = new ReplEngine({
+            toolsets: ["recorder"],
+            recorder: { create: async () => new EmptyRecorder() },
+        });
+        try {
+            const started = await engine.run('const rec = await recorder.start({ displays: "all" }); rec.id', 10_000);
+            expect(started.error).toBeUndefined();
+            const notes = await engine.reset();
+            expect(notes).toHaveLength(1);
+            expect(notes[0]).toStartWith(
+                `the recording ${started.text} stopped with no frames; its folder stays in the library: `
+            );
+        } finally {
+            await engine.shutdown();
+        }
+    }, 30_000);
+
+    // NR42: "Error: RpcError: no display 99999" and "no display -5" named neither the class once nor the real displays.
+    test("an unknown display is refused once, naming the displays that are there", async () => {
+        const engine = new ReplEngine({ toolsets: ["recorder"], recorder: { create: async () => new FakeRecorder() } });
+        try {
+            const refused = await engine.run("await recorder.start({ displays: [99999] })", 10_000);
+            expect(refused.error).toBe("no display 99999; the displays: 1, 4");
+
+            await engine.run('const rec = await recorder.start({ displays: "all" })', 10_000);
+            const switched = await engine.run("await rec.displays.switch(5)", 10_000);
+            expect(switched.error).toEndWith("; the displays: 1, 4");
+            await engine.run("await rec.stop()", 10_000);
+        } finally {
+            await engine.shutdown();
+        }
+    }, 30_000);
+
     test("serial recorders reject multiple displays before capture and on live selection", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-serial-rec-"));
         const recorder = new FakeRecorder();
@@ -1287,7 +1607,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
     test("movies: every time argument names its base, SourceTime or OutputTime, and the notes define both", () => {
         const docs = renderDocs(moviesApi);
         expect(docs).toContain("movie.cut(from: SourceTime, to: SourceTime) →");
-        expect(docs).toContain("movie.still(at?: OutputTime, out?: string) →");
+        expect(docs).toContain("movie.still(at?: Time, out?: string, full?: boolean, source?: boolean) →");
         expect(docs).toContain("movie.range(options: { from: OutputTime; to: OutputTime;");
         expect(docs).toContain('{ op: "cut"; from: SourceTime; to: SourceTime }');
         expect(docs).toContain('{ op: "range"; from: OutputTime; to: OutputTime;');
@@ -1295,6 +1615,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(docs).not.toContain("number (≥0) | string");
         expect(docs).toContain("Note: SourceTime is");
         expect(docs).toContain("Note: OutputTime is");
+        expect(docs).toContain("Note: Time (still(), sheet()) is OutputTime, or SourceTime with source: true.");
     });
 
     test("movies: the docs of a MovieRecording's settings name the keys a movie takes and the ones it keeps", async () => {
@@ -1356,8 +1677,152 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             };
         };
         const meeting = meetings.open(record.id);
-        await meeting.items.add({ findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }] });
+        const answer = await meeting.items.add({
+            findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }],
+        });
         expect(meeting.record.items).toHaveLength(1);
+        // The answer is the added item, not the meeting record (NR5).
+        expect(answer).toMatchObject({ added: [{ kind: "question", status: "suggested" }], warnings: [] });
+        expect(Object.keys(answer as object).sort()).toEqual(["added", "warnings"]);
+    });
+
+    // NR20: the handle had no id, a confirm's token had no door back, and an unknown config path printed nothing.
+    // NR33: meetings.list() gave the start only, so an agent that wanted a short meeting opened each one.
+    test("meetings: list gives each meeting's length in seconds, null while it has no end", async () => {
+        const store = new MeetingStore();
+        const ended = await store.create(
+            { title: "Short", start: "2026-11-02T18:00:00.000Z", end: "2026-11-02T18:25:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const running = await store.create(
+            { title: "Running", start: "2026-11-02T19:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: { list(): Array<{ id: string; seconds: number | null }> };
+        };
+        const rows = meetings.list();
+        expect(rows.find((row) => row.id === ended.id)?.seconds).toBe(1500);
+        expect(rows.find((row) => row.id === running.id)?.seconds).toBeNull();
+    });
+
+    test("meetings: a handle names its meeting, a confirm is undone with its token, and an unknown config path is refused", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Undo", start: "2026-11-02T17:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: {
+                open(ref: string): {
+                    readonly id: string;
+                    readonly title: string;
+                    readonly record: { items: Array<{ id: string; status: string }> };
+                    items: {
+                        add(input: unknown): Promise<unknown>;
+                        confirm(input: unknown): Promise<{ decided: string[]; token?: string }>;
+                        reopen(input: unknown): Promise<{ reopened: string[] }>;
+                    };
+                };
+                config: { get(path?: string): Promise<unknown> };
+            };
+        };
+        const meeting = meetings.open(record.id);
+        expect(meeting.id).toBe(record.id);
+        expect(meeting.title).toBe("Undo");
+        // R2-NR5: it printed every getter and function (about 1,000 chars) and no title.
+        expect(Bun.inspect(meeting)).toBe(
+            `Meeting ${record.id} "Undo" (info() reads it; describe("meetings.Meeting") lists its methods)`
+        );
+
+        // A question is answered by ear, so the fixture is a term with its spelling, which a confirm takes as it is.
+        await meeting.items.add({
+            findings: [{ kind: "term", at: 1, heard: "jason", proposed: "JSON", confidence: 0.9, reason: "a fixture" }],
+        });
+        const [item] = meeting.record.items;
+        const confirmed = await meeting.items.confirm({ ids: [item.id] });
+        expect(confirmed.decided).toEqual([item.id]);
+        expect(confirmed.token).toBeString();
+        expect((await meeting.items.reopen({ ids: [item.id], token: confirmed.token })).reopened).toEqual([item.id]);
+        expect(meeting.record.items[0].status).toBe("suggested");
+
+        await expect(meetings.config.get("global.no.such.key")).rejects.toThrow(
+            '"global.no.such.key" is not set and has no default'
+        );
+    });
+
+    // R2-MC9: the toolset had its own copy of set, which took a label the meeting does not carry and wrote a history
+    // line for it, while the CLI refused.
+    test("meetings: set refuses to remove a label the meeting does not carry, and writes no history line", async () => {
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Labels", start: "2026-11-02T14:00:00.000Z", createdBy: "new", labels: ["kickoff"] },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: { open(ref: string): { set(input: unknown): Promise<{ labels: string[] }> } };
+        };
+        const meeting = meetings.open(record.id);
+        await expect(meeting.set({ unlabel: ["nosuch"] })).rejects.toThrow(
+            `${record.id} has no label "nosuch". Its labels: kickoff`
+        );
+        expect(store.read(record.id)?.history).toHaveLength(record.history.length);
+        expect((await meeting.set({ unlabel: ["Kickoff"] })).labels).toEqual([]);
+    });
+
+    // R2-MC10: an unknown project answered [] here, while the CLI refused it.
+    test("meetings: projects.labels refuses a project nobody knows, and adding a label makes one", async () => {
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: { projects: { labels(input: unknown): Promise<string[]> } };
+        };
+        await expect(meetings.projects.labels({ project: "r2-mc10-nosuch" })).rejects.toThrow(
+            "No project r2-mc10-nosuch. The known ones:"
+        );
+        expect(await meetings.projects.labels({ project: "r2-mc10-new", add: ["Kickoff"] })).toEqual(["Kickoff"]);
+        expect(await meetings.projects.labels({ project: "r2-mc10-new" })).toEqual(["Kickoff"]);
+    });
+
+    // R2-MC11: kind was any string, so a misspelt kind answered no rows, which reads as "the meeting has none".
+    test("meetings: items.list refuses a kind that does not exist and names the kinds", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Kinds", start: "2026-11-02T13:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: { open(ref: string): { items: { list(input?: unknown): unknown[] } } };
+        };
+        const meeting = meetings.open(record.id);
+        expect(() => meeting.items.list({ kind: "bogus" })).toThrow(
+            'expected one of "speaker-range"|"label"|"join"|"term"|"question"'
+        );
+        expect(meeting.items.list({ kind: "term" })).toEqual([]);
+    });
+
+    // R2-MC12: confirm and reject shared one schema, so a reject took speaker and proposed and kept nothing of them.
+    test("meetings: items.reject refuses the values only a confirm takes, and rejects by id", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Reject", start: "2026-11-02T12:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: {
+                open(ref: string): {
+                    readonly record: { items: Array<{ id: string; status: string }> };
+                    items: {
+                        add(input: unknown): Promise<unknown>;
+                        reject(input: unknown): Promise<{ decided: string[] }>;
+                    };
+                };
+            };
+        };
+        const meeting = meetings.open(record.id);
+        await meeting.items.add({
+            findings: [{ kind: "term", at: 1, heard: "jason", proposed: "JSON", confidence: 0.9, reason: "a fixture" }],
+        });
+        const [item] = meeting.record.items;
+        await expect(meeting.items.reject({ ids: [item.id], proposed: "Jason" })).rejects.toThrow('"proposed"');
+        await expect(meeting.items.reject({ ids: [item.id], speaker: "Alice" })).rejects.toThrow('"speaker"');
+        expect(meeting.record.items[0].status).toBe("suggested");
+        expect((await meeting.items.reject({ ids: [item.id] })).decided).toEqual([item.id]);
     });
 
     test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
@@ -1620,12 +2085,27 @@ describe("movies.record() takes the options of tools recorder start", () => {
                 server.close();
             }
         };
-        return { start, started, close };
+        // One 1512 x 982 display at the origin, instead of `ax-tool screens`.
+        const checkTarget: MovieRecorderDeps["checkTarget"] = async (target) =>
+            refuseTargetOffScreen(target, [
+                {
+                    index: 0,
+                    name: "Built-in",
+                    isPrimary: true,
+                    points: { width: 1512, height: 982 },
+                    scaleFactor: 2,
+                    framePixels: { width: 3024, height: 1964 },
+                    originCG: { x: 0, y: 0 },
+                },
+            ]);
+        return { start, started, close, checkTarget };
     }
 
     test("an area, the idle rate, the threshold, the countdown, the cursor, the shortcuts and the microphone reach the recorder", async () => {
         const fake = fakeRecorder();
-        const { movies } = (await new MoviesToolset({ start: fake.start }).load(ctx)) as {
+        const { movies } = (await new MoviesToolset({ start: fake.start, checkTarget: fake.checkTarget }).load(
+            ctx
+        )) as {
             movies: { record(options: unknown): Promise<{ folder?: string }> };
         };
 
@@ -1676,7 +2156,9 @@ describe("movies.record() takes the options of tools recorder start", () => {
 
     test("an option the CLI would refuse is refused before anything starts, with the CLI's message", async () => {
         const fake = fakeRecorder();
-        const { movies } = (await new MoviesToolset({ start: fake.start }).load(ctx)) as {
+        const { movies } = (await new MoviesToolset({ start: fake.start, checkTarget: fake.checkTarget }).load(
+            ctx
+        )) as {
             movies: { record(options: unknown): Promise<unknown> };
         };
         // The schema check throws at the call, the CLI's parse inside the promise: both must refuse.
@@ -1686,6 +2168,9 @@ describe("movies.record() takes the options of tools recorder start", () => {
         await expect(record({ countdown: 11 })).rejects.toThrow("countdown");
         await expect(record({ idleFps: 0 })).rejects.toThrow("idleFps");
         await expect(record({ region: "10,20,300" })).rejects.toThrow("--region takes x,y,width,height");
+        // Below the only display: refused here, instead of a child that refuses and a start that times out.
+        await expect(record({ region: "1,1300,300,200" })).rejects.toThrow("meets no display");
+        await expect(record({ display: 2 })).rejects.toThrow("--display 2 is not connected");
         await expect(record({ micDevice: "BuiltInMicrophoneDevice" })).rejects.toThrow(
             "--mic-device needs --audio mic"
         );

@@ -7,11 +7,80 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
-import { ReplEngine } from "./lib/engine";
+import {
+    DEFAULT_MAX_OUTPUT_CHARS,
+    LONG_RUN_TIMEOUT_MS,
+    LONG_RUN_TOOLSETS,
+    ReplEngine,
+    RUN_TIMEOUT_MS,
+    runTimeoutFor,
+    runTimeoutHint,
+    withoutStreamed,
+} from "./lib/engine";
 import { coerceParam, listPresets, readPreset, removePreset, resolveParams, savePreset } from "./lib/presets";
-import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp } from "./lib/toolsets";
+import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp, toolsetOverlap } from "./lib/toolsets";
 
 handleReadmeFlag(import.meta.url);
+
+const MAX_OUTPUT_HELP = `the most characters a turn returns; longer output is cut with a note naming the file that holds all of it (0: no limit)`;
+
+/** A turn's text on stdout, ended with a newline so the shell prompt starts on its own line (NR21). */
+function printTurnText(text: string): void {
+    if (text) {
+        out.print(text.endsWith("\n") ? text : `${text}\n`);
+    }
+}
+
+/** `--max-output`, or undefined after an error line for a value that is not a whole number of characters. */
+/**
+ * The turn's code from the argument, --file or stdin, or undefined with the reason on stderr when there is none: a run
+ * with no code exited 0 and printed nothing, which reads as "it ran and returned nothing" (R2-NR2). A terminal on stdin
+ * is refused at once instead of waiting for Ctrl-D.
+ */
+async function runSource(code: string | undefined, file: string | undefined): Promise<string | undefined> {
+    const none = `no code to run: pass it as an argument (${toolCommand("node-repl run '1 + 1'")}), with --file <path>, or on stdin`;
+
+    if (code === undefined && file === undefined && process.stdin.isTTY) {
+        logger.error(none);
+        return undefined;
+    }
+
+    const source = file ? readFileSync(file, "utf8") : (code ?? (await Bun.stdin.text()));
+
+    if (source.trim() === "") {
+        logger.error(file ? `${file} is empty: there is no code to run` : none);
+        return undefined;
+    }
+
+    return source;
+}
+
+function maxOutputOption(value: string): number | undefined {
+    const chars = Number(value);
+
+    if (!Number.isInteger(chars) || chars < 0) {
+        logger.error(`--max-output takes a whole number of characters (0: no limit), got "${value}"`);
+        process.exitCode = 1;
+        return undefined;
+    }
+
+    return chars;
+}
+
+/** The entries of a `--toolset` list that do not load, so `movies,nope` is refused as "nope". */
+function unknownToolsets(value: string): string {
+    const entries = value.split(",").map((entry) => entry.trim());
+    const unknown = entries.filter((entry) => {
+        try {
+            parseToolsetList(entry);
+            return false;
+        } catch (error) {
+            logger.debug({ entry, error }, "node-repl --toolset entry does not load");
+            return true;
+        }
+    });
+    return (unknown.length > 0 ? unknown : entries).join(",");
+}
 
 /** The `--toolset` list, or undefined after printing the known ids for an empty or unknown entry. */
 function toolsetsOption(value: string | boolean | undefined, subcommand: string): string[] | undefined {
@@ -19,53 +88,74 @@ function toolsetsOption(value: string | boolean | undefined, subcommand: string)
         return [];
     }
 
+    let ids: string[];
+
     try {
         if (typeof value !== "string" || value.trim() === "") {
             throw new Error("--toolset needs a value");
         }
 
-        return parseToolsetList(value);
+        ids = parseToolsetList(value);
     } catch (error) {
-        logger.error(error instanceof Error ? error.message : String(error));
-        out.println(
-            suggestEnumFlag(toolCommand("node-repl"), "--toolset", REPL_TOOLSET_IDS, {
+        // One message on stderr: the suggestion already names the bad value and the known ones. The subcommand belongs
+        // in the tool name, because `subcommand` strips those words from argv and expects them there (NR10).
+        logger.debug({ error }, "node-repl --toolset refused");
+        const given = typeof value === "string" ? unknownToolsets(value) : undefined;
+        out.printlnErr(
+            suggestEnumFlag(toolCommand(`node-repl ${subcommand}`), "--toolset", REPL_TOOLSET_IDS, {
                 subcommand: [subcommand],
-                given: typeof value === "string" ? value : undefined,
+                given,
             })
         );
         process.exitCode = 1;
         return undefined;
     }
+
+    const overlap = toolsetOverlap(ids);
+
+    if (overlap) {
+        logger.error(`--toolset ${value}: ${overlap}`);
+        process.exitCode = 1;
+        return undefined;
+    }
+
+    return ids;
 }
 
 const program = new Command();
 program
     .name("node-repl")
     .description(
-        "A persistent JavaScript/TypeScript REPL for agents: bindings survive across calls, top-level await works, images come back as MCP content, and --toolset preloads APIs (computer) once per worker. The same four tools Codex's node_repl exposes, without Codex."
+        "A persistent JavaScript/TypeScript REPL for agents: bindings survive across calls, top-level await works, images come back as MCP content, and --toolset preloads toolsets (computer, movies, meetings, browser and the others listed below) once per worker. The same four tools Codex's node_repl exposes, without Codex."
     );
 
 program
     .command("mcp")
     .description("Start the MCP stdio server (tools: js, js_reset, js_add_node_module_dir, turn_ended)")
     .option("--toolset [list]", `comma-separated toolsets to preload: ${REPL_TOOLSET_IDS.join(", ")}`)
-    .action(async (opts: { toolset?: string | boolean }) => {
+    .option("--max-output <chars>", MAX_OUTPUT_HELP, String(DEFAULT_MAX_OUTPUT_CHARS))
+    .action(async (opts: { toolset?: string | boolean; maxOutput: string }) => {
         const toolsets = toolsetsOption(opts.toolset, "mcp");
+        const maxOutputChars = maxOutputOption(opts.maxOutput);
 
-        if (!toolsets) {
+        if (!toolsets || maxOutputChars === undefined) {
             return;
         }
 
         const { startMcpServer } = await import("./mcp/server");
-        await startMcpServer({ toolsets });
+        await startMcpServer({ toolsets, maxOutputChars });
     });
 
 program
     .command("run [code]")
     .description("Run one turn and print its output; reads code from --file or stdin when omitted")
     .option("--file <path>", "read the code from a file")
-    .option("--timeout <ms>", "wall-clock budget in milliseconds (30000 is 30 s)", "30000")
+    .option(
+        "--timeout <ms>",
+        `wall-clock budget in milliseconds (default ${RUN_TIMEOUT_MS} = 30 s; ${LONG_RUN_TIMEOUT_MS} = 10 min with the ${LONG_RUN_TOOLSETS.join(" or ")} toolset)`
+    )
     .option("--toolset [list]", `comma-separated toolsets to preload: ${REPL_TOOLSET_IDS.join(", ")}`)
+    .option("--max-output <chars>", MAX_OUTPUT_HELP, String(DEFAULT_MAX_OUTPUT_CHARS))
     .addHelpText(
         "after",
         [
@@ -75,52 +165,93 @@ program
             '  search("cut")              the methods whose name, doc or parameters hold the words',
             '  describe("movies")         the methods of one toolset or object (describe() lists every name)',
             '  describe("movies.Movie.cut")  one method in full: signature, doc, parameters, result',
+            "They return their text: the last line of a script prints it, and so does a bare describe(…), help(…) or",
+            "search(…) line elsewhere; inside an expression, print it yourself (console.log(describe(…))).",
+            "console.log lines print as the script writes them; the result prints when it ends.",
             "Each `run` is a fresh process, so bindings do not survive between calls; the mcp server keeps them.",
         ].join("\n")
     )
-    .action(async (code: string | undefined, opts: { file?: string; timeout: string; toolset?: string | boolean }) => {
-        // Bun fires a timer scheduled with NaN or a negative delay immediately, so an unchecked
-        // --timeout reports "the turn overran" for what is a bad argument.
-        const timeout = Number(opts.timeout);
+    .action(
+        async (
+            code: string | undefined,
+            opts: { file?: string; timeout?: string; toolset?: string | boolean; maxOutput: string }
+        ) => {
+            const toolsets = toolsetsOption(opts.toolset, "run");
+            // Bun fires a timer scheduled with NaN or a negative delay immediately, so an unchecked
+            // --timeout reports "the turn overran" for what is a bad argument.
+            const timeout = opts.timeout === undefined ? runTimeoutFor(toolsets ?? []) : Number(opts.timeout);
 
-        if (!Number.isFinite(timeout) || timeout <= 0) {
-            logger.error(`--timeout must be a positive number of milliseconds, got "${opts.timeout}"`);
-            process.exitCode = 1;
-            return;
-        }
-
-        // A value under a second is almost always meant as seconds ("--timeout 120"): say so, but run as asked.
-        if (timeout < 1000) {
-            logger.warn(
-                `--timeout is in milliseconds: ${timeout} is ${timeout / 1000} s (for ${timeout} s, pass ${timeout * 1000})`
-            );
-        }
-
-        const toolsets = toolsetsOption(opts.toolset, "run");
-
-        if (!toolsets) {
-            return;
-        }
-
-        const source = opts.file ? readFileSync(opts.file, "utf8") : (code ?? (await Bun.stdin.text()));
-        const engine = new ReplEngine({ toolsets });
-
-        try {
-            const result = await engine.run(source, timeout);
-            out.print(result.text);
-
-            for (const image of result.images) {
-                out.log.info(`image written to ${image.path}`);
-            }
-
-            if (!result.ok) {
-                logger.error(result.stack ?? result.error ?? "unknown error");
+            if (!Number.isFinite(timeout) || timeout <= 0) {
+                logger.error(`--timeout must be a positive number of milliseconds, got "${opts.timeout}"`);
                 process.exitCode = 1;
+                return;
             }
-        } finally {
-            await engine.shutdown();
+
+            // A value under a second is almost always meant as seconds ("--timeout 120"): say so, but run as asked.
+            if (timeout < 1000) {
+                logger.warn(
+                    `--timeout is in milliseconds: ${timeout} is ${timeout / 1000} s (for ${timeout} s, pass ${timeout * 1000})`
+                );
+            }
+
+            const maxOutputChars = maxOutputOption(opts.maxOutput);
+
+            if (!toolsets || maxOutputChars === undefined) {
+                return;
+            }
+
+            // Both used to run the file and drop the code without a word (NR32).
+            if (opts.file && code !== undefined) {
+                logger.error(`run takes the code as an argument or from --file, not both (--file ${opts.file})`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const source = await runSource(code, opts.file);
+
+            if (source === undefined) {
+                process.exitCode = 1;
+                return;
+            }
+
+            // R6 11: console lines print as the turn writes them (a long edit showed nothing for minutes), up to
+            // --max-output; the answer then prints only what was not printed yet (the result, a note).
+            const streamed: string[] = [];
+            let streamedChars = 0;
+            let answered = false;
+            const engine = new ReplEngine({
+                toolsets,
+                maxOutputChars,
+                timeoutHint: runTimeoutHint,
+                onOutput: (line) => {
+                    if (answered || (maxOutputChars > 0 && streamedChars + line.length > maxOutputChars)) {
+                        return;
+                    }
+
+                    streamed.push(line);
+                    streamedChars += line.length + 1;
+                    out.print(`${line}\n`);
+                },
+            });
+
+            try {
+                const result = await engine.run(source, timeout);
+                answered = true;
+                printTurnText(withoutStreamed(result.text, streamed));
+
+                for (const image of result.images) {
+                    out.log.info(`image written to ${image.path}`);
+                }
+
+                if (!result.ok) {
+                    logger.error(result.stack ?? result.error ?? "unknown error");
+                    process.exitCode = 1;
+                }
+            } finally {
+                await engine.shutdown();
+            }
         }
-    });
+    );
 
 const preset = program
     .command("preset")
@@ -196,6 +327,11 @@ preset
                 knownToolsets: REPL_TOOLSET_IDS,
             });
             out.printlnErr(`saved preset ${saved.meta.name} in ${saved.folder}`);
+
+            if (saved.replaced) {
+                out.printlnErr(`the version it replaced is in ${saved.replaced}`);
+            }
+
             out.result(saved.meta);
         } catch (error) {
             logger.error(error instanceof Error ? error.message : String(error));
@@ -261,7 +397,7 @@ preset
                 `await presets.run(${SafeJSON.stringify(name)}, ${SafeJSON.stringify(values)})`,
                 timeout
             );
-            out.print(result.text);
+            printTurnText(result.text);
 
             if (!result.ok) {
                 logger.error(result.stack ?? result.error ?? "unknown error");

@@ -2,19 +2,61 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { effectLabel } from "@genesiscz/utils/api-descriptor";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
-import { jsDescription } from "../mcp/server";
-import { ReplEngine, resultMessage } from "./engine";
-import { createToolsets, parseToolsetList, toolsetCliHelp } from "./toolsets";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
+import { jsDescription, jsResetDescription, parseJsArguments } from "../mcp/server";
+import {
+    capOutput,
+    DEFAULT_MAX_OUTPUT_CHARS,
+    ReplEngine,
+    resultMessage,
+    runTimeoutFor,
+    runTimeoutHint,
+    withoutStreamed,
+} from "./engine";
+import {
+    createToolsets,
+    parseToolsetList,
+    REPL_TOOLSET_IDS,
+    REPL_TOOLSETS,
+    type ReplToolsetId,
+    toolsetCliHelp,
+    toolsetOverlap,
+} from "./toolsets";
+import { browserError } from "./toolsets/browser";
+import { githubPrRef } from "./toolsets/github";
 
-it("CLI help renders registered descriptor methods and handles", () => {
+// NR24: --help used to render every method of all ten toolsets, 535 lines. It now lists each toolset's one line and
+// says how to print one toolset's API.
+it("a run's timeout error names --timeout and --file, and a movies run gets 10 minutes by default", async () => {
+    expect(runTimeoutFor([])).toBe(30_000);
+    expect(runTimeoutFor(["computer", "movies"])).toBe(600_000);
+    const engine = new ReplEngine({ timeoutHint: runTimeoutHint });
+    try {
+        const stuck = await engine.run("await sleep(5000)", 300);
+        expect(stuck.error).toContain("exceeded 300 ms");
+        expect(stuck.error).toContain("--timeout 600000");
+        expect(stuck.error).toContain("--file script.js");
+    } finally {
+        await engine.shutdown();
+    }
+});
+
+it("CLI help lists every toolset with its one line and how to print one's API", () => {
     const help = toolsetCliHelp();
-    expect(help).toContain("recorder.start(options?:");
-    expect(help).toContain("recording.stop(");
-    expect(help).toContain("editor.open(source: string)");
+    for (const id of REPL_TOOLSET_IDS) {
+        expect(help).toContain(`  ${id}: `);
+    }
+
+    expect(help).toContain(`help('movies')`);
+    expect(help).not.toContain("recorder.start(options?:");
+    expect(help.split("\n").length).toBeLessThan(REPL_TOOLSET_IDS.length + 10);
 });
 
 // The MCP server renders a js_add_node_module_dir result with this. A timeout or a worker exit
@@ -37,6 +79,63 @@ describe("resultMessage", () => {
     it("never answers a failure with an empty string", () => {
         expect(resultMessage({ ok: false, text: "", error: undefined })).toBe("unknown error");
         expect(resultMessage({ ok: false, text: "", error: "" })).toBe("unknown error");
+    });
+});
+
+// NR4 (deep test 2026-11-06): one turn returned 300,000 characters to the model.
+describe("the output limit of a turn", () => {
+    it("cuts a long text with a note that names the file holding all of it and how to read the next part", async () => {
+        const engine = new ReplEngine({ defaultTimeoutMs: 10_000, maxOutputChars: 100 });
+        try {
+            const long = await engine.run("'y'.repeat(1000)");
+            expect(long.ok).toBe(true);
+            const [kept, note] = long.text.split("\n… ");
+            expect(kept).toBe("y".repeat(100));
+            const path = note.match(/all of it is in (\S+)\. Read/)?.[1] ?? "";
+            expect(note).toStartWith("[output cut at 100 of 1,000 characters; all of it is in ");
+            expect(note).toContain(`.slice(100, 200)]`);
+            expect(readFileSync(path, "utf8")).toBe("y".repeat(1000));
+            expect((await engine.run("'short'")).text).toBe("short");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    it("keeps text up to the limit whole, and a limit of 0 keeps everything", () => {
+        const writeRest = () => {
+            throw new Error("nothing should be written");
+        };
+        expect(DEFAULT_MAX_OUTPUT_CHARS).toBe(20_000);
+        expect(capOutput({ text: "x".repeat(20_000), max: 20_000, writeRest })).toHaveLength(20_000);
+        expect(capOutput({ text: "x".repeat(50_000), max: 0, writeRest })).toHaveLength(50_000);
+    });
+});
+
+// R6 11: `tools node-repl run` showed nothing until the process exited; a long edit printed nothing for minutes.
+describe("console output streams while the turn runs", () => {
+    it("hands each console line to onOutput before the turn answers, and the answer still holds them", async () => {
+        const seen: Array<{ line: string; at: number }> = [];
+        const engine = new ReplEngine({
+            defaultTimeoutMs: 10_000,
+            onOutput: (line) => seen.push({ line, at: performance.now() }),
+        });
+        try {
+            const result = await engine.run('console.log("first"); await sleep(600); console.log("second"); "done"');
+            const answered = performance.now();
+            expect(seen.map((entry) => entry.line)).toEqual(["first", "second"]);
+            expect(answered - (seen[0]?.at ?? answered)).toBeGreaterThan(400);
+            expect(result.text).toBe("first\nsecond\ndone");
+            expect(withoutStreamed(result.text, ["first", "second"])).toBe("done");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    it("leaves the turn text whole when nothing streamed or the streamed lines are not in it", () => {
+        expect(withoutStreamed("a\nb", [])).toBe("a\nb");
+        expect(withoutStreamed("note\nx\ny\nresult", ["x", "y"])).toBe("note\nresult");
+        expect(withoutStreamed("x\ny", ["x", "y"])).toBe("");
+        expect(withoutStreamed("other", ["x"])).toBe("other");
     });
 });
 
@@ -79,14 +178,25 @@ describe("ReplEngine", () => {
     });
 
     it("emits images as base64 plus a file on disk", async () => {
+        // A 1×1 PNG: the bytes decide the type, as show() decides it.
+        const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
         const result = await engine.run(
-            "await nodeRepl.emitImage({ bytes: new Uint8Array([137, 80, 78, 71]), mimeType: 'image/png' });\n'done'"
+            `await nodeRepl.emitImage({ bytes: "${png}", mimeType: 'image/png' });\n'done'`
         );
         expect(result.ok).toBe(true);
         expect(result.images).toHaveLength(1);
         expect(result.images[0].mimeType).toBe("image/png");
-        expect(result.images[0].data).toBe(Buffer.from([137, 80, 78, 71]).toString("base64"));
+        expect(result.images[0].data).toBe(png);
         expect(result.images[0].path).toContain("node-repl-images-");
+    });
+
+    // NR22: three bytes and a plain string were sent to the host as images, which a host that checks images refuses.
+    it("emitImage refuses bytes that are not an image, as show() does", async () => {
+        const result = await engine.run(
+            "await nodeRepl.emitImage({ bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png' })"
+        );
+        expect(result.error).toBe("emitImage() got bytes that are not a PNG, JPEG, GIF or WebP image");
+        expect(result.images).toHaveLength(0);
     });
 
     it("kills a turn that overruns, on the wall clock, and starts clean", async () => {
@@ -97,6 +207,76 @@ describe("ReplEngine", () => {
         const after = await engine.run("typeof marker");
         expect(after.ok).toBe(true);
         expect(after.text).toBe("undefined");
+    });
+
+    // R2-NR7: a swift build a turn started kept running after the timeout killed the worker, holding the build lock.
+    it("a turn that overruns takes the processes it started with it", async () => {
+        const started = await engine.run('globalThis.child = Bun.spawn(["sleep", "30"]);\nchild.pid');
+        const pid = Number(started.text);
+        expect(pid).toBeGreaterThan(0);
+        const stuck = await engine.run("await new Promise(() => {})", 400);
+        expect(stuck.ok).toBe(false);
+        expect(stuck.error).toContain("exceeded 400 ms");
+        const alive = () => isProcessAlive(pid);
+        const deadline = Date.now() + 3000;
+
+        while (alive() && Date.now() < deadline) {
+            await Bun.sleep(100);
+        }
+
+        expect(alive()).toBe(false);
+    });
+
+    // NR6: a native helper compiling on first use logs that line to stderr and nowhere the caller sees.
+    it("a turn that overruns quotes what the worker wrote to stderr while it ran", async () => {
+        const stuck = await engine.run(
+            'process.stderr.write("compiling the native helper\\n"); await new Promise(() => {});',
+            1000
+        );
+        expect(stuck.ok).toBe(false);
+        expect(stuck.error).toContain("exceeded 1000 ms");
+        expect(stuck.error).toContain("compiling the native helper");
+    });
+
+    // NR30: `run '1' --timeout 50` failed, because the turn's clock ran while bun booted the worker (100 to 300 ms).
+    it("the first turn's budget starts when the worker has started, not before", async () => {
+        const fresh = new ReplEngine();
+        try {
+            const first = await fresh.run("1", 100);
+            expect(first.error).toBeUndefined();
+            expect(first.text).toBe("1");
+        } finally {
+            fresh.dispose();
+        }
+    });
+
+    // NR29: process.exit(3) answered "code unknown" and did not say that the bindings were gone.
+    it("a turn that exits the worker names the code and says every binding is gone", async () => {
+        await engine.run("globalThis.beforeExit = 1");
+        const exited = await engine.run("process.exit(3)");
+        expect(exited.error).toBe("the node-repl worker exited (code 3) before answering; every binding is gone");
+        expect((await engine.run("typeof beforeExit")).text).toBe("undefined");
+    });
+
+    // NR39: a malformed trust.json throws at the worker's module top level, before it can answer.
+    it("a worker that dies before it answers names its exit code and its last stderr lines", async () => {
+        const home = mkdtempSync(join(tmpdir(), "node-repl-trust-"));
+        mkdirSync(genesisToolsDirIn(home, "node-repl"), { recursive: true });
+        writeFileSync(genesisToolsDirIn(home, "node-repl", "trust.json"), '{"allowPaths": []}');
+        const broken = new ReplEngine({ defaultTimeoutMs: 10_000 });
+
+        try {
+            let error: string | undefined;
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+                const result = await broken.run("1");
+                expect(result.ok).toBe(false);
+                error = result.error;
+            });
+            expect(error).toMatch(/exited \(code [1-9]\d*\) before answering/);
+            expect(error).toContain('"allowPaths" must be true or false');
+        } finally {
+            broken.dispose();
+        }
     });
 
     it("carries a declaration without an initialiser into the next turn", async () => {
@@ -132,6 +312,44 @@ describe("ReplEngine", () => {
         const imported = await engine.run("const m = await import('fakepkg');\nm.default?.answer ?? m.answer");
         expect(imported.ok).toBe(true);
         expect(imported.text).toBe("7");
+    });
+
+    // NR18: a timer that threw after its turn answered, and a rejection nobody awaited, were lost without a word.
+    it("the next turn starts with the errors no turn caught, once", async () => {
+        await engine.run(
+            "setTimeout(() => { throw new Error('late nr18') }, 5); Promise.reject(new Error('unawaited nr18')); 'scheduled'"
+        );
+        // The timer fires 5 ms after the turn answered; the next turn must come after it.
+        await Bun.sleep(100);
+        const next = await engine.run("1");
+        expect(next.text).toStartWith(
+            "note: an error no turn caught (a timer, a callback or a promise nobody awaited):"
+        );
+        expect(next.text).toContain("late nr18");
+        expect(next.text).toContain("unawaited nr18");
+        expect(next.text.endsWith("\n1")).toBe(true);
+        expect((await engine.run("2")).text).toBe("2");
+    });
+
+    // NR31: a missing package named the kernel's file ("imported from …/worker.ts") and gave no way forward.
+    it("a missing package says how to make it importable, without the kernel's path", async () => {
+        const missing = await engine.run("await import('nr31-no-such-package')");
+        expect(missing.error).toBe(
+            "Cannot find package 'nr31-no-such-package'. Add the project that has it with js_add_node_module_dir, or import it by absolute path."
+        );
+        const path = await engine.run("await import('/nonexistent/nr31.ts')");
+        expect(path.error).toBe("Cannot find module '/nonexistent/nr31.ts': no file is there.");
+    });
+
+    // NR17: a folder that does not exist was answered "module directory registered".
+    it("refuses a module directory without a node_modules folder, and keeps the worker", async () => {
+        await engine.run("globalThis.keptAcrossRefusal = 1");
+        const missing = await engine.addModuleDir("/nonexistent/dir");
+        expect(missing.ok).toBe(false);
+        expect(missing.error).toBe(
+            "/nonexistent/dir holds no node_modules folder; pass the project folder whose node_modules has the package"
+        );
+        expect((await engine.run("globalThis.keptAcrossRefusal")).text).toBe("1");
     });
 });
 
@@ -199,6 +417,50 @@ const PNG_1X1 = Buffer.from(
 );
 
 describe("toolsets", () => {
+    // NR1 and NR7 (deep test 2026-11-06): an agent calls a read method without asking, so a read method reaches no
+    // one, and every method that prompts the user, takes the screen or spends money says so in its declaration.
+    it("every toolset declares who its calls reach, and no read method reaches anyone", async () => {
+        const reaching: Record<string, string> = {};
+
+        for (const toolset of await createToolsets(REPL_TOOLSET_IDS)) {
+            const owners = [
+                { owner: toolset.api.global, methods: toolset.api.methods },
+                ...(toolset.api.handles ?? []).map((handle) => ({
+                    owner: `${toolset.api.global}.${handle.name}`,
+                    methods: handle.methods,
+                })),
+            ];
+
+            for (const { owner, methods } of owners) {
+                for (const method of methods) {
+                    if (method.effect === "read") {
+                        expect(method.reaches ?? []).toEqual([]);
+                    }
+
+                    if (method.reaches?.length) {
+                        reaching[`${owner}.${method.name}`] = effectLabel(method);
+                    }
+                }
+            }
+        }
+
+        expect(reaching).toEqual({
+            "recorder.start": "reversible · user",
+            "movies.record": "reversible · user",
+            "movies.demo": "reversible · user",
+            "movies.Movie.transcript": "reversible · paid · user",
+            "movies.Movie.copy": "destructive · user",
+            "movies.Movie.reveal": "reversible · user",
+            "movies.Movie.show": "reversible · user",
+            "movies.Movie.closeEditor": "reversible · user",
+            "meetings.assign.sweep": "reversible · user",
+            "meetings.Meeting.assign.ask": "reversible · user",
+            "browser.open": "reversible · user",
+            "browser.navigate": "reversible · user",
+            "browser.close": "destructive · user",
+        });
+    });
+
     it("describe accepts handle names from both help and search", async () => {
         const engine = new ReplEngine({ toolsets: ["recorder"] });
         try {
@@ -256,13 +518,52 @@ describe("toolsets", () => {
         }
     }, 20_000);
 
-    it("a preload that throws answers the turn with the reason and retries on the next turn", async () => {
-        const engine = new ReplEngine({ toolsets: [`${FIXTURE}#BrokenToolset`] });
+    // NR2 (deep test 2026-11-06): one broken toolset used to fail every turn, `1 + 1` and the other toolsets too.
+    it("a toolset whose preload throws leaves plain turns and the other toolsets working, and its global names it", async () => {
+        const engine = new ReplEngine({ toolsets: ["presets", `${FIXTURE}#BrokenToolset`] });
         try {
-            const result = await engine.run("1 + 1");
-            expect(result.ok).toBe(false);
-            expect(result.error).toContain("toolset preload failed: the native backend is missing");
-            expect((await engine.run("1 + 1")).error).toContain("toolset preload failed");
+            const first = await engine.run("1 + 1");
+            expect(first.ok).toBe(true);
+            expect(first.text).toBe(
+                "the counter toolset did not load: the native backend is missing; its global throws until js_reset\n2"
+            );
+            expect((await engine.run("typeof presets.list")).text).toBe("function");
+
+            const used = await engine.run('counter.logTo("/tmp/never")');
+            expect(used.ok).toBe(false);
+            expect(used.error).toBe(
+                "the counter toolset did not load: the native backend is missing; js_reset loads it again"
+            );
+            expect((await engine.run("help()")).text).toContain("counter: did not load: the native backend is missing");
+
+            // A reset preloads again, and the first turn after it says so again.
+            await engine.reset();
+            expect((await engine.run("3")).text).toStartWith("the counter toolset did not load");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    // NR9: a toolset error carried two to six frames of library code, and a preset's frame named presets.ts.
+    it("an error keeps the frames its author wrote, a preset's under its own name, and drops library frames", async () => {
+        const engine = new ReplEngine({ toolsets: ["presets"] });
+        try {
+            const unknown = await engine.run('const n = 1;\ndescribe("no.such.method")');
+            expect(unknown.ok).toBe(false);
+            expect(unknown.stack).toContain("Unknown method: no.such.method");
+            expect(unknown.stack).toContain("turn:2");
+            expect(unknown.stack).not.toContain("discovery.ts");
+
+            const name = `nr9-throws-${process.pid}`;
+            await engine.run(
+                `await presets.save(${SafeJSON.stringify(name)}, { script: "const a = 1;\\nthrow new Error('boom ' + a);" })`
+            );
+            const thrown = await engine.run(`await presets.run(${SafeJSON.stringify(name)})`);
+            expect(thrown.ok).toBe(false);
+            expect(thrown.stack).toContain("boom 1");
+            expect(thrown.stack).toContain(`preset ${name}:2`);
+            expect(thrown.stack).not.toContain("presets.ts");
+            await engine.run(`await presets.remove(${SafeJSON.stringify(name)})`);
         } finally {
             await engine.shutdown();
         }
@@ -276,7 +577,8 @@ describe("toolsets", () => {
             expect((await engine.run('search("path")')).text).toContain("counter.logTo");
             expect((await engine.run('describe("counter.logTo")')).text).toContain("Parameters:");
             const docs = await engine.run('help("counter")');
-            expect(docs.text).toContain("- counter.logTo(path: string) → unknown [reversible]");
+            expect(docs.text).toContain("- counter.logTo(path) [reversible]: ");
+            expect(docs.text).toContain(`describe("counter.logTo") prints one in full`);
             expect((await engine.run('help("nope")')).error).toContain('No toolset "nope" is loaded');
 
             const shown = await engine.run(
@@ -310,11 +612,51 @@ describe("toolsets", () => {
         expect(parseToolsetList(" computer , computer ")).toEqual(["computer"]);
     });
 
+    // NR14: control is computer's API under another name, and with both loaded every search hit came twice.
+    it("toolsets that overlap say which to use, and computer with control is refused", () => {
+        const summary = (id: ReplToolsetId) => REPL_TOOLSETS[id]().api.summary;
+        expect(summary("control")).toContain("The computer toolset's API under the name control");
+        expect(summary("recorder")).toContain("movies.record");
+        expect(summary("editor")).toContain("movies.open");
+        expect(summary("movies")).toContain("recorder and editor");
+        expect(toolsetOverlap(parseToolsetList("computer,control"))).toContain("load one of them");
+        expect(toolsetOverlap(["computer", "movies"])).toBeUndefined();
+    });
+
     it("the js description lists each preloaded toolset's one line", () => {
         expect(jsDescription([])).not.toContain("Preloaded globals");
         expect(jsDescription(["counter: Counts. counter.logTo(path)"])).toContain(
-            "Preloaded globals, built once per worker (search(query) to find methods; describe(name) for full method docs; help(name) for a toolset):\n- counter: Counts. counter.logTo(path)"
+            'Preloaded globals, built once per worker (search(query) to find methods; describe(name) for full method docs; help(name) for a toolset; a method marked [read] changes nothing and reaches no one, "· user" or "· paid" marks one that reaches the user or costs money):\n- counter: Counts. counter.logTo(path)'
         );
+    });
+
+    // NR29: js_reset talked about recordings with no toolset loaded that can start one.
+    it("the js_reset description names recordings only when a toolset that records is loaded", () => {
+        expect(jsResetDescription([])).not.toContain("recording");
+        expect(jsResetDescription(["browser"])).toContain("Toolsets then get up to 10 seconds to dispose");
+        expect(jsResetDescription(["recorder"])).toContain("Owned recordings are stopped and finalized");
+        expect(jsResetDescription(["movies"])).toContain("Owned recordings are stopped and finalized");
+    });
+
+    // NR16: timeout_ms -5 and "abc" ran with the default, and an unknown key was accepted against the schema.
+    it("the js arguments are checked as the schema declares them", () => {
+        expect(parseJsArguments({ code: "1", timeout_ms: 500, title: "count" })).toEqual({
+            code: "1",
+            timeoutMs: 500,
+            title: "count",
+        });
+        expect(parseJsArguments({ code: "1" })).toEqual({ code: "1" });
+        expect(parseJsArguments({ code: "1", timeout_ms: -5 })).toEqual({
+            error: "timeout_ms is a whole number of milliseconds, 1 or more; got -5",
+        });
+        expect(parseJsArguments({ code: "1", timeout_ms: "abc" })).toEqual({
+            error: 'timeout_ms is a whole number of milliseconds, 1 or more; got "abc"',
+        });
+        expect(parseJsArguments({ code: "1", bogus: true })).toEqual({
+            error: "js takes code, timeout_ms and title; unknown: bogus",
+        });
+        expect(parseJsArguments({})).toEqual({ error: "code is required" });
+        expect(parseJsArguments({ code: "1", title: "t".repeat(200) })).toEqual({ code: "1", title: "t".repeat(80) });
     });
 });
 
@@ -323,7 +665,9 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
     await engine.run("1");
     const running = engine.run("await new Promise(() => {})", 60000);
     const queued = engine.run("globalThis.shouldNotRun = true");
-    let reset: Promise<void> | undefined;
+    let reset: Promise<string[]> | undefined;
+    // The worker is warm, so a few microtasks send the turn; one timer tick later it runs, and the reset meets it there.
+    await Bun.sleep(20);
 
     try {
         reset = engine.reset();
@@ -333,7 +677,7 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
                 throw new Error("reset waited for the active turn");
             }),
         ]);
-        expect((await running).ok).toBe(false);
+        expect((await running).error).toBe("cancelled by js_reset; every binding is gone");
         expect((await queued).ok).toBe(false);
         expect((await engine.run("typeof globalThis.shouldNotRun")).text).toContain("undefined");
     } finally {
@@ -343,9 +687,45 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
     }
 });
 
+// NR26: four methods and no close or screenshot; a closed port said "Unable to connect" without the port.
+it("the browser toolset closes and screenshots tabs, and a port nobody answers on is named", async () => {
+    const [browserApi] = (await createToolsets(["browser"])).map((toolset) => toolset.api);
+    expect(browserApi.methods.map((method) => method.name)).toEqual([
+        "tabs",
+        "open",
+        "evaluate",
+        "navigate",
+        "close",
+        "screenshot",
+    ]);
+    expect(browserError(9, new Error("Unable to connect. Is the computer able to access the url?")).message).toBe(
+        "no browser answers on CDP port 9 (http://127.0.0.1:9); start one with --remote-debugging-port=9 --remote-debugging-address=127.0.0.1"
+    );
+    const other = new Error("Navigating to https://x.invalid/ failed: net::ERR_NAME_NOT_RESOLVED");
+    expect(browserError(9, other)).toBe(other);
+});
+
+// NR27: hub.prs() and hub.pr() were "→ unknown", and github.review() refused the URL that hub.pr() takes.
+it("hub and github name their result shapes, and github.review takes a PR URL or owner/repo#n", async () => {
+    const apis = (await createToolsets(["hub", "github"])).map((toolset) => toolset.api);
+    expect(searchMethods(apis, "hub.prs")).toContain("→ { prs: ");
+    expect(searchMethods(apis, "hub.pr")).toContain("→ HubPrDetail");
+    expect(githubPrRef("https://github.com/acme/widgets/pull/42/files")).toEqual({
+        owner: "acme",
+        repo: "widgets",
+        number: 42,
+    });
+    expect(githubPrRef("acme/widgets#7")).toEqual({ owner: "acme", repo: "widgets", number: 7 });
+    expect(() => githubPrRef("widgets 7")).toThrow('"widgets 7" is not a GitHub pull request');
+});
+
 it("discovery covers handle names, missing names and ambiguous names", async () => {
     const apis = (await createToolsets(["meetings", "browser", "control"])).map((toolset) => toolset.api);
     expect(searchMethods(apis, "items.add")).toContain("meetings.Meeting.items.add");
+    // R2-NR6: the source transcript was "→ unknown", so its shape was known only after a call.
+    expect(searchMethods(apis, "meetings.Meeting.transcript")).toContain(
+        "meetings.Meeting.transcript() → { id?, startSec?, speakerId?, speaker, text }[] [read]"
+    );
     expect(describeMethod(apis, "meetings.Meeting.items.add")).toContain("Parameters:");
     expect(() => describeMethod(apis, "missing.method")).toThrow("Unknown method");
     expect(() => describeMethod(apis, "open")).toThrow("Ambiguous method");
@@ -353,4 +733,53 @@ it("discovery covers handle names, missing names and ambiguous names", async () 
     const notes = apis.find((api) => api.global === "control")!.notes!.join(" ");
     expect(notes).toContain("control.read_image");
     expect(notes).not.toContain("computer.read_image");
+});
+
+// NR15: search("cut") listed run_workflow ("execution") and movies.record ("shortcuts") before movies.Movie.cut.
+// R2-NR1: and it answered 15,532 chars, each hit with its whole doc.
+it("search ranks an exact method name first, then whole words, then substrings, and names what is past ten lines", async () => {
+    const apis = (await createToolsets(["computer", "movies"])).map((toolset) => toolset.api);
+    const answer = searchMethods(apis, "cut");
+    const lines = answer.split("\n");
+    expect(lines[0]).toStartWith("movies.Movie.cut(");
+    expect(lines[0]).toEndWith("— Removes a source range from the movie.");
+    const more = lines.at(-2) ?? "";
+    expect(more).toMatch(/^\d+ more: movies\./);
+    // The substring-only hits ("execution", "shortcuts") rank after the whole-word ones, so they are names in that list.
+    const shown = lines.slice(0, -2);
+    expect(shown).toHaveLength(10);
+    expect(more).toContain("computer.run_workflow, movies.search, movies.record");
+    expect(shown.some((line) => /^(computer\.run_workflow|movies\.record)\(/.test(line))).toBe(false);
+    expect(lines.at(-1)).toBe('Each line has the doc\'s first sentence; describe("<name>") prints a method in full.');
+    expect(answer.length).toBeLessThan(6000);
+});
+
+// R2-NR2: `run` with no code exited 0 and printed nothing, which reads as "it ran and returned nothing".
+it("run refuses a turn with no code, from stdin or an empty --file, and runs code from stdin", async () => {
+    const cli = join(import.meta.dir, "..", "index.ts");
+    const run = async (args: string[], stdin: string) => {
+        const child = Bun.spawn([process.execPath, cli, "run", ...args], {
+            env: process.env,
+            stdin: new Blob([stdin]),
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const [stdout, stderr, code] = await Promise.all([
+            new Response(child.stdout).text(),
+            new Response(child.stderr).text(),
+            child.exited,
+        ]);
+        return { stdout, stderr, code };
+    };
+    const empty = await run([], "  \n");
+    expect(empty.code).toBe(1);
+    expect(empty.stdout).toBe("");
+    expect(empty.stderr).toContain("no code to run: pass it as an argument");
+    const file = join(mkdtempSync(join(tmpdir(), "nr-run-")), "empty.js");
+    writeFileSync(file, "");
+    const emptyFile = await run(["--file", file], "");
+    expect(emptyFile.code).toBe(1);
+    expect(emptyFile.stderr).toContain(`${file} is empty: there is no code to run`);
+    const piped = await run([], "1 + 2");
+    expect(piped).toMatchObject({ stdout: "3\n", code: 0 });
 });

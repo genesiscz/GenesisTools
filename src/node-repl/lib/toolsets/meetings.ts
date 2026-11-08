@@ -1,25 +1,26 @@
 import { prepareFindings } from "@app/meetings/lib/add-findings";
 import { captureCost } from "@app/meetings/lib/capture-cost";
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
-import { decideItems } from "@app/meetings/lib/decide";
+import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { testPhrase } from "@app/meetings/lib/dictionary-test";
-import { findingSchema } from "@app/meetings/lib/findings";
+import { FINDING_KINDS, findingSchema } from "@app/meetings/lib/findings";
 import { itemWhat } from "@app/meetings/lib/item-text";
 import { matchDraftSchema, matchPreview } from "@app/meetings/lib/match-preview";
+import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
-import { resolveProject } from "@app/meetings/lib/project";
 import { questionLabel } from "@app/meetings/lib/questions";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
-import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { assertReach, defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { OCR_BOX_LEVELS } from "@genesiscz/utils/macos/ocr-boxes";
-import { EXPORT_IF_EDITED, MeetingsConfigStore, mergeLabels } from "@genesiscz/utils/meetings/config";
+import { EXPORT_IF_EDITED, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { ITEM_STATUSES, type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import {
@@ -46,9 +47,9 @@ const list = defineMethod({
     name: "list",
     params: z.object({ project: z.string().optional() }).strict(),
     result: z.unknown(),
-    resultName: "{ id, title, start, project, items, open }[]",
+    resultName: "{ id, title, start, seconds, project, items, open }[]",
     effect: "read",
-    doc: "The stored meetings, newest first, optionally of one project. `open` counts the suggested items nobody decided yet.",
+    doc: "The stored meetings, newest first, optionally of one project. `seconds` is the meeting's length (null while it has no end); `open` counts the suggested items nobody decided yet.",
 });
 const open = defineMethod({
     name: "open",
@@ -78,8 +79,9 @@ const transcript = defineMethod({
     name: "transcript",
     params: z.object({}),
     result: z.unknown(),
+    resultName: "{ id?, startSec?, speakerId?, speaker, text }[]",
     effect: "read",
-    doc: "The linked source transcript as recorded, before any correction. lines() is the corrected one.",
+    doc: "The linked source transcript as recorded, before any correction. startSec is seconds from the recording's start, when the source has it. lines() is the corrected one.",
 });
 const lines = defineMethod({
     name: "lines",
@@ -91,7 +93,8 @@ const lines = defineMethod({
 });
 const itemsList = defineMethod({
     name: "items.list",
-    params: z.object({ status: z.enum(ITEM_STATUSES).optional(), kind: z.string().optional() }).strict(),
+    // An enum, as the CLI's --kind: a misspelt kind answered no rows (R2-MC11).
+    params: z.object({ status: z.enum(ITEM_STATUSES).optional(), kind: z.enum(FINDING_KINDS).optional() }).strict(),
     result: z.unknown(),
     resultName: "{ id, question?, kind, status, confidence, what, rules }[]",
     effect: "read",
@@ -101,8 +104,9 @@ const add = defineMethod({
     name: "items.add",
     params: z.object({ findings: z.array(findingSchema).min(1) }),
     result: z.unknown(),
+    resultName: "{ added: items.list rows, warnings }",
     effect: "reversible",
-    doc: "Add validated findings under the meeting store lock.",
+    doc: "Add validated findings under the meeting store lock; answers the items it added (as items.list rows) and the warnings, never the whole meeting.",
 });
 const suggest = defineMethod({
     name: "items.suggest",
@@ -113,30 +117,34 @@ const suggest = defineMethod({
     doc: `Run the rules on the transcript and add what they find as suggested items, in one save. rules: any of ${SUGGEST_RULES.join(", ")} (default all). A word check that cannot run is a warning.`,
 });
 const decide = {
-    params: z
-        .object({
-            ids: ids.optional(),
-            minConfidence: z.number().min(0).max(1).optional(),
-            speaker: z.string().optional(),
-            proposed: z.string().optional(),
-        })
-        .strict(),
     result: z.unknown(),
-    resultName: "{ decided: string[], skipped: { id, reason, needs }[] }",
+    resultName: "{ decided: string[], skipped: { id, reason, needs }[], token }",
     effect: "reversible" as const,
 };
+const rejectParams = z.object({ ids: ids.optional(), minConfidence: z.number().min(0).max(1).optional() }).strict();
 const confirm = defineMethod({
     name: "items.confirm",
     ...decide,
+    // Only a confirm keeps a value; reject has its own schema, as in the CLI, so it refuses them (R2-MC12).
+    params: rejectParams.extend({ speaker: z.string().optional(), proposed: z.string().optional() }).strict(),
     doc:
         'Confirm items (ids "i3", or a question\'s number "Q2"), or every suggested item at or above minConfidence (0..1). Transcripts apply confirmed items. A range nobody named needs `speaker`, a term with no spelling needs `proposed`; a question is answered by ear (' +
         toolCommand("meetings listen") +
-        "). Those come back in `skipped` with the reason and what they need.",
+        "). Those come back in `skipped` with the reason and what they need. `token` undoes it with items.reopen.",
 });
 const reject = defineMethod({
     name: "items.reject",
     ...decide,
-    doc: "Reject items by id, or every suggested item at or above minConfidence: they are never suggested again.",
+    params: rejectParams,
+    doc: "Reject items by id, or every suggested item at or above minConfidence: they are never suggested again. `token` undoes it with items.reopen.",
+});
+const reopen = defineMethod({
+    name: "items.reopen",
+    params: z.object({ ids: ids.min(1), token: z.string().min(1).optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ reopened: string[], skipped: { id, reason }[] }",
+    effect: "reversible",
+    doc: "Undo a confirm or a reject: each item gets back what the decision changed. Pass the `token` the decision answered; an item decided again since is refused, and nothing is reopened (NR20).",
 });
 const speakers = defineMethod({
     name: "speakers.stats",
@@ -152,7 +160,7 @@ const rename = defineMethod({
     result: z.unknown(),
     resultName: recordDoc,
     effect: "reversible",
-    doc: 'Name a speaker label ("Speaker 2" → "Alice"): this meeting\'s transcripts use the name from now on.',
+    doc: 'Name a speaker label ("Speaker 2" → "Alice"): this meeting\'s transcripts use the name from now on. A label the linked transcript does not have is refused, with the labels it has.',
 });
 const set = defineMethod({
     name: "set",
@@ -183,7 +191,7 @@ const projectsLabels = defineMethod({
     result: z.unknown(),
     resultName: "string[]",
     effect: "reversible",
-    doc: 'A project\'s known labels; add and remove change them. meetings.projects.labels({ project: "shop", add: ["Checkout 2.0"] }).',
+    doc: 'A project\'s known labels; add and remove change them. A project nobody knows is refused, unless add makes it. meetings.projects.labels({ project: "shop", add: ["Checkout 2.0"] }).',
 });
 const projectsPair = defineMethod({
     name: "projects.pair",
@@ -223,6 +231,7 @@ const assignSweepMethod = defineMethod({
     result: z.unknown(),
     resultName: "{ asked: string[], advanced: { meeting, outcome }[] }",
     effect: "reversible",
+    reaches: ["user"],
     doc: 'One "ask each time" pass, as the watcher runs it: read back answers and apply them, then post a decision-inbox question for each recent ended meeting without a project.',
 });
 const assignProposals = defineMethod({
@@ -239,6 +248,7 @@ const assignAsk = defineMethod({
     result: z.unknown(),
     resultName: "{ formId?, skipped? }",
     effect: "reversible",
+    reaches: ["user"],
     doc: "Post this meeting's project question to the decision inbox now (once per meeting; force asks again).",
 });
 const assignApply = defineMethod({
@@ -326,7 +336,7 @@ const exportMethod = defineMethod({
     result: z.unknown(),
     resultName: "{ path, folder, bytes, action, replaced, kept?, written }",
     effect: "reversible",
-    doc: "Write the polished transcript (play links, dictionary, confirmed items) into the project's export folder, or `to`. An edited note is kept: ifEdited beside (the config's default), refuse or replace.",
+    doc: "Write the polished transcript (play links, dictionary, confirmed items) into the project's export folder, or into the folder `to` (a folder, never a file name: the file is written inside it). An edited note is kept: ifEdited beside (the config's default), refuse or replace.",
 });
 
 const recordingSettings = defineMethod({
@@ -377,7 +387,7 @@ const screen = defineMethod({
     result: z.unknown(),
     resultName:
         "{ zeroMs, recorded, frames: { file, at, displayId, text, meetingSec }[], boxes?: { file, selection, boxes: { text, x, y, width, height }[], annotated, crops }[] }",
-    effect: "read",
+    effect: "reversible",
     doc: 'The screen frames at a transcript time (at, windowSec) or that show a text (match, limit), from the recording\'s ocr.jsonl. With boxes: { outDir }, each frame\'s OCR boxes in frame pixels (level "block" default, or "line"): the ones holding match, or without match the ones that changed since the display\'s earlier frame, drawn numbered on the frame plus one PNG crop each in outDir.',
 });
 const editorProject = defineMethod({
@@ -456,7 +466,7 @@ export class MeetingsToolset extends ReplToolset {
         handles: [
             {
                 name: "Meeting",
-                summary: "An opened meeting. Every call reads the meeting as saved now.",
+                summary: "An opened meeting; `id` and `title` name it. Every call reads the meeting as saved now.",
                 methods: [
                     info,
                     lines,
@@ -467,6 +477,7 @@ export class MeetingsToolset extends ReplToolset {
                     suggest,
                     confirm,
                     reject,
+                    reopen,
                     speakers,
                     rename,
                     set,
@@ -498,6 +509,10 @@ export class MeetingsToolset extends ReplToolset {
                             id: record.id,
                             title: record.title,
                             start: record.start,
+                            // An agent that wants a short meeting had to open each one (NR33).
+                            seconds: record.end
+                                ? Math.round((Date.parse(record.end) - Date.parse(record.start)) / 1000)
+                                : null,
                             project: record.project ?? null,
                             items: record.items.length,
                             open: record.items.filter((item) => item.status === "suggested").length,
@@ -523,7 +538,21 @@ export class MeetingsToolset extends ReplToolset {
                     get: async (path?: string) => {
                         const parsed = configGet.params.parse(path === undefined ? {} : { path });
                         const config = await new MeetingsConfigStore().read();
-                        return parsed.path ? configValueAt(config, parseConfigPath(parsed.path)) : config;
+
+                        if (!parsed.path) {
+                            return config;
+                        }
+
+                        const value = configValueAt(config, parseConfigPath(parsed.path));
+
+                        // An unknown path printed nothing, the same as a value it could not find (NR20).
+                        if (value === undefined) {
+                            throw new Error(
+                                `"${parsed.path}" is not set and has no default; config.get() shows every setting with its default`
+                            );
+                        }
+
+                        return value;
                     },
                     set: async (path: string, value: unknown) => {
                         const parsed = configSet.params.parse({ path, value });
@@ -543,16 +572,9 @@ export class MeetingsToolset extends ReplToolset {
                             limit: parsed.limit ?? 20,
                         });
                     },
-                    labels: async (input: z.input<typeof projectsLabels.params>) => {
-                        const parsed = projectsLabels.params.parse(input);
-                        const config = new MeetingsConfigStore();
-
-                        if (!parsed.add?.length && !parsed.remove?.length) {
-                            return (await config.read()).projects[parsed.project]?.labels ?? [];
-                        }
-
-                        return config.setProjectLabels(parsed.project, parsed);
-                    },
+                    // The CLI's lookup: a project nobody knows is refused, not answered with no labels (R2-MC10).
+                    labels: async (input: z.input<typeof projectsLabels.params>) =>
+                        projectLabels({ config: new MeetingsConfigStore(), ...projectsLabels.params.parse(input) }),
                     pair: async (input: z.input<typeof projectsPair.params>) => {
                         const parsed = projectsPair.params.parse(input);
                         const config = await new MeetingsConfigStore().pairPeople({
@@ -594,7 +616,10 @@ export class MeetingsToolset extends ReplToolset {
                     },
                 },
                 assign: {
-                    sweep: async () => (await loadAssign()).assignSweep(store),
+                    sweep: async () => {
+                        assertReach("user", "post questions to the decision inbox");
+                        return (await loadAssign()).assignSweep(store);
+                    },
                 },
             },
         };
@@ -627,8 +652,8 @@ export class MeetingsToolset extends ReplToolset {
 
             return callRecorder({ id: liveId, method, params });
         };
-        const decideWith = (status: "confirmed" | "rejected") => async (input: z.input<typeof decide.params>) => {
-            const options = decide.params.parse(input);
+        const decideWith = (status: "confirmed" | "rejected") => async (input: z.input<typeof confirm.params>) => {
+            const options = (status === "confirmed" ? confirm : reject).params.parse(input);
             const result = await decideItems({ store, record: current(), status, ids: options.ids ?? [], ...options });
             log.info(
                 { meeting: id, status, decided: result.decided.length, skipped: result.skipped.length },
@@ -638,6 +663,13 @@ export class MeetingsToolset extends ReplToolset {
         };
 
         return {
+            id,
+            get title() {
+                return current().title;
+            },
+            // One line, as a Movie prints: the handle printed every getter and function, and no title (R2-NR5).
+            [Symbol.for("nodejs.util.inspect.custom")]: () =>
+                `Meeting ${id} ${SafeJSON.stringify(current().title)} (info() reads it; describe("meetings.Meeting") lists its methods)`,
             // Read again on each access, so the findings items.add stores show at once.
             get record() {
                 return current();
@@ -685,13 +717,16 @@ export class MeetingsToolset extends ReplToolset {
                             log.debug({ error, meeting: id }, "no transcript to check the finding anchors against");
                             return undefined;
                         });
-                    return store.update(
+                    // NR5 (2026-11-06): this answered the whole meeting record, 88 KB with the calendar attendees.
+                    let added: MeetingItem[] = [];
+                    let warnings: string[] = [];
+                    const record = await store.update(
                         id,
                         { command: "items add", change: `${findings.length} findings` },
-                        (record) => {
+                        (current) => {
                             const prepared = prepareFindings({
                                 findings,
-                                items: record.items,
+                                items: current.items,
                                 transcript: source?.transcript,
                             });
 
@@ -699,9 +734,12 @@ export class MeetingsToolset extends ReplToolset {
                                 log.warn({ meeting: id }, warning);
                             }
 
-                            record.items.push(...prepared.added);
+                            current.items.push(...prepared.added);
+                            added = prepared.added;
+                            warnings = prepared.warnings;
                         }
                     );
+                    return { added: added.map((item) => itemRow(record, item)), warnings };
                 },
                 suggest: async (input: z.input<typeof suggest.params> = {}) => {
                     const asked = suggest.params.parse(input).rules ?? [...SUGGEST_RULES];
@@ -721,6 +759,12 @@ export class MeetingsToolset extends ReplToolset {
                 },
                 confirm: decideWith("confirmed"),
                 reject: decideWith("rejected"),
+                reopen: async (input: z.input<typeof reopen.params>) => {
+                    const options = reopen.params.parse(input);
+                    const result = await reopenItems({ store, record: current(), ...options });
+                    log.info({ meeting: id, reopened: result.reopened.length }, "items reopened");
+                    return result;
+                },
             },
             speakers: {
                 stats: async (input: z.input<typeof speakers.params> = {}) => {
@@ -734,6 +778,24 @@ export class MeetingsToolset extends ReplToolset {
                 },
                 rename: async (label: string, name: string) => {
                     const parsed = rename.params.parse({ label, name });
+                    // A label the transcript does not have was stored as a rename of nobody (NR20).
+                    const transcript = await opened()
+                        .meeting()
+                        .then((meeting) => meeting.transcript)
+                        .catch((error: unknown) => {
+                            log.debug({ error, meeting: id }, "no transcript to check the speaker label against");
+                            return undefined;
+                        });
+                    const labels = [
+                        ...new Set(transcript?.flatMap((entry) => (entry.speaker ? [entry.speaker] : [])) ?? []),
+                    ];
+
+                    if (transcript && !labels.includes(parsed.label)) {
+                        throw new Error(
+                            `the transcript has no speaker label "${parsed.label}"; its labels: ${labels.join(", ") || "none"}`
+                        );
+                    }
+
                     return describe(await store.renameSpeaker(id, parsed.label, parsed.name));
                 },
             },
@@ -753,6 +815,7 @@ export class MeetingsToolset extends ReplToolset {
                     };
                 },
                 ask: async (input: z.input<typeof assignAsk.params> = {}) => {
+                    assertReach("user", "post a question to the decision inbox");
                     const { askMeeting, defaultAssignDeps } = await loadAssign();
                     return askMeeting(store, current(), defaultAssignDeps(), assignAsk.params.parse(input));
                 },
@@ -793,44 +856,14 @@ export class MeetingsToolset extends ReplToolset {
                 callLive("settings.set", settingsPatchOf(input)),
             mark: async (label: string) => callLive("marker.add", recordingMark.params.parse({ label })),
             set: async (input: z.input<typeof set.params>) => {
-                const { title, project, labels = [], unlabel = [] } = set.params.parse(input);
-
-                if (!title && !project && labels.length === 0 && unlabel.length === 0) {
-                    throw new Error("Nothing to set: give title, project, labels and/or unlabel");
-                }
-
-                const config = new MeetingsConfigStore();
-                const resolved = project
-                    ? (await resolveProject({ config, flag: project, quiet: true })).project
-                    : undefined;
-                const target = resolved ?? current().project;
-
-                if (target && labels.length > 0) {
-                    await config.setProjectLabels(target, { add: labels });
-                }
-
-                const removed = new Set(unlabel.map((label) => label.toLowerCase()));
-                const record = await store.update(
-                    id,
-                    {
-                        command: "set",
-                        change: [
-                            resolved && `project ${resolved}`,
-                            title && `title "${title}"`,
-                            labels.length > 0 && `labels + ${labels.join(", ")}`,
-                            unlabel.length > 0 && `labels - ${unlabel.join(", ")}`,
-                        ]
-                            .filter(Boolean)
-                            .join(", "),
-                    },
-                    (saved) => {
-                        saved.project = resolved ?? saved.project;
-                        saved.title = title ?? saved.title;
-                        saved.labels = mergeLabels(saved.labels, labels).filter(
-                            (label) => !removed.has(label.toLowerCase())
-                        );
-                    }
-                );
+                // The CLI's set: it refuses a label to remove that the meeting does not carry, before any write (R2-MC9).
+                const { record } = await setMeetingFields({
+                    store,
+                    config: new MeetingsConfigStore(),
+                    record: current(),
+                    change: set.params.parse(input),
+                    quiet: true,
+                });
                 return describe(record);
             },
             editorProject: async (input: z.input<typeof editorProject.params> = {}) => {

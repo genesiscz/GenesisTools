@@ -992,7 +992,7 @@ func cmdCaptureScreen() {
 
     let content: SCShareableContent
     do {
-        content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
+        content = try shareableContent(listing: indicator.windowIDs)
     } catch {
         errorExit("ScreenCaptureKit refused to enumerate content: \(error.localizedDescription)", code: captureErrorCode(error))
     }
@@ -1604,6 +1604,25 @@ private final class ScreenStreamHost {
 /// that ScreenCaptureKit's start and stop are XPC calls, and an XPC call that never answers used to
 /// hold this process forever. The caller's own grace kill exists too, but a timeout here reports a
 /// real error to the user instead of a silent kill.
+/// The shareable content once the window server lists `windowIDs` (the recording border's panels). A panel ordered in
+/// a moment ago is not listed until its change is committed, and no run loop had turned yet: the filter left it in,
+/// and its rounded corners were in every movie (review 2026-11-06: about 30 red pixels in each corner). Commits the
+/// panels, then asks again for at most `timeout` seconds; past it, the last answer stands.
+func shareableContent(listing windowIDs: Set<CGWindowID>, timeout: TimeInterval = 1) throws -> SCShareableContent {
+    CATransaction.flush()
+    let deadline = Date().addingTimeInterval(timeout)
+    while true {
+        let content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
+        let listed = Set(content.windows.map(\.windowID))
+        if windowIDs.isSubset(of: listed) { return content }
+        if Date() >= deadline {
+            FileHandle.standardError.write(Data("ax-tool: the recording border is not listed yet; the movie may show its corners\n".utf8))
+            return content
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+}
+
 func awaitResult<T>(timeoutSeconds: Double = 30, _ operation: @escaping () async throws -> T) throws -> T {
     let done = DispatchSemaphore(value: 0)
     var outcome: Result<T, Error>?

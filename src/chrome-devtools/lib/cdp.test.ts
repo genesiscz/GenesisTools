@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { runInNewContext } from "node:vm";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     AmbiguousTabError,
@@ -31,6 +32,19 @@ test("a payload file's doc comment and trailing semicolon do not stop its functi
     expect(evaluationExpression("function () { return 2; }")).toBe("(function () { return 2; })()");
     expect(evaluationExpression("document.title")).toBe("document.title");
     expect(evaluationExpression("asyncValue + 1")).toBe("asyncValue + 1");
+});
+
+// NR3 (deep test 2026-11-06): every source that opened with "(" was called, so `(1+2)*3` threw "9 is not a function".
+test("a source that opens with a parenthesis is called only when its value is a function", async () => {
+    const run = (source: string): unknown => runInNewContext(evaluationExpression(source));
+    expect(run("(1 + 2) * 3")).toBe(9);
+    expect(run('("abc").length')).toBe(3);
+    expect(await run("(async () => 5)()")).toBe(5);
+    expect(run("(() => 4)")).toBe(4);
+    expect(run("(function () { return 3; })")).toBe(3);
+    expect(run("(a = (1)) => a + 1")).toBe(2);
+    expect(run("() => 7")).toBe(7);
+    expect(await run("async () => 6")).toBe(6);
 });
 
 describe("a page-agent target named by its label", () => {

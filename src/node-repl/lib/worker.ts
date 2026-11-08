@@ -1,7 +1,7 @@
 import { Console } from "node:console";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { Writable } from "node:stream";
 import vm from "node:vm";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -24,6 +24,9 @@ interface RunRequest {
     id: number;
     op: "run";
     code: string;
+    // R6 11 streamed output
+    /** Each console line also goes to the parent at once, as a `{ output }` line on the protocol channel. */
+    stream?: boolean;
 }
 
 interface AddDirRequest {
@@ -44,7 +47,13 @@ interface DisposeRequest {
     op: "dispose";
 }
 
-type Request = RunRequest | AddDirRequest | PreloadRequest | DisposeRequest;
+/** Answered as soon as the worker reads it: the parent starts a turn's clock only after the worker has booted. */
+interface ReadyRequest {
+    id: number;
+    op: "ready";
+}
+
+type Request = RunRequest | AddDirRequest | PreloadRequest | DisposeRequest | ReadyRequest;
 
 interface EmittedImage {
     mimeType: string;
@@ -64,12 +73,36 @@ interface Response {
     images: EmittedImage[];
     error?: string;
     stack?: string;
+    /** Every frame of a failed turn's error, when `stack` dropped some; the parent logs it and never returns it. */
+    fullStack?: string;
+    /** A preload's toolsets that did not load; the others did, and plain turns run. */
+    failed?: ToolsetFailure[];
+}
+
+interface ToolsetFailure {
+    id: string;
+    error: string;
 }
 
 const moduleDirs: string[] = [];
-const policy: ImportPolicy = loadImportPolicy();
+const policy: ImportPolicy = policyOrExit();
+
+/**
+ * A malformed trust.json must stop the worker, never widen the gate. The reason goes to stderr as one line, because the
+ * engine quotes the worker's last stderr lines in the error of every turn, and a stack trace would push the reason out.
+ */
+function policyOrExit(): ImportPolicy {
+    try {
+        return loadImportPolicy();
+    } catch (error) {
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        process.exit(1);
+    }
+}
 const imageDir = mkdtempSync(join(tmpdir(), "node-repl-images-"));
 let output: string[] = [];
+// R6 11 streamed output: set for the turn that asked for it.
+let streaming = false;
 let images: EmittedImage[] = [];
 let imageCounter = 0;
 
@@ -86,12 +119,15 @@ const replApi = {
     write(value: unknown): void {
         output.push(typeof value === "string" ? value : Bun.inspect(value));
     },
-    async emitImage(input: { bytes: Uint8Array | string; mimeType: string }): Promise<void> {
-        const bytes = typeof input.bytes === "string" ? Buffer.from(input.bytes, "base64") : Buffer.from(input.bytes);
-        const extension = input.mimeType.split("/")[1]?.split("+")[0] ?? "bin";
-        const path = join(imageDir, `image-${++imageCounter}.${extension}`);
-        writeFileSync(path, bytes);
-        images.push({ mimeType: input.mimeType, data: bytes.toString("base64"), path });
+    /**
+     * One image's bytes (or base64), checked as show() checks them: the bytes decide the type. Unchecked bytes went to
+     * the host as an image, and a host that checks images refuses the whole result (NR22).
+     */
+    async emitImage(input: { bytes: Uint8Array | string; mimeType?: string }): Promise<void> {
+        const image = await readShowable({ bytes: input.bytes, mimeType: input.mimeType }).catch((error: unknown) => {
+            throw new Error(String(error instanceof Error ? error.message : error).replace(/^show\(\)/, "emitImage()"));
+        });
+        pushImage(image);
     },
     cwd: process.cwd(),
     homeDir: homedir(),
@@ -101,28 +137,46 @@ const replApi = {
 globalThis.nodeRepl = replApi;
 
 const toolsets: ReplToolset[] = [];
+/** The toolsets of this worker that did not load, with the reason; help() and their globals name them. */
+const failedToolsets: ToolsetFailure[] = [];
+
+/** A checked image into this turn's result and a file beside it. */
+function pushImage(image: { bytes: Uint8Array; mimeType: string }): void {
+    const bytes = Buffer.from(image.bytes);
+    const extension = image.mimeType.split("/")[1]?.split("+")[0] ?? "bin";
+    const path = join(imageDir, `image-${++imageCounter}.${extension}`);
+    writeFileSync(path, bytes);
+    images.push({ mimeType: image.mimeType, data: bytes.toString("base64"), path });
+}
 
 async function showImages(input: ShowInput | ShowInput[]): Promise<void> {
     for (const one of Array.isArray(input) ? input : [input]) {
-        const image = await readShowable(one);
-        await replApi.emitImage({ bytes: image.bytes, mimeType: image.mimeType });
+        pushImage(await readShowable(one));
     }
 }
 
 const CORE_HELP = [
-    "search(query) finds methods across loaded toolsets; describe(name) prints a method's complete descriptor.",
-    "help(name?) prints the docs of a loaded toolset; show(image | path | Buffer) returns an image to the model.",
-    "nodeRepl.write(value) adds output; nodeRepl.emitImage({ bytes, mimeType }) is show() without the type check; await sleep(ms) waits.",
+    "search(query) finds methods across loaded toolsets; describe(name) prints a method's complete descriptor. All three return a string: a bare call on its own line prints it, inside an expression use console.log(describe(name)).",
+    "help(name?) lists a loaded toolset, one line per method (describe(name) prints one in full); show(image | path | Buffer) returns an image to the model.",
+    "nodeRepl.write(value) adds output; nodeRepl.emitImage({ bytes }) is show() for one image's bytes, checked the same way; await sleep(ms) waits.",
+    "Each method says what it does: [read] changes nothing and reaches no one; [reversible] or [destructive] change state; · user means the user meets it (a dialog, a window, focus, the clipboard, the inbox), · paid means a run billed to an account. A call that would reach someone it does not declare is refused.",
 ];
 
 function helpText(name?: string): string {
     if (name === undefined) {
         // Each loaded toolset with the call that prints its methods, so a bare help() is never a dead end.
         const loaded = toolsets.map((toolset) => `${toolset.oneLine()} help("${toolset.id}") lists its methods.`);
-        return [...CORE_HELP, ...(loaded.length > 0 ? loaded : ["No toolsets are loaded (--toolset a,b)."])].join("\n");
+        const failed = failedToolsets.map((failure) => `${failure.id}: did not load: ${failure.error}`);
+        const listed = [...loaded, ...failed];
+        return [...CORE_HELP, ...(listed.length > 0 ? listed : ["No toolsets are loaded (--toolset a,b)."])].join("\n");
     }
 
     const toolset = toolsets.find((one) => one.id === name || one.api.global === name);
+    const failure = failedToolsets.find((one) => one.id === name);
+
+    if (failure) {
+        throw new Error(`the ${failure.id} toolset did not load: ${failure.error}; js_reset loads it again`);
+    }
 
     if (!toolset) {
         throw new Error(
@@ -146,6 +200,25 @@ globalThis.describe = (name) =>
     );
 globalThis.show = showImages;
 globalThis.sleep = (ms: number) => Bun.sleep(ms);
+
+/**
+ * Errors no turn caught: a timer that threw after its turn answered, a promise nobody awaited. The worker keeps running,
+ * and the next turn's output starts with them, so they are not lost without a word (NR18). The last few are kept.
+ */
+const LATE_ERRORS_KEPT = 5;
+const lateErrors: string[] = [];
+
+function noteLateError(error: unknown): void {
+    const { message, stack } = describeError(error);
+    lateErrors.push(stack ?? message);
+
+    if (lateErrors.length > LATE_ERRORS_KEPT) {
+        lateErrors.shift();
+    }
+}
+
+process.on("uncaughtException", noteLateError);
+process.on("unhandledRejection", noteLateError);
 
 let recordingRequestId = 0;
 const recordingRequests = new Map<number, { resolve(id: string): void; reject(error: Error): void }>();
@@ -186,7 +259,30 @@ function startHostedRecording(options: unknown): Promise<string> {
     });
 }
 
-async function preload(request: PreloadRequest): Promise<string> {
+/** Names an inspection or `await` reads off any object; a stub answers them instead of throwing. */
+const INSPECTED = new Set(["then", "toJSON", "constructor", "inspect", "toString", "valueOf", "asymmetricMatch"]);
+
+/** The global of a toolset that did not load: every use throws with its name and reason, inspection stays quiet. */
+function unloadedGlobal(failure: ToolsetFailure): object {
+    return new Proxy(
+        {},
+        {
+            get: (_target, property) => {
+                if (typeof property === "symbol" || INSPECTED.has(property)) {
+                    return undefined;
+                }
+
+                throw new Error(`the ${failure.id} toolset did not load: ${failure.error}; js_reset loads it again`);
+            },
+        }
+    );
+}
+
+/**
+ * Loads each toolset on its own: one that throws becomes a global that names it and the reason, and every other
+ * toolset and plain JavaScript keep working (NR2; a broken native backend used to fail even `1 + 1`).
+ */
+async function preload(request: PreloadRequest): Promise<{ text: string; failed: ToolsetFailure[] }> {
     const { createToolsets } = await import("./toolsets");
     const ctx: ToolsetContext = {
         scratchDir: request.scratchDir,
@@ -195,12 +291,26 @@ async function preload(request: PreloadRequest): Promise<string> {
         recorder: { start: startHostedRecording },
     };
 
-    for (const toolset of await createToolsets(request.toolsets)) {
-        Object.assign(globalThis, await toolset.load(ctx));
-        toolsets.push(toolset);
+    for (const entry of request.toolsets) {
+        let toolset: ReplToolset | undefined;
+
+        try {
+            [toolset] = await createToolsets([entry]);
+            Object.assign(globalThis, await toolset.load(ctx));
+            toolsets.push(toolset);
+        } catch (error) {
+            const failure = { id: toolset?.id ?? entry, error: describeError(error).message };
+            failedToolsets.push(failure);
+
+            if (toolset) {
+                Reflect.set(globalThis, toolset.api.global, unloadedGlobal(failure));
+            }
+        }
     }
 
-    return `toolsets preloaded: ${toolsets.map((toolset) => toolset.id).join(", ")}`;
+    const loaded = toolsets.map((toolset) => toolset.id).join(", ") || "none";
+    const failed = failedToolsets.map((failure) => `${failure.id} (${failure.error})`).join(", ");
+    return { text: `toolsets preloaded: ${loaded}${failed ? `; not loaded: ${failed}` : ""}`, failed: failedToolsets };
 }
 
 async function disposeToolsets(): Promise<string[]> {
@@ -237,6 +347,11 @@ const turnStream = new Writable({
 
         output.push(text);
         process.stderr.write(`${text}\n`);
+
+        if (streaming) {
+            process.stdout.write(`${SafeJSON.stringify({ id: 0, output: text })}\n`);
+        }
+
         done();
     },
 });
@@ -268,7 +383,11 @@ async function runTurn(code: string): Promise<Response["text"]> {
 
             // The authorized path, never a second resolution: re-resolving by directory order
             // could load a different file from the one the containment check approved.
-            return import(decision.resolved ?? specifier);
+            try {
+                return await import(decision.resolved ?? specifier);
+            } catch (error) {
+                throw importError(specifier, error);
+            }
         }) as never,
     });
     const result = await script.runInThisContext();
@@ -286,33 +405,63 @@ async function runTurn(code: string): Promise<Response["text"]> {
     return output.join("\n");
 }
 
-/** Frames of the kernel itself (this worker, the vm call, the toolset argument check), which say nothing about the turn. */
-const KERNEL_FRAME =
-    /node-repl[/\\]lib[/\\]worker\.ts|utils[/\\]repl[/\\]toolset\.ts|runInThisContext|processTicksAndRejections/;
+/**
+ * A failed import as the turn's author reads it: what is missing and how to get it. Bun's own message names the file the
+ * import ran from, which is this kernel, and says nothing about js_add_node_module_dir (NR31).
+ */
+function importError(specifier: string, error: unknown): unknown {
+    if (!/^Cannot find (package|module)/.test(describeError(error).message)) {
+        return error;
+    }
+
+    const isPath = /^(\/|\.|file:)/.test(specifier) || isAbsolute(specifier);
+    return new Error(
+        isPath
+            ? `Cannot find module '${specifier}': no file is there.`
+            : `Cannot find package '${specifier}'. Add the project that has it with js_add_node_module_dir, or import it by absolute path.`
+    );
+}
+
 /** The script's own top level, which only calls the turn's wrapper. */
 const WRAPPER_FRAME = /^\s+at repl-turn\.js:\d+:\d+$/;
 /** `(async () => {` puts the turn one line below where its author wrote it. */
 const TURN_FRAME = /repl-turn\.js:(\d+)/g;
+/** A preset script's frame: `runPresetHere` names its body `preset:<name>`, two lines below the script's own line. */
+const PRESET_FRAME = /preset:([\w.-]+):(\d+)/g;
+/** The frames an author wrote: the turn's and a preset script's. Every other frame is library or kernel code. */
+const AUTHOR_FRAME = /repl-turn\.js:\d+|preset:[\w.-]+:\d+/;
+const FRAME = /^\s+at /;
 
-/** The stack as the turn's author reads it: kernel frames dropped, turn lines numbered as written. */
+/**
+ * The stack as the turn's author reads it: the message, then only the frames the author wrote, numbered as written. A
+ * toolset error carried two to six frames of library code (`discovery.ts`, `rpc/peer.ts`, `@octokit/graphql`), which
+ * say nothing the message does not (NR9); `describeError` keeps the whole stack for the log.
+ */
 export function turnStack(stack: string): string {
     return stack
         .split("\n")
-        .filter((line) => !(/^\s+at /.test(line) && KERNEL_FRAME.test(line)) && !WRAPPER_FRAME.test(line))
+        .filter((line) => !FRAME.test(line) || (AUTHOR_FRAME.test(line) && !WRAPPER_FRAME.test(line)))
         .map((line) =>
-            /^\s+at /.test(line)
-                ? line.replace(TURN_FRAME, (_, row: string) => `turn:${Math.max(1, Number(row) - 1)}`)
+            FRAME.test(line)
+                ? line
+                      .replace(TURN_FRAME, (_, row: string) => `turn:${Math.max(1, Number(row) - 1)}`)
+                      .replace(
+                          PRESET_FRAME,
+                          (_, name: string, row: string) => `preset ${name}:${Math.max(1, Number(row) - 2)}`
+                      )
                 : line
         )
         .join("\n");
 }
 
 /** An error thrown inside the vm context comes from that realm's Error, so instanceof is useless here. */
-function describeError(error: unknown): { message: string; stack?: string } {
+function describeError(error: unknown): { message: string; stack?: string; fullStack?: string } {
     const details: ErrorLike = typeof error === "object" && error !== null ? error : {};
+    const stack = typeof details.stack === "string" ? turnStack(details.stack) : undefined;
     return {
         message: typeof details.message === "string" ? details.message : String(error),
-        stack: typeof details.stack === "string" ? turnStack(details.stack) : undefined,
+        stack,
+        fullStack: typeof details.stack === "string" && details.stack !== stack ? details.stack : undefined,
     };
 }
 
@@ -322,11 +471,16 @@ async function handle(request: Request): Promise<Response> {
 
     if (request.op === "preload") {
         try {
-            return { id: request.id, ok: true, text: await preload(request), images };
+            const loaded = await preload(request);
+            return { id: request.id, ok: true, text: loaded.text, images, failed: loaded.failed };
         } catch (error) {
             const { message, stack } = describeError(error);
             return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack };
         }
+    }
+
+    if (request.op === "ready") {
+        return { id: request.id, ok: true, text: "", images: [] };
     }
 
     if (request.op === "dispose") {
@@ -344,12 +498,22 @@ async function handle(request: Request): Promise<Response> {
         return { id: request.id, ok: true, text: `module directory registered: ${request.dir}`, images: [] };
     }
 
+    if (lateErrors.length > 0) {
+        output.push(
+            `note: an error no turn caught (a timer, a callback or a promise nobody awaited):\n${lateErrors.splice(0).join("\n")}`
+        );
+    }
+
+    streaming = request.stream === true;
+
     try {
         const text = await runTurn(request.code);
         return { id: request.id, ok: true, text, images };
     } catch (error) {
-        const { message, stack } = describeError(error);
-        return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack };
+        const { message, stack, fullStack } = describeError(error);
+        return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack, fullStack };
+    } finally {
+        streaming = false;
     }
 }
 
@@ -372,7 +536,7 @@ function readRequest(line: string): { request: Request } | { failure: Response }
     const id = typeof fields.id === "number" ? fields.id : 0;
 
     if (fields.op === "run" && typeof fields.code === "string") {
-        return { request: { id, op: "run", code: fields.code } };
+        return { request: { id, op: "run", code: fields.code, stream: fields.stream === true } };
     }
 
     if (fields.op === "addDir" && typeof fields.dir === "string") {
@@ -390,6 +554,10 @@ function readRequest(line: string): { request: Request } | { failure: Response }
 
     if (fields.op === "dispose") {
         return { request: { id, op: "dispose" } };
+    }
+
+    if (fields.op === "ready") {
+        return { request: { id, op: "ready" } };
     }
 
     return { failure: { id, ok: false, text: "", images: [], error: `unsupported request: ${line.slice(0, 200)}` } };
