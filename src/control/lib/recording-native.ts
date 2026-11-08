@@ -1,9 +1,12 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { audioStreamCount, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
+import { z } from "zod";
 import type { CaptureSpec } from "./capture-plan";
 import { CaptureRunError, runCapturePlanWithSignal } from "./capture-runner";
 import { captureFromFlags, validateCaptureOptions } from "./native-record";
@@ -18,6 +21,7 @@ import {
     type SegmentJoiner,
     type SegmentRecorder,
     type SegmentResult,
+    type SegmentStart,
 } from "./recording-session";
 import { describeRecordingTarget, type RecordingTarget } from "./recording-targets";
 
@@ -175,6 +179,33 @@ function withRates(options: NativeRecorderOptions, rates: MovieRates | undefined
     };
 }
 
+/** ax-tool writes this into its session folder at a movie's first frame: when it captured that frame. */
+export const MOVIE_START_FILE = "movie-start.json";
+
+const movieStartSchema = z.object({ firstFrameEpochMs: z.number().positive() });
+
+/** The first frame's capture time from the recorder's folder; undefined when the ax-tool wrote none (an older one). */
+function movieStartOf(sessionDir: string): SegmentStart | undefined {
+    const path = join(sessionDir, MOVIE_START_FILE);
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        const { firstFrameEpochMs } = movieStartSchema.parse(
+            SafeJSON.parse(readFileSync(path, "utf8"), { strict: true })
+        );
+        return { firstFrameAt: firstFrameEpochMs };
+    } catch (error) {
+        log.warn(
+            { error, path },
+            "the recorder's first-frame time is unreadable; the movie starts when the session saw it"
+        );
+        return undefined;
+    }
+}
+
 /** One `tools control capture record` run per segment, on the ScreenCaptureKit recorder. */
 export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): SegmentRecorder {
     return {
@@ -185,16 +216,19 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 const result = await runCapturePlanWithSignal({
                     plan: { capture, actions: [] },
                     signal,
-                    onRecording,
+                    onRecording: (started) => onRecording(started ? movieStartOf(started.sessionDir) : undefined),
                     onPreparing,
                 });
                 sessionDir = result.sessionDir;
                 const envelope = result.capture as {
                     error?: unknown;
-                    data?: { stats?: { durationMs?: unknown; capturedFrames?: unknown } };
+                    data?: { stats?: { durationMs?: unknown; capturedFrames?: unknown; movieMs?: unknown } };
                 } | null;
                 const reported = envelope?.data?.stats?.durationMs;
                 const durationMs = typeof reported === "number" && reported > 0 ? reported : undefined;
+                // The movie's own length (first frame to its end); stats.durationMs is the run's wall time.
+                const movie = envelope?.data?.stats?.movieMs;
+                const movieMs = typeof movie === "number" && movie > 0 ? { movieMs: movie } : {};
                 // A movie holds every frame ax-tool captured (capturedFrames: 152 frames in a 5 s movie, checked with
                 // ffprobe); its keptFrames and droppedFrames are the stills of a frames recording, not the movie's.
                 const captured = envelope?.data?.stats?.capturedFrames;
@@ -206,11 +240,11 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 // time, so a failed run's movie is probed whatever ended it: an unfinished one would break every save.
                 const ok = existsSync(output) && (!result.captureFailed || (await playable(output)));
                 if (!result.captureFailed) {
-                    return { ok, endedBy, durationMs, ...frameStats };
+                    return { ok, endedBy, durationMs, ...movieMs, ...frameStats };
                 }
 
                 const code = error ? refusalCode(error) : undefined;
-                return { ok, endedBy, durationMs, error: code ? `[${code}] ${error}` : error, code };
+                return { ok, endedBy, durationMs, ...movieMs, error: code ? `[${code}] ${error}` : error, code };
             } catch (error) {
                 const message =
                     error instanceof CaptureRunError || error instanceof Error ? error.message : String(error);

@@ -292,7 +292,8 @@ export async function runCapturePlanWithSignal({
     signal: AbortSignal;
     guardFocus?: CaptureFocusGuard;
     stopGraceMs?: number;
-    onRecording?: () => void;
+    /** `sessionDir` is the recorder's own folder: ax-tool writes its first frame's time there (`movie-start.json`). */
+    onRecording?: (started: { sessionDir: string }) => void;
     /** The native recorder has to compile first (after a source change), which takes up to a minute. */
     onPreparing?: () => void;
 }): Promise<RunResult> {
@@ -449,7 +450,7 @@ export async function runCapturePlanWithSignal({
         }
     }
     if (attempt.sessionDir && !signal.aborted) {
-        onRecording?.();
+        onRecording?.({ sessionDir: attempt.sessionDir });
     }
 
     const t0 = Date.now();

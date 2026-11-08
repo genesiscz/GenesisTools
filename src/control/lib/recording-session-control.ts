@@ -75,7 +75,7 @@ export class SessionRecorderControl extends RecorderControl {
     readonly kind = "control-session";
     /** The session's methods, and `settings.get`/`settings.set` when the session has movie rates. */
     readonly methods: readonly RecorderMethod[];
-    /** The moments marked while it records, at their movie time. */
+    /** The moments marked while it records, at their movie time (`RecordingSession.movieTimeOfMark`). */
     readonly markers: RecordingMarker[] = [];
     private state: ControlState = "recording";
     private target: RecordingTarget;
@@ -197,7 +197,7 @@ export class SessionRecorderControl extends RecorderControl {
             refuseMarker(this.state);
         }
 
-        const marker = { atMs: Math.round(this.session.elapsedMs()), label };
+        const marker = { atMs: Math.round(await this.session.movieTimeOfMark()), label };
         this.markers.push(marker);
         log.debug({ marker }, "recording marker added");
         return marker;

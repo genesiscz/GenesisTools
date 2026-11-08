@@ -441,6 +441,9 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
             video: existsSync(movie) ? { file: "screen.mp4", durationMs, ...frameStats } : undefined,
             outcome,
             markers: activeControl.markers,
+            // Since 2026-11-08 a marker counts from the movie's first frame; a manifest without this key counted from
+            // when the session heard of that frame, about a second later, so its markers sit early.
+            markerClock: "movie",
         },
         warnings,
     });
