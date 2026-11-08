@@ -288,6 +288,7 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         const child = Bun.spawn(["ffmpeg", "-nostdin", "-v", "error", ...plan.reads[0].args, "-f", "rawvideo", "-"], {
             stdout: "pipe",
             stderr: "pipe",
+            env: process.env,
         });
         const bytes = new Uint8Array(await new Response(child.stdout).arrayBuffer());
         const size = 160 * 120;
@@ -309,7 +310,7 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
                 "rawvideo",
                 "-",
             ],
-            { stdout: "pipe", stderr: "pipe" }
+            { stdout: "pipe", stderr: "pipe", env: process.env }
         );
         const pair = new Uint8Array(await new Response(whole.stdout).arrayBuffer());
         expect(bytes.subarray(0, size)).toEqual(pair.subarray(0, size));
