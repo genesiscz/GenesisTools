@@ -816,6 +816,44 @@ it("a rejection that the turn handles later is not reported as uncaught", async 
     }
 });
 
+// REPL-F2 followup: the failed turn kept running, and its console lines and result went into the next turn's text.
+it("a turn that failed early keeps its later output out of the next turn, and the turn after notes it", async () => {
+    const engine = new ReplEngine();
+    try {
+        const failed = await engine.run(
+            "setTimeout(() => { throw new Error('early') }, 10); await sleep(300); console.log('late-line'); 'turn1 done'",
+            5000
+        );
+        expect(failed.ok).toBe(false);
+        expect(failed.error).toContain("early");
+        const next = await engine.run("await sleep(500); 'turn2'", 5000);
+        expect(next.text).toBe("turn2");
+        const after = await engine.run("'turn3'");
+        expect(after.text).toContain("late-line");
+        expect(after.text).toContain("turn1 done");
+        expect(after.text.endsWith("\nturn3")).toBe(true);
+    } finally {
+        await engine.shutdown();
+    }
+}, 20_000);
+
+// REPL-F2 followup: a timer of an earlier turn that threw failed whichever turn was running.
+it("a throw from an earlier turn's timer does not fail the running turn, and the next turn notes it", async () => {
+    const engine = new ReplEngine();
+    try {
+        await engine.run(
+            "globalThis.ticks = 0; globalThis.ticker = setInterval(() => { if (++globalThis.ticks === 3) { clearInterval(globalThis.ticker); throw new Error('tick from turn 3') } }, 100)"
+        );
+        const running = await engine.run("await sleep(600); 'turn4 fine'", 5000);
+        expect(running).toMatchObject({ ok: true, text: "turn4 fine" });
+        const next = await engine.run("'turn5'");
+        expect(next.text).toContain("tick from turn 3");
+        expect(next.text.endsWith("\nturn5")).toBe(true);
+    } finally {
+        await engine.shutdown();
+    }
+}, 20_000);
+
 // REPL-F1: with toolsets loaded, the dispose request waited behind the running turn for 10 s, and the turn was told
 // "disposing the toolsets exceeded 10000 ms" instead of the reset.
 it("reset with toolsets disposes them at once while a turn waits, and the turn hears the reset", async () => {
