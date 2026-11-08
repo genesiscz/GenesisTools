@@ -1109,8 +1109,9 @@ export function sourceTimeOf(project: EditProject, outUs: number): number {
 }
 
 /**
- * The edit cut down to what plays from `fromOutUs` to `toOutUs` (OUTPUT microseconds), for exporting a part. Cuts and
- * speeds inside the part stay; the edit on disk is not changed.
+ * The edit cut down to what plays from `fromOutUs` to `toOutUs` (OUTPUT microseconds), for exporting a part: each
+ * clip's own overlap with that output range, at its speed, with its id kept. Cuts and speeds inside the part stay; the
+ * edit on disk is not changed. The Swift preview cuts a part the same way (TimelineMap.part).
  */
 export function partOf(project: EditProject, fromOutUs: number, toOutUs: number): EditProject {
     const length = outputDurationUs(project);
@@ -1122,7 +1123,30 @@ export function partOf(project: EditProject, fromOutUs: number, toOutUs: number)
         );
     }
 
-    return keepRange(project, sourceTimeOf(project, fromOutUs), sourceTimeOf(project, Math.min(length, toOutUs)));
+    const clips: EditClip[] = [];
+    let outStartUs = 0;
+
+    for (const clip of project.clips) {
+        const outEndUs = outStartUs + clipOutputUs(clip);
+        const startUs = Math.max(fromOutUs, outStartUs);
+        const endUs = Math.min(toOutUs, outEndUs);
+
+        if (endUs - startUs >= MINIMUM_CLIP_US) {
+            clips.push({
+                ...clip,
+                fromUs: clip.fromUs + Math.round((startUs - outStartUs) * clip.speed),
+                toUs: Math.min(clip.toUs, clip.fromUs + Math.round((endUs - outStartUs) * clip.speed)),
+            });
+        }
+
+        outStartUs = outEndUs;
+    }
+
+    if (clips.length === 0) {
+        throw new RangeError(`nothing plays from ${seconds(fromOutUs)} to ${seconds(toOutUs)} s (OUTPUT seconds)`);
+    }
+
+    return { ...project, clips };
 }
 
 /** Plays a source range at `speed` (0.25 to 16); the clips are split at its edges. */
