@@ -53,6 +53,14 @@ final class RecorderFxTests: XCTestCase {
         XCTAssertTrue(TransitionLook.joins(in: cutProject(own)).isEmpty)
     }
 
+    /// A lens op may name the window's id for the new lens; without one the service makes the id, as for an old client.
+    func testALensOpCarriesItsIdOnlyWhenItNamesOne() throws {
+        let named = try XCTUnwrap(String(data: JSONEncoder().encode(EditOp.lens(EditOp.Lens(id: "l1", from: 1, to: 3))), encoding: .utf8))
+        XCTAssertTrue(named.contains("\"id\":\"l1\""), named)
+        let plain = try XCTUnwrap(String(data: JSONEncoder().encode(EditOp.lens(EditOp.Lens(from: 1, to: 2))), encoding: .utf8))
+        XCTAssertFalse(plain.contains("\"id\""), "no id: the service makes one, as for an old client")
+    }
+
     /// R7 5: a blended frame hides what the other side's still shows, by the parts as they are drawn there. A part that
     /// ends 200 ms before the cut, or starts 150 ms after the incoming clip's start, is drawn up to the cut (snapMs), so
     /// the still of that side must be covered by it too.
