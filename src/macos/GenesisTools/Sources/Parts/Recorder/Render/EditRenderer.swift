@@ -35,8 +35,8 @@ final class ZoomState: @unchecked Sendable {
 
     // R5 5 redaction edges
     private var sourceFrames: SourceFrames?
-    /// The hidden parts as drawn (RedactionEdges), for the project they were made from.
-    private var drawnRedactions: (key: RedactionEdges.Key, parts: [EditProject.Redaction])?
+    /// The hidden parts as drawn (RedactionEdges), for the project and the frame times they were made from.
+    private var drawnRedactions: (key: RedactionEdges.Key, frames: SourceFrames?, parts: [EditProject.Redaction])?
 
     /// The source movie's frame times, read by the renderer once it has the movie.
     func setSourceFrames(_ frames: SourceFrames?) {
@@ -50,7 +50,7 @@ final class ZoomState: @unchecked Sendable {
     private func refreshRedactions(_ project: EditProject, frames: SourceFrames?) {
         let parts = RedactionEdges.effective(project, frames: frames)
         lock.lock()
-        drawnRedactions = (RedactionEdges.Key(project), parts)
+        drawnRedactions = (RedactionEdges.Key(project), frames, parts)
         lock.unlock()
     }
 
@@ -60,7 +60,8 @@ final class ZoomState: @unchecked Sendable {
         let cached = drawnRedactions
         let frames = sourceFrames
         lock.unlock()
-        if let cached, cached.key == RedactionEdges.Key(project) { return cached.parts }
+        // Parts worked out before the frame times arrived end too early, so they are not used once the times are known.
+        if let cached, cached.key == RedactionEdges.Key(project), cached.frames === frames { return cached.parts }
         return RedactionEdges.effective(project, frames: frames)
     }
 
