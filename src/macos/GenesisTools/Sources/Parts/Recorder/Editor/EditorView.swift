@@ -1982,11 +1982,15 @@ private struct HiddenPartHandles: View {
 /// the renderer draws at rest (Looks.textPlateUnitRect, measured on the export's canvas). A text's x, y is the centre of
 /// its block, and a left- or right-aligned plate sits against the block's edge or is kept inside at the canvas's edge,
 /// so a grip at x, y floated beside the plate. The centre lies on the plate for every alignment and edge, and keeps
-/// the grip where it was for a centred text. A text that makes no plate keeps its grip at x, y.
+/// the grip where it was for a centred text. It is the centre of the part of the plate the picture shows: a plate taller
+/// than the canvas is kept at its bottom and runs out of the top, and the overlay is not clipped to the picture, so the
+/// whole plate's centre drew the grip above the preview. textOrigin keeps the plate's corner on the canvas, so that part
+/// is never empty. A text that makes no plate keeps its grip at x, y.
 enum TextGrip {
     static func point(_ note: EditProject.TextNote, canvas: CGSize) -> CGPoint {
         guard let plate = Looks.textPlateUnitRect(note, canvas: canvas) else { return CGPoint(x: note.x, y: note.y) }
-        return CGPoint(x: plate.midX, y: plate.midY)
+        let shown = plate.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        return CGPoint(x: shown.midX, y: shown.midY)
     }
 }
 

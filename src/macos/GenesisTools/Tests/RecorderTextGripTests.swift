@@ -13,9 +13,16 @@ final class RecorderTextGripTests: XCTestCase {
     private let context = CIContext()
 
     private func note(_ text: String = "Invoices", align: EditProject.TextAlign?, x: Double = 0.62, y: Double = 0.5,
-                      animate: EditProject.TextAnimate? = nil) -> EditProject.TextNote {
-        EditProject.TextNote(id: "t", startUs: 0, endUs: 10_000_000, text: text, x: x, y: y, size: 0.05, animate: animate,
+                      size: Double = 0.05, animate: EditProject.TextAnimate? = nil) -> EditProject.TextNote {
+        EditProject.TextNote(id: "t", startUs: 0, endUs: 10_000_000, text: text, x: x, y: y, size: size, animate: animate,
                              block: align.map { EditProject.TextBlock(width: 0.4, align: $0) })
+    }
+
+    /// A callout so long that its plate is more than twice the canvas's height: textOrigin keeps it at the bottom, so
+    /// it runs out of the top and its centre lies above the picture. Its lines are set by "\n" and fit the block on
+    /// both canvases the grip test measures, so the two plates have the same lines and only scale.
+    private var overflowing: EditProject.TextNote {
+        note(Array(repeating: "Send and track", count: 50).joined(separator: "\n"), align: .left, x: 0.5)
     }
 
     /// The cases the grip must follow: each alignment, a plate kept inside at the left and at the right edge, a text
@@ -30,6 +37,7 @@ final class RecorderTextGripTests: XCTestCase {
             ("kept inside at the right edge", note(align: .right, x: 0.95)),
             ("two lines", note("Send, track\nand get paid", align: .left, x: 0.3, y: 0.3)),
             ("slide-up at rest", note(align: .right, x: 0.5, y: 0.7, animate: EditProject.TextAnimate(kind: .slideUp, ms: 600))),
+            ("taller than twice the canvas", overflowing),
         ]
     }
 
@@ -81,16 +89,28 @@ final class RecorderTextGripTests: XCTestCase {
         }
     }
 
-    /// textPlateRect is the box drawText really composites the plate in, to the pixel.
+    /// textPlateRect is the box drawText really composites the plate in, to the pixel. Only its part inside the canvas
+    /// can show, which is the whole box for every case but the overflowing one.
     func testThePlateRectIsWhereDrawTextCompositesThePlate() throws {
         for (name, note) in cases {
             let drawn = try drawnPlate(note)
-            let rect = try XCTUnwrap(Looks.textPlateRect(note, size: size), name)
+            let rect = try XCTUnwrap(Looks.textPlateRect(note, size: size), name).intersection(CGRect(origin: .zero, size: size))
             XCTAssertEqual(rect.minX, drawn.minX, accuracy: 1, name)
             XCTAssertEqual(rect.maxX, drawn.maxX, accuracy: 1, name)
             XCTAssertEqual(rect.minY, drawn.minY, accuracy: 1, name)
             XCTAssertEqual(rect.maxY, drawn.maxY, accuracy: 1, name)
         }
+    }
+
+    /// A plate that runs out of the canvas keeps its grip on the part the preview shows: the overlay is not clipped to
+    /// the picture, so a grip at the whole plate's centre drew above the preview.
+    func testTheGripOfAnOverflowingPlateStaysOnThePicture() throws {
+        let note = overflowing
+        let rect = try XCTUnwrap(Looks.textPlateRect(note, size: size))
+        XCTAssertGreaterThan(rect.height, 2 * size.height, "the case needs a plate more than twice the canvas's height")
+        let grip = TextGrip.point(note, canvas: size)
+        XCTAssertTrue(CGRect(x: 0, y: 0, width: 1, height: 1).contains(grip), "the grip at \(grip) is off the picture")
+        XCTAssertTrue(try drawnPlate(note).contains(gripPixel(note, canvas: size)), "the grip is off the drawn plate")
     }
 
     /// The measure and the drawn plate share one layout, so their sizes never drift apart, whatever the colours.
