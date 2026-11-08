@@ -377,3 +377,23 @@ describe("frame reads refuse a rate that never advances", () => {
         }
     });
 });
+
+describe("the export frame cache (review CLI-F5)", () => {
+    // A run killed during a flush, two editors at once or a full disk left half a file, and every later verifyHidden
+    // on that export threw a JSON parse error.
+    test("a torn cache file starts empty instead of throwing, and the next flush writes a whole one", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-torn-cache-"));
+        const movie = join(folder, "export.mp4");
+        writeFileSync(movie, "an export's bytes for the content key");
+        const path = toolDataDir("recorder", "verify-ocr", `${movieContentKey(movie)}.json`);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, '{"0":[{"text":"Orla Fic');
+
+        const cache = exportFrameCache(movie);
+        expect(cache.get(0)).toBeUndefined();
+
+        cache.set(0, [{ text: "Orla Fictive", x: 0.1, y: 0.1, width: 0.3, height: 0.05 }]);
+        cache.flush();
+        expect(exportFrameCache(movie).get(0)?.[0]?.text).toBe("Orla Fictive");
+    });
+});
