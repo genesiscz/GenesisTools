@@ -65,6 +65,13 @@ final class ZoomState: @unchecked Sendable {
         return RedactionEdges.effective(project, frames: frames)
     }
 
+    /// The largest zoom of the edit as the window has it now (1: none), so the transition stills grow with a new zoom.
+    var largestZoomScale: Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return max(1, project.zooms.map(\.scale).max() ?? 1)
+    }
+
     /// The camera bubble as the window has it now, so a moved or hidden bubble shows at the next frame.
     var camera: EditProject.Camera? {
         lock.lock()
@@ -761,8 +768,9 @@ struct EditRenderer {
         let outputScale = picture.height / natural.height
         let cameraFeed = await CameraFeed.make(project: project)
         // Round 4 fx-render: the frames a transition blends with, read when a frame first needs them.
-        let stills = TransitionStills(asset: asset,
-                                      maximumSize: TransitionStills.maximumSize(source: natural, picture: picture, project: project))
+        // The preview keeps this composition through zoom edits, so each frame sizes the stills by the zooms it has now.
+        let stillSize = { TransitionStills.maximumSize(source: natural, picture: picture, zoomScale: zoom.largestZoomScale) }
+        let stills = TransitionStills(asset: asset, maximumSize: stillSize())
         let videoComposition = AVMutableVideoComposition(asset: composition) { request in
             var image = request.sourceImage
             let extent = image.extent
@@ -775,7 +783,7 @@ struct EditRenderer {
             let look = zoom.look(atOutput: outUs)
             let view = look.view
             var result: CIImage
-            if let mark = look.transition, let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent) {
+            if let mark = look.transition, let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent, maximumSize: stillSize()) {
                 // Each side is hidden by its own parts before the blend; only the spotlights dim the blended frame.
                 image = TransitionLook.compose(live: image, liveRedactions: look.redactions, still: still, mark: mark, liveView: view)
                 result = Looks.redact(look.redactions.filter { $0.style == .spotlight }, on: image,
