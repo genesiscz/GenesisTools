@@ -39,6 +39,10 @@ tools recorder mark <label> [id]                 # a marker at this moment (a mo
 tools recorder markers <recording> [--chapters]  # its markers as JSON with where each plays, or "0:00 Intro" chapter lines
 tools recorder click-groups <recording> [--gap 3] # its clicks in groups (count, source seconds, where each plays), as movie.clickGroups()
 tools recorder rename <recording> <title>        # a new title for the library, the editor window and movies.list()
+tools recorder import <movie> [--title T] [--marker TIME=LABEL ...] [--json]  # a library recording of a movie file
+                                                 # (.mp4, .m4v, .mov): an APFS clone, titled T or the file's name,
+                                                 # a marker at each movie TIME (seconds or m:ss); prints its folder,
+                                                 # and its id on stderr (below)
 tools recorder undo <recording>                  # back one step of apply, the REPL or the window (30 steps in <edit>.undo.json)
 tools recorder redo <recording>                  # make the step undo took back again, while nothing changed since
 tools recorder search <text> [--json]            # titles, marker labels and cached transcript lines across the library
@@ -125,6 +129,30 @@ time. A recording that loses the service goes on recording and joins the next se
 A `<recording>` is a library id, `last` (the newest), `open` (the one in front in the editor; with one window open,
 that one), a recording folder, a movie or an `edit.json`. The editor writes which windows it shows to
 `~/.genesis-tools/recordings/editor-open.json` with its pid, so a reader drops the file of an editor that is gone.
+
+## Import a movie
+
+`tools recorder import <movie>` (the REPL's `movies.import(path, { title, markers })`) makes a library recording of a
+movie that exists already, such as a render, an export or a movie from another app, so the editor and every command
+take it like a recording. It writes the folder the recorder writes (`src/recorder/lib/import.ts`):
+
+- `video-<time>-<uuid>/screen.mp4` (or `screen.mov`): an APFS clone of the file, so it takes no disk until one side
+  changes. On a disk without clones it is a whole copy. Nothing writes to the file you import.
+- `recording.json`, version 1: `settings.kind` `"video"`, `video { file, durationMs, frames, averageFps }`, `outcome`
+  `"done"`, no cursor track (`cursor` `"none"`, `shortcuts` false), `importedFrom` (the file's path), and the markers
+  in movie time (`markers [{ atMs, label }]`, `markerClock` `"movie"`).
+- A movie with sound keeps it: `audio.sources` is `["movie"]`, so the editor plays, exports and transcribes it as it
+  does a recording with system audio in its movie. A movie without an audio track lists no source, and `transcript()`
+  refuses it.
+
+A marker is `--marker <time>=<label>` (`0:12=Login done`; `{ at, label }` in the REPL, `at` in source seconds or
+`m:ss`), with a label of 1 to 80 characters. A marker outside the movie is refused. A file that is not a movie the
+editor plays is refused too: another extension, a file ffprobe cannot read, a file with no video stream, and a movie
+the editor's own probe refuses (over 12 hours, over 48 megapixels, HDR). A refusal makes nothing; when the editor
+refuses the copy, its folder goes to the GenesisTools trash. `movies.import()` returns the recording as a `Movie`, as
+`movies.open()` does, because the next call is an edit; the CLI prints the folder on stdout and the id on stderr, and
+`--json` prints `{ id, folder, title, movie, source, seconds, frames, averageFps, audioTracks, markers }`.
+`tools recorder trash <id>` removes it again.
 
 ## The edit (`edit.json`, version 1)
 
@@ -365,6 +393,7 @@ await m.polish();                           // removeIdle, autoZoom, normalize, 
 await m.spotlight({ from: 2, to: 6, rect: { x: 0.5, y: 0, width: 0.5, height: 0.5 } });  // dims all but the rect
 await m.undo();                             // { undone: ["redact"], stepsLeft, … }
 const r = await movies.record({ maxSeconds: 30, audio: ["system"] }); /* … */ const movie = await r.stop();
+const rendered = await movies.import("/path/to/render.mp4", { title: "Tour", markers: [{ at: "0:12", label: "Login" }] });
 const area = await movies.record({ region: "0,0,1280,800", idleFps: 1, threshold: 1, countdown: 3 });
 ```
 
