@@ -946,3 +946,17 @@ it("a module directory added while a turn runs answers at once and leaves the tu
         await engine.shutdown();
     }
 }, 20_000);
+
+// REPL-F5, end to end through the CLI: its printer stops for good at the first line past --max-output.
+it("run stops streaming after the first line past --max-output, so no line prints twice", async () => {
+    const cli = join(import.meta.dir, "..", "index.ts");
+    const code = 'console.log("x".repeat(15000)); console.log("y".repeat(6000)); console.log("z".repeat(100)); 1';
+    const child = Bun.spawn([process.execPath, cli, "run", "--max-output", "20000", code], {
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    expect(stdout.split("x".repeat(15000)).length - 1).toBe(1);
+    expect(stdout.split("z".repeat(100)).length - 1).toBeLessThanOrEqual(1);
+}, 20_000);
