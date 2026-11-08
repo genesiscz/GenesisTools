@@ -911,9 +911,11 @@ extension EditOp {
         var op: EditOp { .transition(self) }
     }
 
-    /// A magnifier lens over SOURCE seconds; `at` holds it still.
+    /// A magnifier lens over SOURCE seconds; `at` holds it still. `id`: the window's id for it, so a change sent
+    /// before the service answers names a lens the service has; nil lets the service make one.
     struct Lens: EditOpPayload {
         static let tag = "lens"
+        var id: String?
         var from: Double
         var to: Double
         var radius: Double?

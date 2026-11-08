@@ -55,7 +55,7 @@ final class RecorderFxTests: XCTestCase {
 
     /// The Style tab changes a copy of the edit; each transition, tilt and lens change must become ops, or the service
     /// answers the old edit and the control flips back.
-    func testTheStyleTabsTransitionTiltAndLensChangesBecomeOps() {
+    func testTheStyleTabsTransitionTiltAndLensChangesBecomeOps() throws {
         let plain = cutProject(nil)
         var fade = plain
         fade.transitions = EditProject.Transitions(default: .init(kind: .crossfade, ms: 300))
@@ -83,8 +83,14 @@ final class RecorderFxTests: XCTestCase {
         var lensed = plain
         lensed.lens = EditProject.Lens(items: [item])
         XCTAssertEqual(EditOpDiff.ops(from: plain, to: lensed),
-                       [.lens(EditOp.Lens(from: 1, to: 3, radius: 0.12, magnification: 2, follow: false,
+                       [.lens(EditOp.Lens(id: "l1", from: 1, to: 3, radius: 0.12, magnification: 2, follow: false,
                                           at: EditOp.Point(x: 0.5, y: 0.5), ring: "#FFFFFF"))])
+        // The window's id goes with the new lens, so a setLens sent before the service answers names a lens it has.
+        let added = try XCTUnwrap(EditOpDiff.ops(from: plain, to: lensed)?.first)
+        let wire = try XCTUnwrap(String(data: JSONEncoder().encode(added), encoding: .utf8))
+        XCTAssertTrue(wire.contains("\"id\":\"l1\""), wire)
+        XCTAssertFalse(try XCTUnwrap(String(data: JSONEncoder().encode(EditOp.lens(EditOp.Lens(from: 1, to: 2))), encoding: .utf8))
+            .contains("\"id\""), "no id: the service makes one, as for an old client")
         var bigger = lensed
         bigger.lens?.items[0].magnification = 3
         bigger.lens?.items[0].radius = 0.2

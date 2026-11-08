@@ -85,6 +85,22 @@ describe("lens", () => {
         expect(() => applyOp(project, { op: "unlens", id: "l404" })).toThrow(`no lens l404; lenses: ${id}`);
     });
 
+    test("a lens op may name its id, so the window's id is the service's; a taken or malformed id is refused", () => {
+        const project = applyOp(cutProject(), { op: "lens", id: "lwindow1", from: 1, to: 3 });
+        expect(project.lens?.items.map((lens) => lens.id)).toEqual(["lwindow1"]);
+        expect(applyOp(project, { op: "setLens", id: "lwindow1", radius: 0.2 }).lens?.items[0].radius).toBe(0.2);
+        expect(() => applyOp(project, { op: "lens", id: "lwindow1", from: 4, to: 5 })).toThrow(
+            "a lens lwindow1 exists already; lenses: lwindow1"
+        );
+        expect(() => editOpSchema.parse({ op: "lens", id: "", from: 1, to: 2 })).toThrow();
+        expect(() => editOpSchema.parse({ op: "lens", id: "l 1", from: 1, to: 2 })).toThrow();
+        expect(() => editOpSchema.parse({ op: "lens", id: "l".repeat(41), from: 1, to: 2 })).toThrow();
+        const facts = { generatedIds: [] as string[] };
+        const made = applyOp(project, { op: "lens", from: 4, to: 5 }, facts);
+        expect(made.lens?.items).toHaveLength(2);
+        expect(made.lens?.items[1].id).not.toBe("lwindow1");
+    });
+
     test("a lens past the end or shorter than 0.1 s is refused", () => {
         expect(() => applyOp(cutProject(), { op: "lens", from: 25, to: 26 })).toThrow(/past the end/);
         expect(() => applyOp(cutProject(), { op: "lens", from: 2, to: 2.05 })).toThrow(/at least 0.1 s/);
