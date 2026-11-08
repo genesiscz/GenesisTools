@@ -1092,7 +1092,8 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(wide, facts).filter((issue) => issue.kind === "text-overlap")).toHaveLength(1);
         // The canvas's shape counts: 0.3 apart across a 9:16 canvas is less room than across 16:9.
         const box = textBox({ text: "Hello", size: 0.05, x: 0.5, y: 0.5 }, canvasShape(wholeProject(source)));
-        expect(box.right - box.left).toBeCloseTo(5 * 0.58 * 0.05 + 2 * 0.7 * 0.05, 5);
+        // The renderer's plate for "Hello" at 54 px is 200 px wide on a 1080 px short side.
+        expect(Math.abs((box.right - box.left) * 1080 - 200)).toBeLessThanOrEqual(1);
         expect(canvasShape(applyOp(wholeProject(source), { op: "frame", aspect: "9:16" }))).toEqual({
             width: 1,
             height: 16 / 9,
@@ -1132,6 +1133,64 @@ describe("edit project (edit.json)", () => {
         expect(textBox({ ...title, x: 0.1, block: { width: 0.4, align: "left" } }, canvas).left).toBe(0);
         const nearRight = textBox({ ...title, x: 0.95, block: { width: 0.4, align: "right" } }, canvas);
         expect(nearRight.right).toBeCloseTo(canvas.width, 5);
+    });
+
+    // 2026-11-08: check() said a title and its subtitle overlap while the export showed them apart. At 0.58 em a
+    // character the 26-letter title was wider than its block, so the estimate wrapped it into two lines that reached
+    // the subtitle; the renderer draws it on one line. The pixel sizes below are the renderer's (TextPlates at 1080p).
+    test("check measures a text with the renderer's font, and judges a plain text by its lines, not its plate", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const overlaps = (project: ReturnType<typeof wholeProject>) =>
+            checkProject(project, facts).filter((issue) => issue.kind === "text-overlap");
+        const block = { width: 0.4, align: "center" as const };
+        // A title and its subtitle in one block, as the demo projects place them.
+        const note = (text: string, size: number, y: number, style: "plain" | "plate" = "plain") => ({
+            op: "text" as const,
+            from: 1,
+            to: 6,
+            text,
+            x: 0.735,
+            y,
+            size,
+            style,
+            block,
+        });
+        const title = note("Zákazník napíše do poradny", 0.05, 0.43);
+        const subtitle = note("Recepce zrovna telefonuje, zprávu nečte.", 0.029, 0.535);
+        const pair = (a: typeof title, b: typeof title) => applyOp(applyOp(wholeProject(source), a), b);
+        const pixels = (box: { left: number; top: number; right: number; bottom: number }) => ({
+            width: (box.right - box.left) * 1080,
+            height: Math.round((box.bottom - box.top) * 1080),
+        });
+
+        expect(overlaps(pair(title, subtitle))).toEqual([]);
+        const canvas = canvasShape(wholeProject(source));
+        const titlePlate = pixels(textBox(title, canvas));
+        expect(Math.abs(titlePlate.width - 749)).toBeLessThanOrEqual(1);
+        expect(titlePlate.height).toBe(105);
+        // The same pair at one y does meet.
+        expect(overlaps(pair(title, { ...subtitle, y: 0.43 }))).toHaveLength(1);
+
+        // A long text wraps where the renderer wraps it: four lines of 43 px, 237 px tall with the plate's insets.
+        const long = pixels(
+            textBox(
+                {
+                    text: "Každý krok nastavení se v ukázce objeví jako krátký titulek, jeden po druhém, v pořadí, v jakém je projde nový uživatel.",
+                    size: 0.04,
+                    x: 0.5,
+                    y: 0.5,
+                    block,
+                },
+                canvas
+            )
+        );
+        expect(long.height).toBe(237);
+        expect(Math.abs(long.width - 728)).toBeLessThanOrEqual(1);
+
+        // Here the plates meet and the lines do not: a drawn plate shows, a plain text's inset is empty space.
+        const close = { ...subtitle, y: 0.49 };
+        expect(overlaps(pair(title, close))).toEqual([]);
+        expect(overlaps(pair({ ...title, style: "plate" }, { ...close, style: "plate" }))).toHaveLength(1);
     });
 
     // R7 10: a 1.2x zoom on a phone cut the side labels in half, and check() said nothing.
