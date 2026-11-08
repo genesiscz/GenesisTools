@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfigStore, projectNameSchema } from "@genesiscz/utils/meetings/config";
-import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { localStamp } from "./shared";
 
@@ -20,6 +20,11 @@ function sourceMatches(raw: Record<string, unknown>): Array<Record<string, unkno
               isObject(source) && isObject(source.match) ? [source.match] : []
           )
         : [];
+}
+
+/** A folder step (waiting or asked) that would pair a folder with the project once it is answered. */
+function folderStepNames(record: MeetingRecord, project: string): boolean {
+    return record.assign?.folder?.project === project;
 }
 
 export interface ProjectRename {
@@ -67,11 +72,20 @@ export async function renameProject(options: {
 
     const meetings: string[] = [];
 
-    for (const record of store.list().filter((one) => one.project === from)) {
+    for (const record of store.list().filter((one) => one.project === from || folderStepNames(one, from))) {
         await store.update(record.id, { command: "projects rename", change: `project ${from} → ${to}` }, (next) => {
-            next.project = to;
+            if (next.project === from) {
+                next.project = to;
+            }
+
+            if (next.assign?.folder?.project === from) {
+                next.assign.folder.project = to;
+            }
         });
-        meetings.push(record.id);
+
+        if (record.project === from) {
+            meetings.push(record.id);
+        }
     }
 
     log.debug({ from, to, meetings: meetings.length }, "project renamed");
@@ -143,11 +157,20 @@ export async function removeProject(options: {
 
     const unassigned: string[] = [];
 
-    for (const record of using) {
+    for (const record of store.list().filter((one) => one.project === name || folderStepNames(one, name))) {
         await store.update(record.id, { command: "projects remove", change: `project ${name} removed` }, (next) => {
-            next.project = undefined;
+            if (next.project === name) {
+                next.project = undefined;
+            }
+
+            if (next.assign?.folder?.project === name) {
+                delete next.assign.folder;
+            }
         });
-        unassigned.push(record.id);
+
+        if (record.project === name) {
+            unassigned.push(record.id);
+        }
     }
 
     log.debug({ name, unassigned: unassigned.length, backup }, "project removed");
