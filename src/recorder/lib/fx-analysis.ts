@@ -269,6 +269,11 @@ export async function ocrVideo(options: {
     /** R8 5: lines read before, by frame time (a frame found there is not read again), and where each new read goes. */
     cache?: FrameCache;
 }): Promise<ScreenTextFrame[]> {
+    // A rate of 0, below 0 or not a number made the frame step 0 or NaN: the grid loop never ended, or read one frame.
+    if (!(Number.isFinite(options.fps) && options.fps > 0)) {
+        throw new RangeError(`ocrVideo: fps is a positive number of frames a second, not ${options.fps}`);
+    }
+
     const fromUs = options.fromUs ?? 0;
     const stepUs = 1_000_000 / options.fps;
     const folder = mkdtempSync(join(tmpdir(), "gt-screen-text-"));
@@ -1009,6 +1014,15 @@ export async function verifyHidden(
         timeBase?: "source" | "output";
     }
 ): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[]; fixOps: EditOp[]; notes?: string[] }> {
+    const everySeconds = options.everySeconds ?? 0.25;
+
+    // CLI-F1: checked before the export, as the REPL schema bounds it; 0 hung the read and "0,5" (NaN) read one frame.
+    if (!(everySeconds >= 0.1 && everySeconds <= 5)) {
+        throw new RangeError(
+            `verifyHidden: everySeconds takes 0.1 to 5 seconds between the frames read, not ${everySeconds}`
+        );
+    }
+
     const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
     // R6 3: every text and pattern (and the private data, when asked or when nothing else is) in one read.
     const matchers = [
@@ -1046,7 +1060,7 @@ export async function verifyHidden(
         fromUs: range.fromUs,
         toUs: Math.min(durationUs, range.toUs),
         cache,
-        fps: 1 / (options.everySeconds ?? 0.25),
+        fps: 1 / everySeconds,
         onFrame: (done, total) => {
             const tenth = Math.floor((done / Math.max(1, total)) * 10);
 

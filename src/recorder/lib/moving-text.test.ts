@@ -7,7 +7,7 @@ import { framePresentationUs, gridRead } from "@genesiscz/utils/recording-editor
 import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
 import { applyOp, editOpSchema, wholeProject } from "@genesiscz/utils/recording-editor/project";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
-import { exportFrameCache, exportRangeOf, ocrVideo, scanOf, textHitsOf } from "./fx-analysis";
+import { exportFrameCache, exportRangeOf, ocrVideo, scanOf, textHitsOf, verifyHidden } from "./fx-analysis";
 
 /**
  * Round 6 item 1: hidden text must stay hidden while the screen scrolls or slides. The movie is generated from two
@@ -316,4 +316,20 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         expect(bytes.subarray(0, size)).toEqual(pair.subarray(0, size));
         expect(bytes.subarray(size, 2 * size)).toEqual(pair.subarray(size, 2 * size));
     }, 60_000);
+});
+
+describe("verifyHidden refuses a read rate it cannot use (review CLI-F1)", () => {
+    // `--every 0` made the frame step 0 and the grid loop never ended; "0,5" (a decimal comma) read one frame only and
+    // said "Nothing readable". Both are refused before anything is exported or read.
+    test.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 0.05, 6])("everySeconds %p is refused", async (every) => {
+        await expect(verifyHidden("/nonexistent/verify.edit.json", { everySeconds: every })).rejects.toThrow(
+            /everySeconds takes 0\.1 to 5/
+        );
+    });
+
+    test.each([0, -2, Number.NaN, Number.POSITIVE_INFINITY])("ocrVideo fps %p is refused", async (fps) => {
+        await expect(ocrVideo({ video: "/nonexistent/movie.mp4", toUs: 1_000_000, fps })).rejects.toThrow(
+            /a positive number of frames a second/
+        );
+    });
 });
