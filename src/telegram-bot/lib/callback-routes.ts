@@ -65,7 +65,9 @@ export function decisionPressHandler(
         now?: () => number;
     } = { actDeps: realActDeps }
 ): CallbackHandler {
-    return async (press: CallbackPress, token: string) => {
+    return async (press: CallbackPress, payload: string) => {
+        // `<token>`, or `<token>:<letters>` for a Send button, which carries the letters it shows.
+        const [token = "", shown] = payload.split(":", 2);
         const at = deps.now?.();
         const clock = at === undefined ? {} : { now: at };
         const claimed =
@@ -77,7 +79,13 @@ export function decisionPressHandler(
 
         try {
             actDeps = await deps.actDeps();
-            receipt = await pressToken({ token, key: `telegram:${press.id}`, deps: actDeps, ...clock });
+            receipt = await pressToken({
+                token,
+                key: `telegram:${press.id}`,
+                deps: actDeps,
+                ...(shown === undefined ? {} : { shown }),
+                ...clock,
+            });
         } catch (err) {
             // Give the message back, so the retraction can still drop its buttons when the decision closes elsewhere.
             if (claimed) {
@@ -108,11 +116,13 @@ export function decisionPressHandler(
             await rememberMessage(claimed.noticeId, claimed.posted);
             const { text } = claimed.posted;
             const { outcome } = receipt;
+            // A toggle redraws with its staged pick; a refused Send redraws with the pick as it is now, so the button
+            // shows the letters a second press would send.
             const buttons =
-                outcome.kind === "staged" && text !== undefined
+                (outcome.kind === "staged" || receipt.tokenKind === "send") && text !== undefined
                     ? await redrawnToggleKeyboard({
                           token,
-                          staged: outcome.option,
+                          staged: outcome.kind === "staged" ? outcome.option : "",
                           store: actDeps.store,
                           rows: actDeps.rows,
                       })
