@@ -289,6 +289,19 @@ final class RecorderFrameLayoutTests: XCTestCase {
 
 // R5 10 multi-line texts
 final class RecorderTextBlockTests: XCTestCase {
+    /// Karaoke makes one plate per word said and a typewriter one per letter: a long talk kept every one of them until
+    /// the export ended. Only the plates used last stay, and a plate in use is drawn again from the cache.
+    func testTextPlatesKeepOnlyThePlatesUsedLast() throws {
+        let plates = TextPlates()
+        let line = "one two three four five six seven eight nine ten eleven twelve"
+        for characters in 0...200 {
+            _ = plates.plate(line, fontSize: 40, maxWidth: 1500, highlight: (characters, .yellow))
+        }
+        XCTAssertLessThanOrEqual(plates.count, 64)
+        let first = try XCTUnwrap(plates.plate("Stays", fontSize: 40, maxWidth: 1500))
+        XCTAssertTrue(plates.plate("Stays", fontSize: 40, maxWidth: 1500) === first, "a plate used again comes from the cache")
+    }
+
     /// "\n" makes a second line, a long text wraps inside the block's width and is drawn whole, never cut.
     func testATextBreaksAtNewlinesAndWrapsInsideItsBlock() throws {
         let plates = TextPlates()

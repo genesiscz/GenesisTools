@@ -158,15 +158,20 @@ enum TransitionLook {
     }
 }
 
-/// The source pictures transitions blend with: one frame per source time, read once from the movie and kept.
+/// The source pictures transitions blend with: one frame per source time, read once from the movie. Joins come in
+/// time order and each reads two stills, so only the stills used last are kept, never one per join of the movie.
 final class TransitionStills: @unchecked Sendable {
+    static let kept = 4
     private let generator: AVAssetImageGenerator
     private let lock = NSLock()
-    private var images: [Int64: CIImage?] = [:]
+    private var images = RecentCache<Int64, CIImage?>(limit: TransitionStills.kept)
 
-    init(asset: AVAsset) {
+    /// `maximumSize` (zero: the source's size) is the largest still the render can show, so a 5K source is not
+    /// decoded at full size for a smaller output.
+    init(asset: AVAsset, maximumSize: CGSize = .zero) {
         generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = false
+        generator.maximumSize = maximumSize
         // Exactly the frame on screen at the time, the one the clip itself shows there. Any tolerance lets the
         // generator answer with an earlier key frame: 0.25 s gave the incoming still from the CUT part before the clip
         // (40.29 s for 40.40 s, 65.32 s for 65.40 s on a phone recording), whose redactions are not the ones at the
@@ -179,7 +184,7 @@ final class TransitionStills: @unchecked Sendable {
     /// has none there, and the transition then draws as a hard cut. Waits at most 3 s for a first read.
     func image(atSourceUs us: Int64, extent: CGRect) -> CIImage? {
         lock.lock()
-        if let cached = images[us] {
+        if let cached = images.value(for: us) {
             lock.unlock()
             return cached.map { fit($0, to: extent) }
         }
@@ -198,9 +203,26 @@ final class TransitionStills: @unchecked Sendable {
         }
         let image = box.image.map { CIImage(cgImage: $0) }
         lock.lock()
-        images[us] = image
+        images.set(image, for: us)
         lock.unlock()
         return image.map { fit($0, to: extent) }
+    }
+
+    /// How many stills the cache holds now.
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return images.count
+    }
+
+    /// The largest still a frame can show: the output picture, times the largest zoom and lens magnification of the
+    /// edit (both enlarge the still), and never more than the source.
+    static func maximumSize(source: CGSize, picture: CGSize, project: EditProject) -> CGSize {
+        let zoom = project.zooms.map(\.scale).max() ?? 1
+        let lens = project.lens?.items.map(\.magnification).max() ?? 1
+        let enlarge = max(1, zoom) * max(1, lens)
+        return CGSize(width: min(source.width, (picture.width * enlarge).rounded(.up)),
+                      height: min(source.height, (picture.height * enlarge).rounded(.up)))
     }
 
     private func fit(_ image: CIImage, to extent: CGRect) -> CIImage {

@@ -163,6 +163,34 @@ final class RecorderFxExportTests: XCTestCase {
         }
     }
 
+    /// A long edit with many cuts reads two stills per join; the stills of joins already played must not stay in
+    /// memory (100 joins of a 5K source kept about 12 GB), and a still is no larger than the render can show.
+    func testTransitionStillsKeepOnlyTheLastFewAndNoMoreThanTheOutputShows() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("fx-stills-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie)
+        let stills = TransitionStills(asset: AVURLAsset(url: movie))
+        let extent = CGRect(x: 0, y: 0, width: Self.size.width, height: Self.size.height)
+        for second in 0..<9 {
+            XCTAssertNotNil(stills.image(atSourceUs: Int64(second) * 1_000_000, extent: extent), "a still at \(second) s")
+        }
+        XCTAssertLessThanOrEqual(stills.count, 4, "only the stills used last stay")
+        XCTAssertNotNil(stills.image(atSourceUs: 8_000_000, extent: extent), "the newest still is still there")
+
+        let source = CGSize(width: 5120, height: 2880)
+        var project = EditProject.whole(video: movie.path, durationUs: 10_000_000, width: 5120, height: 2880, cursor: nil, recording: nil)
+        XCTAssertEqual(TransitionStills.maximumSize(source: source, picture: CGSize(width: 1920, height: 1080), project: project),
+                       CGSize(width: 1920, height: 1080), "no zoom: the output's picture")
+        project.zooms = [EditProject.Zoom(id: "z", startUs: 0, endUs: 1_000_000, scale: 2)]
+        XCTAssertEqual(TransitionStills.maximumSize(source: source, picture: CGSize(width: 1920, height: 1080), project: project),
+                       CGSize(width: 3840, height: 2160), "a 2x zoom shows the still twice as large")
+        project.lens = EditProject.Lens(items: [.init(id: "l", startUs: 0, endUs: 1_000_000, magnification: 4)])
+        XCTAssertEqual(TransitionStills.maximumSize(source: source, picture: CGSize(width: 1920, height: 1080), project: project),
+                       source, "never more than the source")
+    }
+
     func testNoTransitionShowsACutOrRedactedSecretInTheExport() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("fx-secret-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

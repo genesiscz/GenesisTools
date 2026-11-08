@@ -62,9 +62,18 @@ final class CaptionTrack: @unchecked Sendable {
 
 /// White text on a dark rounded plate, made once per text and size because every frame that shows it draws it.
 /// Captions and the keys overlay use it; the render runs on Core Image's threads, so the cache has a lock.
+/// Karaoke makes one plate per word said and a typewriter one per letter, so only the plates used last are kept.
 final class TextPlates: @unchecked Sendable {
+    static let kept = 64
     private let lock = NSLock()
-    private var images: [String: CIImage] = [:]
+    private var images = RecentCache<String, CIImage>(limit: TextPlates.kept)
+
+    /// How many plates the cache holds now.
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return images.count
+    }
 
     /// `plain`: no plate, the text with a soft shadow, for a title over a busy picture. `highlight` colours the first
     /// `characters` characters (the karaoke caption's words said so far).
@@ -72,7 +81,7 @@ final class TextPlates: @unchecked Sendable {
                highlight: (characters: Int, color: NSColor)? = nil, alignment: NSTextAlignment = .center) -> CIImage? {
         let key = "\(text)|\(Int(fontSize))|\(Int(maxWidth))|\(weight.rawValue)|\(plain)|\(highlight.map { "\($0.characters)\($0.color)" } ?? "")|\(alignment.rawValue)"
         lock.lock()
-        if let cached = images[key] {
+        if let cached = images.value(for: key) {
             lock.unlock()
             return cached
         }
@@ -80,7 +89,7 @@ final class TextPlates: @unchecked Sendable {
         guard let image = Self.render(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, plain: plain,
                                       highlight: highlight, alignment: alignment) else { return nil }
         lock.lock()
-        images[key] = image
+        images.set(image, for: key)
         lock.unlock()
         return image
     }
