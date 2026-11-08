@@ -8,6 +8,7 @@ import {
     outputTimeOf,
     type TEXT_ALIGNS,
 } from "./project";
+import { layoutText } from "./text-metrics";
 
 /**
  * "fix": the export will be wrong or something never shows; "check": it works but may not be what was meant; "note"
@@ -120,15 +121,16 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
     }
 
     const texts = [...(project.texts ?? [])].sort((a, b) => a.startUs - b.startUs);
-    // R6 9: two texts overlap when their rendered plates do (the renderer's size, wrap and clamp to the canvas), not
-    // when their anchors are near: "same place" for texts side by side was most of check()'s noise.
+    // R6 9: two texts overlap when what they show does (the renderer's font, wrap and clamp to the canvas; a plate
+    // text's plate, a plain text's lines), not when their anchors are near: "same place" for texts side by side was
+    // most of check()'s noise.
     const canvas = canvasShape(project);
+    const shown = texts.map((note) => ({ note, box: shownBox(note, canvas) }));
 
-    for (const [index, note] of texts.entries()) {
-        const box = textBox(note, canvas);
-        const over = texts
+    for (const [index, { note, box }] of shown.entries()) {
+        const over = shown
             .slice(index + 1)
-            .find((other) => other.startUs < note.endUs && boxesOverlap(box, textBox(other, canvas)));
+            .find((other) => other.note.startUs < note.endUs && boxesOverlap(box, other.box))?.note;
 
         if (over) {
             issues.push({
@@ -417,10 +419,11 @@ export function canvasShape(project: EditProject): { width: number; height: numb
     return ratio >= 1 ? { width: ratio, height: 1 } : { width: 1, height: 1 / ratio };
 }
 
-/** Average advance of a semibold system font, as a share of its size (measured on mixed text: 0.55 to 0.6). */
-const CHAR_WIDTH = 0.58;
-/** One line's height as a share of the font size. */
-const LINE_HEIGHT = 1.2;
+/**
+ * The canvas's short side in pixels that check() lays texts out at, since it does not know the export's size. The size
+ * matters little: the font sets a line about 1.5 % wider in em at 31 px than at 54 px, and the same from 78 px up.
+ */
+const CHECK_SHORT_SIDE_PX = 1080;
 /** A plate's left edge before the canvas clamp, from the block's centre and width and the plate's width. */
 const PLATE_LEFT: Record<
     (typeof TEXT_ALIGNS)[number],
@@ -431,44 +434,65 @@ const PLATE_LEFT: Record<
     right: ({ centre, block, plate }) => centre + block / 2 - plate,
 };
 
+type CanvasBox = { left: number; top: number; right: number; bottom: number };
+
 /**
  * A text's plate on the canvas (units of the canvas's short side, y from the top), as the renderer draws it
- * (Captions.swift drawText and textOrigin): the font size is `size` of the short side, lines wrap at the block's width
- * (0.8 of the canvas) less the plate's inset (0.7 × size each side, 0.38 × size above and below), and the plate is
- * kept inside the canvas. x, y is the block's centre: a centred plate is centred on it, a left-aligned plate starts at
- * the block's left edge and a right-aligned one ends at its right edge, so texts with the same x and block line up.
- * The widths are estimated from the characters, so they are close, not exact.
+ * (Captions.swift drawText, TextPlates.render and textOrigin) on a canvas whose short side is CHECK_SHORT_SIDE_PX:
+ * the font is `size` of the short side in whole pixels, the lines are set with the renderer's font (text-metrics.ts)
+ * and wrap at the block's width (0.8 of the canvas) less the plate's inset (0.7 × size each side, 0.38 × size above
+ * and below), and the plate is kept inside the canvas. x, y is the block's centre: a centred plate is centred on it, a
+ * left-aligned plate starts at the block's left edge and a right-aligned one ends at its right edge, so texts with the
+ * same x and block line up.
  */
 export function textBox(
     note: { text: string; size: number; x: number; y: number; block?: EditTextNote["block"] },
     canvas: { width: number; height: number }
-): { left: number; top: number; right: number; bottom: number } {
-    const font = note.size;
-    const insetX = font * 0.7;
-    const insetY = font * 0.38;
-    const block = canvas.width * Math.min(0.95, Math.max(0.15, note.block?.width ?? 0.8));
-    const wrap = Math.max(font * 4, block - 2 * insetX);
-    let lines = 0;
-    let widest = 0;
-
-    for (const line of note.text.split("\n")) {
-        const width = Math.max(1, line.length) * CHAR_WIDTH * font;
-        lines += Math.max(1, Math.ceil(width / wrap));
-        widest = Math.max(widest, Math.min(width, wrap));
-    }
-
-    const width = widest + 2 * insetX;
-    const height = lines * LINE_HEIGHT * font + 2 * insetY;
-    const start = PLATE_LEFT[note.block?.align ?? "center"]({ centre: note.x * canvas.width, block, plate: width });
-    const left = Math.min(Math.max(0, start), Math.max(0, canvas.width - width));
-    const top = Math.min(Math.max(0, note.y * canvas.height - height / 2), Math.max(0, canvas.height - height));
-    return { left, top, right: left + width, bottom: top + height };
+): CanvasBox {
+    return textBoxes(note, canvas).plate;
 }
 
-function boxesOverlap(
-    a: { left: number; top: number; right: number; bottom: number },
-    b: { left: number; top: number; right: number; bottom: number }
-): boolean {
+/** The plate (textBox) and the lines inside it: the plate less its inset. */
+function textBoxes(
+    note: { text: string; size: number; x: number; y: number; block?: EditTextNote["block"] },
+    canvas: { width: number; height: number }
+): { plate: CanvasBox; lines: CanvasBox } {
+    const unit = CHECK_SHORT_SIDE_PX;
+    const font = Math.max(8, Math.round(note.size * unit));
+    const insetX = font * 0.7;
+    const insetY = font * 0.38;
+    const canvasWidth = canvas.width * unit;
+    const canvasHeight = canvas.height * unit;
+    const block = canvasWidth * Math.min(0.95, Math.max(0.15, note.block?.width ?? 0.8));
+    const align = note.block?.align ?? "center";
+    const set = layoutText(note.text, font, Math.max(font * 4, block - 2 * insetX), align);
+    const width = Math.ceil(set.width + 2 * insetX);
+    const height = Math.ceil(set.height + 2 * insetY);
+    const start = PLATE_LEFT[align]({ centre: note.x * canvasWidth, block, plate: width });
+    const left = Math.min(Math.max(0, start), Math.max(0, canvasWidth - width));
+    const top = Math.min(Math.max(0, note.y * canvasHeight - height / 2), Math.max(0, canvasHeight - height));
+    const box = (x0: number, y0: number, x1: number, y1: number) => ({
+        left: x0 / unit,
+        top: y0 / unit,
+        right: x1 / unit,
+        bottom: y1 / unit,
+    });
+    return {
+        plate: box(left, top, left + width, top + height),
+        lines: box(left + insetX, top + insetY, left + width - insetX, top + height - insetY),
+    };
+}
+
+/**
+ * What a viewer sees of a text: a plate text's plate, a plain text's lines. A plain text draws no plate, so its inset
+ * is empty space, and a subtitle may sit inside a title's inset without touching its letters.
+ */
+function shownBox(note: EditTextNote, canvas: { width: number; height: number }): CanvasBox {
+    const boxes = textBoxes(note, canvas);
+    return note.style === "plain" ? boxes.lines : boxes.plate;
+}
+
+function boxesOverlap(a: CanvasBox, b: CanvasBox): boolean {
     return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
