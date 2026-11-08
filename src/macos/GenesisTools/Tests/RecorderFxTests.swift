@@ -341,4 +341,49 @@ final class RecorderTextBlockTests: XCTestCase {
         XCTAssertLessThanOrEqual(plate.extent.width, 576)
         XCTAssertLessThan(plate.extent.height, size.height, "the callout fits the canvas's height")
     }
+
+    /// x is the block's centre. A left-aligned plate starts at the block's left edge and a right-aligned one ends at its
+    /// right edge, whatever its own width; a centred one (and one without a block) is centred on x. All stay inside.
+    func testAnAlignedPlateSitsAgainstItsBlocksEdge() {
+        let size = CGSize(width: 1920, height: 1080)
+        func note(_ align: EditProject.TextAlign?, x: Double = 0.62) -> EditProject.TextNote {
+            EditProject.TextNote(id: "t", startUs: 0, endUs: 1_000_000, text: "t", x: x, y: 0.5,
+                                 block: align.map { EditProject.TextBlock(width: 0.4, align: $0) })
+        }
+        for width: CGFloat in [200, 500] {
+            let plate = CGSize(width: width, height: 80)
+            XCTAssertEqual(Looks.textOrigin(note(.left), plate: plate, size: size).x, (0.62 - 0.2) * 1920, accuracy: 0.001)
+            XCTAssertEqual(Looks.textOrigin(note(.right), plate: plate, size: size).x + width, (0.62 + 0.2) * 1920, accuracy: 0.001)
+            XCTAssertEqual(Looks.textOrigin(note(.center), plate: plate, size: size).x + width / 2, 0.62 * 1920, accuracy: 0.001)
+            XCTAssertEqual(Looks.textOrigin(note(nil), plate: plate, size: size).x + width / 2, 0.62 * 1920, accuracy: 0.001)
+            XCTAssertEqual(Looks.textOrigin(note(.left), plate: plate, size: size).y, 540 - 40, accuracy: 0.001)
+        }
+        let plate = CGSize(width: 300, height: 80)
+        XCTAssertEqual(Looks.textOrigin(note(.left, x: 0.1), plate: plate, size: size).x, 0, "kept inside on the left")
+        XCTAssertEqual(Looks.textOrigin(note(.right, x: 0.95), plate: plate, size: size).x, 1920 - 300, "kept inside on the right")
+    }
+
+    /// Drawn, a short title and a longer subtitle with one x and one left-aligned block start at the same column: the
+    /// block's left edge. Before 2026-11-08 each was centred on x, so their left edges did not line up.
+    func testLeftAlignedTextsWithOneBlockStartAtTheSameColumn() throws {
+        let size = CGSize(width: 1920, height: 1080)
+        let plates = TextPlates()
+        let white = CIImage(color: .white).cropped(to: CGRect(origin: .zero, size: size))
+        let context = CIContext()
+        var starts: [Int] = []
+        for text in ["Invoices", "Send, track and get paid"] {
+            let note = EditProject.TextNote(id: "t", startUs: 0, endUs: 1_000_000, text: text, x: 0.62, y: 0.5, size: 0.05,
+                                            block: .init(width: 0.4, align: .left))
+            let drawn = Looks.drawText(note, opacity: 1, plates: plates, on: white, size: size)
+            var row = [UInt8](repeating: 0, count: 4 * Int(size.width))
+            context.render(drawn, toBitmap: &row, rowBytes: 4 * Int(size.width), bounds: CGRect(x: 0, y: 540, width: size.width, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            // The plate darkens the white canvas (to about 145: Core Image blends in linear light): its first column.
+            starts.append(try XCTUnwrap(stride(from: 0, to: row.count, by: 4).first { row[$0] < 200 }) / 4)
+        }
+        let blockLeft = Int(((0.62 - 0.2) * 1920).rounded())
+        for start in starts {
+            XCTAssertEqual(Double(start), Double(blockLeft), accuracy: 1, "the plate starts at the block's left edge")
+        }
+    }
 }
