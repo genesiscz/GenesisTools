@@ -19,7 +19,12 @@ import {
 
 const { log } = logger.scoped("recorder-fx-analysis");
 
-const clock = (seconds: number): string => new Date(Math.round(seconds * 1000)).toISOString().slice(14, 21);
+/** A time as mm:ss.s, with the hours in front from one hour on (h:mm:ss.s), so a long recording's times stay right. */
+export function clock(seconds: number): string {
+    const iso = new Date(Math.round(seconds * 1000)).toISOString();
+    const hours = Math.floor(Math.round(seconds * 1000) / 3_600_000);
+    return hours > 0 ? `${hours}:${iso.slice(14, 21)}` : iso.slice(14, 21);
+}
 
 function fail(error: unknown, what: string): void {
     log.debug({ error }, `${what} failed`);
@@ -43,8 +48,12 @@ export function registerFxAnalysisCommands(program: Command): void {
         .option("--json", "print JSON")
         .action(async (value: string, flags: { names?: string; excludeFixed?: boolean; json?: boolean }) => {
             try {
+                const names = flags.names
+                    ?.split(",")
+                    .map((name) => name.trim())
+                    .filter(Boolean);
                 const hits = await privateData((await openProject(value)).project, {
-                    names: flags.names?.split(",").map((name) => name.trim()),
+                    names,
                     excludeFixed: flags.excludeFixed,
                 });
 
@@ -62,9 +71,7 @@ export function registerFxAnalysisCommands(program: Command): void {
                     return;
                 }
 
-                out.printlnErr(
-                    `Hide them all: ${toolCommand("recorder apply")} ${value} '{"op":"hidePrivate"}' (or "ids":[…] for some)`
-                );
+                out.printlnErr(hidePrivateHint(value, { names, excludeFixed: flags.excludeFixed }));
             } catch (error) {
                 fail(error, "private-data");
             }
@@ -199,6 +206,25 @@ export function registerFxAnalysisCommands(program: Command): void {
                 }
             }
         );
+}
+
+/**
+ * The apply command that hides what private-data listed, with the same names and excludeFixed: the op finds its hits
+ * again, so without the names it never finds the name hits, and their ids match nothing.
+ */
+export function hidePrivateHint(value: string, flags: { names?: readonly string[]; excludeFixed?: boolean }): string {
+    const names = (flags.names ?? []).map((name) => name.trim()).filter(Boolean);
+    const all = SafeJSON.stringify(
+        {
+            op: "hidePrivate",
+            ...(names.length > 0 ? { names } : {}),
+            ...(flags.excludeFixed ? { excludeFixed: true } : {}),
+        },
+        { strict: true }
+    );
+    const some = all.replace(/\}$/, ',"ids":[…]}');
+    const quoted = (json: string) => `'${json.replaceAll("'", "'\\''")}'`;
+    return `Hide them all: ${toolCommand("recorder apply")} ${value} ${quoted(all)} (or ${quoted(some)} for some)`;
 }
 
 /** One hit as a line: id, source span, label, the masked value and what it is now. */
