@@ -1008,6 +1008,31 @@ export function exportRangeOf(
     return { fromUs: leadUs + fromUs, toUs: leadUs + toUs };
 }
 
+/**
+ * The part of the SOURCE a verifyHidden from/to covers, for its source reads (scanOf, with its margin each side):
+ * source seconds as they are; output seconds through the clips. Undefined without from and to: the whole movie.
+ */
+function sourceScanOf(
+    project: EditProject,
+    options: { from?: TimeValue; to?: TimeValue; timeBase?: "source" | "output" }
+): { fromUs: number; toUs: number } | undefined {
+    if (options.timeBase !== "output") {
+        return scanOf(options.from, options.to);
+    }
+
+    if (options.from === undefined && options.to === undefined) {
+        return undefined;
+    }
+
+    const endUs = outputDurationUs(project);
+    const outputUs = (time: TimeValue | undefined, fallback: number) =>
+        time === undefined ? fallback : Math.min(endUs, Math.max(0, timeToUs(time)));
+    const fromUs = outputUs(options.from, 0);
+    const toUs = Math.max(fromUs, outputUs(options.to, endUs) - 1);
+    const sourceUs = [sourceTimeOf(project, fromUs), sourceTimeOf(project, toUs)];
+    return scanOf(Math.min(...sourceUs) / 1_000_000, Math.max(...sourceUs) / 1_000_000);
+}
+
 /** A moment of the export where the text is still readable. */
 export interface Leak {
     /** Seconds of the export file (an intro card included). */
@@ -1132,7 +1157,10 @@ export async function verifyHidden(
     // R6 5: an export starts with the intro card; what plays after it is the output, and each output moment a source one.
     const endUs = cardsLeadUs(project) + outputDurationUs(project);
     // R7: a few characters of a value the source shows (a heading that slid out at the edge) are a leak of it too.
-    const { frames: sourceFrames } = await screenTextOf(project);
+    // CLI-F7: with from/to the source is read in that range only, as a ranged findText reads it, so a 5 s check of
+    // a movie never read whole reads seconds of it, not a whole-movie OCR.
+    const scan = sourceScanOf(project, options);
+    const { frames: sourceFrames } = await screenTextIn(project, scan);
     const values = sourceFrames.flatMap((frame) =>
         frame.lines.flatMap((line) => matcher(line.text).map((match) => match.value))
     );
@@ -1158,7 +1186,7 @@ export async function verifyHidden(
         };
     });
     // R7 3: each leak's place in the source picture, from the source's own reads, and the redact ops that cover it.
-    const sourceHits = leaks.some((leak) => leak.source) ? await trackedHits(project, matcher) : [];
+    const sourceHits = leaks.some((leak) => leak.source) ? await trackedHits(project, matcher, { scan }) : [];
     const placed: Leak[] = leaks.map(({ keys, ...leak }) => ({
         ...leak,
         // R8 4: its place in the source at every frame it was read, the track of its fix.
