@@ -93,12 +93,14 @@ extension WidgetModel {
 
     /// A click on a decision option in a session's inbox. A second click on the staged option clears the pick.
     /// ⇧ adds the letter to the staged ones or takes it out (`DecisionAnswering.nextPick`), and always stages.
+    /// A decision that takes any set of its options does what ⇧ does on every click and number key, in every click
+    /// mode ("Send at once" too): only its Send sends the ticked set (Martin, 2026-11-07, DECISION 15).
     public func choose(_ card: WidgetCard, option: String) {
         if card.kind == "dialog" {
             answerDialog(key: card.sourceId, option: option)
             return
         }
-        let adding = NSEvent.modifierFlags.contains(.shift)
+        let adding = NSEvent.modifierFlags.contains(.shift) || card.takesSeveral
         guard clickStagesNow || adding else {
             // Media in this card's own answer cannot be staged: the outbox carries it with the pick.
             if ownAnswerCardID == card.id, !draft.assetIds.isEmpty {
@@ -151,14 +153,15 @@ extension WidgetModel {
     }
 
     /// A click on a decision option in the inbox of every session. With "Send at once" the pick is staged on the
-    /// item's own session and sent once the hub has it.
+    /// item's own session and sent once the hub has it. A decision that takes any set of its options ticks or unticks
+    /// the letter instead, in every click mode, as `choose(_:option:)` on a card does.
     public func choose(_ item: WidgetInboxItem, option: String) {
         if item.kind == "dialog" {
             answerDialog(key: item.sourceId, option: option)
             return
         }
         guard let session = session(forKey: item.key), let revision = item.revision else { return }
-        let adding = NSEvent.modifierFlags.contains(.shift)
+        let adding = NSEvent.modifierFlags.contains(.shift) || item.takesSeveral
         guard clickStagesNow || adding else {
             stage(id: item.sourceId, sessionId: session.target.sessionId, revision: revision, option: option,
                   item: item, completed: { [weak self] version in
@@ -171,6 +174,32 @@ extension WidgetModel {
         let current = stagedOption(item.sourceId, stored: item.draftOption)
         stage(id: item.sourceId, sessionId: session.target.sessionId, revision: revision,
               option: DecisionAnswering.nextPick(current, option, adding: adding), item: item)
+    }
+
+    /// "Pick the recommended a + b + c" on a card: the staged pick becomes exactly `option`; nothing is sent.
+    public func pickSet(_ card: WidgetCard, option: String) {
+        guard let selected, let revision = card.revision else { return }
+        stage(id: card.sourceId, sessionId: selected.target.sessionId, revision: revision, option: option,
+              item: Self.inboxItem(card))
+    }
+
+    /// "Pick the recommended a + b + c" on an inbox item: the staged pick becomes exactly `option`; nothing is sent.
+    public func pickSet(_ item: WidgetInboxItem, option: String) {
+        guard let session = session(forKey: item.key), let revision = item.revision else { return }
+        stage(id: item.sourceId, sessionId: session.target.sessionId, revision: revision, option: option, item: item)
+    }
+
+    /// ⌘-Return on an option of a decision that takes any set: the ticked set goes to its session now; with nothing
+    /// ticked, `letter` is ticked first and goes alone. Return alone only ticks (`choose`).
+    func sendSet(_ card: WidgetCard, orLetter letter: String) {
+        if stagedOption(card.sourceId, stored: card.draftOption) == nil { choose(card, option: letter) }
+        sendStaged([card.sourceId], known: [Self.inboxItem(card)])
+    }
+
+    /// `sendSet(_:orLetter:)` for an entry of the inbox of every session.
+    func sendSet(_ item: WidgetInboxItem, orLetter letter: String) {
+        if stagedOption(item.sourceId, stored: item.draftOption) == nil { choose(item, option: letter) }
+        sendStaged([item.sourceId], known: [item])
     }
 
     /// Sends a card's selected option by staging its pick and note, then sending the staged decision.
@@ -255,10 +284,15 @@ extension WidgetModel {
 
     /// A card as the inbox list carries it, for the sends that take list items (Send now, Send again).
     nonisolated static func inboxItem(_ card: WidgetCard) -> WidgetInboxItem {
-        WidgetInboxItem(id: card.id, sourceId: card.sourceId, kind: card.kind, key: card.sessionKey, at: card.at,
-                        needsAnswer: card.needsAnswer, title: card.title, number: card.number,
-                        options: card.choices.map(\.title), recommended: card.choices.first(where: \.recommended)?.id,
-                        revision: card.revision, draftOption: card.draftOption, draft: card.draft)
+        // A set's recommendation keeps every letter ("abc"), which `isRecommended` and `recommendedSet` read.
+        let recommendedSet = card.choices.filter(\.recommended).map(\.id).joined()
+        let recommended = card.takesSeveral ? (recommendedSet.isEmpty ? nil : recommendedSet)
+            : card.choices.first(where: \.recommended)?.id
+        return WidgetInboxItem(id: card.id, sourceId: card.sourceId, kind: card.kind, key: card.sessionKey, at: card.at,
+                               needsAnswer: card.needsAnswer, title: card.title, number: card.number,
+                               options: card.choices.map(\.title), recommended: recommended,
+                               revision: card.revision, draftOption: card.draftOption, draft: card.draft,
+                               multiple: card.multiple)
     }
 
     private func stage(

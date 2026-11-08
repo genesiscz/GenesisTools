@@ -60,6 +60,9 @@ export interface CallerHost {
     projectRoot?: string | null;
     parentThreadId?: string | null;
     relationshipToParent?: string | null;
+    /** The thread's title in T3 Code, and its parent thread's, so a record can name both without a second read. */
+    title?: string | null;
+    parentTitle?: string | null;
 }
 
 /** The account a caller's harness bills, from the launcher's stamp: an account name, or a proxy target instead. */

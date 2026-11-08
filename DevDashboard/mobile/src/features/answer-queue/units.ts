@@ -321,3 +321,27 @@ export function togglePick({
 
     return multiple ? [...selected, choice] : [choice];
 }
+
+/**
+ * A press on a letter of a multiple decision: the whole staged set with that letter toggled, in option order
+ * (`"a"` and `c` give `"ac"`). An empty set is `""`, which clears the staged pick on the Mac.
+ */
+export function toggleStagedLetter({
+    staged,
+    letter,
+    letters,
+}: {
+    staged: string | null;
+    letter: string;
+    letters: readonly string[];
+}): string {
+    const held = new Set(staged ?? "");
+
+    if (held.has(letter)) {
+        held.delete(letter);
+    } else {
+        held.add(letter);
+    }
+
+    return letters.filter((entry) => held.has(entry)).join("");
+}

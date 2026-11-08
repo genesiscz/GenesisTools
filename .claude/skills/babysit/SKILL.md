@@ -329,6 +329,13 @@ which fails on a leftover conflict marker and on a JSON file that does not parse
 inline `bun -e` script: on 2026-10-14 one returned the pick names as text, wrote the word `ours` into both plugin
 manifests (d9687720a), and the genesis-tools plugin did not load in any new session for 12 hours.
 
+During a rebase, `bun .claude/skills/babysit/scripts/resolve-same.ts --cwd <worktree>` is the only automatic
+resolver. It keeps the HEAD side only for matching conflict blocks and handles a version-only conflict by retaining
+the higher version. It stops for a real conflict, a parse failure, or an empty commit without proof that its patch is
+upstream. Start the rebase with `--empty=stop --reapply-cherry-picks` so Git cannot silently drop a later empty
+commit. The resolver refuses a rebase configured to drop empty commits. Never automatically keep ours or theirs for
+a whole file. Resolve the remaining conflicts manually with `conflicts.ts` and check them before continuing.
+
 Gates before each push: the test files of the scope (not the PR's whole suite: a test that launches a real
 browser or app, such as the chrome-devtools headless tests, makes a 1.4 GB app copy per launch, so run it only when
 the fix touches that path, and report it as NOT RUN otherwise), `bunx tsgo --noEmit`, Biome on the changed files,
@@ -401,7 +408,13 @@ only prepares and prints the squash; every git call is an argument array, becaus
    `fix(<scopes>): #<N> followup - address PR review (<k> commits)` whose body lists each squashed subject; prove the
    tree is identical (`git rev-parse HEAD^{tree}` before and after) and run `bun scripts/git/check-commits.ts
    origin/master..HEAD`.
-2. Push with `--force-with-lease=<branch>:<old head>`. An identical tree on a green head needs no new CI run
+2. After any restack that resolved a conflict, run `bun .claude/skills/babysit/scripts/restack-verify.ts --branch
+   <name>=<oldHead>..<newHead> --old-base <oldBase> --new-base <newBase> --reference <integration-ref>` for every
+   restacked branch before any push. Restore every DROPPED file and every CHANGED file that does not equal the
+   integration branch from the pre-restack version or the integration branch, then verify again. On 2026-11-05,
+   whole-file conflict resolution lost review fixes in three PRs: a monitor test import, six mobile files, and three
+   e2e files. This check compares each PR's own file patches to expose those losses.
+   Push with `--force-with-lease=<branch>:<old head>`. An identical tree on a green head needs no new CI run
    (review-loop 4e); a rebase that resolved a conflict is new code: rerun CI and judge it. Do not wait for eve to
    review the last judged fix; the CodeRabbit-review and per-thread-reply requirements still hold.
 3. `git fetch origin <branch>` in the main checkout (`tools github merge` compares against the local remote ref and
@@ -420,15 +433,18 @@ only prepares and prints the squash; every git call is an argument array, becaus
 
 A PR that conflicts with master, or whose parent was just squash-merged, is restacked first:
 `bun .claude/skills/babysit/scripts/restack.ts --wt <worktree> --onto origin/master [--upstream <fork point>]`. It runs
-with hooks and rerere off (a hook froze on a stuck syspolicyd; rerere hid a conflict behind an old resolution),
-resolves only the plugin version files (the higher version wins), and aborts on any code conflict: that one goes to
-the worker who knows the PR, as a merge-prep steer that authorizes the rebase. `--upstream` is the commit the branch
-forked from on its parent (a child stacked on a parent that kept growing forked before the parent's later commits;
+with hooks and rerere off (a hook froze on a stuck syspolicyd; rerere hid a conflict behind an old resolution).
+It leaves conflicts in place. Run `resolve-same.ts --cwd <worktree>` as described in step 7, then send any remaining
+conflict to the worker who knows the PR as a merge-prep steer that authorizes the rebase. `--upstream` is the commit
+the branch forked from on its parent (a child stacked on a parent that kept growing forked before the parent's later commits;
 find it with `git merge-base <child> <old parent head>`). Check with `git range-diff`, run the area tests, give a
 child that changes plugin files a version above its new base, then push with `--force-with-lease`. A restack is new
 code: rerun CI and judge it before the merge; eve need not re-review the last judged fix. A PR over about 50
 files keeps its CodeRabbit review, and the thread replies of review-loop step 5a still hold. When the restack carries a fix round too, push it with
 `integrate.ts … --restacked-from <old head>`: the lease is that old head, and the gates check only the PR's own commits.
+Record each branch's old head and old base before restacking. After a conflict resolution, run `restack-verify.ts`
+for every restacked branch against the integration branch as in step 2, and restore dropped or unexplained changed
+files before pushing. Use `resolve-same.ts` as the only automatic resolver; never automatically keep an entire side.
 
 ## 7c. Disk: watch it, reclaim /tmp yourself
 

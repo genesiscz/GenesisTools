@@ -6,6 +6,7 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig, normalizePath, type Plugin, type PluginOption, type Rolldown, type UserConfig } from "vite";
 // Relative on purpose: config bundlers inline relative imports but externalize bare ones.
+import { startLogCap } from "../DashboardApp/log-cap";
 import { env } from "../env.client";
 import { pinNodeModules } from "./pin-node-modules";
 
@@ -108,6 +109,26 @@ function watchExternalDirs(dirs: string[]): Plugin {
             for (const dir of dirs) {
                 server.watcher.add(dir);
             }
+        },
+    };
+}
+
+/**
+ * Dev-server plugin that keeps a detached dashboard's background log under its size cap (`DashboardApp/log-cap.ts`).
+ * Does nothing when the dashboard was not started into a log file (`DASHBOARD_LOG_FILE` unset).
+ */
+function capDashboardLog(): Plugin {
+    return {
+        name: "cap-dashboard-log",
+        apply: "serve",
+        configureServer(server) {
+            const logFile = env.dashboard.getLogFile();
+            if (!logFile) {
+                return;
+            }
+
+            const stop = startLogCap(logFile);
+            server.httpServer?.once("close", stop);
         },
     };
 }
@@ -261,7 +282,7 @@ export function createDashboardViteConfig({
         .map(([find, replacement]) => ({ find, replacement }));
     const externalWatchDirs = appDir ? deriveWatchDirs(root, appDir, extraWatchDirs) : [];
 
-    const corePlugins: PluginOption[] = [pinNodeModules(root), tailwindcss()];
+    const corePlugins: PluginOption[] = [pinNodeModules(root), tailwindcss(), capDashboardLog()];
 
     if (externalWatchDirs.length > 0) {
         corePlugins.push(watchExternalDirs(externalWatchDirs));
@@ -280,6 +301,12 @@ export function createDashboardViteConfig({
         server: {
             port,
             host,
+            // Off for every dashboard. Vite 8 turns it on when an AI agent starts the server, and then it prints the
+            // browser's console errors in the server output. TanStack devtools (`devtools()`) sends that server output
+            // back to the browser console as `[Server] …` errors, so each error came back again with one more prefix:
+            // claude-history wrote 19.6 GB of its background log in three hours (2026-11-05). A dashboard that loads
+            // the devtools still gets the browser's console lines in its server output, as `[Client] …`.
+            forwardConsole: false,
             fs: {
                 allow: [root, resolve(__dirname, "../../..")],
             },

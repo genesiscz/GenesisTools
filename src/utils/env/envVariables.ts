@@ -238,6 +238,12 @@ export const env = {
         getHome: () => getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),
         /** True only when GENESIS_TOOLS_HOME is actually set (a sandboxed root). */
         hasExplicitHome: () => isNonEmpty("GENESIS_TOOLS_HOME"),
+        /**
+         * The home whose `Applications` folder holds GenesisTools.app: GENESIS_TOOLS_APP_HOME, else the real home. It
+         * does not follow GENESIS_TOOLS_HOME: a sandbox has data but no app of its own, and a window launched on one
+         * built and registered a second app inside it (2026-11-07). The test preload points it at an empty folder.
+         */
+        getAppHome: () => getTrimmed("GENESIS_TOOLS_APP_HOME") ?? homedir(),
         /** fable-replace's own data root override (its journal lives under it); unset in normal use. */
         getFableReplaceHome: () => getTrimmed("FABLE_REPLACE_HOME"),
         /** Set by the GenesisTools.app launcher for its children: the TCC identity this process runs under. */

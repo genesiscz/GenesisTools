@@ -43,13 +43,14 @@ import {
 } from "./launchd";
 import {
     launchdSpawnCmd,
+    logFileSpawnEnv,
     persistInstallServeMode,
     resolveSpawnCmd,
     runDev,
     shouldOpenBrowser,
     spawnEnv,
 } from "./lifecycle-serve";
-import { printDevServerBanner, readLogTail, resetLogFile } from "./logSession";
+import { LOG_TAIL_WINDOW_BYTES, printDevServerBanner, readLogTail, resetLogFile } from "./logSession";
 import {
     describeConflict,
     promptDependencyStart,
@@ -175,7 +176,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
     const { pid, exited } = spawnDetached({
         cmd: resolveSpawnCmd(config, opts),
         cwd: config.spawn.cwd,
-        env: spawnEnv(config),
+        env: logFileSpawnEnv(config, ctx.logFile),
         logFile: ctx.logFile,
     });
     writePid(config.key, pid);
@@ -327,7 +328,7 @@ async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpO
             label: ctx.plistLabel,
             command,
             cwd: config.spawn.cwd,
-            env: spawnEnv(config),
+            env: logFileSpawnEnv(config, ctx.logFile),
             logFile: ctx.logFile,
         });
         writePreferences(config.key, { launchdInstalled: true, launchdPromptDismissed: false });
@@ -359,7 +360,7 @@ async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpO
             label: ctx.plistLabel,
             command,
             cwd: config.spawn.cwd,
-            env: spawnEnv(config),
+            env: logFileSpawnEnv(config, ctx.logFile),
             logFile: ctx.logFile,
         });
     }
@@ -703,9 +704,16 @@ export async function attach(ctx: LifecycleContext, opts: { lines?: number } = {
                 continue;
             }
             const size = statSync(logFile).size;
+            if (size < pos) {
+                // The log was trimmed or reset (log-cap.ts, resetLogFile): follow it from its new start.
+                pos = 0;
+            }
+
             if (size <= pos) {
                 continue;
             }
+
+            pos = Math.max(pos, size - LOG_TAIL_WINDOW_BYTES);
             const fd = openSync(logFile, "r");
             try {
                 const buf = Buffer.alloc(size - pos);

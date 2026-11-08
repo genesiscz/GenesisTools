@@ -22,12 +22,19 @@ processes. `bun run app:status` prints what is installed and whether it is stale
 
 **🛑 A package that uses GenesisKit by path** (`src/macos/GenesisTools`, `GenesisClickyPreview`,
 `GenesisWidgetPreview`) **is built, tested and run with `--disable-build-manifest-caching`**:
-`swift test --package-path src/macos/GenesisTools --disable-build-manifest-caching`. SwiftPM re-plans a build
+`swift build --disable-build-manifest-caching` in the preview packages. SwiftPM re-plans a build
 only when the ROOT package's own folders, `Package.swift` or `Package.resolved` change, so a Swift file added
 to GenesisKit is never compiled into the dependent, and its first use fails with "cannot find 'X' in scope" on
 correct code. It hit three merges on 2026-10-10 and the Clicky preview twice on 2026-10-12. The flag costs
 about 0.1 s. `bun run app` decides it by itself (a hash of the Swift file list in `app.ts`), and the shell guard
 blocks the bare command (rule `swiftpm-stale-plan`). GenesisKit's own tests do not need it.
+
+**The app's tests: `bun run app:test`** (`tools macos permissions test`; pass `swift test` arguments after `--`:
+`bun run app:test -- --filter HubUsageTests`). It runs `swift test` in the app build's own scratch tree
+(`.build/opt`, every part, `-O`, no index store) and decides the manifest flag the same way. A plain `swift test`
+builds a second full tree in `.build`: measured 2026-11-05, 1676 MiB, against 260 MiB that the tests add to the
+app's tree, and the app build after a test build took 2.6 s (nothing rebuilt). The suite gives the same result
+both ways (886 tests, 0 failures).
 
 **🛑 The reap is the part that matters, and it is why this is a rule rather than a suggestion.**
 macOS delivers a notification click to the bundle's ALREADY-RUNNING instance and only launches a

@@ -77,19 +77,25 @@ describe("genesisAppLauncher", () => {
         mkdirSync(join(home, ".genesis-tools", "app"), { recursive: true });
         writeFileSync(join(home, ".genesis-tools", "app", "disabled"), "");
         await env.testing.withOverrides(
-            { GENESIS_TOOLS_APP_BUNDLE_ID: undefined, GENESIS_TOOLS_NO_APP: undefined, GENESIS_TOOLS_HOME: home },
+            {
+                GENESIS_TOOLS_APP_BUNDLE_ID: undefined,
+                GENESIS_TOOLS_NO_APP: undefined,
+                GENESIS_TOOLS_HOME: home,
+                GENESIS_TOOLS_APP_HOME: home,
+            },
             () => {
                 expect(genesisAppLauncher()).toBeNull();
             }
         );
     });
 
-    it("returns null when no bundle is installed under GENESIS_TOOLS_HOME", async () => {
+    it("returns null when no bundle is installed in the app home", async () => {
         await env.testing.withOverrides(
             {
                 GENESIS_TOOLS_APP_BUNDLE_ID: undefined,
                 GENESIS_TOOLS_NO_APP: undefined,
                 GENESIS_TOOLS_HOME: "/nonexistent",
+                GENESIS_TOOLS_APP_HOME: "/nonexistent",
             },
             () => {
                 expect(genesisAppLauncher()).toBeNull();
@@ -118,6 +124,7 @@ describe.skipIf(skip.unlessMac)("genesisAppLauncher decides per caller", () => {
             {
                 ...base,
                 GENESIS_TOOLS_HOME: home,
+                GENESIS_TOOLS_APP_HOME: home,
                 GENESIS_TOOLS_APP_BUNDLE_ID: GENESIS_APP_BUNDLE_ID,
                 GENESIS_TOOLS_APP_INODE: inode,
             },
@@ -133,6 +140,7 @@ describe.skipIf(skip.unlessMac)("genesisAppLauncher decides per caller", () => {
             {
                 ...base,
                 GENESIS_TOOLS_HOME: home,
+                GENESIS_TOOLS_APP_HOME: home,
                 GENESIS_TOOLS_APP_BUNDLE_ID: undefined,
                 GENESIS_TOOLS_APP_INODE: undefined,
             },
@@ -148,6 +156,7 @@ describe.skipIf(skip.unlessMac)("genesisAppLauncher decides per caller", () => {
             {
                 ...base,
                 GENESIS_TOOLS_HOME: home,
+                GENESIS_TOOLS_APP_HOME: home,
                 GENESIS_TOOLS_APP_BUNDLE_ID: GENESIS_APP_BUNDLE_ID,
                 GENESIS_TOOLS_APP_INODE: `${inode}9`,
             },
@@ -163,6 +172,7 @@ describe.skipIf(skip.unlessMac)("genesisAppLauncher decides per caller", () => {
             {
                 ...base,
                 GENESIS_TOOLS_HOME: home,
+                GENESIS_TOOLS_APP_HOME: home,
                 GENESIS_TOOLS_APP_BUNDLE_ID: GENESIS_APP_BUNDLE_ID,
                 GENESIS_TOOLS_APP_INODE: undefined,
             },
@@ -178,6 +188,7 @@ describe.skipIf(skip.unlessMac)("genesisAppLauncher decides per caller", () => {
             {
                 ...base,
                 GENESIS_TOOLS_HOME: home,
+                GENESIS_TOOLS_APP_HOME: home,
                 GENESIS_TOOLS_APP_BUNDLE_ID: "com.example.other",
                 GENESIS_TOOLS_APP_INODE: inode,
             },
@@ -206,7 +217,7 @@ describe("nativeInboxState", () => {
 
     it("selects the live widget data root, including Preview and explicit roots", async () => {
         const home = mkdtempSync(join(tmpdir(), "widget-root-"));
-        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_APP_HOME: home }, () => {
             const [normal, preview] = widgetLockPaths();
             const live = new Set([preview]);
             const deps = {
@@ -226,7 +237,7 @@ describe("nativeInboxState", () => {
 
     it("reads the bundles, the staging key and the widget locks of this home", async () => {
         const home = mkdtempSync(join(tmpdir(), "native-inbox-"));
-        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_APP_HOME: home }, () => {
             const [lock] = widgetLockPaths();
             const live = new Set<string>();
             const deps = {
@@ -300,7 +311,7 @@ describe("nativeInboxState", () => {
 
     it("writes the hooks' state file only for a native install, and rewrites it when the install goes away", async () => {
         const home = mkdtempSync(join(tmpdir(), "native-inbox-file-"));
-        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_APP_HOME: home }, () => {
             const path = nativeInboxStateFile();
             const none = nativeInboxRecord({ ...off });
             const installed = nativeInboxRecord({ ...off, previewBundle: true });

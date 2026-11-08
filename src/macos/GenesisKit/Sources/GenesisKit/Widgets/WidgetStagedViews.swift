@@ -340,6 +340,16 @@ struct WidgetStagedDecisionRow: View {
                     ForEach(Array(options.enumerated()), id: \.offset) { index, option in
                         WidgetItemOptionButton(model: model, item: item, index: index, option: option)
                     }
+                    // A set's clicks only tick, so this one decision's Send sits under its options too.
+                    if item.takesSeveral {
+                        WidgetSetSendBar(
+                            letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
+                            recommended: DecisionAnswering.recommendedSet(item.recommended, count: options.count),
+                            sending: model.sendingDecisionIDs.contains(item.sourceId),
+                            identifier: "widget.staged.sendSet." + item.sourceId,
+                            pick: { model.pickSet(item, option: $0) },
+                            send: { model.sendStaged([item.sourceId], known: [item]) })
+                    }
                 }
             }
             Button("Open in its session") {
