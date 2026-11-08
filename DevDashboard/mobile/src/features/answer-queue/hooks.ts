@@ -47,9 +47,9 @@ function useQueueWrite<V, R>(
     return useMutation({
         mutationFn: (variables: V) => write(client, variables),
         onSuccess: (result) => onDone?.(result),
-        onSettled: () => {
-            void queryClient.invalidateQueries({ queryKey: answerQueueKeys.queue });
-        },
+        // Returned, so the write stays pending until the queue shows its result: a card disables its options while
+        // pending, and a tap in the gap would compute the next set from the old staged pick and drop a letter.
+        onSettled: () => queryClient.invalidateQueries({ queryKey: answerQueueKeys.queue }),
     });
 }
 
