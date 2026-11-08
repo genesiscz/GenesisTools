@@ -182,6 +182,8 @@ const zoomSchema = z
         focus: focusSchema.optional(),
         follow: z.boolean().optional(),
         lane: z.string().optional(),
+        easeInMs: z.number().int().nonnegative().optional(),
+        easeOutMs: z.number().int().nonnegative().optional(),
         // R5 4 canvas zoom
         target: z.enum(["picture", "canvas"]).optional(),
     })
@@ -280,7 +282,7 @@ const movieMethods = [
     edit(
         "zoom",
         zoomSchema,
-        'Zooms over a source range: scale 1–4, focus {x,y} 0..1 from the top left, or follow: true for the cursor. target "canvas" zooms the whole framed export instead of the picture inside it (focus is then 0..1 of the canvas): a phone on the left of a 16:9 frame fills it with zoom({ from, to, scale: 2.5, focus: { x: 0.15, y: 0.5 }, target: "canvas" }). A canvas zoom may overlap a picture zoom; texts, captions and keys stay where they are.'
+        'Zooms over a source range: scale 1–4, focus {x,y} 0..1 from the top left, or follow: true for the cursor. target "canvas" zooms the whole framed export instead of the picture inside it (focus is then 0..1 of the canvas): a phone on the left of a 16:9 frame fills it with zoom({ from, to, scale: 2.5, focus: { x: 0.15, y: 0.5 }, target: "canvas" }). A canvas zoom may overlap a picture zoom; texts, captions and keys stay where they are. easeInMs / easeOutMs (450 each when absent) set how long it grows and shrinks; an ease in as long as the zoom is a slow push over a still screen.'
     ),
     edit("unzoom", z.object({ id: z.string() }), "Removes a zoom by its id.", ["id"]),
     edit(

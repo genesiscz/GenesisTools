@@ -1483,6 +1483,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             scale: z.number().min(1).max(4).optional(),
             focus: focusSchema.optional(),
             follow: z.boolean().optional(),
+            /** How long it takes to grow and to shrink back (450 ms each when absent); a long ease in is a slow push. */
+            easeInMs: z.number().int().nonnegative().optional(),
+            easeOutMs: z.number().int().nonnegative().optional(),
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
             // R5 4 canvas zoom
@@ -2568,6 +2571,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 scale: op.scale,
                 focus: op.focus,
                 follow: op.follow,
+                easeInMs: op.easeInMs,
+                easeOutMs: op.easeOutMs,
                 target: op.target,
             }).project;
         case "unzoom":

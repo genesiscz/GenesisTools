@@ -653,6 +653,20 @@ describe("edit project (edit.json)", () => {
         expect(outputDurationUs(faster)).toBe(5_000_000);
     });
 
+    test("a zoom op takes its ease times, so a slow push over a still screen needs no second setZoom op", () => {
+        const project = applyOp(wholeProject(source), {
+            op: "zoom",
+            from: 1,
+            to: 6,
+            scale: 1.2,
+            easeInMs: 4500,
+            easeOutMs: 300,
+        });
+        expect(project.zooms.map((zoom) => [zoom.easeInMs, zoom.easeOutMs])).toEqual([[4500, 300]]);
+        const plain = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 6 });
+        expect(plain.zooms.map((zoom) => [zoom.easeInMs, zoom.easeOutMs])).toEqual([[450, 450]]);
+    });
+
     test("effect lanes: items find their lane, new lanes save in order, and a removed lane hands its items on", () => {
         const rect = { x: 0.1, y: 0.1, width: 0.2, height: 0.2 };
         let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 2 });
