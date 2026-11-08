@@ -3,7 +3,7 @@ import CoreImage
 
 /// fx B (round 4): the "⏩ 6x" badge drawn while a sped-up part plays (EditProject.AutoSpeed, the `speedUpWaits` and
 /// `autoSpeed` ops in src/utils/recording-editor/project.ts). It shows over every clip at 1.5x or faster, in a corner
-/// of the output, and fades in and out over 0.15 s at the clip's edges.
+/// of the output, and fades in and out over 0.15 s at the edges of the span of touching clips that play at its speed.
 enum SpeedBadge {
     /// Slower parts get no badge: a 1.25x trim is not a speed-up a viewer needs told about.
     static let minimumSpeed = 1.5
@@ -15,15 +15,26 @@ enum SpeedBadge {
         var opacity: Double
     }
 
-    /// The badge at an output time: the clip playing then, when the badge is on and the clip is fast enough.
+    /// The badge at an output time: the clip playing then, when the badge is on and the clip is fast enough. A split
+    /// clip (or two touching stretches of one speed) is one span, so the badge fades only at the span's outer edges.
     static func badge(atOutput outUs: Int64, project: EditProject) -> Mark? {
         guard let auto = project.autoSpeed, auto.badge else { return nil }
+        let clips = project.clips
         var start: Int64 = 0
-        for clip in project.clips {
+        for (index, clip) in clips.enumerated() {
             let end = start + clip.outputDurationUs
             if outUs < end {
                 guard clip.speed >= minimumSpeed else { return nil }
-                let edge = Double(min(outUs - start, end - outUs))
+                var spanStart = start, spanEnd = end
+                for before in clips[..<index].reversed() {
+                    guard before.speed == clip.speed else { break }
+                    spanStart -= before.outputDurationUs
+                }
+                for after in clips[(index + 1)...] {
+                    guard after.speed == clip.speed else { break }
+                    spanEnd += after.outputDurationUs
+                }
+                let edge = Double(min(outUs - spanStart, spanEnd - outUs))
                 return Mark(speed: clip.speed, position: auto.position, opacity: max(0, min(1, edge / Double(fadeUs))))
             }
             start = end

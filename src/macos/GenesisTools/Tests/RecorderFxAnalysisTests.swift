@@ -83,6 +83,19 @@ final class RecorderFxAnalysisTests: XCTestCase {
         XCTAssertEqual(SpeedBadge.label(2.5), "⏩ 2.5x")
     }
 
+    func testSpeedBadgeStaysOnAcrossASplitBetweenTwoClipsOfOneSpeed() {
+        // A 4x clip split in two: c1 plays 0 to 2.5 s of the output, c2 2.5 to 5 s, at the same speed.
+        let split = project(speeds: [4, 4, 1], badge: EditProject.AutoSpeed())
+        for outUs in stride(from: Int64(2_350_000), through: 2_650_000, by: 25_000) {
+            XCTAssertEqual(SpeedBadge.badge(atOutput: outUs, project: split)?.opacity, 1, "at \(outUs) µs the speed does not change")
+        }
+        XCTAssertEqual(SpeedBadge.badge(atOutput: 75_000, project: split)?.opacity ?? 0, 0.5, accuracy: 0.01, "it fades in at the span's start")
+        XCTAssertEqual(SpeedBadge.badge(atOutput: 4_925_000, project: split)?.opacity ?? 0, 0.5, accuracy: 0.01, "it fades out at the span's end")
+        // Another speed at the join still fades out and in.
+        let change = project(speeds: [4, 6, 1], badge: EditProject.AutoSpeed())
+        XCTAssertEqual(SpeedBadge.badge(atOutput: 2_500_000 - 75_000, project: change)?.opacity ?? 0, 0.5, accuracy: 0.01)
+    }
+
     func testSpeedBadgeDrawsInItsCorner() throws {
         let size = CGSize(width: 640, height: 360)
         let black = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: CGRect(origin: .zero, size: size))
