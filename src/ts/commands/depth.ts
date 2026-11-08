@@ -219,6 +219,9 @@ async function runDepthCommand(paths: string[], options: DepthCliOptions): Promi
     const by = options.by ?? "folder";
     const within = options.within && options.within.length > 0 ? options.within : paths;
     const scan = { tests: options.tests === true, ignore: options.ignore };
+    // Before any parse: a mistyped --split is refused without reading the tree first.
+    const moduleGrouping = createAreaGrouping({ roots: paths, split: options.split });
+    const importerGrouping = createAreaGrouping({ roots: within, split: options.split });
     const loaded = await loadFiles(paths, scan);
 
     for (const input of loaded.empty) {
@@ -230,8 +233,8 @@ async function runDepthCommand(paths: string[], options: DepthCliOptions): Promi
     const report = measureDepth(loaded.entries, index, {
         by,
         within,
-        moduleGrouping: createAreaGrouping({ roots: paths, split: options.split }),
-        importerGrouping: createAreaGrouping({ roots: within, split: options.split }),
+        moduleGrouping,
+        importerGrouping,
         minExports: options.minExports,
         limit: options.limit,
         deepLimit: options.deep,

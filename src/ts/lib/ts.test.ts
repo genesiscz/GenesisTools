@@ -1800,6 +1800,28 @@ describe("parseImports", () => {
             ["./f", "dynamic"],
         ]);
     });
+
+    it("finds a call with a comment or a newline before its parenthesis, as parseModule does", () => {
+        // No line here reads `import(` or `require(`: a text check for that skipped all three calls.
+        const source = [
+            'const a = require /* why */ ("./a");',
+            'const b = import\n// lazy\n("./b");',
+            'const c = require?.("./c");',
+        ].join("\n");
+
+        expect(parseImports(source, "probe.ts").map((site) => site.specifier)).toEqual(["./a", "./b", "./c"]);
+        expect(parseImports(source, "probe.ts")).toEqual(parseModule(source, "probe.ts").imports);
+        expect(parseImports("const d = other.import(1);", "probe.ts")).toEqual([]);
+    });
+
+    it('reads a re-export\'s specifier from its source only, so `export default "./x"` imports nothing', () => {
+        const source = 'export default "./sibling";\nexport { a } from "./a";';
+        const parsed = parseModule(source, "probe.ts");
+
+        expect(parseImports(source, "probe.ts").map((site) => site.specifier)).toEqual(["./a"]);
+        expect(parsed.imports.map((site) => site.specifier)).toEqual(["./a"]);
+        expect(parsed.exportNames.has("default")).toBe(true);
+    });
 });
 
 /**
@@ -1957,6 +1979,60 @@ describe("the import index, areas and depth", () => {
         expect(() => parseForbid("lib")).toThrow(UsageError);
     });
 
+    it("matches a --forbid prefix on whole folder names only", () => {
+        const utils = parseForbid("src/utils->src");
+        const ai = parseForbid("src/ai->src/utils/ai");
+
+        expect(breaksRule(utils, "src/utils/ai", "src/hub")).toBe(true);
+        expect(breaksRule(utils, "src/utils/ai", "src/utils/cli")).toBe(false);
+        expect(breaksRule(utils, "src/utilsX", "src/hub")).toBe(false);
+        expect(breaksRule(utils, "src/utils/ai", "src/utilsX")).toBe(true);
+        expect(breaksRule(ai, "src/ai", "src/utils/ai")).toBe(true);
+        expect(breaksRule(ai, "src/ai-proxy", "src/utils/ai")).toBe(false);
+        expect(breaksRule(ai, "src/ai-spend", "src/utils/ai/providers")).toBe(false);
+    });
+
+    it("fires a rule whose target is inside its source, and exempts only the target's own edges", () => {
+        const inner = parseForbid("src/utils->src/utils/ai");
+
+        expect(breaksRule(inner, "src/utils/(root)", "src/utils/ai")).toBe(true);
+        expect(breaksRule(inner, "src/utils/cli", "src/utils/ai/providers")).toBe(true);
+        expect(breaksRule(inner, "src/utils/ai/providers", "src/utils/ai/(root)")).toBe(false);
+        expect(breaksRule(inner, "src/utils/cli", "src/utils/storage")).toBe(false);
+
+        const report = buildAreaReport(index(), createAreaGrouping({ roots: [tree], split: [at("lib")], cwd: tree }), {
+            forbid: [parseForbid("lib->lib/core")],
+        });
+
+        expect(report.violations.map((violation) => [violation.from, violation.to])).toEqual([
+            ["lib/util", "lib/core"],
+        ]);
+    });
+
+    it("reads a rule with a trailing slash as the folder itself", () => {
+        const slashed = parseForbid("./src/utils/->src/");
+
+        expect(slashed).toMatchObject({ from: "src/utils", to: "src" });
+        expect(breaksRule(slashed, "src/utils", "src/hub")).toBe(true);
+        expect(breaksRule(slashed, "src/utils/ai", "src/hub")).toBe(true);
+
+        const plain = buildAreaReport(index(), grouping(), { forbid: [parseForbid("lib->app")] });
+        const trailing = buildAreaReport(index(), grouping(), { forbid: [parseForbid("lib/->app/")] });
+
+        expect(trailing.violations.map((violation) => violation.sites)).toEqual(
+            plain.violations.map((violation) => violation.sites)
+        );
+        expect(trailing.violations).toHaveLength(1);
+    });
+
+    it("refuses a --split folder that does not exist instead of splitting its parent", () => {
+        expect(() => createAreaGrouping({ roots: [tree], split: [at("lib/typo")], cwd: tree })).toThrow("--split");
+        expect(() => createAreaGrouping({ roots: [tree], split: [at("lib/helpers.ts")], cwd: tree })).toThrow(
+            UsageError
+        );
+        expect(() => createAreaGrouping({ roots: [at("lib/nothing-here")], cwd: tree })).not.toThrow();
+    });
+
     it("draws a Mermaid flowchart with mutual edges red and dynamic-only edges dashed", () => {
         const flowchart = renderMermaid(buildAreaReport(index(), grouping()), { minEdges: 1 });
 
@@ -1997,22 +2073,59 @@ describe("the import index, areas and depth", () => {
         });
     });
 
-    it("finds startup entries in folders and sums recurring package cost across entries", () => {
-        expect(startupEntryFor(at("app/tool"))).toBe(at("app/tool/index.ts"));
-        expect(startupEntryFor(at("app/web/page.ts"))).toBe(at("app/web/page.ts"));
-        expect(startupEntryFor(at("app/empty"))).toBeUndefined();
-        expect(toolEntriesIn(at("app"))).toEqual([at("app/tool/index.ts")]);
-        expect(moduleKey({ kind: "package", label: "pkg:@napi-rs/canvas/js-binding.js" })).toBe("pkg:@napi-rs/canvas");
-        expect(moduleKey({ kind: "package", label: "pkg:zod" })).toBe("pkg:zod");
-        expect(moduleKey({ kind: "file", label: "src/a.ts" })).toBe("src/a.ts");
+    it("counts `export {}` as no export and `export { helper }` as the declaration it names", async () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "gt-ts-exports-")));
+        const listed = (extra: string) =>
+            [
+                'import { core } from "./other";',
+                "function helper() {",
+                "    return 1;",
+                "}",
+                "class Box {",
+                "    open(): void {}",
+                "    private secret(): void {}",
+                `    ${extra}`,
+                "}",
+                "const { a, b } = { a: 1, b: 2 };",
+                "export { helper, Box as Crate, a, core };",
+            ].join("\n");
 
-        const result = (entry: string, coldMs: number, modules: Array<[string, NodeKind, number]>): AnalysisResult => ({
+        writeFileSync(join(dir, "other.ts"), "export const core = 1;");
+        writeFileSync(join(dir, "empty.ts"), "export {};\nconst x = 1;");
+        writeFileSync(join(dir, "listed.ts"), listed(""));
+        writeFileSync(join(dir, "listed-more.ts"), listed("close(): void {}"));
+        writeFileSync(join(dir, "listed-private.ts"), listed("private hidden(): void {}"));
+
+        const loaded = await loadFiles([dir]);
+        const local = createAreaGrouping({ roots: [dir], cwd: dir });
+        const report = measureDepth(loaded.entries, buildImportIndex([dir], { cwd: dir }), {
+            by: "file",
+            within: [dir],
+            moduleGrouping: local,
+            importerGrouping: local,
+            cwd: dir,
+        });
+        const row = (module: string) => report.modules.find((entry) => entry.module === module);
+
+        expect(row("empty.ts")).toMatchObject({ exports: 0, reexports: 0 });
+        expect(row("listed.ts")).toMatchObject({ exports: 4, reexports: 1, exportedFunctions: 1, thinExports: 1 });
+        expect(row("listed-more.ts")?.interfaceChars).toBeGreaterThan(row("listed.ts")?.interfaceChars ?? 0);
+        expect(row("listed-private.ts")?.interfaceChars).toBe(row("listed.ts")?.interfaceChars);
+    });
+
+    function result(
+        entry: string,
+        coldMs: number,
+        modules: Array<[string, NodeKind, number, string?]>,
+        timedOut = false
+    ): AnalysisResult {
+        return {
             entry,
             root: tree,
             runs: 1,
             coldMs,
             sumSelfMs: 0,
-            modules: modules.map(([label, kind, selfMs]) => ({
+            modules: modules.map(([label, kind, selfMs, importError]) => ({
                 id: label,
                 label,
                 kind,
@@ -2022,14 +2135,26 @@ describe("the import index, areas and depth", () => {
                 measured: true,
                 bytes: 0,
                 findings: [],
+                ...(importError ? { importError } : {}),
             })),
             edges: [],
             unresolved: [],
             workerStderr: "",
-            timedOut: false,
-            unmeasured: 0,
+            timedOut,
+            unmeasured: timedOut ? 1 : 0,
             planned: modules.length,
-        });
+        };
+    }
+
+    it("finds startup entries in folders and sums recurring package cost across entries", () => {
+        expect(startupEntryFor(at("app/tool"))).toBe(at("app/tool/index.ts"));
+        expect(startupEntryFor(at("app/web/page.ts"))).toBe(at("app/web/page.ts"));
+        expect(startupEntryFor(at("app/empty"))).toBeUndefined();
+        expect(toolEntriesIn(at("app"))).toEqual([at("app/tool/index.ts")]);
+        expect(moduleKey({ kind: "package", label: "pkg:@napi-rs/canvas/js-binding.js" })).toBe("pkg:@napi-rs/canvas");
+        expect(moduleKey({ kind: "package", label: "pkg:zod" })).toBe("pkg:zod");
+        expect(moduleKey({ kind: "file", label: "src/a.ts" })).toBe("src/a.ts");
+
         const report = summarizeStartup(
             [
                 {
@@ -2053,14 +2178,40 @@ describe("the import index, areas and depth", () => {
             { minMs: 20, top: 2, runs: 1 }
         );
 
-        expect(report.entries.map((entry) => entry.entry)).toEqual(["b", "a", "c"]);
-        expect(report.entries[1].top).toEqual([
+        expect(report.entries.map((entry) => entry.entry)).toEqual(["c", "b", "a"]);
+        expect(report.entries[2].top).toEqual([
             { module: "pkg:heavy", selfMs: 120 },
             { module: "a.ts", selfMs: 40 },
         ]);
-        expect(report.entries[2].error).toBe("boom");
+        expect(report.entries[0].error).toBe("boom");
         expect(report.recurring).toEqual([
             { module: "pkg:heavy", entries: 2, totalMs: 220, maxMs: 120, paidBy: ["a", "b"] },
         ]);
+    });
+
+    it("reads an import that threw or never settled as a failed entry, and sorts failed and timed-out entries first", () => {
+        const report = summarizeStartup(
+            [
+                { entry: "fast", result: result("fast", 100, [["fast.ts", "file", 5]]) },
+                {
+                    entry: "cli",
+                    result: result("cli", 80, [["cli.ts", "file", 4, "exit 0"]]),
+                },
+                {
+                    entry: "missing",
+                    result: result("missing", 0.5, [
+                        ["missing.ts", "file", 0.4, "Cannot find module './nope'"],
+                        ["dep.ts", "file", 0.1, "hang: never settled"],
+                    ]),
+                },
+                { entry: "slow", result: result("slow", 0, [["slow.ts", "file", 30]], true) },
+            ],
+            { minMs: 20, top: 2, runs: 1 }
+        );
+
+        expect(report.entries.map((entry) => entry.entry)).toEqual(["missing", "slow", "fast", "cli"]);
+        expect(report.entries[0].error).toBe("import failed: missing.ts: Cannot find module './nope' (and 1 more)");
+        expect(report.entries.find((entry) => entry.entry === "cli")?.error).toBeUndefined();
+        expect(report.entries[1]).toMatchObject({ timedOut: true, coldMs: 0 });
     });
 });

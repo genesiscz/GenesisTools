@@ -272,6 +272,8 @@ async function runAreasCommand(paths: string[], options: AreasCliOptions): Promi
 
     const rules = (options.forbid ?? []).map(parseForbid);
     const limit = options.limit ?? 40;
+    // Before the index: a mistyped --split is refused without parsing the whole tree first.
+    const grouping = createAreaGrouping({ roots: paths, split: options.split, depth: options.depth });
     const index = buildImportIndex(paths, { tests: options.tests === true, ignore: options.ignore });
 
     for (const input of index.empty) {
@@ -279,7 +281,6 @@ async function runAreasCommand(paths: string[], options: AreasCliOptions): Promi
         process.exitCode = 1;
     }
 
-    const grouping = createAreaGrouping({ roots: paths, split: options.split, depth: options.depth });
     const report = buildAreaReport(index, grouping, { forbid: rules });
 
     if (options.mermaid) {
@@ -322,7 +323,7 @@ export function registerAreasCommands(program: Command): void {
         .argument("<paths...>", "Files or directories; an area is the first folder under each one")
         .option(
             "--split <dir>",
-            "Group one level deeper inside this folder (src/utils gives src/utils/ai, src/utils/(root)); repeatable",
+            "Group one level deeper inside this existing folder (src/utils gives src/utils/ai, src/utils/(root)); repeatable",
             collect,
             [] as string[]
         )
@@ -333,7 +334,7 @@ export function registerAreasCommands(program: Command): void {
         )
         .option(
             "--forbid <rule>",
-            'A direction that must not exist, "<from>-><to>" by area prefix: "src/utils->src/" lists every utils area importing a tool; repeatable, exit 1 when broken',
+            'A direction that must not exist, "<from>-><to>", each a folder that holds areas: "src/utils->src" lists every utils area importing a tool; repeatable, exit 1 when broken',
             collect,
             [] as string[]
         )

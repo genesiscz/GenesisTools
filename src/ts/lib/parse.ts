@@ -185,8 +185,16 @@ function readImportStatement(node: SgNode): ImportSite | null {
     };
 }
 
+/**
+ * `export … from "x"` keeps its specifier in the `source` field. Any other string child is not a
+ * source: `export default "./sibling"` exports a string value and imports nothing.
+ */
+function exportSourceOf(node: SgNode): SgNode | null {
+    return field(node, "source");
+}
+
 function readReexport(node: SgNode): ImportSite | null {
-    const source = node.children().find((c) => c.kind() === "string");
+    const source = exportSourceOf(node);
 
     if (!source) {
         return null;
@@ -522,11 +530,20 @@ function collectSideEffects(statement: SgNode, into: SideEffect[]): void {
     }
 }
 
+/**
+ * Only the calls whose callee is `import` or `require`. ast-grep filters them in the native walk, so a
+ * file with thousands of calls hands back a handful of nodes instead of every call expression. The
+ * callee is matched as a node, so a comment or a newline before the parenthesis does not hide a call.
+ */
+const IMPORT_CALL_RULE = {
+    rule: { kind: "call_expression", has: { field: "function", regex: "^(?:import|require)$" } },
+};
+
 /** `import("x")` and `require("x")` anywhere in the file, marked dynamic when they do not run at load. */
 function callImportSites(root: SgNode): ImportSite[] {
     const sites: ImportSite[] = [];
 
-    for (const call of root.findAll({ rule: { kind: "call_expression" } })) {
+    for (const call of root.findAll(IMPORT_CALL_RULE)) {
         const callee = calleeText(call);
 
         if (callee !== "require" && callee !== "import") {
@@ -563,14 +580,11 @@ function callImportSites(root: SgNode): ImportSite[] {
     return sites;
 }
 
-/** A file with no `import(` or `require(` text cannot hold a call site, so the tree walk is skipped. */
-const IMPORT_CALL_HINT = /\b(?:import|require)\s*\(/;
-
 /**
  * Only the import sites of a module, the same sites `parseModule` reports, without the side-effect
  * and module-scope-use passes. A whole-tree import index parses thousands of files, and those two
- * passes cost more than the parse itself: on 6594 files (2026-11-08, one process, a loaded Mac)
- * this took 5.0 s and `parseModule` 12.1 s.
+ * passes cost more than the parse itself: on 6594 files (2026-11-08, one process, four runs on a
+ * Mac at load average 150 to 250) this took 4.4 to 6.1 s and `parseModule` 10.1 to 10.5 s.
  */
 export function parseImports(source: string, file: string): ImportSite[] {
     const lang = languageFor(file) ?? Lang.TypeScript;
@@ -586,7 +600,7 @@ export function parseImports(source: string, file: string): ImportSite[] {
             if (site) {
                 imports.push(site);
             }
-        } else if (kind === "export_statement" && statement.children().some((c) => c.kind() === "string")) {
+        } else if (kind === "export_statement" && exportSourceOf(statement)) {
             const site = readReexport(statement);
 
             if (site) {
@@ -595,9 +609,7 @@ export function parseImports(source: string, file: string): ImportSite[] {
         }
     }
 
-    if (IMPORT_CALL_HINT.test(source)) {
-        imports.push(...callImportSites(root));
-    }
+    imports.push(...callImportSites(root));
 
     return imports;
 }
@@ -631,9 +643,7 @@ export function parseModule(source: string, file: string): ParsedModule {
         }
 
         if (kind === "export_statement") {
-            const hasSource = statement.children().some((c) => c.kind() === "string");
-
-            if (hasSource) {
+            if (exportSourceOf(statement)) {
                 const site = readReexport(statement);
 
                 if (site) {

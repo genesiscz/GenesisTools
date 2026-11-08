@@ -112,6 +112,7 @@ export interface StartupEntry {
     top: StartupModuleCost[];
     timedOut: boolean;
     unmeasured: number;
+    /** The entry could not be measured, or a module in it rejected or never settled. Its cold time is no startup cost. */
     error?: string;
 }
 
@@ -128,6 +129,7 @@ export interface RecurringModule {
 export interface StartupReport {
     runs: number;
     minMs: number;
+    /** Failed entries first, then timed-out ones, then the slowest cold import first. */
     entries: StartupEntry[];
     /** Modules or packages at or above `minMs` in two or more entries, heaviest summed cost first. */
     recurring: RecurringModule[];
@@ -164,6 +166,32 @@ export function selfTimesOf(result: AnalysisResult): Map<string, number> {
     return times;
 }
 
+/**
+ * Why an entry's numbers are no startup cost: a module whose import rejected (a throw, a missing file)
+ * or never settled. A fast cold time is then the time to the failure. An `exit N` is no failure: the
+ * measurement runs an entry with `--help`, and a CLI exits on it by design.
+ */
+export function importFailureOf(result: AnalysisResult): string | undefined {
+    const failed = result.modules.filter((module) => module.importError && !module.importError.startsWith("exit "));
+
+    if (failed.length === 0) {
+        return undefined;
+    }
+
+    const first = failed.find((module) => module.label === result.entry) ?? failed[0];
+    const more = failed.length > 1 ? ` (and ${failed.length - 1} more)` : "";
+    return `import failed: ${first.label}: ${first.importError}${more}`;
+}
+
+/** Failed entries first, then timed-out ones: a broken measurement must not read as the fastest entry. */
+function healthOf(entry: StartupEntry): number {
+    if (entry.error) {
+        return 0;
+    }
+
+    return entry.timedOut ? 1 : 2;
+}
+
 export function summarizeStartup(
     outcomes: Array<{ entry: string; result?: AnalysisResult; error?: string }>,
     options: { minMs: number; top: number; runs: number }
@@ -195,6 +223,7 @@ export function summarizeStartup(
             top: ranked.slice(0, options.top).map(([module, selfMs]) => ({ module, selfMs: round(selfMs) })),
             timedOut: outcome.result.timedOut,
             unmeasured: outcome.result.unmeasured,
+            error: importFailureOf(outcome.result),
         });
 
         for (const [module, selfMs] of ranked) {
@@ -211,7 +240,7 @@ export function summarizeStartup(
         }
     }
 
-    entries.sort((a, b) => b.coldMs - a.coldMs || a.entry.localeCompare(b.entry));
+    entries.sort((a, b) => healthOf(a) - healthOf(b) || b.coldMs - a.coldMs || a.entry.localeCompare(b.entry));
 
     return {
         runs: options.runs,
