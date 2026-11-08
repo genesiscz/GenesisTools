@@ -4,6 +4,7 @@ import { optionLetters } from "@genesiscz/utils/agents/dialogs/keys";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { logger } from "@genesiscz/utils/logger";
 import { type AmbiguousAnswer, type ChatAnswer, chatAnswers, type OpenDecisionRef } from "./chat-answers";
+import { decisionOptionLabels, takesSeveral } from "./option-labels";
 import { awaitsAnswer, type DecisionRecord, kindOf, readDecisions, recordChatAnswers } from "./store";
 
 const log = logger.child({ component: "question:chat-answers" });
@@ -34,6 +35,8 @@ export function openDecisionRefs(
     return rows.map((row) => ({
         number: row.number,
         letters: optionLetters(row.options.length),
+        // Read on the options it shows, as every button surface reads it: a row may keep its options in its prompt.
+        ...(takesSeveral({ ...row, options: decisionOptionLabels(row.prompt, row.options) }) ? { several: true } : {}),
         askedAt: askedAtOf(row),
         revision: row.revision ?? 1,
         ...(askedBefore(row) ? { askedBefore: true } : {}),
