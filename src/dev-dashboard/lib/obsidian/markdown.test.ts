@@ -486,6 +486,22 @@ describe("Obsidian syntax", () => {
         expect(html).toContain('href="/share/x?asset=h3#L12"');
     });
 
+    test("a link to an image is marked for the share page's viewer, a link to another file is not", () => {
+        const { html } = renderMarkdown("[![Tiles|480](shot.webp)](shot.webp) [data](data.json)", {
+            resolveWikilink: () => null,
+            resolveAsset: (target) =>
+                target === "shot.webp"
+                    ? { kind: "image", url: "/share/x?asset=a1", name: "shot.webp" }
+                    : target === "data.json"
+                      ? { kind: "json", url: "/share/x?asset=a2", name: "data.json" }
+                      : null,
+        });
+
+        expect(html).toContain('<a href="/share/x?asset=a1" class="dd-md-asset-link" data-asset-image><img');
+        expect(html).toContain('alt="Tiles"');
+        expect(html).not.toMatch(/asset=a2"[^>]*data-asset-image/);
+    });
+
     test("raw HTML and Mermaid labels cannot inject markup before diagram rendering", () => {
         const source = [
             '<iframe srcdoc="<script>window.bad=1</script>"></iframe>',

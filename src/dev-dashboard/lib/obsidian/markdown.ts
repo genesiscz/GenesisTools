@@ -239,7 +239,8 @@ function renderAsset(asset: ResolvedAsset, labelHtml: string, inline: boolean, s
             return `<img src="${url}" alt="${labelHtml}" class="dd-md-asset-img"${sizeAttrs(size)} loading="lazy" />`;
         }
 
-        return `<a href="${url}" class="dd-md-asset-link">${labelHtml}</a>`;
+        // Marked as an image, so the share page opens it in its viewer: the served address has no file extension.
+        return `<a href="${url}" class="dd-md-asset-link" data-asset-image>${labelHtml}</a>`;
     }
 
     if (asset.kind === "page") {
