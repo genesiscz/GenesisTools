@@ -3,7 +3,7 @@ import { denoiseSchema } from "./denoise";
 import { textAnimateOf } from "./overlays";
 import { timeToUs } from "./plan";
 import type { CursorSample, EditOp, EditProject } from "./project";
-import { MINIMUM_CLIP_US, newId, placeZoom, TEXT_MAX_CHARS } from "./project";
+import { CANVAS_ZOOM_HOLDS_FOCUS, MINIMUM_CLIP_US, newId, placeZoom, TEXT_MAX_CHARS } from "./project";
 
 /**
  * The ops that change an item that exists (a zoom, hidden part, text, shape, clip or lane) by its id, as the editor
@@ -75,8 +75,15 @@ export function setZoom(project: EditProject, op: Op<"setZoom">): EditProject {
     }
 
     const zoom = project.zooms[index];
-    // Placing the focus by hand makes a zoom that followed the cursor a manual one, unless the op names the mode.
-    const mode = op.mode ?? (op.focus ? "manual" : zoom.mode);
+    const canvas = zoom.target === "canvas";
+
+    if (canvas && op.mode === "follow") {
+        throw new RangeError(CANVAS_ZOOM_HOLDS_FOCUS);
+    }
+
+    // Placing the focus by hand makes a zoom that followed the cursor a manual one, unless the op names the mode. A
+    // canvas zoom saved with follow before the rule renders at its focus, so a change to it stores that manual mode.
+    const mode = canvas ? "manual" : (op.mode ?? (op.focus ? "manual" : zoom.mode));
     const next = {
         ...zoom,
         mode,

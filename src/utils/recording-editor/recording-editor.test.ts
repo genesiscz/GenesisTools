@@ -1642,6 +1642,45 @@ describe("edit project (edit.json)", () => {
         expect([second?.startUs, second?.target]).toEqual([3_000_000, "canvas"]);
     });
 
+    // A canvas zoom with follow was saved as mode follow, and the renderer held its focus (ZoomCurve.canvasView).
+    describe("canvas zooms hold their focus", () => {
+        test("a canvas zoom refuses follow, and setZoom will not make it follow", () => {
+            const base = wholeProject(source);
+            expect(() =>
+                applyOp(base, { op: "zoom", from: 2, to: 6, scale: 2, target: "canvas", follow: true })
+            ).toThrow(/canvas zoom holds its focus/);
+            const canvas = applyOp(base, {
+                op: "zoom",
+                from: 2,
+                to: 6,
+                scale: 2,
+                target: "canvas",
+                focus: { x: 0.2, y: 0.5 },
+            });
+            const id = canvas.zooms[0].id;
+            expect(canvas.zooms[0]).toMatchObject({ mode: "manual", target: "canvas" });
+            expect(() => applyOp(canvas, { op: "setZoom", id, mode: "follow" })).toThrow(/canvas zoom holds its focus/);
+            expect(applyOp(canvas, { op: "setZoom", id, scale: 3 }).zooms[0]).toMatchObject({
+                mode: "manual",
+                scale: 3,
+            });
+            // An edit saved before the rule loads and stays editable: a change to it stores the manual mode it renders with.
+            const saved = { ...canvas, zooms: canvas.zooms.map((zoom) => ({ ...zoom, mode: "follow" as const })) };
+            expect(applyOp(saved, { op: "setZoom", id, scale: 3 }).zooms[0]).toMatchObject({
+                mode: "manual",
+                scale: 3,
+            });
+            // A picture zoom still follows the cursor, by the zoom op and by setZoom.
+            const picture = applyOp(base, { op: "zoom", from: 2, to: 6, follow: true });
+            expect(picture.zooms[0].mode).toBe("follow");
+            expect(picture.zooms[0].target).toBeUndefined();
+            const manual = applyOp(base, { op: "zoom", from: 2, to: 6, focus: { x: 0.3, y: 0.3 } });
+            expect(applyOp(manual, { op: "setZoom", id: manual.zooms[0].id, mode: "follow" }).zooms[0].mode).toBe(
+                "follow"
+            );
+        });
+    });
+
     // R5 10: a long callout was cut (setText cut it to 200 characters without a word) and "\n" was undocumented.
     test("a text keeps its line breaks, takes a callout of 500 characters and refuses a longer one aloud", () => {
         const callout = `Step one\n${"word ".repeat(60).trim()}`;

@@ -231,6 +231,12 @@ struct WideButton: View {
     }
 }
 
+extension EditProject.Zoom {
+    /// A picture zoom may follow the cursor. A canvas zoom holds its focus (0...1 of the canvas): the cursor moves inside
+    /// the picture, so the renderer never follows it there (ZoomCurve.canvasView) and the service refuses follow for one.
+    var offersFollowCursor: Bool { target != .canvas }
+}
+
 private struct ZoomInspector: View {
     @Bindable var model: EditorModel
 
@@ -258,12 +264,19 @@ private struct ZoomInspector: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 SectionLabel(text: "Zoom mode")
-                GenSegmentedTabs("Zoom mode", items: [.init(EditProject.ZoomMode.follow, "Follow Cursor"), .init(.manual, "Manual")],
-                                 selection: Binding(get: { zoom.mode }, set: { mode in model.updateZoom(id) { $0.mode = mode } }),
-                                 minSegmentWidth: 110, identifier: "recorder.zoom.mode", fillsWidth: true)
-                if zoom.mode == .follow && model.cursor == nil {
-                    Text("This recording has no cursor track, so the zoom holds the focus below.")
+                if zoom.offersFollowCursor {
+                    GenSegmentedTabs("Zoom mode", items: [.init(EditProject.ZoomMode.follow, "Follow Cursor"), .init(.manual, "Manual")],
+                                     selection: Binding(get: { zoom.mode }, set: { mode in model.updateZoom(id) { $0.mode = mode } }),
+                                     minSegmentWidth: 110, identifier: "recorder.zoom.mode", fillsWidth: true)
+                    if zoom.mode == .follow && model.cursor == nil {
+                        Text("This recording has no cursor track, so the zoom holds the focus below.")
+                            .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    }
+                } else {
+                    Text("A canvas zoom holds the focus below. The cursor moves inside the picture, so only a picture zoom follows it.")
                         .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("recorder.zoom.mode.canvas")
                 }
                 FocusPicker(model: model, zoom: zoom)
             }

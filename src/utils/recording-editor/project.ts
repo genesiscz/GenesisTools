@@ -106,6 +106,13 @@ function wholeUs<T extends z.ZodType<number>>(schema: T) {
 export const MINIMUM_CLIP_US = 16_667;
 const MINIMUM_ZOOM_US = 200_000;
 
+/**
+ * Why a canvas zoom refuses follow: the renderer holds its focus (ZoomCurve.canvasView), because the cursor moves
+ * inside the picture and not on the canvas. An edit saved with such a zoom still loads and renders at its focus.
+ */
+export const CANVAS_ZOOM_HOLDS_FOCUS =
+    "a canvas zoom holds its focus (0...1 of the canvas) and does not follow the cursor; give focus {x, y}, or drop target for a picture zoom that follows";
+
 const clipSchema = z.object({
     id: z.string(),
     fromUs: wholeUs(z.number().int().nonnegative()),
@@ -1206,7 +1213,7 @@ export interface ZoomOptions {
     easeInMs?: number;
     easeOutMs?: number;
     // R5 4 canvas zoom
-    /** "canvas" zooms the whole framed export; absent zooms inside the picture. */
+    /** "canvas" zooms the whole framed export; absent zooms inside the picture. A canvas zoom refuses `follow`. */
     target?: "picture" | "canvas";
 }
 
@@ -1262,6 +1269,11 @@ export function addZoom(
     options: ZoomOptions = {}
 ): { project: EditProject; zoom: EditZoom } {
     checkRange(project, fromUs, toUs);
+
+    if (options.target === "canvas" && options.follow) {
+        throw new RangeError(CANVAS_ZOOM_HOLDS_FOCUS);
+    }
+
     const span = placeZoom(project, fromUs, toUs, options.target);
 
     if (!span) {
@@ -1670,7 +1682,10 @@ export const editOpSchema = z.discriminatedUnion("op", [
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
             // R5 4 canvas zoom
-            /** "canvas" zooms the whole framed export (focus is 0...1 of the canvas); absent zooms the picture. */
+            /**
+             * "canvas" zooms the whole framed export (focus is 0...1 of the canvas); absent zooms the picture. A canvas
+             * zoom holds its focus, so it refuses follow.
+             */
             target: z.enum(["picture", "canvas"]).optional(),
         })
         .strict(),
@@ -2069,7 +2084,10 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("moveLane"), id: z.string(), to: z.number().int().min(0) }).strict(),
     /** Puts a zoom, hidden part, spotlight, text or shape (by id) on a lane that holds its kind. */
     z.object({ op: z.literal("moveToLane"), id: z.string(), lane: z.string() }).strict(),
-    /** Changes a zoom that exists; a focus placed by hand makes a following zoom manual (unless `mode` says). */
+    /**
+     * Changes a zoom that exists; a focus placed by hand makes a following zoom manual (unless `mode` says). A canvas
+     * zoom holds its focus, so mode "follow" is refused for it.
+     */
     z
         .object({
             op: z.literal("setZoom"),
