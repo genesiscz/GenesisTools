@@ -886,7 +886,7 @@ function unmatchedWarnings(
 ): string[] {
     return unmatchedQueries(read, query).map(
         (said) =>
-            `no screen text ${scan ? "of the range read" : "of the whole movie"} matches ${said}: each OCR line is matched on its own, without case; \\w and \\b take letters of any language, \\p{L} is any letter`
+            `no screen text ${scan ? "of the range read" : "of the whole movie"} matches ${said}: each OCR line is matched on its own, without case, and a text without accents; \\w and \\b take letters of any language, \\p{L} is any letter`
     );
 }
 

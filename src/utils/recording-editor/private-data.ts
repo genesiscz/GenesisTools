@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "@genesiscz/utils/logger";
+import { foldWithIndex } from "@genesiscz/utils/macos/ocr-boxes";
 import { z } from "zod";
 
 /**
@@ -416,23 +417,39 @@ export function compacting(matcher: LineMatcher): LineMatcher {
     };
 }
 
-/** The private patterns, plus `names` (people, companies) the caller wants hidden too, matched without case. */
+/**
+ * A literal text as a pattern source: without diacritics (run it on `foldWithIndex(line).folded`), and with the spaces
+ * OCR leaves out or reads in between its letters, so "alice@example.com" finds "alice@example. com" and "Jiri" finds
+ * "Jiří", as the Find tab matches.
+ */
+function literalSource(text: string): string {
+    return [...foldWithIndex(text.replace(/\s+/g, "")).folded].map(escapeRegExp).join("\\s*");
+}
+
+/** The matches of `regexes` on `text` without diacritics, each as its [start, end) in `text`. */
+function foldedMatches(text: string, regexes: readonly RegExp[]): Array<[number, number]> {
+    const { folded, index } = foldWithIndex(text);
+    return regexes
+        .flatMap((regex) => [...folded.matchAll(regex)])
+        .filter((match) => match[0].length > 0)
+        .map((match): [number, number] => {
+            const start = match.index ?? 0;
+            return [index[start], index[start + match[0].length]];
+        });
+}
+
+/** The private patterns, plus `names` (people, companies) to hide too, matched without case or accents. */
 export function privateMatcher(names: readonly string[] = []): LineMatcher {
     const wanted = names.map((name) => name.trim()).filter(Boolean);
     // A name matches with the spaces OCR leaves out or reads in, as textMatcher does, so a name that the "no screen text
     // matches" warning counts as read is also hidden.
-    const namePattern = wanted.length
-        ? new RegExp(wanted.map((name) => [...name.replace(/\s+/g, "")].map(escapeRegExp).join("\\s*")).join("|"), "gi")
-        : undefined;
+    const namePattern = wanted.length ? new RegExp(wanted.map(literalSource).join("|"), "giu") : undefined;
     return compacting((text) => {
         const found: TextMatch[] = findPrivateText(text).map((match) => ({ ...match, label: labelOf(match.kind) }));
 
-        for (const match of namePattern ? text.matchAll(namePattern) : []) {
-            const start = match.index ?? 0;
-            const end = start + match[0].length;
-
+        for (const [start, end] of namePattern ? foldedMatches(text, [namePattern]) : []) {
             if (!found.some((other) => start < other.end && end > other.start)) {
-                found.push({ kind: "name", label: "Name", value: match[0].toLowerCase(), start, end });
+                found.push({ kind: "name", label: "Name", value: text.slice(start, end).toLowerCase(), start, end });
             }
         }
 
@@ -447,37 +464,40 @@ export type HideUnit = (typeof HIDE_UNITS)[number];
 /**
  * A literal text (without case) or a regular expression's source, as hideText asks for it. Each OCR line is matched on
  * its own (Vision reads a run of text on one baseline as a line): `^` and `$` are the line's start and end, the match
- * is without case, and a space OCR reads next to . @ _ - is left out first. A literal text also matches with spaces
- * OCR reads in or leaves out between its letters. `unit: "line"` makes each match cover its whole OCR line. `texts` and
+ * is without case, and a space OCR reads next to . @ _ - is left out first. A literal text also matches without
+ * accents, as the Find tab does, and with spaces OCR reads in or leaves out between its letters; a pattern runs on the
+ * line as read. `unit: "line"` makes each match cover its whole OCR line. `texts` and
  * `patterns` look for several at once.
  */
 export function textMatcher(options: TextMatcherOptions): LineMatcher {
-    const sources = [
-        ...[options.text, ...(options.texts ?? [])]
-            .map((text) => text?.trim())
-            .filter((text): text is string => Boolean(text))
-            // A literal text matches with the spaces OCR leaves out or reads in: "alice@example.com" finds
-            // "alice@example. com".
-            .map((text) => [...text.replace(/\s+/g, "")].map(escapeRegExp).join("\\s*")),
-        ...[options.pattern, ...(options.patterns ?? [])].filter((pattern): pattern is string => Boolean(pattern)),
-    ];
+    const literals = [options.text, ...(options.texts ?? [])]
+        .map((text) => text?.trim())
+        .filter((text): text is string => Boolean(text))
+        .map((text) => unicodePattern(literalSource(text)));
+    // A pattern runs on the line as read: a regular expression may name accented letters on purpose.
+    const patterns = [options.pattern, ...(options.patterns ?? [])]
+        .filter((pattern): pattern is string => Boolean(pattern))
+        .map(unicodePattern);
 
-    if (sources.length === 0) {
+    if (literals.length + patterns.length === 0) {
         throw new Error("give text (the words to hide) or pattern (a regular expression), or texts and patterns");
     }
 
-    const regexes = sources.map(unicodePattern);
     // R6 3: every text and pattern in one pass over the screen text; each value is its own hit.
     const matches = compacting((text) =>
-        regexes
-            .flatMap((regex) => [...text.matchAll(regex)])
-            .filter((match) => match[0].length > 0)
-            .map((match) => ({
+        [
+            ...foldedMatches(text, literals),
+            ...patterns
+                .flatMap((regex) => [...text.matchAll(regex)])
+                .filter((match) => match[0].length > 0)
+                .map((match): [number, number] => [match.index ?? 0, (match.index ?? 0) + match[0].length]),
+        ]
+            .map(([start, end]) => ({
                 kind: "text" as const,
                 label: "Text",
-                value: match[0].replace(/\s+/g, "").toLowerCase(),
-                start: match.index ?? 0,
-                end: (match.index ?? 0) + match[0].length,
+                value: text.slice(start, end).replace(/\s+/g, "").toLowerCase(),
+                start,
+                end,
             }))
             .sort((a, b) => a.start - b.start)
     );
@@ -505,10 +525,13 @@ const FRAGMENT_INNER_LETTERS = 6;
  * memory; a hit shows them masked.
  */
 export function edgeFragments(matcher: LineMatcher, values: readonly string[]): LineMatcher {
+    // Letters compare without accents, as the matchers do: "Novak" on screen is a part of "jiřínovák".
+    const bare = (text: string) => foldWithIndex(text).folded.toLowerCase();
     const known = [...new Set(values.map((value) => value.replace(/\s+/g, "").toLowerCase()))].map((value) => ({
         value,
+        folded: bare(value),
         digits: value.replace(/\D/g, ""),
-        letters: value.replace(/[^\p{L}]/gu, ""),
+        letters: bare(value).replace(/[^\p{L}]/gu, ""),
     }));
     const partOf = (found: TextMatch, value: string): TextMatch => ({
         ...found,
@@ -518,12 +541,12 @@ export function edgeFragments(matcher: LineMatcher, values: readonly string[]): 
     });
     return (text) => {
         const own = matcher(text);
-        const line = text.replace(/\s+/g, "").toLowerCase();
+        const line = bare(text.replace(/\s+/g, ""));
         const enough = line.length >= 5 || (line.length >= 3 && /\d/.test(line));
 
         if (own.length === 0 && enough) {
             const whole = known.find(
-                ({ value }) => value.length > line.length && (value.startsWith(line) || value.endsWith(line))
+                ({ folded }) => folded.length > line.length && (folded.startsWith(line) || folded.endsWith(line))
             );
 
             if (whole) {
@@ -564,7 +587,7 @@ export function edgeFragments(matcher: LineMatcher, values: readonly string[]): 
         }
 
         for (const run of text.matchAll(/\p{L}+/gu)) {
-            const word = run[0].toLowerCase();
+            const word = bare(run[0]);
             const owner =
                 word.length >= FRAGMENT_LETTERS
                     ? known.find(

@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { foldWithIndex } from "@genesiscz/utils/macos/ocr-boxes";
 import { checkProject, issueSummary } from "./check";
 import { anchorTimeUs, movieEvents, nearestEvent } from "./events";
 import { blockShifts } from "./motion";
@@ -1412,6 +1413,40 @@ describe("hidden parts keep whole microseconds (round 7)", () => {
         expect(redactionBoxAt(part, 3_500_000).y).toBeCloseTo(0.3, 6);
         expect(redactionBoxAt(part, 1_000_000).y).toBeCloseTo(0.4, 6);
         expect(redactionBoxAt(part, 1_750_000).y).toBeCloseTo(0.35, 6);
+    });
+});
+
+describe("screen text matches without accents, as the Find tab does", () => {
+    test("a literal text without accents finds the accented words and covers them exactly", () => {
+        const line = "Kontakt: Jiří Fiktivní, tel";
+        const found = textMatcher({ text: "Jiri Fiktivni" })(line);
+        expect(found).toHaveLength(1);
+        expect(line.slice(found[0].start, found[0].end)).toBe("Jiří Fiktivní");
+        expect(found[0].value).toBe("jiřífiktivní");
+    });
+
+    test("a decomposed line maps the match back over its combining marks", () => {
+        const line = "Jiří Fiktivní".normalize("NFD");
+        const found = textMatcher({ text: "Jiri" })(line);
+        expect(found).toHaveLength(1);
+        expect(line.slice(found[0].start, found[0].end)).toBe("Jiří".normalize("NFD"));
+        expect(foldWithIndex("aé😀b")).toEqual({ folded: "ae😀b", index: [0, 1, 2, 3, 4, 5] });
+    });
+
+    test("a private name without accents finds the accented name", () => {
+        const line = "Zdeňka Smyšlená";
+        const found = privateMatcher(["Zdenka Smyslena"])(line);
+        expect(found.map((match) => [match.kind, match.start, match.end])).toEqual([["name", 0, line.length]]);
+    });
+
+    test("a pattern still runs on the line as read", () => {
+        const found = textMatcher({ pattern: "Jiří" })("Jiri a Jiří");
+        expect(found.map((match) => match.start)).toEqual([7]);
+    });
+
+    test("an edge fragment without accents is a part of an accented value", () => {
+        const leaks = edgeFragments(textMatcher({ text: "Jiri Fiktivni" }), ["jiřífiktivní"])("Fiktivni, tel");
+        expect(leaks.map((leak) => [leak.start, leak.end, leak.value])).toEqual([[0, 8, "jiřífiktivní"]]);
     });
 });
 
