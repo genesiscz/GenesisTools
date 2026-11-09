@@ -1844,9 +1844,13 @@ private struct ExportInspector: View {
             let movie = (settings.format ?? .mp4) == .mp4
             let part = model.exportPart
             let length = part.map { $0.toUs - $0.fromUs } ?? model.durationUs
+            // A whole export plays its intro and end cards around the movie (a part has none). The file size estimate
+            // keeps the movie's length: card frames are about 5 % of the file.
+            let cards = part == nil ? CardSpans.cardsNote(model.project) : nil
+            let fileLength = part == nil ? CardSpans.exportLengthUs(model.project) : length
             HStack {
                 SectionLabel(text: "Part", value: part.map { formatClockRange($0.fromUs, $0.toUs) }
-                    ?? "Everything (\(formatClock(model.durationUs, tenths: true)))")
+                    ?? "Everything (\(formatClock(model.durationUs, tenths: true))\(cards == nil ? "" : " + cards"))")
                 if part != nil {
                     IconButton(systemName: "xmark.circle.fill", tooltip: "Export the whole edit again", size: 12) { model.clearPart() }
                         .accessibilityIdentifier("recorder.export.clearPart")
@@ -1863,8 +1867,8 @@ private struct ExportInspector: View {
                     .font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(length, tenths: true))"
-                                                      : formatClock(length, tenths: true))
+            let played = formatClock(fileLength, tenths: true) + (cards.map { " (\($0))" } ?? "")
+            SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(played)" : played)
             if movie {
                 let bytes = EditExporter.estimatedBytes(size: size, lengthUs: length, codec: settings.codec, fps: plan.fps)
                 SectionLabel(text: "File size", value: "about \(ByteFormat.file(bytes))")
