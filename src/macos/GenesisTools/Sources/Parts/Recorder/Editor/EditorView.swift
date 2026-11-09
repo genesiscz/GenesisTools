@@ -249,8 +249,11 @@ private struct ZoomInspector: View {
                        in: 1.1...4)
                     .accessibilityLabel("Zoom level")
                     .accessibilityIdentifier("recorder.zoom.level")
-                if model.project.zooms.count > 1 {
-                    WideButton(title: "Apply Zoom Level to All") { model.applyScaleToAll(zoom.scale) }
+                let alike = model.project.zooms.filter { EditorModel.sameTarget($0, zoom) }.count
+                if alike > 1 {
+                    let title = alike == model.project.zooms.count ? "Apply Zoom Level to All"
+                        : zoom.target == .canvas ? "Apply Zoom Level to All Canvas Zooms" : "Apply Zoom Level to All Picture Zooms"
+                    WideButton(title: title) { model.applyScaleToAll(of: zoom.id) }
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -330,26 +333,80 @@ private struct MotionBlurSection: View {
     }
 }
 
+/// The zoom focus picker's geometry, in the space a zoom's focus counts in. All rects are 0...1 of that space or of the
+/// picture, from the top left. A picture zoom's space is the movie's picture. A canvas zoom's is the framed canvas
+/// (R5 4: ZoomCurve.canvasView, Looks.zoomCanvas), so its picker shows the canvas with the tile where the frame puts the
+/// picture, and a point in the picker is the focus the export reads. Before 2026-11-09 every zoom's picker showed the
+/// bare picture: a drag onto the phone of a phone-left frame stored 0.5, and the export zoomed into the background.
+struct FocusPickerLayout: Equatable {
+    /// Width over height of the space.
+    var aspect: CGFloat
+    /// Where the picture's tile is drawn in the space.
+    var tile: CGRect
+    /// The part of the picture the tile shows.
+    var crop: CGRect
+    /// The zoomed view at the zoom's full scale, as ZoomCurve.View draws it.
+    var box: CGRect
+    /// The frame drawn around the tile; nil when the space is the picture.
+    var frame: EditProject.Frame?
+
+    static func make(project: EditProject, zoom: EditProject.Zoom) -> FocusPickerLayout {
+        let source = CGSize(width: max(1, CGFloat(project.source.width)), height: max(1, CGFloat(project.source.height)))
+        let half = 0.5 / max(1, zoom.scale)
+        let box = ZoomCurve.View(scale: zoom.scale, centerX: min(max(zoom.focusX, half), 1 - half),
+                                 centerY: min(max(zoom.focusY, half), 1 - half)).rect
+        let whole = CGRect(x: 0, y: 0, width: 1, height: 1)
+        // Without a frame the canvas is the picture.
+        guard zoom.target == .canvas, let frame = project.frame else {
+            return FocusPickerLayout(aspect: source.width / source.height, tile: whole, crop: whole, box: box, frame: nil)
+        }
+        let sizes = EditRenderer.outputSizes(source: source, maxHeight: 0, aspect: frame.aspect)
+        // The renderer's placement. A cover crop follows the cursor while the movie plays; the picker shows it centred.
+        let placement = Looks.framePlacement(frame, picture: sizes.picture, canvas: sizes.canvas)
+        // Core Image counts y from the bottom, the picker from the top.
+        func topLeft(_ rect: CGRect, of size: CGSize) -> CGRect {
+            CGRect(x: rect.minX / size.width, y: 1 - rect.maxY / size.height, width: rect.width / size.width, height: rect.height / size.height)
+        }
+        return FocusPickerLayout(aspect: sizes.canvas.width / sizes.canvas.height, tile: topLeft(placement.inner, of: sizes.canvas),
+                                 crop: placement.crop.map { topLeft($0, of: sizes.picture) } ?? whole, box: box, frame: frame)
+    }
+
+    /// The focus a point of a picker `size` large stands for, kept inside the space.
+    func focus(at point: CGPoint, size: CGSize) -> (x: Double, y: Double) {
+        (min(max(0, Double(point.x / max(1, size.width))), 1), min(max(0, Double(point.y / max(1, size.height))), 1))
+    }
+}
+
 /// The frame under the zoom with the zoomed rectangle on it; dragging moves the focus.
 private struct FocusPicker: View {
     @Bindable var model: EditorModel
     let zoom: EditProject.Zoom
 
     var body: some View {
-        let aspect = CGFloat(model.project.source.width) / CGFloat(max(1, model.project.source.height))
+        let layout = FocusPickerLayout.make(project: model.project, zoom: zoom)
         GeometryReader { geometry in
             let size = geometry.size
-            let side = 1 / zoom.scale
-            let rect = CGRect(x: (min(max(zoom.focusX, side / 2), 1 - side / 2) - side / 2) * size.width,
-                              y: (min(max(zoom.focusY, side / 2), 1 - side / 2) - side / 2) * size.height,
-                              width: side * size.width, height: side * size.height)
+            let rect = Self.scaled(layout.box, to: size)
+            let tile = Self.scaled(layout.tile, to: size)
             ZStack(alignment: .topLeading) {
-                if let tile = model.filmstrip.tile(atSource: zoom.startUs) {
-                    Image(decorative: tile.image, scale: 1).resizable().aspectRatio(contentMode: .fill)
-                        .frame(width: size.width, height: size.height).clipped()
+                if let frame = layout.frame {
+                    Rectangle().fill(Self.fill(frame.background))
                 } else {
                     Color.black
                 }
+                Group {
+                    if let image = model.filmstrip.tile(atSource: zoom.startUs)?.image {
+                        let full = CGSize(width: tile.width / max(1e-6, layout.crop.width), height: tile.height / max(1e-6, layout.crop.height))
+                        Image(decorative: image, scale: 1).resizable()
+                            .frame(width: full.width, height: full.height)
+                            .offset(x: -layout.crop.minX * full.width, y: -layout.crop.minY * full.height)
+                    } else {
+                        Color.black
+                    }
+                }
+                .frame(width: tile.width, height: tile.height, alignment: .topLeading)
+                .clipShape(RoundedRectangle(cornerRadius: (layout.frame?.cornerRadius ?? 0) * min(size.width, size.height), style: .continuous))
+                .offset(x: tile.minX, y: tile.minY)
                 Color.black.opacity(0.35)
                 RoundedRectangle(cornerRadius: 4).strokeBorder(Color.white, lineWidth: 1.5)
                     .frame(width: rect.width, height: rect.height)
@@ -359,9 +416,10 @@ private struct FocusPicker: View {
             }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                let focus = layout.focus(at: value.location, size: size)
                 model.updateZoom(zoom.id) {
-                    $0.focusX = Double(value.location.x / size.width)
-                    $0.focusY = Double(value.location.y / size.height)
+                    $0.focusX = focus.x
+                    $0.focusY = focus.y
                     if $0.mode == .follow, model.cursor != nil {
                         $0.mode = .manual
                         model.show("Set to Manual: the zoom holds the place you picked.", error: false)
@@ -369,11 +427,12 @@ private struct FocusPicker: View {
                 }
             })
         }
-        .aspectRatio(aspect, contentMode: .fit)
+        .aspectRatio(layout.aspect, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement()
         .accessibilityLabel("Zoom focus")
-        .accessibilityValue("x \(Int((zoom.focusX * 100).rounded()))%, y \(Int((zoom.focusY * 100).rounded()))%")
+        .accessibilityValue("x \(Int((zoom.focusX * 100).rounded()))%, y \(Int((zoom.focusY * 100).rounded()))%"
+            + (layout.frame == nil ? "" : " of the canvas"))
         .accessibilityAdjustableAction { direction in nudgeFocus(dx: direction == .increment ? 0.02 : -0.02, dy: 0) }
         .accessibilityAction(named: "Move Up") { nudgeFocus(dx: 0, dy: -0.02) }
         .accessibilityAction(named: "Move Down") { nudgeFocus(dx: 0, dy: 0.02) }
@@ -385,12 +444,28 @@ private struct FocusPicker: View {
         .accessibilityIdentifier("recorder.zoom.focus")
     }
 
-    /// The keyboard and VoiceOver path to aim the zoom: 2 % of the picture per step, kept inside it.
+    /// The keyboard and VoiceOver path to aim the zoom: 2 % of the picker's space per step (the picture, or the canvas
+    /// for a canvas zoom), kept inside it.
     private func nudgeFocus(dx: Double, dy: Double) {
         model.updateZoom(zoom.id) {
             $0.focusX = min(max(0, $0.focusX + dx), 1)
             $0.focusY = min(max(0, $0.focusY + dy), 1)
             if $0.mode == .follow { $0.mode = .manual }
+        }
+    }
+
+    private static func scaled(_ rect: CGRect, to size: CGSize) -> CGRect {
+        CGRect(x: rect.minX * size.width, y: rect.minY * size.height, width: rect.width * size.width, height: rect.height * size.height)
+    }
+
+    /// The frame's background as the picker draws it: an image background shows its first color, as the renderer does
+    /// while the picture is missing, so the inspector reads no file.
+    private static func fill(_ background: EditProject.Background) -> AnyShapeStyle {
+        switch background.kind {
+        case .none: AnyShapeStyle(Color.black)
+        case .gradient where background.colors.count > 1:
+            AnyShapeStyle(LinearGradient(colors: background.colors.map(swiftColor), startPoint: .topLeading, endPoint: .bottomTrailing))
+        case .color, .gradient, .image: AnyShapeStyle(background.colors.first.map(swiftColor) ?? .black)
         }
     }
 }

@@ -945,10 +945,20 @@ final class EditorModel {
         }
     }
 
-    func applyScaleToAll(_ scale: Double) {
+    /// Every zoom on zoom `id`'s target takes its level. A canvas zoom scales the whole framed export and a picture zoom
+    /// the movie inside it, so one level means another view on each, and one never sets the other.
+    func applyScaleToAll(of id: String) {
+        guard let source = project.zooms.first(where: { $0.id == id }) else { return }
         change { project in
-            for index in project.zooms.indices { project.zooms[index].scale = scale }
+            for index in project.zooms.indices where Self.sameTarget(project.zooms[index], source) {
+                project.zooms[index].scale = source.scale
+            }
         }
+    }
+
+    /// Both zooms are canvas zooms, or both zoom inside the picture (nil is the picture).
+    static func sameTarget(_ a: EditProject.Zoom, _ b: EditProject.Zoom) -> Bool {
+        (a.target ?? .picture) == (b.target ?? .picture)
     }
 
     /// A zoom moved or resized in time (a drag, ⌥← and ⌥→); the service keeps it clear of its neighbours.
