@@ -489,10 +489,16 @@ final class MeetingDetailModel {
                undo: (title: "Undo", args: Self.readdArgs(meeting: id, ref)))
     }
 
-    /// Plays the meeting's audio from a transcript time in the player that Settings → Meetings → Window picks; the bar
-    /// under the window shows where it is and stops it.
-    func play(at seconds: Double) {
-        window?.playback.play(meeting: id, at: seconds, player: MeetingsPreferences.player().cliPlayer)
+    /// Plays a transcript time in the window's Moment player: inside the loaded clip it seeks, else the Moment at that
+    /// time (or the whole meeting, in Meeting view) takes the top of the stack. The dock names it and stops it.
+    func play(at seconds: Double, from source: MomentSource = .transcript) {
+        window?.player.playTime(seconds, in: id, from: source)
+    }
+
+    /// Plays a Moment target of this meeting (a row's, a time in a question, a speaker's turn), placed on the stack as
+    /// its source says.
+    func play(_ target: MomentTarget, from source: MomentSource) {
+        window?.player.play(target, in: id, from: source)
     }
 
     func openInRecorder() {

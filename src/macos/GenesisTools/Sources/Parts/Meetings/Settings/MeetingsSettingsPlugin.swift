@@ -272,7 +272,7 @@ struct MeetingsWindowPage: View {
     @State private var plainNoticeSeconds: Int
     @State private var noticePlace: String
     @State private var typedAnswer: String
-    @State private var player: String
+    @State private var playbackView: String
 
     /// The first frame shows the saved choices, never a default that snaps to them.
     init(defaults: UserDefaults) {
@@ -285,7 +285,7 @@ struct MeetingsWindowPage: View {
         _plainNoticeSeconds = State(initialValue: MeetingsPreferences.plainNoticeSeconds(defaults))
         _noticePlace = State(initialValue: MeetingsPreferences.noticePlace(defaults).rawValue)
         _typedAnswer = State(initialValue: MeetingsPreferences.typedAnswer(defaults).rawValue)
-        _player = State(initialValue: MeetingsPreferences.player(defaults).rawValue)
+        _playbackView = State(initialValue: MeetingsPreferences.Playback.view.value(defaults).rawValue)
     }
 
     var body: some View {
@@ -353,12 +353,12 @@ struct MeetingsWindowPage: View {
 
     private var audioCard: some View {
         NativeSettingsCard("Audio") {
-            NativeSettingsSegmented("Play a transcript time", identifier: "meetings.window.player", options: [
-                NativeSettingsOption(MeetingsPreferences.Player.window.rawValue, "In this window",
-                                     detail: "ffplay plays with no window of its own; the bar under the Meetings window pauses and stops it."),
-                NativeSettingsOption(MeetingsPreferences.Player.app.rawValue, "In the meetings player",
-                                     detail: "The player the meetings config names (VLC first) plays in its own window; the bar stops it."),
-            ], selection: binding($player, key: MeetingsPreferences.playerKey))
+            NativeSettingsSegmented("A transcript time plays", identifier: "meetings.playback.view", options: [
+                NativeSettingsOption(MeetingsPreferences.Playback.View.moment.rawValue, "Its Moment",
+                                     detail: "A short clip around the time, with the tone at the time, as tools meetings listen plays it."),
+                NativeSettingsOption(MeetingsPreferences.Playback.View.meeting.rawValue, "The meeting from there",
+                                     detail: "The whole recording plays on from the time; a seek is instant and zooming never stops it."),
+            ], selection: binding($playbackView, key: MeetingsPreferences.Playback.view.key))
         }
         .nativeSettingsAnchor(MeetingsSettingsPages.playbackAnchor)
     }

@@ -1,0 +1,369 @@
+import Foundation
+import XCTest
+@testable import GenesisToolsMeetings
+
+/// A sound that plays nothing: the test moves its time and ends it.
+@MainActor
+private final class FakeSound: MomentSound {
+    let url: URL
+    var currentTime: TimeInterval = 0
+    let duration: TimeInterval
+    var rate: Float = 1
+    private(set) var isPlaying = false
+    var onEnd: (@MainActor () -> Void)?
+    private(set) var stopped = false
+
+    init(url: URL, duration: TimeInterval) {
+        self.url = url
+        self.duration = duration
+    }
+
+    func play() { isPlaying = true }
+    func pause() { isPlaying = false }
+    func stop() {
+        isPlaying = false
+        stopped = true
+        onEnd = nil
+    }
+
+    /// The sound reached its end.
+    func finish() {
+        currentTime = duration
+        isPlaying = false
+        onEnd?()
+    }
+}
+
+/// The Moment engine in the test: each cut answers a Moment of the target's time with a 5 s pad and the tone 0.4 s
+/// before the spot, and records what it was asked.
+@MainActor
+private final class FakeEngine {
+    var cuts: [MeetingsAPI.MomentParams] = []
+    var plans: [MeetingsAPI.MomentParams] = []
+    var cutFailure: Error?
+    var planAnswer = MeetingsAPI.MomentPlan.Result(moment: nil, cannot: nil)
+    var audio: MeetingsAPI.MeetingAudio.Result?
+    /// A cut waits until the test lets it go.
+    var holdCuts = false
+    private var held: [CheckedContinuation<Void, Never>] = []
+    let folder: URL
+
+    init() throws {
+        folder = FileManager.default.temporaryDirectory.appendingPathComponent("moment-player-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+
+    func release() {
+        let waiting = held
+        held = []
+        for continuation in waiting { continuation.resume() }
+    }
+
+    static func moment(_ meeting: String, _ target: MomentTarget, spot: Double, pad: Double = 5, length: Double = 10) -> Moment {
+        Moment(meeting: meeting, target: target, label: MomentPlayer.provisionalLabel(target), fromSec: spot, toSec: spot + length,
+               padSec: pad, startSec: max(0, spot - pad), endSec: spot + length + pad, spotSec: spot,
+               tone: .init(atSec: spot - 0.4, sound: ToneSound(hz: 880, sec: 0.15, volume: 0.6)), delaySec: 2, repeatGapSec: 1, screen: nil)
+    }
+
+    var engine: MomentPlayer.Engine {
+        MomentPlayer.Engine(
+            cut: { [unowned self] params in
+                self.cuts.append(params)
+                if self.holdCuts { await withCheckedContinuation { self.held.append($0) } }
+                try Task.checkCancellation()
+                if let cutFailure = self.cutFailure { throw cutFailure }
+                let spot: Double
+                switch params.target {
+                case .item: spot = 100
+                case .range(let from, _): spot = from
+                default: spot = params.target.startSec ?? 0
+                }
+                var moment = Self.moment(params.meeting, params.target, spot: spot, pad: params.padSec ?? 5)
+                if case .range(let from, let to) = params.target {
+                    moment = Moment(meeting: params.meeting, target: params.target, label: moment.label, fromSec: from, toSec: to,
+                                    padSec: params.padSec ?? 5, startSec: from - (params.padSec ?? 5), endSec: to + (params.padSec ?? 5),
+                                    spotSec: from, tone: moment.tone, delaySec: 2, repeatGapSec: 1, screen: nil)
+                }
+                let path = self.folder.appendingPathComponent("\(UUID().uuidString.prefix(6)).wav")
+                FileManager.default.createFile(atPath: path.path, contents: Data())
+                return MomentClip(moment: moment, path: path.path)
+            },
+            plan: { [unowned self] params in
+                self.plans.append(params)
+                return self.planAnswer
+            },
+            audio: { [unowned self] _ in
+                guard let audio = self.audio else { throw MeetingsService.Unavailable(reason: "no service in the test") }
+                return audio
+            })
+    }
+}
+
+@MainActor
+final class MeetingsPlayerTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var suite = ""
+    private var engine: FakeEngine!
+    private var sounds: [FakeSound] = []
+
+    override func setUp() async throws {
+        suite = "meetings.player.tests.\(UUID().uuidString)"
+        defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        engine = try FakeEngine()
+        sounds = []
+    }
+
+    override func tearDown() async throws {
+        defaults.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: engine.folder)
+    }
+
+    private func makePlayer() -> MomentPlayer {
+        MomentPlayer(engine: engine.engine, load: { [unowned self] url in
+            let sound = FakeSound(url: url, duration: 20)
+            self.sounds.append(sound)
+            return sound
+        }, defaults: defaults)
+    }
+
+    private func until(_ what: String, timeout: TimeInterval = 3, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    private var playingCount: Int { sounds.filter(\.isPlaying).count }
+
+    // MARK: The table and the rules
+
+    func testOneTableDecidesPushOrReplacePerClickSource() {
+        let push = MeetingsPreferences.Playback.ClickInQuestion.push
+        XCTAssertEqual(MomentPlayer.placement(for: .row, clickInQuestion: push), .replaceAll)
+        XCTAssertEqual(MomentPlayer.placement(for: .autoplay, clickInQuestion: push), .replaceAll)
+        XCTAssertEqual(MomentPlayer.placement(for: .pin, clickInQuestion: push), .replaceAll)
+        XCTAssertEqual(MomentPlayer.placement(for: .questionTime, clickInQuestion: push), .push, "R38: a time in a question layers up")
+        XCTAssertEqual(MomentPlayer.placement(for: .questionTime, clickInQuestion: .replace), .replaceTop)
+        XCTAssertEqual(MomentPlayer.placement(for: .speakerChip, clickInQuestion: push), .push)
+        XCTAssertEqual(MomentPlayer.placement(for: .selection, clickInQuestion: push), .push)
+        XCTAssertEqual(MomentPlayer.placement(for: .transcript, clickInQuestion: push), .replaceTop)
+        XCTAssertEqual(MomentPlayer.placement(for: .more, clickInQuestion: push), .replaceTop)
+        XCTAssertEqual(MomentPlayer.placement(for: .outside, clickInQuestion: push), .replaceTop)
+    }
+
+    /// G-STACK-3: Play on after a pause goes back 1 s, but never into the tone once it has played.
+    func testTheRewindNeverReplaysTheTone() {
+        // The clip starts at 95; the tone sounds at 99.6 and ends at 99.75.
+        XCTAssertEqual(MomentPlayer.resumeOffset(pausedAt: 100.2, startSec: 95, rewindSec: 1, toneEndSec: 99.75), 4.75, accuracy: 0.0001,
+                       "paused 0.45 s after the tone: it plays on from the tone's end, not before it")
+        XCTAssertEqual(MomentPlayer.resumeOffset(pausedAt: 104, startSec: 95, rewindSec: 1, toneEndSec: 99.75), 8, accuracy: 0.0001)
+        XCTAssertEqual(MomentPlayer.resumeOffset(pausedAt: 97, startSec: 95, rewindSec: 1, toneEndSec: 99.75), 1, accuracy: 0.0001,
+                       "before the tone the rewind is plain; the tone plays as part of the clip")
+        XCTAssertEqual(MomentPlayer.resumeOffset(pausedAt: 95.4, startSec: 95, rewindSec: 1, toneEndSec: nil), 0)
+    }
+
+    func testCuttingWordsWaitTwoHundredMillisecondsAndCancelFiveSeconds() {
+        XCTAssertFalse(MomentPlayer.cuttingShows(elapsed: 0.15).words)
+        XCTAssertTrue(MomentPlayer.cuttingShows(elapsed: 0.2).words)
+        XCTAssertFalse(MomentPlayer.cuttingShows(elapsed: 4.9).cancel)
+        XCTAssertTrue(MomentPlayer.cuttingShows(elapsed: 5).cancel)
+    }
+
+    // MARK: Playing a Moment
+
+    func testARowPlaysItsClipFromTheStartAndASecondClickPausesIt() async throws {
+        let player = makePlayer()
+        player.play(.item("i3"), in: "m", from: .row)
+        guard case .cutting = player.phase else { return XCTFail("the clip is cut first, got \(player.phase)") }
+        try await until("it plays") { player.phase == .playing }
+        XCTAssertEqual(engine.cuts.map(\.target), [.item("i3")], "one moment.clip of the row's target")
+        XCTAssertEqual(player.top?.label, "i3")
+        XCTAssertEqual(player.top?.startSec, 95)
+        XCTAssertEqual(player.top?.toneEndSec ?? 0, 99.75, accuracy: 0.0001)
+        XCTAssertEqual(sounds.first?.currentTime, 0, "the clip plays from its start: the pad, then the tone at the spot")
+        XCTAssertTrue(player.isPlaying(.item("i3"), in: "m"))
+
+        sounds[0].currentTime = 5.2
+        player.play(.item("i3"), in: "m", from: .row)
+        XCTAssertEqual(player.phase, .paused, "a second click on the same row pauses (R14)")
+        XCTAssertEqual(player.top?.pausedAt ?? 0, 100.2, accuracy: 0.0001)
+        XCTAssertEqual(engine.cuts.count, 1, "and cuts nothing again")
+        player.resume()
+        XCTAssertEqual(player.phase, .playing)
+        XCTAssertEqual(sounds[0].currentTime, 4.75, accuracy: 0.0001, "play on goes back to the tone's end, not into the tone")
+    }
+
+    func testAPushedMomentPausesTheOneBelowAndGivesItBackWhenItEnds() async throws {
+        let player = makePlayer()
+        player.play(.item("q1"), in: "m", from: .row)
+        try await until("the question plays") { player.phase == .playing }
+        sounds[0].currentTime = 8
+
+        player.play(.range(from: 730, to: 750), in: "m", from: .questionTime)
+        XCTAssertEqual(player.stack.count, 2, "the question's own time layers up (R38)")
+        XCTAssertFalse(sounds[0].isPlaying, "the Moment below paused at once")
+        XCTAssertEqual(player.stack[0].pausedAt ?? 0, 103, accuracy: 0.0001)
+        try await until("the pushed Moment plays") { player.phase == .playing && self.sounds.count == 2 }
+        XCTAssertEqual(playingCount, 1, "two sounds never play at once")
+        XCTAssertEqual(player.top?.label, "12:10–12:30")
+
+        sounds[1].finish()
+        XCTAssertEqual(player.stack.count, 1, "the pushed Moment left when it ended")
+        XCTAssertTrue(sounds[1].stopped)
+        XCTAssertEqual(player.phase, .playing, "the one below plays again")
+        XCTAssertTrue(sounds[0].isPlaying)
+        XCTAssertEqual(sounds[0].currentTime, 7, accuracy: 0.0001, "from where it stopped, 1 s earlier")
+        XCTAssertEqual(playingCount, 1)
+    }
+
+    func testTheStackKeepsAtMostItsDepthBelowTheTop() async throws {
+        defaults.set(2, forKey: MeetingsPreferences.Playback.stackDepth.key)
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        for second in [10.0, 20, 30, 40] {
+            player.play(.stretch(atSec: second, speaker: nil), in: "m", from: .speakerChip)
+        }
+        XCTAssertEqual(player.stack.count, 3, "two below the top")
+        XCTAssertEqual(player.stack.map(\.target), [.stretch(atSec: 20, speaker: nil), .stretch(atSec: 30, speaker: nil),
+                                                    .stretch(atSec: 40, speaker: nil)])
+        player.play(.item("i2"), in: "m", from: .row)
+        XCTAssertEqual(player.stack.map(\.target), [.item("i2")], "a row starts over")
+    }
+
+    func testATranscriptTimeSeeksInsideTheClipAndReplacesTheTopOutsideIt() async throws {
+        let player = makePlayer()
+        player.play(.item("i3"), in: "m", from: .row)
+        try await until("it plays") { player.phase == .playing }
+        player.playTime(108, in: "m")
+        XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001, "inside the clip: a seek, no new cut")
+        XCTAssertEqual(engine.cuts.count, 1)
+
+        player.playTime(600, in: "m")
+        XCTAssertEqual(player.stack.count, 1)
+        XCTAssertEqual(player.top?.target, .time(600), "outside the clip: the Moment at that time takes the top's place (G-PLAY-1)")
+        try await until("the new Moment plays") { player.phase == .playing && self.sounds.count == 2 }
+        XCTAssertTrue(sounds[0].stopped)
+    }
+
+    func testTheEndOfAClipOffersMoreAndPlaysTheNextStretch() async throws {
+        let player = makePlayer()
+        player.play(.time(60), in: "m", from: .transcript)
+        try await until("it plays") { player.phase == .playing }
+        sounds[0].finish()
+        XCTAssertEqual(player.phase, .ended(offerMore: true), "the default afterClip offers more")
+        player.playMore()
+        XCTAssertEqual(player.top?.target, .range(from: 75, to: 105), "30 s from the clip's end")
+
+        defaults.set("stop", forKey: MeetingsPreferences.Playback.afterClip.key)
+        try await until("it plays") { player.phase == .playing && self.sounds.count == 2 }
+        sounds[1].finish()
+        XCTAssertEqual(player.phase, .ended(offerMore: false))
+    }
+
+    func testAFailedCutSaysWhyAndTheMeetingsPlayControlsKnowIt() async throws {
+        engine.cutFailure = MeetingsCLI.Failure(sentence: "No source keeps the recording.", detail: "unplayable", code: "unplayable")
+        engine.planAnswer = .init(moment: nil, cannot: MomentCannot(code: "no-audio", message: "No source keeps the recording on this Mac."))
+        let player = makePlayer()
+        player.play(.item("i3"), in: "m", from: .row)
+        try await until("it failed") { if case .failed = player.phase { return true } else { return false } }
+        try await until("the reason is known") { player.reason(.item("i9"), in: "m") != nil }
+        XCTAssertEqual(player.reason(.item("i9"), in: "m")?.code, "no-audio", "a state reason disables every play control of the meeting")
+        XCTAssertNil(player.reason(.item("i9"), in: "other"))
+        player.dismissFailure()
+        XCTAssertEqual(player.phase, .idle)
+        XCTAssertTrue(player.stack.isEmpty)
+    }
+
+    func testCancelStopsTheCutAndKeepsWhatPlayedBefore() async throws {
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("it plays") { player.phase == .playing }
+        engine.holdCuts = true
+        player.play(.stretch(atSec: 40, speaker: "Dana Example"), in: "m", from: .speakerChip)
+        try await until("the cut runs") { self.engine.cuts.count == 2 }
+        player.cancelCut()
+        XCTAssertEqual(player.stack.count, 1, "the Moment being cut left")
+        XCTAssertEqual(player.phase, .paused, "the one below waits, paused")
+        engine.release()
+    }
+
+    func testAPreCutWaitsWhileAPlaysCutRunsSoTheServiceNeverCancelsThePlay() async throws {
+        engine.holdCuts = true
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("the play's cut runs") { self.engine.cuts.count == 1 }
+        player.precut(.item("i2"), in: "m")
+        XCTAssertEqual(engine.cuts.count, 1, "no second moment.clip while the first runs")
+        engine.release()
+        try await until("it plays") { player.phase == .playing }
+        engine.holdCuts = false
+        player.precut(.item("i2"), in: "m")
+        try await until("the next row is cut") { self.engine.cuts.count == 2 }
+        try await Task.sleep(for: .milliseconds(30))
+        player.play(.item("i2"), in: "m", from: .autoplay)
+        try await until("the next row plays") { player.phase == .playing && player.top?.target == .item("i2") }
+        XCTAssertEqual(engine.cuts.count, 2, "the pre-cut clip plays without another cut")
+    }
+
+    func testStopEndsEverySound() async throws {
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("it plays") { player.phase == .playing }
+        player.play(.time(10), in: "m", from: .selection)
+        try await until("the selection plays") { self.sounds.count == 2 && player.phase == .playing }
+        player.stop()
+        XCTAssertEqual(player.phase, .idle)
+        XCTAssertTrue(player.stack.isEmpty)
+        XCTAssertTrue(sounds.allSatisfy(\.stopped))
+        XCTAssertNil(player.meeting)
+    }
+
+    // MARK: Whole-meeting mode (decision 16)
+
+    func testOneTrackPlaysTheRecordingItselfFromTheTime() async throws {
+        engine.audio = .init(path: engine.folder.appendingPathComponent("upload.ogg").path, tracks: 1, channels: 2, durationSec: 3600)
+        let player = makePlayer()
+        player.playMeeting("m", at: 1234)
+        try await until("it plays") { player.phase == .playing }
+        XCTAssertEqual(player.top?.kind, .file)
+        XCTAssertEqual(sounds[0].url.lastPathComponent, "upload.ogg")
+        XCTAssertEqual(sounds[0].currentTime, 1234, "the file plays from the time: no cut")
+        XCTAssertTrue(engine.cuts.isEmpty)
+        player.playTime(2000, in: "m")
+        XCTAssertEqual(sounds[0].currentTime, 2000, "a seek in the whole meeting is instant")
+    }
+
+    func testSeveralTracksPlayAsSixtySecondMomentsOneAfterTheOther() async throws {
+        engine.audio = .init(path: "/x/two.mka", tracks: 2, channels: 2, durationSec: 3600)
+        let player = makePlayer()
+        player.playMeeting("m", at: 100)
+        try await until("the first stretch plays") { player.phase == .playing }
+        XCTAssertEqual(player.top?.kind, .rolling)
+        XCTAssertEqual(engine.cuts.first?.target, .range(from: 100, to: 160))
+        XCTAssertEqual(engine.cuts.first?.padSec, 0, "the stretches meet end to start")
+        sounds[0].finish()
+        try await until("the next stretch is cut") { self.engine.cuts.count == 2 }
+        XCTAssertEqual(engine.cuts[1].target, .range(from: 160, to: 220))
+    }
+
+    func testTheViewSettingPlaysAnOutsideTimeAsTheWholeMeeting() async throws {
+        defaults.set("meeting", forKey: MeetingsPreferences.Playback.view.key)
+        engine.audio = .init(path: engine.folder.appendingPathComponent("a.ogg").path, tracks: 1, channels: 1, durationSec: 600)
+        let player = makePlayer()
+        player.playTime(42, in: "m")
+        try await until("it plays") { player.phase == .playing }
+        XCTAssertEqual(player.top?.kind, .file)
+        XCTAssertTrue(engine.cuts.isEmpty)
+    }
+
+    // MARK: Speed
+
+    func testTheSpeedSettingAppliesToTheSound() async throws {
+        defaults.set(1.5, forKey: MeetingsPreferences.Playback.speed.key)
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("it plays") { player.phase == .playing }
+        XCTAssertEqual(sounds[0].rate, 1.5)
+    }
+}
