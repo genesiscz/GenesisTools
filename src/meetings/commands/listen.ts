@@ -10,6 +10,7 @@ import {
     MeetingsConfigStore,
     resolveDictionary,
 } from "@genesiscz/utils/meetings/config";
+import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
 import { type DecisionActor, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { type ChoiceRow, choiceChip, choiceSelect, heardMark } from "@genesiscz/utils/prompts/clack/choice-select";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
@@ -500,7 +501,8 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
             player,
             vocabulary: answerVocabulary(
                 meeting,
-                dictionary.entries.map((entry) => entry.value)
+                dictionary.entries.map((entry) => entry.value),
+                await meetingPeopleNames({ store, config: settings, meeting: meeting.id })
             ),
             transcript: new TranscriptLines((await opened.meeting()).transcript),
             padSec,
