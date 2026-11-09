@@ -2026,3 +2026,34 @@ describe("a connection to the service that closes under a call", () => {
         await expect(twice).rejects.toThrow("closed twice (ECONNREFUSED; then ECONNREFUSED again)");
     });
 });
+
+// Regression test: 2026-11-09 00:43, 01:05, 01:12 and 01:33 the service exited for a code change while an export
+// ran through it, and each caller failed with "the connection to the recorder service closed while the call ran".
+describe("a code change while a call runs", () => {
+    test("the service stops only once no call is running", async () => {
+        const source = realpathSync(mkdtempSync(join(tmpdir(), "rs-src-")));
+        const module = join(source, "loaded-busy.ts");
+        writeFileSync(module, "export const loaded = true;\n");
+        await import(module);
+        const { service } = await serviceFixture({ sourceRoot: source, checkEveryMs: 15 });
+        const release = Promise.withResolvers<void>();
+        const face = await connect(service.entry, async () => {
+            await release.promise;
+            return { ok: true, path: "/tmp/out.mp4", bytes: 1024, seconds: 1 };
+        });
+        await face.call("hello", hello("host", ["render.export"]));
+        const client = await connect(service.entry);
+        await client.call("hello", hello("client"));
+        const exporting = client.call<unknown>("render.export", { path: editFixture("rs-busy-"), out: "/tmp/out.mp4" });
+        await Bun.sleep(30);
+        const later = new Date(Date.now() + 60_000);
+        utimesSync(module, later, later);
+
+        expect(await Promise.race([service.stopped, Bun.sleep(300).then(() => "still running")])).toBe("still running");
+        release.resolve();
+        await exporting;
+        expect(await Promise.race([service.stopped, Bun.sleep(1_000).then(() => "still running")])).toBe(
+            "code-changed"
+        );
+    });
+});

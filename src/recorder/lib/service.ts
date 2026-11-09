@@ -171,6 +171,8 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     let app: { connection: Connection; host: ConnectedAppHost } | undefined;
     const helloWaiters = new Set<() => void>();
     let lastBusy = Date.now();
+    /** Calls answered now: a code change waits for them, so an export never loses its service halfway. */
+    let callsRunning = 0;
     let stopping = false;
     const stopped = Promise.withResolvers<string>();
     // `server` is assigned below; notifications only start once it listens.
@@ -690,8 +692,16 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             socket,
             state: () => ({ id: ++lastConnectionId, holds: new Map(), gestures: new Map(), recordings: new Set() }),
             // A cancelled request's edit never lands: every edit it makes checks this request's signal before it saves.
-            call: ({ method, params, connection, context }) =>
-                withEditCancel(context.signal, () => answer(method, params, connection, context)),
+            call: async ({ method, params, connection, context }) => {
+                callsRunning += 1;
+
+                try {
+                    return await withEditCancel(context.signal, () => answer(method, params, connection, context));
+                } finally {
+                    callsRunning -= 1;
+                    lastBusy = Date.now();
+                }
+            },
             onOpen: () => {
                 lastBusy = Date.now();
             },
@@ -739,6 +749,16 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     const idleMs = options.idleMs ?? SERVICE_IDLE_MS;
     const check = setInterval(() => {
         if (options.sourceRoot && newestLoadedModuleMtime(options.sourceRoot) > startedAt) {
+            // A running call (an export, a camera start) or a live recording would lose the service halfway: on
+            // 2026-11-09 four exports failed with "the connection closed while the call ran". Wait for them.
+            if (callsRunning > 0 || recordings.size > 0) {
+                log.info(
+                    { calls: callsRunning, recordings: recordings.size },
+                    "recorder service code changed; exiting once no call runs and no recording is live"
+                );
+                return;
+            }
+
             log.info("recorder service code changed since start; exiting so the next caller starts the new code");
             stop("code-changed");
             return;
