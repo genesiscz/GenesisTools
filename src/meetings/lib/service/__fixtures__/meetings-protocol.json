@@ -27,12 +27,13 @@
             "meeting.show",
             "meeting.transcript",
             "meeting.revisions",
-            "subscribe"
+            "subscribe",
+            "unsubscribe"
           ],
           "events": [
             "meeting.changed"
           ],
-          "version": "e06d18be0224"
+          "version": "73374ddffc14"
         }
       }
     },
@@ -475,6 +476,45 @@
       }
     },
     {
+      "method": "subscribe",
+      "direction": "client→service",
+      "note": "A meeting filter that does not read: -32602, and the subscription before stays.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "method": "subscribe",
+        "params": {
+          "meeting": ""
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "error": {
+          "code": -32602,
+          "message": "subscribe: meeting: Too small: expected string to have >=1 characters"
+        }
+      }
+    },
+    {
+      "method": "unsubscribe",
+      "direction": "client→service",
+      "note": "The end of the subscription: no event reaches it until it subscribes again.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 14,
+        "method": "unsubscribe",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 14,
+        "result": {
+          "events": []
+        }
+      }
+    },
+    {
       "method": "hello",
       "direction": "client→service",
       "note": "A CLI in an agent session: the harness and session come from whoIsCalling.",
@@ -502,12 +542,13 @@
             "meeting.show",
             "meeting.transcript",
             "meeting.revisions",
-            "subscribe"
+            "subscribe",
+            "unsubscribe"
           ],
           "events": [
             "meeting.changed"
           ],
-          "version": "e06d18be0224"
+          "version": "73374ddffc14"
         }
       }
     },

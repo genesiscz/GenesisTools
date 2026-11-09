@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { type ServiceEntry, type ServiceHost, startServiceHost } from "@genesiscz/utils/rpc/service-host";
 import type { RpcConnection } from "@genesiscz/utils/rpc/socket-server";
 import {
@@ -119,7 +120,17 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
         },
         onSubscribe: (connection, params) => {
             const parsed = subscribeParamsSchema.safeParse(params ?? {});
-            connection.state.meeting = parsed.success ? parsed.data.meeting : undefined;
+
+            // An invalid meeting filter would widen the subscription to every meeting; it is refused instead.
+            if (!parsed.success) {
+                const issue = parsed.error.issues[0];
+                throw new RpcError(
+                    JSON_RPC_ERRORS.invalidParams,
+                    `subscribe: ${issue?.path.join(".") || "params"}: ${issue?.message}`
+                );
+            }
+
+            connection.state.meeting = parsed.data.meeting;
         },
         idleMs: options.idleMs ?? MEETINGS_SERVICE_IDLE_MS,
         checkEveryMs: options.checkEveryMs,

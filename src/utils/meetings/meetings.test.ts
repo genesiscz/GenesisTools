@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { DEFAULT_OCR_TILE_PX } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -564,6 +565,38 @@ describe("meeting records", () => {
         expect(read.context.map((entry) => entry.id)).toEqual(["c1"]);
         expect(read.project).toBeUndefined();
         expect(read.history.map((entry) => entry.command)).toEqual(["new", "context add"]);
+    });
+
+    test("a decision a newer build wrote, with an actor kind and an action this build does not know, still loads", async () => {
+        const store = records();
+        const record = await store.create(
+            { title: "Review", start: "2026-11-02T09:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "created" }
+        );
+        const raw = SafeJSON.parse(fs.readFileSync(store.path(record.id), "utf8"), { strict: true });
+        raw.items = [
+            {
+                id: "i1",
+                kind: "term",
+                heard: "dana",
+                proposed: "Dana",
+                status: "confirmed",
+                suggestedAt: "2026-11-02T09:10:00.000Z",
+                decidedAt: "2026-11-02T09:20:00.000Z",
+                decision: {
+                    token: "t-future",
+                    previous: { status: "suggested" },
+                    actor: { kind: "person", name: "Dana Example" },
+                    entry: { action: "assign", reason: "her voice" },
+                },
+            },
+        ];
+        writeFileSync(store.path(record.id), SafeJSON.stringify(raw, null, 2));
+
+        const decision = store.read(record.id)?.items[0]?.decision;
+        expect(decision?.actor).toEqual({ kind: "unknown" });
+        expect(decision?.entry).toEqual({ action: "unknown", reason: "her voice" });
+        expect(decision?.token).toBe("t-future");
     });
 });
 

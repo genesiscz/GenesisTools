@@ -100,6 +100,15 @@ export const DECISION_ACTIONS = [
 ] as const;
 export type DecisionActionKind = (typeof DECISION_ACTIONS)[number];
 
+/**
+ * An actor as a saved record reads it: a kind a newer build wrote (one this build does not know) reads as `unknown`,
+ * so the record still loads here instead of failing whole (WaveB-Plan decision 17).
+ */
+export const savedDecisionActorSchema = decisionActorSchema.catch({ kind: "unknown" });
+
+/** A decision's action as a saved record reads it: an action a newer build added reads as `unknown`. */
+export const savedDecisionActionSchema = z.enum([...DECISION_ACTIONS, "unknown"]).catch("unknown");
+
 const itemBase = {
     id: itemIdSchema,
     status: z.enum(ITEM_STATUSES),
@@ -125,10 +134,10 @@ const itemBase = {
                 speaker: z.string().optional(),
                 proposed: z.string().optional(),
             }),
-            actor: decisionActorSchema.optional(),
+            actor: savedDecisionActorSchema.optional(),
             entry: z
                 .object({
-                    action: z.enum(DECISION_ACTIONS),
+                    action: savedDecisionActionSchema,
                     reason: z.string().optional(),
                     /** The question whose answer, skip or split decided this item. */
                     question: itemIdSchema.optional(),
