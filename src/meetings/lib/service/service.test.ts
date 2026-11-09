@@ -1099,6 +1099,13 @@ async function captureExamples(): Promise<Example[]> {
     const mergeToken = z.object({ merge: z.object({ token: z.string() }) }).parse(merged.reply.result).merge.token;
     await ask(window, "people.unmerge", { token: mergeToken }, "The merge split again.");
     await ask(window, "people.unmerge", { token: "nope" }, "No merge has that token: unknown-merge.");
+    await ask(window, "people.add", { name: "Robin Example", email: "robin.two@example.com" }, "A second Robin.");
+    await ask(
+        window,
+        "people.hide",
+        { person: "Robin Example" },
+        "A name two people share: ambiguous-person, with the candidates to pick from."
+    );
     await ask(
         window,
         "decision.plan",
@@ -1221,6 +1228,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
         expect([...new Set(codes)].sort()).toEqual(
             [
                 "already-decided",
+                "ambiguous-person",
                 "unplayable",
                 "unknown-comment",
                 "already-sent",
