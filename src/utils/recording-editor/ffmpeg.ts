@@ -74,7 +74,8 @@ export function speedArgv(options: { input: string; output: string; factor: numb
         options.input,
         "-map",
         "0:v:0",
-        ...(options.audio ? ["-map", "0:a:0", "-filter:a", atempoChain(options.factor), "-c:a", "aac"] : ["-an"]),
+        // Every audio track, as trimArgv keeps them: a recording of system sound and mic has two.
+        ...(options.audio ? ["-map", "0:a", "-filter:a", atempoChain(options.factor), "-c:a", "aac"] : ["-an"]),
         "-filter:v",
         `setpts=PTS/${options.factor},${EVEN}`,
         // Without it the muxer keeps the source's constant rate and drops the frames a speed-up packs closer.

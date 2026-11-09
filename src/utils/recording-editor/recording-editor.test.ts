@@ -3135,6 +3135,9 @@ describe("the camera on the screen's clock", () => {
 test("editor commands replace guarded outputs and force the requested container", () => {
     expect(trimArgv({ input: "in.mp4", output: "out.mp4", fromUs: 0, toUs: 1000000 })).toContain("-y");
     expect(speedArgv({ input: "in.mp4", output: "out.mp4", factor: 2, audio: true })).toContain("-y");
+    // A sped-up segment keeps every audio track (system sound and mic), as a trim does.
+    expect(speedArgv({ input: "in.mp4", output: "out.mp4", factor: 2, audio: true })).toContain("0:a");
+    expect(speedArgv({ input: "in.mp4", output: "out.mp4", factor: 2, audio: true })).not.toContain("0:a:0");
 
     for (const format of ["mp4", "webm", "gif"] as const) {
         const args = exportVideoArgv({ input: "in.mp4", output: "out.wrong", format });
