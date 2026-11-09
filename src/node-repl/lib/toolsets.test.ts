@@ -1556,6 +1556,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             recorder,
             rates: { activeFps: 60, idleFps: 60, threshold: 0.5 },
             join: async () => ({ durationMs: 2000 }),
+            measure: async () => 1000,
             emit: (event) => control?.observe(event),
             tickMs: 0,
             slowStartMs: 0,

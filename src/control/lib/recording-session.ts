@@ -119,7 +119,10 @@ export interface SegmentResult {
     /** True when the movie at `output` exists and is complete. */
     ok: boolean;
     endedBy: SegmentEnd;
-    /** The recorder's own measure of the movie, when it reported one. */
+    /**
+     * The run's wall time as the recorder measured it, when it reported one. It also counts the wait for the first frame
+     * and the stop, so it is not the movie's length: that is `movieMs`, and the saved file's own length is `MovieMeasure`.
+     */
     durationMs?: number;
     /** The movie's own length (from its first frame to its end), when the recorder reported it. */
     movieMs?: number;
@@ -158,6 +161,7 @@ export interface SegmentRecorder {
 export interface FinishedSegment {
     index: number;
     path: string;
+    /** The run's wall time: the recorder's `durationMs`, or the session's own when it reported none. */
     durationMs: number;
     target: RecordingTarget;
     frames?: number;
@@ -183,6 +187,9 @@ export function movieFrameStats(
 
 /** Joins finished segments into `output`, one H.264 MP4, and returns the joined movie's length. */
 export type SegmentJoiner = (input: { segments: FinishedSegment[]; output: string }) => Promise<{ durationMs: number }>;
+
+/** A saved movie's length (ms), measured the way a `SegmentJoiner` measures the movie it joined. */
+export type MovieMeasure = (path: string) => Promise<number>;
 
 export type RecordingOutcome = "done" | "discarded" | "failed";
 
@@ -251,6 +258,8 @@ export class RecordingSession {
             output: string;
             recorder: SegmentRecorder;
             join: SegmentJoiner;
+            /** Measures a one-segment movie at `output`, so its length is the file's as a joined movie's is. */
+            measure: MovieMeasure;
             emit: (event: RecordingSessionEvent) => void;
             maxSeconds?: number;
             segmentSeconds?: number;
@@ -658,7 +667,7 @@ export class RecordingSession {
         try {
             if (ordered.length === 1) {
                 await this.moveMovie(ordered[0].path);
-                durationMs = ordered[0].durationMs;
+                durationMs = await this.savedLengthMs(ordered[0]);
             } else {
                 durationMs = await this.joinMovie(ordered);
             }
@@ -684,6 +693,20 @@ export class RecordingSession {
             ...movieFrameStats(ordered, durationMs),
         });
         this.end("done");
+    }
+
+    /**
+     * The saved one-segment movie's length. A movie the probe cannot read is still saved, so it keeps the recorder's
+     * movie length, which is the nearer of the two figures it reported.
+     */
+    private async savedLengthMs(segment: FinishedSegment): Promise<number> {
+        try {
+            return await this.options.measure(this.options.output);
+        } catch (error) {
+            const fallbackMs = segment.movieMs ?? segment.durationMs;
+            log.warn({ error, output: this.options.output, fallbackMs }, "the saved movie could not be measured");
+            return fallbackMs;
+        }
     }
 
     private async deleteSegments(): Promise<void> {

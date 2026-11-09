@@ -19,6 +19,7 @@ import {
     audioTitlesArgv,
     audioTrackTitles,
     cursorTrackOffsets,
+    movieLengthMs,
     type NativeRecorderOptions,
     nativeSegmentRecorder,
     segmentCaptureSpec,
@@ -200,6 +201,8 @@ describe("RecordingSession", () => {
             segmentSeconds?: number;
             slowStartMs?: number;
             join?: ConstructorParameters<typeof RecordingSession>[0]["join"];
+            /** Measures the one-segment movie; by default it answers the fake recorder's 1000 ms. */
+            measure?: ConstructorParameters<typeof RecordingSession>[0]["measure"];
             /** Sees every event after the test's own list does. */
             emit?: (event: RecordingSessionEvent) => void;
         } = {}
@@ -215,6 +218,7 @@ describe("RecordingSession", () => {
                 await writeFile(output, segments.map((segment) => segment.path).join("\n"));
                 return { durationMs: segments.reduce((sum, segment) => sum + segment.durationMs, 0) };
             },
+            measure: async () => 1000,
             emit: (event) => {
                 events.push(event);
                 emit?.(event);
@@ -270,6 +274,7 @@ describe("RecordingSession", () => {
                 await writeFile(output, "joined");
                 return { durationMs: 1000 };
             },
+            measure: async () => 1000,
             emit: (event) => {
                 events.push(event);
                 control?.observe(event);
@@ -526,6 +531,7 @@ describe("RecordingSession", () => {
                 output: join(root, "private.mp4"),
                 recorder,
                 join: async () => ({ durationMs: 0 }),
+                measure: async () => 1000,
                 emit: () => {},
                 now: () => clock,
                 tickMs: 0,
@@ -569,6 +575,7 @@ describe("RecordingSession", () => {
             output: join(root, "out.mp4"),
             recorder,
             join: async () => ({ durationMs: 0 }),
+            measure: async () => 1000,
             emit: (event) => events.push(event),
             tickMs: 0,
             slowStartMs: 0,
@@ -657,6 +664,7 @@ describe("RecordingSession", () => {
             output: join(root, "out.mp4"),
             recorder,
             join: async () => ({ durationMs: 0 }),
+            measure: async () => 1000,
             emit: (event) => control?.observe(event),
             now: () => clock,
             tickMs: 0,
@@ -695,6 +703,7 @@ describe("RecordingSession", () => {
                 await writeFile(output, "joined");
                 return { durationMs: 1000 };
             },
+            measure: async () => 1000,
             emit: (event) => control?.observe(event),
             now: () => clock,
             tickMs: 0,
@@ -818,6 +827,63 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("done");
         // Two runs of 1000 ms with 50 frames each: 100 frames over 2 s.
         expect(events.find((event) => event.event === "done")).toMatchObject({ frames: 100, averageFps: 50 });
+    });
+
+    describe("a saved movie's length is measured the same way for one segment and several", () => {
+        // The defect: one segment kept ax-tool's wall time, which also counts the wait for the first frame and the
+        // stop, while a join probed the file, so recording.json's durationMs and averageFps disagreed with the movie.
+        it("a one-segment movie's durationMs is the saved movie's measured length, like a joined one's", async () => {
+            const measured: string[] = [];
+            const { recorder } = fakeRecorder({ frames: { frames: 30 }, movieMs: 990 });
+            const recording = session(recorder, {
+                measure: async (path) => {
+                    measured.push(path);
+                    return 970;
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(measured).toEqual([join(root, "out.mp4")]);
+            // 30 frames over the measured 0.97 s, not over the 1 s of wall time the recorder reported.
+            expect(events.find((event) => event.event === "done")).toMatchObject({
+                durationMs: 970,
+                frames: 30,
+                averageFps: 30.9,
+            });
+        });
+
+        it("a joined movie keeps the joiner's length and is not measured again", async () => {
+            const measured: string[] = [];
+            const { recorder } = fakeRecorder();
+            const recording = session(recorder, {
+                measure: async (path) => {
+                    measured.push(path);
+                    return 1;
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "pause" });
+            await recording.command({ cmd: "resume" });
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(joined).toHaveLength(1);
+            expect(measured).toEqual([]);
+            expect(events.find((event) => event.event === "done")).toMatchObject({ durationMs: 2000, segments: 2 });
+        });
+
+        it("a one-segment movie the probe cannot read still saves, with the recorder's movie length", async () => {
+            const { recorder } = fakeRecorder({ movieMs: 990 });
+            const recording = session(recorder, {
+                measure: async () => {
+                    throw new Error("not a movie ffprobe can read");
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(events.find((event) => event.event === "done")).toMatchObject({ durationMs: 990, segments: 1 });
+        });
     });
 
     it("a first run that fails without a movie ends the session with the refusal code", async () => {
@@ -1140,6 +1206,15 @@ describe("a joined cursor track on the joined movie's clock", () => {
     afterEach(async () => {
         mock.restore();
         await rm(root, { recursive: true, force: true });
+    });
+
+    it("measures a saved movie by its probed length in whole milliseconds, as the joiner measures a join", async () => {
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async () => ({
+            ...({} as Awaited<ReturnType<typeof videoProbe.probeVideo>>),
+            durationUs: 2_530_400,
+        }));
+        expect(await movieLengthMs(join(root, "out.mp4"))).toBe(2530);
+        expect(probe).toHaveBeenCalledWith({ input: join(root, "out.mp4") });
     });
 
     it("starts each segment's cursor rows where the lengths of the segments before it end", () => {
@@ -1514,6 +1589,7 @@ describe("a movie recording's live settings", () => {
                 await writeFile(output, "joined");
                 return { durationMs: 1000 };
             },
+            measure: async () => 1000,
             emit: (event) => control?.observe(event),
             tickMs: 0,
             slowStartMs: 0,

@@ -6,6 +6,7 @@ import { type CountdownHold, runCountdown } from "@app/control/lib/peekaboo";
 import {
     audioTrackTitles,
     cursorTrackPath,
+    movieLengthMs,
     type NativeRecorderOptions,
     nativeSegmentRecorder,
     SESSION_MOTION_THRESHOLD,
@@ -457,6 +458,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         output: movie,
         recorder: nativeSegmentRecorder(segmentRecorderOptions(options, folder)),
         join: segmentJoiner(audioTrackTitles(options.audio)),
+        measure: movieLengthMs,
         emit,
         maxSeconds: options.maxSeconds ?? VIDEO_RECORDING_MAX_SECONDS,
         // The rates `settings.set` changes while it records; a movie without an idle rate keeps its fps when still.

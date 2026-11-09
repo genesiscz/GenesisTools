@@ -415,9 +415,18 @@ const joinSegments = async ({
         placements,
         output,
     });
-    const joined = await probeVideo({ input: output });
-    return { durationMs: Math.round(joined.durationUs / 1000) };
+    return { durationMs: await movieLengthMs(output) };
 };
+
+/**
+ * A saved movie's length as ffprobe reads it (ms), the length the editor opens it with. A one-segment recording and a
+ * joined one are both measured this way, because ax-tool's wall `durationMs` also counts the wait for the first frame
+ * and the stop and differed from the file by up to 100 ms.
+ */
+export async function movieLengthMs(path: string): Promise<number> {
+    const probe = await probeVideo({ input: path });
+    return Math.round(probe.durationUs / 1000);
+}
 
 /**
  * How long a segment lasts in the joined movie: its file's duration as ffprobe reads it, which is where both the concat
