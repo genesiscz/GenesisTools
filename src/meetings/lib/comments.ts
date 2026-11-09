@@ -1,5 +1,5 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -13,6 +13,7 @@ import {
     type MeetingComment,
     type StagedComment,
 } from "./comment-schema";
+import { appendLines } from "./ndjson-lines";
 
 export {
     type CommentListener,
@@ -253,32 +254,7 @@ export class MeetingComments {
 
     /** One line at the end; after a torn last line (a writer that died mid-line) on a line of its own. */
     private append(line: CommentLine): void {
-        mkdirSync(dirname(this.path), { recursive: true });
-        const text = `${SafeJSON.stringify(line, { jsonl: true })}\n`;
-        appendFileSync(this.path, endsTorn(this.path) ? `\n${text}` : text, { mode: 0o600 });
-    }
-}
-
-/** The file's last byte is not a line end: the next line must start on a line of its own. */
-function endsTorn(path: string): boolean {
-    if (!existsSync(path)) {
-        return false;
-    }
-
-    const size = statSync(path).size;
-
-    if (size === 0) {
-        return false;
-    }
-
-    const fd = openSync(path, "r");
-
-    try {
-        const last = Buffer.alloc(1);
-        readSync(fd, last, 0, 1, size - 1);
-        return last[0] !== 10;
-    } finally {
-        closeSync(fd);
+        appendLines(this.path, [SafeJSON.stringify(line, { jsonl: true })], { mode: 0o600 });
     }
 }
 

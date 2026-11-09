@@ -291,6 +291,24 @@ describe("decision journal", () => {
         expect(fx.item("i2")).toMatchObject({ status: "confirmed" });
     });
 
+    // A real tear has no line end: the next entry must start on a line of its own, or it is glued onto the torn bytes
+    // and the newest decision is the one that no longer reads.
+    test("an entry after a torn last line without a line end still reads, and its token reverts", async () => {
+        const fx = await fixture([term("i1", 10, { proposed: "wiki" })]);
+        appendFileSync(fx.journal.path(fx.meeting.id), '{"token":"torn-line","at":"2026-11-09T18:0');
+        const decided = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i1"] },
+            actor: { kind: "cli" },
+        });
+
+        expect(fx.journal.read(fx.meeting.id).map((entry): string | undefined => entry.token)).toEqual([
+            decided.entry?.token,
+        ]);
+        await fx.journal.revert({ meeting: fx.meeting.id, token: decided.entry!.token, actor: person });
+        expect(fx.item("i1")).toMatchObject({ status: "suggested" });
+    });
+
     test("an add is one entry with the items it made, and its Undo removes them unless decided since", async () => {
         const fx = await fixture([term("i1", 10)]);
         const finding = {

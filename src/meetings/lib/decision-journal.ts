@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
@@ -36,6 +36,7 @@ import {
     type LabelChange,
     MEETING_FIELDS,
 } from "./decision-actions";
+import { appendLines } from "./ndjson-lines";
 import {
     answerQuestion,
     DEFAULT_LISTEN_BELOW,
@@ -1167,7 +1168,7 @@ export class DecisionJournal {
             labels: [],
             corrections: [],
         };
-        appendFileSync(this.path(request.meeting), `${SafeJSON.stringify(entry, { jsonl: true })}\n`, { mode: 0o600 });
+        appendLines(this.path(request.meeting), [SafeJSON.stringify(entry, { jsonl: true })], { mode: 0o600 });
         log.debug({ meeting: entry.meeting, action: "comment", token: entry.token }, "comments journaled");
         return entry;
     }
@@ -1401,7 +1402,7 @@ export class DecisionJournal {
     /** The entry's line, its answer log line and its ledger lines, in that order, under the record's lock. */
     private write(entry: JournalEntry, after: { reverted: JournalEntry | undefined; openAfter: number }): void {
         const { store } = this.options;
-        appendFileSync(this.path(entry.meeting), `${SafeJSON.stringify(entry, { jsonl: true })}\n`, { mode: 0o600 });
+        appendLines(this.path(entry.meeting), [SafeJSON.stringify(entry, { jsonl: true })], { mode: 0o600 });
         const event = answerEventOf(entry, after.reverted);
 
         if (event) {
