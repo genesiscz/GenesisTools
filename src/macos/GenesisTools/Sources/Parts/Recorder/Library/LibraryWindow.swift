@@ -22,6 +22,9 @@ final class LibraryModel {
     /// What was said or marked that matches the filter, the first hit per recording, from `tools recorder search`
     /// (cached transcripts with their fixes, and marker labels).
     private(set) var spoken: [URL: SpokenHit] = [:]
+    /// The recordings whose title the same search matched (its `title` rows: case and accents folded), so the filter
+    /// shows what `tools recorder search` finds; they get no "said at" line.
+    private(set) var titleHits: Set<URL> = []
     /// The spoken search is running (the empty state waits for it); `searchFailed` is its last error.
     private(set) var searching = false
     private(set) var searchFailed: String?
@@ -54,10 +57,21 @@ final class LibraryModel {
     static let thumbnailSize = NSSize(width: 248, height: 155)
 
     var visible: [RecorderMenu.Recent] {
-        let query = filter.trimmingCharacters(in: .whitespaces).lowercased()
+        let query = filter.trimmingCharacters(in: .whitespaces)
         return query.isEmpty ? items : items.filter {
-            $0.title.lowercased().contains(query) || $0.folder.lastPathComponent.contains(query) || spoken[$0.folder] != nil
+            Self.matches(title: $0.title, folderName: $0.folder.lastPathComponent, query: query,
+                         spokenHit: spoken[$0.folder] != nil, titleHit: titleHits.contains($0.folder))
         }
+    }
+
+    /// Whether a card shows for `query`: its title with case and accents folded (as the search folds them, so
+    /// "prihlaseni" finds "Ukázka přihlášení" before the search answers and for a query too short to search), the
+    /// search's own title or spoken hit, or its folder name.
+    nonisolated static func matches(title: String, folderName: String, query: String, spokenHit: Bool, titleHit: Bool) -> Bool {
+        if spokenHit || titleHit { return true }
+        let folded: (String) -> String = { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) }
+        let wanted = folded(query)
+        return folded(title).contains(wanted) || folded(folderName).contains(wanted)
     }
 
     /// From three letters on, 300 ms after the last key: one service search, with the CLI as fallback.
@@ -66,6 +80,7 @@ final class LibraryModel {
         let query = filter.trimmingCharacters(in: .whitespaces)
         guard query.count >= 3 else {
             if !spoken.isEmpty { spoken = [:] }
+            if !titleHits.isEmpty { titleHits = [] }
             searching = false
             searchFailed = nil
             return
@@ -88,10 +103,15 @@ final class LibraryModel {
                 }
                 self.searchFailed = nil
                 var hits: [URL: SpokenHit] = [:]
+                var titles: Set<URL> = []
                 for row in rows {
-                    guard let kind = row["kind"] as? String, kind != "title", let folder = row["folder"] as? String,
-                          let text = row["text"] as? String else { continue }
+                    guard let kind = row["kind"] as? String, let folder = row["folder"] as? String else { continue }
                     let url = URL(fileURLWithPath: folder)
+                    if kind == "title" {
+                        titles.insert(url)
+                        continue
+                    }
+                    guard let text = row["text"] as? String else { continue }
                     let at = (row["at"] as? NSNumber)?.doubleValue ?? 0
                     if hits[url] == nil {
                         hits[url] = SpokenHit(at: at, text: text, marker: kind == "marker")
@@ -101,6 +121,7 @@ final class LibraryModel {
                 }
                 HubPerf.log("recorder.library.search \"\(query)\": \(hits.count) recordings by what was said or marked")
                 self.spoken = hits
+                self.titleHits = titles
             }
         }
         spokenSearch = work
