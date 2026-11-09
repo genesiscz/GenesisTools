@@ -698,6 +698,28 @@ describe("itemWhat", () => {
         expect(itemWhat(range(279, 279))).toBe("Speaker 1 04:39 → Alice Example");
         expect(itemWhat(range(279, 301))).toBe("Speaker 1 04:39–05:01 → Alice Example");
     });
+
+    test("a term shows its spelling, else its quote with the source, else its meaning; only none of them is a ?", () => {
+        const term = (extra: Record<string, unknown>) =>
+            meetingItemSchema.parse({
+                id: "i1",
+                kind: "term",
+                status: "suggested",
+                suggestedAt: "2026-11-02T15:00:00.000Z",
+                atSec: 1623,
+                heard: "category data",
+                confidence: 0.9,
+                rules: [],
+                ...extra,
+            });
+
+        expect(itemWhat(term({ proposed: "CategoryData" }))).toBe("category data → CategoryData");
+        expect(itemWhat(term({ meaning: "CategoryData" }))).toBe("category data → CategoryData (meaning)");
+        expect(itemWhat(term({ quote: { text: "categoryData: string", source: "dto.ts:12" } }))).toBe(
+            'category data → "categoryData: string" (quote from dto.ts:12)'
+        );
+        expect(itemWhat(term({}))).toBe("category data → ?");
+    });
 });
 
 describe("appliedLine", () => {
