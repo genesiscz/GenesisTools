@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { JobInfo } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -159,6 +159,19 @@ export function listLiveRecordings(dir = liveRecordingsDir()): LiveEntry[] {
     }
 
     return entries.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+}
+
+/** The folders running recorders write into (each live entry's `folder`, resolved). */
+export function liveRecordingFolders(dir = liveRecordingsDir()): Set<string> {
+    return new Set(listLiveRecordings(dir).flatMap((entry) => (entry.folder ? [resolve(entry.folder)] : [])));
+}
+
+/**
+ * Whether a running recorder writes into `folder`. The library leaves such a folder where it is until the stop, as the
+ * Recordings window does: no trash, and `last` names the newest recording that has ended.
+ */
+export function isRecordingLive(folder: string, dir = liveRecordingsDir()): boolean {
+    return liveRecordingFolders(dir).has(resolve(folder));
 }
 
 export function readLiveRecording(id: string, dir = liveRecordingsDir()): LiveEntry | undefined {

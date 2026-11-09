@@ -8,7 +8,9 @@ import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitratio
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { applyOp, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import { RecorderControl, type RecorderMethod, type StopAnswer } from "@genesiscz/utils/screen-recorder/control";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
+import { LiveRecordingServer } from "@genesiscz/utils/screen-recorder/live";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { computeEdit, exportProgressPrinter, parseExportSize, renderInto, withEditCancel } from "./edit";
@@ -954,6 +956,66 @@ it("recording trash from an agent call asks no one: a policy that would ask refu
         ]);
     } finally {
         run.mockRestore();
+    }
+});
+
+/** A movie recording that still records, for the live-folder checks. */
+class StillRecording extends RecorderControl {
+    readonly kind = "movie";
+    readonly methods: readonly RecorderMethod[] = ["status", "stop"];
+
+    async status() {
+        return { kind: this.kind, title: "Login demo", state: "recording" as const, displays: [], frames: 0 };
+    }
+
+    async pause() {
+        return { state: "paused" as const };
+    }
+
+    async resume() {
+        return { state: "recording" as const };
+    }
+
+    async stop(): Promise<StopAnswer> {
+        return { state: "stopped" };
+    }
+}
+
+it("a recording that still records is not trashed, and its library row says it records", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "recording-live-"));
+    const other = mkdtempSync(join(tmpdir(), "recording-done-"));
+
+    for (const dir of [folder, other]) {
+        writeFileSync(
+            join(dir, "recording.json"),
+            SafeJSON.stringify({ id: "x", title: "Login demo", startedAt: "2026-11-09T10:00:00.000Z" })
+        );
+    }
+
+    const server = new LiveRecordingServer({
+        id: `live-actions-${process.pid}`,
+        kind: "movie",
+        title: "Login demo",
+        folder,
+        control: new StillRecording(),
+    });
+    const run = spyOn(cli, "execTool").mockImplementation(async () => ({
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+    }));
+
+    try {
+        await expect(trashRecordings([other, folder], { askUser: true })).rejects.toThrow(
+            `${folder} is still recording; stop it first with tools recorder stop. Nothing was moved.`
+        );
+        expect(run).not.toHaveBeenCalled();
+        expect(libraryRow(folder)?.recording).toBe(true);
+        expect(libraryRow(other)?.recording).toBeUndefined();
+    } finally {
+        run.mockRestore();
+        server.close();
     }
 });
 

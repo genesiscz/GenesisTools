@@ -31,7 +31,7 @@ import {
     type OcrSinkKind,
     ocrSinkFor,
 } from "./frame-output";
-import { RECORDING_MANIFEST, type RecordingManifest, recordingsLibraryDir } from "./library";
+import { RECORDING_MANIFEST, type RecordingManifest, readRecordingManifestSafe, recordingsLibraryDir } from "./library";
 import { liveRecordingId } from "./live";
 import { emptyPieceVerdict, FRAME_RECORDING_METHODS, FrameRecording } from "./recording";
 import { patchChange, type SessionCapture } from "./session";
@@ -423,7 +423,8 @@ export class LibraryRecording extends FrameRecording<number> {
         const manifest: RecordingManifest = {
             version: 1,
             id: this.id,
-            title: this.options.title ?? this.id,
+            // A rename while it records (tools recorder rename, the window) wrote the file: keep that title.
+            title: readRecordingManifestSafe(this.folder)?.manifest?.title ?? this.options.title ?? this.id,
             startedAt: this.startedAt.toISOString(),
             ...(final ? { endedAt: new Date().toISOString() } : {}),
             displays: this.choice.recorded(),

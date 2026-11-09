@@ -1,10 +1,11 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { liveRecordingFolders } from "@genesiscz/utils/screen-recorder/live";
 import { type RecordingStoreId, recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { z } from "zod";
 import { exportAs } from "./edit";
@@ -156,7 +157,16 @@ export async function trashRecordings(
         throw new Error("name at least one recording to trash");
     }
 
+    const live = liveRecordingFolders();
+
     for (const folder of unique) {
+        // Its recorder still writes there, so the join at its stop would fail; the window offers only Show in Finder.
+        if (live.has(resolve(folder))) {
+            throw new Error(
+                `${folder} is still recording; stop it first with ${toolCommand("recorder stop")}. Nothing was moved.`
+            );
+        }
+
         const kept = recordingStoreOf(folder, roots)?.kept;
 
         if (kept) {

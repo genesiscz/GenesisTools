@@ -8,6 +8,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { readRecordingManifestSafe, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
+import { liveRecordingFolders } from "@genesiscz/utils/screen-recorder/live";
 import { recordingStores } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { z } from "zod";
 
@@ -58,6 +59,8 @@ export interface LibraryRow {
     movieFrames?: number;
     /** `edit.json` exists: the recording was edited. */
     edited: boolean;
+    /** A running recorder still writes into the folder (a live entry names it), as the window's card says. */
+    recording?: true;
     /** How the recording ended (`done`, `failed`, `discarded`), when its recorder wrote it. */
     outcome?: string;
     /** The movie's length, when the recorder wrote it. */
@@ -163,6 +166,7 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
     const { root, limit = Infinity } = typeof options === "string" ? { root: options } : options;
     const roots = root === undefined ? recordingStores().map((store) => store.root()) : [root];
     const rows: LibraryRow[] = [];
+    const live = liveRecordingFolders();
 
     for (const dir of roots) {
         if (!existsSync(dir)) {
@@ -170,7 +174,7 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
         }
 
         for (const entry of readdirSync(dir, { withFileTypes: true })) {
-            const row = entry.isDirectory() ? libraryRow(join(dir, entry.name)) : undefined;
+            const row = entry.isDirectory() ? libraryRow(join(dir, entry.name), live) : undefined;
 
             if (row) {
                 rows.push(row);
@@ -187,12 +191,14 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
  * One recording folder as `list --json` gives it (`tools recorder show`); undefined when it holds no recording.json or
  * the file is not JSON. A manifest the schema refuses still gives a row from its own keys, as the window lists it.
  */
-export function libraryRow(folder: string): LibraryRow | undefined {
+export function libraryRow(folder: string, live: ReadonlySet<string> = liveRecordingFolders()): LibraryRow | undefined {
     const read = readRecordingManifestSafe(folder);
 
     if (!read) {
         return undefined;
     }
+
+    const recording = live.has(resolve(folder)) ? { recording: true as const } : {};
 
     const manifest = read.manifest;
 
@@ -212,6 +218,7 @@ export function libraryRow(folder: string): LibraryRow | undefined {
             movie: movieOf(folder),
             frames: Array.isArray(read.raw.frames) ? read.raw.frames.length : 0,
             edited: existsSync(join(folder, "edit.json")),
+            ...recording,
         };
     }
 
@@ -229,6 +236,7 @@ export function libraryRow(folder: string): LibraryRow | undefined {
         ...(end.video?.durationMs === undefined ? {} : { durationMs: end.video.durationMs }),
         ...(end.video?.frames === undefined ? {} : { movieFrames: end.video.frames }),
         ...(end.outcome === "failed" && manifest.warnings[0] ? { reason: manifest.warnings[0] } : {}),
+        ...recording,
     };
 }
 
@@ -278,10 +286,16 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
     }
 
     if (value === "last") {
-        const newest = listLibrary({ limit: 1 })[0];
+        // The newest that has ended: a folder a recorder still writes into is not one to edit, move or rename yet.
+        const rows = listLibrary();
+        const newest = rows.find((row) => !row.recording);
 
         if (!newest) {
-            throw new Error("The recordings library is empty; record one with " + toolCommand("recorder start") + ".");
+            throw new Error(
+                rows.length > 0
+                    ? "The only recording still records; stop it first with " + toolCommand("recorder stop") + "."
+                    : "The recordings library is empty; record one with " + toolCommand("recorder start") + "."
+            );
         }
 
         return newest.folder;

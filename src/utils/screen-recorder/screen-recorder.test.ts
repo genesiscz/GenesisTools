@@ -767,6 +767,27 @@ describe("library recording frames", () => {
         expect(existsSync(join(recording.folder, ".pieces"))).toBe(false);
         expect(files.some((name) => name.endsWith(".ocr.json"))).toBe(false);
     });
+    test("a rename while it records keeps its title through the recorder's final manifest", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-lib-rename-"));
+        const recorder = new PieceRecorder();
+        recorder.folder = join(root, "rec");
+        const recording = await startRecording({
+            recorder,
+            folder: recorder.folder,
+            liveDir: join(root, "live"),
+            maxDurationSec: 30,
+            pieceSec: 0.2,
+            title: "Start",
+        });
+        // A marker writes recording.json while it records; a rename needs one.
+        await recording.addMarker("first");
+        expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 3_000 })).toBe(true);
+        renameRecording(recording.folder, "Renamed");
+        await recording.addMarker("second");
+        await recording.stop();
+        expect(readRecordingManifest(recording.folder)?.title).toBe("Renamed");
+    });
+
     test("flush per piece: JPEG frames and their ocr.jsonl rows exist while it records, under wall-clock names", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-lib-piece-"));
         const recorder = new PieceRecorder();

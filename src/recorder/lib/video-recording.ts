@@ -28,6 +28,7 @@ import {
     RECORDING_MANIFEST,
     type RecordingManifest,
     type RecordingSpan,
+    readRecordingManifestSafe,
     recordingsLibraryDir,
     writeRecordingManifest,
 } from "@genesiscz/utils/screen-recorder/library";
@@ -580,6 +581,8 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
     await writeRecordingManifest(folder, {
         ...manifest,
+        // A rename while it recorded (tools recorder rename, movie.rename()) wrote the file: keep that title.
+        title: readRecordingManifestSafe(folder)?.manifest?.title ?? manifest.title,
         endedAt: new Date().toISOString(),
         settings: {
             ...manifest.settings,
