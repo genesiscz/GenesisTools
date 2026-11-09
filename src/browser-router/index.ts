@@ -3,6 +3,7 @@
 import { extensionAdvice } from "@app/browser-extension/lib/host/loaded";
 import { hasCapability } from "@genesiscz/utils/browser-router/capabilities";
 import { configFile } from "@genesiscz/utils/browser-router/config";
+import { resolveDefaultBrowsers } from "@genesiscz/utils/browser-router/default-browser";
 import { tokenLink } from "@genesiscz/utils/browser-router/links";
 import { presets, presetWarnings } from "@genesiscz/utils/browser-router/presets";
 import { type PresetOptions, RouteError, route } from "@genesiscz/utils/browser-router/route";
@@ -684,6 +685,29 @@ program
             }
 
             out.println(decision.openArguments.join(" ") || "(swallowed)");
+        } catch (error) {
+            fail(error);
+        }
+    });
+
+program
+    .command("browser")
+    .description("Name the default browser and the browser a click on this URL really reaches through the routes")
+    .argument("[url]", "The link to check", "https://example.com/")
+    .option("--json", "Print { defaultBrowser, defaultBrowserEffective, viaRouter } as JSON (the app reads this)")
+    .action((url: string, options: { json?: boolean }) => {
+        try {
+            const browsers = resolveDefaultBrowsers(url);
+
+            if (options.json) {
+                out.result(browsers);
+                return;
+            }
+
+            out.println(`default browser: ${browsers.defaultBrowser?.name ?? "(none)"}`);
+            out.println(
+                `opens ${url} in: ${browsers.defaultBrowserEffective?.name ?? "(no browser: the router runs a command or has no config)"}`
+            );
         } catch (error) {
             fail(error);
         }
