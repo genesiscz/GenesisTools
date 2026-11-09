@@ -865,30 +865,123 @@ export function concatListLine(path: string): string {
     return `file '${path.replaceAll("'", "'\\''")}'`;
 }
 
+/** Where one segment's picture sits in a re-encoded joined movie, in joined pixels; `into` is the joined frame. */
+export interface SegmentPlacement {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    into: { w: number; h: number };
+}
+
+/** The frame a re-encoded join writes: the first segment's size, rounded down to even sides as H.264 needs. */
+export function joinedFrameSize({ width, height }: { width: number; height: number }): { w: number; h: number } {
+    return { w: Math.max(2, Math.floor(width / 2) * 2), h: Math.max(2, Math.floor(height / 2) * 2) };
+}
+
+/**
+ * Where a `width` x `height` picture lands in the `into` frame when it is scaled to fit and centred on black: ffmpeg's
+ * force_original_aspect_ratio=decrease with force_divisible_by=2 for the size, and the centring offsets rounded down
+ * to even, as yuv420p's chroma rounds them. joinSegmentsArgv writes these numbers into its filter and
+ * joinCursorTracks moves the segment's rows by the same ones, so the cursor lands on the pixels that show it.
+ */
+export function letterboxPlacement({
+    width,
+    height,
+    into,
+}: {
+    width: number;
+    height: number;
+    into: { w: number; h: number };
+}): SegmentPlacement {
+    const w = Math.min(into.w, Math.round((into.h * width) / height / 2) * 2);
+    const h = Math.min(into.h, Math.round((into.w * height) / width / 2) * 2);
+    return { x: Math.floor((into.w - w) / 4) * 2, y: Math.floor((into.h - h) / 4) * 2, w, h, into };
+}
+
 /**
  * The cursor tracks of the segments (`<segment>.cursor.jsonl`) as one track of the joined movie: each segment's
- * times move by the length of the segments before it, so a pause leaves no gap in the track either.
+ * times move by the length of the segments before it, so a pause leaves no gap in the track either. A segment with a
+ * `placement` was letterboxed into the joined frame: its `x` and `y` (0...1 of its own picture) move into that picture,
+ * and its `pw` grows by the joined frame's width over the picture's, so the joined width over `pw` stays the pixels
+ * one of its points covers. Every other key of a row is kept.
  */
-export function joinCursorTracks(parts: Array<{ text: string; offsetMs: number }>): string {
+export function joinCursorTracks(
+    parts: Array<{ text: string; offsetMs: number; placement?: SegmentPlacement }>
+): string {
     const lines: string[] = [];
 
     for (const part of parts) {
         for (const line of part.text.split("\n")) {
             const match = /^\{"t":(-?[\d.]+)(,.*)$/.exec(line.trim());
 
-            if (match) {
-                lines.push(`{"t":${(Number(match[1]) + part.offsetMs).toFixed(1)}${match[2]}`);
+            if (!match) {
+                continue;
             }
+
+            const t = (Number(match[1]) + part.offsetMs).toFixed(1);
+            const placed = part.placement ? placedCursorRow(line.trim(), t, part.placement) : null;
+            lines.push(placed ?? `{"t":${t}${match[2]}`);
         }
     }
 
     return lines.length ? `${lines.join("\n")}\n` : "";
 }
 
+/** One cursor row moved into its segment's letterboxed picture; null when the row is not a JSON object. */
+function placedCursorRow(line: string, t: string, placement: SegmentPlacement): string | null {
+    let row: unknown;
+    try {
+        row = SafeJSON.parse(line, { strict: true });
+    } catch (error) {
+        log.debug({ error, line }, "a cursor row is not JSON; kept it unplaced");
+        return null;
+    }
+
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+        return null;
+    }
+
+    const { x, y, w, h, into } = placement;
+    const fields = Object.entries(row).map(([key, value]) => {
+        let text: string;
+
+        if (key === "t") {
+            text = t;
+        } else if (key === "x" && typeof value === "number") {
+            text = ((x + value * w) / into.w).toFixed(5);
+        } else if (key === "y" && typeof value === "number") {
+            text = ((y + value * h) / into.h).toFixed(5);
+        } else if (key === "pw" && typeof value === "number") {
+            text = ((value * into.w) / w).toFixed(1);
+        } else {
+            text = SafeJSON.stringify(value, { strict: true });
+        }
+
+        return `${SafeJSON.stringify(key, { strict: true })}:${text}`;
+    });
+    return `{${fields.join(",")}}`;
+}
+
+/** Where each segment's picture sits when a join re-encodes them into the first segment's `width` x `height`. */
+export function segmentPlacements({
+    sizes,
+    width,
+    height,
+}: {
+    sizes: Array<{ width: number; height: number }>;
+    width: number;
+    height: number;
+}): SegmentPlacement[] {
+    const into = joinedFrameSize({ width, height });
+    return sizes.map((size) => letterboxPlacement({ ...size, into }));
+}
+
 /**
  * ffmpeg arguments that join segments of any sizes into one H.264 MP4 at the first segment's size: each input is
- * scaled to fit, padded with black and given square pixels, then the concat filter chains them. The recorder writes
- * variable frame rate movies (a frame only when something moved), so the output keeps their timestamps.
+ * scaled to fit and centred on black at its segmentPlacements place (the same numbers the cursor track moves by),
+ * given square pixels, then the concat filter chains them. The recorder writes variable frame rate movies (a frame
+ * only when something moved), so the output keeps their timestamps.
  */
 export function joinSegmentsArgv({
     inputs,
@@ -899,7 +992,8 @@ export function joinSegmentsArgv({
     audioTracks = audio ? 1 : 0,
     audioTitles,
 }: {
-    inputs: string[];
+    /** Each segment's file and its picture's size as shown (`probeVideo`'s displayWidth and displayHeight). */
+    inputs: Array<{ path: string; width: number; height: number }>;
     width: number;
     height: number;
     output: string;
@@ -909,12 +1003,11 @@ export function joinSegmentsArgv({
     /** One per audio track, in track order. */
     audioTitles?: string[];
 }): string[] {
-    const w = Math.max(2, Math.floor(width / 2) * 2);
-    const h = Math.max(2, Math.floor(height / 2) * 2);
-    const chains = inputs.map(
-        (_, index) =>
-            `[${index}:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
-            `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v${index}]` +
+    const placements = segmentPlacements({ sizes: inputs, width, height });
+    const chains = placements.map(
+        ({ x, y, w, h, into }, index) =>
+            `[${index}:v]scale=${w}:${h},pad=${into.w}:${into.h}:${x}:${y}:color=black,` +
+            `setsar=1,format=yuv420p,settb=AVTB[v${index}]` +
             Array.from(
                 { length: audioTracks },
                 (_, track) => `;[${index}:a:${track}]aresample=async=1:first_pts=0[a${index}_${track}]`
@@ -936,7 +1029,7 @@ export function joinSegmentsArgv({
             "-loglevel",
             "error",
             "-y",
-            ...inputs.flatMap((input) => ["-i", input]),
+            ...inputs.flatMap((input) => ["-i", input.path]),
             "-filter_complex",
             `${chains.join(";")};${labels}concat=n=${inputs.length}:v=1:a=${audioTracks}[out]${outputs.join("")}`,
             "-map",
@@ -970,7 +1063,7 @@ export function joinSegmentsArgv({
         "-loglevel",
         "error",
         "-y",
-        ...inputs.flatMap((input) => ["-i", input]),
+        ...inputs.flatMap((input) => ["-i", input.path]),
         "-filter_complex",
         `${chains.join(";")};${labels}concat=n=${inputs.length}:v=1:a=0[out]`,
         "-map",

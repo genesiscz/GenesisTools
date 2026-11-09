@@ -6,6 +6,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chosenPlan } from "@app/recorder/lib/proxy";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
@@ -31,6 +32,7 @@ import {
     type FinishedSegment,
     joinCursorTracks,
     joinSegmentsArgv,
+    letterboxPlacement,
     type MovieRates,
     PREPARING_MESSAGE,
     parseRecordingCommand,
@@ -1055,7 +1057,10 @@ describe("joining segments with their audio and cursor tracks", () => {
 
     it("keeps the audio when it re-encodes segments of different sizes", () => {
         const argv = joinSegmentsArgv({
-            inputs: ["/a.mp4", "/b.mp4"],
+            inputs: [
+                { path: "/a.mp4", width: 1280, height: 720 },
+                { path: "/b.mp4", width: 1920, height: 1080 },
+            ],
             width: 1280,
             height: 720,
             output: "/o.mp4",
@@ -1082,7 +1087,10 @@ describe("joining segments with their audio and cursor tracks", () => {
         expect(copied).toContain("title=System audio");
         expect(copied.at(-1)).toBe("/o.mp4");
         const joined = joinSegmentsArgv({
-            inputs: ["/a.mp4", "/b.mp4"],
+            inputs: [
+                { path: "/a.mp4", width: 1280, height: 720 },
+                { path: "/b.mp4", width: 1920, height: 1080 },
+            ],
             width: 1280,
             height: 720,
             output: "/o.mp4",
@@ -1171,16 +1179,162 @@ describe("a joined cursor track on the joined movie's clock", () => {
     });
 });
 
+function cursorRows(text: string): Array<Record<string, unknown>> {
+    return text
+        .trim()
+        .split("\n")
+        .map((line): Record<string, unknown> => SafeJSON.parse(line, { strict: true }));
+}
+
+describe("segments of another shape: the picture and the cursor rows share one placement", () => {
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `cursor-letterbox-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        mock.restore();
+        await rm(root, { recursive: true, force: true });
+    });
+
+    it("places a 16:9 segment inside a 16:10 frame as ffmpeg's letterbox does, with even offsets", () => {
+        expect(letterboxPlacement({ width: 1920, height: 1080, into: { w: 2880, h: 1800 } })).toEqual({
+            x: 0,
+            y: 90,
+            w: 2880,
+            h: 1620,
+            into: { w: 2880, h: 1800 },
+        });
+        // The live join of 1920x1080 into 1440x900 put the picture's first row at 44 (yuv420p rounds 45 down).
+        expect(letterboxPlacement({ width: 1920, height: 1080, into: { w: 1440, h: 900 } })).toMatchObject({
+            x: 0,
+            y: 44,
+            w: 1440,
+            h: 810,
+        });
+        expect(letterboxPlacement({ width: 1440, height: 900, into: { w: 1440, h: 900 } })).toMatchObject({
+            x: 0,
+            y: 0,
+            w: 1440,
+            h: 900,
+        });
+    });
+
+    it("writes the same placement into the join filter", () => {
+        const argv = joinSegmentsArgv({
+            inputs: [
+                { path: "/a.mp4", width: 2880, height: 1800 },
+                { path: "/b.mp4", width: 1920, height: 1080 },
+            ],
+            width: 2880,
+            height: 1800,
+            output: "/o.mp4",
+        });
+        const graph = argv[argv.indexOf("-filter_complex") + 1];
+        expect(graph).toContain("[0:v]scale=2880:1800,pad=2880:1800:0:0:color=black,");
+        expect(graph).toContain("[1:v]scale=2880:1620,pad=2880:1800:0:90:color=black,");
+    });
+
+    it("moves a letterboxed segment's cursor rows into its picture and scales its point width", () => {
+        const joined = joinCursorTracks([
+            { text: '{"t":0.0,"x":0.50000,"y":0.50000,"pw":1920.0}\n', offsetMs: 0 },
+            {
+                text: '{"t":0.0,"x":0.00000,"y":0.00000,"pw":1440.0,"shape":"abc"}\n{"t":10.0,"x":1.00000,"y":0.50000,"click":"left"}\n',
+                offsetMs: 2000,
+                placement: { x: 160, y: 0, w: 1600, h: 1080, into: { w: 1920, h: 1080 } },
+            },
+        ]);
+        const [first, corner, click] = cursorRows(joined);
+        expect(first).toEqual({ t: 0, x: 0.5, y: 0.5, pw: 1920 });
+        expect(corner.t).toBe(2000);
+        expect(corner.x).toBeCloseTo(160 / 1920, 4);
+        expect(corner.y).toBe(0);
+        // 1600 joined pixels show 1440 points: videoWidth / pw must be 1600 / 1440.
+        expect(corner.pw).toBeCloseTo((1440 * 1920) / 1600, 1);
+        expect(corner.shape).toBe("abc");
+        expect(click.x).toBeCloseTo(1760 / 1920, 4);
+        expect(click.y).toBeCloseTo(0.5, 4);
+        expect(click.click).toBe("left");
+    });
+
+    it("joins segments of different shapes with their rows inside the padded picture", async () => {
+        const sizes: Record<string, [number, number]> = { "a.mp4": [1440, 900], "b.mp4": [1920, 1080] };
+        const nameOf = (input: string) => input.split("/").at(-1) ?? "";
+        spyOn(mediaFacts, "readMediaFacts").mockImplementation(async ({ input }) => ({
+            path: input,
+            bytes: 1,
+            durationSec: 1,
+            streams: [
+                {
+                    type: "video",
+                    codec: "h264",
+                    attachedPicture: false,
+                    width: sizes[nameOf(input)]?.[0],
+                    height: sizes[nameOf(input)]?.[1],
+                },
+            ],
+        }));
+        const commands: string[][] = [];
+        spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            commands.push(command);
+            return "";
+        });
+        spyOn(videoProbe, "probeVideo").mockImplementation(async ({ input }) => {
+            const [width, height] = sizes[nameOf(input)] ?? [1440, 900];
+            return {
+                ...({} as Awaited<ReturnType<typeof videoProbe.probeVideo>>),
+                width,
+                height,
+                displayWidth: width,
+                displayHeight: height,
+                durationUs: 2_000_000,
+            };
+        });
+        const segments: FinishedSegment[] = [
+            { index: 0, path: join(root, "a.mp4"), durationMs: 1000, target: display },
+            { index: 1, path: join(root, "b.mp4"), durationMs: 1000, target: display },
+        ];
+        await writeFile(cursorTrackPath(segments[0].path), '{"t":0.0,"x":0.50000,"y":0.50000,"pw":1440.0}\n');
+        await writeFile(
+            cursorTrackPath(segments[1].path),
+            '{"t":0.0,"x":0.01000,"y":0.01000,"pw":1920.0}\n{"t":100.0,"x":0.01000,"y":1.00000,"click":"left"}\n'
+        );
+        const output = join(root, "joined.mp4");
+
+        await segmentJoiner()({ segments, output });
+
+        const graph = commands[0][commands[0].indexOf("-filter_complex") + 1];
+        expect(graph).toContain("[1:v]scale=1440:810,pad=1440:900:0:44:color=black,");
+        const [first, top, bottom] = cursorRows(await readFile(cursorTrackPath(output), "utf8"));
+        expect(first).toEqual({ t: 0, x: 0.5, y: 0.5, pw: 1440 });
+        expect(top.t).toBe(1000);
+        expect(top.x).toBeCloseTo(0.01, 4);
+        expect(top.y).toBeCloseTo((44 + 0.01 * 810) / 900, 4);
+        expect(top.pw).toBeCloseTo((1920 * 1440) / 1440, 1);
+        expect(bottom.y).toBeCloseTo((44 + 810) / 900, 4);
+    });
+});
+
 describe("joinSegmentsArgv", () => {
     it("scales and pads every input to the first segment's even size and concatenates them", () => {
-        const argv = joinSegmentsArgv({ inputs: ["/a.mp4", "/b.mp4"], width: 1281, height: 721, output: "/o.mp4" });
+        const argv = joinSegmentsArgv({
+            inputs: [
+                { path: "/a.mp4", width: 1281, height: 721 },
+                { path: "/b.mp4", width: 1440, height: 900 },
+            ],
+            width: 1281,
+            height: 721,
+            output: "/o.mp4",
+        });
         expect(argv.slice(0, 6)).toEqual(["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y"]);
         expect(argv).toContain("-nostdin");
         expect(argv.filter((value) => value === "-i")).toHaveLength(2);
         const graph = argv[argv.indexOf("-filter_complex") + 1];
         expect(graph).toBe(
-            "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v0];" +
-                "[1:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v1];" +
+            "[0:v]scale=1280:720,pad=1280:720:0:0:color=black,setsar=1,format=yuv420p,settb=AVTB[v0];" +
+                "[1:v]scale=1152:720,pad=1280:720:64:0:color=black,setsar=1,format=yuv420p,settb=AVTB[v1];" +
                 "[v0][v1]concat=n=2:v=1:a=0[out]"
         );
         expect(argv.slice(-9)).toEqual([
@@ -1457,7 +1611,10 @@ describe("a movie recording's live settings", () => {
 
 it("segment re-encoding maps every audio source", () => {
     const argv = joinSegmentsArgv({
-        inputs: ["/a.mp4", "/b.mp4"],
+        inputs: [
+            { path: "/a.mp4", width: 1280, height: 720 },
+            { path: "/b.mp4", width: 1920, height: 1080 },
+        ],
         width: 1280,
         height: 720,
         output: "/out.mp4",

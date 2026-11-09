@@ -20,9 +20,11 @@ import {
     joinSegmentsArgv,
     type MovieRates,
     type SegmentJoiner,
+    type SegmentPlacement,
     type SegmentRecorder,
     type SegmentResult,
     type SegmentStart,
+    segmentPlacements,
 } from "./recording-session";
 import { describeRecordingTarget, type RecordingTarget } from "./recording-targets";
 
@@ -372,6 +374,8 @@ const joinSegments = async ({
         audioCounts.every((count) => count === audioCounts[0]);
     const totalMs = segments.reduce((sum, segment) => sum + segment.durationMs, 0);
     const timeoutMs = Math.max(120_000, totalMs * 2);
+    // A stream copy keeps every picture as it is; a re-encode letterboxes each one, and its cursor rows move with it.
+    let placements: SegmentPlacement[] | undefined;
 
     if (sameShape) {
         const list = `${output}.concat.txt`;
@@ -383,11 +387,17 @@ const joinSegments = async ({
             await rm(list, { force: true });
         }
     } else {
-        const probe = await probeVideo({ input: segments[0].path });
+        const probes = await Promise.all(segments.map((segment) => probeVideo({ input: segment.path })));
+        const inputs = segments.map((segment, index) => ({
+            path: segment.path,
+            width: probes[index].displayWidth,
+            height: probes[index].displayHeight,
+        }));
+        const frame = { width: probes[0].displayWidth, height: probes[0].displayHeight };
+        placements = segmentPlacements({ sizes: inputs, ...frame });
         const argv = joinSegmentsArgv({
-            inputs: segments.map((segment) => segment.path),
-            width: probe.displayWidth,
-            height: probe.displayHeight,
+            inputs,
+            ...frame,
             output,
             audioTracks: audioCounts[0] ?? 0,
             audioTitles: audioTitles.length === audioCounts[0] ? audioTitles : [],
@@ -396,12 +406,13 @@ const joinSegments = async ({
     }
 
     log.debug(
-        { segments: segments.length, output, copied: sameShape, audioTracks: audioCounts[0] ?? 0 },
+        { segments: segments.length, output, copied: sameShape, audioTracks: audioCounts[0] ?? 0, placements },
         sameShape ? "segments joined by stream copy" : "segments joined by re-encoding"
     );
     await joinSegmentCursorTracks({
         segments,
         lengthsMs: segments.map((segment, index) => joinedLengthMs(segment, facts[index])),
+        placements,
         output,
     });
     const joined = await probeVideo({ input: output });
@@ -434,20 +445,27 @@ export function cursorTrackOffsets(lengthsMs: number[]): number[] {
 async function joinSegmentCursorTracks({
     segments,
     lengthsMs,
+    placements,
     output,
 }: {
     segments: FinishedSegment[];
     lengthsMs: number[];
+    /** Each segment's picture in a re-encoded join; none for a stream copy. */
+    placements?: SegmentPlacement[];
     output: string;
 }): Promise<void> {
     const offsets = cursorTrackOffsets(lengthsMs);
-    const parts: Array<{ text: string; offsetMs: number }> = [];
+    const parts: Parameters<typeof joinCursorTracks>[0] = [];
 
     for (const [index, segment] of segments.entries()) {
         const path = cursorTrackPath(segment.path);
 
         if (existsSync(path)) {
-            parts.push({ text: await readFile(path, "utf8"), offsetMs: offsets[index] ?? 0 });
+            parts.push({
+                text: await readFile(path, "utf8"),
+                offsetMs: offsets[index] ?? 0,
+                placement: placements?.[index],
+            });
         }
     }
 
