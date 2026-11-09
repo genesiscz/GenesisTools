@@ -114,6 +114,18 @@ final class NoticeStackTests: XCTestCase {
         XCTAssertEqual(texts(model), ["C"])
     }
 
+    func testAWaitingNoticeWhoseActionDidNotStartGetsItsButtonsBack() {
+        let clock = ManualNoticeClock()
+        let model = stack(clock)
+        let id = model.push(StackedNotice(text: "Confirmed", actions: [.undo { _ in }]))
+        clock.advance(by: 10)
+        model.press(model.notices[0].actions[0], of: id)
+        clock.advance(by: 100)
+        model.release(id)
+        XCTAssertNil(model.waiting[id], "the Undo is offered again")
+        XCTAssertEqual(model.remaining(id), 20, "its clock goes on from where the press stopped it")
+    }
+
     func testAResultForANoticeAlreadyClosedGoesOnTop() {
         let clock = ManualNoticeClock()
         let model = stack(clock)
@@ -173,6 +185,38 @@ final class NoticeStackTests: XCTestCase {
         model.dismissAll()
         let none = try await settledHeight(host)
         XCTAssertEqual(none, 0, "an empty stack takes no room and no clicks")
+    }
+
+    /// A settings page scrolls; a stack on its content would sit at the content's far end, off screen. Inside a
+    /// `noticeStackViewport()` it floats over the visible part instead. The plain host is the control.
+    func testAStackOnScrolledContentFloatsOverTheViewport() async throws {
+        let model = stack(ManualNoticeClock())
+        model.push(StackedNotice(text: "Saved the work rules", lasting: .untilDismissed))
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+
+        func stackFrame(viewport: Bool) async throws -> CGRect {
+            FrameProbe.reset()
+            let page = ScrollView {
+                Color.gray.frame(height: 3000).frame(maxWidth: .infinity).noticeStack(model)
+            }
+            let root = Group {
+                if viewport { page.noticeStackViewport() } else { page }
+            }.frame(width: 400, height: 500)
+            let host = NSHostingView(rootView: root)
+            host.frame = NSRect(x: 0, y: 0, width: 400, height: 500)
+            for _ in 0..<10 {
+                host.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            return try XCTUnwrap(FrameProbe.frames["notice-stack"], "the stack is drawn")
+        }
+
+        let floating = try await stackFrame(viewport: true)
+        XCTAssertLessThanOrEqual(floating.maxY, 500, "inside the viewport: \(floating)")
+        XCTAssertGreaterThan(floating.minY, 350, "at its bottom edge: \(floating)")
+        let onContent = try await stackFrame(viewport: false)
+        XCTAssertGreaterThan(onContent.minY, 2500, "without a viewport it sits at the content's end: \(onContent)")
     }
 
     private func settledHeight(_ host: NSHostingView<NoticeStackView>) async throws -> CGFloat {

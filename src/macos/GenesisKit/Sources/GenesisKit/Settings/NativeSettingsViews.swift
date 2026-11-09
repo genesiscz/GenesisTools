@@ -205,6 +205,8 @@ private struct NativeSettingsPageScroll: View {
             // A requested card drawn late (its page waited for its settings) scrolls into view when it appears.
             .onChange(of: center.cardArrival) { _, _ in Task { await scrollToRequested(proxy) } }
         }
+        // A page's notices (`.noticeStack`) float over the visible page, wherever it is scrolled.
+        .noticeStackViewport()
         .id(id)
     }
 

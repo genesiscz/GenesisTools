@@ -274,6 +274,13 @@ public final class NoticeStackModel {
         action.perform(id)
     }
 
+    /// A waiting notice whose action did not start (the same change still runs): its buttons come back and its clock
+    /// goes on from where it stopped.
+    public func release(_ id: StackedNotice.ID) {
+        guard waiting.removeValue(forKey: id) != nil else { return }
+        startClock(id)
+    }
+
     /// Stops (true) or restarts (false) every notice's clock; a restarted notice has the time it had left.
     public func setPaused(_ paused: Bool) {
         guard paused != isPaused else { return }
@@ -365,6 +372,7 @@ public struct NoticeStackView: View {
             .scrollIndicators(contentHeight > maxHeight ? .automatic : .never)
             .frame(maxWidth: maxWidth)
             .frame(height: min(contentHeight, maxHeight))
+            .frameProbe("notice-stack")
             .onHover { model.setPaused($0) }
             .onDisappear { model.setPaused(false) }
             .animation(GenMotion.animation(expanding: true, reduceMotion: reduceMotion), value: notices.map(\.id))
