@@ -84,10 +84,8 @@ struct PRReviewBar: View {
                         open.toggle()
                     }
                 }
-                IconButton(systemName: "arrow.clockwise", tooltip: "Load the PR threads again from the host, and look for a stored agent review") {
-                    store.load(noCache: true)
-                    model.lookupStoredProposals()
-                }
+                // No reload here: the diff toolbar's reload (or the hub session header's) loads the threads and the
+                // stored agent reviews again too. Two reload buttons sat one row apart (hub UX pass C16).
                 if !model.selectedThreads.isEmpty {
                     Button {
                         fixing = true
@@ -260,7 +258,7 @@ struct PRReviewBar: View {
                 .textSelection(.enabled)
                 .instantTooltip(error)
         } else {
-            Text("Loading threads…").foregroundColor(ReviewPalette.dim)
+            Text("Reading the PR's threads…").foregroundColor(ReviewPalette.dim).lineLimit(1)
         }
     }
 
@@ -498,6 +496,7 @@ struct PRThreadsList: View {
                                   uniquingKeysWith: { first, _ in first })
         VStack(spacing: 0) {
             toolbar(all: all, placed: placed, shown: threads, files: groups.count)
+            scopeNote
             PanelFindBar(find: find)
             // The agent's drafts scroll with the threads: a proposal with many drafts would otherwise take the
             // panel's whole height and push its later drafts and every thread out of reach.
@@ -561,9 +560,11 @@ struct PRThreadsList: View {
             + threads.compactMap { proposed[$0.id]?.reply }, prepare: { mountThrough($0.row, groups: groups) }) {
             threads.filter { !folded.contains($0.path) }.map { thread in
                 PanelFindRow(id: thread.id, fields: [PanelFindField("path", "\(thread.path):\(thread.line)")]
-                    + thread.comments.flatMap { comment in
+                    + thread.comments.enumerated().flatMap { index, comment in
+                        // The first note shows its text past a bot's tag lines (`PRNoteLede`): find what is drawn.
                         [PanelFindField("author:\(comment.id)", comment.author.name),
-                         PanelFindField("comment:\(comment.id)", comment.bodyMarkdown, markdown: true)]
+                         PanelFindField("comment:\(comment.id)", index == 0 ? PRNoteLede.split(comment.bodyMarkdown).body : comment.bodyMarkdown,
+                                        markdown: true)]
                     }
                     + PRProposedReply.findFields(proposed[thread.id], on: thread))
             }
@@ -622,6 +623,39 @@ struct PRThreadsList: View {
         thisFilePath.map { ($0 as NSString).lastPathComponent } ?? "no file"
     }
 
+    /// The PR's threads beside a diff of another scope (uncommitted changes, one commit): they are not on its lines,
+    /// so the list says so and offers the PR's own diff. Without it PR #507's threads sat beside an Uncommitted diff of
+    /// other files and read as comments on them (hub UX pass C49).
+    @ViewBuilder
+    private var scopeNote: some View {
+        if model.pr != nil, !model.showsLiveThreadsInline {
+            let target: DiffScope? = model.prScope ?? (model.remoteHead == nil ? .branch : nil)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.renamed)
+                    Text(verbatim: "These are \(model.prLabel)'s threads. The diff shows \(model.scopeWords), so they are not on its lines.")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Color.white.opacity(0.8))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                if let target {
+                    GhostButton(model.prScope == nil ? "Show the branch" : "Show the PR's diff", symbol: "arrow.left.arrow.right",
+                                tooltip: "Switch the diff to \(model.prScope == nil ? "the branch against its base" : "the PR's changes"), where each thread sits on its line",
+                                height: 22) {
+                        model.setScope(target)
+                    }
+                    .fixedSize()
+                    .padding(.leading, 17)
+                }
+            }
+            .padding(.horizontal, compact ? 10 : 14)
+            .padding(.bottom, 8)
+        }
+    }
+
     /// What the list shows when no thread passes the filters.
     private var emptyThreads: some View {
         VStack(spacing: 6) {
@@ -636,7 +670,7 @@ struct PRThreadsList: View {
     }
 
     private var emptyMessage: String {
-        if store.payload == nil { return "No threads loaded yet." }
+        if store.payload == nil { return store.error == nil ? "Reading the PR's threads…" : "The PR's threads did not load." }
         if onlyThisFile { return "No \(showClosed ? "" : "open ")thread on \(thisFileName)." }
         if showClosed { return "No thread matches these filters." }
         return model.proposal?.drafts.isEmpty == false ? "No open PR threads." : "No open threads."
@@ -678,16 +712,21 @@ struct PRThreadsList: View {
 
     @ViewBuilder
     private func toolbar(all: [PRThread], placed: [String: PRThreadPlacement], shown: [PRThread], files: Int) -> some View {
+        // Until the threads arrive the counts are unknown, not zero: "Open 0 · All 0 · 0 threads in 0 files" read as an
+        // empty review while it was still loading (hub UX pass C50).
+        let loaded = store.payload != nil
         let openCount = all.filter { Self.isOpen($0, placed[$0.id]) }.count
         let fixable = shown.filter { !$0.resolved && !$0.isMyDraft && !model.selectedThreads.contains($0.id) }.map(\.id)
         let threads = Plural.count(shown.count, "thread")
         // "This file" follows the file the diff counts as current (the topmost one while scrolling), so name it.
-        let summary = onlyThisFile ? "\(threads) on \(thisFileName)" : "\(threads) in \(Plural.count(files, "file"))"
+        let summary = !loaded
+            ? (store.error == nil ? "Reading the PR's threads…" : "The threads did not load")
+            : onlyThisFile ? "\(threads) on \(thisFileName)" : "\(threads) in \(Plural.count(files, "file"))"
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                PRFilterChip(title: "Open", count: openCount, on: !showClosed,
+                PRFilterChip(title: "Open", count: loaded ? openCount : nil, on: !showClosed,
                              tooltip: "Unresolved threads that are not outdated for this diff, your drafts, and the threads on a newer push") { showClosed = false }
-                PRFilterChip(title: "All", count: all.count, on: showClosed,
+                PRFilterChip(title: "All", count: loaded ? all.count : nil, on: showClosed,
                              tooltip: "Also the resolved threads and the outdated ones") { showClosed = true }
                 Rectangle().fill(ReviewPalette.hairline).frame(width: 1, height: 14)
                 PRFilterChip(title: "This file", symbol: "doc.text", on: onlyThisFile,
@@ -779,6 +818,50 @@ enum PRProposedReply {
     static func findFields(_ proposed: ProposalDocument.Thread?, on thread: PRThread) -> [PanelFindField] {
         guard let reply = proposed?.reply, !reply.trimmed.isEmpty, !isPosted(reply, on: thread) else { return [] }
         return [PanelFindField("proposed:\(thread.id)", reply, markdown: true)]
+    }
+}
+
+/// A review bot's note opens with short tag lines ("🧹 Quality | 🟡 Medium · confidence 98/100", "_⚠️ Potential issue_")
+/// before its bold title. A card drew them as three lines between the author and the point; they become one dim line,
+/// so the card starts with the title (hub UX pass C51). Only a run of tags that ends at a title counts: a short plain
+/// comment ("nit: rename this") stays as it is.
+enum PRNoteLede {
+    static let maxTagLength = 90
+
+    static func split(_ markdown: String) -> (tags: [String], body: String) {
+        let paragraphs = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n")
+        var tags: [String] = []
+        var index = 0
+        while index < paragraphs.count {
+            let text = paragraphs[index].trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty {
+                index += 1
+                continue
+            }
+            guard isTag(text) else { break }
+            tags.append(plain(text))
+            index += 1
+        }
+        guard !tags.isEmpty, index < paragraphs.count,
+              isTitle(paragraphs[index].trimmingCharacters(in: .whitespacesAndNewlines)) else { return ([], markdown) }
+        return (tags, paragraphs[index...].joined(separator: "\n\n"))
+    }
+
+    private static func isTag(_ paragraph: String) -> Bool {
+        guard !paragraph.contains("\n"), paragraph.count <= maxTagLength, !isTitle(paragraph) else { return false }
+        return !["#", "<", "```", "- ", "* ", "> ", "|"].contains { paragraph.hasPrefix($0) }
+    }
+
+    private static func isTitle(_ paragraph: String) -> Bool {
+        let line = paragraph.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? paragraph
+        return line.hasPrefix("#") || (line.count > 4 && line.hasPrefix("**") && line.hasSuffix("**"))
+    }
+
+    /// The tag without its emphasis marks ("_⚠️ Potential issue_ | _🟠 Major_" reads "⚠️ Potential issue | 🟠 Major");
+    /// a mark inside a word (`snake_case`) stays.
+    static func plain(_ tag: String) -> String {
+        tag.replacingOccurrences(of: "(?<![\\w*_])[*_]+|[*_]+(?![\\w*_])", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
     }
 }
 
@@ -1207,7 +1290,7 @@ private struct PRThreadRow: View, Equatable {
                 foldedSummary
             } else {
                 ForEach(Array(thread.comments.enumerated()), id: \.element.id) { index, comment in
-                    commentView(comment, reply: index > 0)
+                    commentView(comment, reply: index > 0, opener: index == 0)
                 }
                 if let proposed, let reply = proposed.reply {
                     proposedReply(proposed, text: reply)
@@ -1306,16 +1389,12 @@ private struct PRThreadRow: View, Equatable {
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(ReviewPalette.renamed.opacity(0.22)))
     }
 
-    /// A folded thread: who opened it, its first line, and how many notes it has.
+    /// A folded thread: its first line (the title, past a bot's tags) and how many notes it has; who opened it is in
+    /// the header.
     private var foldedSummary: some View {
         HStack(spacing: 6) {
             if let first = thread.comments.first {
-                UserAvatar(url: first.author.avatarUrl, name: first.author.name, username: first.author.username, size: 16)
-                Text(verbatim: first.author.name)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.85))
-                    .fixedSize()
-                Text(verbatim: PRThreadFold.firstLine(first.bodyMarkdown))
+                Text(verbatim: PRThreadFold.firstLine(PRNoteLede.split(first.bodyMarkdown).body))
                     .font(.system(size: 11.5))
                     .foregroundColor(Color.white.opacity(0.7))
                     .lineLimit(1)
@@ -1385,10 +1464,17 @@ private struct PRThreadRow: View, Equatable {
                 Circle().fill(ReviewPalette.renamed).frame(width: 6, height: 6)
                     .instantTooltip("New notes since you last opened this PR's threads")
             }
+            // Who opened the thread and when, on the header's line: the first note starts with its text (C51).
+            if let opener = thread.comments.first {
+                byline(opener, avatar: 16)
+            }
             Spacer(minLength: 4)
             // A narrow panel puts them under the notes instead: beside the badges they were cut to "Re… R…".
             if !compact, !folded {
                 threadActions
+                if let opener = thread.comments.first {
+                    draftActions(opener)
+                }
             }
             IconButton(systemName: "chevron.down", tooltip: folded ? "Show the whole thread" : "Fold the thread to one line") {
                 toggleFold()
@@ -1475,43 +1561,69 @@ private struct PRThreadRow: View, Equatable {
         }
     }
 
-    @ViewBuilder
-    private func commentView(_ comment: PRThreadComment, reply: Bool) -> some View {
-        let isNew = fresh.contains(comment.id)
+    /// A note's author, age and marks on one line. The thread's first note has it in the card's header.
+    /// `avatar`: its size, or nil where the avatar sits beside the note instead (a reply).
+    private func byline(_ comment: PRThreadComment, avatar: CGFloat?) -> some View {
         let profile = forge?.user(comment.author.username)
+        return HStack(spacing: 5) {
+            if let avatar {
+                UserAvatar(url: comment.author.avatarUrl, name: comment.author.name, username: comment.author.username, size: avatar)
+            }
+            ExternalLink(text: comment.author.name, url: profile,
+                         font: .system(size: 12, weight: .semibold), color: Color.white.opacity(0.92), glyph: .onHover,
+                         tooltip: "@\(comment.author.username) on the host", findField: "author:\(comment.id)")
+                .modifier(PRRestingDim(linked: profile != nil))
+                .layoutPriority(1)
+            if avatar == nil, !compact, comment.author.name != comment.author.username {
+                Text(verbatim: "@\(comment.author.username)").foregroundColor(ReviewPalette.dim).lineLimit(1)
+            }
+            PRNoteTime(createdAt: comment.createdAt, url: comment.url.flatMap(URL.init(string:)))
+            if comment.editedAt != nil {
+                Text("edited").foregroundColor(ReviewPalette.dim).fixedSize()
+            }
+            // The header's "Your draft" already says it for the first note of my draft thread.
+            if comment.isDraft, !(thread.isMyDraft && comment.id == thread.comments.first?.id) {
+                Badge("Draft", color: ReviewPalette.modified, look: .tone,
+                      tooltip: "Only you see it until you submit the review")
+            }
+            if fresh.contains(comment.id) {
+                Badge("new", color: ReviewPalette.renamed, look: .filled,
+                      tooltip: "Written after you last opened this PR's threads")
+            }
+        }
+        .font(.system(size: 11.5))
+        .lineLimit(1)
+    }
+
+    /// A note. The thread's first one (`opener`) starts with its text at the card's full width: its author is in the
+    /// header, and a review bot's tag lines are one dim line above the title. Before, five lines (author, two tag
+    /// lines, title) came before the point, and an avatar column narrowed the text (hub UX pass C51).
+    @ViewBuilder
+    private func commentView(_ comment: PRThreadComment, reply: Bool, opener: Bool = false) -> some View {
+        let lede = opener ? PRNoteLede.split(comment.bodyMarkdown) : (tags: [], body: comment.bodyMarkdown)
         HStack(alignment: .top, spacing: 8) {
-            UserAvatar(url: comment.author.avatarUrl, name: comment.author.name, username: comment.author.username, size: reply ? 18 : 22)
-                .padding(.top, 1)
+            if !opener {
+                UserAvatar(url: comment.author.avatarUrl, name: comment.author.name, username: comment.author.username, size: reply ? 18 : 22)
+                    .padding(.top, 1)
+            }
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
-                    ExternalLink(text: comment.author.name, url: profile,
-                                 font: .system(size: 12, weight: .semibold), color: Color.white.opacity(0.92), glyph: .onHover,
-                                 tooltip: "@\(comment.author.username) on the host", findField: "author:\(comment.id)")
-                        .modifier(PRRestingDim(linked: profile != nil))
-                        .layoutPriority(1)
-                    if !compact, comment.author.name != comment.author.username {
-                        Text(verbatim: "@\(comment.author.username)").foregroundColor(ReviewPalette.dim).lineLimit(1)
+                if !opener {
+                    HStack(spacing: 5) {
+                        byline(comment, avatar: nil)
+                        Spacer(minLength: 4)
+                        // A narrow panel shows them under the text: here they cut the author's name to "q…r".
+                        if !compact {
+                            draftActions(comment)
+                        }
                     }
-                    PRNoteTime(createdAt: comment.createdAt, url: comment.url.flatMap(URL.init(string:)))
-                    if comment.editedAt != nil {
-                        Text("edited").foregroundColor(ReviewPalette.dim).fixedSize()
-                    }
-                    if comment.isDraft {
-                        Badge("Draft", color: ReviewPalette.modified, look: .tone,
-                              tooltip: "Only you see it until you submit the review")
-                    }
-                    if isNew {
-                        Badge("new", color: ReviewPalette.renamed, look: .filled,
-                              tooltip: "Written after you last opened this PR's threads")
-                    }
-                    Spacer(minLength: 4)
-                    // A narrow panel shows them under the text: here they cut the author's name to "q…r".
-                    if !compact {
-                        draftActions(comment)
-                    }
+                } else if !lede.tags.isEmpty {
+                    Text(verbatim: lede.tags.joined(separator: " · "))
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.dim)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .instantTooltip(lede.tags.joined(separator: "\n"))
                 }
-                .font(.system(size: 11.5))
-                .lineLimit(1)
                 if editingID == comment.id {
                     editor(text: $editText)
                     HStack(spacing: 8) {
@@ -1532,7 +1644,7 @@ private struct PRThreadRow: View, Equatable {
                     }
                 } else {
                     // Commit ids and PR/MR references as links (PRRefLinker); a PR link asks where to open it.
-                    MarkdownContentView(markdown: PRRefLinker.linkify(comment.bodyMarkdown, forge: forge), style: Self.noteStyle)
+                    MarkdownContentView(markdown: PRRefLinker.linkify(lede.body, forge: forge), style: Self.noteStyle)
                         .findField("comment:\(comment.id)")
                         .environment(\.openURL, OpenURLAction { url in
                             PRRefMenu.open(url, model: model)

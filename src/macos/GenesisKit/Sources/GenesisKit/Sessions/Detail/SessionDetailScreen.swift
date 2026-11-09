@@ -123,6 +123,9 @@ public struct SessionDetailInfo: Equatable {
 public struct SessionDetailActions {
     public var refreshing = false
     public var refresh: () -> Void = {}
+    /// What the header's reload button reloads, when the host reloads more than the session (the hub: its Changes
+    /// pane too). nil: "Reload the session and its transcript".
+    public var refreshTooltip: String?
     public var openInCursor: (() -> Void)?
     public var openInFinder: (() -> Void)?
     public var copy: (String) -> Void = { _ in }
@@ -573,16 +576,28 @@ public struct SessionDetailHeader: View {
 
     private var headerButtons: some View {
         HStack(spacing: 4) {
-            Button {
-                actions.copy(actions.resumeCommand)
-            } label: {
-                Image(systemName: "terminal")
-                    .font(.system(size: 12))
-                    .frame(width: 22, height: 22)
+            // Labelled: as a bare terminal glyph beside reload and the sidebar toggle it read as "open a terminal",
+            // and the three icons had equal weight and no words (hub UX pass C16). No command, no button: it copied
+            // an empty string.
+            if !actions.resumeCommand.isEmpty {
+                Button {
+                    actions.copy(actions.resumeCommand)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "terminal")
+                            .font(.system(size: 11))
+                        Text("Copy resume")
+                            .font(.system(size: 11.5))
+                            .lineLimit(1)
+                    }
+                    .fixedSize()
+                    .frame(height: 22)
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip("Copy the command that resumes this session in a terminal")
+                .accessibilityLabel(Text("Copy the resume command"))
+                .accessibilityIdentifier("session-details-copy-resume")
             }
-            .buttonStyle(.genHoverIcon(accent: SessionPalette.blue, diameter: 26))
-            .instantTooltip("Copy the resume command")
-            .accessibilityIdentifier("session-details-copy-resume")
 
             Button(action: actions.refresh) {
                 Group {
@@ -600,7 +615,8 @@ public struct SessionDetailHeader: View {
             .sessionCommand(SessionsKeymap.reload, enabled: !actions.refreshing, hostOwns: hostOwnsCommandKeys) {
                 actions.refresh()
             }
-            .instantTooltip(SessionsKeymap.tooltip("Reload the session and its transcript", SessionsKeymap.reload, hostOwns: hostOwnsCommandKeys))
+            .instantTooltip(SessionsKeymap.tooltip(refreshTitle, SessionsKeymap.reload, hostOwns: hostOwnsCommandKeys))
+            .accessibilityLabel(Text(refreshTitle))
             .accessibilityIdentifier("session-details-refresh")
 
             Button {
@@ -612,9 +628,14 @@ public struct SessionDetailHeader: View {
             }
             .buttonStyle(.genHoverIcon(accent: SessionPalette.blue, diameter: 26))
             .instantTooltip(showSidebar ? "Hide the details sidebar" : "Show the details sidebar")
+            .accessibilityLabel(Text(showSidebar ? "Hide the details sidebar" : "Show the details sidebar"))
             .accessibilityIdentifier("session-details-sidebar-toggle")
         }
         .foregroundStyle(SessionPalette.secondary)
+    }
+
+    private var refreshTitle: String {
+        actions.refreshTooltip ?? "Reload the session and its transcript"
     }
 
     private func metaItem(_ symbol: String, _ text: String, tip: String, action: (() -> Void)? = nil) -> some View {
