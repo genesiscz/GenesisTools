@@ -880,6 +880,67 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(fixed, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut")).toEqual([]);
     });
 
+    describe("the caption and the hidden parts as the renderer draws them", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+
+        test("captionAt draws the later of two overlapping lines, only while captions show, with the fix after the pick", () => {
+            const raw = {
+                segments: [
+                    { text: " first ", start: 1, end: 5 },
+                    { text: "second", start: 4.5, end: 6 },
+                    { text: "", start: 6, end: 7 },
+                    { text: "backwards", start: 8, end: 7.5 },
+                ],
+            };
+            const off = wholeProject(source);
+            expect(projectOps.captionAt(off, raw, 2_000_000)).toBeNull();
+            expect(projectOps.spokenLineAt(off, raw, 2_000_000)).toBe("first");
+            // The captions op needs a transcript file on disk, so these set the field the op would set.
+            const on = { ...off, captions: projectOps.captionsSchema.parse({ show: true }) };
+            expect(projectOps.captionAt(on, raw, 2_000_000)).toBe("first");
+            expect(projectOps.captionAt(on, raw, 4_700_000)).toBe("second");
+            // A line with no words, or one that ends before it starts, is no line.
+            expect(projectOps.captionAt(on, raw, 6_500_000)).toBeNull();
+            expect(projectOps.captionAt(on, raw, 7_700_000)).toBeNull();
+            // A fix with no words hides the picked line, and the earlier line under it does not show through.
+            const hidden = { ...on, transcript: { fixes: { "4500": "" } } };
+            expect(projectOps.captionAt(hidden, raw, 4_700_000)).toBeNull();
+            const fixed = { ...on, transcript: { fixes: { "4500": "Second, fixed" } } };
+            expect(projectOps.captionAt(fixed, raw, 4_700_000)).toBe("Second, fixed");
+            expect(
+                projectOps.captionAt(
+                    { ...on, captions: projectOps.captionsSchema.parse({ show: false }) },
+                    raw,
+                    4_700_000
+                )
+            ).toBeNull();
+        });
+
+        test("snappedRedactionSpans runs a blur that ends 200 ms before a cut up to the cut, and closes a short gap", () => {
+            const rect = { x: 0.1, y: 0.1, width: 0.2, height: 0.2 };
+            let project = applyOp(wholeProject(source), { op: "redact", from: 1, to: 2, rect });
+            project = applyOp(project, { op: "redact", from: 2.2, to: 3.8, rect, style: "black" });
+            project = applyOp(project, { op: "redact", from: 6.2, to: 7, rect });
+            project = applyOp(project, { op: "redact", from: 1, to: 3.8, rect, style: "spotlight" });
+            project = applyOp(project, { op: "cut", from: 4, to: 6 });
+            const drawn = (edit: projectOps.EditProject) =>
+                projectOps.snappedRedactionSpans(edit).map((part) => [part.style, part.startUs, part.endUs]);
+
+            expect(drawn(project)).toEqual([
+                ["blur", 1_000_000, 2_200_000],
+                ["black", 2_200_000, 4_000_000],
+                ["blur", 6_000_000, 7_000_000],
+                ["spotlight", 1_000_000, 3_800_000],
+            ]);
+            expect(drawn(applyOp(project, { op: "redactionJoins", snapMs: 0 }))).toEqual([
+                ["blur", 1_000_000, 2_000_000],
+                ["black", 2_200_000, 3_800_000],
+                ["blur", 6_200_000, 7_000_000],
+                ["spotlight", 1_000_000, 3_800_000],
+            ]);
+        });
+    });
+
     describe("played time: the renderer's ramps and links", () => {
         const source = { video: "/movies/screen.mp4", durationUs: 30_000_000, width: 1920, height: 1080 };
         const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
