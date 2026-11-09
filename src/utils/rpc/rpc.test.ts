@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
 import { failedCallLevel, LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
+import {
+    readLiveServiceEntry,
+    type ServiceHost,
+    type ServiceHostOptions,
+    serviceSocketPath,
+    startServiceHost,
+} from "./service-host";
 import { RpcSocketClient, type RpcSocketClientOptions } from "./socket-client";
 import { type RpcConnection, RpcSocketServer } from "./socket-server";
 
@@ -333,5 +340,102 @@ describe("the outbox of a reader that stops reading", () => {
         expect(ended).toBe(1);
         expect(peer.closed).toBe(true);
         await expect(waiting).rejects.toThrow("stopped reading");
+    });
+});
+
+describe("the service host (service-host.ts)", () => {
+    const hosted: Array<ServiceHost<Role>> = [];
+
+    afterEach(() => {
+        for (const host of hosted.splice(0)) {
+            host.stop("test end");
+        }
+    });
+
+    async function host(dir: string, options: Partial<ServiceHostOptions<Role>> = {}) {
+        const start = await startServiceHost<Role>({
+            dir,
+            label: "test service",
+            logScope: "rpc-test",
+            protocol: 7,
+            code: "code-a",
+            state: () => ({}),
+            call: async ({ method, params, connection }) => {
+                if (method === "hello") {
+                    connection.state.role = roleOf(params);
+                }
+
+                return { method };
+            },
+            idleMs: 0,
+            rivalWaitMs: 500,
+            ...options,
+        });
+
+        if (start.status === "started") {
+            hosted.push(start.host);
+        }
+
+        return start;
+    }
+
+    test("a start writes service.json with its protocol and code; a second start in the folder answers running", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const first = await host(dir);
+
+        expect(first.status).toBe("started");
+        expect(readLiveServiceEntry(dir)).toMatchObject({ protocol: 7, code: "code-a", pid: process.pid });
+        expect(await host(dir)).toMatchObject({ status: "running", entry: { pid: process.pid } });
+    });
+
+    test("subscribe reaches onSubscribe with its own params, and emit passes the service's filter", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const seen: unknown[] = [];
+        const start = await host(dir, { onSubscribe: (_connection, params) => seen.push(params) });
+
+        if (start.status !== "started") {
+            throw new Error("the host did not start");
+        }
+
+        const client = await connect(serviceSocketPath(dir));
+        const heard: unknown[] = [];
+        client.onNotification((notification) => heard.push(notification));
+        await client.call("hello", { role: "host" });
+        await client.call("subscribe", { events: ["thing.changed"], meeting: "m1" });
+        start.host.emit("thing.changed", { n: 1 }, (connection) => connection.state.role === "client");
+        start.host.emit("thing.changed", { n: 2 }, (connection) => connection.state.role === "host");
+        await client.call("hello", { role: "host" });
+
+        expect(seen).toEqual([{ events: ["thing.changed"], meeting: "m1" }]);
+        expect(heard).toEqual([{ method: "thing.changed", params: { n: 2 } }]);
+    });
+
+    test("an idle service with no connection stops and removes its files", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const start = await host(dir, { idleMs: 1, checkEveryMs: 20 });
+
+        if (start.status !== "started") {
+            throw new Error("the host did not start");
+        }
+
+        expect(await start.host.stopped).toBe("idle");
+        expect(readLiveServiceEntry(dir)).toBeUndefined();
+        expect(existsSync(serviceSocketPath(dir))).toBe(false);
+    });
+
+    test("a service with a live connection does not stop for idleness", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const start = await host(dir, { idleMs: 1, checkEveryMs: 20 });
+
+        if (start.status !== "started") {
+            throw new Error("the host did not start");
+        }
+
+        const client = await connect(serviceSocketPath(dir));
+        await client.call("hello", { role: "client" });
+        const outcome = await Promise.race([start.host.stopped, Bun.sleep(120).then(() => "running")]);
+
+        expect(outcome).toBe("running");
+        expect(start.host.connections).toHaveLength(1);
     });
 });
