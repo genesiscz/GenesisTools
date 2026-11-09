@@ -1085,6 +1085,8 @@ export async function verifyHidden(
         );
     }
 
+    verifyMatcherOf(options);
+
     if (options.movie) {
         return verifyExport(value, options, options.movie);
     }
@@ -1141,16 +1143,30 @@ export interface VerifyHiddenAnswer {
     notes?: string[];
 }
 
+/**
+ * What verifyHidden reads the export for: every text and pattern asked, and the private data when `private` asks for
+ * it, when nothing else is asked, or when `names` are given (names are private data, as hidePrivate and privateData
+ * treat them). R6 3: all of them in one read.
+ */
+export function verifyMatcherOf(options: VerifyHiddenOptions): LineMatcher {
+    const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
+    const named = (options.names ?? []).some((name) => name.trim());
+
+    if (named && options.private === false) {
+        throw new Error("verifyHidden: names are private data; drop private: false or names");
+    }
+
+    const matchers = [
+        ...(asked ? [textMatcher(options)] : []),
+        ...(options.private || !asked || named ? [privateMatcher(options.names)] : []),
+    ];
+    return (text) => matchers.flatMap((one) => one(text));
+}
+
 /** verifyHidden over `movie`, an export of the edit `value`. */
 async function verifyExport(value: string, options: VerifyHiddenOptions, movie: string): Promise<VerifyHiddenAnswer> {
     const everySeconds = options.everySeconds ?? 0.25;
-    const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
-    // R6 3: every text and pattern (and the private data, when asked or when nothing else is) in one read.
-    const matchers = [
-        ...(asked ? [textMatcher(options)] : []),
-        ...(options.private || !asked ? [privateMatcher(options.names)] : []),
-    ];
-    const matcher: LineMatcher = (text) => matchers.flatMap((one) => one(text));
+    const matcher = verifyMatcherOf(options);
     const { project } = await openProject(value);
     const progress = options.onProgress ?? (() => undefined);
     const info = await probeVideo({ input: movie });
@@ -1320,13 +1336,13 @@ function mergeFrames(even: readonly ScreenTextFrame[], dense: readonly ScreenTex
     return all.map((frame, index) => ({ ...frame, untilUs: all[index + 1]?.atUs ?? frame.untilUs }));
 }
 
-/** R7 4: the source times where the screen changes at once (a new screen, a tab): over a third of the picture in a step. */
+/**
+ * R7 4: the source times where the screen changes at once (a new screen, a tab): the scene events of `eventsOf`, each at
+ * the frame where the new screen starts, so the window around it holds the new screen too.
+ */
 async function sceneChangesOf(project: EditProject): Promise<number[]> {
     try {
-        const { steps, fps } = await changeStepsOf(project);
-        return steps.flatMap((step, index) =>
-            step.changed / Math.max(1, step.cells) > 1 / 3 ? [Math.round((index * 1_000_000) / fps)] : []
-        );
+        return (await eventsOf(project)).filter((event) => event.kind === "scene").map((event) => event.fromUs);
     } catch (error) {
         logger.debug({ error }, "verifyHidden: no change steps, so no scene changes to read around");
         return [];

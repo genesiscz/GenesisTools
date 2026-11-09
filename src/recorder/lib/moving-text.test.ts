@@ -19,6 +19,7 @@ import {
     scanOf,
     textHitsOf,
     verifyHidden,
+    verifyMatcherOf,
 } from "./fx-analysis";
 
 /**
@@ -454,6 +455,21 @@ describe("verifyHidden refuses a read rate it cannot use (review CLI-F1)", () =>
         await expect(ocrVideo({ video: "/nonexistent/movie.mp4", toUs: 1_000_000, fps })).rejects.toThrow(
             /a positive number of frames a second/
         );
+    });
+});
+
+describe("verifyHidden checks the names it is given", () => {
+    test("names beside a text turn the private check on", () => {
+        const matcher = verifyMatcherOf({ text: "Bob", names: ["Alice Example"] });
+        expect(matcher("Alice Example").map((match) => match.kind)).toEqual(["name"]);
+        expect(matcher("Bob").map((match) => match.kind)).toEqual(["text"]);
+    });
+
+    test("names with private: false are refused before anything is exported", async () => {
+        expect(() => verifyMatcherOf({ names: ["Alice Example"], private: false })).toThrow(/names are private data/);
+        await expect(
+            verifyHidden("/nonexistent/verify.edit.json", { names: ["Alice Example"], private: false })
+        ).rejects.toThrow(/names are private data/);
     });
 });
 

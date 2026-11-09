@@ -304,7 +304,10 @@ export function registerHideTextCommands(program: Command): void {
         .option("--text <text>", "the words that must not be readable (repeat it for several)", collect, [])
         .option("--pattern <regex>", "a regular expression that must not match (repeat it for several)", collect, [])
         .option("--private", "the private data (the default without --text or --pattern)")
-        .option("--names <list>", "with --private: names too, comma-separated")
+        .option(
+            "--names <list>",
+            "names to check too, comma-separated; names are private data, so they turn --private on"
+        )
         .option("--every <seconds>", "seconds between the frames read", "0.25")
         .option("--movie <file>", "an export already made, instead of exporting again")
         .option("--keep-export", "keep the export it makes for the check (without --movie); it is removed by default")
