@@ -1,5 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { audibleTracksOf, mixedTracksFilter, type PlayedAudio } from "@genesiscz/utils/recording-editor/loudness";
+import { readCursorTrack } from "@genesiscz/utils/recording-editor/project";
+import { pointerBusyRanges, subtractRanges } from "@genesiscz/utils/recording-editor/waits";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 
 const { log } = logger.scoped("recording-editor-idle");
@@ -257,18 +259,20 @@ export function silenceDetectArgs(options: { video: string; minUs: number; track
 
 /**
  * The stretches to cut: no new video frame, or no change in the picture (`frozenUs`), for at least `minUs`,
- * overlapped with silence (all of it when the export plays no audio), each shortened by `keepUs` at both ends so a cut
- * never lands on the change before or after it.
+ * overlapped with silence (all of it when the export plays no audio), without the `busyUs` ranges (what the drawn
+ * pointer does, which the movie's pixels do not show), each shortened by `keepUs` at both ends so a cut never lands on
+ * the change before or after it.
  */
 export function idleRanges(options: {
     frameTimesUs: readonly number[];
     frozenUs?: ReadonlyArray<readonly [number, number]>;
     silentUs?: ReadonlyArray<readonly [number, number]>;
+    busyUs?: ReadonlyArray<readonly [number, number]>;
     durationUs: number;
     minUs: number;
     keepUs: number;
 }): Array<[number, number]> {
-    const { frameTimesUs: frames, frozenUs = [], silentUs, durationUs, minUs, keepUs } = options;
+    const { frameTimesUs: frames, frozenUs = [], silentUs, busyUs = [], durationUs, minUs, keepUs } = options;
     const gaps: Array<[number, number]> = [];
     const times = [...frames, durationUs];
 
@@ -293,7 +297,8 @@ export function idleRanges(options: {
           )
         : still;
 
-    return quiet
+    return subtractRanges(quiet, busyUs)
+        .filter(([from, to]) => to - from >= minUs)
         .map(([from, to]): [number, number] => [from + keepUs, Math.min(durationUs, to) - keepUs])
         .filter(([from, to]) => to - from > 0);
 }
@@ -317,7 +322,8 @@ function mergeRanges(ranges: ReadonlyArray<readonly [number, number]>): Array<[n
 
 /**
  * Probes a movie and returns its idle stretches; logs what it found. `audio` is the edit's (`project.audio`), so the
- * silence is judged on what the export plays; absent, every audio track counts.
+ * silence is judged on what the export plays; absent, every audio track counts. `cursor` is the recording's track
+ * (`project.source.cursor`): its moves, clicks and shortcut presses are not idle, as waits() counts them.
  */
 export async function findIdle(options: {
     video: string;
@@ -325,6 +331,7 @@ export async function findIdle(options: {
     minUs: number;
     keepUs: number;
     audio?: PlayedAudio;
+    cursor?: string;
 }): Promise<Array<[number, number]>> {
     const pictures = frameTimesUs(options.video).then(async (frames) => ({
         frames,
@@ -334,13 +341,15 @@ export async function findIdle(options: {
         pictures,
         silentRangesUs({ video: options.video, minUs: options.minUs, audio: options.audio }),
     ]);
-    const ranges = idleRanges({ frameTimesUs: frames, frozenUs: frozen, silentUs: silent, ...options });
+    const busy = pointerBusyRanges(readCursorTrack(options.cursor));
+    const ranges = idleRanges({ frameTimesUs: frames, frozenUs: frozen, silentUs: silent, busyUs: busy, ...options });
     log.debug(
         {
             video: options.video,
             frames: frames.length,
             frozen: frozen.length,
             silent: silent?.length ?? "no audio played",
+            pointerBusy: busy.length,
             idle: ranges.length,
         },
         "idle stretches found"

@@ -66,6 +66,7 @@ import {
     type ChangeStep,
     fixedAreas,
     measureChangeSteps,
+    pointerBusyRanges,
     WAIT_SAMPLE_FPS,
     type WaitStretch,
     waitStretches,
@@ -1365,32 +1366,12 @@ export async function changeStepsOf(
     });
 }
 
-/** The moments the viewer must see at normal speed: clicks (±0.5 s), cursor moves, and speech (±0.2 s). */
+/**
+ * The moments the viewer must see at normal speed: what the pointer does (`pointerBusyRanges`, which removeIdle keeps
+ * too) and speech (±0.2 s).
+ */
 function busyRanges(project: EditProject): Array<[number, number]> {
-    const busy: Array<[number, number]> = [];
-    const samples = readCursorTrack(project.source.cursor);
-    const bucketMs = 250;
-    const travel = new Map<number, number>();
-
-    for (const [index, sample] of samples.entries()) {
-        if (sample.click) {
-            busy.push([Math.max(0, (sample.ms - 500) * 1000), (sample.ms + 500) * 1000]);
-        }
-
-        const previous = samples[index - 1];
-
-        if (previous) {
-            const bucket = Math.floor(sample.ms / bucketMs);
-            travel.set(bucket, (travel.get(bucket) ?? 0) + Math.hypot(sample.x - previous.x, sample.y - previous.y));
-        }
-    }
-
-    for (const [bucket, distance] of travel) {
-        // A fiftieth of the picture in a quarter second: a real move, not a hand resting on the mouse.
-        if (distance > 0.02) {
-            busy.push([bucket * bucketMs * 1000, (bucket + 1) * bucketMs * 1000]);
-        }
-    }
+    const busy = pointerBusyRanges(readCursorTrack(project.source.cursor));
 
     if (existsSync(transcriptCachePath(project.source.video))) {
         for (const segment of readTranscriptSegments(project)) {

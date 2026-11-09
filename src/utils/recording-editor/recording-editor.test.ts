@@ -92,6 +92,7 @@ import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
 import textCases from "./text-metrics.cases.json";
 import { cutRanges, fillerCuts, fillerList, transcriptSegmentSchema, wordCuts, wordSpans } from "./transcript-cuts";
+import { pointerBusyRanges } from "./waits";
 
 function workspace(): string {
     return mkdtempSync(join(tmpdir(), "gt-editor-"));
@@ -2006,6 +2007,40 @@ describe("edit project (edit.json)", () => {
             })
         ).toEqual([[300_000, 5_700_000]]);
         expect(idleRanges({ ...base, silentUs: [] })).toEqual([]);
+    });
+
+    describe("idle stretches keep what the drawn pointer does", () => {
+        test("idleRanges leaves out the busy ranges of a still, silent stretch", () => {
+            const frames = Array.from({ length: 301 }, (_, index) => index * 33_000);
+            expect(
+                idleRanges({
+                    frameTimesUs: frames,
+                    frozenUs: [[0, 10_000_000]],
+                    silentUs: [[0, 10_000_000]],
+                    busyUs: [[4_000_000, 5_000_000]],
+                    durationUs: 10_000_000,
+                    minUs: 2_000_000,
+                    keepUs: 300_000,
+                })
+            ).toEqual([
+                [300_000, 3_700_000],
+                [5_300_000, 9_700_000],
+            ]);
+        });
+
+        test("pointerBusyRanges covers a move, a click and a shortcut press", () => {
+            const busy = pointerBusyRanges([
+                { ms: 1000, x: 0.1, y: 0.1 },
+                { ms: 1100, x: 0.2, y: 0.1 },
+                { ms: 3000, x: 0.2, y: 0.1, key: "⌘C" },
+                { ms: 7500, x: 0.2, y: 0.1, click: "left" },
+            ]);
+            expect(busy).toEqual([
+                [1_000_000, 1_250_000],
+                [2_500_000, 3_500_000],
+                [7_000_000, 8_000_000],
+            ]);
+        });
     });
 
     describe("frozen stretches on the editor clock", () => {
