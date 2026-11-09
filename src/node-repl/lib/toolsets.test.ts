@@ -64,7 +64,12 @@ import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-ga
 import transcriptCuts from "@genesiscz/utils/recording-editor/__fixtures__/transcript-cuts.json";
 import transcriptWordsFixture from "@genesiscz/utils/recording-editor/__fixtures__/transcript-words.json";
 import { RecordingEditor } from "@genesiscz/utils/recording-editor/editor";
-import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import {
+    readProject,
+    transcriptCachePath,
+    wholeProject,
+    writeProject,
+} from "@genesiscz/utils/recording-editor/project";
 import { searchMethods } from "@genesiscz/utils/repl/discovery";
 import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
@@ -273,6 +278,76 @@ describe("toolset method names", () => {
         expect(now).toMatchObject({ output: 2, source: 3, zoom: null, caption: null });
         expect(now.texts).toMatchObject([{ text: "Hello", from: 2.5, to: 4, plays: { from: 1.5, to: 3 } }]);
         expect((await itemsAt(60)).warnings).toEqual(["60 s is past the end; this is the last moment, 9 s"]);
+    });
+});
+
+describe("itemsAt agrees with the frame the renderer draws", () => {
+    const fixture = (segments: Array<{ text: string; start: number; end: number }>) => {
+        const folder = mkdtempSync(join(tmpdir(), "items-at-frame-"));
+        const video = join(folder, "screen.mp4");
+        const path = join(folder, "edit.json");
+        writeProject(path, wholeProject({ video, durationUs: 12_000_000, width: 100, height: 100 }));
+        writeFileSync(transcriptCachePath(video), SafeJSON.stringify({ text: "", segments }));
+        return new Movie(path);
+    };
+
+    test("itemsAt names a caption only while captions show, the line the renderer picks, and what is said in spoken", async () => {
+        const movie = fixture([
+            { text: "Hello", start: 0.5, end: 3 },
+            { text: "Next", start: 2.5, end: 4 },
+        ]);
+
+        // No captions op: the export draws no caption, and the transcript line is still said there.
+        expect(await movie.itemsAt(1)).toMatchObject({ caption: null, spoken: "Hello" });
+        await movie.captions({ show: true });
+        expect(await movie.itemsAt(1)).toMatchObject({ caption: "Hello", spoken: "Hello" });
+        // Two lines overlap at 2.7 s: the renderer draws the later one (CaptionTrack.line picks the last started line).
+        expect(await movie.itemsAt(2.7)).toMatchObject({ caption: "Next", spoken: "Next" });
+        await movie.captions({ show: false });
+        expect(await movie.itemsAt(2.7)).toMatchObject({ caption: null, spoken: "Next" });
+        expect(await movie.itemsAt(5)).toMatchObject({ caption: null, spoken: null });
+    });
+
+    test("itemsAt names a canvas zoom and a picture zoom that play together, the glide between linked zooms and a lens", async () => {
+        const movie = fixture([]);
+        await movie.zoom({ from: 1, to: 7, target: "canvas", scale: 1.5 });
+        await movie.zoom({ from: 2, to: 4, scale: 2 });
+        await movie.zoom({ from: 4.3, to: 6, scale: 2.5 });
+        await movie.lens({ from: 2.8, to: 3.2 });
+
+        const now = await movie.itemsAt(3);
+        expect(now.zoom).toMatchObject({ from: 2, to: 4, scale: 2 });
+        expect(now.canvasZoom).toMatchObject({ from: 1, to: 7, scale: 1.5, target: "canvas" });
+        expect(now.lenses).toMatchObject([{ from: 2.8, to: 3.2 }]);
+        // 2-4 s and 4.3-6 s are linked (0.3 s apart, under one ease out and one ease in): the view glides between them
+        // from 3.55 s to 4.75 s, the gap at 4.15 s included.
+        expect((await movie.itemsAt(4.15)).zoom).toMatchObject({
+            glide: { from: { from: 2, to: 4 }, to: { from: 4.3, to: 6 } },
+        });
+        expect((await movie.itemsAt(5)).zoom).toMatchObject({ from: 4.3, to: 6, scale: 2.5 });
+        // Control: before the picture zooms only the canvas zoom shows, and no lens.
+        const early = await movie.itemsAt(1.5);
+        expect(early).toMatchObject({ zoom: null, lenses: [] });
+        expect(early.canvasZoom).toMatchObject({ target: "canvas" });
+        expect((await movie.itemsAt(8)).canvasZoom).toBeNull();
+    });
+
+    test("itemsAt names the hidden parts the export snaps to a cut or to the next part, with their own times", async () => {
+        const movie = fixture([]);
+        const rect = { x: 0.3, y: 0.3, width: 0.4, height: 0.4 };
+        await movie.redact({ from: 7, to: 8, rect, style: "black" });
+        await movie.redact({ from: 8.2, to: 9.85, rect, style: "black" });
+        await movie.cut(10, 11.5);
+
+        // The 0.2 s gap between the parts closes, and the second part's end 0.15 s before the cut runs to the cut.
+        const gap = await movie.itemsAt(8.1);
+        expect(gap.redactions).toMatchObject([{ from: 7, to: 8, drawn: { from: 7, to: 8.2 } }]);
+        expect((await movie.itemsAt(9.9)).redactions).toMatchObject([{ from: 8.2, to: 9.85, drawn: { to: 10 } }]);
+        // Control: snapMs 0 draws each part exactly as placed.
+        await movie.redactionJoins({ snapMs: 0 });
+        expect((await movie.itemsAt(8.1)).redactions).toEqual([]);
+        expect((await movie.itemsAt(9.9)).redactions).toEqual([]);
+        expect((await movie.itemsAt(7.5)).redactions).toMatchObject([{ from: 7, to: 8 }]);
     });
 });
 

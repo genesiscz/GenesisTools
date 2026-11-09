@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     applyOp,
+    cutEdgesOf,
     type EditOp,
     type EditProject,
     type EditTextNote,
@@ -621,16 +622,6 @@ function sourceBeforePlayed(project: EditProject, endUs: number, playUs: number)
     }
 
     return 0;
-}
-
-/** The source times where a kept clip ends before a cut (or the movie's end), and where one starts after a cut. */
-function cutEdgesOf(project: EditProject): { ends: number[]; starts: number[] } {
-    const clips = project.clips.filter((clip) => clip.toUs > clip.fromUs);
-    const ends = clips.filter((clip, index) => clips[index + 1]?.fromUs !== clip.toUs).map((clip) => clip.toUs);
-    const starts = clips
-        .filter((clip, index) => clip.fromUs > 0 && clips[index - 1]?.toUs !== clip.fromUs)
-        .map((clip) => clip.fromUs);
-    return { ends, starts };
 }
 
 /**

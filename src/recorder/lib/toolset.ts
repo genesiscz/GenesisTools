@@ -51,11 +51,13 @@ import {
     BACKGROUND_KINDS,
     CANVAS_ASPECTS,
     cameraOpSchema,
+    captionAt,
     describeProject,
     EDIT_CLOCKS,
     type EditClock,
     type EditOp,
     type EditProject,
+    type EditZoom,
     editOpSchema,
     effectsOnSourceTime,
     FRAME_ALIGNS,
@@ -72,7 +74,9 @@ import {
     SHAPE_KINDS,
     SPOTLIGHT_CUTOUTS,
     shortcutsOf,
+    snappedRedactionSpans,
     sourceTimeOf,
+    spokenLineAt,
     TEXT_ALIGNS,
     TEXT_MAX_CHARS,
     TEXT_STYLES,
@@ -81,6 +85,7 @@ import {
     transcriptLines,
     wholeProject,
     writeProject,
+    zoomShownAt,
 } from "@genesiscz/utils/recording-editor/project";
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
 import { type CutMatch, FILLER_LEVELS, type FillerLevel } from "@genesiscz/utils/recording-editor/transcript-cuts";
@@ -893,8 +898,8 @@ const movieMethods = [
         params: z.object({ at: outputTimeSchema }),
         positional: ["at"],
         result: z.unknown(),
-        resultName: "{ output, source, zoom, redactions, texts, shapes, caption }",
-        doc: "What plays at OUTPUT seconds `at` (as still() and show() take it), in words: the source time there, the zoom (or null), the hidden parts and spotlights, texts and shapes on screen (as info() lists them, with their ids for retime() or untext(), plus `plays: { from, to }` in output seconds, null where cut), and the caption line (or null). A cheap way to check an edit without a picture.",
+        resultName: "{ output, source, zoom, canvasZoom, redactions, texts, shapes, lenses, caption, spoken }",
+        doc: "What plays at OUTPUT seconds `at` (as still() and show() take it), in words, as the export draws that frame: the source time there; zoom, the picture's zoom, and canvasZoom, the canvas's (each a zoom, null, or { glide: { from, to } } while the view moves between two linked zooms); the hidden parts and spotlights, texts, shapes and lenses on screen (as info() lists them, with their ids for retime() or untext(), plus `plays: { from, to }` in output seconds, null where cut). A hidden part counts as on screen while the export draws it: redactionJoins runs a part on to a cut or to the next part, and then it carries drawn: { from, to } in source seconds beside its own from and to (the hold on a still frame of a screen recording is not counted). caption is the caption line the export draws (null while captions are off), and spoken the transcript line said there, captions on or off. A cheap way to check an edit without a picture.",
         effect: "read",
     }),
     defineMethod({
@@ -2630,38 +2635,64 @@ export class Movie {
         const askedUs = timeToUs(at);
         const outUs = Math.min(Math.max(0, askedUs), outputDurationUs(project));
         const sourceUs = sourceTimeOf(project, outUs);
-        const live = (item: { id: string; startUs: number; endUs: number }) =>
-            item.startUs <= sourceUs && sourceUs < item.endUs;
+        const live = (item: { startUs: number; endUs: number }) => item.startUs <= sourceUs && sourceUs < item.endUs;
+        // A hidden part is on screen while the export draws it, which redactionJoins can run on to a cut or the next part.
+        const drawn = new Map(snappedRedactionSpans(project).map((part) => [part.id, part] as const));
         const spans = new Map(
-            [...project.zooms, ...(project.redactions ?? []), ...(project.texts ?? []), ...(project.shapes ?? [])]
-                .filter(live)
-                .map((item) => [item.id, item] as const)
+            [
+                ...(project.redactions ?? []).filter((part) => live(drawn.get(part.id) ?? part)),
+                ...[...(project.texts ?? []), ...(project.shapes ?? []), ...(project.lens?.items ?? [])].filter(live),
+            ].map((item) => [item.id, item] as const)
         );
         const described = describeProject(project, opened.path);
         const playsAt = (us: number) => {
             const out = outputTimeOf(project, us);
             return out === undefined ? null : Math.round(out / 1000) / 1000;
         };
+        const seconds = (us: number) => Math.round(us / 1000) / 1000;
+        const withPlays = <T extends object>(item: T, span: { startUs: number; endUs: number }) => ({
+            ...item,
+            plays: { from: playsAt(span.startUs), to: playsAt(span.endUs) },
+        });
         // Each item as info() lists it (source seconds), plus `plays`: its OUTPUT start and end, null where cut.
         const onScreen = <T extends { id: string }>(list: T[] | undefined) =>
             (list ?? []).flatMap((item) => {
                 const span = spans.get(item.id);
-                return span ? [{ ...item, plays: { from: playsAt(span.startUs), to: playsAt(span.endUs) } }] : [];
+                return span ? [withPlays(item, span)] : [];
             });
+        const redactions = onScreen(described.redactions).map((part) => {
+            const own = spans.get(part.id);
+            const shown = drawn.get(part.id);
+            return own && shown && (shown.startUs !== own.startUs || shown.endUs !== own.endUs)
+                ? { ...part, drawn: { from: seconds(shown.startUs), to: seconds(shown.endUs) } }
+                : part;
+        });
+        // The picture's and the canvas's view each show one zoom, or glide between two linked zooms.
+        const listedZoom = (zoom: EditZoom) => withPlays(described.zooms[project.zooms.indexOf(zoom)], zoom);
+        const view = (target: NonNullable<EditZoom["target"]>) => {
+            const shown = zoomShownAt(project, sourceUs, target);
+
+            if (!shown) {
+                return null;
+            }
+
+            return "glide" in shown
+                ? { glide: { from: listedZoom(shown.glide.from), to: listedZoom(shown.glide.to) } }
+                : listedZoom(shown.zoom);
+        };
         const cache = transcriptCachePath(project.source.video);
-        const lines = existsSync(cache)
-            ? transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), project)
-            : [];
-        const line = lines.find((one) => one.from * 1e6 <= sourceUs && sourceUs < one.to * 1e6);
-        const seconds = (us: number) => Math.round(us / 1000) / 1000;
+        const transcript = existsSync(cache) ? SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }) : null;
         return {
             output: seconds(outUs),
             source: seconds(sourceUs),
-            zoom: onScreen(described.zooms)[0] ?? null,
-            redactions: onScreen(described.redactions),
+            zoom: view("picture"),
+            canvasZoom: view("canvas"),
+            redactions,
             texts: onScreen(described.texts),
             shapes: onScreen(described.shapes),
-            caption: line?.text ?? null,
+            lenses: onScreen(described.lenses),
+            caption: captionAt(project, transcript, sourceUs),
+            spoken: spokenLineAt(project, transcript, sourceUs),
             ...(outUs === askedUs
                 ? {}
                 : {

@@ -266,8 +266,11 @@ silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…
 `motion {blur?}`, `captions {show?,size?,position?}`, `keys {show?,size?,position?,durationMs?}`, `exportSettings {codec?,maxHeight?,output?,format?}`, `retime {id, at? | by? | from?, to?}` (moves a zoom, hidden part, text or shape to start `at` or `by` seconds with its length kept, or sets its start or end, which changes the length; a zoom may not meet another zoom), `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
 order to the file as it is now and save once; one failing op saves nothing and names itself.
 
-`movie.itemsAt(at)` (and `tools recorder items-at <recording> <at>`) says in words what plays at an output time: the
-source time, the zoom, the hidden parts, texts and shapes on screen with their ids, and the caption line.
+`movie.itemsAt(at)` (and `tools recorder items-at <recording> <at>`) says in words what plays at an output time, as the
+export draws that frame: the source time, the picture zoom and the canvas zoom (or the glide between two linked zooms),
+the hidden parts, texts, shapes and lenses on screen with their ids, the caption line (null while captions are off) and
+`spoken`, the transcript line said there. A hidden part that `redactionJoins` runs on to a cut or to the next part
+counts while it is drawn and carries `drawn: { from, to }`.
 
 `movie.check()` (and `tools recorder check`) lists what to look at before an export, a marker or text a cut hides or
 shortens included; an issue with a fix carries it as a REPL call (`fix`) and as edit ops (`action.ops`). An edit whose

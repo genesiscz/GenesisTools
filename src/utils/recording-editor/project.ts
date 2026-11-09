@@ -774,6 +774,57 @@ export function outputTimeOf(project: EditProject, sourceUs: number): number | u
 }
 
 /**
+ * The source times where a kept clip ends before a cut (or the movie's end), and where one starts after a cut. The
+ * Swift twin is RedactionEdges.cutEdges.
+ */
+export function cutEdgesOf(project: EditProject): { ends: number[]; starts: number[] } {
+    const clips = project.clips.filter((clip) => clip.toUs > clip.fromUs);
+    const ends = clips.filter((clip, index) => clips[index + 1]?.fromUs !== clip.toUs).map((clip) => clip.toUs);
+    const starts = clips
+        .filter((clip, index) => clip.fromUs > 0 && clips[index - 1]?.toUs !== clip.fromUs)
+        .map((clip) => clip.fromUs);
+    return { ends: ends.sort((a, b) => a - b), starts: starts.sort((a, b) => a - b) };
+}
+
+/**
+ * The hidden parts with the source times the export draws them, the rule of the window's renderer
+ * (RedactionEdges.effective): with `redactionJoins.snapMs` (250 unless set), a hiding part (blur, pixelate, black) that
+ * ends that close before a cut is drawn to the cut, one that starts that close after a cut is drawn from it, and one
+ * that ends that close before the next hiding part starts stays on until it does. Spotlights keep their own times, and
+ * nothing is ever shortened. The renderer also keeps a part on while a frame from its time stays on screen (a screen
+ * recording writes no frame while nothing moves); that needs the movie's frame times, which this does not read.
+ */
+export function snappedRedactionSpans(project: EditProject): EditRedaction[] {
+    const parts = (project.redactions ?? []).map((part) => ({ ...part }));
+    const snapUs = Math.max(0, project.redactionJoins?.snapMs ?? REDACTION_SNAP_MS) * 1000;
+
+    if (snapUs <= 0) {
+        return parts;
+    }
+
+    const cuts = cutEdgesOf(project);
+    const hiding = parts.filter((part) => part.style !== "spotlight");
+
+    for (const part of hiding) {
+        const end = cuts.ends.find((edge) => edge > part.endUs && edge - part.endUs <= snapUs);
+        const start = cuts.starts.findLast((edge) => edge < part.startUs && part.startUs - edge <= snapUs);
+        part.endUs = end ?? part.endUs;
+        part.startUs = start ?? part.startUs;
+    }
+
+    for (const part of hiding) {
+        const end = part.endUs;
+        const following = hiding.map((other) => other.startUs).filter((start) => start > end && start - end <= snapUs);
+
+        if (following.length > 0) {
+            part.endUs = Math.min(...following);
+        }
+    }
+
+    return parts;
+}
+
+/**
  * Where each voiceover plays in the exported file, in microseconds from its first frame (the intro card's), in that
  * order: a movie line from its output time after the intro, cut at the movie's end; a card line from its card's start
  * plus `atUs`, running on to the end of the file at most. A line whose start is cut, or whose card is gone, is left out.
@@ -1583,6 +1634,65 @@ export function zoomsLinked(project: EditProject, first: EditZoom, second: EditZ
 
     const later = secondStart > firstStart || (secondStart === firstStart && second.startUs > first.startUs);
     return later && secondStart - firstEnd < (first.easeOutMs + second.easeInMs) * 1000;
+}
+
+/** What one view (the picture's or the canvas's) shows at a moment: one zoom, or the glide between two linked zooms. */
+export type ZoomShown = { zoom: EditZoom } | { glide: { from: EditZoom; to: EditZoom } };
+
+/**
+ * The zoom a view shows at a source moment that plays, the rule of the window's renderer (ZoomCurve.curve in
+ * TimelineMap.swift): between two linked zooms of that target, from where the first starts to leave to where the
+ * second has arrived (in output time), the glide from one to the other; elsewhere the zoom whose source range holds the
+ * moment, or null. A canvas zoom and a picture zoom play together, so each target has its own answer.
+ */
+export function zoomShownAt(
+    project: EditProject,
+    sourceUs: number,
+    target: NonNullable<EditZoom["target"]>
+): ZoomShown | null {
+    const outUs = outputTimeOf(project, sourceUs);
+
+    if (outUs === undefined) {
+        return null;
+    }
+
+    const ordered = project.zooms
+        .filter((zoom) => (zoom.target === "canvas") === (target === "canvas"))
+        .flatMap((zoom) => {
+            const spans = outputSpansOf(project, zoom.startUs, zoom.endUs);
+            const startOut = spans[0]?.fromUs;
+            const endOut = spans.at(-1)?.toUs;
+            return startOut === undefined || endOut === undefined ? [] : [{ zoom, startOut, endOut }];
+        })
+        .sort((a, b) => a.startOut - b.startOut || a.zoom.startUs - b.zoom.startUs);
+
+    for (const [index, first] of ordered.entries()) {
+        const second = ordered[index + 1];
+
+        if (!second || !zoomsLinked(project, first.zoom, second.zoom)) {
+            continue;
+        }
+
+        // A zoom shorter than its own ease would leave a gap: the glide starts no later than the first zoom's end and
+        // ends no earlier than the second's start.
+        const leaves = Math.max(
+            first.startOut + first.zoom.easeInMs * 1000,
+            first.endOut - first.zoom.easeOutMs * 1000
+        );
+        const arrives = Math.min(
+            second.endOut - second.zoom.easeOutMs * 1000,
+            second.startOut + second.zoom.easeInMs * 1000
+        );
+        const startUs = Math.min(first.endOut, leaves);
+        const endUs = Math.max(second.startOut, arrives);
+
+        if (endUs > startUs && outUs >= startUs && outUs < endUs) {
+            return { glide: { from: first.zoom, to: second.zoom } };
+        }
+    }
+
+    const live = ordered.findLast(({ zoom }) => zoom.startUs <= sourceUs && sourceUs < zoom.endUs);
+    return live ? { zoom: live.zoom } : null;
 }
 
 /**
@@ -4066,6 +4176,68 @@ export function transcriptLines(raw: unknown, project: EditProject): TranscriptL
                 text: segment.text.trim(),
             };
         });
+}
+
+const captionSegmentSchema = z.object({ text: z.string(), start: z.number(), end: z.number() });
+
+/**
+ * The transcript cache's lines as the burned-in captions read them (CaptionTrack.load in Captions.swift): each segment
+ * with words and an end after its start, in source microseconds, by start. A malformed segment is left out alone.
+ */
+function captionTrackLines(raw: unknown): Array<{ fromUs: number; toUs: number; text: string }> {
+    const parsed = z.object({ segments: z.array(z.unknown()) }).safeParse(raw);
+
+    if (!parsed.success) {
+        return [];
+    }
+
+    return parsed.data.segments
+        .flatMap((value) => {
+            const segment = captionSegmentSchema.safeParse(value);
+            const text = segment.success ? segment.data.text.trim() : "";
+
+            if (!segment.success || !text || !(segment.data.end > segment.data.start)) {
+                return [];
+            }
+
+            return [
+                {
+                    fromUs: Math.trunc(segment.data.start * 1_000_000),
+                    toUs: Math.trunc(segment.data.end * 1_000_000),
+                    text,
+                },
+            ];
+        })
+        .sort((a, b) => a.fromUs - b.fromUs);
+}
+
+/**
+ * The transcript line said at a source time, read as the captions read it (CaptionTrack.line(atSourceUs:) and
+ * EditRenderer.look): the last line that has started, kept only while it has not ended, then its fix from
+ * `transcript.fixes`. A fix with no words hides it, and an earlier line that overlaps it does not show through. Null
+ * where nothing is said. It does not look at `captions`: captionAt() does.
+ */
+export function spokenLineAt(project: EditProject, raw: unknown, sourceUs: number): string | null {
+    const started = captionTrackLines(raw)
+        .filter((line) => line.fromUs <= sourceUs)
+        .at(-1);
+
+    if (!started || started.toUs <= sourceUs) {
+        return null;
+    }
+
+    const fix = project.transcript?.fixes[String(Math.round(started.fromUs / 1000))];
+
+    if (fix === undefined) {
+        return started.text;
+    }
+
+    return fix === "" ? null : fix;
+}
+
+/** The caption line the export draws at a source time: the spoken line while captions show (absent is off), else null. */
+export function captionAt(project: EditProject, raw: unknown, sourceUs: number): string | null {
+    return project.captions?.show ? spokenLineAt(project, raw, sourceUs) : null;
 }
 
 /**
