@@ -146,6 +146,9 @@ final class CapturePicker {
                 CameraBubble.shared.pickerClosed(started: false)
                 return
             }
+            // The Start shortcut opens no picker, so the camera preview is hidden: it comes up first, before the
+            // countdown too, so its window is on screen when the start names it for the movie to leave out.
+            if options.camera { _ = await CameraBubble.shared.previewForStart() }
             guard options.countdown else {
                 start(choice, options: options)
                 return
@@ -170,10 +173,20 @@ final class CapturePicker {
 
     private func start(_ choice: CaptureChoice, options: CaptureOptions, exclude panels: [Int] = [],
                        onFailure: (() -> Void)? = nil) {
-        let exclude = (options.camera ? CameraBubble.shared.windowIDs : []) + panels.filter { $0 > 0 }
-        CameraBubble.shared.pickerClosed(started: options.camera)
-        RecorderMenu.shared.startRecording(arguments: options.startArguments(choice, excludeWindowIds: exclude),
-                                           onFailure: onFailure)
+        let plan = Self.startPlan(choice: choice, options: options, previewWindowIDs: CameraBubble.shared.windowIDs,
+                                  panels: panels)
+        CameraBubble.shared.pickerClosed(started: options.camera, previewLeftOut: plan.previewLeftOut)
+        RecorderMenu.shared.startRecording(arguments: plan.arguments, onFailure: onFailure)
+    }
+
+    /// What a start runs, and whether it leaves the camera preview out of the movie: one answer for both, from the
+    /// preview's windows on screen at the start (`CameraBubble.windowIDs`). The preview may show while it records only
+    /// when `previewLeftOut`. `panels` are other windows the movie leaves out (the countdown's).
+    nonisolated static func startPlan(choice: CaptureChoice, options: CaptureOptions, previewWindowIDs: [Int],
+                                      panels: [Int] = []) -> (arguments: [String], previewLeftOut: Bool) {
+        let preview = options.camera ? previewWindowIDs.filter { $0 > 0 } : []
+        let exclude = preview + panels.filter { $0 > 0 }
+        return (options.startArguments(choice, excludeWindowIds: exclude), !preview.isEmpty)
     }
 
     /// `--picker --snapshot`: the panel over made-up targets, drawn off screen into a PNG (verification without a

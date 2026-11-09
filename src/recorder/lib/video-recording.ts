@@ -58,11 +58,14 @@ export interface VideoRecordingOptions {
     excludeWindowIds?: number[];
     /**
      * The menu bar recorder records the camera beside the screen into `camera.mov` (`settings.camera` asks for it):
-     * refused while it does not run, and a warning at the end when no camera movie came.
+     * refused while it does not run, and a warning at the end when no camera movie came. It is asked before the first
+     * segment, and the camera preview's window it answers is left out of every segment.
      */
     camera?: boolean;
     /** Whether the menu bar recorder runs; default its lock (`recorderFaceState`). */
     recorderFace?: () => FlockState;
+    /** Where `camera.start` and `camera.stop` go; default the recorder service (`recorderHost()`). */
+    cameraHost?: CameraHost;
     audio?: ("system" | "mic")[];
     micDevice?: string;
     /** Keep the system cursor in the movie; by default it stays out and the editor draws it from the track. */
@@ -453,11 +456,13 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
         options.emit?.(event);
     };
+    // Read at each segment's start, so the camera preview's window joins the exclusions before the first one.
+    const segmentOptions = segmentRecorderOptions(options, folder);
     const session = new RecordingSession({
         target: options.target,
         directory: join(folder, `segments-${randomUUID().slice(0, 8)}`),
         output: movie,
-        recorder: nativeSegmentRecorder(segmentRecorderOptions(options, folder)),
+        recorder: nativeSegmentRecorder(segmentOptions),
         join: segmentJoiner(audioTrackTitles(options.audio)),
         measure: movieLengthMs,
         emit,
@@ -501,19 +506,30 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
                         }),
                     { once: true }
                 );
-                await session.start();
-
-                // Asked for, not left to the face's watch of the live recordings; a refusal ends the start.
+                // Asked for before the first segment, not left to the face's watch of the live recordings: the face
+                // answers the camera preview's window, which ScreenCaptureKit records unless the movie leaves it out
+                // by its id (it ignores the panel's sharing type), and a refusal ends the start before it records.
                 if (options.camera) {
-                    cameraRefused = await startRecordingCamera(folder);
-                    cameraStarted = cameraRefused === undefined;
+                    const camera = await startRecordingCamera(folder, options.cameraHost);
 
-                    if (cameraRefused) {
-                        emit({ event: "error", message: cameraRefused, code: "camera-refused", fatal: true });
-                        await activeControl.discard();
+                    if (!camera.started) {
+                        cameraRefused = camera.reason;
+                        emit({ event: "error", message: camera.reason, code: "camera-refused", fatal: true });
+                        return "failed";
+                    }
+
+                    cameraStarted = true;
+                    segmentOptions.excludeWindowIds = [
+                        ...new Set([...(segmentOptions.excludeWindowIds ?? []), ...camera.windowIds]),
+                    ];
+
+                    // A stop that came while the camera started has ended the session; a segment now would record on.
+                    if (signal.aborted) {
+                        return session.finished;
                     }
                 }
 
+                await session.start();
                 return session.finished;
             },
             { handleTermination: true }
@@ -523,7 +539,9 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     }
 
     const spans = session.movieSpans();
-    const cameraProblem = cameraStarted ? await endRecordingCamera({ folder, outcome, spans }) : undefined;
+    const cameraProblem = cameraStarted
+        ? await endRecordingCamera({ folder, outcome, spans, host: options.cameraHost })
+        : undefined;
 
     // One segment is moved, not joined, so its tracks still read "Core Media Audio": title them by one stream copy.
     if (outcome === "done" && segments === 1 && options.audio?.length && existsSync(movie)) {

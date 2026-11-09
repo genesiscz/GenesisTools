@@ -137,7 +137,7 @@ private final class FakeRecorderService: @unchecked Sendable {
 private final class FakeFace: RecorderHostFace {
     var opened: [(path: String, focus: Bool, atSeconds: Double?, tab: InspectorTab?)] = []
     var shown: [String] = []
-    var camera: CameraBubble.StartAnswer = .started
+    var camera: CameraBubble.StartAnswer = .started(windowIDs: [4242])
     var cameraFolders: [String] = []
     var windows: [String: Any] = ["open": [["path": "/r/demo", "title": "Demo", "window": 41]], "front": ["path": "/r/demo", "title": "Demo", "window": 41]]
     var closed: [(path: String?, window: Int?)] = []
@@ -393,7 +393,10 @@ final class RecorderServiceHostTests: XCTestCase {
     func testCameraStartAnswersStartedOrTheCodedRefusal() async throws {
         _ = try await connectedHost()
         let started = try await ask(30, "camera.start", ["folder": folder.path])
-        XCTAssertEqual(started["result"] as? [String: Bool], ["started": true])
+        let result = try XCTUnwrap(started["result"] as? [String: Any])
+        XCTAssertEqual(result["started"] as? Bool, true)
+        // The preview's window, which the recording leaves out of its movie.
+        XCTAssertEqual(result["windowIds"] as? [Int], [4242])
         face.camera = .denied
         let denied = try await refusal(31, "camera.start", ["folder": folder.path])
         XCTAssertEqual(denied, 1014)
@@ -580,7 +583,7 @@ final class RecorderServiceHostTests: XCTestCase {
             }
             if params["folder"] != nil { params["folder"] = folder.path }
             let refusal = ((example["reply"] as? [String: Any])?["error"] as? [String: Any])?["code"] as? Int
-            face.camera = refusal == 1014 ? .denied : refusal == 1015 ? .busy("FaceTime") : .started
+            face.camera = refusal == 1014 ? .denied : refusal == 1015 ? .busy("FaceTime") : .started(windowIDs: [4242])
             let answer = try await ask(id, method, params, timeout: 60)
             if let refusal {
                 XCTAssertEqual(errorCode(answer), refusal, method)

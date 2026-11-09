@@ -20,10 +20,14 @@ enum RecorderFailureStyle: String, CaseIterable, Identifiable {
 }
 
 /// When the camera bubble's live preview shows on screen. Settings → Recorder → Camera.
+/// The preview shows while it records only when the movie leaves it out: its window id reached the recorder's
+/// `--exclude-window-ids` before the first frame (ScreenCaptureKit ignores the panel's sharing type, so a preview the
+/// movie did not leave out is baked into it). The picker, the Start shortcut and the recorder service's `camera.start`
+/// leave it out; a recording the face found by its own watch, with no service, does not.
 enum CameraPreviewPolicy: String, CaseIterable, Identifiable {
     /// Every recording that records the camera, also one the CLI, an agent or the recorder service started.
     case everyCameraRecording = "every"
-    /// Only a recording the capture picker started (the behaviour before this setting).
+    /// Only a recording the capture picker or the Start shortcut started (the behaviour before this setting).
     case pickerRecordings = "picker"
     /// Never: the camera records without a preview, and the editor places the bubble.
     case never
@@ -39,9 +43,11 @@ enum CameraPreviewPolicy: String, CaseIterable, Identifiable {
     /// The picker shows the preview while it is open, so the bubble can be placed before the start.
     var showsWhilePicking: Bool { self != .never }
 
-    /// Whether a recording that records the camera shows the preview while it runs.
-    func showsPreview(startedByPicker: Bool) -> Bool {
-        switch self {
+    /// Whether a recording that records the camera shows the preview while it runs. `previewLeftOut`: the preview's
+    /// window is in the movie's `--exclude-window-ids`; without it the preview never shows, or the movie would hold it.
+    func showsPreview(startedByPicker: Bool, previewLeftOut: Bool) -> Bool {
+        guard previewLeftOut else { return false }
+        return switch self {
         case .everyCameraRecording: true
         case .pickerRecordings: startedByPicker
         case .never: false

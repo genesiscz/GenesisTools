@@ -329,8 +329,12 @@ export const hostApi = defineApi({
         defineMethod({
             name: "camera.start",
             params: z.object({ folder: path }),
-            result: z.object({ started: z.literal(true) }),
-            doc: "Starts the camera bubble for a recording folder; 1014 when macOS denies the camera, 1015 when it is busy.",
+            result: z.object({
+                started: z.literal(true),
+                /** The camera preview's windows on screen; an app from before this field sends none. */
+                windowIds: z.array(z.number().int()).optional(),
+            }),
+            doc: "Starts the camera bubble for a recording folder, before its movie starts, and answers the preview's windowIds, which the movie must leave out (--exclude-window-ids); 1014 when macOS denies the camera, 1015 when it is busy.",
             effect: "reversible",
         }),
         defineMethod({

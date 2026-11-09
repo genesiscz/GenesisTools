@@ -104,7 +104,8 @@ enum RecorderHostMethods {
             "camera.start": method { request in
                 let folder = try Params(request).folder()
                 switch await face.startCamera(folder: folder) {
-                case .started: return ["started": true]
+                // The preview's window: the recording leaves it out of the movie from its first segment.
+                case let .started(windowIDs): return ["started": true, "windowIds": windowIDs]
                 case .denied:
                     throw Failure.remote(code: RecorderServiceHost.Code.cameraDenied,
                                          message: "Camera access is off for GenesisTools (System Settings → Privacy & Security → Camera)")

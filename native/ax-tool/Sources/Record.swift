@@ -1041,7 +1041,9 @@ func cmdCaptureScreen() {
 
     let content: SCShareableContent
     do {
-        content = try shareableContent(listing: indicator.windowIDs)
+        // The windows the movie leaves out too (the camera preview, a countdown): one the list does not hold yet
+        // could not be left out, so the movie would show it.
+        content = try shareableContent(listing: indicator.windowIDs.union(options.selection.excludedWindowIDs))
     } catch {
         errorExit("ScreenCaptureKit refused to enumerate content: \(error.localizedDescription)", code: captureErrorCode(error))
     }
@@ -1682,7 +1684,8 @@ func shareableContent(listing windowIDs: Set<CGWindowID>, timeout: TimeInterval 
         let listed = Set(content.windows.map(\.windowID))
         if windowIDs.isSubset(of: listed) { return content }
         if Date() >= deadline {
-            FileHandle.standardError.write(Data("ax-tool: the recording border is not listed yet; the movie may show its corners\n".utf8))
+            let missing = windowIDs.subtracting(listed).sorted().map(String.init).joined(separator: ",")
+            FileHandle.standardError.write(Data("ax-tool: windows \(missing) are not listed yet; the movie may show them (the recording border, a window it leaves out)\n".utf8))
             return content
         }
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))

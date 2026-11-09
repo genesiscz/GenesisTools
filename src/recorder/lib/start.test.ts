@@ -232,6 +232,102 @@ describe("a countdown that ends when the movie records", () => {
     });
 });
 
+/** A recorder that records nothing: it notes its start and the windows its movie leaves out. */
+async function fakeRecorder(steps: string[], excluded: number[][]) {
+    const scratch = await mkdtemp(join(tmpdir(), "gt-camera-preview-"));
+    return spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ plan, onRecording }) => {
+        steps.push("recorder starts");
+        excluded.push(plan.capture?.excludeWindowIds ?? []);
+        onRecording?.({ sessionDir: join(scratch, "session") });
+        return {
+            ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+            captureFailed: false,
+            sessionDir: join(scratch, "session"),
+            warnings: [],
+            capture: null,
+        };
+    });
+}
+
+// Regression test: a camera recording started by the CLI, the REPL or the service asked for the camera after its
+// first segment started and never left the camera preview out, so the preview was baked into screen.mp4 and a frame,
+// a zoom or a moved bubble showed two faces (hunt 2026-11-09, ScreenCaptureKit ignores the panel's sharing type).
+describe("a camera recording leaves the camera preview out of its movie", () => {
+    it("asks for the camera before the first segment, and the preview's window joins every segment's exclusions", async () => {
+        const steps: string[] = [];
+        const excluded: number[][] = [];
+        const cameraHost: CameraHost = {
+            call: async (method, params) => {
+                steps.push(method);
+
+                if (method === "camera.stop") {
+                    // The face writes camera.json once the camera movie is finished.
+                    await writeFile(join(params.folder, "camera.json"), "{}");
+                    return { stopped: true };
+                }
+
+                return { started: true, windowIds: [4242] };
+            },
+        };
+        const spy = await fakeRecorder(steps, excluded);
+
+        try {
+            await recordVideo({
+                target: { kind: "region", x: 0, y: 0, width: 320, height: 200 },
+                camera: true,
+                recorderFace: () => "held",
+                cameraHost,
+                excludeWindowIds: [77],
+            });
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(steps.slice(0, 2)).toEqual(["camera.start", "recorder starts"]);
+        expect(excluded[0]).toEqual([77, 4242]);
+    });
+
+    it("a camera the face refuses ends the start before the recorder starts", async () => {
+        const steps: string[] = [];
+        const excluded: number[][] = [];
+        const cameraHost: CameraHost = {
+            call: async (method) => {
+                steps.push(method);
+                throw new RpcError(1014, "Camera access is off for GenesisTools");
+            },
+        };
+        const spy = await fakeRecorder(steps, excluded);
+        let result: Awaited<ReturnType<typeof recordVideo>> | undefined;
+
+        try {
+            result = await recordVideo({
+                target: { kind: "region", x: 0, y: 0, width: 320, height: 200 },
+                camera: true,
+                recorderFace: () => "held",
+                cameraHost,
+            });
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(steps).toEqual(["camera.start"]);
+        expect(result?.outcome).toBe("failed");
+        expect(result?.warnings.join(" ")).toContain("Camera access is off for GenesisTools");
+    });
+
+    it("camera.start answers the preview's windows; an answer without them (an older app) leaves none out", async () => {
+        const host = (answer: unknown): CameraHost => ({ call: async () => answer });
+        expect(await startRecordingCamera("/tmp/rec", host({ started: true, windowIds: [4242] }))).toEqual({
+            started: true,
+            windowIds: [4242],
+        });
+        expect(await startRecordingCamera("/tmp/rec", host({ started: true }))).toEqual({
+            started: true,
+            windowIds: [],
+        });
+    });
+});
+
 const window: RecordingTarget = { kind: "window", windowIds: [83493] };
 const app: RecordingTarget = { kind: "app", app: "Notes" };
 const display: RecordingTarget = { kind: "display", screenIndex: 0, follow: true };
@@ -307,10 +403,11 @@ describe("a window or app movie", () => {
                 return { started: true };
             },
         });
-        expect(await startRecordingCamera("/tmp/rec", host())).toBeUndefined();
-        expect(await startRecordingCamera("/tmp/rec", host("Camera access is off for GenesisTools"))).toContain(
-            "Camera access is off for GenesisTools"
-        );
+        expect(await startRecordingCamera("/tmp/rec", host())).toEqual({ started: true, windowIds: [] });
+        expect(await startRecordingCamera("/tmp/rec", host("Camera access is off for GenesisTools"))).toMatchObject({
+            started: false,
+            reason: expect.stringContaining("Camera access is off for GenesisTools"),
+        });
         await stopRecordingCamera("/tmp/rec", host("no recorder host said hello"));
         expect(calls).toEqual(["camera.start /tmp/rec", "camera.start /tmp/rec", "camera.stop /tmp/rec"]);
     });
