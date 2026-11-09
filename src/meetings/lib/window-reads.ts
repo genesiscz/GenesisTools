@@ -15,7 +15,7 @@ import { transcriptMarkdown } from "./export";
 import { type MatchDraft, type MatchPreviewRow, matchDraftSchema, matchPreview } from "./match-preview";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingsOverview, meetingsOverview } from "./overview";
-import { meetingSource, sourceRefOf } from "./sources";
+import { type LinkedSource, meetingSource, sourceRefOf } from "./sources";
 import { type CorrectedTranscript, correctTranscript } from "./transcript-corrections";
 
 const { log } = logger.scoped("meetings-window-reads");
@@ -85,17 +85,23 @@ export function revisionTokens(facts: RevisionFacts): WindowRevisions {
  * the part reads and its source's revision. Reads no transcript and no frame, so the window can ask it on every
  * return and read again only the parts whose token changed.
  */
-export async function revisionsRead(options: { store: MeetingStore; record: MeetingRecord }): Promise<WindowRevisions> {
-    const { store, record } = options;
+export async function revisionsRead(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    /** The record's source, when the caller holds it already (a test's fake one); else its linked source. */
+    linked?: LinkedSource;
+}): Promise<WindowRevisions> {
+    const { store, record, linked } = options;
     const folder = store.folder(record.id);
     const recordFile = fileIdentity(join(folder, MEETING_FILE));
     const config = fileIdentity(new MeetingsConfigStore().path);
-    const ref = sourceRefOf(record);
+    const ref = linked ? { sourceId: linked.source.id, sourceMeetingId: linked.sourceMeetingId } : sourceRefOf(record);
     let source: string | null = "no source";
 
     if (ref) {
         try {
-            source = await (await meetingSource(ref.sourceId)).revision(ref.sourceMeetingId);
+            const reader = linked?.source ?? (await meetingSource(ref.sourceId));
+            source = await reader.revision(ref.sourceMeetingId);
         } catch (error) {
             log.debug({ error, meeting: record.id }, "the source gave no revision; the window reads it again");
             source = null;
@@ -214,9 +220,11 @@ export async function correctedTranscriptRead(options: {
     record: MeetingRecord;
     format: TranscriptFormat;
     flags: TranscriptReadOptions;
+    /** The record's source, when the caller holds it already (a test's fake one); else its linked source. */
+    linked?: LinkedSource;
 }): Promise<{ markdown?: ReturnType<typeof transcriptMarkdown>; applied: CorrectedTranscript }> {
-    const { store, record, format, flags } = options;
-    const meeting = await OpenedMeeting.of(store, record).meeting();
+    const { store, record, format, flags, linked } = options;
+    const meeting = await OpenedMeeting.of(store, record, linked).meeting();
     const config = await new MeetingsConfigStore().read();
     const markdown =
         format === "md"
