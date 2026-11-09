@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { assertReach, defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { convertFileToMonoMp3 } from "@genesiscz/utils/audio/converter";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { FlockState } from "@genesiscz/utils/fs/flock";
@@ -17,11 +18,13 @@ import {
     groupIssues,
     issueSummary,
 } from "@genesiscz/utils/recording-editor/check";
+import { audioTrackCount } from "@genesiscz/utils/recording-editor/denoise";
 import { MOVIE_EVENT_KINDS, type MovieEventKind, type Tap, tapSchema } from "@genesiscz/utils/recording-editor/events";
 import { TRANSITION_KINDS } from "@genesiscz/utils/recording-editor/fx";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { arrowTail } from "@genesiscz/utils/recording-editor/item-ops";
 import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
+import { transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
 import {
     CAPTION_KINDS,
     CHAPTER_PLACES,
@@ -857,7 +860,7 @@ const movieMethods = [
         doc:
             "The spoken lines in source seconds (plays: where each starts in the edit, null when cut), from " +
             toolCommand("transcribe") +
-            "; cached beside the movie, refresh: true transcribes again. A run without the cache is a paid transcription and may ask the user for the AI vault key; a video recorded without sound is refused.",
+            " of what the export plays: every audio track that is not muted, mixed, on the movie's clock (a microphone that starts late keeps its place). Cached beside the movie, refresh: true transcribes again (do so after muting a track). A run without the cache is a paid transcription and may ask the user for the AI vault key; a video recorded without sound, or with every track muted or the audio left out, is refused.",
         effect: "reversible",
         reaches: ["paid", "user"],
     }),
@@ -1736,6 +1739,41 @@ function screenTextForCheck(project: EditProject): EditFacts["screenText"] {
     }
 }
 
+/** Runs `tools transcribe` on the extracted sound into the transcript cache. */
+async function transcribeInto(options: {
+    input: string;
+    cache: string;
+    video: string;
+    tracks: readonly number[];
+    provider?: string;
+    lang?: string;
+}): Promise<void> {
+    const { cache } = options;
+    const args = ["transcribe", options.input, "--format", "json", "-o", cache];
+
+    if (options.provider) {
+        args.push("--provider", options.provider);
+    }
+
+    if (options.lang) {
+        args.push("--lang", options.lang);
+    }
+
+    log.info(
+        { video: options.video, tracks: options.tracks, provider: options.provider ?? "default", cache },
+        "transcribing the movie"
+    );
+    const result = await execTool(args, { timeout: 60 * 60_000 });
+
+    if (!result.success || !existsSync(cache)) {
+        // The CLI's error lines start with ■; the last line alone is often only the suggested command.
+        const lines = result.stderr.trim().split("\n").filter(Boolean);
+        const marked = lines.filter((line) => line.includes("■")).map((line) => line.replace(/^.*■\s*/, ""));
+        const reason = (marked.length > 0 ? marked.join("; ") : lines.at(-1)) ?? `exit ${result.exitCode}`;
+        throw new Error(`the transcription failed: ${reason}`);
+    }
+}
+
 /** True when a video recording's manifest lists no sound source, so a transcription would pay for silence. */
 function recordedWithoutSound(opened: { path: string; project: EditProject }): boolean {
     const folder = recordingFolderOf(opened);
@@ -2508,27 +2546,24 @@ export class Movie {
             throw new Error(`${video} was recorded without sound, so there is nothing to transcribe`);
         }
 
+        // What the export plays, on the movie's clock: every unmuted track mixed, a late first sample kept in place.
+        const tracks = transcribedTracks(await audioTrackCount(video), opened.project.audio);
         // The guard sits on the paid call itself: a method declared read that reaches here is refused (NR1).
         assertReach("paid", "start a transcription", "Call movie.transcript() first; it declares the paid run.");
-        const args = ["transcribe", video, "--format", "json", "-o", cache];
+        const heard = join(tmpdir(), `gt-transcript-${process.pid}-${Date.now()}.mp3`);
 
-        if (options.provider) {
-            args.push("--provider", options.provider);
-        }
-
-        if (options.lang) {
-            args.push("--lang", options.lang);
-        }
-
-        log.info({ video, provider: options.provider ?? "default", cache }, "transcribing the movie");
-        const result = await execTool(args, { timeout: 60 * 60_000 });
-
-        if (!result.success || !existsSync(cache)) {
-            // The CLI's error lines start with ■; the last line alone is often only the suggested command.
-            const lines = result.stderr.trim().split("\n").filter(Boolean);
-            const marked = lines.filter((line) => line.includes("■")).map((line) => line.replace(/^.*■\s*/, ""));
-            const reason = (marked.length > 0 ? marked.join("; ") : lines.at(-1)) ?? `exit ${result.exitCode}`;
-            throw new Error(`the transcription failed: ${reason}`);
+        try {
+            await convertFileToMonoMp3(video, heard, { tracks });
+            await transcribeInto({
+                input: heard,
+                cache,
+                provider: options.provider,
+                lang: options.lang,
+                video,
+                tracks,
+            });
+        } finally {
+            rmSync(heard, { force: true });
         }
 
         return transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);

@@ -21,6 +21,20 @@ export function audibleTracks(count: number, audio: PlayedAudio = {}): number[] 
     return Array.from({ length: count }, (_, index) => index).filter((index) => !audio.mutedTracks?.includes(index));
 }
 
+/**
+ * The tracks a transcription hears: the ones the export plays, so captions follow the sound the viewer hears. Throws
+ * when no track plays, because a transcript of a muted track would caption words nobody hears.
+ */
+export function transcribedTracks(count: number, audio: PlayedAudio = {}): number[] {
+    const tracks = audibleTracks(count, audio);
+
+    if (tracks.length === 0) {
+        throw new Error("every audio track is muted or left out, so there is nothing to transcribe");
+    }
+
+    return tracks;
+}
+
 /** `audibleTracks` over the movie's probed audio stream count. */
 export async function audibleTracksOf(video: string, audio?: PlayedAudio): Promise<number[]> {
     return audibleTracks(await audioTrackCount(video), audio);

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join, parse } from "node:path";
-import { MONO_MP3_BITRATE_KBPS } from "@genesiscz/utils/audio/converter";
+import { CONTAINER_CLOCK_FILTER, MONO_MP3_BITRATE_KBPS } from "@genesiscz/utils/audio/converter";
 import { getAudioInfo } from "@genesiscz/utils/audio/probe";
 import { logger } from "@genesiscz/utils/logger";
 import { spawn } from "bun";
@@ -43,6 +43,8 @@ export async function splitAudioFile(
                 "-vn",
                 "-map",
                 "0:a:0",
+                "-af",
+                CONTAINER_CLOCK_FILTER,
                 "-c:a",
                 "libmp3lame",
                 "-b:a",

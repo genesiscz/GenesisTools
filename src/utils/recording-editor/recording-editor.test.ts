@@ -42,7 +42,7 @@ import {
     silenceDetectArgs,
 } from "@genesiscz/utils/recording-editor/idle";
 import { laneItems, resolveLanes } from "@genesiscz/utils/recording-editor/lanes";
-import { audibleTracks } from "@genesiscz/utils/recording-editor/loudness";
+import { audibleTracks, transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
 import {
     annotateClicks,
     applyOp,
@@ -2292,6 +2292,13 @@ describe("edit project (edit.json)", () => {
         expect(audibleTracks(2)).toEqual([0, 1]);
         expect(audibleTracks(2, { include: false, mutedTracks: [] })).toEqual([]);
         expect(audibleTracks(2, { include: true, mutedTracks: [0, 1] })).toEqual([]);
+    });
+
+    test("the transcript hears every track the export plays and refuses when none plays", () => {
+        expect(transcribedTracks(2, {})).toEqual([0, 1]);
+        expect(transcribedTracks(2, { mutedTracks: [0] })).toEqual([1]);
+        expect(() => transcribedTracks(2, { mutedTracks: [0, 1] })).toThrow(/every audio track is muted or left out/);
+        expect(() => transcribedTracks(2, { include: false })).toThrow(/nothing to transcribe/);
     });
 
     describe.skipIf(skip.integration)("removeIdle on a movie with two audio tracks", () => {
