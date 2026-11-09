@@ -76,17 +76,30 @@ struct ProgressMark: Equatable {
 
     static let fadeUs: Int64 = 200_000
 
-    /// The markers (the recording's and the edit's) at their output times, inside the movie, in order; one per time.
+    /// The least gap between two chapters, the MP4's own: moments.ts chapterPoints with EMBEDDED_CHAPTER_MIN_SECONDS,
+    /// so the bar divides only where the exported movie has a chapter.
+    static let minChapterGapUs: Int64 = 1_000_000
+
+    /// The chapters the markers (the recording's and the edit's) start, at their output times, inside the movie, in
+    /// order, folded as the MP4's chapters are: a first marker under `minChapterGapUs` starts the first chapter at 0
+    /// (no divider), and a marker closer than that to the chapter kept before it starts none, so the earlier name stays.
     static func chapters(project: EditProject, recorded: [(us: Int64, label: String)]) -> [(outUs: Int64, label: String)] {
         let lengthUs = project.outputDurationUs
         let all = recorded + (project.markers ?? []).map { (us: $0.atUs, label: $0.label) }
-        var seen = Set<Int64>()
-        return all.compactMap { marker -> (outUs: Int64, label: String)? in
+        let played = all.compactMap { marker -> (outUs: Int64, label: String)? in
             guard let outUs = TimelineMap.outputTime(ofSource: marker.us, in: project), outUs >= 0, outUs < lengthUs else { return nil }
             return (outUs, marker.label)
         }
         .sorted { $0.outUs < $1.outUs }
-        .filter { seen.insert($0.outUs).inserted }
+        var kept: [(outUs: Int64, label: String)] = []
+        for marker in played {
+            guard let last = kept.last else {
+                kept.append(marker.outUs < minChapterGapUs ? (0, marker.label) : marker)
+                continue
+            }
+            if marker.outUs - last.outUs >= minChapterGapUs { kept.append(marker) }
+        }
+        return kept
     }
 
     static func at(outUs: Int64, project: EditProject, recorded: [(us: Int64, label: String)],

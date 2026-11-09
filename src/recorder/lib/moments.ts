@@ -127,6 +127,13 @@ export function chaptersOf(
     return chapterPoints(markers, options).map((chapter) => `${clock(chapter.at)} ${chapter.label}`);
 }
 
+/**
+ * The least gap between two chapters embedded in an exported MP4 (chapterPoints' minSeconds). The burned-in progress
+ * bar folds its dividers by the same gap (Overlays.swift ProgressMark.minChapterGapUs), so the two name the same
+ * chapters: change both together. Shorter chapters are noise in a player's chapter menu.
+ */
+export const EMBEDDED_CHAPTER_MIN_SECONDS = 1;
+
 /** The chapters as output seconds and labels, by the rules of chaptersOf. */
 export function chapterPoints(
     markers: ReadonlyArray<{ plays: number | null; label: string }>,

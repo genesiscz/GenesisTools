@@ -193,7 +193,9 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   recording's own markers in recording.json. Op `marker` (`at`, `label`, default "Marker <n>"), op `unmarker` (`id`),
   and the `range` op's action `marker` (at the range's start), which the editor's range popover sends as Add Marker.
   `markers()` and `tools recorder markers` list both kinds (an edit marker with its `id`); the chapters and the marks
-  lane show both.
+  lane show both. An exported MP4's chapters and the burned-in progress bar's dividers fold the same way: a marker
+  under 1 s after the chapter kept before it starts none (the earlier name stays), and a first marker under 1 s
+  starts the first chapter at 0 with no divider (`EMBEDDED_CHAPTER_MIN_SECONDS` in moments.ts).
   - A recording's own markers (`settings.markers` in recording.json, `{ atMs, label }`) are in movie time: seconds of
     screen.mp4 from its first frame, with the paused time left out. A mark made before the first frame is at 0 (at
     a piece's start after a resume). A movie recording since 2026-11-08 says so with `settings.markerClock: "movie"`.

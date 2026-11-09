@@ -64,7 +64,14 @@ import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { privateHitsOf, scanOf, textHitsOf, waitsOf } from "./fx-analysis";
 import { type ExportAnswer, movieOf, resolveRecording } from "./library";
-import { chapterMetadata, chapterPoints, chaptersOfPart, markersOf, recordedMarkersOf } from "./moments";
+import {
+    chapterMetadata,
+    chapterPoints,
+    chaptersOfPart,
+    EMBEDDED_CHAPTER_MIN_SECONDS,
+    markersOf,
+    recordedMarkersOf,
+} from "./moments";
 import { hostExport } from "./service-client";
 
 const { log } = logger.scoped("recorder-edit");
@@ -1142,7 +1149,7 @@ export async function embedChapters({
     leadUs?: number;
 }): Promise<number> {
     const opened = await openProject(value);
-    const whole = chapterPoints(markersOf(opened), { minSeconds: 1 });
+    const whole = chapterPoints(markersOf(opened), { minSeconds: EMBEDDED_CHAPTER_MIN_SECONDS });
     const inPart = part ? chaptersOfPart(whole, { from: part.fromUs / 1_000_000, to: part.toUs / 1_000_000 }) : whole;
     const lead = (leadUs ?? 0) / 1_000_000;
     const chapters =
