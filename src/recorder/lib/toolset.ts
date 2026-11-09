@@ -808,7 +808,7 @@ const movieMethods = [
     edit(
         "normalize",
         z.object({ targetLufs: z.number().min(-30).max(-8).optional() }).strict(),
-        "Measures the movie's loudness (EBU R128, the unmuted tracks mixed) and sets the volume so the export reaches targetLufs (default -16, speech on the web; -14 music). The volume tops out at 200 % (+6 dB). The result adds loudness: { measuredLufs, volume }."
+        "Measures the loudness of what the export plays of the recording's own sound (EBU R128: the kept clips at their speed, the unmuted tracks mixed, the cleaned copy when denoise is on) and sets the volume so it plays at targetLufs (default -16, speech on the web; -14 music). Music and voiceovers keep their own volume. Normalize again after cutting. The volume tops out at 200 % (+6 dB). The result adds loudness: { measuredLufs, volume }."
     ),
     defineMethod({
         name: "export",
@@ -1321,7 +1321,7 @@ const movieMethods = [
         result: z.unknown(),
         resultName:
             "{ id, kind, label, masked, from, to, plays, box: { x, y, width, height }, moves, exclude?, hidden }[]",
-        doc: 'The private data on the screen: emails, tokens and keys, phone numbers, IBANs and card numbers (and names you pass) in the text of its frames, read with Vision on this Mac (a movie: one frame a second, then five a second around each hit\'s edges and while it moves; cached once per movie content, so a copy of the movie reuses it; the first scan of a long movie takes minutes). One hit per value while it shows, at source seconds, tracked through a scroll (moves: true; its hidden part follows the text). masked shows only the first and last two characters. exclude: areas never searched and left visible (a toast); excludeFixed: true finds what stays still while the content scrolls and leaves it visible. hidePrivate({ ids }) hides them; kind is "email" | "token" | "phone" | "iban" | "card" | "name".',
+        doc: 'The private data on the screen: emails, tokens and keys, phone numbers, IBANs and card numbers (and names you pass) in the text of its frames, read with Vision on this Mac (a movie: one frame a second, then five a second around each hit\'s edges and while it moves; cached once per movie content, so a copy of the movie reuses it; the first scan of a long movie takes minutes). One hit per value while it shows, at source seconds (plays: the OUTPUT seconds of its first kept moment, null when no part of it plays), tracked through a scroll (moves: true; its hidden part follows the text). masked shows only the first and last two characters. exclude: areas never searched and left visible (a toast); excludeFixed: true finds what stays still while the content scrolls and leaves it visible. hidePrivate({ ids }) hides them; kind is "email" | "token" | "phone" | "iban" | "card" | "name".',
         effect: "read",
     }),
     edit(

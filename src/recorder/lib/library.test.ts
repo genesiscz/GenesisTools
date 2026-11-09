@@ -7,7 +7,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
-import { applyOp, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import type { MovieEvent } from "@genesiscz/utils/recording-editor/events";
+import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { RecorderControl, type RecorderMethod, type StopAnswer } from "@genesiscz/utils/screen-recorder/control";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer } from "@genesiscz/utils/screen-recorder/live";
@@ -23,7 +24,7 @@ import {
 } from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
-import { privateData } from "./fx-analysis";
+import { eventsOut, privateData } from "./fx-analysis";
 import {
     describeLiveEntries,
     editorOpenStatePath,
@@ -703,6 +704,34 @@ describe("exportTargetOf: the one file name rule of an export", () => {
         const later = new Date(Date.now() + 60_000);
         utimesSync(join(recording, "edit.json"), later, later);
         expect(currentGif(recording)).toBeUndefined();
+    });
+});
+
+describe("a hit, wait or event whose first moment is cut plays from its first kept moment", () => {
+    it("privateData's plays is the hit's first kept moment, null only when all of it is cut", async () => {
+        const whole = wholeProject({
+            video: join(tailFolder(still), "proxy.mp4"),
+            durationUs: 10_000_000,
+            width: 1600,
+            height: 1000,
+        });
+        // The hit shows from 0.5 s to 10 s; with 0.2..3 s cut, the rest of it plays from output 0.2 s.
+        const startCut = applyOp(whole, editOpSchema.parse({ op: "cut", from: 0.2, to: 3 }));
+        expect((await privateData(startCut)).map((hit) => [hit.from, hit.to, hit.plays])).toEqual([[0.5, 10, 0.2]]);
+        const allCut = applyOp(whole, editOpSchema.parse({ op: "cut", from: 0.2, to: 10 }));
+        expect((await privateData(allCut)).map((hit) => hit.plays)).toEqual([null]);
+    });
+
+    it("an event range plays from its first kept moment; a moment inside a cut plays nowhere", () => {
+        const project = applyOp(
+            wholeProject({ video: "/movie/proxy.mp4", durationUs: 10_000_000, width: 100, height: 100 }),
+            editOpSchema.parse({ op: "cut", from: 3, to: 5 })
+        );
+        const events: MovieEvent[] = [
+            { kind: "still", index: 1, fromUs: 4_000_000, toUs: 8_000_000 },
+            { kind: "click", index: 1, fromUs: 4_000_000 },
+        ];
+        expect(eventsOut(project, events).map((event) => event.plays)).toEqual([3, null]);
     });
 });
 

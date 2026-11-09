@@ -35,6 +35,14 @@ struct ScreenHit: Decodable, Equatable, Identifiable {
     var id: String { file }
     var sourceUs: Int64 { Int64((sec * 1_000_000).rounded()) }
     var untilUs: Int64 { Int64((untilSec * 1_000_000).rounded()) }
+
+    /// Where the hit first plays in the edit: the first kept moment of the time its frame shows, so a hit whose start
+    /// is cut still plays from where the rest of it shows; nil only when all of it is cut.
+    func playsOut(in project: EditProject) -> Int64? {
+        untilUs > sourceUs
+            ? TimelineMap.shown(fromUs: sourceUs, toUs: untilUs, in: project)?.startOut
+            : TimelineMap.outputTime(ofSource: sourceUs, in: project)
+    }
 }
 
 /// The edit ops of a screen hit: `hide[i]` blurs `boxes[i]` and `mark[i]` draws a box round it while the frame shows,
@@ -128,7 +136,7 @@ extension EditorModel {
     /// Cuts the time the hit's frame shows.
     func cutScreenMoment(_ hit: ScreenHit) {
         guard !hit.ops.cut.isEmpty else { return }
-        let from = TimelineMap.outputTime(ofSource: hit.sourceUs, in: project).map { formatClock($0, tenths: true) } ?? "a cut part"
+        let from = hit.playsOut(in: project).map { formatClock($0, tenths: true) } ?? "a cut part"
         let span = String(format: "%.1f s", hit.untilSec - hit.sec)
         applyOps(Self.json(hit.ops.cut)) { [weak self] result in
             switch result {
@@ -153,7 +161,7 @@ extension EditorModel {
             guard let self else { return }
             switch result {
             case .success:
-                let from = TimelineMap.outputTime(ofSource: hit.sourceUs, in: self.project).map { formatClock($0, tenths: true) } ?? "a cut part"
+                let from = hit.playsOut(in: self.project).map { formatClock($0, tenths: true) } ?? "a cut part"
                 self.show("\(done) \(name) from \(from) while that frame shows. ⌘Z \(undo).", error: false)
             case let .failure(failure):
                 self.show("\(name) \(failed): \(failure.reason)", error: true)
@@ -169,7 +177,7 @@ extension EditorModel {
     func goToScreenHit(_ index: Int) {
         guard let hits = screenHits, hits.indices.contains(index) else { return }
         selectedScreenHit = index
-        guard let out = TimelineMap.outputTime(ofSource: hits[index].sourceUs, in: project) else {
+        guard let out = hits[index].playsOut(in: project) else {
             show("That moment was cut from the edit.", error: false)
             return
         }
@@ -296,7 +304,7 @@ private struct ScreenHitRow: View {
     let selected: Bool
 
     var body: some View {
-        let out = TimelineMap.outputTime(ofSource: hit.sourceUs, in: model.project)
+        let out = hit.playsOut(in: model.project)
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Text(verbatim: out.map { formatClock($0, tenths: true) } ?? "cut")

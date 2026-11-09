@@ -53,6 +53,7 @@ import {
     leakSourceBox,
     leakSourceKeys,
     outputDurationUs,
+    outputSpansOf,
     outputTimeOf,
     readCursorTrack,
     sourceTimeOf,
@@ -846,7 +847,7 @@ export interface PrivateHitOut {
     masked: string;
     from: number;
     to: number;
-    /** Output seconds where it first shows in the edit now; null when that moment is cut. */
+    /** Output seconds of its first kept moment in the edit now; null when no part of it plays. */
     plays: number | null;
     box: PrivateHit["box"];
     /** It moves (a scroll): its hidden part follows these keyframes. */
@@ -861,10 +862,15 @@ export interface PrivateHitOut {
 
 const seconds = (us: number): number => Math.round(us / 1000) / 1000;
 
+/** Output microseconds of the first kept moment of a source range; undefined when all of it is cut. */
+function firstShownOutputUs(project: EditProject, fromUs: number, toUs: number): number | undefined {
+    return outputSpansOf(project, fromUs, toUs)[0]?.fromUs;
+}
+
 function hitsOut(project: EditProject, hits: readonly PrivateHit[]): PrivateHitOut[] {
     const applied = new Set(project.privacy?.applied ?? []);
     return hits.map((hit) => {
-        const plays = outputTimeOf(project, hit.fromUs);
+        const plays = firstShownOutputUs(project, hit.fromUs, hit.toUs);
         return {
             id: hit.id,
             kind: hit.kind,
@@ -1456,7 +1462,7 @@ export async function waits(
     options: { minSeconds?: number; maxArea?: number } = {}
 ): Promise<WaitOut[]> {
     return (await waitsOf(project, options)).map((wait) => {
-        const plays = outputTimeOf(project, wait.fromUs);
+        const plays = firstShownOutputUs(project, wait.fromUs, wait.toUs);
         const length = wait.toUs - wait.fromUs;
         return {
             id: wait.id,
@@ -1528,7 +1534,11 @@ export async function eventsOf(project: EditProject, options: { taps?: readonly 
 
 export function eventsOut(project: EditProject, events: readonly MovieEvent[]): MovieEventOut[] {
     return events.map((event) => {
-        const plays = outputTimeOf(project, event.fromUs);
+        // A range plays from its first kept moment; a point event plays only where its one moment is kept.
+        const plays =
+            event.toUs === undefined
+                ? outputTimeOf(project, event.fromUs)
+                : firstShownOutputUs(project, event.fromUs, event.toUs);
         return {
             kind: event.kind,
             index: event.index,
