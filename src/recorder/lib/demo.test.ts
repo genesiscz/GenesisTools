@@ -10,6 +10,7 @@ import type { EditOp } from "@genesiscz/utils/recording-editor/project";
 import * as projectOps from "@genesiscz/utils/recording-editor/project";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import * as probe from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { type DemoDriver, type DemoStepTiming, demoEditOps, demoScriptSchema, runDemo, subtractRanges } from "./demo";
@@ -667,5 +668,74 @@ describe("movie survey on one time base", () => {
             part.mockRestore();
             still.mockRestore();
         }
+    });
+});
+
+describe("movie.export() lengths", () => {
+    /** An edit of 8 s that plays (0-2 s and 4-10 s of a 10 s source). */
+    function cutEdit(): string {
+        const folder = mkdtempSync(join(tmpdir(), "export-length-"));
+        const path = join(folder, "screen.edit.json");
+        const project = projectOps.wholeProject({
+            video: join(folder, "screen.mp4"),
+            durationUs: 10_000_000,
+            width: 496,
+            height: 1080,
+        });
+        projectOps.writeProject(path, {
+            ...project,
+            clips: [
+                { id: "c1", fromUs: 0, toUs: 2_000_000, speed: 1 },
+                { id: "c2", fromUs: 4_000_000, toUs: 10_000_000, speed: 1 },
+            ],
+        });
+        return path;
+    }
+
+    async function exported(path: string, fileSeconds: number, options: { from?: number; to?: number } = {}) {
+        const spies = [
+            spyOn(library, "requireRecorderPart").mockReturnValue(undefined),
+            spyOn(edit, "exportAs").mockImplementation(async () => ({
+                ok: true,
+                path: "/x/out.mp4",
+                bytes: 1,
+                seconds: 0,
+            })),
+            spyOn(probe, "probeVideo").mockImplementation(
+                async () =>
+                    ({ durationUs: fileSeconds * 1_000_000, width: 496, height: 1080 }) as Awaited<
+                        ReturnType<typeof probe.probeVideo>
+                    >
+            ),
+        ];
+
+        try {
+            return await new Movie(path).export(options);
+        } finally {
+            for (const spy of spies) {
+                spy.mockRestore();
+            }
+        }
+    }
+
+    test("outputSeconds is the movie without its cards as info() says, exportSeconds the file with them", async () => {
+        const path = cutEdit();
+        const movie = new Movie(path);
+        await movie.introCard({ title: "Demo", seconds: 3 });
+        await movie.endCard({ text: "Thanks", seconds: 2 });
+        const info = await movie.info();
+        // The renderer's file: 3 s intro + 8 s movie + 2 s end card.
+        const answer = await exported(path, 13);
+        expect(answer.outputSeconds).toBe(info.outputSeconds);
+        expect(answer.exportSeconds).toBeCloseTo(13, 3);
+    });
+
+    test("a part export has both lengths near the part", async () => {
+        const path = cutEdit();
+        const movie = new Movie(path);
+        await movie.introCard({ title: "Demo", seconds: 3 });
+        const answer = await exported(path, 2.5, { from: 1, to: 3.5 });
+        expect(answer.outputSeconds).toBeCloseTo(2.5, 3);
+        expect(answer.exportSeconds).toBeCloseTo(2.5, 3);
     });
 });

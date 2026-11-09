@@ -832,8 +832,9 @@ const movieMethods = [
             })
             .strict(),
         result: z.unknown(),
-        resultName: "{ path, bytes, outputSeconds, width, height, renderSeconds, replaced?, subtitles? }",
-        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; from/to (OUTPUT seconds, what plays) export only that part and leave the edit as it is. subtitles "srt" | "vtt" also writes the transcript beside it in the movie\'s time (default: the edit\'s export.subtitles). An MP4 gets the recording\'s markers as chapters (chapters: the count) unless exportSettings { chapters: false }. warnings also carries what check() says must be fixed (an item whose time is cut, missing music). Without overwrite it throws when the file exists; overwrite: true replaces out (or, without out, the usual "<title>.mp4" beside the movie) in one step, after the new movie is complete (replaced: true says it did). size { width } or { height } (or both, in the canvas\'s shape) sets the picture\'s exact pixels, e.g. { height: 1080 }; absent follows exportSettings({ maxHeight }) and keeps the frame rate H.264 can hold (a 2698×1516 export came from that budget). onProgress(fraction) is called about once a percent; the run also logs "export 30%" lines every 10 %. Example: await movie.export({ out: "/tmp/demo.mp4", overwrite: true, size: { height: 1080 } }).',
+        resultName:
+            "{ path, bytes, outputSeconds, exportSeconds, width, height, renderSeconds, replaced?, subtitles? }",
+        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; from/to (OUTPUT seconds, what plays) export only that part and leave the edit as it is. outputSeconds is the movie as info() names it (without its intro and end cards; the length of the part for a part), exportSeconds the length of the file with its cards. subtitles "srt" | "vtt" also writes the transcript beside it in the movie\'s time (default: the edit\'s export.subtitles). An MP4 gets the recording\'s markers as chapters (chapters: the count) unless exportSettings { chapters: false }. warnings also carries what check() says must be fixed (an item whose time is cut, missing music). Without overwrite it throws when the file exists; overwrite: true replaces out (or, without out, the usual "<title>.mp4" beside the movie) in one step, after the new movie is complete (replaced: true says it did). size { width } or { height } (or both, in the canvas\'s shape) sets the picture\'s exact pixels, e.g. { height: 1080 }; absent follows exportSettings({ maxHeight }) and keeps the frame rate H.264 can hold (a 2698×1516 export came from that budget). onProgress(fraction) is called about once a percent; the run also logs "export 30%" lines every 10 %. Example: await movie.export({ out: "/tmp/demo.mp4", overwrite: true, size: { height: 1080 } }).',
         effect: "reversible",
     }),
     defineMethod({
@@ -2522,6 +2523,10 @@ export class Movie {
         }
 
         const info = await probeVideo({ input: answer.path });
+        // outputSeconds is the movie as info() names it (without its cards, or the part asked); exportSeconds is the
+        // file's own length, intro and end cards included (a part has none).
+        const movieUs = outputDurationUs(opened.project);
+        const playsUs = part ? Math.max(0, Math.min(part.toUs, movieUs) - Math.max(0, part.fromUs)) : movieUs;
         // What check() would say must be fixed rides along, so an export never hides it.
         const { issues } = await this.check();
         const warnings = [
@@ -2533,7 +2538,8 @@ export class Movie {
         return {
             path: answer.path,
             bytes: answer.bytes,
-            outputSeconds: Math.round(info.durationUs / 1000) / 1000,
+            outputSeconds: Math.round(playsUs / 1000) / 1000,
+            exportSeconds: Math.round(info.durationUs / 1000) / 1000,
             width: info.width,
             height: info.height,
             renderSeconds: answer.seconds,
@@ -3401,7 +3407,7 @@ export function movieDemoDriver(options: RecordOptions, ctx?: ToolsetContext): D
         },
         async exportMovie(folder) {
             const answer = await new Movie(folder, ctx).export();
-            return { path: answer.path, outputSeconds: answer.outputSeconds };
+            return { path: answer.path, outputSeconds: answer.outputSeconds, exportSeconds: answer.exportSeconds };
         },
         sleep: (ms) => Bun.sleep(ms),
         now: () => Date.now(),

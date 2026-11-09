@@ -202,7 +202,7 @@ export interface DemoDriver {
     /** Its still and silent stretches of at least `minMs`, in ms (idle.ts `findIdle`). */
     idleMs(folder: string, minMs: number): Promise<Array<[number, number]>>;
     edit(folder: string, ops: EditOp[]): Promise<void>;
-    exportMovie?(folder: string): Promise<{ path: string; outputSeconds?: number }>;
+    exportMovie?(folder: string): Promise<{ path: string; outputSeconds?: number; exportSeconds?: number }>;
     sleep(ms: number): Promise<void>;
     now(): number;
 }
@@ -214,7 +214,8 @@ export interface DemoResult {
     failed: Array<{ caption: string; error: string }>;
     ops: number;
     sourceSeconds: number;
-    exported?: { path: string; outputSeconds?: number };
+    /** outputSeconds: the movie without its cards; exportSeconds: the file with them. */
+    exported?: { path: string; outputSeconds?: number; exportSeconds?: number };
 }
 
 /**
