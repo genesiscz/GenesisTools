@@ -26,6 +26,11 @@ export const voiceoverSchema = z.object({
     card: z.enum(VOICEOVER_CARDS).optional(),
     file: z.string().min(1),
     durationUs: z.number().int().positive(),
+    /**
+     * How far into the file it starts playing, absent from its beginning; `durationUs` is what plays from there. A part
+     * export (partOf) sets it for a line that started before the part, so the part plays the rest of it.
+     */
+    skipUs: z.number().int().nonnegative().optional(),
     /** 0 to 2 (200 %). */
     volume: z.number().min(0).max(2).default(1),
     /** What it says ("Intro"), for the lists. */

@@ -691,6 +691,12 @@ export const musicSchema = z.object({
     startMs: z.number().int().min(0).optional(),
     /** false plays the file once (from startMs) and then stops; absent loops it to the movie's length. */
     loop: z.boolean().optional(),
+    /**
+     * Set by a part export (partOf): where the part's first frame plays in the whole export (microseconds, after its
+     * intro card) and how long the whole export is. The music goes on from that place in its file and fades only at
+     * the whole's ends, so the part sounds like the same stretch of the whole.
+     */
+    inWhole: z.object({ atUs: z.number().int().nonnegative(), lengthUs: z.number().int().positive() }).optional(),
 });
 
 /** The look of the zoom's moves: `blur` 0 (sharp) to 1 smears the picture along a pan or a zoom, 0.5 by default. */
@@ -1585,9 +1591,16 @@ export function sourceTimeOf(project: EditProject, outUs: number): number {
 /**
  * The edit cut down to what plays from `fromOutUs` to `toOutUs` (OUTPUT microseconds), for exporting a part: each
  * clip's own overlap with that output range, at its speed, with its id kept. Cuts and speeds inside the part stay; the
- * edit on disk is not changed. The Swift preview cuts a part the same way (TimelineMap.part).
+ * edit on disk is not changed. Its audio sounds like that stretch of the whole export (partAudioOf). The Swift preview
+ * cuts a part the same way (TimelineMap.part).
  */
 export function partOf(project: EditProject, fromOutUs: number, toOutUs: number): EditProject {
+    const kept = keptRangeOf(project, fromOutUs, toOutUs);
+    return { ...kept, audio: partAudioOf(project, kept.clips[0].fromUs, fromOutUs) };
+}
+
+/** The edit's clips cut down to what plays from `fromOutUs` to `toOutUs` (OUTPUT); the rest of the edit as it is. */
+function keptRangeOf(project: EditProject, fromOutUs: number, toOutUs: number): EditProject {
     const length = outputDurationUs(project);
     const seconds = (us: number) => Math.round(us / 1000) / 1000;
 
@@ -1621,6 +1634,50 @@ export function partOf(project: EditProject, fromOutUs: number, toOutUs: number)
     }
 
     return { ...project, clips };
+}
+
+/**
+ * The audio of a part that starts at `fromOutUs` (OUTPUT) and whose first frame is `firstSourceUs`: a movie voiceover
+ * that starts before the part and plays into it starts at the first frame with the cut-off length skipped, one that
+ * ends before the part is left out, and the music learns where the part plays in the whole export
+ * (voiceoverExportSpans and the Swift MusicMix read them). TimelineMap.part does the same in Swift.
+ */
+function partAudioOf(project: EditProject, firstSourceUs: number, fromOutUs: number): EditProject["audio"] {
+    const music = project.audio.music;
+    const voiceovers = project.audio.voiceovers?.flatMap((clip) => {
+        const startUs = clip.card === undefined ? outputTimeOf(project, clip.atUs) : undefined;
+
+        if (startUs === undefined || startUs >= fromOutUs) {
+            return [clip];
+        }
+
+        const cutUs = fromOutUs - startUs;
+
+        if (clip.durationUs <= cutUs) {
+            return [];
+        }
+
+        return [
+            { ...clip, atUs: firstSourceUs, skipUs: (clip.skipUs ?? 0) + cutUs, durationUs: clip.durationUs - cutUs },
+        ];
+    });
+    const leadUs = cardsLeadUs(project);
+    const wholeUs = leadUs + outputDurationUs(project) + Math.round((project.cards?.end?.seconds ?? 0) * 1_000_000);
+    return {
+        ...project.audio,
+        ...(voiceovers ? { voiceovers } : {}),
+        ...(music
+            ? {
+                  music: {
+                      ...music,
+                      inWhole: {
+                          atUs: (music.inWhole?.atUs ?? 0) + leadUs + fromOutUs,
+                          lengthUs: music.inWhole?.lengthUs ?? wholeUs,
+                      },
+                  },
+              }
+            : {}),
+    };
 }
 
 /** Plays a source range at `speed` (0.25 to 16); the clips are split at its edges. */
@@ -4485,7 +4542,7 @@ function applyRange(project: EditProject, op: Extract<EditOp, { op: "range" }>):
         case "cut":
             return cutRange(project, fromUs, toUs);
         case "keep":
-            return partOf(project, fromOut, toOut);
+            return keptRangeOf(project, fromOut, toOut);
         case "speed":
             return speedRange(project, fromUs, toUs, op.factor ?? 2);
         case "zoom":

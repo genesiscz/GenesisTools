@@ -110,7 +110,10 @@ enum TimelineMap {
     }
 
     /// The edit cut down to what plays from `fromOut` to `toOut` (output microseconds): each clip's overlap with the
-    /// range, at its speed. For exporting a part; nil when nothing plays there.
+    /// range, at its speed. For exporting a part; nil when nothing plays there. Its audio sounds like that stretch of
+    /// the whole export: a movie voiceover that starts before the part and plays into it starts at the part's first
+    /// frame with the cut-off length skipped, one that ends before it is left out, and the music learns where the part
+    /// plays in the whole. partOf in project.ts does the same (__fixtures__/part-audio.json).
     static func part(_ project: EditProject, fromOut: Int64, toOut: Int64) -> EditProject? {
         var clips: [EditProject.Clip] = []
         for placed in placed(project) {
@@ -121,9 +124,25 @@ enum TimelineMap {
             clip.toUs = min(placed.clip.toUs, placed.clip.fromUs + Int64((Double(end - placed.outStartUs) * placed.clip.speed).rounded()))
             clips.append(clip)
         }
-        guard !clips.isEmpty else { return nil }
+        guard let first = clips.first else { return nil }
         var next = project
         next.clips = clips
+        next.audio.voiceovers = project.audio.voiceovers?.compactMap { clip in
+            guard clip.card == nil, let startUs = outputTime(ofSource: clip.atUs, in: project), startUs < fromOut else { return clip }
+            let cutUs = fromOut - startUs
+            guard clip.durationUs > cutUs else { return nil }
+            var kept = clip
+            kept.atUs = first.fromUs
+            kept.skipUs = (clip.skipUs ?? 0) + cutUs
+            kept.durationUs = clip.durationUs - cutUs
+            return kept
+        }
+        if var music = project.audio.music {
+            let cards = CardSpans(project: project, enabled: true)
+            music.inWhole = .init(atUs: (music.inWhole?.atUs ?? 0) + cards.leadUs + fromOut,
+                                  lengthUs: music.inWhole?.lengthUs ?? cards.leadUs + project.outputDurationUs + cards.tailUs)
+            next.audio.music = music
+        }
         return next
     }
 

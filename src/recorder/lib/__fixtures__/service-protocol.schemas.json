@@ -4439,6 +4439,26 @@
                   },
                   "loop": {
                     "type": "boolean"
+                  },
+                  "inWhole": {
+                    "type": "object",
+                    "properties": {
+                      "atUs": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "lengthUs": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "atUs",
+                      "lengthUs"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -4519,6 +4539,11 @@
                     "durationUs": {
                       "type": "integer",
                       "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "skipUs": {
+                      "type": "integer",
+                      "minimum": 0,
                       "maximum": 9007199254740991
                     },
                     "volume": {

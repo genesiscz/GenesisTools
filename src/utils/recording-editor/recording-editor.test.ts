@@ -85,6 +85,7 @@ import cardVoiceovers from "./__fixtures__/card-voiceovers.json";
 import editMarkers from "./__fixtures__/edit-markers.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import logoPictureTypes from "./__fixtures__/logo-picture-types.json";
+import partAudio from "./__fixtures__/part-audio.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema, syncDenoisedTranscript } from "./denoise";
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
@@ -97,6 +98,7 @@ import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
 import textCases from "./text-metrics.cases.json";
 import { cutRanges, fillerCuts, fillerList, transcriptSegmentSchema, wordCuts, wordSpans } from "./transcript-cuts";
+import { voiceoverSchema } from "./voiceovers";
 import { pointerBusyRanges } from "./waits";
 
 function workspace(): string {
@@ -650,6 +652,33 @@ describe.skipIf(skip.integration)("the editor on a video, and the frame review o
             }).done
         ).rejects.toThrow(OverwriteInputError);
     }, 60_000);
+});
+
+describe("a part export's audio", () => {
+    // A part sounds like the same stretch of the whole export. The case is shared with the Swift TimelineMap.part
+    // (Tests/RecorderHuntR2PartExportAudioTests.swift), so the two part makers fail together.
+    test("keeps a voiceover that plays across the part's start and the music's place in the whole (part-audio.json)", () => {
+        const whole = editProjectSchema.parse(partAudio.edit);
+        const part = partOf(whole, partAudio.part.fromUs, partAudio.part.toUs);
+        expect(part.audio.voiceovers).toEqual(partAudio.voiceovers.map((clip) => voiceoverSchema.parse(clip)));
+        expect(part.audio.music?.inWhole).toEqual(partAudio.inWhole);
+        const { cards: _cards, ...exported } = part;
+        expect(voiceoverExportSpans(exported)).toEqual(partAudio.spans);
+        // A part of a part counts from the same whole.
+        const inner = partOf(exported, 1_000_000, 3_000_000);
+        expect(inner.audio.music?.inWhole).toEqual({ atUs: partAudio.inWhole.atUs + 1_000_000, lengthUs: 23_000_000 });
+        expect(inner.audio.voiceovers?.find((clip) => clip.id === "v1")).toMatchObject({
+            skipUs: 3_000_000,
+            durationUs: 3_000_000,
+        });
+    });
+
+    test("the keep op still makes the kept range the new whole: no music place, voiceovers as they were", () => {
+        const whole = editProjectSchema.parse(partAudio.edit);
+        const kept = applyOp(whole, editOpSchema.parse({ op: "range", action: "keep", from: 6, to: 12 }));
+        expect(kept.audio.music?.inWhole).toBeUndefined();
+        expect(kept.audio.voiceovers).toEqual(whole.audio.voiceovers);
+    });
 });
 
 describe("edit project (edit.json)", () => {

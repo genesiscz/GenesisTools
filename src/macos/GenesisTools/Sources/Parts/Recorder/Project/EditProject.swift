@@ -239,6 +239,9 @@ struct EditProject: Codable, Equatable {
         var card: Card?
         var file: String
         var durationUs: Int64
+        /// How far into the file it starts playing; nil is its beginning, and `durationUs` plays from there. A part
+        /// export (TimelineMap.part) sets it for a line that started before the part.
+        var skipUs: Int64?
         /// 0 to 2.
         var volume = 1.0
         var label: String?
@@ -279,6 +282,15 @@ struct EditProject: Codable, Equatable {
         var startMs: Int?
         /// false plays the file once; nil loops it to the movie's length.
         var loop: Bool?
+        /// Set by a part export (TimelineMap.part): where the part's first frame plays in the whole export, after its
+        /// intro card, and how long the whole export is. The music goes on from that place in its file and fades only
+        /// at the whole's ends (MusicMix), so the part sounds like the same stretch of the whole.
+        var inWhole: InWhole?
+
+        struct InWhole: Codable, Equatable {
+            var atUs: Int64
+            var lengthUs: Int64
+        }
     }
 
     struct Clicks: Codable, Equatable {

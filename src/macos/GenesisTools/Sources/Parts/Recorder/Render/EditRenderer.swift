@@ -537,12 +537,15 @@ enum MusicMix {
     }
 
     /// The music's volume at `us`: its level, times the fades at both ends, times the duck under a spoken part.
-    /// `duck` nil is the music's own share over `rampUs`.
+    /// `duck` nil is the music's own share over `rampUs`. `lengthUs` is where the music ends; for a part
+    /// (`music.inWhole`) both the fades and that end are on the whole export's clock, so the part fades only where the
+    /// whole does.
     static func gain(atUs us: Int64, music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64,
                      duck: Duck? = nil) -> Double {
         let duck = duck ?? Duck(drop: music.duck, rampUs: rampUs)
         let fadeUs = Double(max(1, Int64(music.fadeMs) * 1000))
-        let fade = music.fadeMs == 0 ? 1 : max(0, min(1, Double(us) / fadeUs, Double(lengthUs - us) / fadeUs))
+        let wholeUs = Double(us + (music.inWhole?.atUs ?? 0))
+        let fade = music.fadeMs == 0 ? 1 : max(0, min(1, wholeUs / fadeUs, (Double(lengthUs) - wholeUs) / fadeUs))
         var level = 1.0
         for span in speech {
             let into: Double
@@ -560,17 +563,21 @@ enum MusicMix {
         return music.volume * fade * level
     }
 
-    /// The times where the volume changes its slope, with the volume there; a ramp runs between each pair.
+    /// The times where the volume changes its slope, with the volume there; a ramp runs between each pair, over
+    /// 0 to `lengthUs`. `fadeEndUs` is where the music's fade-out ends, on the whole export's clock for a part
+    /// (`music.inWhole`); nil is the whole's length for a part, else `lengthUs`.
     static func keyframes(music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64,
-                          duck: Duck? = nil) -> [(us: Int64, volume: Double)] {
+                          duck: Duck? = nil, fadeEndUs: Int64? = nil) -> [(us: Int64, volume: Double)] {
         let rampUs = duck?.rampUs ?? rampUs
         let fadeUs = Int64(music.fadeMs) * 1000
-        var times: Set<Int64> = [0, lengthUs, min(lengthUs, fadeUs), max(0, lengthUs - fadeUs)]
+        let shiftUs = music.inWhole?.atUs ?? 0
+        let endUs = fadeEndUs ?? music.inWhole?.lengthUs ?? lengthUs
+        var times: Set<Int64> = [0, lengthUs, fadeUs - shiftUs, endUs - fadeUs - shiftUs, endUs - shiftUs]
         for span in speech {
             times.formUnion([span.fromUs - rampUs, span.fromUs, span.toUs, span.toUs + rampUs])
         }
         return times.filter { $0 >= 0 && $0 <= lengthUs }.sorted()
-            .map { ($0, gain(atUs: $0, music: music, speech: speech, lengthUs: lengthUs, duck: duck)) }
+            .map { ($0, gain(atUs: $0, music: music, speech: speech, lengthUs: endUs, duck: duck)) }
     }
 
     /// Lays the music under the movie and returns its mix parameters; nil (logged) when the file has no sound.
@@ -593,16 +600,26 @@ enum MusicMix {
         let skip = CMTimeMinimum(EditRenderer.us(Int64(music.startMs ?? 0) * 1000),
                                  CMTimeMaximum(.zero, available.duration - CMTime(value: 1, timescale: 2)))
         var range = CMTimeRange(start: available.start + skip, duration: available.duration - skip)
-        var at = CMTime.zero
+        // A part (inWhole) lays the whole export's music timeline from where the part starts in it: `at` is on the
+        // part's clock, so the passes before the part start below zero and only their rest is laid.
+        let shiftUs = music.inWhole?.atUs ?? 0
+        var at = CMTime.zero - EditRenderer.us(shiftUs)
         while at < length {
-            let piece = CMTimeMinimum(range.duration, length - at)
-            try out.insertTimeRange(CMTimeRange(start: range.start, duration: piece), of: source, at: at)
-            at = at + piece
+            let end = at + range.duration
+            if end > .zero {
+                let into = CMTimeMaximum(.zero, CMTime.zero - at)
+                let place = CMTimeMaximum(at, .zero)
+                let piece = CMTimeMinimum(range.duration - into, length - place)
+                try out.insertTimeRange(CMTimeRange(start: range.start + into, duration: piece), of: source, at: place)
+            }
+            at = end
             if music.loop == false { break }
             range = available
         }
-        // Played once, the music fades out at its own end.
+        // Played once, the music fades out at its own end (on the whole's clock for a part).
         let playedUs = min(lengthUs, Int64((at.seconds * 1_000_000).rounded()))
+        guard playedUs > 0 else { return nil }
+        let fadeEndUs = min(music.inWhole?.lengthUs ?? lengthUs, playedUs + shiftUs)
         var speech = speech(lines: lines, project: project)
             .map { (fromUs: $0.fromUs + offsetUs, toUs: $0.toUs + offsetUs) }
         // Round 3 (2026-11-08): a card's voiceover ducks the music over its card too (in the file's time already).
@@ -613,7 +630,7 @@ enum MusicMix {
                                      rampUs: Duck.of(project).rampUs)
             }
         }
-        let frames = keyframes(music: music, speech: speech, lengthUs: playedUs, duck: Duck.of(project))
+        let frames = keyframes(music: music, speech: speech, lengthUs: playedUs, duck: Duck.of(project), fadeEndUs: fadeEndUs)
         let parameters = AVMutableAudioMixInputParameters(track: out)
         for (start, end) in zip(frames, frames.dropFirst()) where end.us > start.us {
             parameters.setVolumeRamp(fromStartVolume: Float(start.volume), toEndVolume: Float(end.volume),
