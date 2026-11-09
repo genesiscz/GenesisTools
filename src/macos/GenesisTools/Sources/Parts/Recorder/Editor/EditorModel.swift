@@ -733,17 +733,27 @@ final class EditorModel {
     }
 
     /// A text at the top middle for 3 s from the playhead; the Text tab then writes and places it.
-    func addText(_ text: String = "Title", atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
-        // A text fades in from its start (`ZoomState.texts`, in the movie as it plays): it starts that much earlier in
-        // what plays, so the paused frame at the playhead shows it whole in a sped-up part too.
-        let fadeUs = ZoomState.textFadeUs(lengthUs: durationUs)
-        let start = TimelineMap.sourceTime(atOutput: max(0, (outUs ?? clock.outUs) - fadeUs), in: project)
+    func addText(_ text: String = "Title", atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil,
+                 lead: Bool = true) {
+        let start = Self.textStart(project: project, atOutput: outUs ?? clock.outUs, lengthUs: durationUs, lead: lead)
         let op = EditOp.Text(from: EditOpDiff.seconds(start), to: EditOpDiff.seconds(start + durationUs), text: text, lane: lane)
         edit([.text(op)]) { [weak self] before, after in
             guard let self, let id = Self.addedID(before, after, { ($0.texts ?? []).map(\.id) }) else { return }
             self.selectedText = id
             self.tab = .text
         }
+    }
+
+    /// Where a text added at output time `outUs` starts in source time. At the playhead (`lead`) it fades in from its
+    /// start (`ZoomState.texts`, in the movie as it plays), so it starts that much earlier in what plays and the paused
+    /// frame shows it whole in a sped-up part too; never before the clip that plays at the playhead, because the time
+    /// before it is cut. From a dragged range it starts where the range does, as every other kind the popover adds.
+    nonisolated static func textStart(project: EditProject, atOutput outUs: Int64, lengthUs: Int64, lead: Bool) -> Int64 {
+        let at = TimelineMap.sourceTime(atOutput: outUs, in: project)
+        guard lead else { return at }
+        let early = TimelineMap.sourceTime(atOutput: max(0, outUs - ZoomState.textFadeUs(lengthUs: lengthUs)), in: project)
+        guard let clip = TimelineMap.clip(atOutput: outUs, in: project)?.clip else { return early }
+        return min(at, max(clip.fromUs, early))
     }
 
     /// Each recording marker in the kept movie as a 2.5 s step title, "1. Open the settings", in one undo step: the

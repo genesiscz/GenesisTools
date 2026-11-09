@@ -82,7 +82,7 @@ extension EditorModel {
         case .zoom: addZoom(atOutput: fromOut, durationUs: max(500_000, length ?? 2_000_000), lane: lane)
         case .hide: addRedaction(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
         case .spotlight: addSpotlight(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
-        case .text: addText(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
+        case .text: addText(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane, lead: toOut == nil)
         case .shape: addShape(.box, atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
         case .speed: speedRange(fromOut: fromOut, toOut: toOut ?? fromOut + 2_000_000, speed: 2)
         case .cameraHide: addCameraHidden(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
