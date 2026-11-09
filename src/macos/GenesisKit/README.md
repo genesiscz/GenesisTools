@@ -52,7 +52,7 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | Folder | What |
 |---|---|
 | `Style/` | hover styles (`.genHover*`, `.genHoverEffect`), `.instantTooltip` + `TooltipGuard`, `.rowButton` / `RowButtonStyle`, `KitPalette` / `KitTheme`, `GenesisKitHost`, `.hoverHighlight()` / `.axMarker(_:)`, `SWR` (stale-while-revalidate: `changed`, `fade`, `rowTransition`, `animation`) + `.swrFlash` |
-| `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `NewItemsPill` ("3 new ↓" over a live list while the reader is scrolled up) and `RowArrival` (a new row fades in and rises 8 pt, fade only under Reduce Motion), `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `ForgeBadge` ("GitLab !7528" with the forge's mark, opens the PR/MR), `UserAvatar` (a person's picture on a host, one fetch per URL, initial or person-glyph fallback), `.kicker`, `RefreshingMark` (the spinner over last known data), `AgentTextField` (a one-line AppKit text field whose binding takes an accessibility write, so an agent can fill it) |
+| `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `NoticeStack` (several notices floating over a view, each with its own Undo and time, stopped under the pointer), `NewItemsPill` ("3 new ↓" over a live list while the reader is scrolled up) and `RowArrival` (a new row fades in and rises 8 pt, fade only under Reduce Motion), `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `ForgeBadge` ("GitLab !7528" with the forge's mark, opens the PR/MR), `UserAvatar` (a person's picture on a host, one fetch per URL, initial or person-glyph fallback), `.kicker`, `RefreshingMark` (the spinner over last known data), `AgentTextField` (a one-line AppKit text field whose binding takes an accessibility write, so an agent can fill it) |
 | `Keymap/` | keyboard shortcuts as data: `KeyChord` (a key by position or by character, plus modifiers; labels in the user's layout), `KeymapLibrary` (an app's commands and default keys), `KeymapConfiguration` + `KeymapStore` (the user's keys, JSON), `Keymap` (both together: keys in force, hints, conflicts, menu items), `KeymapDispatcher` + `.keymapAction` (runs a command from its key), `KeyChordRecorder`, `KeymapHelpView` / `KeymapListView` / `KeymapHelpWindow` (the list, with an editor) |
 | `Media/` | `MediaThumbnailView` (the picture of any image, video or document: off-main decode, file-identity cache, Retina pixel buckets, poster frame and length for a video, a named placeholder with Retry on failure, a click previews it) on `MediaThumbnailCache`; `.mediaPreviewHost()` + `MediaPreviewState` (an in-place Quick Look style preview over a surface, ← / → through the set) and `MediaPreviewKeyboard` (Esc / Space / arrows, for a window's key handler); `ImageViewer.present` (a window that grows from the picture's place: pinch / ⌘± / ⌘0 zoom anchored at the pointer, pan, ← / → through the source's pictures, "Compare with…" as a slider or side by side, same table row first; `ImageViewer.prefetch` on the first click; `ImageViewerSnapshot` renders any state off screen) and `MediaDataURL` (an embedded `data:image/` picture as a private temporary file) |
 | `Paths/` | `PathOpener` (folder in Finder by bundle id, file in Cursor at a line), `PathLabel`, `PathActionsMenu`, `Clipboard` + `CopyToast`, `DefaultApp` (a file's default app by name, opened at a line through `cursor://` / `vscode://`), `PathLinkHandler` + `.pathLinks` / `.pathLinkMenu` (a file link in rendered markdown opens by a setting, with a right-click menu) |
@@ -1547,7 +1547,7 @@ InfoStrip(
 
 #### `NoticePill`
 
-A status line: an icon, a message, an optional dim detail line, the ways to fix what it reports, and the full message behind "Details". A success notice without fixes calls `dismiss` six seconds after it appears (the timer restarts when `text` changes); an error, a warning, or a notice with a fix stays until the person dismisses it or it no longer applies. The text wraps rather than ending in an ellipsis, and it can be selected and copied.
+A status line: an icon, a message, an optional dim detail line, the ways to fix what it reports, and the full message behind "Details". A success notice without fixes calls `dismiss` six seconds after it appears (the timer restarts when `text` changes); an error, a warning, or a notice with a fix stays until the person dismisses it or it no longer applies. The text wraps rather than ending in an ellipsis, and it can be selected and copied. Inside a `NoticeStack` (the environment's `noticePillPlacement` is `.stacked`) the pill fills the stack's width and has no timer of its own: the stack decides how long it stays. Several notices at once, or a notice that must not push the content, belong in a `NoticeStack`.
 
 - `text: String`: the message.
 - `detail: String? = nil`: a dimmer second line.
@@ -1567,6 +1567,37 @@ if let notice {
         self.notice = nil
     }
 }
+```
+
+#### `NoticeStack`
+
+Several notices that float over a view's content (Controls/NoticeStack.swift). A new notice joins the others and never replaces the one before, so two Undo buttons stay reachable; nothing in the content moves, because the stack is an overlay. Each notice counts its own time; the pointer over the stack stops every clock, and each notice then goes on with the time it had left. An error stays until it is closed. The oldest notices sit at the edge the stack is pinned to and the newest goes to the far side, so a new notice never moves the ones already there. Taller than `maxHeight` (360 pt), the stack scrolls and keeps its newest notice in view. Each push is announced to VoiceOver.
+
+- `NoticeStackModel(clock:timing:announces:)`, `@Observable` and `@MainActor`, one per surface (a pane, a settings page).
+  - `push(_:replacing:) -> StackedNotice.ID`: adds a notice on top; with `replacing:` the notice takes that one's place and id, with a fresh clock (a result replacing its "Undoing…" notice). A `replacing:` id that is gone adds it on top.
+  - `dismiss(_:)`, `dismissAll()`, `press(_:of:)` (what a button does), `release(_:)` (a waiting notice whose action did not start gets its buttons back), `setPaused(_:)`, `remaining(_:)`, `notices` (oldest first), `waiting`.
+  - `timing` is read at each push (`NoticeStackTiming(actionSeconds:plainSeconds:)`, `.standard` is 30 s and 6 s), so a changed setting applies to the next notice.
+  - `clock`: `SystemNoticeClock.shared` by default; a test passes a `ManualNoticeClock` and moves it with `advance(by:)`.
+- `StackedNotice(id:text:detail:more:tone:actions:lasting:)`. `lasting` is `.automatic` (an error stays; a notice with a button stays `actionSeconds`; any other stays `plainSeconds`), `.seconds(x)` or `.untilDismissed`.
+- `StackedNotice.Action(_:symbol:confirm:afterPress:perform:)`; `perform` gets the notice's id. `afterPress` is `.dismiss` (Retry: the notice goes, the new attempt reports on its own), `.keep` (Show in Finder: the notice stays and counts on) or `.wait("Undoing…")` (the notice stays in its place with no buttons and a stopped clock until the result replaces it). Shortcuts: `.undo { id in … }` and `.retry { … }`.
+- `.noticeStack(_ model:, alignment: .bottom)` floats the model's notices over any view; `.top` pins the stack under the view's top edge.
+- `.noticeStackViewport(alignment:)` on the view that holds a scroll view: the stacks of the views inside float over its visible bounds instead of sitting at the end of the scrolled content. The settings window's page scroll has it, so a settings page only adds `.noticeStack`.
+- `NoticeStackView(_:maxWidth:maxHeight:pinnedTo:)` draws one model where a modifier does not fit.
+
+```swift
+@ObservationIgnored let notices = NoticeStackModel(timing: { .init(actionSeconds: 30, plainSeconds: 6) })
+
+func confirmed(_ item: Item, token: String) {
+    notices.push(StackedNotice(text: "Confirmed \(item.title)", actions: [.undo { [weak self] id in
+        self?.reopen(item, token: token) { result in
+            self?.notices.push(StackedNotice(text: result), replacing: id)
+        }
+    }]))
+}
+
+// In the view:
+List(items) { row($0) }
+    .noticeStack(model.notices)
 ```
 
 #### `NewItemsPill`
