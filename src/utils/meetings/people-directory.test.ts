@@ -280,7 +280,8 @@ describe("the people book and its merges", () => {
         expect((await directory.hide("Quinn Example")).changed).toBe(true);
         expect((await directory.known("quinn")).people).toEqual([]);
         expect((await directory.known("quinn", { includeHidden: true })).people[0]?.hidden).toBe(true);
-        expect((await directory.hide("Quinn Example", false)).changed).toBe(true);
+        const shownAgain = await directory.hide("Quinn Example", false);
+        expect([shownAgain.changed, shownAgain.person.hidden]).toEqual([true, undefined]);
         expect((await directory.known("quinn")).people).toHaveLength(1);
 
         await expect(directory.find("Nobody Example")).rejects.toMatchObject({ code: "unknown-person" });
