@@ -546,7 +546,7 @@ describe("calibrateChannels", () => {
         endSec: index * 2 + 2,
         channel: index < 30 ? "mic" : "system",
     }));
-    const energyOf = (micSide: "left" | "right" | "both") => {
+    const energyOf = (micSide: "left" | "right" | "both", bleed = 5) => {
         const left = new Float32Array(1200);
         const right = new Float32Array(1200);
 
@@ -554,8 +554,8 @@ describe("calibrateChannels", () => {
             const mic = block < 600;
             const loudLeft = micSide === "both" || (micSide === "left") === mic;
             const loudRight = micSide === "both" || (micSide === "right") === mic;
-            left[block] = loudLeft ? 500 : 5;
-            right[block] = loudRight ? 500 : 5;
+            left[block] = loudLeft ? 500 : mic ? 5 : bleed;
+            right[block] = loudRight ? 500 : mic ? 5 : bleed;
         }
 
         return { left, right };
@@ -565,6 +565,16 @@ describe("calibrateChannels", () => {
         expect(calibrateChannels(energyOf("left"), segments).layout).toBe("left-mic");
         expect(calibrateChannels(energyOf("right"), segments).layout).toBe("right-mic");
         expect(micShare(energyOf("right"), "right-mic", 0, 2)).toBeCloseTo(0.99, 2);
+    });
+
+    test("a microphone that hears the call through loudspeakers still names its side; one that hears it as loud does not", () => {
+        // The call at a third of its loudness on the microphone's side: the call segments' left share is 0.25.
+        expect(calibrateChannels(energyOf("left", 167), segments)).toMatchObject({
+            layout: "left-mic",
+            systemMedian: 0.25,
+        });
+        expect(calibrateChannels(energyOf("right", 167), segments).layout).toBe("right-mic");
+        expect(calibrateChannels(energyOf("left", 400), segments).layout).toBe("unknown");
     });
 
     test("a mono recording, or too few tagged segments, leaves the layout unknown and the share out", () => {
