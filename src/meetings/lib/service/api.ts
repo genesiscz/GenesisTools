@@ -2,6 +2,14 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
+import {
+    type KnownPeople,
+    type KnownPerson,
+    MEETING_ROLES,
+    type MergePlan,
+    PERSON_RANKS,
+    PERSON_SOURCE_KINDS,
+} from "@genesiscz/utils/meetings/people-directory";
 import { meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
 import type { SpeakerHint, SpeakerLeave } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
@@ -579,6 +587,170 @@ const commentSend = defineMethod({
     effect: "destructive",
 });
 
+/** A person of the people directory (`KnownPerson`, src/utils/meetings/people-directory.ts). */
+export const knownPersonSchema = z.object({
+    /** `email:<address>` or `name:<name tokens>`: what the other people methods take as a person. */
+    id: z.string(),
+    name: z.string(),
+    email: z.string().optional(),
+    self: z.literal(true).optional(),
+    aliases: z.array(z.string()),
+    sources: z.array(z.enum(PERSON_SOURCE_KINDS)),
+    /** Why this place in the list: present at the moment, in the meeting, in other meetings, Contacts, own. */
+    rank: z.enum(PERSON_RANKS),
+    meetings: z.number().int().nonnegative(),
+    lastSeen: z.string().optional(),
+    projects: z.array(z.string()),
+    organization: z.string().optional(),
+    note: z.string().optional(),
+    /** The merge it is made of: `people.unmerge` with this token splits it. */
+    merge: z.string().optional(),
+    hidden: z.literal(true).optional(),
+}) satisfies z.ZodType<KnownPerson>;
+
+/** A person as a people method names one: an id (`email:…`, `name:…`), an email, or a name. */
+const personRef = z.string().trim().min(1);
+
+const peopleKnown = defineMethod({
+    name: "people.known",
+    params: z
+        .object({
+            /** What was typed: case and accents do not matter. Empty lists everyone. */
+            query: z.string().default(""),
+            /** Rank for this meeting: its people first. */
+            meeting: meetingRef.optional(),
+            /** And for this moment of it: the people in the call then first of all. */
+            atSec: z.number().min(0).optional(),
+            limit: z.number().int().min(1).max(500).optional(),
+            includeHidden: z.boolean().optional(),
+        })
+        .strict(),
+    result: z.object({
+        query: z.string(),
+        people: z.array(knownPersonSchema),
+        /** How many matched before the limit. */
+        total: z.number().int().nonnegative(),
+        /** Each source's state: `refused` and `off` carry the reason a picker shows (never an empty list). */
+        sources: z.array(
+            z.object({
+                kind: z.enum(PERSON_SOURCE_KINDS),
+                state: z.enum(["ok", "off", "refused", "failed"]),
+                reason: z.string().optional(),
+            })
+        ),
+    }) satisfies z.ZodType<KnownPeople>,
+    resultName: "{ query, people: KnownPerson[], total, sources }",
+    doc: "The people the directory knows from the meetings, the projects, Contacts and the people book, matching the query with case and accents folded, ranked: present at atSec in the meeting, then that meeting's people, then other meetings by count and recency, then Contacts, then own entries. Nothing is preselected. The person picker (R23, R44) and the Contacts view (R24) ask it.",
+    effect: "read",
+});
+
+const ownEntryResultSchema = z.object({
+    name: z.string(),
+    email: z.string().optional(),
+    note: z.string().optional(),
+    addedAt: z.string(),
+});
+
+const peopleAdd = defineMethod({
+    name: "people.add",
+    params: z
+        .object({
+            name: z.string().trim().min(1),
+            email: z.string().trim().min(1).optional(),
+            note: z.string().optional(),
+        })
+        .strict(),
+    result: z.object({
+        person: knownPersonSchema,
+        entry: ownEntryResultSchema,
+        /** False when the book had them already: the email and note were added to their entry. */
+        added: z.boolean(),
+        /** True when they were hidden and adding showed them again. */
+        shown: z.boolean(),
+    }),
+    resultName: "{ person, entry, added, shown }",
+    doc: "Adds a person by hand to the people book (the picker's \"Add 'X' as new speaker\", `people add`). A person the book has gains the email and note instead.",
+    effect: "reversible",
+});
+
+const peopleHide = defineMethod({
+    name: "people.hide",
+    params: z
+        .object({
+            person: personRef,
+            /** False shows a hidden person again. */
+            hidden: z.boolean().optional(),
+        })
+        .strict(),
+    result: z.object({ person: knownPersonSchema, changed: z.boolean() }),
+    resultName: "{ person, changed }",
+    doc: "Hides a person from every list of the directory, or shows them again. Refused with `unknown-person` or `ambiguous-person`.",
+    effect: "reversible",
+});
+
+const mergeParams = z
+    .object({
+        a: personRef,
+        b: personRef,
+        /** The name the merged person shows; the first person's when absent. */
+        name: z.string().trim().min(1).optional(),
+    })
+    .strict();
+
+const mergePlanSchema = z.object({
+    people: z.tuple([knownPersonSchema, knownPersonSchema]),
+    name: z.string(),
+    /** The meetings that name either person; `people`: which of the two (0, 1) each names. */
+    meetings: z.array(
+        z.object({
+            id: z.string(),
+            title: z.string(),
+            start: z.string(),
+            people: z.array(z.union([z.literal(0), z.literal(1)])),
+            as: z.array(z.enum(MEETING_ROLES)),
+        })
+    ),
+    /** The speaker labels renamed to either person: they show as the merged person. */
+    labels: z.array(z.object({ meeting: z.string(), label: z.string(), name: z.string() })),
+}) satisfies z.ZodType<MergePlan>;
+
+const peoplePlanMerge = defineMethod({
+    name: "people.planMerge",
+    params: mergeParams,
+    result: mergePlanSchema,
+    resultName: "{ people, name, meetings, labels }",
+    doc: "What merging two people would do, without writing anything: the meetings that name either one and the speaker labels renamed to them (R24: a merge first asks, naming the meetings). No meeting record changes on a merge.",
+    effect: "read",
+});
+
+const peopleMergeSchema = z.object({
+    token: z.string(),
+    people: z.tuple([
+        z.object({ name: z.string(), email: z.string().optional() }),
+        z.object({ name: z.string(), email: z.string().optional() }),
+    ]),
+    name: z.string(),
+    at: z.string(),
+});
+
+const peopleMerge = defineMethod({
+    name: "people.merge",
+    params: mergeParams,
+    result: z.object({ merge: peopleMergeSchema, plan: mergePlanSchema }),
+    resultName: "{ merge: { token, people, name, at }, plan }",
+    doc: "Merges two people into one in the people book: an alias every reader of the directory applies, so no meeting record changes. `people.unmerge` with its token splits them again.",
+    effect: "reversible",
+});
+
+const peopleUnmerge = defineMethod({
+    name: "people.unmerge",
+    params: z.object({ token: z.string().trim().min(1) }).strict(),
+    result: z.object({ merge: peopleMergeSchema }),
+    resultName: "{ merge }",
+    doc: "Splits a merge again by its token. Refused with `unknown-merge` for a token the book does not have.",
+    effect: "reversible",
+});
+
 export const meetingsApi = defineApi({
     id: "meetings-service",
     global: "meetings",
@@ -611,6 +783,12 @@ export const meetingsApi = defineApi({
         commentList,
         commentUnstage,
         commentSend,
+        peopleKnown,
+        peopleAdd,
+        peopleHide,
+        peoplePlanMerge,
+        peopleMerge,
+        peopleUnmerge,
     ],
     notes: [
         "`subscribe { meeting?, events? }` (answered by the transport) starts the notifications; no events: all of them, no meeting: every meeting's.",
@@ -710,6 +888,12 @@ export const MEETINGS_ERROR_CODES = [
     "unknown-comment",
     /** The comment was sent: it cannot be unstaged or sent again. */
     "already-sent",
+    /** A people method's person names nobody the directory knows. */
+    "unknown-person",
+    /** A people method's person names several people: data `{ code, candidates }`, each a KnownPerson. */
+    "ambiguous-person",
+    /** `people.unmerge` named a token the people book does not have. */
+    "unknown-merge",
     /** The first call on the connection was not `hello`. */
     "no-hello",
     /** Anything else: the message says what. */

@@ -47,6 +47,12 @@
             "comment.list",
             "comment.unstage",
             "comment.send",
+            "people.known",
+            "people.add",
+            "people.hide",
+            "people.planMerge",
+            "people.merge",
+            "people.unmerge",
             "subscribe",
             "unsubscribe"
           ],
@@ -56,7 +62,7 @@
             "decision.reverted",
             "comment.sent"
           ],
-          "version": "d3d6209e4e39"
+          "version": "7ddd26c23e59"
         }
       }
     },
@@ -587,6 +593,12 @@
             "comment.list",
             "comment.unstage",
             "comment.send",
+            "people.known",
+            "people.add",
+            "people.hide",
+            "people.planMerge",
+            "people.merge",
+            "people.unmerge",
             "subscribe",
             "unsubscribe"
           ],
@@ -596,7 +608,7 @@
             "decision.reverted",
             "comment.sent"
           ],
-          "version": "d3d6209e4e39"
+          "version": "7ddd26c23e59"
         }
       }
     },
@@ -2312,6 +2324,459 @@
       }
     },
     {
+      "method": "people.known",
+      "direction": "client→service",
+      "note": "The person picker's list: ranked for the meeting and the moment, with each source's state; nothing preselected.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 40,
+        "method": "people.known",
+        "params": {
+          "query": "ex",
+          "meeting": "2026-11-03-1000-design-review",
+          "atSec": 9
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 40,
+        "result": {
+          "query": "ex",
+          "people": [
+            {
+              "id": "name:alex example",
+              "name": "Alex Example",
+              "aliases": [],
+              "sources": [
+                "meetings"
+              ],
+              "rank": "meeting",
+              "meetings": 1,
+              "lastSeen": "2026-11-03T09:00:00.000Z",
+              "projects": []
+            },
+            {
+              "id": "name:dana example",
+              "name": "Dana Example",
+              "self": true,
+              "aliases": [],
+              "sources": [
+                "meetings"
+              ],
+              "rank": "meeting",
+              "meetings": 1,
+              "lastSeen": "2026-11-03T09:00:00.000Z",
+              "projects": []
+            }
+          ],
+          "total": 2,
+          "sources": [
+            {
+              "kind": "meetings",
+              "state": "ok"
+            },
+            {
+              "kind": "projects",
+              "state": "ok"
+            },
+            {
+              "kind": "own",
+              "state": "ok"
+            },
+            {
+              "kind": "contacts",
+              "state": "ok"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "people.add",
+      "direction": "client→service",
+      "note": "The picker's Add 'Robin Example' as new speaker: a person in the people book.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 41,
+        "method": "people.add",
+        "params": {
+          "name": "Robin Example",
+          "email": "robin@example.com",
+          "note": "from the board"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 41,
+        "result": {
+          "entry": {
+            "name": "Robin Example",
+            "email": "robin@example.com",
+            "note": "from the board",
+            "addedAt": "2026-11-03T10:00:00.000Z"
+          },
+          "added": true,
+          "shown": false,
+          "person": {
+            "id": "email:robin@example.com",
+            "name": "Robin Example",
+            "email": "robin@example.com",
+            "aliases": [],
+            "sources": [
+              "own"
+            ],
+            "rank": "own",
+            "meetings": 0,
+            "projects": [],
+            "note": "from the board"
+          }
+        }
+      }
+    },
+    {
+      "method": "people.hide",
+      "direction": "client→service",
+      "note": "Left out of every list; hidden: false shows them.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 42,
+        "method": "people.hide",
+        "params": {
+          "person": "robin@example.com"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 42,
+        "result": {
+          "person": {
+            "id": "email:robin@example.com",
+            "name": "Robin Example",
+            "email": "robin@example.com",
+            "aliases": [],
+            "sources": [
+              "own"
+            ],
+            "rank": "own",
+            "meetings": 0,
+            "projects": [],
+            "note": "from the board",
+            "hidden": true
+          },
+          "changed": true
+        }
+      }
+    },
+    {
+      "method": "people.hide",
+      "direction": "client→service",
+      "note": "Nobody known by that name: unknown-person.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 43,
+        "method": "people.hide",
+        "params": {
+          "person": "Nobody Example"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 43,
+        "error": {
+          "code": 1100,
+          "message": "Nobody known is \"Nobody Example\". Search: tools meetings people <text>",
+          "data": {
+            "code": "unknown-person"
+          }
+        }
+      }
+    },
+    {
+      "method": "people.planMerge",
+      "direction": "client→service",
+      "note": "What a merge links (meetings, renamed labels); nothing is written and no meeting record changes on a merge.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 44,
+        "method": "people.planMerge",
+        "params": {
+          "a": "Alex Example",
+          "b": "robin@example.com"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 44,
+        "result": {
+          "people": [
+            {
+              "id": "name:alex example",
+              "name": "Alex Example",
+              "aliases": [],
+              "sources": [
+                "meetings"
+              ],
+              "rank": "meetings",
+              "meetings": 1,
+              "lastSeen": "2026-11-03T09:00:00.000Z",
+              "projects": []
+            },
+            {
+              "id": "email:robin@example.com",
+              "name": "Robin Example",
+              "email": "robin@example.com",
+              "aliases": [],
+              "sources": [
+                "own"
+              ],
+              "rank": "own",
+              "meetings": 0,
+              "projects": [],
+              "note": "from the board",
+              "hidden": true
+            }
+          ],
+          "name": "Alex Example",
+          "meetings": [
+            {
+              "id": "2026-11-03-1000-design-review",
+              "title": "Design review",
+              "start": "2026-11-03T09:00:00.000Z",
+              "people": [
+                0
+              ],
+              "as": [
+                "participant",
+                "speaker"
+              ]
+            }
+          ],
+          "labels": [
+            {
+              "meeting": "2026-11-03-1000-design-review",
+              "label": "Speaker 2",
+              "name": "Alex Example"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "people.merge",
+      "direction": "client→service",
+      "note": "An alias in the people book; its token splits it again.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 45,
+        "method": "people.merge",
+        "params": {
+          "a": "Alex Example",
+          "b": "robin@example.com"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 45,
+        "result": {
+          "merge": {
+            "token": "b3690d7e-c0e5-447f-886a-6c4feff408b6",
+            "people": [
+              {
+                "name": "Alex Example"
+              },
+              {
+                "name": "Robin Example",
+                "email": "robin@example.com"
+              }
+            ],
+            "name": "Alex Example",
+            "at": "2026-11-03T10:00:00.000Z"
+          },
+          "plan": {
+            "people": [
+              {
+                "id": "name:alex example",
+                "name": "Alex Example",
+                "aliases": [],
+                "sources": [
+                  "meetings"
+                ],
+                "rank": "meetings",
+                "meetings": 1,
+                "lastSeen": "2026-11-03T09:00:00.000Z",
+                "projects": []
+              },
+              {
+                "id": "email:robin@example.com",
+                "name": "Robin Example",
+                "email": "robin@example.com",
+                "aliases": [],
+                "sources": [
+                  "own"
+                ],
+                "rank": "own",
+                "meetings": 0,
+                "projects": [],
+                "note": "from the board",
+                "hidden": true
+              }
+            ],
+            "name": "Alex Example",
+            "meetings": [
+              {
+                "id": "2026-11-03-1000-design-review",
+                "title": "Design review",
+                "start": "2026-11-03T09:00:00.000Z",
+                "people": [
+                  0
+                ],
+                "as": [
+                  "participant",
+                  "speaker"
+                ]
+              }
+            ],
+            "labels": [
+              {
+                "meeting": "2026-11-03-1000-design-review",
+                "label": "Speaker 2",
+                "name": "Alex Example"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "method": "people.unmerge",
+      "direction": "client→service",
+      "note": "The merge split again.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 46,
+        "method": "people.unmerge",
+        "params": {
+          "token": "b3690d7e-c0e5-447f-886a-6c4feff408b6"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 46,
+        "result": {
+          "merge": {
+            "token": "b3690d7e-c0e5-447f-886a-6c4feff408b6",
+            "people": [
+              {
+                "name": "Alex Example"
+              },
+              {
+                "name": "Robin Example",
+                "email": "robin@example.com"
+              }
+            ],
+            "name": "Alex Example",
+            "at": "2026-11-03T10:00:00.000Z"
+          }
+        }
+      }
+    },
+    {
+      "method": "people.unmerge",
+      "direction": "client→service",
+      "note": "No merge has that token: unknown-merge.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 47,
+        "method": "people.unmerge",
+        "params": {
+          "token": "nope"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 47,
+        "error": {
+          "code": 1100,
+          "message": "No merge has the token nope. See them: tools meetings people --json",
+          "data": {
+            "code": "unknown-merge"
+          }
+        }
+      }
+    },
+    {
+      "method": "decision.plan",
+      "direction": "client→service",
+      "note": "One line given to a person: the assignment, and the stretches of the same label it may also reach.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 48,
+        "method": "decision.plan",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": {
+            "kind": "assign",
+            "person": "Dana Example",
+            "lines": [
+              {
+                "atSec": 9,
+                "line": 1
+              }
+            ]
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 48,
+        "result": {
+          "entry": {
+            "token": "ca672354-2ad9-457b-80cb-47fcf1abefb4",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "window"
+            },
+            "action": {
+              "kind": "assign",
+              "person": "Dana Example",
+              "lines": [
+                {
+                  "atSec": 9,
+                  "line": 1
+                }
+              ]
+            },
+            "decided": [],
+            "settled": [],
+            "skipped": [],
+            "changes": [],
+            "labels": [],
+            "assignments": [
+              {
+                "id": "a1",
+                "after": {
+                  "id": "a1",
+                  "label": "Speaker 2",
+                  "fromSec": 9,
+                  "toSec": 9,
+                  "person": "Dana Example",
+                  "at": "2026-11-03T10:00:00.000Z"
+                }
+              }
+            ],
+            "corrections": []
+          },
+          "skipped": [],
+          "reach": {
+            "items": [],
+            "dictionary": [],
+            "stretches": []
+          }
+        }
+      }
+    },
+    {
       "method": "decision.applied",
       "direction": "service→client",
       "notification": {
@@ -2587,6 +3052,12 @@
             "comment.list",
             "comment.unstage",
             "comment.send",
+            "people.known",
+            "people.add",
+            "people.hide",
+            "people.planMerge",
+            "people.merge",
+            "people.unmerge",
             "subscribe",
             "unsubscribe"
           ],
@@ -2596,7 +3067,7 @@
             "decision.reverted",
             "comment.sent"
           ],
-          "version": "d3d6209e4e39"
+          "version": "7ddd26c23e59"
         }
       }
     },

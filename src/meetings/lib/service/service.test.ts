@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
+import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
@@ -220,6 +221,13 @@ const fakeCut: NonNullable<MeetingsHandlerDeps["cut"]> = async (options) => {
     options.onProgress?.(0.5);
     writeFileSync(options.outPath, "RIFF");
 };
+/** The one contact of the tests' address book. */
+const SKY = {
+    given_name: "Sky",
+    family_name: "Example",
+    organization_name: "Harbor Works",
+    email_addresses: [{ value: "sky@example.com" }],
+};
 /** The pid of a `listen --subscribe-answers --with-comments` the tests say runs; every other pid is gone. */
 const LISTENER_PID = 4343;
 const quietDeps: MeetingsHandlerDeps = {
@@ -234,6 +242,13 @@ const quietDeps: MeetingsHandlerDeps = {
         mkdirSync(dirname(path), { recursive: true });
         writeFileSync(path, "RIFF");
     },
+    // An address book with one invented contact, so a people answer never reads this Mac's Contacts.
+    contacts: () =>
+        new ContactsPeopleSource({
+            authorized: async () => ({ status: "authorized", authorized: true }),
+            search: async (query) => (query.toLowerCase().startsWith("sk") ? [SKY] : []),
+            list: async () => [SKY],
+        }),
     // Ten seconds of 100 ms blocks: quiet, then the left channel loud from 4 s to 5 s.
     energy: async () => ({
         left: Float32Array.from({ length: 100 }, (_, block) => (block >= 40 && block < 50 ? 800 : 100)),
@@ -1049,6 +1064,47 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "comment.send", { meeting: REVIEW.id }, "Every staged comment; the journal keeps the entry.");
     await ask(window, "comment.unstage", { meeting: REVIEW.id, id: "c1" }, "A sent comment: already-sent.");
     await ask(window, "comment.send", { meeting: REVIEW.id, ids: ["c7"] }, "No such comment: unknown-comment.");
+    await ask(
+        window,
+        "people.known",
+        { query: "ex", meeting: REVIEW.id, atSec: 9 },
+        "The person picker's list: ranked for the meeting and the moment, with each source's state; nothing preselected."
+    );
+    await ask(
+        window,
+        "people.add",
+        { name: "Robin Example", email: "robin@example.com", note: "from the board" },
+        "The picker's Add 'Robin Example' as new speaker: a person in the people book."
+    );
+    await ask(
+        window,
+        "people.hide",
+        { person: "robin@example.com" },
+        "Left out of every list; hidden: false shows them."
+    );
+    await ask(window, "people.hide", { person: "Nobody Example" }, "Nobody known by that name: unknown-person.");
+    await ask(
+        window,
+        "people.planMerge",
+        { a: "Alex Example", b: "robin@example.com" },
+        "What a merge links (meetings, renamed labels); nothing is written and no meeting record changes on a merge."
+    );
+    const merged = await window.request("people.merge", { a: "Alex Example", b: "robin@example.com" });
+    examples.push({
+        method: "people.merge",
+        direction: "client→service",
+        note: "An alias in the people book; its token splits it again.",
+        ...merged,
+    });
+    const mergeToken = z.object({ merge: z.object({ token: z.string() }) }).parse(merged.reply.result).merge.token;
+    await ask(window, "people.unmerge", { token: mergeToken }, "The merge split again.");
+    await ask(window, "people.unmerge", { token: "nope" }, "No merge has that token: unknown-merge.");
+    await ask(
+        window,
+        "decision.plan",
+        { meeting: REVIEW.id, action: { kind: "assign", person: "Dana Example", lines: [{ atSec: 9, line: 1 }] } },
+        "One line given to a person: the assignment, and the stretches of the same label it may also reach."
+    );
     for (const method of ["decision.applied", "decision.reverted", "comment.sent"]) {
         const heard = window.lines.find((line) => line.method === method);
         examples.push({ method, direction: "service→client", ...(heard ? { notification: heard } : {}) });
@@ -1168,6 +1224,8 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 "unplayable",
                 "unknown-comment",
                 "already-sent",
+                "unknown-person",
+                "unknown-merge",
                 "code-mismatch",
                 "meeting-not-found",
                 "meeting-ref",
