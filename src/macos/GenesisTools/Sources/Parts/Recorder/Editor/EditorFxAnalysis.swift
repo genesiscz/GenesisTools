@@ -228,12 +228,12 @@ struct SmoothCursorSection: View {
                 SectionLabel(text: "Ignore moves under", value: String(format: "%.0f pt", smooth.jitterPx))
                 Slider(value: Binding(get: { smooth.jitterPx }, set: { value in
                     model.setLooks { $0.cursorSmooth?.jitterPx = value.rounded() }
-                }), in: 0...12)
+                }), in: EditLimits.smoothJitterPx)
                     .accessibilityLabel("Ignore cursor moves under, in points")
                 SectionLabel(text: "Fade when still after", value: smooth.idleFadeSeconds == 0 ? "never" : String(format: "%.1f s", smooth.idleFadeSeconds))
                 Slider(value: Binding(get: { smooth.idleFadeSeconds }, set: { value in
                     model.setLooks { $0.cursorSmooth?.idleFadeSeconds = (value * 2).rounded() / 2 }
-                }), in: 0...10)
+                }), in: EditLimits.smoothIdleFadeSeconds)
                     .accessibilityLabel("Fade the cursor when still after, in seconds")
             }
         }

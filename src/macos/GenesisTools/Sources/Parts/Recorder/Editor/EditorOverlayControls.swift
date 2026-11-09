@@ -106,7 +106,7 @@ struct ProgressBarSection: View {
                     .accessibilityIdentifier("recorder.style.progressChapterPlace")
                     SectionLabel(text: "Name shows for", value: String(format: "%.1f s", Double(bar.chapterMs) / 1000))
                     Slider(value: Binding(get: { Double(bar.chapterMs) }, set: { value in set { $0.chapterMs = Int((value / 250).rounded() * 250) } }),
-                           in: 500...6000)
+                           in: EditLimits.progressChapterMs)
                         .accessibilityLabel("How long a chapter's name shows")
                 }
                 if model.markers.isEmpty {

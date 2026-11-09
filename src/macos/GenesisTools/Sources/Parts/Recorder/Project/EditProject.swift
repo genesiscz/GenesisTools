@@ -830,4 +830,17 @@ enum EditLimits {
     static let captionFix = Words(name: "A caption line", limit: 300)
     static let cardSeconds: ClosedRange<Double> = 0.5...15
     static let textAnimateMs: ClosedRange<Double> = 100...5000
+    // The sliders' ranges: the ops' own minimum and maximum, so an agent's value sits inside the track.
+    static let duckingDb: ClosedRange<Double> = 0...40
+    static let duckingFadeMs: ClosedRange<Double> = 0...5000
+    static let clicksRadius: ClosedRange<Double> = 0.005...0.2
+    static let keysSize: ClosedRange<Double> = 0.02...0.12
+    static let captionsSize: ClosedRange<Double> = 0.02...0.1
+    /// 0 is "never hide", which the Hide when still switch says; the slider starts at its 250 ms step.
+    static let cursorHideAfterMs: ClosedRange<Double> = 0...30000
+    static let smoothJitterPx: ClosedRange<Double> = 0...20
+    static let smoothIdleFadeSeconds: ClosedRange<Double> = 0...30
+    static let framePadding: ClosedRange<Double> = 0...0.3
+    static let frameCornerRadius: ClosedRange<Double> = 0...0.1
+    static let progressChapterMs: ClosedRange<Double> = 500...10000
 }

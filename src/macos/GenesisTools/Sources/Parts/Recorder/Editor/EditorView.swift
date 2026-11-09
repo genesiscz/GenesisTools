@@ -668,12 +668,12 @@ private struct StyleInspector: View {
                 }
                 SectionLabel(text: "Padding", value: "\(Int((frame.padding * 100).rounded()))%")
                 Slider(value: Binding(get: { frame.padding }, set: { value in model.setLooks { $0.frame?.padding = (value * 200).rounded() / 200 } }),
-                       in: 0...0.2)
+                       in: EditLimits.framePadding)
                     .accessibilityLabel("Padding")
                     .accessibilityIdentifier("recorder.style.padding")
                 SectionLabel(text: "Corners", value: sizeLabel(frame.cornerRadius, model, .canvasShort))
                 Slider(value: Binding(get: { frame.cornerRadius }, set: { value in model.setLooks { $0.frame?.cornerRadius = (value * 1000).rounded() / 1000 } }),
-                       in: 0...0.05)
+                       in: EditLimits.frameCornerRadius)
                     .accessibilityLabel("Corners")
                     .accessibilityIdentifier("recorder.style.corners")
                 SwitchRow("Shadow", isOn: Binding(get: { frame.shadow }, set: { on in model.setLooks { $0.frame?.shadow = on } }))
@@ -734,7 +734,7 @@ struct CursorInspector: View {
                 }
                 SectionLabel(text: "Size", value: sizeLabel(clicks.radius, model, .pictureHeight))
                 Slider(value: Binding(get: { clicks.radius }, set: { value in model.setLooks { $0.clicks?.radius = (value * 1000).rounded() / 1000 } }),
-                       in: 0.01...0.1)
+                       in: EditLimits.clicksRadius)
                     .accessibilityLabel("Click size")
                     .accessibilityIdentifier("recorder.style.clickSize")
             }
@@ -769,7 +769,7 @@ struct CursorInspector: View {
                             SectionLabel(text: "Hide after", value: String(format: "%.1f s", Double(hide) / 1000))
                             Slider(value: Binding(get: { Double(hide) }, set: { value in
                                 model.setCursor { $0.hideAfterMs = Int((value / 250).rounded() * 250) }
-                            }), in: 500...5000)
+                            }), in: 250...EditLimits.cursorHideAfterMs.upperBound)
                                 .accessibilityLabel("Hide the cursor after")
                                 .accessibilityIdentifier("recorder.style.cursorHideAfter")
                         }
@@ -808,7 +808,7 @@ private struct CaptionsInspector: View {
                                      minSegmentWidth: 60, identifier: "recorder.style.keysPosition", fillsWidth: true)
                     SectionLabel(text: "Shortcut size", value: sizeLabel(keys.size, model, .canvasShort, atLeast: 8))
                     Slider(value: Binding(get: { keys.size }, set: { value in model.setLooks { $0.keys?.size = (value * 1000).rounded() / 1000 } }),
-                           in: 0.03...0.1)
+                           in: EditLimits.keysSize)
                         .accessibilityLabel("Shortcut size")
                         .accessibilityIdentifier("recorder.style.keysSize")
                 }
@@ -839,7 +839,7 @@ private struct CaptionsInspector: View {
                                      minSegmentWidth: 60, identifier: "recorder.style.captionsPosition", fillsWidth: true)
                     SectionLabel(text: "Text size", value: sizeLabel(captions.size, model, .canvasShort, atLeast: 8))
                     Slider(value: Binding(get: { captions.size }, set: { value in model.setLooks { $0.captions?.size = (value * 1000).rounded() / 1000 } }),
-                           in: 0.025...0.08)
+                           in: EditLimits.captionsSize)
                         .accessibilityLabel("Caption text size")
                         .accessibilityIdentifier("recorder.style.captionsSize")
                     // R4 6 karaoke captions
