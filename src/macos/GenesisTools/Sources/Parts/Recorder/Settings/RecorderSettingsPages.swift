@@ -43,6 +43,9 @@ private struct RecorderRecordingSettings: View {
         }
     }
 
+    /// While still at Same: one frame rate, so Change needed has nothing to switch.
+    private var stillRateIsSame: Bool { model.capture(\.idleFps).wrappedValue == 0 }
+
     private var recordingCard: some View {
         let countdown = model.capture(\.countdown)
         return NativeSettingsCard("Recording", subtitle: "The capture picker's options. They apply to the next recording, also one started from the menu bar or a shortcut.") {
@@ -55,6 +58,8 @@ private struct RecorderRecordingSettings: View {
                     Text(verbatim: "\(model.capture(\.countdownSeconds).wrappedValue) s")
                         .font(.system(size: 12)).monospacedDigit()
                 }
+                // AppKit's disabled stepper reads as live over the settings backdrop; dim it with the row (C53).
+                .nativeSettingsDisabledLook()
                 .accessibilityIdentifier("recorder.settings.countdownSeconds")
             }
             .disabled(!countdown.wrappedValue)
@@ -70,11 +75,16 @@ private struct RecorderRecordingSettings: View {
                 options: CaptureOptions.idleRates.map { NativeSettingsOption($0, $0 == 0 ? "Same" : "\(Self.number($0)) fps") },
                 selection: model.capture(\.idleFps), minSegmentWidth: 52)
             Divider()
+            // With While still at Same there is no still rate to leave, so the threshold changes nothing (C53).
             NativeSettingsSegmented(
-                "Change needed", detail: "How much of the picture must change to leave the still rate.",
+                "Change needed",
+                detail: stillRateIsSame
+                    ? "While still is Same, so the rate never changes. Pick a still rate to use it."
+                    : "How much of the picture must change to leave the still rate.",
                 identifier: "recorder.settings.threshold",
                 options: CaptureOptions.thresholds.map { NativeSettingsOption($0, "\(Self.number($0)) %") },
                 selection: model.capture(\.threshold), minSegmentWidth: 52)
+                .disabled(stillRateIsSame)
             Divider()
             NativeSettingsSegmented(
                 "When another app takes the focus", detail: "What the open capture picker does when you click another app or window.",
