@@ -239,6 +239,13 @@ enum Looks {
             .cropped(to: CGRect(origin: .zero, size: size))
     }
 
+    /// Where `zoomCanvas` moves a point of the canvas, both 0...1 from the top left: the twin of `zoomCanvasRect`
+    /// (Core Image coordinates) for the preview's source-to-canvas map.
+    static func zoomCanvasMap(_ view: ZoomCurve.View) -> Homography {
+        let rect = view.rect
+        return .affine(scaleX: 1 / rect.width, offsetX: -rect.minX / rect.width, scaleY: 1 / rect.height, offsetY: -rect.minY / rect.height)
+    }
+
     // R5 5 redaction edges
     /// A pixelate block's side in source pixels: the part's `cell` (2 to 256), else 1.8 % of the picture's height and at
     /// least 8 (about 19 px on a 1080 p movie, 39 px on a 2160 p one).
@@ -304,45 +311,139 @@ enum Looks {
     }
 
     /// Where a point of the source picture (0...1 from the top left) lands on the canvas (0...1 from the top left) in
-    /// one frame: through the zoom's view, then the frame's placement. Per axis it is a scale and an offset, so the
-    /// preview can draw a source rectangle where it shows and turn a drag on the canvas back into source fractions.
+    /// one frame, in the renderer's order: the picture zoom's view, the frame's placement, the tilt, then the canvas
+    /// zoom (EditRenderer's composition). Without a tilt it is a scale and an offset per axis; a tilt adds one
+    /// projective map of the canvas after them. The preview draws a source rectangle where it shows with it, and turns
+    /// a drag on the canvas back into source fractions.
     struct SourceToCanvas: Equatable {
+        /// The picture zoom and the frame, and the canvas zoom too when no tilt comes between them.
         var scaleX = 1.0, offsetX = 0.0, scaleY = 1.0, offsetY = 0.0
-        /// The part of the canvas the picture shows in (0...1): a hidden part is drawn only inside it.
+        /// The part of the canvas the picture shows in (0...1): a hidden part is drawn only inside it. Under a tilt it
+        /// is the box around the turned picture; null when the turn cannot be undone, so no outline is drawn.
         var shown = CGRect(x: 0, y: 0, width: 1, height: 1)
+        /// The tilt and the canvas zoom after it, as one map of the canvas (0...1 from the top left); nil without a tilt.
+        var perspective: Perspective?
 
-        func point(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * scaleX + offsetX, y: p.y * scaleY + offsetY) }
-        func rect(_ r: CGRect) -> CGRect {
-            CGRect(x: r.minX * scaleX + offsetX, y: r.minY * scaleY + offsetY, width: r.width * scaleX, height: r.height * scaleY)
+        /// A projective map of the canvas and its inverse.
+        struct Perspective: Equatable {
+            let forward: Homography
+            let backward: Homography
+
+            /// Nil when the map folds the canvas onto a line, so no point could be turned back.
+            init?(_ forward: Homography) {
+                guard let backward = forward.inverted() else { return nil }
+                self.forward = forward
+                self.backward = backward
+            }
         }
-        func sourcePoint(ofCanvas p: CGPoint) -> CGPoint {
+
+        private func placed(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * scaleX + offsetX, y: p.y * scaleY + offsetY) }
+
+        private func unplaced(_ p: CGPoint) -> CGPoint {
             CGPoint(x: (p.x - offsetX) / max(1e-9, scaleX), y: (p.y - offsetY) / max(1e-9, scaleY))
         }
+
+        func point(_ p: CGPoint) -> CGPoint {
+            let at = placed(p)
+            return perspective?.forward.apply(at) ?? at
+        }
+
+        func sourcePoint(ofCanvas p: CGPoint) -> CGPoint { unplaced(perspective?.backward.apply(p) ?? p) }
+
+        /// A source rectangle on the canvas. A tilt lands it slightly slanted: the rectangle is centred where its centre
+        /// lands and stretched as the tilt stretches the canvas there, so `sourceRect(ofCanvas:)` gives the same part
+        /// back, and a click on a hidden part, or a drag there and back, never resizes it (HiddenPartDrag).
+        func rect(_ r: CGRect) -> CGRect {
+            guard let perspective else {
+                return CGRect(x: r.minX * scaleX + offsetX, y: r.minY * scaleY + offsetY, width: r.width * scaleX, height: r.height * scaleY)
+            }
+            let middle = placed(CGPoint(x: r.midX, y: r.midY))
+            let centre = perspective.forward.apply(middle), stretch = perspective.forward.stretch(at: middle)
+            let width = r.width * scaleX * stretch.x, height = r.height * scaleY * stretch.y
+            return CGRect(x: centre.x - width / 2, y: centre.y - height / 2, width: width, height: height)
+        }
+
         func sourceRect(ofCanvas r: CGRect) -> CGRect {
-            let origin = sourcePoint(ofCanvas: r.origin)
-            return CGRect(x: origin.x, y: origin.y, width: r.width / max(1e-9, scaleX), height: r.height / max(1e-9, scaleY))
+            guard let perspective else {
+                let origin = sourcePoint(ofCanvas: r.origin)
+                return CGRect(x: origin.x, y: origin.y, width: r.width / max(1e-9, scaleX), height: r.height / max(1e-9, scaleY))
+            }
+            let middle = perspective.backward.apply(CGPoint(x: r.midX, y: r.midY))
+            let centre = unplaced(middle), stretch = perspective.forward.stretch(at: middle)
+            let width = r.width / max(1e-9, scaleX * stretch.x), height = r.height / max(1e-9, scaleY * stretch.y)
+            return CGRect(x: centre.x - width / 2, y: centre.y - height / 2, width: width, height: height)
+        }
+
+        /// This map, then `turn` (a projective map of the canvas, 0...1 from the top left).
+        fileprivate func followed(by turn: Homography) -> SourceToCanvas {
+            var map = self
+            map.perspective = Perspective(perspective.map { $0.forward.then(turn) } ?? turn)
+            map.shown = map.perspective == nil ? .null : turn.bounds(of: shown).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+            return map
+        }
+
+        /// This map, then the canvas zoom `view` (Looks.zoomCanvas): folded into the scale and the offset, or after the tilt.
+        fileprivate func zoomedCanvas(_ view: ZoomCurve.View) -> SourceToCanvas {
+            let zoom = Looks.zoomCanvasMap(view)
+            guard perspective == nil else { return followed(by: zoom) }
+            var map = self
+            map.scaleX = scaleX * zoom.a
+            map.offsetX = offsetX * zoom.a + zoom.c
+            map.scaleY = scaleY * zoom.e
+            map.offsetY = offsetY * zoom.e + zoom.f
+            map.shown = zoom.bounds(of: shown).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+            return map
         }
     }
 
+    /// The map at an output moment of `project`, from the same inputs EditRenderer's look takes there (ZoomState.look):
+    /// the picture zoom's view and the cover focus, the frame, the tilt's pose and the canvas zoom's view. The editor's
+    /// preview draws and drags its hidden-part, spotlight, shape and screen-find handles through it.
+    static func sourceToCanvas(project: EditProject, cursor: CursorTrack?, atOutput outUs: Int64) -> SourceToCanvas {
+        let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
+        let view = ZoomCurve.view(atSource: sourceUs, project: project, cursor: cursor)
+        let sizes = EditRenderer.outputSizes(source: CGSize(width: project.source.width, height: project.source.height),
+                                             maxHeight: 0, aspect: project.frame?.aspect)
+        let focus = ZoomState.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view)
+        return sourceToCanvas(view: view, frame: project.frame, picture: sizes.picture, canvas: sizes.canvas, coverFocus: focus,
+                              tilt: project.tilt.flatMap { TiltLook.pose(atOutputUs: outUs, lengthUs: project.outputDurationUs, tilt: $0) },
+                              canvasView: ZoomCurve.canvasView(atSource: sourceUs, project: project))
+    }
+
     static func sourceToCanvas(view: ZoomCurve.View, frame: EditProject.Frame?, picture: CGSize, canvas: CGSize,
-                               coverFocus: CGPoint = CGPoint(x: 0.5, y: 0.5)) -> SourceToCanvas {
+                               coverFocus: CGPoint = CGPoint(x: 0.5, y: 0.5), tilt: TiltLook.Pose? = nil,
+                               canvasView: ZoomCurve.View = .whole) -> SourceToCanvas {
         let shown = view.rect
         var map = SourceToCanvas(scaleX: 1 / shown.width, offsetX: -shown.minX / shown.width,
                                  scaleY: 1 / shown.height, offsetY: -shown.minY / shown.height)
-        guard let frame else { return map }
-
-        let placement = framePlacement(frame, picture: picture, canvas: canvas, focus: coverFocus)
-        let crop = placement.crop ?? .zero
-        let s = placement.scale
-        // Core Image counts y from the bottom: the picture's top (y 0) is at height H before the crop.
-        let ax = picture.width * s / canvas.width, bx = (placement.inner.minX - crop.minX * s) / canvas.width
-        let ay = picture.height * s / canvas.height
-        let by = 1 - (picture.height * s - crop.minY * s + placement.inner.minY) / canvas.height
-        let inner = placement.inner
-        map = SourceToCanvas(scaleX: map.scaleX * ax, offsetX: map.offsetX * ax + bx,
-                             scaleY: map.scaleY * ay, offsetY: map.offsetY * ay + by,
-                             shown: CGRect(x: inner.minX / canvas.width, y: 1 - inner.maxY / canvas.height,
-                                           width: inner.width / canvas.width, height: inner.height / canvas.height))
+        if let frame {
+            let placement = framePlacement(frame, picture: picture, canvas: canvas, focus: coverFocus)
+            let crop = placement.crop ?? .zero
+            let s = placement.scale
+            // Core Image counts y from the bottom: the picture's top (y 0) is at height H before the crop.
+            let ax = picture.width * s / canvas.width, bx = (placement.inner.minX - crop.minX * s) / canvas.width
+            let ay = picture.height * s / canvas.height
+            let by = 1 - (picture.height * s - crop.minY * s + placement.inner.minY) / canvas.height
+            let inner = placement.inner
+            map = SourceToCanvas(scaleX: map.scaleX * ax, offsetX: map.offsetX * ax + bx,
+                                 scaleY: map.scaleY * ay, offsetY: map.offsetY * ay + by,
+                                 shown: CGRect(x: inner.minX / canvas.width, y: 1 - inner.maxY / canvas.height,
+                                               width: inner.width / canvas.width, height: inner.height / canvas.height))
+        }
+        if let tilt {
+            // The tilt turns Core Image pixels (y up); the map counts fractions of the canvas from the top left.
+            let toPixels = Homography.affine(scaleX: canvas.width, offsetX: 0, scaleY: -canvas.height, offsetY: canvas.height)
+            let toFractions = Homography.affine(scaleX: 1 / canvas.width, offsetX: 0, scaleY: -1 / canvas.height, offsetY: 1)
+            if let turn = TiltLook.homography(pose: tilt, canvas: canvas) {
+                map = map.followed(by: toPixels.then(turn).then(toFractions))
+            } else {
+                map.shown = .null
+            }
+        }
+        // The renderer zooms the canvas only past 1.0005, as here.
+        if canvasView.scale > 1.0005 {
+            map = map.zoomedCanvas(canvasView)
+        }
         return map
     }
 
@@ -524,5 +625,85 @@ enum Looks {
         guard digits.count == 6, let value = UInt32(digits, radix: 16) else { return .white }
         return CIColor(red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255,
                        blue: Double(value & 0xFF) / 255)
+    }
+}
+
+/// A projective map of the plane, as Core Image's perspective transform draws one: (x, y) goes to
+/// ((a x + b y + c) / w, (d x + e y + f) / w) with w = g x + h y + i. The preview's source-to-canvas map turns with the
+/// tilt through it (Looks.SourceToCanvas).
+struct Homography: Equatable {
+    var a, b, c, d, e, f, g, h, i: Double
+
+    /// A scale and an offset per axis.
+    static func affine(scaleX: Double, offsetX: Double, scaleY: Double, offsetY: Double) -> Homography {
+        Homography(a: scaleX, b: 0, c: offsetX, d: 0, e: scaleY, f: offsetY, g: 0, h: 0, i: 1)
+    }
+
+    /// The map that takes each corner of `rect` where `corner` takes it, as the perspective transform does with a layer's
+    /// corners; nil for a rectangle with no area or corners that land on one line.
+    init?(rect: CGRect, corner: (CGPoint) -> CGPoint) {
+        guard rect.width > 0, rect.height > 0 else { return nil }
+        // Heckbert's square to quadrilateral: (0, 0), (1, 0), (1, 1), (0, 1) to p0, p1, p2, p3.
+        let p0 = corner(CGPoint(x: rect.minX, y: rect.minY)), p1 = corner(CGPoint(x: rect.maxX, y: rect.minY))
+        let p2 = corner(CGPoint(x: rect.maxX, y: rect.maxY)), p3 = corner(CGPoint(x: rect.minX, y: rect.maxY))
+        let x0 = Double(p0.x), y0 = Double(p0.y), x1 = Double(p1.x), y1 = Double(p1.y)
+        let x2 = Double(p2.x), y2 = Double(p2.y), x3 = Double(p3.x), y3 = Double(p3.y)
+        let dx1 = x1 - x2, dx2 = x3 - x2, sumX = x0 - x1 + x2 - x3
+        let dy1 = y1 - y2, dy2 = y3 - y2, sumY = y0 - y1 + y2 - y3
+        let det = dx1 * dy2 - dx2 * dy1
+        guard det != 0, det.isFinite else { return nil }
+        let g = (sumX * dy2 - dx2 * sumY) / det
+        let h = (dx1 * sumY - sumX * dy1) / det
+        let square = Homography(a: x1 - x0 + g * x1, b: x3 - x0 + h * x3, c: x0, d: y1 - y0 + g * y1, e: y3 - y0 + h * y3, f: y0,
+                                g: g, h: h, i: 1)
+        let toSquare = Homography.affine(scaleX: 1 / Double(rect.width), offsetX: -Double(rect.minX / rect.width),
+                                         scaleY: 1 / Double(rect.height), offsetY: -Double(rect.minY / rect.height))
+        self = toSquare.then(square)
+    }
+
+    init(a: Double, b: Double, c: Double, d: Double, e: Double, f: Double, g: Double, h: Double, i: Double) {
+        (self.a, self.b, self.c, self.d, self.e, self.f, self.g, self.h, self.i) = (a, b, c, d, e, f, g, h, i)
+    }
+
+    func apply(_ p: CGPoint) -> CGPoint {
+        let x = Double(p.x), y = Double(p.y)
+        let w = g * x + h * y + i
+        return CGPoint(x: (a * x + b * y + c) / w, y: (d * x + e * y + f) / w)
+    }
+
+    /// This map, then `next`.
+    func then(_ next: Homography) -> Homography {
+        let n = next
+        return Homography(a: n.a * a + n.b * d + n.c * g, b: n.a * b + n.b * e + n.c * h, c: n.a * c + n.b * f + n.c * i,
+                          d: n.d * a + n.e * d + n.f * g, e: n.d * b + n.e * e + n.f * h, f: n.d * c + n.e * f + n.f * i,
+                          g: n.g * a + n.h * d + n.i * g, h: n.g * b + n.h * e + n.i * h, i: n.g * c + n.h * f + n.i * i)
+    }
+
+    /// The map back; nil when this one folds the plane onto a line (an extreme tilt), so nothing can be turned back.
+    func inverted() -> Homography? {
+        let ca = e * i - f * h, cb = f * g - d * i, cc = d * h - e * g
+        let det = a * ca + b * cb + c * cc
+        let size = [a, b, c, d, e, f, g, h, i].map(abs).max() ?? 0
+        guard det.isFinite, size > 0, abs(det) > 1e-12 * size * size * size else { return nil }
+        return Homography(a: ca / det, b: (c * h - b * i) / det, c: (b * f - c * e) / det,
+                          d: cb / det, e: (a * i - c * g) / det, f: (c * d - a * f) / det,
+                          g: cc / det, h: (b * g - a * h) / det, i: (a * e - b * d) / det)
+    }
+
+    /// How much the map stretches a short move along x, and one along y, at `p` (its derivative's diagonal there).
+    func stretch(at p: CGPoint) -> CGPoint {
+        let w = g * Double(p.x) + h * Double(p.y) + i
+        let mapped = apply(p)
+        return CGPoint(x: abs((a - g * Double(mapped.x)) / w), y: abs((e - h * Double(mapped.y)) / w))
+    }
+
+    /// The box around the four corners of `rect` where the map takes them.
+    func bounds(of rect: CGRect) -> CGRect {
+        guard !rect.isNull else { return .null }
+        let corners = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+                       CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)].map(apply)
+        let xs = corners.map(\.x), ys = corners.map(\.y)
+        let minX = xs.min() ?? 0, minY = ys.min() ?? 0
+        return CGRect(x: minX, y: minY, width: (xs.max() ?? 0) - minX, height: (ys.max() ?? 0) - minY)
     }
 }

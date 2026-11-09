@@ -836,15 +836,10 @@ final class EditorModel {
         edit([.untext(EditOp.Untext(id: id))])
     }
 
-    /// How the source picture maps onto the canvas at the playhead: the zoom there and the frame (for the preview's
-    /// hidden-part handles).
+    /// How the source picture maps onto the canvas at the playhead, as the preview draws it there (the picture zoom,
+    /// the frame, the tilt and the canvas zoom): the hidden-part, spotlight, shape and screen-find handles use it.
     func sourceToCanvas(atOutput outUs: Int64) -> Looks.SourceToCanvas {
-        let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
-        let view = ZoomCurve.view(atSource: sourceUs, project: project, cursor: cursor)
-        let sizes = EditRenderer.outputSizes(source: CGSize(width: project.source.width, height: project.source.height),
-                                             maxHeight: 0, aspect: project.frame?.aspect)
-        let focus = ZoomState.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view)
-        return Looks.sourceToCanvas(view: view, frame: project.frame, picture: sizes.picture, canvas: sizes.canvas, coverFocus: focus)
+        Looks.sourceToCanvas(project: project, cursor: cursor, atOutput: outUs)
     }
 
     /// The moments marked while it recorded (`recording.json` settings.markers), at source microseconds.

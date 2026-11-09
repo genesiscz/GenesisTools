@@ -393,11 +393,24 @@ enum TiltLook {
         return CGPoint(x: Double(pivot.x) + x1 * factor, y: Double(pivot.y) + y2 * factor)
     }
 
-    /// `layer` (whose extent must be `rect`) turned by `pose` about the canvas centre.
-    static func apply(_ layer: CIImage, rect: CGRect, pose: Pose, canvas: CGSize) -> CIImage {
+    /// The turn of a canvas point (Core Image coordinates) about the canvas centre, seen from 2.2 canvas widths away.
+    private static func turning(pose: Pose, canvas: CGSize) -> (CGPoint) -> CGPoint {
         let pivot = CGPoint(x: canvas.width / 2, y: canvas.height / 2)
         let distance = 2.2 * Double(max(canvas.width, canvas.height))
-        let corner = { (x: CGFloat, y: CGFloat) in CIVector(cgPoint: project(CGPoint(x: x, y: y), pose: pose, pivot: pivot, distance: distance)) }
+        return { project($0, pose: pose, pivot: pivot, distance: distance) }
+    }
+
+    /// The turn as one projective map of the canvas (Core Image coordinates). `project` is a plane turned and seen in
+    /// perspective, so the four corners of any layer give this same map: the editor's preview handles follow the
+    /// turned picture with it (Looks.sourceToCanvas). Nil for a turn that folds the canvas onto a line.
+    static func homography(pose: Pose, canvas: CGSize) -> Homography? {
+        Homography(rect: CGRect(origin: .zero, size: canvas), corner: turning(pose: pose, canvas: canvas))
+    }
+
+    /// `layer` (whose extent must be `rect`) turned by `pose` about the canvas centre.
+    static func apply(_ layer: CIImage, rect: CGRect, pose: Pose, canvas: CGSize) -> CIImage {
+        let turn = turning(pose: pose, canvas: canvas)
+        let corner = { (x: CGFloat, y: CGFloat) in CIVector(cgPoint: turn(CGPoint(x: x, y: y))) }
         return layer.applyingFilter("CIPerspectiveTransform", parameters: [
             "inputTopLeft": corner(rect.minX, rect.maxY),
             "inputTopRight": corner(rect.maxX, rect.maxY),
