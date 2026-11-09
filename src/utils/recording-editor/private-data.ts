@@ -175,7 +175,10 @@ export function maskPrivate(value: string): string {
     return `${compact.slice(0, 2)}${"•".repeat(Math.min(8, compact.length - 4))}${compact.slice(-2)}`;
 }
 
-/** A rectangle as fractions of the movie's picture, from its top left. */
+/**
+ * A rectangle as fractions of the movie's picture, from its top left: x and width are shares of the picture's width,
+ * y and height shares of its height, so the same pixels are the same share each way only on a square picture.
+ */
 export interface FractionBox {
     x: number;
     y: number;
@@ -198,12 +201,39 @@ export interface ScreenTextFrame {
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 
 /**
- * Where a match sits in its OCR line: the line's box narrowed by the share of characters before and after it (a
- * proportional font makes this approximate), padded so the hidden part covers the whole value.
+ * The picture shape (width over height in pixels) the pads around a hit were tuned on: 16:9 recordings, and the
+ * generated moving-text movie that checks every frame with Vision OCR. There a pad's x share is the share of the height
+ * it is written as; on any other shape the x share changes so the pad keeps the same pixels.
  */
-export function matchBox(line: ScreenLine, match: { start: number; end: number }): FractionBox {
+const PAD_TUNED_ASPECT = 16 / 9;
+
+/** A pad's share of the width on a picture of `aspect`: the pixels that `share` of the width is on a 16:9 picture. */
+const widthShare = (share: number, aspect: number): number => (share * PAD_TUNED_ASPECT) / aspect;
+
+/**
+ * A margin of `lines` line heights around a box `height` high: that share of the height for y, and for x the pixels
+ * the same share of the width is on a 16:9 picture (widthShare). Neither is under `floor`.
+ */
+function linePad(options: { height: number; lines: number; aspect: number; floor?: number }): { x: number; y: number } {
+    const pad = options.height * options.lines;
+    const floor = options.floor ?? 0;
+    return { x: Math.max(floor, widthShare(pad, options.aspect)), y: Math.max(floor, pad) };
+}
+
+/**
+ * Where a match sits in its OCR line: the line's box narrowed by the share of characters before and after it (a
+ * proportional font makes this approximate), padded so the hidden part covers the whole value. The side pad is about
+ * one line height in pixels (0.6 of the line's height as a share of a 16:9 width), and the same pixels on a picture of
+ * any other `aspect` (its width over its height in pixels): one share on every shape gave a portrait phone a quarter.
+ */
+export function matchBox(options: {
+    line: ScreenLine;
+    match: { start: number; end: number };
+    aspect: number;
+}): FractionBox {
+    const { line, match } = options;
     const length = Math.max(1, line.text.length);
-    const padX = Math.max(line.width * 0.03, line.height * 0.6, 0.004);
+    const padX = Math.max(line.width * 0.03, widthShare(line.height * 0.6, options.aspect), 0.004);
     const padY = Math.max(line.height * 0.25, 0.003);
     const left = clamp01(line.x + (line.width * match.start) / length - padX);
     const right = clamp01(line.x + (line.width * match.end) / length + padX);
@@ -668,18 +698,19 @@ function samePlace(a: FractionBox, b: FractionBox): boolean {
 
 /**
  * R8 2: a carried place with half a line of margin on each side: the motion that carries it is measured on blocks
- * coarser than a line, and a read box (matchBox) is a line and a half high, so a third of it is half a line.
+ * coarser than a line, and a read box (matchBox) is a line and a half high, so a third of it is half a line. Its x
+ * share keeps the pixels it has on a 16:9 picture on a picture of any other `aspect` (linePad).
  */
-function withMargin<T extends FractionBox>(box: T): T {
-    const pad = box.height / 3;
-    const x = clamp01(box.x - pad);
-    const y = clamp01(box.y - pad);
+function withMargin<T extends FractionBox>(box: T, aspect: number): T {
+    const pad = linePad({ height: box.height, lines: 1 / 3, aspect });
+    const x = clamp01(box.x - pad.x);
+    const y = clamp01(box.y - pad.y);
     return {
         ...box,
         x,
         y,
-        width: Math.min(1, box.x + box.width + pad) - x,
-        height: Math.min(1, box.y + box.height + pad) - y,
+        width: Math.min(1, box.x + box.width + pad.x) - x,
+        height: Math.min(1, box.y + box.height + pad.y) - y,
     };
 }
 
@@ -816,9 +847,11 @@ export function sweptBand(options: {
     velocity: { x: number; y: number };
     travelUs: number;
     area: FractionBox | undefined;
+    /** The picture's width over its height in pixels: the pads keep the pixels they have on 16:9 (linePad). */
+    aspect: number;
 }): FractionBox {
     const { box, velocity } = options;
-    const pad = Math.max(0.005, box.height * 0.5);
+    const pad = linePad({ height: box.height, lines: 0.5, aspect: options.aspect, floor: 0.005 });
     const area = options.area ?? { x: 0, y: 0, width: 1, height: 1 };
     // The moving part, but never smaller than the text itself.
     const lo = { x: Math.min(area.x, box.x), y: Math.min(area.y, box.y) };
@@ -837,31 +870,32 @@ export function sweptBand(options: {
 
     // No measured travel: only its own place (the picture under it changed, nothing says it went anywhere).
     if (velocity.x === 0 && velocity.y === 0) {
-        return clampBox(box.x - pad, box.y - pad, box.x + box.width + pad, box.y + box.height + pad);
+        return clampBox(box.x - pad.x, box.y - pad.y, box.x + box.width + pad.x, box.y + box.height + pad.y);
     }
 
     // On along its direction to where the picture stopped changing (a follow that failed under-measured its speed), and
     // past that as far as its speed carries it: the quarter-second change steps miss a text that only crossed a cell
     // between two of them (a banner that slid in from the edge). R8 3: only along a direction it really travels (half a
-    // line or more in that time); a drift of a few pixels across a scroll swept the band over the whole picture.
-    const travels = (distance: number) => distance >= Math.max(0.005, box.height * 0.5);
+    // line or more in that time, the pad, so along x the same pixels on any shape); a drift of a few pixels across a
+    // scroll swept the band over the whole picture.
+    const travels = { x: reach.x >= pad.x, y: reach.y >= pad.y };
     // Along its main direction to the moving area's edge; across it (a slide that also drifts) only as far as it went.
     const main = Math.abs(velocity.x) >= Math.abs(velocity.y) ? "x" : "y";
-    const left = velocity.x < 0 && travels(reach.x) ? Math.min(box.x - reach.x, main === "x" ? lo.x : 1) : box.x;
+    const left = velocity.x < 0 && travels.x ? Math.min(box.x - reach.x, main === "x" ? lo.x : 1) : box.x;
     const right =
-        velocity.x > 0 && travels(reach.x)
+        velocity.x > 0 && travels.x
             ? Math.max(box.x + box.width + reach.x, main === "x" ? hi.x : 0)
             : box.x + box.width;
-    const top = velocity.y < 0 && travels(reach.y) ? Math.min(box.y - reach.y, main === "y" ? lo.y : 1) : box.y;
+    const top = velocity.y < 0 && travels.y ? Math.min(box.y - reach.y, main === "y" ? lo.y : 1) : box.y;
     const bottom =
-        velocity.y > 0 && travels(reach.y)
+        velocity.y > 0 && travels.y
             ? Math.max(box.y + box.height + reach.y, main === "y" ? hi.y : 0)
             : box.y + box.height;
-    const band = clampBox(left - pad, top - pad, right + pad, bottom + pad);
-    const x = velocity.x < 0 && travels(reach.x) ? clamp01(left - pad) : band.x;
-    const y = velocity.y < 0 && travels(reach.y) ? clamp01(top - pad) : band.y;
-    const r = velocity.x > 0 && travels(reach.x) ? clamp01(right + pad) : band.x + band.width;
-    const b = velocity.y > 0 && travels(reach.y) ? clamp01(bottom + pad) : band.y + band.height;
+    const band = clampBox(left - pad.x, top - pad.y, right + pad.x, bottom + pad.y);
+    const x = velocity.x < 0 && travels.x ? clamp01(left - pad.x) : band.x;
+    const y = velocity.y < 0 && travels.y ? clamp01(top - pad.y) : band.y;
+    const r = velocity.x > 0 && travels.x ? clamp01(right + pad.x) : band.x + band.width;
+    const b = velocity.y > 0 && travels.y ? clamp01(bottom + pad.y) : band.y + band.height;
     return { x, y, width: Math.max(0.012, r - x), height: Math.max(0.012, b - y) };
 }
 
@@ -880,16 +914,25 @@ export function sweptBand(options: {
  * straight up or down by at most `maxShift` of the picture between samples. A gap up to `gapUs` is bridged (a sample
  * can miss a line OCR read on its neighbours). A hit starts half way between the last sample without it and the first
  * with it (at most 0.5 s early), and lasts until the sample after its last.
+ *
+ * `aspect` is the picture's width over its height in pixels: every pad around a hit keeps the pixels it has on 16:9.
  */
 export function textHits(
     frames: readonly ScreenTextFrame[],
     matcher: LineMatcher,
     {
+        aspect,
         gapUs = 1_500_000,
         maxShift = 0.35,
         exclude = [],
         motion,
-    }: { gapUs?: number; maxShift?: number; exclude?: readonly FractionBox[]; motion?: MotionModel } = {}
+    }: {
+        aspect: number;
+        gapUs?: number;
+        maxShift?: number;
+        exclude?: readonly FractionBox[];
+        motion?: MotionModel;
+    }
 ): PrivateHit[] {
     interface Open {
         kind: HitKind;
@@ -987,7 +1030,7 @@ export function textHits(
         for (const line of frame.lines) {
             for (const match of matcher(line.text)) {
                 matchedLines.add(line);
-                const box = matchBox(line, match);
+                const box = matchBox({ line, match, aspect });
 
                 if (exclude.some((area) => inside(box, area))) {
                     continue;
@@ -1054,7 +1097,9 @@ export function textHits(
                     continue;
                 }
 
-                const read = found.map((part) => matchBox(line, part)).reduce((all, box) => union(all, box));
+                const read = found
+                    .map((part) => matchBox({ line, match: part, aspect }))
+                    .reduce((all, box) => union(all, box));
                 const carried = carryTo(track, frame.atUs);
                 const centre = (box: FractionBox) => box.y + box.height / 2;
 
@@ -1095,7 +1140,7 @@ export function textHits(
                     return key;
                 }
 
-                return read && sameBox(read, key) ? key : withMargin(key);
+                return read && sameBox(read, key) ? key : withMargin(key, aspect);
             });
         }
     }
@@ -1253,6 +1298,7 @@ export function textHits(
                     velocity,
                     travelUs: Math.abs(stopUs - start.atUs) + BAND_MARGIN_US,
                     area: model.movingArea(fromUs, toUs),
+                    aspect,
                 }),
             });
             track.fromUs = Math.min(track.fromUs, fromUs);
@@ -1303,12 +1349,12 @@ export function textHits(
                 continue;
             }
 
-            const pad = Math.max(0.005, Math.max(from.height, to.height) * 0.5);
+            const pad = linePad({ height: Math.max(from.height, to.height), lines: 0.5, aspect, floor: 0.005 });
             const area = model.movingArea(from.atUs, to.atUs);
             const band = union(from, to);
             const inside = area ? union(area, band) : band;
-            const x = Math.max(inside.x, clamp01(band.x - pad));
-            const y = Math.max(inside.y, clamp01(band.y - pad));
+            const x = Math.max(inside.x, clamp01(band.x - pad.x));
+            const y = Math.max(inside.y, clamp01(band.y - pad.y));
             track.uncertain.push({
                 fromUs: Math.max(0, from.atUs - BAND_MARGIN_US),
                 toUs: to.atUs + BAND_MARGIN_US,
@@ -1316,8 +1362,8 @@ export function textHits(
                 box: {
                     x,
                     y,
-                    width: Math.min(inside.x + inside.width, band.x + band.width + pad) - x,
-                    height: Math.min(inside.y + inside.height, band.y + band.height + pad) - y,
+                    width: Math.min(inside.x + inside.width, band.x + band.width + pad.x) - x,
+                    height: Math.min(inside.y + inside.height, band.y + band.height + pad.y) - y,
                 },
             });
         }
@@ -1358,7 +1404,7 @@ export function textHits(
                 fromUs: last.atUs,
                 toUs: again.key.atUs,
                 why: "rest",
-                box: withMargin(union(last, again.key)),
+                box: withMargin(union(last, again.key), aspect),
             });
         }
     }
@@ -1379,12 +1425,16 @@ export function textHits(
     }
 }
 
-/** The private hits of a movie's screen text (and of `names`), tracked over time (textHits). */
+/** The private hits of a movie's screen text (and of `names`), tracked over time (textHits, with its `aspect`). */
 export function privateHits(
     frames: readonly ScreenTextFrame[],
-    options: { gapUs?: number; names?: readonly string[]; exclude?: readonly FractionBox[] } = {}
+    options: { aspect: number; gapUs?: number; names?: readonly string[]; exclude?: readonly FractionBox[] }
 ): PrivateHit[] {
-    return textHits(frames, privateMatcher(options.names), { gapUs: options.gapUs, exclude: options.exclude });
+    return textHits(frames, privateMatcher(options.names), {
+        aspect: options.aspect,
+        gapUs: options.gapUs,
+        exclude: options.exclude,
+    });
 }
 
 /**

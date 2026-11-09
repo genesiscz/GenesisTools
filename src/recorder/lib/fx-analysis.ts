@@ -697,10 +697,12 @@ export async function trackedHits(
 ): Promise<PrivateHit[]> {
     const { frames: coarse, source } = await screenTextIn(project, options.scan);
     const exclude = options.exclude ?? [];
+    // The screen text is placed over the source movie (a frames recording's proxy canvas), so its pads take its shape.
+    const aspect = project.source.width / project.source.height;
 
     if (source === "frames") {
         options.onRead?.(coarse);
-        return textHits(coarse, matcher, { exclude });
+        return textHits(coarse, matcher, { aspect, exclude });
     }
 
     const { steps, fps, grid } = await changeStepsOf(project);
@@ -757,7 +759,7 @@ export async function trackedHits(
             grid,
         });
         options.onRead?.([...outside, ...dense]);
-        return textHits([...outside, ...dense], matcher, { exclude, motion });
+        return textHits([...outside, ...dense], matcher, { aspect, exclude, motion });
     };
     const merged = mergeWindows(windows);
     let hits = await follow(merged);
@@ -1201,7 +1203,9 @@ async function verifyExport(value: string, options: VerifyHiddenOptions, movie: 
     const values = sourceFrames.flatMap((frame) =>
         frame.lines.flatMap((line) => matcher(line.text).map((match) => match.value))
     );
-    const leaks = textHits(frames, edgeFragments(matcher, values), { gapUs: 0 }).map((hit) => {
+    // The export's own picture: a frame or a zoom can give it another shape than the source.
+    const aspect = (info.displayWidth || info.width) / (info.displayHeight || info.height);
+    const leaks = textHits(frames, edgeFragments(matcher, values), { aspect, gapUs: 0 }).map((hit) => {
         const atUs = hit.keys[0]?.atUs ?? hit.fromUs;
         const from = exportToOutputUs(project, atUs);
         const to = exportToOutputUs(project, Math.min(hit.toUs, endUs));

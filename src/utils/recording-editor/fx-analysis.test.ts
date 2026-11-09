@@ -55,6 +55,8 @@ import {
 // Every value here is invented: example.com mail, test card and IBAN numbers, made-up tokens.
 const source = { video: "/movies/screen.mp4", durationUs: 60_000_000, width: 1920, height: 1080 };
 const op = (raw: unknown) => editOpSchema.parse(raw);
+/** The screen-text fixtures' boxes are shares of the 16:9 source picture; the pad tests give other shapes. */
+const aspect = source.width / source.height;
 
 describe("private data patterns", () => {
     test("finds each kind and nothing in ordinary text", () => {
@@ -98,7 +100,7 @@ describe("private hits over time", () => {
             frame(3, [line("Signed in as alice@example.com")]),
             frame(10, [line("Signed in as alice@example.com", 0.1)]),
         ];
-        const hits = privateHits(frames);
+        const hits = privateHits(frames, { aspect });
         expect(hits.map((hit) => [hit.kind, hit.fromUs, hit.toUs])).toEqual([
             ["email", 0, 4_000_000],
             ["email", 9_500_000, 11_000_000],
@@ -107,11 +109,14 @@ describe("private hits over time", () => {
         expect(hits[0].box.x).toBeGreaterThan(0.2);
         expect(hits[0].box.x + hits[0].box.width).toBeLessThanOrEqual(0.52);
         expect(SafeJSON.stringify(hits)).not.toContain("alice@example.com");
-        expect(privateHits(frames).map((hit) => hit.id)).toEqual(hits.map((hit) => hit.id));
+        expect(privateHits(frames, { aspect }).map((hit) => hit.id)).toEqual(hits.map((hit) => hit.id));
     });
 
     test("hidePrivate adds one blurred part per hit, once", () => {
-        const hits = privateHits([frame(2, [line("alice@example.com")]), frame(5, [line("4111 1111 1111 1111", 0.8)])]);
+        const hits = privateHits(
+            [frame(2, [line("alice@example.com")]), frame(5, [line("4111 1111 1111 1111", 0.8)])],
+            { aspect }
+        );
         const facts: OpFacts = { privateHits: hits };
         const once = applyOp(wholeProject(source), op({ op: "hidePrivate" }), facts);
         expect(once.redactions?.map((part) => [part.style, part.label, part.startUs])).toEqual([
@@ -126,6 +131,176 @@ describe("private hits over time", () => {
             /no private hit pnope/
         );
         expect(() => applyOp(wholeProject(source), op({ op: "hidePrivate" }))).toThrow(/screen text/);
+    });
+});
+
+describe("a hidden part's pads are the same pixels on any picture shape", () => {
+    const landscape = { width: 1920, height: 1080 };
+    const portrait = { width: 1179, height: 2556 };
+    type Picture = typeof landscape;
+    const shapeOf = (picture: Picture) => picture.width / picture.height;
+    /** A box given in pixels, as shares of `picture`. */
+    const shares = (picture: Picture, px: FractionBox): FractionBox => ({
+        x: px.x / picture.width,
+        y: px.y / picture.height,
+        width: px.width / picture.width,
+        height: px.height / picture.height,
+    });
+
+    test("a match's side pad keeps its 16:9 pixels on a portrait picture, so the first letter stays covered", () => {
+        // The same OCR line at the same pixels on both: 405 x 50 px from x 118 (a phone frame and a 1080p one).
+        const padOn = (picture: Picture, topPx: number) => {
+            const line = {
+                text: "mail: a@b.example",
+                ...shares(picture, { x: 118, y: topPx, width: 405, height: 50 }),
+            };
+            const [hit] = textHits([{ atUs: 0, untilUs: 1_000_000, lines: [line] }], privateMatcher(), {
+                aspect: shapeOf(picture),
+            });
+            const [match] = privateMatcher()(line.text);
+            const startPx = (line.x + (line.width * match.start) / line.text.length) * picture.width;
+            return { leftPx: hit.box.x * picture.width, padPx: startPx - hit.box.x * picture.width };
+        };
+        const tall = padOn(portrait, 1214);
+        const wide = padOn(landscape, 521);
+        // At least a glyph (0.6 of the line's height), and the same pixels on both.
+        expect(tall.padPx).toBeGreaterThanOrEqual(0.6 * 50);
+        expect(Math.abs(tall.padPx - wide.padPx)).toBeLessThan(1);
+        // The ink of the address's first letter starts at 231 px on the portrait frame.
+        expect(tall.leftPx).toBeLessThanOrEqual(231);
+    });
+
+    test("a line 0.02 high keeps its 0.012 pad of a 16:9 width and pads 9:16 by as many line heights in pixels", () => {
+        const line = { text: "alice@example.com", x: 0.3, y: 0.5, width: 0.2, height: 0.02 };
+        const padX = (shape: number) => {
+            const frames: ScreenTextFrame[] = [{ atUs: 0, untilUs: 1_000_000, lines: [line] }];
+            const [hit] = textHits(frames, privateMatcher(), { aspect: shape });
+            return line.x - hit.box.x;
+        };
+        expect(padX(16 / 9)).toBeCloseTo(0.012, 5);
+        expect(padX(9 / 16)).toBeCloseTo((0.012 * (16 / 9)) / (9 / 16), 5);
+    });
+
+    test("a band with no measured travel pads the same text by the same pixels on both shapes", () => {
+        const padsOn = (picture: Picture) => {
+            const box = shares(picture, { x: 400, y: 900, width: 300, height: 45 });
+            const band = sweptBand({
+                box,
+                velocity: { x: 0, y: 0 },
+                travelUs: 0,
+                area: undefined,
+                aspect: shapeOf(picture),
+            });
+            return { x: (box.x - band.x) * picture.width, y: (box.y - band.y) * picture.height };
+        };
+        const wide = padsOn(landscape);
+        const tall = padsOn(portrait);
+        expect(tall.x).toBeCloseTo(wide.x, 1);
+        expect(tall.y).toBeCloseTo(wide.y, 1);
+    });
+
+    test("a sideways drift of a third of a line in pixels does not sweep a portrait band to the picture's edge", () => {
+        // 35 px sideways in 0.3 s beside a text 115 px high: it did not travel.
+        const band = sweptBand({
+            box: { x: 0.4, y: 0.5, width: 0.2, height: 0.045 },
+            velocity: { x: -1e-7, y: 0 },
+            travelUs: 300_000,
+            area: { x: 0, y: 0, width: 1, height: 1 },
+            aspect: shapeOf(portrait),
+        });
+        expect(band.x).toBeGreaterThan(0.3);
+    });
+
+    describe("a carried place and a gap band", () => {
+        const frame = (ms: number, lines: ScreenTextFrame["lines"]): ScreenTextFrame => ({
+            atUs: ms * 1000,
+            untilUs: (ms + 200) * 1000,
+            lines,
+        });
+        /** The name 384 x 40 px from x 128, at `y` of the picture (the scroll moves it by shares of the picture). */
+        const row = (picture: Picture, y: number) => ({
+            text: "Orla Fictive",
+            ...shares(picture, { x: 128, y: y * picture.height, width: 384, height: 40 }),
+        });
+        /** A list that scrolls up by `travel` of the picture from 0.2 s to 0.8 s, fast first and slow at the end. */
+        const scroll = (travel: number, options: { lostAfterUs?: number } = {}): MotionModel => {
+            const offset = (us: number) => {
+                const u = Math.min(1, Math.max(0, (us - 200_000) / 600_000));
+                return -travel * (1 - (1 - u) ** 2);
+            };
+            return {
+                moving: (fromUs, toUs) => Math.max(fromUs, toUs) > 200_000 && Math.min(fromUs, toUs) < 800_000,
+                movingArea: () => ({ x: 0, y: 0, width: 1, height: 1 }),
+                changeEdge: (_box, atUs) => atUs,
+                carry: (box, fromUs, toUs) => {
+                    const direction = toUs >= fromUs ? 1 : -1;
+                    const keys: TrackKey[] = [];
+
+                    for (
+                        let at = fromUs + direction * 33_333;
+                        direction > 0 ? at <= toUs : at >= toUs;
+                        at += direction * 33_333
+                    ) {
+                        if (options.lostAfterUs !== undefined && at > options.lostAfterUs) {
+                            const last = keys.at(-1) ?? { ...box, atUs: fromUs };
+                            return { keys, reachedUs: at, box: last, end: "lost" };
+                        }
+
+                        keys.push({ ...box, atUs: Math.round(at), y: box.y + offset(at) - offset(fromUs) });
+                    }
+
+                    const last = keys.at(-1) ?? { ...box, atUs: fromUs };
+                    return { keys, reachedUs: toUs, box: last, end: "reached" };
+                },
+            };
+        };
+        const matcher = textMatcher({ text: "Orla Fictive" });
+        const framesOn = (picture: Picture) => [
+            frame(0, [row(picture, 0.8)]),
+            frame(200, [row(picture, 0.8)]),
+            frame(800, [row(picture, 0.2)]),
+        ];
+        const readAt = (picture: Picture, y: number) =>
+            textHits([frame(0, [row(picture, y)])], matcher, { aspect: shapeOf(picture) })[0].box;
+
+        test("a carried place gets the same margin in pixels on both shapes", () => {
+            const marginsOn = (picture: Picture) => {
+                const [hit] = textHits(framesOn(picture), matcher, { aspect: shapeOf(picture), motion: scroll(0.6) });
+                const read = readAt(picture, 0.8);
+                const carried = hit.keys.filter((key) => key.atUs > 250_000 && key.atUs < 750_000);
+                expect(carried.length).toBeGreaterThan(0);
+                return carried.map((key) => ({
+                    x: ((key.width - read.width) * picture.width) / 2,
+                    y: ((key.height - read.height) * picture.height) / 2,
+                }));
+            };
+            const [first, ...others] = marginsOn(landscape);
+
+            for (const margin of [...others, ...marginsOn(portrait)]) {
+                expect(margin.x).toBeCloseTo(first.x, 1);
+                expect(margin.y).toBeCloseTo(first.y, 1);
+            }
+        });
+
+        test("the band between two reads the motion could not join gets the same pad in pixels on both shapes", () => {
+            const padOn = (picture: Picture) => {
+                const hits = textHits(framesOn(picture), matcher, {
+                    aspect: shapeOf(picture),
+                    motion: scroll(0.6, { lostAfterUs: 400_000 }),
+                });
+                const gap = hits.flatMap((hit) => hit.uncertain ?? []).find((band) => band.why === "gap");
+                expect(gap).toBeDefined();
+                const top = readAt(picture, 0.2);
+                return {
+                    x: (top.x - (gap?.box.x ?? 0)) * picture.width,
+                    y: (top.y - (gap?.box.y ?? 0)) * picture.height,
+                };
+            };
+            const wide = padOn(landscape);
+            const tall = padOn(portrait);
+            expect(tall.x).toBeCloseTo(wide.x, 1);
+            expect(tall.y).toBeCloseTo(wide.y, 1);
+        });
     });
 });
 
@@ -247,7 +422,7 @@ describe("tracked text, exclusions and events", () => {
             frame(1000, [row("alice@example.com", 0.7)]),
             frame(1200, []),
         ];
-        const [hit, ...rest] = textHits(frames, matcher);
+        const [hit, ...rest] = textHits(frames, matcher, { aspect });
         expect(rest).toEqual([]);
         expect([hit.fromUs, hit.toUs]).toEqual([100_000, 1_200_000]);
         expect(hit.keys.map((key) => [key.atUs, Math.round(key.y * 100) / 100])).toEqual([
@@ -257,13 +432,14 @@ describe("tracked text, exclusions and events", () => {
             [1_000_000, 0.69],
         ]);
         // An excluded area is never searched.
-        expect(textHits(frames, matcher, { exclude: [{ x: 0, y: 0.6, width: 1, height: 0.4 }] })).toEqual([]);
+        expect(textHits(frames, matcher, { aspect, exclude: [{ x: 0, y: 0.6, width: 1, height: 0.4 }] })).toEqual([]);
     });
 
     test("hideText adds a part that follows its keyframes and leaves the excluded area visible", () => {
         const hits = textHits(
             [frame(2000, [row("alice@example.com", 0.9)]), frame(2200, [row("alice@example.com", 0.6)])],
-            textMatcher({ text: "alice@example.com" })
+            textMatcher({ text: "alice@example.com" }),
+            { aspect }
         );
         const edited = applyOp(
             wholeProject(source),
@@ -380,7 +556,7 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
             frame(600, []),
             frame(800, [row("Orla Fictive 777 123 456", 0.2)]),
         ];
-        const [hit, ...rest] = textHits(frames, matcher, { motion: scroll(0.6) });
+        const [hit, ...rest] = textHits(frames, matcher, { aspect, motion: scroll(0.6) });
         expect(rest).toEqual([]);
         expect(hit.uncertain).toBeUndefined();
         // Halfway through the move the part is where the motion put the text, not on a straight line between reads.
@@ -391,17 +567,19 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
         expect(Math.abs(centre(placed) - (centre(read) - 0.6 * (1 - (1 - 1 / 3) ** 2)))).toBeLessThan(0.01);
         expect(placed.height).toBeGreaterThan(read.height);
         // Without the motion the 0.6 jump is two hits and the move between them is not hidden.
-        expect(textHits(frames, matcher).length).toBe(2);
+        expect(textHits(frames, matcher, { aspect }).length).toBe(2);
     });
 
     test("a read the motion does not lead to is another text; a gap it cannot follow hides the band between", () => {
         const frames = [frame(0, [row("Orla Fictive", 0.8)]), frame(200, [row("Orla Fictive", 0.8)])];
         // The motion carries it to 0.2, so a read at 0.5 is a second copy of the name, not this one.
         expect(
-            textHits([...frames, frame(800, [row("Orla Fictive", 0.5)])], matcher, { motion: scroll(0.6) }).length
+            textHits([...frames, frame(800, [row("Orla Fictive", 0.5)])], matcher, { aspect, motion: scroll(0.6) })
+                .length
         ).toBe(2);
         // The motion is lost at 0.4 s: the two reads stay apart, and the band from 0.8 up to 0.2 is hidden between them.
         const lost = textHits([...frames, frame(800, [row("Orla Fictive", 0.2)])], matcher, {
+            aspect,
             motion: scroll(0.6, { lostAfterUs: 400_000 }),
         });
         const band = lost
@@ -421,8 +599,8 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
 
     test('unit "line" hides the whole OCR line of a match; "match" only the matched words; a pattern is per line', () => {
         const line = { text: "Orla Fictive   777 123 456", x: 0.1, y: 0.5, width: 0.4, height: 0.03 };
-        const [word] = textHits([frame(0, [line])], textMatcher({ text: "orla fictive" }));
-        const [whole] = textHits([frame(0, [line])], textMatcher({ text: "orla fictive", unit: "line" }));
+        const [word] = textHits([frame(0, [line])], textMatcher({ text: "orla fictive" }), { aspect });
+        const [whole] = textHits([frame(0, [line])], textMatcher({ text: "orla fictive", unit: "line" }), { aspect });
         expect(word.box.x + word.box.width).toBeLessThan(0.35);
         expect(whole.box.x).toBeLessThanOrEqual(0.1);
         expect(whole.box.x + whole.box.width).toBeGreaterThanOrEqual(0.5);
@@ -442,7 +620,7 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
             frame(200, [row("Orla Fictive", 0.2), row("Bram Sample", 0.4), row("call 606 000 111", 0.6)]),
         ];
         const several = textMatcher({ texts: ["orla fictive", "bram sample"], patterns: ["\\d{3} \\d{3} \\d{3}"] });
-        const hits = textHits(frames, several);
+        const hits = textHits(frames, several, { aspect });
         expect(hits.map((hit) => Math.round(hit.keys[0].y * 10) / 10)).toEqual([0.2, 0.4, 0.6]);
         expect(() =>
             applyOp(wholeProject(source), op({ op: "hideText", texts: ["Nobody Here"], patterns: ["^zzz"] }), {
@@ -466,7 +644,9 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
     });
 
     test("info() names each part's kind and the hide request that made it", () => {
-        const hits = textHits([frame(0, [row("Orla Fictive", 0.2)])], textMatcher({ texts: ["Orla Fictive"] }));
+        const hits = textHits([frame(0, [row("Orla Fictive", 0.2)])], textMatcher({ texts: ["Orla Fictive"] }), {
+            aspect,
+        });
         const hidden = applyOp(
             applyOp(wholeProject(source), op({ op: "hideText", texts: ["Orla Fictive"], unit: "line" }), {
                 textHits: hits,
@@ -486,7 +666,8 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
     test("unhide takes a hide back and forgets it, so the same hide runs again; unredact forgets its part too", () => {
         const hits = textHits(
             [frame(0, [row("Orla Fictive", 0.2), row("Bram Sample", 0.5)])],
-            textMatcher({ texts: ["Orla Fictive", "Bram Sample"] })
+            textMatcher({ texts: ["Orla Fictive", "Bram Sample"] }),
+            { aspect }
         );
         const hide = op({ op: "hideText", texts: ["Orla Fictive", "Bram Sample"] });
         const drawn = applyOp(
@@ -569,6 +750,7 @@ describe("uncertain bands stay small (round 7)", () => {
     test("a text that rests where it never moved makes no band, though the picture beside it changes", () => {
         const frames = [name(1000, 0.4), name(1200, 0.4)];
         const hits = textHits(frames, matcher, {
+            aspect,
             motion: model({ path: [0, 0, 0], end: "still", changingUs: 900_000 }),
         });
         expect(hits.flatMap((hit) => hit.uncertain ?? [])).toEqual([]);
@@ -576,7 +758,10 @@ describe("uncertain bands stay small (round 7)", () => {
 
     test("a text a new screen replaced makes no band, and neither does the gap to its next read", () => {
         const frames = [name(1000, 0.4), name(1100, 0.4), name(1500, 0.4, 0.5), name(1600, 0.4, 0.5)];
-        const hits = textHits(frames, matcher, { motion: model({ path: [], end: "scene", changingUs: 900_000 }) });
+        const hits = textHits(frames, matcher, {
+            aspect,
+            motion: model({ path: [], end: "scene", changingUs: 900_000 }),
+        });
         expect(hits.flatMap((hit) => hit.uncertain ?? [])).toEqual([]);
     });
 
@@ -584,6 +769,7 @@ describe("uncertain bands stay small (round 7)", () => {
         // Back from its read the steps shrink to nothing: it started moving gently, as a scroll does.
         const path = [-0.03, -0.05, -0.06, -0.065, -0.065, -0.065, -0.065];
         const hits = textHits([name(1000, 0.4)], matcher, {
+            aspect,
             motion: model({ path, end: "still", changingUs: 200_000 }),
         });
         expect(hits.flatMap((hit) => hit.uncertain ?? [])).toEqual([]);
@@ -594,6 +780,7 @@ describe("uncertain bands stay small (round 7)", () => {
         // matches as still. The quarter-second change steps saw nothing at the right edge.
         const path = [0.04, 0.09, 0.15, 0.15, 0.15, 0.15];
         const hits = textHits([name(1000, 0.4)], matcher, {
+            aspect,
             motion: model({
                 path,
                 end: "still",
@@ -612,6 +799,7 @@ describe("uncertain bands stay small (round 7)", () => {
 
     test("a lost follow is banded only as far as the text could travel, inside the part that moved", () => {
         const hits = textHits([name(1000, 0.4, 0.5)], matcher, {
+            aspect,
             motion: model({
                 path: [0],
                 end: "lost",
@@ -764,8 +952,8 @@ describe("a few digits of a hidden value at the picture's edge are a leak (round
         const frames: ScreenTextFrame[] = [
             { atUs: 0, untilUs: 33_000, lines: [{ text: "718263", x: 0.97, y: 0.2, width: 0.03, height: 0.04 }] },
         ];
-        expect(textHits(frames, edgeFragments(matcher, values), { gapUs: 0 }).length).toBe(1);
-        expect(textHits(frames, matcher, { gapUs: 0 }).length).toBe(0);
+        expect(textHits(frames, edgeFragments(matcher, values), { aspect, gapUs: 0 }).length).toBe(1);
+        expect(textHits(frames, matcher, { aspect, gapUs: 0 }).length).toBe(0);
     });
 });
 
@@ -804,9 +992,9 @@ describe("a part of a hidden value that a box edge cut is a leak anywhere in the
                 lines: [{ text: "(...8263) Kovářová", x: 0.5, y: 0.3, width: 0.3, height: 0.03 }],
             },
         ];
-        const hits = textHits(frames, edgeFragments(matcher, values), { gapUs: 0 });
+        const hits = textHits(frames, edgeFragments(matcher, values), { aspect, gapUs: 0 });
         expect(hits.length).toBe(2);
-        expect(textHits(frames, matcher, { gapUs: 0 }).length).toBe(0);
+        expect(textHits(frames, matcher, { aspect, gapUs: 0 }).length).toBe(0);
     });
 });
 
@@ -870,7 +1058,7 @@ describe("a hidden part stays on its text through a slide-in (round 8)", () => {
             frame(200, [{ text: "Orla Fictive", x: 0.7, y: 0.5, width: 0.25, height: 0.03 }]),
             frame(800, [{ text: "Orla Fictive · 4071-8263", x: 0.4, y: 0.5, width: 0.5, height: 0.03 }]),
         ];
-        const hits = textHits(frames, matcher, { motion: slide({ x: -0.3, y: 0 }) });
+        const hits = textHits(frames, matcher, { aspect, motion: slide({ x: -0.3, y: 0 }) });
         expect(hits.length).toBe(1);
         // At 0.5 s the whole line is half way: x 0.55, 0.5 wide.
         expect(covered(hits, 500_000, { x: 0.55, y: 0.5, width: 0.5 - 0.06, height: 0.03 })).toBe(true);
@@ -885,7 +1073,7 @@ describe("a hidden part stays on its text through a slide-in (round 8)", () => {
             frame(200, [{ text: "4071-8263", x: 0.3, y: at(200), width: 0.2, height: 0.03 }]),
             frame(500, [{ text: "(...8263)", x: 0.4, y: at(500), width: 0.1, height: 0.03 }]),
         ];
-        const hits = textHits(frames, matcher, { motion: slide({ x: 0, y: -0.4 }, { x: 0, y: -0.06 }) });
+        const hits = textHits(frames, matcher, { aspect, motion: slide({ x: 0, y: -0.4 }, { x: 0, y: -0.06 }) });
         expect(covered(hits, 500_000, { x: 0.4, y: at(500), width: 0.1, height: 0.03 })).toBe(true);
     });
 
@@ -894,13 +1082,14 @@ describe("a hidden part stays on its text through a slide-in (round 8)", () => {
         const title = { text: "Orla Fictive", x: 0.6, y: 0.09, width: 0.2, height: 0.02 };
         const frames = [frame(0, [title]), frame(200, [title]), frame(600, [title])];
         // The content behind the title scrolls up; the blocks carry the title with it.
-        const hits = textHits(frames, matcher, { motion: slide({ x: 0, y: -0.3 }) });
+        const hits = textHits(frames, matcher, { aspect, motion: slide({ x: 0, y: -0.3 }) });
         expect(covered(hits, 300_000, { x: 0.6, y: 0.09, width: 0.2, height: 0.02 })).toBe(true);
     });
 
     test("a band where a sideways slide was lost stays in the text's row, though the read drifted a pixel up", () => {
         // A banner lost while it slid left at a tenth of the picture per 0.1 s, drifting 0.0002 up meanwhile.
         const band = sweptBand({
+            aspect,
             box: { x: 0.4, y: 0.5, width: 0.2, height: 0.045 },
             velocity: { x: -1e-6, y: -2e-9 },
             travelUs: 300_000,
@@ -919,7 +1108,7 @@ describe("a hidden part stays on its text through a slide-in (round 8)", () => {
             frame(200, [{ text: "Orla Fictive", x: 0, y: 0.5, width: 0.005, height: 0.03 }]),
             frame(400, [{ text: "Orla Fictive", x: 0, y: 0.5, width: 0.3, height: 0.03 }]),
         ];
-        const [hit] = textHits(frames, matcher, { motion: slide({ x: 0, y: 0 }) });
+        const [hit] = textHits(frames, matcher, { aspect, motion: slide({ x: 0, y: 0 }) });
         expect(hit.fromUs).toBeLessThan(200_000);
         const before = redactionBoxAt({ ...hit.box, track: hit.keys }, hit.fromUs);
         expect(before.width).toBeGreaterThan(0.005);
