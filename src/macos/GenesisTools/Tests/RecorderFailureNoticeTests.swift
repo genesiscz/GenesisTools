@@ -61,6 +61,8 @@ final class RecorderFailureNoticeTests: XCTestCase {
         XCTAssertEqual(report.logLine, 812)
         XCTAssertEqual(report.dayLog, "/Users/alice/.genesis-tools/logs/1970-01-01.log")
         XCTAssertEqual(report.log, Self.output)
+        XCTAssertEqual(report.area, "recorder", "the bug form's Affected tool")
+        XCTAssertEqual(report.expected, "The recording starts, and its controls and the red menu bar item appear.")
     }
 
     func testAStartWithNoOutputSaysWhereTheLogIs() {

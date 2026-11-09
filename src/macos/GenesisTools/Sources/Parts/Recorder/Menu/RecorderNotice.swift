@@ -95,7 +95,9 @@ enum RecorderNotice {
             dayLog: FailureReport.dayLogPath(home: home, time: time),
             log: printed ? failure.output : "",
             time: time,
-            app: app)
+            app: app,
+            expected: "The recording starts, and its controls and the red menu bar item appear.",
+            area: "recorder")
     }
 
     /// "Recording a window", from the start's target flag.
@@ -174,8 +176,11 @@ final class RecorderNoticePanel {
 
     func show(_ report: FailureReport, retry: (@MainActor () -> Void)?, defaults: UserDefaults = .standard) {
         let poster = ToolsIssuePoster(dryRun: defaults.bool(forKey: "recorder.debug.issueDryRun"))
+        var report = report
+        report.area = report.area ?? "recorder"
         panel.show(report, options: RecorderFailureStyle.noticeOptions(defaults), retry: retry,
-                   issue: FailureNoticeIssueTarget(repo: Self.issueRepo, poster: poster))
+                   issue: FailureNoticeIssueTarget(repo: Self.issueRepo, poster: poster),
+                   environment: { await FailureEnvironment.load() })
     }
 
     func close() { panel.close() }
