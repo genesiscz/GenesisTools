@@ -1132,11 +1132,13 @@ func cmdCaptureScreen() {
         }
         CGDisplayRegisterReconfigurationCallback(displayReconfigurationCallback, nil)
     }
-    // The rectangle the cursor track is relative to, in global points: the window as it moves, the region, or the
-    // recorded display (which a switch or follow-focus changes). The loop's 0.25 s tick keeps it current.
+    // The rectangle the cursor track is relative to, in global points: the window as it moves (the loop's 0.25 s
+    // tick keeps it current), the region, or the recorded display, which a switch or follow-focus changes. A movie keeps
+    // its first size and letterboxes a display of another shape into it, so that rectangle takes the movie's shape.
+    let movieSize = options.videoOut == nil ? nil : CGSize(width: width, height: height)
     let trackedRect = LockedRect(windowTarget?.bounds ?? options.region ?? sourceRect.map {
         $0.offsetBy(dx: display.bounds.minX, dy: display.bounds.minY)
-    } ?? display.bounds)
+    } ?? cursorTrackRect(display: display.bounds, movie: movieSize))
     var cursorTrack: CursorTrackWriter?
     if let path = argValue("--cursor-track") {
         cursorTrack = CursorTrackWriter(path: path, shapes: argValue("--cursor-shapes")) { trackedRect.value }
@@ -1147,6 +1149,13 @@ func cmdCaptureScreen() {
     // frame, which came up to 0.18 s before it when the capture records audio.
     let started = Date()
     host.cursorTrack = cursorTrack
+    if options.mode == "screen", sourceRect == nil {
+        // Moved when the stream takes the new display, not on a later tick; the next row names the new point width.
+        host.onDisplayChange = { geometry in
+            trackedRect.value = cursorTrackRect(display: geometry.bounds, movie: movieSize)
+            cursorTrack?.pointWidthChanged()
+        }
+    }
     cursorTrack?.start { recorder.movieStart }
     let cancelled = runRecordingLoop(duration: options.duration) {
         if let target = windowTarget,
@@ -1154,8 +1163,6 @@ func cmdCaptureScreen() {
            let raw = rows.first?[kCGWindowBounds] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw) {
             indicator.update([bounds])
             trackedRect.value = bounds
-        } else if options.mode == "screen", sourceRect == nil {
-            trackedRect.value = host.display.bounds
         }
         guard options.mode == "screen" else { return recorder.failure == nil && !host.stopRequested }
 
@@ -1346,6 +1353,8 @@ private final class ScreenStreamHost {
 
     let audio: NativeAudio?
     var cursorTrack: CursorTrackWriter?
+    /// Runs on the main thread each time the stream takes another display (a live switch or a restart).
+    var onDisplayChange: ((DisplayGeometry) -> Void)?
     /// `set-max-long-side` replaces `--max-long-side`.
     private var maxLongSide: Int?
     /// The size in points the stream records: the display in screen mode, else the window or region.
@@ -1565,6 +1574,7 @@ private final class ScreenStreamHost {
             displaysUsed.append(geometry.id)
         }
         indicator.update([geometry.bounds])
+        onDisplayChange?(geometry)
     }
 
     private func outputSize(for geometry: DisplayGeometry) -> CGSize? {

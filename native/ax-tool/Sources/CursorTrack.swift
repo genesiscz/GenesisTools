@@ -18,8 +18,9 @@ import SnapshotSupport
 /// keeps the cursor's image: every 100 ms it reads `NSCursor.currentSystem` (0.64 ms a read) and hashes the image; a
 /// new image is written once as `<dir>/<hash>.png` (twice the point size) and `<dir>/<hash>.json` (`hotX`, `hotY`,
 /// `width`, `height` in points), and the next row carries `"shape": "<hash>"`. The first row also carries `"pw"`, the
-/// recorded rectangle's width in points, so a reader knows how many movie pixels one cursor point is. Shape rows exist
-/// only for a movie without the system cursor in it, which is how the editor knows to draw one.
+/// recorded rectangle's width in points, so a reader knows how many movie pixels one cursor point is; the first row after
+/// a display switch carries it again. Shape rows exist only for a movie without the system cursor in it, which is how
+/// the editor knows to draw one.
 ///
 /// With `--shortcuts` a row also carries `"key": "⌘⇧4"` when a shortcut was pressed, for the editor's keys overlay.
 /// Only presses with ⌘ or ⌃ are kept: plain typing and ⌥ alone (which types characters such as @ on many layouts)
@@ -106,6 +107,12 @@ final class CursorTrackWriter {
             return nil
         }
         return label
+    }
+
+    /// The recorded rectangle changed size (the recording moved to another display): the next row carries its new
+    /// `pw`, so a reader measures the cursor in the new display's points from there on.
+    func pointWidthChanged() {
+        queue.async { self.wrotePointWidth = false }
     }
 
     /// `movieStart` is the movie's first frame timestamp (host clock), nil until that frame came; it is read per sample.

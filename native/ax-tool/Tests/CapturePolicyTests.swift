@@ -242,6 +242,30 @@ final class DisplayChangeTests: XCTestCase {
         XCTAssertEqual(displayUnder(CGPoint(x: 50, y: 50), displays: displays), 1)
         XCTAssertNil(displayUnder(CGPoint(x: 500, y: 50), displays: displays))
     }
+
+    func testCursorTrackRectWidensASwitchedDisplayToTheMoviesShape() {
+        let rect = cursorTrackRect(display: CGRect(x: 0, y: 0, width: 1920, height: 1200), movie: CGSize(width: 2560, height: 1440))
+        XCTAssertEqual(rect.minX, -106.67, accuracy: 0.01, "a 16:10 display in a 16:9 movie has bars at the sides")
+        XCTAssertEqual(rect.minY, 0, accuracy: 0.0001)
+        XCTAssertEqual(rect.width, 2133.33, accuracy: 0.01)
+        XCTAssertEqual(rect.height, 1200, accuracy: 0.0001)
+        // A live follow recording: a 2.39:1 monitor letterboxed into a 4112x2658 movie showed rows 468 to 2189.
+        let movie = CGSize(width: 4112, height: 2658)
+        let wide = cursorTrackRect(display: CGRect(x: 0, y: -1440, width: 3440, height: 1440), movie: movie)
+        XCTAssertEqual((-1440 - wide.minY) / wide.height, 468.0 / 2658, accuracy: 0.002, "the monitor's top edge")
+        XCTAssertEqual((0 - wide.minY) / wide.height, 2190.0 / 2658, accuracy: 0.002, "the monitor's bottom edge")
+        XCTAssertEqual((0 - wide.minX) / wide.width, 0, accuracy: 0.0001)
+    }
+
+    func testCursorTrackRectKeepsTheFirstDisplayAndAFreeSizedStream() {
+        let laptop = CGRect(x: 0, y: 0, width: 2056, height: 1329)
+        let same = cursorTrackRect(display: laptop, movie: CGSize(width: 4112, height: 2658))
+        XCTAssertEqual(same.minX, laptop.minX, accuracy: 0.0001)
+        XCTAssertEqual(same.minY, laptop.minY, accuracy: 0.0001)
+        XCTAssertEqual(same.width, laptop.width, accuracy: 0.0001)
+        XCTAssertEqual(same.height, laptop.height, accuracy: 0.0001)
+        XCTAssertEqual(cursorTrackRect(display: laptop, movie: nil), laptop, "frames take each display's own size")
+    }
 }
 
 final class CaptureCommandTests: XCTestCase {

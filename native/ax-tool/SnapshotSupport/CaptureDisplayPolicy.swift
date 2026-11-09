@@ -109,6 +109,23 @@ public func displayUnder(_ point: CGPoint?, displays: [DisplayFrame]) -> CGDirec
     return displays.first(where: { $0.bounds.contains(point) })?.id
 }
 
+/// The rectangle a screen recording's cursor track is relative to, in global points: the recorded display widened to
+/// the movie's shape and centred on it. A movie keeps one size from start to end, and the stream letterboxes a display
+/// of another shape into it (`preservesAspectRatio`), so the bars belong to the rectangle too and a row's 0...1 lands
+/// on the movie pixel that shows the pointer. Without a fixed movie size (`movie` nil: frames take each display's own
+/// size) it is the display itself.
+public func cursorTrackRect(display: CGRect, movie: CGSize?) -> CGRect {
+    guard let movie, movie.width > 0, movie.height > 0, display.width > 0, display.height > 0 else { return display }
+    let aspect = movie.width / movie.height
+    if display.width / display.height > aspect {
+        let height = display.width / aspect
+        return CGRect(x: display.minX, y: display.midY - height / 2, width: display.width, height: height)
+    }
+
+    let width = display.height * aspect
+    return CGRect(x: display.midX - width / 2, y: display.minY, width: width, height: display.height)
+}
+
 /// Scales `size` down so its longer side is at most `maxLongSide` pixels, keeping the aspect ratio; `even` rounds both
 /// sides down to even numbers, as H.264 needs.
 public func capLongSide(_ size: CGSize, maxLongSide: Int?, even: Bool) -> CGSize {
