@@ -22,6 +22,7 @@ import { cardsLeadUs } from "@genesiscz/utils/recording-editor/overlays";
 import { type TimeValue, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     applyOp,
+    type EditClock,
     type EditMarker,
     type EditOp,
     type EditProject,
@@ -66,10 +67,9 @@ import { privateHitsOf, scanOf, textHitsOf, waitsOf } from "./fx-analysis";
 import { type ExportAnswer, movieOf, resolveRecording } from "./library";
 import {
     chapterMetadata,
-    chapterPoints,
     chaptersOfPart,
     EMBEDDED_CHAPTER_MIN_SECONDS,
-    markersOf,
+    exportChapterPoints,
     recordedMarkersOf,
 } from "./moments";
 import { hostExport } from "./service-client";
@@ -1093,22 +1093,23 @@ function freeOutput(video: string, extension: string): string {
  * 960 wide for a GIF). The intermediate movie lives in a temporary folder and is removed.
  */
 /**
- * Writes the edit's subtitles (the cached transcript with its fixes, in output time) to `out` as SubRip or WebVTT.
- * `part` keeps the lines of an exported part, moved to start at 0.
+ * Writes the edit's subtitles (the cached transcript with its fixes) to `out` as SubRip or WebVTT, beside the movie
+ * under its export's name by default. The cues are on the clock of the export they go with: a whole export plays the
+ * intro card first, so every cue moves by its length; `clock: "output"` keeps the movie's own times. `part` keeps the
+ * lines of an exported part, moved to start at 0 (a part plays no cards).
  */
 export async function writeSubtitles({
     value,
     format,
     out,
     part,
-    leadUs,
+    clock,
 }: {
     value: string;
     format: SubtitleFormat;
     out?: string;
     part?: { fromUs: number; toUs: number };
-    /** R4 9 intro card: the export's time before the movie; every cue moves by it. */
-    leadUs?: number;
+    clock?: Exclude<EditClock, "source">;
 }): Promise<{ path: string; cues: number; format: SubtitleFormat }> {
     const opened = await openProject(value);
     const cache = transcriptCachePath(opened.project.source.video);
@@ -1120,7 +1121,8 @@ export async function writeSubtitles({
     }
 
     const lines = transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
-    const shift = leadUs ?? 0;
+    // R4 9 intro card: the renderer plays it before the movie.
+    const shift = part || clock === "output" ? 0 : cardsLeadUs(opened.project);
     const cues = subtitleCues(lines, opened.project, part).map((cue) =>
         shift ? { ...cue, fromUs: cue.fromUs + shift, toUs: cue.toUs + shift } : cue
     );
@@ -1128,37 +1130,32 @@ export async function writeSubtitles({
         ? resolve(out)
         : join(dirname(opened.project.source.video), `${defaultExportName(opened.project.source.video)}.${format}`);
     atomicWriteFileSync(path, formatSubtitles(cues, format));
-    log.debug({ path, cues: cues.length, format, part }, "subtitles written");
+    log.debug({ path, cues: cues.length, format, part, shift }, "subtitles written");
     return { path, cues: cues.length, format };
 }
 
 /**
  * Puts the recording's markers into an MP4 as chapters (players list them; QuickTime under View → Chapters): a
  * stream copy through ffmpeg into a file beside it, then moved over it. Answers how many it wrote; 0 leaves the movie.
+ * A whole export's chapters are on its own clock (exportChapterPoints: the intro card's title at 0:00, every marker
+ * after the card); a part plays no cards, so its chapters are the edit's, moved to start at the part.
  */
 export async function embedChapters({
     value,
     movie,
     part,
-    leadUs,
 }: {
     value: string;
     movie: string;
     part?: { fromUs: number; toUs: number };
-    /** R4 9 intro card: the export's time before the movie; the intro becomes its own first chapter. */
-    leadUs?: number;
 }): Promise<number> {
     const opened = await openProject(value);
-    const whole = chapterPoints(markersOf(opened), { minSeconds: EMBEDDED_CHAPTER_MIN_SECONDS });
-    const inPart = part ? chaptersOfPart(whole, { from: part.fromUs / 1_000_000, to: part.toUs / 1_000_000 }) : whole;
-    const lead = (leadUs ?? 0) / 1_000_000;
-    const chapters =
-        lead > 0 && inPart.length > 0
-            ? [
-                  { at: 0, label: opened.project.cards?.intro?.title ?? "Intro" },
-                  ...inPart.map((chapter) => ({ ...chapter, at: chapter.at + lead })),
-              ]
-            : inPart;
+    const chapters = part
+        ? chaptersOfPart(exportChapterPoints(opened, { minSeconds: EMBEDDED_CHAPTER_MIN_SECONDS, clock: "output" }), {
+              from: part.fromUs / 1_000_000,
+              to: part.toUs / 1_000_000,
+          })
+        : exportChapterPoints(opened, { minSeconds: EMBEDDED_CHAPTER_MIN_SECONDS });
 
     if (chapters.length === 0) {
         return 0;
@@ -1235,17 +1232,16 @@ export async function finishExport({
     const { project } = await openProject(value);
     const format = subtitles ?? project.export.subtitles;
     const warnings: string[] = [];
-    // R4 9 intro card: the renderer plays it before the movie, so subtitles and chapters move by its length. A part
-    // is a clip of the movie without the cards on every route (exportAs here, the window's exportedProject), so it
-    // starts at the part's first frame.
-    const leadUs = part ? 0 : cardsLeadUs(project);
+    // R4 9 intro card: the renderer plays it before the movie, so writeSubtitles and embedChapters move a whole
+    // export's subtitles and chapters by its length. A part is a clip of the movie without the cards on every route
+    // (exportAs here, the window's exportedProject), so it starts at the part's first frame.
     const extras: { subtitles?: string; chapters?: number } = {};
 
     if (format) {
         const out = join(dirname(movie), `${basename(movie, extname(movie))}.${format}`);
 
         try {
-            extras.subtitles = (await writeSubtitles({ value, format, out, part, leadUs })).path;
+            extras.subtitles = (await writeSubtitles({ value, format, out, part })).path;
         } catch (error) {
             log.debug({ error, value }, "no subtitles beside the export");
             warnings.push(`no subtitles: ${error instanceof Error ? error.message : String(error)}`);
@@ -1254,7 +1250,7 @@ export async function finishExport({
 
     if (extname(movie).toLowerCase() === ".mp4" && project.export.chapters !== false) {
         try {
-            const count = await embedChapters({ value, movie, part, leadUs });
+            const count = await embedChapters({ value, movie, part });
 
             if (count) {
                 extras.chapters = count;

@@ -52,6 +52,8 @@ import {
     CANVAS_ASPECTS,
     cameraOpSchema,
     describeProject,
+    EDIT_CLOCKS,
+    type EditClock,
     type EditOp,
     type EditProject,
     editOpSchema,
@@ -133,8 +135,9 @@ import {
     resolveRecording,
 } from "./library";
 import {
-    chaptersOf,
+    chapterLines,
     clickGroupsOf,
+    exportChapterPoints,
     markersOf,
     recordedMarkersOf,
     recordingFolderOf,
@@ -828,10 +831,16 @@ const movieMethods = [
     }),
     defineMethod({
         name: "subtitles",
-        params: z.object({ format: z.enum(SUBTITLE_FORMATS).optional(), out: z.string().optional() }).strict(),
+        params: z
+            .object({
+                format: z.enum(SUBTITLE_FORMATS).optional(),
+                out: z.string().optional(),
+                clock: z.enum(["export", "output"]).optional(),
+            })
+            .strict(),
         result: z.unknown(),
         resultName: "{ path, cues, format }",
-        doc: 'Writes the transcript as a subtitle file in OUTPUT time: format "srt" (default) or "vtt", lines that were cut left out, fixed lines as fixed, beside the movie unless out is given. Needs transcript() first.',
+        doc: 'Writes the transcript as a subtitle file: format "srt" (default) or "vtt", lines that were cut left out, fixed lines as fixed, beside the movie under its export\'s name unless out is given. The cues are on the exported file\'s clock, so with an intro card they start the card\'s length later, as export({ subtitles }) writes them; clock: "output" gives the movie\'s own times (OUTPUT time, no card). Needs transcript() first.',
         effect: "reversible",
     }),
     defineMethod({
@@ -969,8 +978,8 @@ const movieMethods = [
         name: "comments",
         params: z.object({}).strict(),
         result: z.unknown(),
-        resultName: "{ path, comments: { id, text, from, to?, plays, author?, link?, resolved, at }[] }",
-        doc: "The recording's review comments (comments.jsonl beside it) in time order: from/to in source seconds, plays where that moment plays in the edit now (null when cut). The editor shows each as a marker on the timeline; a click there jumps to it.",
+        resultName: "{ path, comments: { id, text, from, to?, plays, exportPlays, author?, link?, resolved, at }[] }",
+        doc: "The recording's review comments (comments.jsonl beside it) in time order: from/to in source seconds, plays where that moment plays in the edit now (OUTPUT seconds, null when cut), exportPlays where it plays in the exported file (after the intro card). The editor shows each as a marker on the timeline; a click there jumps to it.",
         effect: "read",
     }),
     defineMethod({
@@ -983,12 +992,13 @@ const movieMethods = [
                 author: z.string().max(80).optional(),
                 link: z.string().url().optional(),
                 annotation: z.number().int().positive().optional(),
+                clock: z.enum(EDIT_CLOCKS).optional(),
                 source: z.boolean().optional(),
             })
             .strict(),
         result: z.unknown(),
         resultName: "{ path, comment }",
-        doc: "A review comment at `at` (to: the end of a range) in OUTPUT seconds or \"m:ss\", what plays, as a reviewer of the export sees it; source: true takes times of the recording itself. link: the page it came from (a vitrinka annotation's link, a board, a PR); annotation: that annotation's number on the board link names, so the comment opens it. The editor window shows it at once.",
+        doc: 'A review comment at `at` (to: the end of a range) in OUTPUT seconds or "m:ss", what plays on the editor\'s timeline (the movie without its cards). clock: "export" takes times of the exported file, as a reviewer reads them off its player (the intro card first; a time on a card goes onto the movie and the text says so); clock: "source" (or source: true) takes times of the recording itself. link: the page it came from (a vitrinka annotation\'s link, a board, a PR); annotation: that annotation\'s number on the board link names, so the comment opens it. The editor window shows it at once.',
         effect: "reversible",
     }),
     defineMethod({
@@ -1024,7 +1034,7 @@ const movieMethods = [
         doc:
             "Imports a vitrinka board's annotations as review comments (" +
             toolCommand("recorder comment import") +
-            " does the same): board is its link (a ?card= link picks that card), <workspace>/<slug>, or a bare slug, which is looked up in the vitrinka CLI's default workspace (name the workspace for a board elsewhere); card: only that card. Each annotation on a shot, movie or step card lands at the OUTPUT time its text starts with (0:42, 1:02:03, 42s), else at 0:00 with a note that says so; a resolved one is resolved. A second import adds nothing (each comment keeps the annotation's link). dryRun: true reads the board and writes nothing.",
+            " does the same): board is its link (a ?card= link picks that card), <workspace>/<slug>, or a bare slug, which is looked up in the vitrinka CLI's default workspace (name the workspace for a board elsewhere); card: only that card. Each annotation on a shot, movie or step card lands at the time its text starts with (0:42, 1:02:03, 42s), read as a time of the exported file the board shows: the intro card's length comes off, and a time on the intro or end card goes to the movie's start or end with a note in its text. One without a time goes to 0:00 with a note that says so; a resolved one is resolved; wouldAdd keeps the times as the board has them. A second import adds nothing (each comment keeps the annotation's link). dryRun: true reads the board and writes nothing.",
         effect: "reversible",
     }),
     defineMethod({
@@ -1064,10 +1074,14 @@ const movieMethods = [
     }),
     defineMethod({
         name: "chapters",
-        params: z.object({ intro: z.string().optional(), minSeconds: z.number().positive().optional() }),
+        params: z.object({
+            intro: z.string().optional(),
+            minSeconds: z.number().positive().optional(),
+            clock: z.enum(["export", "output"]).optional(),
+        }),
         result: z.unknown(),
         resultName: "string[]",
-        doc: 'The markers as video chapters, "0:00 Intro" lines in output time for a YouTube or Vimeo description: none without markers; with markers a first chapter at 0:00 (named intro, "Intro" by default), cut markers left out, a marker under minSeconds (10) after the one before it left out.',
+        doc: 'The markers as video chapters, "0:00 Intro" lines for the YouTube or Vimeo description of the exported file, on its clock: none without markers; with markers a first chapter at 0:00 (named intro, by default the intro card\'s title, else "Intro"), every marker the intro card\'s length later, cut markers left out, a marker under minSeconds (10) after the one before it left out. clock: "output" gives the movie\'s own times (no card).',
         effect: "read",
     }),
     defineMethod({
@@ -1605,9 +1619,9 @@ export const moviesApi = defineApi({
     ],
     notes: [
         'SourceTime is seconds (or "m:ss", "h:mm:ss") of the movie as recorded, before any cut or speed change: every edit op and every method that places an item takes it, and a cut never moves it.',
-        'OutputTime is seconds (or "m:ss") of the edited movie, what plays after cuts and speed changes: range(), itemsAt(), poster(), export({ from, to }) and comment() take it (comment({ source: true }) takes SourceTime).',
+        'OutputTime is seconds (or "m:ss") of the edited movie, what plays after cuts and speed changes: range(), itemsAt(), poster(), export({ from, to }) and comment() take it (comment({ clock: "source" }) takes SourceTime, comment({ clock: "export" }) a time of the exported file).',
         "Time (still(), sheet()) is OutputTime, or SourceTime with source: true. Survey with these two, never with ffmpeg frame numbers: they read frames with the editor's own decoder, so a time read on a sheet is the time to put in an op. ffmpeg's fps filter picks the nearest frame, up to half a step later, and frame numbers of a variable-frame-rate screen recording drift by seconds.",
-        "In an answer, from, to, at, start and end are source seconds and plays is output seconds (null where that moment is cut). The exceptions say so: itemsAt() gives output and source, info() gives sourceSeconds and outputSeconds, still() and sheet() cells give source and output, chapters() are output seconds, and a comment's at is when it was written. Output time is the movie without its cards: the exported file plays an intro card first, so info().exportTime gives introSeconds, endSeconds and exportSeconds, a voiceover's exportPlays and a cell's export are times in the exported file.",
+        "In an answer, from, to, at, start and end are source seconds and plays is output seconds (null where that moment is cut). The exceptions say so: itemsAt() gives output and source, info() gives sourceSeconds and outputSeconds, still() and sheet() cells give source and output, and a comment's at is when it was written. Output time is the movie without its cards: the exported file plays an intro card first, so info().exportTime gives introSeconds, endSeconds and exportSeconds, and a voiceover's exportPlays, a comment's exportPlays and a cell's export are times in the exported file. The doors that make something for the exported file use its clock: subtitles(), chapters(), the MP4's chapters and importComments() (a board shows the export); their clock: \"output\" gives the movie's own times.",
         "Every edit reads the file fresh and saves once, so the open window and you never overwrite each other.",
         'The edit is a file: it stays after the worker ends, and the next run starts from it. apply([{ op: "reset" }]) starts over; undo() takes back the last change, one of an earlier run too (<edit>.undo.json, 30 steps).',
         "Limits: speed 0.25–16, zoom scale 1–4, focus x and y 0–1, volume 0–2.",
@@ -2442,8 +2456,13 @@ export class Movie {
         };
     }
 
-    async subtitles(options: { format?: SubtitleFormat; out?: string } = {}) {
-        return writeSubtitles({ value: this.recording, format: options.format ?? "srt", out: options.out });
+    async subtitles(options: { format?: SubtitleFormat; out?: string; clock?: Exclude<EditClock, "source"> } = {}) {
+        return writeSubtitles({
+            value: this.recording,
+            format: options.format ?? "srt",
+            out: options.out,
+            clock: options.clock,
+        });
     }
 
     /** `<movie>.transcript.json` beside the movie: the raw result, so a later edit maps it again for free. */
@@ -2870,6 +2889,7 @@ export class Movie {
         author?: string;
         link?: string;
         annotation?: number;
+        clock?: EditClock;
         source?: boolean;
     }) {
         return commentOn(this.recording, options);
@@ -2914,8 +2934,8 @@ export class Movie {
         return { id: manifest.id, title: manifest.title, folder };
     }
 
-    async chapters(options: { intro?: string; minSeconds?: number } = {}) {
-        return chaptersOf(markersOf(await openProject(this.recording)), options);
+    async chapters(options: { intro?: string; minSeconds?: number; clock?: Exclude<EditClock, "source"> } = {}) {
+        return chapterLines(exportChapterPoints(await openProject(this.recording), options));
     }
 
     async show(options: { focus?: boolean; at?: number; tab?: EditorTab } = {}) {

@@ -818,6 +818,63 @@ describe("finishing a part export of an edit with cards", () => {
         expect(written[0]).not.toContain("title=Demo");
         expect(written[0]).toContain("START=1000\nEND=2500\ntitle=Step one");
     });
+
+    // Round 1 hunt (intro-card-export-clock): subtitles() and `tools recorder subtitles` write the file the export is
+    // named after, but without the intro's lead, so a player showed every cue 3 s early beside the exported movie.
+    test("the subtitle file named after the export follows its clock; clock output and a part do not move", async () => {
+        const { path, root } = cardedEdit("rs-subtitles-clock-");
+        const whole = await edits.writeSubtitles({ value: path, format: "srt" });
+        expect(readFileSync(whole.path, "utf8")).toContain("00:00:05,500 --> 00:00:06,500");
+
+        const output = join(root, "output.srt");
+        await edits.writeSubtitles({ value: path, format: "srt", out: output, clock: "output" });
+        expect(readFileSync(output, "utf8")).toContain("00:00:02,500 --> 00:00:03,500");
+
+        const part = join(root, "part.srt");
+        await edits.writeSubtitles({
+            value: path,
+            format: "srt",
+            out: part,
+            part: { fromUs: 2_000_000, toUs: 5_000_000 },
+        });
+        expect(readFileSync(part, "utf8")).toContain("00:00:00,500 --> 00:00:01,500");
+    });
+
+    // Round 1 hunt (intro-card-export-clock): the whole export named the card at 0:00 and then chapterPoints' own
+    // "Intro" at the card's end, a second intro chapter.
+    test("a whole export's chapters name the intro card at 0:00 once and move every marker by it", async () => {
+        const { path, root } = cardedEdit("rs-finish-whole-chapters-");
+        const movie = join(root, "talk-export.mp4");
+        writeFileSync(movie, "movie");
+        const written: string[] = [];
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async ({ input }) => ({
+            path: input,
+            durationUs: 16_000_000,
+            width: 100,
+            height: 100,
+            displayWidth: 100,
+            displayHeight: 100,
+            rotation: 0,
+            bytes: 5,
+            codec: "h264",
+        }));
+        const ffmpeg = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            written.push(readFileSync(command[command.indexOf("ffmetadata") + 2] ?? "", "utf8"));
+            writeFileSync(command.at(-1) ?? "", "movie");
+            return "";
+        });
+        closing.push(
+            () => probe.mockRestore(),
+            () => ffmpeg.mockRestore()
+        );
+
+        const answer = await edits.finishExport({ value: path, answer: { ok: true, path: movie } });
+
+        expect(answer.chapters).toBe(3);
+        expect(written[0]).toContain("START=0\nEND=6000\ntitle=Demo");
+        expect(written[0]).toContain("START=6000\nEND=7500\ntitle=Step one");
+        expect(written[0]).not.toContain("title=Intro");
+    });
 });
 
 describe("the format an export asks for", () => {

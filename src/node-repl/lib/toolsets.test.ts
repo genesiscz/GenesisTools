@@ -23,11 +23,13 @@ import {
 import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "@app/recorder/lib/frames-recording";
 import { requireRecorderPart } from "@app/recorder/lib/library";
 import {
+    chapterLines,
     chapterMetadata,
     chapterPoints,
     chaptersOf,
     chaptersOfPart,
     EMBEDDED_CHAPTER_MIN_SECONDS,
+    exportChapterPoints,
     markersOf,
     recordingFolderOf,
     spreadTimes,
@@ -724,6 +726,34 @@ describe("movie chapters", () => {
             )
         ).toEqual(["0:00 Start", "0:30 Next"]);
         expect(chaptersOf([])).toEqual([]);
+    });
+
+    // Round 1 hunt (intro-card-export-clock): chapters() and `markers --chapters` printed output times for the exported
+    // file's description, so each link opened the upload the intro card's length early.
+    test("on the exported file's clock: the card's title at 0:00 once, every marker the card's length later", () => {
+        const folder = join(tmpdir(), "gt-no-such-recording");
+        const project = {
+            ...wholeProject({ video: join(folder, "talk.mp4"), durationUs: 60_000_000, width: 100, height: 100 }),
+            cards: { intro: { title: "Demo", seconds: 3 } },
+            markers: [
+                { id: "m1", atUs: 12_000_000, label: "Login" },
+                { id: "m2", atUs: 30_000_000, label: "Dashboard" },
+            ],
+        };
+        const opened = { path: join(folder, "talk.edit.json"), project };
+
+        expect(exportChapterPoints(opened, { minSeconds: 1 })).toEqual([
+            { at: 0, label: "Demo" },
+            { at: 15, label: "Login" },
+            { at: 33, label: "Dashboard" },
+        ]);
+        expect(chapterLines(exportChapterPoints(opened))).toEqual(["0:00 Demo", "0:15 Login", "0:33 Dashboard"]);
+        expect(chapterLines(exportChapterPoints(opened, { intro: "Start" }))[0]).toBe("0:00 Start");
+        expect(chapterLines(exportChapterPoints(opened, { clock: "output" }))).toEqual([
+            "0:00 Intro",
+            "0:12 Login",
+            "0:30 Dashboard",
+        ]);
     });
 
     test("a line's words come as cutWords reads them, and the editor's pick of one place cuts only that place", async () => {

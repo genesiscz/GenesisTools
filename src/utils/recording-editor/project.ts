@@ -890,6 +890,35 @@ export function exportToOutputUs(project: EditProject, exportUs: number): number
     return outUs >= 0 && outUs <= outputDurationUs(project) ? outUs : undefined;
 }
 
+/**
+ * The clocks a time of an edit can be on: SOURCE (the recording as recorded, what ops take), OUTPUT (the edited movie,
+ * what the editor's timeline shows, without its cards) and EXPORT (the exported file, which plays the intro card first).
+ */
+export const EDIT_CLOCKS = ["source", "output", "export"] as const;
+export type EditClock = (typeof EDIT_CLOCKS)[number];
+
+/**
+ * A moment of the export file as output microseconds, held on the movie: a moment on the intro card is output 0 and
+ * one on the end card (or past the movie's end) is the output's end; `inCard` names the card it was on.
+ */
+export function exportToOutputClampedUs(
+    project: EditProject,
+    exportUs: number
+): { outUs: number; inCard?: "intro" | "end" } {
+    const outUs = exportUs - cardsLeadUs(project);
+    const endUs = outputDurationUs(project);
+
+    if (outUs < 0) {
+        return { outUs: 0, inCard: "intro" };
+    }
+
+    if (outUs > endUs) {
+        return { outUs: endUs, ...(project.cards?.end ? { inCard: "end" as const } : {}) };
+    }
+
+    return { outUs };
+}
+
 // R7 3 verifyHidden fixes
 /**
  * Where a text verifyHidden read on the export sits in the SOURCE picture (fractions of the source movie's picture) from

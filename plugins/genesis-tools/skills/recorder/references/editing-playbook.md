@@ -42,7 +42,12 @@ before you edit any recording that you did not just record with demo mode.
 - OUTPUT seconds: the edited movie, what plays after cuts and speed changes. `still()`, `sheet()`, `itemsAt()`,
   `range()` and `export({ from, to })` take them.
 - The exported file plays the intro card first. `info().exportTime` gives `introSeconds`, `endSeconds` and
-  `exportSeconds`; a voiceover's `exportPlays`, and a sheet cell's `export`, are times in the exported file.
+  `exportSeconds`; a voiceover's `exportPlays`, a comment's `exportPlays` and a sheet cell's `export` are times in
+  the exported file.
+- What is made for the exported file is on its clock: `subtitles()`, `chapters()`, the MP4's chapters, and the times
+  `importComments()` reads off a board (a board shows the export). `comment()` takes OUTPUT seconds, the editor's
+  timeline; `comment({ clock: "export" })` takes a time read off the exported file. `clock: "output"` on
+  `subtitles()` and `chapters()` gives the movie's own times.
 - 🛑 Survey only with `sheet()`, `still()`, `events()` and `findText()`. They read frames with the editor's own
   decoder (or sample on its time base), so a time you read there is the time to put in an op. Never place an effect
   from ffmpeg frame numbers: the fps filter takes the NEAREST frame (up to half a step later), and the frame numbers

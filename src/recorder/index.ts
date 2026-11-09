@@ -63,7 +63,7 @@ import {
     shortRecordingId,
     waitForEditorOpen,
 } from "./lib/library";
-import { chaptersOf, clickGroupsOf, markersOf, searchLibrary } from "./lib/moments";
+import { chapterLines, clickGroupsOf, exportChapterPoints, markersOf, searchLibrary } from "./lib/moments";
 import { applyEdit, redoLastEdit, undoLastEdit } from "./lib/movie-client";
 import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay, parseDisplayPlan } from "./lib/proxy";
 import { copyRecording, revealRecording, trashRecordings } from "./lib/quick-actions";
@@ -610,6 +610,10 @@ const commentCommand = program
     )
     .option("--annotation <number>", "the annotation's number on the board --link names: the comment opens it")
     .option("--source", "at and --to are times of the recording itself, not of the edit")
+    .option(
+        "--export",
+        "at and --to are times of the exported file, as its player shows them (the intro card first); a time on a card goes onto the movie"
+    )
     // `comment add …` is taken here, not as a subcommand: commander would give an `add` subcommand's options to
     // `comment` itself, which has the same ones.
     .allowExcessArguments()
@@ -618,7 +622,14 @@ const commentCommand = program
             _recording: string,
             _at: string,
             _text: string,
-            flags: { to?: string; author?: string; link?: string; annotation?: string; source?: boolean },
+            flags: {
+                to?: string;
+                author?: string;
+                link?: string;
+                annotation?: string;
+                source?: boolean;
+                export?: boolean;
+            },
             command: Command
         ) => {
             try {
@@ -635,6 +646,10 @@ const commentCommand = program
                     throw new Error(`--annotation takes the annotation's number, not "${flags.annotation}"`);
                 }
 
+                if (flags.source && flags.export) {
+                    throw new Error("--source and --export name two clocks; give one");
+                }
+
                 const [value, at, text] = named;
                 out.result(
                     await commentOn(value, {
@@ -644,6 +659,7 @@ const commentCommand = program
                         author: flags.author,
                         link: flags.link,
                         annotation: flags.annotation === undefined ? undefined : Number(flags.annotation),
+                        clock: flags.export ? "export" : undefined,
                         source: flags.source,
                     })
                 );
@@ -656,7 +672,7 @@ const commentCommand = program
 commentCommand
     .command("import")
     .description(
-        "Import a vitrinka board's annotations as review comments: each annotation on a shot, movie or step card (or on one --card) at the OUTPUT time its text starts with (0:42, 1:02:03, 42s), else at 0:00 with a note; a second import adds nothing"
+        "Import a vitrinka board's annotations as review comments: each annotation on a shot, movie or step card (or on one --card) at the time its text starts with (0:42, 1:02:03, 42s), read on the exported file the board shows (the intro card's length comes off; a time on a card goes onto the movie with a note), else at 0:00 with a note; a second import adds nothing"
     )
     .argument("<recording>", "a library id, `last`, `open` or a recording folder")
     .argument("<board>", "the board's link (a ?card= link picks that card), <workspace>/<slug> or its slug")
@@ -771,13 +787,18 @@ program
     .command("markers")
     .description("The moments marked while a recording ran, with where each plays in its edit (null when cut)")
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
-    .option("--chapters", 'as "0:00 Intro" chapter lines for a video description (cut markers left out)')
-    .action(async (value: string, flags: { chapters?: boolean }) => {
+    .option(
+        "--chapters",
+        "as \"0:00 Intro\" chapter lines for the exported file's description (cut markers left out; with an intro card the first line is its title and every marker sits the card's length later)"
+    )
+    .option("--output-time", "with --chapters: the movie's own times, without the intro card")
+    .action(async (value: string, flags: { chapters?: boolean; outputTime?: boolean }) => {
         try {
             const opened = await openProject(value);
 
             if (flags.chapters) {
-                out.print(`${chaptersOf(markersOf(opened)).join("\n")}\n`);
+                const chapters = exportChapterPoints(opened, { clock: flags.outputTime ? "output" : "export" });
+                out.print(`${chapterLines(chapters).join("\n")}\n`);
                 return;
             }
 
@@ -1509,17 +1530,26 @@ program
         }
     );
 
+interface SubtitlesFlags {
+    format?: string;
+    out?: string;
+    from?: string;
+    to?: string;
+    outputTime?: boolean;
+}
+
 program
     .command("subtitles")
     .description(
-        "Write a recording's transcript as a subtitle file in the edit's time (cut lines left out, fixes kept)"
+        "Write a recording's transcript as a subtitle file for its export (cut lines left out, fixes kept): the export's clock, so with an intro card every cue starts the card's length later"
     )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .option("--format <format>", "srt (default) or vtt")
     .option("--out <file>", "the file to write (default beside the movie, named like its export)")
     .option("--from <time>", "only the part from this OUTPUT time, moved to start at 0 (an exported part)")
     .option("--to <time>", "only the part up to this OUTPUT time")
-    .action(async (value: string, flags: { format?: string; out?: string; from?: string; to?: string }) => {
+    .option("--output-time", "the movie's own times, without the intro card (a part never has one)")
+    .action(async (value: string, flags: SubtitlesFlags) => {
         try {
             const part =
                 flags.from === undefined && flags.to === undefined
@@ -1535,6 +1565,7 @@ program
                     format: flags.format === undefined ? "srt" : parseSubtitleFormat(flags.format),
                     out: flags.out,
                     part,
+                    clock: flags.outputTime ? "output" : undefined,
                 })
             );
         } catch (error) {

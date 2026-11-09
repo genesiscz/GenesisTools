@@ -36,7 +36,10 @@ tools recorder stop|pause|resume|status [id]     # the newest live recording, or
                                                  # pause on a paused one and resume on a running one say "already …"
                                                  # and exit 0
 tools recorder mark <label> [id]                 # a marker at this moment (a movie, frames or meeting recording); the editor and movie.markers() show it
-tools recorder markers <recording> [--chapters]  # its markers as JSON with where each plays, or "0:00 Intro" chapter lines
+tools recorder markers <recording> [--chapters [--output-time]]  # its markers as JSON with where each plays, or
+                                                 # "0:00 Intro" chapter lines on the exported file's clock (the intro
+                                                 # card's title first, every marker after the card); --output-time
+                                                 # gives the movie's own times
 tools recorder click-groups <recording> [--gap 3] # its clicks in groups (count, source seconds, where each plays), as movie.clickGroups()
 tools recorder rename <recording> <title>        # a new title for the library, the editor window and movies.list()
 tools recorder import <movie> [--title T] [--marker TIME=LABEL ...] [--json]  # a library recording of a movie file
@@ -60,8 +63,13 @@ tools recorder reveal <recording> [--meeting]    # its folder in Finder; --meeti
 tools recorder trash <recording>                 # to the Trash (Finder's Put Back restores it); a meeting's screen
                                                  # recording is refused
 tools recorder comment <recording> <at> <text>   # a review comment at an OUTPUT time (seconds or m:ss); the editor
-                                                 # shows it on the timeline (`comment add` is the same command)
-tools recorder comments <recording>              # its review comments in time order, with where each plays
+                                                 # shows it on the timeline (`comment add` is the same command);
+                                                 # --export takes a time of the exported file (the intro card first),
+                                                 # --source one of the recording
+tools recorder comment import <recording> <board>  # a vitrinka board's annotations as comments, at the times they
+                                                 # start with, read on the exported file the board shows
+tools recorder comments <recording>              # its review comments in time order, with where each plays (plays)
+                                                 # and where it plays in the exported file (exportPlays)
 tools recorder resolve <recording> <id> [--reopen]  # a comment done (or open again)
 tools recorder uncomment <recording> <id>        # remove a comment
 tools recorder replace-words <recording> --find T --replace T [--match-case] [--part-of-word]  # fix a word in every
@@ -106,7 +114,9 @@ tools recorder cut-words <recording> --at T --words "you know" [--occurrence N] 
                                                  # line at T: every place, or with --occurrence only the Nth
 tools recorder cut-fillers <recording> [--lang cs|sk|en] [--all] [--words a,b] [--dry-run]  # every ehm, hm, um;
                                                  # --all also the fillers that are words (jako, like)
-tools recorder subtitles <recording> [--format srt|vtt] [--out F] [--from T --to T]  # the transcript as subtitles
+tools recorder subtitles <recording> [--format srt|vtt] [--out F] [--from T --to T] [--output-time]  # the transcript
+                                                 # as subtitles for the export: with an intro card every cue starts
+                                                 # the card's length later; --output-time keeps the movie's own times
 tools recorder finish <recording> <movie> [--from T --to T]  # subtitles + chapters for a movie exported elsewhere
 ```
 

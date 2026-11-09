@@ -2,8 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { cardsLeadUs } from "@genesiscz/utils/recording-editor/overlays";
 import {
     CLICK_GROUP_GAP_MS,
+    type EditClock,
     type EditProject,
     groupClicks,
     outputTimeOf,
@@ -124,7 +126,32 @@ export function chaptersOf(
     markers: ReadonlyArray<{ plays: number | null; label: string }>,
     options: { intro?: string; minSeconds?: number } = {}
 ): string[] {
-    return chapterPoints(markers, options).map((chapter) => `${clock(chapter.at)} ${chapter.label}`);
+    return chapterLines(chapterPoints(markers, options));
+}
+
+/** Chapters as "0:00 Intro" lines, the form YouTube and Vimeo read in a video's description. */
+export function chapterLines(chapters: ReadonlyArray<{ at: number; label: string }>): string[] {
+    return chapters.map((chapter) => `${clock(chapter.at)} ${chapter.label}`);
+}
+
+/**
+ * The chapters of the movie a viewer gets, by the rules of chapterPoints: on the exported file's clock by default, so
+ * every kept marker sits the intro card's length later and the 0:00 chapter is named after the card's title (`intro`
+ * names it otherwise). The MP4's embedded chapters, chapters() and `markers --chapters` all come from here, so the
+ * lines pasted into a description match the file. `clock: "output"` gives the movie's own times, without the card.
+ */
+export function exportChapterPoints(
+    opened: { path: string; project: EditProject },
+    options: { intro?: string; minSeconds?: number; clock?: Exclude<EditClock, "source"> } = {}
+): Array<{ at: number; label: string }> {
+    const leadUs = options.clock === "output" ? 0 : cardsLeadUs(opened.project);
+    const markers = markersOf(opened).map((marker) =>
+        marker.plays === null || leadUs === 0
+            ? marker
+            : { ...marker, plays: Math.round(marker.plays * 1000 + leadUs / 1000) / 1000 }
+    );
+    const intro = options.intro ?? (leadUs > 0 ? opened.project.cards?.intro?.title : undefined);
+    return chapterPoints(markers, { minSeconds: options.minSeconds, ...(intro === undefined ? {} : { intro }) });
 }
 
 /**
