@@ -1464,7 +1464,8 @@ export async function exportAs(
             overwrite: options.overwrite,
             render: async (to) => {
                 await runVideoCommand({
-                    command: exportVideoArgv({ input: rendered, output: to, format }),
+                    // The window's render already holds one mixed audio track.
+                    command: exportVideoArgv({ input: rendered, output: to, format, audioTracks: 1 }),
                     timeoutMs: 30 * 60_000,
                 });
                 const bytes = (await stat(to)).size;

@@ -3965,7 +3965,7 @@ test("editor commands replace guarded outputs and force the requested container"
     expect(speedArgv({ input: "in.mp4", output: "out.mp4", factor: 2, audio: true })).not.toContain("0:a:0");
 
     for (const format of ["mp4", "webm", "gif"] as const) {
-        const args = exportVideoArgv({ input: "in.mp4", output: "out.wrong", format });
+        const args = exportVideoArgv({ input: "in.mp4", output: "out.wrong", format, audioTracks: 1 });
         expect(args).toContain("-y");
         expect(args[args.lastIndexOf("-f") + 1]).toBe(format);
     }
@@ -3974,9 +3974,32 @@ test("editor commands replace guarded outputs and force the requested container"
 // Regression test: deep test 2026-11-06 RE8 — a 20 s WebM took 121 s: libvpx ran one row at a time at its slowest
 // speed. Measured on 10 s of 1440p60: these flags cost a third less CPU at an SSIM no lower (0.99911 against 0.99900).
 test("a WebM encodes rows in parallel at speed 3, with the CRF that keeps its quality", () => {
-    const args = exportVideoArgv({ input: "in.mp4", output: "out.webm", format: "webm" }).join(" ");
+    const args = exportVideoArgv({ input: "in.mp4", output: "out.webm", format: "webm", audioTracks: 1 }).join(" ");
 
     expect(args).toContain("-c:v libvpx-vp9 -b:v 0 -crf 32 -row-mt 1 -deadline good -cpu-used 3");
+});
+
+// Regression test: hunt r2-repl-export-all-tracks. Without a map ffmpeg kept one audio track, so an export of a
+// recording of system sound and mic lost the mic; the Swift export mixes every track into one.
+describe("exportVideoArgv plays every audio track", () => {
+    test("two tracks are mixed into one with no level change, the picture mapped beside them", () => {
+        const args = exportVideoArgv({ input: "in.mp4", output: "out.mp4", format: "mp4", audioTracks: 2 });
+        const joined = args.join(" ");
+
+        expect(joined).toContain("amix=inputs=2:normalize=0");
+        expect(joined).toContain("-map [a]");
+        expect(joined).toContain("-map 0:v:0");
+    });
+
+    test("one track maps it, none drops audio, and a GIF never maps audio", () => {
+        expect(
+            exportVideoArgv({ input: "in.mp4", output: "o.mp4", format: "mp4", audioTracks: 1 }).join(" ")
+        ).toContain("-map 0:a:0");
+        expect(exportVideoArgv({ input: "in.mp4", output: "o.webm", format: "webm", audioTracks: 0 })).toContain("-an");
+        const gif = exportVideoArgv({ input: "in.mp4", output: "o.gif", format: "gif", audioTracks: 2 }).join(" ");
+        expect(gif).not.toContain("amix");
+        expect(gif).toContain("-an");
+    });
 });
 
 test("manifest duration preserves static recordings and the unchanged tail", async () => {
