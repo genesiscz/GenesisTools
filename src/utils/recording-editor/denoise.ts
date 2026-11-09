@@ -23,7 +23,8 @@ export const denoiseSchema = z.object({
     method: z.enum(DENOISE_METHODS).default("afftdn"),
     /** How much the noise is turned down, in dB (afftdn `nr`). 12 takes fan and room hum away; 25+ starts to blur words. */
     reductionDb: z.number().min(1).max(40).default(12),
-    /** The audio tracks to clean (0 is the first); absent is every track. A screen recording's mic is its last track. */
+    /** The audio tracks to clean (0 is the first); absent is every track. The tracks follow recording.json's
+     * audio.sources: the system sound first, then the mic. */
     tracks: z.array(z.number().int().nonnegative()).optional(),
     /** A strength per track ("1": 20) where it differs from `reductionDb`; absent tracks use `reductionDb`. */
     trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),

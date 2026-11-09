@@ -294,7 +294,10 @@ async function playable(path: string): Promise<boolean> {
  */
 const AUDIO_TRACK_TITLES: Record<"system" | "mic", string> = { system: "System audio", mic: "Microphone" };
 
-/** The title of each audio track: ax-tool writes one track per `--audio` source, in the order given. */
+/**
+ * The title of each audio track: ax-tool writes one track per `--audio` source, in the order given; the recorder
+ * always passes the system sound first, then the mic.
+ */
 export function audioTrackTitles(sources: ("system" | "mic")[] = []): string[] {
     return sources.map((source) => AUDIO_TRACK_TITLES[source]);
 }

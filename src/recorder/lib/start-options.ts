@@ -209,7 +209,8 @@ function parseAudio(raw: string | undefined): StartAudioSource[] | undefined {
         throw new Error(`--audio takes system, mic or system,mic (got "${raw}")`);
     }
 
-    return known;
+    // The tracks follow recording.json's audio.sources, which the docs promise as the system sound first, then the mic.
+    return START_AUDIO_SOURCES.filter((source) => known.includes(source));
 }
 
 /** `--countdown [seconds]`: undefined when not given, the picker's 3 s when bare. */

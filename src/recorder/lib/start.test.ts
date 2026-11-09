@@ -18,6 +18,7 @@ import {
     parseStartFlags,
     refuseMissingWindowOrApp,
     refuseTargetOffScreen,
+    startAudioOf,
 } from "./start-options";
 import {
     announcedCountdown,
@@ -558,5 +559,11 @@ describe("a window or app movie", () => {
         expect(() => parseStartFlags({ window: "83493", audio: "mic" })).toThrow(/--audio needs a display or an area/);
         expect(() => parseStartFlags({ app: "Notes", audio: "system" })).toThrow(/--audio needs a display or an area/);
         expect(parseStartFlags({ window: "83493" }).target).toEqual(window);
+    });
+
+    it("--audio records the system sound first, then the mic, as recording.json lists the tracks", () => {
+        expect(startAudioOf({ audio: "mic,system" })).toEqual(["system", "mic"]);
+        expect(startAudioOf({ audio: "mic,mic" })).toEqual(["mic"]);
+        expect(startAudioOf({ audio: "system" })).toEqual(["system"]);
     });
 });
