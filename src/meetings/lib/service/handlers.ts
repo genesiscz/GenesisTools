@@ -8,6 +8,7 @@ import {
 } from "@genesiscz/utils/meetings/conflict";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
+import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { RpcError } from "@genesiscz/utils/rpc/errors";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
@@ -76,6 +77,8 @@ export interface MeetingsHandlerDeps {
     energy?: typeof channelEnergy;
     /** Whether a comment listener's pid still runs `meetings listen` (tests answer); the process table by default. */
     listenerAlive?: (pid: number) => boolean;
+    /** The people directory's Contacts source (tests pass a fake, or none); darwinkit's Contacts by default. */
+    contacts?: () => PeopleSource | undefined;
 }
 
 /**
@@ -173,6 +176,7 @@ const decisions = () => import("./decision-handlers");
 const moments = () => import("./moment-handlers");
 const reads = () => import("./reads-handlers");
 const comments = () => import("./comment-handlers");
+const people = () => import("./people-handlers");
 
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
@@ -232,6 +236,13 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "comment.unstage": async (params, context) =>
             (await comments()).unstageComment(params, context, storeOf(), deps),
         "comment.send": async (params, context) => (await comments()).sendComments(params, context, storeOf(), deps),
+        // The people directory loads Contacts (darwinkit) only when a call asks for people.
+        "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
+        "people.add": async (params) => (await people()).addPerson(params, storeOf(), deps),
+        "people.hide": async (params) => (await people()).hidePerson(params, storeOf(), deps),
+        "people.planMerge": async (params) => (await people()).planPeopleMerge(params, storeOf(), deps),
+        "people.merge": async (params) => (await people()).mergePeople(params, storeOf(), deps),
+        "people.unmerge": async (params) => (await people()).unmergePeople(params, storeOf(), deps),
     };
 }
 
