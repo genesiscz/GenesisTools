@@ -204,8 +204,14 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     const gestureKey = (connection: Connection, gesture: string): string => `${connection.state.id}:${gesture}`;
     let lastConnectionId = 0;
 
+    /**
+     * The session key of a path: the session's own path as a window holds it, even after its folder was moved away (no
+     * recording resolves there any more), or the edit the path names.
+     */
+    const keyOf = (path: string): string => (sessions.get(path) ? path : editPathOf(path));
+
     const sessionOf = (path: string): EditSession => {
-        const session = sessions.get(editPathOf(path));
+        const session = sessions.get(keyOf(path));
 
         if (!session) {
             throw new RpcError(RPC_ERRORS.invalidParams, `no open session of ${path}; call session.open first`);
@@ -214,10 +220,21 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         return session;
     };
 
+    /** An open session that still has its folder: a change to a moved or trashed recording would make it again. */
+    const editableSessionOf = (path: string): EditSession | undefined => {
+        const session = sessions.get(keyOf(path));
+
+        if (session?.moved) {
+            throw new RpcError(RPC_ERRORS.invalidParams, "the recording was moved or trashed; close this window");
+        }
+
+        return session;
+    };
+
     /** The open session of a recording argument, or none; a path that names no recording has none. */
     const openSessionOf = (path: string): EditSession | undefined => {
         try {
-            return sessions.get(editPathOf(path));
+            return sessions.get(keyOf(path));
         } catch (error) {
             log.debug({ error, path }, "a host call's path names no recording with an edit");
             return undefined;
@@ -376,7 +393,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             };
         },
         "session.close": (params, { connection }: HandlerContext) => {
-            const path = editPathOf(params.path);
+            const path = connection.state.holds.has(params.path) ? params.path : editPathOf(params.path);
             const holders = connection.state.holds.get(path);
 
             if (!holders?.delete(params.holder ?? "")) {
@@ -392,7 +409,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             return { closed: true };
         },
         "edit.apply": async (params, { connection }: HandlerContext) => {
-            const session = sessions.get(editPathOf(params.path));
+            const session = editableSessionOf(params.path);
 
             if (session) {
                 const answer = await session.apply(params.ops, {
@@ -423,7 +440,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             };
         },
         "edit.undo": async (params, { connection }: HandlerContext) => {
-            const session = sessions.get(editPathOf(params.path));
+            const session = editableSessionOf(params.path);
 
             if (session) {
                 const answer = await session.undo({ by: byOf(connection) });
@@ -444,7 +461,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             return { revision: undone.project.revision, project: undone.project, undone: undone.undone ?? [] };
         },
         "edit.redo": async (params, { connection }: HandlerContext) => {
-            const session = sessions.get(editPathOf(params.path));
+            const session = editableSessionOf(params.path);
 
             if (!session) {
                 const redone = await redoEdit(params.path);
@@ -467,7 +484,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         "gesture.begin": (params, { connection }: HandlerContext) => {
             const key = gestureKey(connection, params.gesture);
             const answer = sessionOf(params.path).beginGesture(key);
-            connection.state.gestures.set(key, editPathOf(params.path));
+            connection.state.gestures.set(key, keyOf(params.path));
             return answer;
         },
         "gesture.preview": (params, { connection }: HandlerContext) =>

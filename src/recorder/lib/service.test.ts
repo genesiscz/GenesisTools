@@ -5,6 +5,7 @@ import {
     mkdtempSync,
     readFileSync,
     realpathSync,
+    renameSync,
     rmSync,
     utimesSync,
     writeFileSync,
@@ -539,6 +540,29 @@ describe("the recorder service", () => {
         await app.call<unknown>("session.close", { path, holder: "window-1" });
         await Bun.sleep(20);
         expect(service.sessions.size).toBe(0);
+    });
+
+    // Regression test: hunt 2026-11-09 r2-editor-follows-moved-recording: a trashed recording's window made its folder again
+    test("a recording moved away while a window edits it: its save makes no folder again, edits are refused and the close releases the hold", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 50 });
+        const path = editFixture("rs-moved-away-");
+        const app = await connect(service.entry);
+        await app.call<unknown>("hello", hello("host"));
+        const opened = await app.call<{ path: string }>("session.open", { path, holder: "window-1" });
+        await app.call<unknown>("edit.apply", { path: opened.path, ops: [{ op: "volume", volume: 0.4 }] });
+        renameSync(dirname(opened.path), `${dirname(opened.path)}-trashed`);
+        await Bun.sleep(250);
+
+        expect(existsSync(dirname(opened.path))).toBe(false);
+        await expect(
+            app.call<unknown>("edit.apply", { path: opened.path, ops: [{ op: "volume", volume: 0.5 }] })
+        ).rejects.toThrow("the recording was moved or trashed; close this window");
+        expect(await app.call<unknown>("session.close", { path: opened.path, holder: "window-1" })).toEqual({
+            closed: true,
+        });
+        await Bun.sleep(20);
+        expect(service.sessions.size).toBe(0);
+        expect(existsSync(dirname(opened.path))).toBe(false);
     });
 
     // Regression test: 2026-11-05 recorder service review, finding 12 — a service edit without an open session told nobody

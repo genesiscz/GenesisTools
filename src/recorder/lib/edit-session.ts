@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import {
@@ -351,6 +352,11 @@ export class EditSession {
         });
     }
 
+    /** The recording's folder is gone (moved or trashed) while the session holds it. */
+    get moved(): boolean {
+        return !existsSync(dirname(this.path));
+    }
+
     /** Saves now when a change waits for its save. Throws `staleRevision` when a newer file could not take it. */
     flush(): void {
         if (this.timer) {
@@ -359,6 +365,12 @@ export class EditSession {
         }
 
         if (this.unsaved.length === 0) {
+            return;
+        }
+
+        // The recording was moved or trashed: a save would make its folder again (and Put Back would then fail).
+        if (this.moved) {
+            log.warn({ path: this.path }, "the recording's folder is gone; its unsaved edit stays unsaved");
             return;
         }
 
