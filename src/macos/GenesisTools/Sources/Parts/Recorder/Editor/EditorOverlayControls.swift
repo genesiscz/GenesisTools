@@ -211,7 +211,7 @@ struct CardsSection: View {
     }
 
     private func field(_ title: String, _ value: String, _ words: EditLimits.Words, set: @escaping (String) -> Void) -> some View {
-        TextField(title, text: words.binding(value, set: set, refuse: { model.show($0, error: true) }))
+        DraftTextField(title: title, stored: value, words: words, refuse: { model.show($0, error: true) }, set: set)
             .textFieldStyle(.roundedBorder)
             .accessibilityLabel(title)
     }

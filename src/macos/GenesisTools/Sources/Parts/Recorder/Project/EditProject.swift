@@ -824,6 +824,7 @@ enum EditLimits {
     static let introDate = Words(name: "An intro date", limit: 60)
     static let endText = Words(name: "An end card text", limit: 200, trims: true)
     static let endLink = Words(name: "An end card link", limit: 300)
+    static let captionFix = Words(name: "A caption line", limit: 300)
     static let cardSeconds: ClosedRange<Double> = 0.5...15
     static let textAnimateMs: ClosedRange<Double> = 100...5000
 }

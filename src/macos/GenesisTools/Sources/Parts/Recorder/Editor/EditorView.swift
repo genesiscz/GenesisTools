@@ -919,9 +919,8 @@ struct CaptionLinesList: View {
                         }
                         .buttonStyle(.genHoverPlain())
                         .instantTooltip("Go to this line")
-                        TextField("", text: Binding(get: { hidden ? line.text : (fixes[key] ?? line.text) }, set: { value in
-                            model.fixCaption(line, text: value == line.text ? nil : value)
-                        }), axis: .vertical)
+                        DraftTextField(title: "", stored: hidden ? line.text : (fixes[key] ?? line.text), words: EditLimits.captionFix,
+                                       axis: .vertical, refuse: { model.show($0, error: true) }) { model.typeCaption(line, text: $0) }
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                         .foregroundStyle(hidden ? RecorderPalette.dim : RecorderPalette.text)
@@ -1113,9 +1112,10 @@ private struct TextInspector: View {
     private func editor(_ note: EditProject.TextNote) -> some View {
         let id = note.id
         return VStack(alignment: .leading, spacing: 8) {
-            TextField("Text", text: EditLimits.text.binding(note.text, set: { words in
+            DraftTextField(title: "Text", stored: note.text, words: EditLimits.text, axis: .vertical,
+                           refuse: { model.show($0, error: true) }) { words in
                 if !words.trimmingCharacters(in: .whitespaces).isEmpty { model.updateText(id) { $0.text = words } }
-            }, refuse: { model.show($0, error: true) }), axis: .vertical)
+            }
             .lineLimit(1...3)
             .textFieldStyle(.roundedBorder)
             .accessibilityIdentifier("recorder.text.words")
@@ -1226,10 +1226,10 @@ private struct RedactionEditor: View {
         let tracked = redaction.track?.isEmpty == false
         let shown = RedactionTrack.shownRect(redaction, atSourceUs: redaction.startUs)
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Name (what it hides)", text: Binding(get: { redaction.label ?? "" }, set: { value in
+            DraftTextField(title: "Name (what it hides)", stored: redaction.label ?? "", refuse: { model.show($0, error: true) }) { value in
                 let name = String(value.prefix(60))
                 model.updateRedaction(id) { $0.label = name.trimmingCharacters(in: .whitespaces).isEmpty ? nil : name }
-            }))
+            }
             .textFieldStyle(.roundedBorder)
             .accessibilityIdentifier("recorder.hide.name")
             if redaction.follow == true && !tracked {

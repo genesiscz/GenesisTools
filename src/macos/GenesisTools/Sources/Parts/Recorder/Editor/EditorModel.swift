@@ -669,6 +669,22 @@ final class EditorModel {
         }
     }
 
+    /// Typing in a caption line goes through change(), as the Text tab's words do: the keystrokes are one gesture and
+    /// one "Caption Fix" undo step, and EditOpDiff sends fixLine or unfixLine from the gesture's mark. Empty words keep
+    /// the last fix (only the eye button hides a line), and the transcript's own words take the fix back.
+    func typeCaption(_ line: CaptionTrack.Line, text: String) {
+        change { $0.transcript = Self.typedCaption($0.transcript, line: line, text: text) }
+    }
+
+    nonisolated static func typedCaption(_ transcript: EditProject.TranscriptSettings?, line: CaptionTrack.Line,
+                                         text: String) -> EditProject.TranscriptSettings? {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return transcript }
+        var settings = transcript ?? .init()
+        let key = EditProject.TranscriptSettings.key(line)
+        if text == line.text { settings.fixes.removeValue(forKey: key) } else { settings.fixes[key] = text }
+        return settings.fixes.isEmpty ? nil : settings
+    }
+
     /// A copy of the selected zoom, hidden part, text, shape or camera part right after the original, selected (⌘D).
     func duplicateSelection() {
         let id: String
