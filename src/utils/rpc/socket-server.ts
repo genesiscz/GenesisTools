@@ -30,6 +30,8 @@ export interface RpcSocketServerOptions<S> {
     state: () => S;
     /** Answers every method but `subscribe`, which the server answers itself; throw an RpcError to refuse. */
     call: (call: RpcCall<S>) => Promise<unknown>;
+    /** A connection subscribed: `params` as it sent them, for a service's own filters beside `events`. */
+    onSubscribe?: (connection: RpcConnection<S>, params: unknown) => void;
     onOpen?: (connection: RpcConnection<S>) => void;
     onClose?: (connection: RpcConnection<S>) => void;
     /** The logger scope (`live-recordings`) and the name in its lines (`live recording`). */
@@ -178,6 +180,7 @@ export class RpcSocketServer<S> {
         if (call.method === "subscribe") {
             const events = subscribeParams.safeParse(call.params ?? {});
             connection.events = new Set(events.success ? (events.data.events ?? []) : []);
+            this.options.onSubscribe?.(connection, call.params);
             return { events: [...connection.events] };
         }
 
