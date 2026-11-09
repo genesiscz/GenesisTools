@@ -2533,22 +2533,28 @@ private struct HubModePicker: View {
     @State private var icons = false
 
     /// Room each title takes beside its text: the segment's own inset, so a title never touches its neighbour.
-    private static let titleInset: CGFloat = 8
+    private static let titleInset: CGFloat = 6
     private static let spacing: CGFloat = 1
     private static let outerPadding: CGFloat = 2
 
-    /// The width the row needs to show every title whole, each at the semibold weight a selected one takes and
-    /// the Inbox one with its count. The segments are equal, so the widest title sets every segment's width. It was
-    /// a fixed 340 pt written when six modes fitted; with seven, "Worktrees" was cut at 350 pt (hub UX council,
-    /// 2026-11-09).
-    static func titlesWidth(waiting: Int) -> CGFloat {
+    /// A title's width at the semibold weight a selected one takes, so selecting a mode never cuts its title.
+    static func titleWidth(_ text: String) -> CGFloat {
         let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        let widest = HubMode.allCases.map { mode in
-            let text = mode == .inbox && waiting > 0 ? "\(mode.title) \(waiting)" : mode.title
-            return (text as NSString).size(withAttributes: [.font: font]).width
-        }.max() ?? 0
+        return ceil((text as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    static func title(_ mode: HubMode, waiting: Int) -> String {
+        mode == .inbox && waiting > 0 ? "\(mode.title) \(waiting)" : mode.title
+    }
+
+    /// The width the row needs to show every title whole. Each segment is at least as wide as its own title (the
+    /// Inbox one with its count) and shares the rest; equal segments needed 450 pt for "Worktrees", so a 370 pt
+    /// sidebar showed only icons. It was a fixed 340 pt written when six modes fitted, and with seven "Worktrees"
+    /// was cut at 350 pt (hub UX council, 2026-11-09).
+    static func titlesWidth(waiting: Int) -> CGFloat {
         let count = CGFloat(HubMode.allCases.count)
-        return (count * (ceil(widest) + titleInset) + (count - 1) * spacing + 2 * outerPadding).rounded(.up)
+        let titles = HubMode.allCases.map { titleWidth(title($0, waiting: waiting)) + titleInset }.reduce(0, +)
+        return (titles + (count - 1) * spacing + 2 * outerPadding).rounded(.up)
     }
 
     var body: some View {
@@ -2570,6 +2576,7 @@ private struct HubModePicker: View {
         let selected = model.mode == mode
         let waiting = inbox.waitingCount
         let count = mode == .inbox && waiting > 0 ? " \(waiting)" : ""
+        let least = icons ? 0 : Self.titleWidth(Self.title(mode, waiting: waiting)) + Self.titleInset
         return Button {
             model.setMode(mode)
         } label: {
@@ -2582,11 +2589,10 @@ private struct HubModePicker: View {
                     Text(verbatim: mode.title + count)
                         .font(.system(size: 11, weight: selected ? .semibold : .regular))
                         .lineLimit(1)
-                        .padding(.horizontal, Self.titleInset / 2)
                 }
             }
             .foregroundColor(selected ? .white : Color.white.opacity(0.7))
-            .frame(maxWidth: .infinity)
+            .frame(minWidth: least, maxWidth: .infinity)
             .frame(height: 20)
             .background(RoundedRectangle(cornerRadius: 5).fill(selected ? Color.white.opacity(0.16) : Color.clear))
             .contentShape(Rectangle())
