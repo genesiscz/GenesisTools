@@ -55,9 +55,17 @@ async function serve(flags: ServeFlags): Promise<void> {
         const { startRecorderService } = await import("../lib/service");
         await withInterrupt(
             async (signal) => {
+                const { prewarmAxTool } = await import("@app/control/lib/runner");
                 const start = await startRecorderService({
                     idleMs: flags.idle === false ? 0 : undefined,
                     sourceRoot: new URL("../../", import.meta.url).pathname,
+                    prewarmNative: (trigger) => {
+                        const outcome = prewarmAxTool({ trigger });
+
+                        if (outcome !== "fresh") {
+                            log.info({ trigger, outcome }, "native recorder prewarm");
+                        }
+                    },
                 });
 
                 if (start.status === "running") {

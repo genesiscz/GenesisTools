@@ -2104,3 +2104,14 @@ describe("a code change while a call runs", () => {
         );
     });
 });
+
+describe("building the native recorder ahead of a recording", () => {
+    test("the service asks for a prewarm when it starts and at each check", async () => {
+        const triggers: string[] = [];
+        await serviceFixture({ checkEveryMs: 15, prewarmNative: (trigger) => triggers.push(trigger) });
+        await Bun.sleep(80);
+
+        expect(triggers[0]).toBe("recorder-service-start");
+        expect(triggers.slice(1)).toContain("recorder-service-check");
+    });
+});

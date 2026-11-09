@@ -87,6 +87,12 @@ export interface RecorderServiceOptions {
     /** The headless face and `open`; tests stub them, so no app starts there. */
     headless?: Partial<HeadlessDeps>;
     onStopped?: (reason: string) => void;
+    /**
+     * Builds the native recorder (ax-tool) ahead of a recording when it is stale, without waiting: at the start
+     * (`recorder-service-start`) and at each check (`recorder-service-check`, a native source change). `serve` passes
+     * `prewarmAxTool`; tests leave it out, so no build starts there.
+     */
+    prewarmNative?: (trigger: string) => void;
 }
 
 export interface RecorderService {
@@ -746,8 +752,17 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     setEditOwner({ sessionOf: (path) => sessions.get(path) });
     setRecorderHostResolver(() => host);
 
+    const prewarm = (trigger: string): void => {
+        try {
+            options.prewarmNative?.(trigger);
+        } catch (error) {
+            log.warn({ error, trigger }, "the native recorder prewarm failed");
+        }
+    };
+    prewarm("recorder-service-start");
     const idleMs = options.idleMs ?? SERVICE_IDLE_MS;
     const check = setInterval(() => {
+        prewarm("recorder-service-check");
         if (options.sourceRoot && newestLoadedModuleMtime(options.sourceRoot) > startedAt) {
             // A running call (an export, a camera start) or a live recording would lose the service halfway: on
             // 2026-11-09 four exports failed with "the connection closed while the call ran". Wait for them.

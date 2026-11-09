@@ -337,7 +337,7 @@ export async function runCapturePlanWithSignal({
     if (backend === "native") {
         validateNativeCapturePlan(plan);
         try {
-            axTool = await ensureBinaryAsync({ signal, onBuild: onPreparing });
+            axTool = await ensureBinaryAsync({ signal, onBuild: onPreparing, trigger: "recording-start" });
         } catch (error) {
             throwIfCancelled("while the recorder was being built");
             throw error;
