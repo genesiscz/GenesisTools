@@ -1388,7 +1388,10 @@ program
     )
     .argument("<recording>", "the edit the movie was exported from")
     .argument("<movie>", "the exported movie")
-    .option("--from <time>", "the movie holds only the part from this OUTPUT time (seconds or m:ss)")
+    .option(
+        "--from <time>",
+        "the movie holds only the part from this OUTPUT time (seconds or m:ss), with no intro or end card"
+    )
     .option("--to <time>", "the movie holds only the part up to this OUTPUT time")
     .action(async (value: string, movie: string, flags: { from?: string; to?: string }) => {
         try {

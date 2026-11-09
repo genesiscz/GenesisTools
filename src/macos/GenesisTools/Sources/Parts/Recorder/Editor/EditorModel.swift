@@ -1381,6 +1381,16 @@ final class EditorModel {
         return format != .mp4 || project.audio.denoise != nil ? .tools(format) : .window
     }
 
+    /// What the window's MP4 export renders: the edit, or for a marked part a trimmed copy (the edit itself stays
+    /// whole). R4 9 intro and end cards: a part is a clip of the movie, without the cards around it, as `exportAs` in
+    /// src/recorder/lib/edit.ts makes it for the CLI, the REPL and the window's other formats. TimelineMap.part keeps
+    /// the cards, as partOf does there, so they go here; a part that keeps no clip exports the whole edit.
+    nonisolated static func exportedProject(_ project: EditProject, part: (fromUs: Int64, toUs: Int64)?) -> EditProject {
+        guard let part, var trimmed = TimelineMap.part(project, fromOut: part.fromUs, toOut: part.toUs) else { return project }
+        trimmed.cards = nil
+        return trimmed
+    }
+
     func export() {
         guard exportProgress == nil, !exportWaiting else { return }
         exportWaiting = true
@@ -1397,10 +1407,8 @@ final class EditorModel {
             exportThroughTools(format)
             return
         }
-        // A marked part exports a trimmed copy; the edit itself stays whole.
-        var rendered = project
         let part = exportPart
-        if let part, let trimmed = TimelineMap.part(project, fromOut: part.fromUs, toOut: part.toUs) { rendered = trimmed }
+        let rendered = Self.exportedProject(project, part: part)
         let url = EditExporter.outputURL(for: project)
         exportProgress = 0
         exportCancelled = false

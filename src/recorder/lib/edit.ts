@@ -1180,7 +1180,7 @@ export async function embedChapters({
 /**
  * What an export does after the movie is written, by the edit's settings: the subtitle file beside it and the
  * markers as chapters in an MP4. A missing transcript or a failed chapter step is a warning, never a failed export.
- * `part`: the movie holds only that part of the edit (the window's I and O).
+ * `part`: the movie holds only that part of the edit (the window's I and O), which has no intro or end card.
  */
 export async function finishExport({
     value,
@@ -1207,8 +1207,10 @@ export async function finishExport({
     const { project } = await openProject(value);
     const format = subtitles ?? project.export.subtitles;
     const warnings: string[] = [];
-    // R4 9 intro card: the renderer plays it before the movie, so subtitles and chapters move by its length.
-    const leadUs = cardsLeadUs(project);
+    // R4 9 intro card: the renderer plays it before the movie, so subtitles and chapters move by its length. A part
+    // is a clip of the movie without the cards on every route (exportAs here, the window's exportedProject), so it
+    // starts at the part's first frame.
+    const leadUs = part ? 0 : cardsLeadUs(project);
     const extras: { subtitles?: string; chapters?: number } = {};
 
     if (format) {

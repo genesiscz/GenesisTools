@@ -29,6 +29,8 @@ import {
 } from "@genesiscz/utils/screen-recorder/control";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
+import * as videoProbe from "@genesiscz/utils/video/probe";
+import * as videoProcess from "@genesiscz/utils/video/process";
 import type { z } from "zod";
 import goldenFixture from "./__fixtures__/editor-golden.json";
 import screenOpsFixture from "./__fixtures__/screen-hit-ops.json";
@@ -734,6 +736,85 @@ describe("finishing an export", () => {
         await expect(edits.finishExport({ value: path, answer: { ok: true, path: movie } })).rejects.toThrow(
             `${movie} does not exist`
         );
+    });
+});
+
+describe("finishing a part export of an edit with cards", () => {
+    /** A 10 s edit with a 3 s intro and end card, one transcript line at source 2.5 s and markers at 3 s and 4.5 s. */
+    function cardedEdit(prefix: string): { path: string; root: string } {
+        const root = mkdtempSync(join(tmpdir(), prefix));
+        const path = join(root, "talk.edit.json");
+        writeProject(path, {
+            ...wholeProject({ video: join(root, "talk.mp4"), durationUs: 10_000_000, width: 100, height: 100 }),
+            cards: { intro: { title: "Demo", seconds: 3 }, end: { text: "Bye", qr: false, seconds: 3 } },
+            markers: [
+                { id: "m1", atUs: 3_000_000, label: "Step one" },
+                { id: "m2", atUs: 4_500_000, label: "Step two" },
+            ],
+        });
+        writeFileSync(
+            join(root, "talk.transcript.json"),
+            '{"segments":[{"start":2.5,"end":3.5,"text":"Hello there"}]}'
+        );
+        return { path, root };
+    }
+
+    // Round 1 hunt (part-export-cards): a part plays no cards on any route, so its cues start from the part, while the
+    // window's `recorder finish --from --to` moved them by the whole edit's intro.
+    test("a part's subtitles start from the part, not after the intro; a whole export still moves them by it", async () => {
+        const { path, root } = cardedEdit("rs-finish-part-");
+        const movie = join(root, "part.webm");
+        writeFileSync(movie, "movie");
+
+        const part = await edits.finishExport({
+            value: path,
+            answer: { ok: true, path: movie },
+            subtitles: "srt",
+            part: { fromUs: 2_000_000, toUs: 5_000_000 },
+        });
+        expect(part.subtitles).toBe(join(root, "part.srt"));
+        expect(readFileSync(join(root, "part.srt"), "utf8")).toContain("00:00:00,500 --> 00:00:01,500");
+
+        await edits.finishExport({ value: path, answer: { ok: true, path: movie }, subtitles: "srt" });
+        expect(readFileSync(join(root, "part.srt"), "utf8")).toContain("00:00:05,500 --> 00:00:06,500");
+    });
+
+    test("a part's chapters have no intro chapter and start from the part", async () => {
+        const { path, root } = cardedEdit("rs-finish-chapters-");
+        const movie = join(root, "part.mp4");
+        writeFileSync(movie, "movie");
+        const written: string[] = [];
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async ({ input }) => ({
+            path: input,
+            durationUs: 3_000_000,
+            width: 100,
+            height: 100,
+            displayWidth: 100,
+            displayHeight: 100,
+            rotation: 0,
+            bytes: 5,
+            codec: "h264",
+        }));
+        const ffmpeg = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            written.push(readFileSync(command[command.indexOf("ffmetadata") + 2] ?? "", "utf8"));
+            writeFileSync(command.at(-1) ?? "", "movie");
+            return "";
+        });
+        closing.push(
+            () => probe.mockRestore(),
+            () => ffmpeg.mockRestore()
+        );
+
+        const answer = await edits.finishExport({
+            value: path,
+            answer: { ok: true, path: movie },
+            part: { fromUs: 2_000_000, toUs: 5_000_000 },
+        });
+
+        // The part starts in the 0:00 chapter chapterPoints adds before the first marker; no chapter names the intro card.
+        expect(answer.chapters).toBe(3);
+        expect(written[0]).not.toContain("title=Demo");
+        expect(written[0]).toContain("START=1000\nEND=2500\ntitle=Step one");
     });
 });
 
