@@ -207,7 +207,7 @@ describe("meetings config", () => {
 
         expect(migrateMeetingsConfig(raw)).toBe(true);
         expect(raw).toEqual({
-            version: 3,
+            version: MEETINGS_CONFIG_VERSION,
             projects: {
                 work: { match: { calendar: { calendars: ["Work"] }, title: { words: ["Sync", "Wiki"] } } },
                 side: { match: { title: { words: ["Side"] } } },
@@ -232,7 +232,7 @@ describe("meetings config", () => {
             retryFailedMin: 10,
         });
         expect(matchProjects(config, { title: "Side quest" })).toEqual(["side"]);
-        expect(meetingsConfigSchema.parse({ version: 4, future: { key: 1 } }).version).toBe(4);
+        expect(meetingsConfigSchema.parse({ version: 99, future: { key: 1 } }).version).toBe(99);
     });
 
     test("labels and people pairings: many projects per person, unpairing an entry keeps other sources", async () => {
@@ -283,6 +283,34 @@ describe("meetings config", () => {
         expect(await config.addSourceFolder("wisprflow", "work", "Work")).toBe(true);
         expect(await config.addSourceFolder("wisprflow", "work", "work")).toBe(false);
         expect(sourceFolders(await config.read(), "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);
+    });
+
+    test("a version 3 file nests the tone under listen.tone, and a key already there wins", async () => {
+        const v3 = { version: 3, global: { playback: { listen: { beep: false, beepLeadSec: 0.8, repeat: false } } } };
+        const raw: Record<string, unknown> = structuredClone(v3);
+
+        expect(migrateMeetingsConfig(raw)).toBe(true);
+        expect(raw).toEqual({
+            version: MEETINGS_CONFIG_VERSION,
+            global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: false } } },
+        });
+        expect(migrateMeetingsConfig(raw)).toBe(false);
+        expect(meetingsConfigSchema.parse(v3).global.playback.listen.tone).toEqual({
+            enabled: false,
+            leadSec: 0.8,
+            sound: { hz: 880, sec: 0.15, volume: 0.6 },
+        });
+
+        const both = { version: 3, global: { playback: { listen: { beep: false, tone: { enabled: true } } } } };
+        expect(meetingsConfigSchema.parse(both).global.playback.listen.tone.enabled).toBe(true);
+
+        const config = store();
+        await config.storage.setConfig(v3);
+        expect((await config.read()).global.playback.listen.tone.leadSec).toBe(0.8);
+        expect(await config.storage.getConfig()).toEqual({
+            version: MEETINGS_CONFIG_VERSION,
+            global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: false } } },
+        });
     });
 
     test("a version 1 file on disk is rewritten once, and a later change keeps the new shape", async () => {

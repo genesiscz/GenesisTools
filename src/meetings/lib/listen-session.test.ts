@@ -485,12 +485,13 @@ describe("listen --clip-out (MC22)", () => {
                 audioPath: "/clips/call.ogg",
                 outPath: clip,
                 ...plan,
+                toneSound: listen.tone.sound,
             }))
         );
         const spot = askedSpotSec(asQuestion(record.items[0]), words);
-        expect(written[0]).toMatchObject({ padSec: 5, toneAtSec: spot - listen.beepLeadSec });
+        expect(written[0]).toMatchObject({ padSec: 5, toneAtSec: spot - listen.tone.leadSec });
         expect(written[0]!.fromSec).toBeLessThan(spot);
-        expect(written[1]).toMatchObject({ fromSec: 60, toSec: 61, padSec: listen.beepLeadSec + SPEAKER_PAD_SEC });
+        expect(written[1]).toMatchObject({ fromSec: 60, toSec: 61, padSec: listen.tone.leadSec + SPEAKER_PAD_SEC });
         expect(fx.read()).toEqual(record);
     });
 });

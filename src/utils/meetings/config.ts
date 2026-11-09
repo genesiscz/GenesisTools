@@ -37,7 +37,7 @@ export const projectNameSchema = z
 const strings = z.array(z.string().trim().min(1)).default([]);
 
 /** The config shape this code writes. Older files are migrated on the first read (`migrateMeetingsConfig`). */
-export const MEETINGS_CONFIG_VERSION = 3;
+export const MEETINGS_CONFIG_VERSION = 4;
 
 /**
  * How a meeting finds its project, by the facts every meeting has: its calendar entry, its title and its people. A
@@ -169,6 +169,29 @@ export const MEETING_PLAYERS = ["vlc", "ffplay"] as const;
 /** The players `tools meetings listen` can play a cut clip with, in the order it tries them. */
 export const LISTEN_PLAYERS = ["afplay", "vlc", "ffplay"] as const;
 
+/** The tone's sound when nothing else is set: a short 880 Hz sine, quieter than speech. */
+export const DEFAULT_TONE_SOUND = { hz: 880, sec: 0.15, volume: 0.6 } as const;
+
+/**
+ * The short tone a Moment's clip carries just before its asked spot (the heard words of a term, the start of a voice),
+ * so the listener knows what the question is about. The terminal and the Meetings window both hear it.
+ */
+const toneSchema = z.object({
+    enabled: z.boolean().default(true),
+    /** How long before the asked spot the tone sounds (version 3 kept it as `beepLeadSec`). */
+    leadSec: z.number().min(0).max(3).default(0.4),
+    /** What it sounds like: a sine of `hz`, `sec` long, at `volume` (1 is the speech's level). */
+    sound: z
+        .object({
+            hz: z.number().min(50).max(8000).default(DEFAULT_TONE_SOUND.hz),
+            sec: z.number().min(0.02).max(2).default(DEFAULT_TONE_SOUND.sec),
+            volume: z.number().min(0).max(1).default(DEFAULT_TONE_SOUND.volume),
+        })
+        .prefault({}),
+});
+export type ToneSettings = z.infer<typeof toneSchema>;
+export type ToneSound = ToneSettings["sound"];
+
 const listenSchema = z.object({
     /** Plays the cut clip; a clip needs no seeking, so macOS's own afplay is enough. */
     player: z.enum(LISTEN_PLAYERS).default("afplay"),
@@ -180,10 +203,8 @@ const listenSchema = z.object({
     minPriority: z.number().min(0).default(0.5),
     /** Seconds between showing a question and playing its clip, so the question is read before the audio starts. */
     delaySec: z.number().min(0).max(10).default(2),
-    /** A short tone in the clip just before the asked spot: the heard words of a term, the start of a speaker range. */
-    beep: z.boolean().default(true),
-    /** How long before the asked spot the tone sounds. */
-    beepLeadSec: z.number().min(0).max(3).default(0.4),
+    /** The tone before the asked spot (version 3 kept `beep` and `beepLeadSec` flat here). */
+    tone: toneSchema.prefault({}),
     /** Plays the clip again each time it ends, until the question is answered, so it can be heard while typing. */
     repeat: z.boolean().default(true),
     /** The pause between two plays of a repeated clip. */
@@ -450,6 +471,33 @@ function migrateToV3(raw: Record<string, unknown>): void {
 }
 
 /**
+ * Version 3 to 4: `global.playback.listen.beep` to `listen.tone.enabled` and `beepLeadSec` to `listen.tone.leadSec`,
+ * since the tone gained its sound and belongs to every Moment, not only the terminal's. A key already in its new place
+ * wins.
+ */
+function migrateToV4(raw: Record<string, unknown>): void {
+    const global = isObject(raw.global) ? raw.global : undefined;
+    const playback = global && isObject(global.playback) ? global.playback : undefined;
+    const listen = playback && isObject(playback.listen) ? playback.listen : undefined;
+
+    if (!listen || (listen.beep === undefined && listen.beepLeadSec === undefined)) {
+        return;
+    }
+
+    const tone = objectAt(listen, "tone");
+
+    if (listen.beep !== undefined) {
+        tone.enabled ??= listen.beep;
+        delete listen.beep;
+    }
+
+    if (listen.beepLeadSec !== undefined) {
+        tone.leadSec ??= listen.beepLeadSec;
+        delete listen.beepLeadSec;
+    }
+}
+
+/**
  * Moves an older config to the current places, in place, one version step at a time. A file without a version is
  * version 1. Returns whether anything changed; a current config is left alone, so a second run changes nothing.
  */
@@ -464,7 +512,11 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
         migrateToV2(raw);
     }
 
-    migrateToV3(raw);
+    if (version < 3) {
+        migrateToV3(raw);
+    }
+
+    migrateToV4(raw);
     raw.version = MEETINGS_CONFIG_VERSION;
     return true;
 }
