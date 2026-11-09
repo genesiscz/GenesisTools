@@ -113,7 +113,9 @@ public struct ApprovalItem: Identifiable {
     /// How much the delete can lose; nil draws no risk chip.
     public let risk: ApprovalRisk?
 
-    public var id: String { path }
+    /// A row is the object where it is now: two rows of one path (two requests' set-aside copies of a folder) are two
+    /// rows, ticked apart.
+    public var id: String { location }
 
     public init(path: String, location: String? = nil, name: String, folder: String, size: String?, reason: String,
                 gone: Bool, aside: Bool = false, isFolder: Bool, opensInMarkdown: Bool = false, icon: NSImage? = nil,
