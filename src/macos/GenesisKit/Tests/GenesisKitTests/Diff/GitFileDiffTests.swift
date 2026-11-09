@@ -24,6 +24,32 @@ final class GitFileDiffTests: XCTestCase {
         }
     }
 
+    /// A file over the soft limit is a "large file" note until the reader asks for it; then a commit scope reads both
+    /// sides whole (2026-11-09: a 1.7 MB vendored file kept its note after "click to show it anyway").
+    func testALargeFileOfACommitShowsWholeOnceAsked() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gk-diff-large-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let line = String(repeating: "x", count: 1_200_000)
+        _ = try git(["init", "-q"], in: repo)
+        try (line + "\n").write(to: repo.appendingPathComponent("big.tsx"), atomically: true, encoding: .utf8)
+        _ = try git(["add", "big.tsx"], in: repo)
+        _ = try git(["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "one"], in: repo)
+        try (line + "y\n").write(to: repo.appendingPathComponent("big.tsx"), atomically: true, encoding: .utf8)
+        _ = try git(["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-q", "-a", "-m", "two"], in: repo)
+        let sha = try git(["rev-parse", "HEAD"], in: repo)
+
+        var source = GitWorkingTreeSource(repo: repo)
+        let skipped = try XCTUnwrap(try source.load(scope: .commit(sha: sha, title: "two")).files.first)
+        XCTAssertTrue(GitWorkingTreeSource.isLarge(skipped.skipped), "\(skipped.skipped ?? "no note")")
+
+        source.fullFiles = ["big.tsx"]
+        let whole = try XCTUnwrap(try source.load(scope: .commit(sha: sha, title: "two")).files.first)
+        XCTAssertNil(whole.skipped, "asked for, the file is read whole")
+        XCTAssertEqual(whole.newContents?.count, line.count + 2)
+        XCTAssertEqual(whole.oldContents?.count, line.count + 1)
+    }
+
     /// A changed and an added PNG carry their sides' sources, and the page's image URLs serve those bytes.
     func testAnImageInTheDiffNamesItsSidesAndTheirBytesAreServed() throws {
         let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gk-diff-image-\(UUID().uuidString)")

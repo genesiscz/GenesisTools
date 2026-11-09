@@ -182,7 +182,7 @@ interface ItemContext {
 function openOnCommandClick(click: OnLineClickProps | OnDiffLineClickProps, context: ItemContext): void {
     // A file skipped for its size shows one note line; a click on it asks for the whole file (Martin, 2026-10-26).
     if (!click.event.metaKey && largeFiles.has(context.item.id)) {
-        post({ type: "showLarge", fileId: context.item.id });
+        askLarge(context.item.id, "note line");
         return;
     }
 
@@ -348,6 +348,57 @@ const folded = new Set<string>();
 
 /** Files skipped for their size, by id: a click on their note line asks for them (`openOnCommandClick`). */
 const largeFiles = new Set<string>();
+
+/** The same files by path, for their header's button (pierre names a header by its file's path). */
+const largeByPath = new Map<string, string>();
+
+/** Large files asked for and not here yet: their button reads "Loading…" and a second click asks nothing. */
+const largeAsked = new Set<string>();
+
+/**
+ * Asks Swift for a large file whole, once, from its header button, its note line or that line's "+". The button turns
+ * into "Loading…" at once, so the click shows even before the file arrives (2026-11-09: a click on the note looked
+ * like nothing happened). Every ask is logged, so a click that did reach the page can be told from one that did not.
+ */
+function askLarge(fileId: string, from: string): void {
+    if (largeAsked.has(fileId)) {
+        return;
+    }
+
+    largeAsked.add(fileId);
+    post({ type: "log", message: `diff.large asked for ${fileId} from its ${from}` });
+    post({ type: "showLarge", fileId });
+    const item = viewer.getItem(fileId);
+
+    if (item) {
+        viewer.updateItem({ ...item, version: nextVersion(fileId) });
+    }
+}
+
+/** A large file's "Show whole file" button after its name; "Loading…" once asked. Nothing for other files. */
+function largeFileButton(path: string): HTMLElement | undefined {
+    const fileId = largeByPath.get(path);
+
+    if (fileId === undefined) {
+        return undefined;
+    }
+
+    const asked = largeAsked.has(fileId);
+    const button = element(
+        "button",
+        "margin-left:8px;font:11px -apple-system,sans-serif;color:rgba(255,255,255,.85);background:transparent;border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:1px 8px;cursor:pointer;-webkit-user-select:none;user-select:none",
+        asked ? "Loading…" : "Show whole file"
+    );
+    button.title = asked
+        ? "Reading the whole file; it replaces the note when it arrives"
+        : "This file is over 1 MB, so the diff skipped it: read it whole (up to 20 MB)";
+    button.disabled = asked;
+    button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        askLarge(fileId, "header button");
+    });
+    return button;
+}
 
 /** The header's fold chevron: shows the state, names the header for VoiceOver and `tools control`. */
 function foldChevron(path: string): HTMLElement {
@@ -532,6 +583,12 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
             blameLeave();
         },
         onGutterUtilityClick(range: SelectedLineRange, context: ItemContext) {
+            // The note line of a large file is no code to comment on: its "+" asks for the file, as the line does.
+            if (largeFiles.has(context.item.id)) {
+                askLarge(context.item.id, "+ button");
+                return;
+            }
+
             openComposer(context.item.id, range);
         },
         onLineSelectionEnd(range: SelectedLineRange | null, context: ItemContext) {
@@ -546,7 +603,7 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
             return foldChevron(fileDiff.name);
         },
         renderHeaderFilenameSuffix(fileDiff) {
-            return svgModeButton(fileDiff.name);
+            return svgModeButton(fileDiff.name) ?? largeFileButton(fileDiff.name);
         },
     };
 }
@@ -3464,8 +3521,14 @@ function addFiles(batch: FilesBatch): void {
     for (const file of batch.files) {
         if (file.large) {
             largeFiles.add(file.id);
+            largeByPath.set(file.path, file.id);
         } else {
             largeFiles.delete(file.id);
+            largeAsked.delete(file.id);
+
+            if (largeByPath.get(file.path) === file.id) {
+                largeByPath.delete(file.path);
+            }
         }
     }
 
