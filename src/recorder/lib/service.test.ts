@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { cameraMoviePath } from "@genesiscz/utils/recording-editor/camera";
-import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import { applyOp, readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import type { RpcProgress } from "@genesiscz/utils/rpc/peer";
 import { type RpcNotification, RpcSocketClient, type RpcSocketClientOptions } from "@genesiscz/utils/rpc/socket-client";
 import {
@@ -58,7 +58,7 @@ import {
     type ServiceEntry,
     serviceApi,
 } from "./service-protocol";
-import { Movie, moviesApi } from "./toolset";
+import { Movie, moviesApi, recordingMovie } from "./toolset";
 
 const closing: Array<() => void> = [];
 
@@ -1246,6 +1246,47 @@ describe("the REPL's and the CLI's way to the service", () => {
         } finally {
             rmSync(folder, { recursive: true, force: true });
         }
+    });
+
+    // H1-111: tools recorder fix, cut-words, cut-fillers and replace-words, and the Movie that stop() and demo() return,
+    // saved the edit beside the service, so the window's open session lost its undo history.
+    test("recordingMovie, the Movie of the CLI's edit commands, stop() and demo(), edits the window's open session through the service", async () => {
+        const { dir, service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-cli-fix-");
+        writeProject(
+            path,
+            applyOp(applyOp(readProject(path), { op: "marker", at: 6.2, label: "Step" }), {
+                op: "cut",
+                from: 3,
+                to: 6.5,
+            })
+        );
+        const window = await connect(service.entry);
+        await window.call<unknown>("hello", hello("host"));
+        await window.call<unknown>("session.open", { path });
+        await window.call<unknown>("edit.apply", {
+            path,
+            ops: [{ op: "volume", volume: 0.5 }],
+            baseRevision: readProject(path).revision,
+        });
+        const session = service.sessions.get(path);
+        expect(session?.undoDepth).toBe(1);
+
+        // In this test the service runs in this process, so a local save would reach the session too: the call itself
+        // must go over the socket, as it does from a CLI process that has no session of its own.
+        const spy = spyOn(RpcSocketClient.prototype, "call");
+
+        try {
+            await recordingMovie(path, undefined, { dir }).fix();
+            expect(spy.mock.calls.map(([method]) => method)).toContain("movie.fix");
+        } finally {
+            spy.mockRestore();
+        }
+
+        await Bun.sleep(10);
+
+        expect(session?.current.project.markers?.map((marker) => marker.atUs)).toEqual([6_500_000]);
+        expect(session?.undoDepth).toBe(2);
     });
 
     test("a REPL Movie's edit goes into the window's open session through the service, and runs locally without one", async () => {

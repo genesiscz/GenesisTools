@@ -80,7 +80,7 @@ import {
     type StartFlags,
     withStartOptions,
 } from "./lib/start-options";
-import { Movie, movieDemoDriver } from "./lib/toolset";
+import { Movie, movieDemoDriver, recordingMovie } from "./lib/toolset";
 import { announcedCountdown, recordVideo, tracksPointer, videoDoneLine } from "./lib/video-recording";
 
 const { log } = logger.scoped("recorder");
@@ -857,7 +857,7 @@ program
     .action(
         async (value: string, flags: { find: string; replace: string; matchCase?: boolean; partOfWord?: boolean }) => {
             try {
-                const answer = await new Movie(value).replaceWords({
+                const answer = await recordingMovie(value).replaceWords({
                     find: flags.find,
                     replace: flags.replace,
                     matchCase: flags.matchCase,
@@ -953,7 +953,7 @@ program
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .action(async (value: string) => {
         try {
-            const answer = await new Movie(value).fix();
+            const answer = await recordingMovie(value).fix();
 
             for (const message of answer.fixed) {
                 out.printlnErr(`fixed  ${message}`);
@@ -1472,7 +1472,7 @@ program
             flags: { at: string; words: string; occurrence?: string; padMs?: string; dryRun?: boolean }
         ) => {
             try {
-                const movie = new Movie(value);
+                const movie = recordingMovie(value);
                 out.result(
                     await movie.cutWords({
                         at: parseTime(flags.at, "--at"),
@@ -1527,7 +1527,7 @@ program
             flags: { lang?: string; all?: boolean; words?: string; padMs?: string; dryRun?: boolean }
         ) => {
             try {
-                const answer = await new Movie(value).cutFillers({
+                const answer = await recordingMovie(value).cutFillers({
                     ...(flags.lang ? { language: flags.lang } : {}),
                     level: flags.all ? "all" : "sounds",
                     ...(flags.words ? { words: flags.words.split(",").map((word) => word.trim()) } : {}),

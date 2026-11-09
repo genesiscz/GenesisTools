@@ -3166,7 +3166,7 @@ export class MovieRecording {
             await Bun.sleep(POLL_MS);
         }
 
-        return new Movie(folder, this.ctx);
+        return recordingMovie(folder, this.ctx);
     }
 }
 
@@ -3323,6 +3323,15 @@ export function movieDemoDriver(options: RecordOptions, ctx?: ToolsetContext): D
     };
 }
 
+/**
+ * The Movie every door outside this module hands out for a recording that can change its edit: its edit methods run
+ * in the recorder service when one runs, so the window's open edit keeps its undo history. A bare Movie saves the
+ * file beside the service, which then drops that history (EditSession.syncWithDisk).
+ */
+export function recordingMovie(recording: string, ctx?: ToolsetContext, options: { dir?: string } = {}): Movie {
+    return serviceRoutedMovie(new Movie(recording, ctx), movieMethods, options);
+}
+
 /** `movies.demo()`: the REPL door of runDemo, with the Movie of the result to keep editing. */
 async function recordDemo(options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }, ctx?: ToolsetContext) {
     const parsed = demoParamsSchema.parse(options);
@@ -3341,7 +3350,7 @@ async function recordDemo(options: z.input<typeof demoParamsSchema> & { steps: D
         holdSeconds: parsed.holdSeconds,
         export: parsed.export,
     });
-    return { movie: new Movie(result.folder, ctx), ...result };
+    return { movie: recordingMovie(result.folder, ctx), ...result };
 }
 
 export class MoviesToolset extends ReplToolset {
@@ -3359,14 +3368,14 @@ export class MoviesToolset extends ReplToolset {
                 // A name that matches nothing answered a Movie, and the first call failed far from the typo (NR11).
                 open: (recording: string) => {
                     resolveRecording(recording);
-                    return serviceRoutedMovie(new Movie(recording, ctx), movieMethods);
+                    return recordingMovie(recording, ctx);
                 },
                 record: (options: RecordOptions = {}) => record({ options, ctx, deps: { ...REAL_DEPS, ...this.deps } }),
                 demo: (options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }) => recordDemo(options, ctx),
                 // The recording the import made, as open() gives it: the next call is an edit.
                 import: async (path: string, options: ImportMovieOptions = {}) => {
                     const imported = await importMovie(path, options);
-                    return serviceRoutedMovie(new Movie(imported.folder, ctx), movieMethods);
+                    return recordingMovie(imported.folder, ctx);
                 },
                 search: (text: string) => searchLibrary(text),
             },
