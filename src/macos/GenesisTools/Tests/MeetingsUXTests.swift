@@ -253,7 +253,7 @@ final class MeetingsUXTests: XCTestCase {
 
     // MARK: R15, R31 notices float over the pane, stack, and each keeps its Undo
 
-    func testTwoAnswersInARowKeepTwoUndoButtons() throws {
+    func testTwoDecisionsInARowKeepTwoUndoButtons() throws {
         let (defaults, suite) = try defaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let clock = ManualNoticeClock()

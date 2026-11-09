@@ -182,8 +182,14 @@ struct SpeakerStats: Decodable, Equatable {
 /// A sign about one label from `speakers stats`, with how strong it is ("weak", "normal", "strong"). The fields after
 /// `strength` belong to some kinds only (`SpeakerHint` in src/utils/transcribe/speakers.ts).
 struct SpeakerHint: Decodable, Equatable, Hashable {
-    /// Lines in a row that break an attendance rule (`absent-speaker`, `sole-attendee`).
-    struct Range: Decodable, Equatable, Hashable { let lines: Int }
+    /// Lines in a row that break an attendance rule (`absent-speaker`, `sole-attendee`): where they are, and who was in
+    /// the call meanwhile (the candidates for the voice, on `absent-speaker` ranges).
+    struct Range: Decodable, Equatable, Hashable {
+        let lines: Int
+        var fromSec: Double? = nil
+        var toSec: Double? = nil
+        var present: [String]? = nil
+    }
     /// A goodbye after which the label speaks again (`leave-then-continues`).
     struct Leave: Decodable, Equatable, Hashable { let atSec: Double }
 

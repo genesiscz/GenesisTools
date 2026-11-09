@@ -253,8 +253,94 @@ final class MeetingsServiceTests: XCTestCase {
                 let changed = try MeetingsService.decode(MeetingsAPI.MeetingChanged.self, notification)
                 XCTAssertEqual(changed.meeting, Self.design)
                 XCTAssertEqual(changed.parts, ["show", "transcript"])
+            case MeetingsAPI.DecisionApplied.name, MeetingsAPI.DecisionReverted.name, MeetingsAPI.CommentSent.name:
+                // Every event decodes through the table the connection uses.
+                let notification = try XCTUnwrap((example["notification"] as? [String: Any])?["params"])
+                let event = try XCTUnwrap(MeetingsAPI.eventDecoders[method], "\(method) is in the event table")(notification)
+                XCTAssertEqual(event.meeting, Self.design, label)
+                if method != MeetingsAPI.CommentSent.name { XCTAssertNotNil(event.entry, label) }
+            case MeetingsAPI.DecisionPlan.name:
+                try roundTrip(MeetingsAPI.DecisionPlan.Params.self, params, label)
+                if let result { XCTAssertNotNil(try MeetingsService.decode(MeetingsAPI.DecisionPlan.Result.self, result).entry, label) }
+            case MeetingsAPI.DecisionApply.name:
+                try roundTrip(MeetingsAPI.DecisionApply.Params.self, params, label)
+                if let result {
+                    let decided = try MeetingsService.decode(MeetingsAPI.DecisionApply.Result.self, result)
+                    let entry = try XCTUnwrap(decided.entry, label)
+                    XCTAssertEqual(entry.actor.kind, "agent", label)
+                    XCTAssertFalse(entry.changes.isEmpty, "\(label): the item before and after decode")
+                }
+                if let data = (reply?["error"] as? [String: Any])?["data"] {
+                    let refused = try MeetingsService.decode(AlreadyDecided.self, data)
+                    XCTAssertEqual(refused.code, "already-decided", label)
+                    XCTAssertNotNil(refused.entry, "\(label): the refusal names the entry that decided it")
+                }
+            case MeetingsAPI.DecisionRevert.name:
+                try roundTrip(MeetingsAPI.DecisionRevert.Params.self, params, label)
+                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.DecisionRevert.Result.self, result).entry?.action.kind, "revert") }
+            case MeetingsAPI.JournalRead.name:
+                try roundTrip(MeetingsAPI.JournalRead.Params.self, params, label)
+                if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.JournalRead.Result.self, result).entries.isEmpty, label) }
+            case MeetingsAPI.MomentPlan.name:
+                try roundTrip(MeetingsAPI.MomentPlan.Params.self, params, label)
+                if let result {
+                    let plan = try MeetingsService.decode(MeetingsAPI.MomentPlan.Result.self, result)
+                    XCTAssertTrue(plan.moment != nil || plan.cannot != nil, label)
+                }
+            case MeetingsAPI.MomentClipCut.name:
+                try roundTrip(MeetingsAPI.MomentClipCut.Params.self, params, label)
+                if let result { XCTAssertTrue(try MeetingsService.decode(MeetingsAPI.MomentClipCut.Result.self, result).path.hasSuffix(".wav"), label) }
+            case MeetingsAPI.TonePreview.name:
+                try roundTrip(MeetingsAPI.TonePreview.Params.self, params, label)
+                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.TonePreview.Result.self, result).sound.hz, 880) }
+            case MeetingsAPI.MeetingAudio.name:
+                try roundTrip(MeetingsAPI.MeetingAudio.Params.self, params, label)
+                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.MeetingAudio.Result.self, result).tracks, 1) }
+            case MeetingsAPI.MeetingSpeakers.name:
+                try roundTrip(MeetingsAPI.MeetingSpeakers.Params.self, params, label)
+                if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.MeetingSpeakers.Result.self, result).speakers.isEmpty, label) }
+            case MeetingsAPI.MeetingScreen.name:
+                try roundTrip(MeetingsAPI.MeetingScreen.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.MeetingScreen.Result.self, result) }
+            case MeetingsAPI.MeetingWaveform.name:
+                try roundTrip(MeetingsAPI.MeetingWaveform.Params.self, params, label)
+                if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.MeetingWaveform.Result.self, result).peaks.isEmpty, label) }
+            case MeetingsAPI.Overview.name:
+                try roundTrip(MeetingsAPI.Overview.Params.self, params, label)
+                if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.Overview.Result.self, result).meetings.isEmpty, label) }
+            case MeetingsAPI.ConfigRead.name:
+                try roundTrip(MeetingsAPI.ConfigRead.Params.self, params, label)
+                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.ConfigRead.Result.self, result).value, .number(30)) }
+            case MeetingsAPI.ConfigSet.name:
+                try roundTrip(MeetingsAPI.ConfigSet.Params.self, params, label)
+                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.ConfigSet.Result.self, result).path.last, "longestClipSec") }
+            case MeetingsAPI.ConfigUnset.name:
+                try roundTrip(MeetingsAPI.ConfigUnset.Params.self, params, label)
+                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.ConfigUnset.Result.self, result).value, .number(30)) }
+            case MeetingsAPI.MeetingRows.name:
+                try roundTrip(MeetingsAPI.MeetingRows.Params.self, params, label)
+                if let result {
+                    let rows = try MeetingsService.decode(MeetingsAPI.MeetingRows.Result.self, result)
+                    let row = try XCTUnwrap(rows.rows.first, label)
+                    XCTAssertEqual(row.choices.first?.confidence, 0.82, "\(label): the suggested choice's confidence")
+                    XCTAssertNil(row.choices.dropFirst().first?.confidence, "\(label): a speaker candidate shows none")
+                    XCTAssertEqual(row.decision?.by, "an agent (Claude Code, session 11111111)", label)
+                    XCTAssertEqual(row.choices[1].action.decision(on: row), .confirm(["i1"], speaker: "Dana Example"))
+                }
+            case MeetingsAPI.CommentStage.name:
+                try roundTrip(MeetingsAPI.CommentStage.Params.self, params, label)
+                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.CommentStage.Result.self, result).state, "staged") }
+            case MeetingsAPI.CommentList.name:
+                try roundTrip(MeetingsAPI.CommentList.Params.self, params, label)
+                if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.CommentList.Result.self, result).listeners.isEmpty, label) }
+            case MeetingsAPI.CommentUnstage.name:
+                try roundTrip(MeetingsAPI.CommentUnstage.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.CommentUnstage.Result.self, result) }
+            case MeetingsAPI.CommentSend.name:
+                try roundTrip(MeetingsAPI.CommentSend.Params.self, params, label)
+                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.CommentSend.Result.self, result).entry?.action.kind, "comment") }
             default:
-                // A method the window does not call yet (Wave B adds the decisions and the moments): nothing to decode.
+                // A method the window does not mirror (b-people's people.*): nothing to decode.
                 continue
             }
             if let error = reply?["error"] as? [String: Any], (error["code"] as? NSNumber)?.intValue == MeetingsAPI.refusedCode {
@@ -264,7 +350,8 @@ final class MeetingsServiceTests: XCTestCase {
             decoded[method, default: 0] += 1
         }
         for method in [MeetingsAPI.Hello.name, MeetingsAPI.List.name, MeetingsAPI.Show.name, MeetingsAPI.Transcript.name,
-                       MeetingsAPI.Revisions.name, MeetingsAPI.Subscribe.name, MeetingsAPI.MeetingChanged.name] {
+                       MeetingsAPI.Revisions.name, MeetingsAPI.Subscribe.name, MeetingsAPI.MeetingChanged.name]
+            + Self.wavebMethods + [MeetingsAPI.DecisionApplied.name, MeetingsAPI.DecisionReverted.name, MeetingsAPI.CommentSent.name] {
             XCTAssertGreaterThan(decoded[method] ?? 0, 0, "the fixture has an example of \(method)")
         }
         for code in ["meeting-not-found", "no-transcript-source", "no-hello", "protocol-mismatch", "code-mismatch"] {
@@ -279,8 +366,21 @@ final class MeetingsServiceTests: XCTestCase {
                        MeetingsAPI.Transcript.name, MeetingsAPI.Revisions.name, MeetingsAPI.Subscribe.name] {
             XCTAssertTrue(hello.methods.contains(method), "the service answers \(method): \(hello.methods)")
         }
-        XCTAssertTrue(hello.events.contains(MeetingsAPI.MeetingChanged.name))
+        for method in Self.wavebMethods {
+            XCTAssertTrue(hello.methods.contains(method), "the service answers \(method): \(hello.methods)")
+        }
+        XCTAssertEqual(Set(hello.events), Set(MeetingsAPI.windowEvents), "the window subscribes to every event the service sends")
+        XCTAssertEqual(Set(MeetingsAPI.eventDecoders.keys), Set(MeetingsAPI.windowEvents))
     }
+
+    /// The methods Wave B mirrors.
+    private static let wavebMethods = [
+        MeetingsAPI.DecisionPlan.name, MeetingsAPI.DecisionApply.name, MeetingsAPI.DecisionRevert.name, MeetingsAPI.JournalRead.name,
+        MeetingsAPI.MomentPlan.name, MeetingsAPI.MomentClipCut.name, MeetingsAPI.TonePreview.name, MeetingsAPI.MeetingAudio.name,
+        MeetingsAPI.MeetingSpeakers.name, MeetingsAPI.MeetingScreen.name, MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name,
+        MeetingsAPI.ConfigRead.name, MeetingsAPI.ConfigSet.name, MeetingsAPI.ConfigUnset.name, MeetingsAPI.MeetingRows.name,
+        MeetingsAPI.CommentStage.name, MeetingsAPI.CommentList.name, MeetingsAPI.CommentUnstage.name, MeetingsAPI.CommentSend.name,
+    ]
 
     func testTheWindowsReadsNameTheServiceMethodAndTheSameCommand() {
         let record = MeetingDetailModel.recordRead("m1")
@@ -314,18 +414,20 @@ final class MeetingsServiceTests: XCTestCase {
         try? FileManager.default.removeItem(at: folder)
     }
 
-    /// service.json as the TypeScript host writes it, naming the fake's socket and a live pid.
-    private func writeServiceEntry() throws {
-        let entry: [String: Any] = ["version": 1, "protocol": 1, "pid": Int(getpid()), "socket": fake.path,
+    /// service.json as the TypeScript host writes it, naming the fake's socket and a live pid (and the checkout its code
+    /// runs from, when given).
+    private func writeServiceEntry(sourceRoot: String? = nil) throws {
+        var entry: [String: Any] = ["version": 1, "protocol": 1, "pid": Int(getpid()), "socket": fake.path,
                                     "startedAt": "2026-11-09T19:00:00.000Z", "codeStamp": 0]
+        entry["sourceRoot"] = sourceRoot
         try JSONSerialization.data(withJSONObject: entry).write(to: folder.appendingPathComponent("service.json"))
     }
 
-    private func makeService() -> MeetingsService {
+    private func makeService(checkout: MeetingsService.Checkout? = nil) -> MeetingsService {
         let log = commands!
         return MeetingsService(folder: folder, timing: .init(helloTimeout: 2, startThrottle: 30, refusedBackoff: 60, idleClose: 60,
                                                              reconnectDelay: 0.05),
-                               pid: 4242, startService: {
+                               pid: 4242, checkout: checkout, startService: {
                                    log.starts += 1
                                    if let failure = log.startFailure { throw failure }
                                })
@@ -474,10 +576,12 @@ final class MeetingsServiceTests: XCTestCase {
         let service = makeService()
         let heard = expectation(description: "meeting.changed arrived")
         var changes: [MeetingsAPI.MeetingChanged] = []
-        service.onMeetingChanged = { changed in
+        let listening = service.listen { signal in
+            guard case .event(.meetingChanged(let changed)) = signal else { return }
             changes.append(changed)
             heard.fulfill()
         }
+        defer { listening.cancel() }
         let events = try await service.subscribe(meeting: Self.design, events: ["meeting.changed"])
         XCTAssertEqual(events, ["meeting.changed"])
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -502,16 +606,24 @@ final class MeetingsServiceTests: XCTestCase {
         try writeServiceEntry()
         let service = makeService()
         var resumed = 0
-        service.onSubscriptionResumed = { resumed += 1 }
+        var lost = 0
+        let listening = service.listen { signal in
+            if signal == .resumed { resumed += 1 }
+            if signal == .lost { lost += 1 }
+        }
+        defer { listening.cancel() }
         _ = try await service.subscribe(meeting: Self.design, events: ["meeting.changed"])
         XCTAssertEqual(fake.count("hello"), 1)
         XCTAssertEqual(resumed, 0, "the first subscription missed nothing")
+        XCTAssertTrue(service.isSubscribed)
 
         fake.hangUp()
         for _ in 0..<150 where fake.count("subscribe") < 2 || resumed == 0 { try await Task.sleep(nanoseconds: 20_000_000) }
         XCTAssertEqual(fake.count("hello"), 2, "the kept subscription opened a new connection")
         XCTAssertEqual(fake.count("subscribe"), 2, "and subscribed on it")
+        XCTAssertEqual(lost, 1, "the listener heard the subscription was lost while no connection was open")
         XCTAssertEqual(resumed, 1, "the subscriber hears that events between the connections were missed")
+        XCTAssertTrue(service.isSubscribed)
         XCTAssertEqual(commands.runs, [], "no read ran")
 
         service.unsubscribe()
@@ -539,5 +651,87 @@ final class MeetingsServiceTests: XCTestCase {
             XCTAssertTrue(error is CancellationError, "\(error)")
         }
         XCTAssertEqual(commands.runs, [], "a cancelled read does not fall back to the command")
+    }
+
+    // MARK: Which service (finding 5 of the Wave A review)
+
+    func testTwoCheckoutPathsAreTheSameFolderWithOrWithoutTheTrailingSlash() throws {
+        let root = folder.appendingPathComponent("checkout")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let link = folder.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: root)
+        XCTAssertTrue(MeetingsService.Checkout.same(root.path + "/", root.path))
+        XCTAssertTrue(MeetingsService.Checkout.same(link.path, root.path + "/"), "a symlink resolves")
+        XCTAssertFalse(MeetingsService.Checkout.same(root.path, folder.path))
+        let checkout = MeetingsService.Checkout(root: { root.path }, acceptsUnnamed: false)
+        XCTAssertTrue(checkout.accepts(root.path + "/"))
+        XCTAssertFalse(checkout.accepts("/elsewhere/"))
+        XCTAssertFalse(checkout.accepts(nil), "under an override, a service that names no checkout is not used")
+        XCTAssertTrue(MeetingsService.Checkout(root: { root.path }, acceptsUnnamed: true).accepts(nil))
+    }
+
+    func testAServiceOfAnotherCheckoutIsNotAskedAndTheCommandAnswers() async throws {
+        try writeServiceEntry(sourceRoot: "/Users/someone/elsewhere/GenesisTools/")
+        let service = makeService(checkout: .init(root: { "/tmp/cc/worktree" }, acceptsUnnamed: true))
+        XCTAssertEqual(service.discover(), .otherCheckout("/Users/someone/elsewhere/GenesisTools/"))
+        do {
+            _ = try await MeetingDetailModel.recordRead(Self.design).run(service: service, command: command())
+            XCTFail("the command fallback throws in this test")
+        } catch let failure as MeetingsCLI.Failure {
+            XCTAssertEqual(failure.sentence, "The command ran.")
+        }
+        XCTAssertEqual(fake.count("hello"), 0, "the other checkout's service heard nothing")
+        XCTAssertEqual(commands.starts, 0, "no second service is started beside it")
+        XCTAssertEqual(commands.runs, [["show", Self.design, "--json"]])
+    }
+
+    func testAServiceOfTheSameCheckoutAnswersUnderAnOverride() async throws {
+        let root = folder.appendingPathComponent("checkout")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeServiceEntry(sourceRoot: root.path + "/")
+        let service = makeService(checkout: .init(root: { root.path }, acceptsUnnamed: false))
+        let record = try await MeetingDetailModel.recordRead(Self.design).run(service: service, command: command())
+        XCTAssertEqual(record.id, Self.design)
+        XCTAssertEqual(fake.count("hello"), 1)
+        XCTAssertEqual(commands.runs, [])
+    }
+
+    func testAGenericFailedRefusalOfAReadRunsTheCommand() async throws {
+        try writeServiceEntry()
+        fake.answers["meeting.show"] = ["error": ["code": 1100, "message": "boom", "data": ["code": "failed"]]]
+        let service = makeService()
+        do {
+            _ = try await MeetingDetailModel.recordRead(Self.design).run(service: service, command: command())
+            XCTFail("the command fallback throws in this test")
+        } catch let failure as MeetingsCLI.Failure {
+            XCTAssertEqual(failure.sentence, "The command ran.", "the read ran as the command")
+        }
+        XCTAssertEqual(commands.runs, [["show", Self.design, "--json"]])
+        // A write shows the refusal: `call` throws it as the command's failure with the code.
+        do {
+            _ = try await service.call(MeetingsAPI.Show.self, .init(ref: Self.design))
+            XCTFail("the refusal answered")
+        } catch let failure as MeetingsCLI.Failure {
+            XCTAssertEqual(failure.code, "failed")
+        }
+    }
+
+    func testADecisionEventReachesEveryListener() async throws {
+        try writeServiceEntry()
+        fake.answers["subscribe"] = ["result": ["events": MeetingsAPI.windowEvents]]
+        let service = makeService()
+        var first: [MeetingsEvent] = []
+        var second: [MeetingsEvent] = []
+        let heard = expectation(description: "both listeners heard it")
+        heard.expectedFulfillmentCount = 2
+        let one = service.listen { if case .event(let event) = $0 { first.append(event); heard.fulfill() } }
+        let two = service.listen { if case .event(let event) = $0 { second.append(event); heard.fulfill() } }
+        defer { one.cancel(); two.cancel() }
+        _ = try await service.subscribe(events: MeetingsAPI.windowEvents)
+        let notification = try XCTUnwrap(try MeetingsFixture.examples().first { $0["method"] as? String == "decision.applied" }?["notification"] as? [String: Any])
+        fake.send(notification)
+        await fulfillment(of: [heard], timeout: 3)
+        XCTAssertEqual(first.first?.entry?.action, .confirm(["i1"]))
+        XCTAssertEqual(first, second)
     }
 }
