@@ -42,7 +42,7 @@ import {
     silenceDetectArgs,
 } from "@genesiscz/utils/recording-editor/idle";
 import { laneItems, resolveLanes } from "@genesiscz/utils/recording-editor/lanes";
-import { audibleTracks, transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
+import { audibleTracks, integratedLoudness, transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
 import {
     annotateClicks,
     applyOp,
@@ -4352,4 +4352,58 @@ test("disabling track denoise preserves excluded audio", () => {
             true
         );
     }
+});
+
+describe.skipIf(skip.integration)("normalize measures what the export plays", () => {
+    const makeTone = async (out: string, seconds: number, volume: string) => {
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                `color=c=black:s=64x64:d=${seconds}`,
+                "-f",
+                "lavfi",
+                "-i",
+                `sine=f=440:r=48000:d=${seconds},volume='${volume}':eval=frame`,
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+                out,
+            ],
+            timeoutMs: 60_000,
+        });
+    };
+
+    test("only the kept clips count, at their played speed, so a cut loud part does not lower the gain", async () => {
+        const dir = workspace();
+        const movie = join(dir, "loud-then-quiet.mp4");
+        const quiet = join(dir, "quiet.mp4");
+        await makeTone(movie, 4, "if(lt(t,2),1,0.25)");
+        await makeTone(quiet, 2, "0.25");
+
+        const alone = await integratedLoudness({ video: quiet });
+        const kept = await integratedLoudness({
+            video: movie,
+            clips: [{ fromUs: 2_000_000, toUs: 4_000_000, speed: 1 }],
+        });
+        expect(alone).toBeDefined();
+        expect(Math.abs((kept ?? 0) - (alone ?? 0))).toBeLessThan(1);
+
+        const sped = await integratedLoudness({
+            video: movie,
+            clips: [
+                { fromUs: 0, toUs: 400_000, speed: 2 },
+                { fromUs: 2_000_000, toUs: 4_000_000, speed: 1 },
+            ],
+        });
+        expect(Number.isFinite(sped)).toBe(true);
+    });
 });

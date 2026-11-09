@@ -12,6 +12,7 @@ import { bubbleFromSidecar, readCameraSidecar } from "@genesiscz/utils/recording
 import { cutIssues, type EditIssue } from "@genesiscz/utils/recording-editor/check";
 import {
     audioTrackCount,
+    denoisedSourcePath,
     ensureDenoisedSource,
     syncDenoisedTranscript,
 } from "@genesiscz/utils/recording-editor/denoise";
@@ -646,7 +647,15 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFac
     }
 
     if (op.op === "normalize") {
-        const lufs = await integratedLoudness({ video: project.source.video, mutedTracks: project.audio.mutedTracks });
+        // What the export plays of the recording's own sound: the kept clips at their speed, from the cleaned copy the
+        // export renders from when denoise is on (music, voiceovers and the click keep their own volume).
+        const denoise = project.audio.denoise;
+        const cleaned = denoise ? denoisedSourcePath(project.source.video, denoise) : undefined;
+        const lufs = await integratedLoudness({
+            video: cleaned && existsSync(cleaned) ? cleaned : project.source.video,
+            mutedTracks: project.audio.mutedTracks,
+            clips: project.clips,
+        });
         return { loudnessLufs: lufs ?? null };
     }
 
