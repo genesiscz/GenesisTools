@@ -2557,19 +2557,29 @@ private struct HubModePicker: View {
         return (titles + (count - 1) * spacing + 2 * outerPadding).rounded(.up)
     }
 
+    /// The row's height: a 20 pt segment and the padding around it.
+    private static let height: CGFloat = 20 + 2 * outerPadding
+
     var body: some View {
-        HStack(spacing: Self.spacing) {
-            ForEach(HubMode.allCases, id: \.self) { mode in
-                segment(mode, icons: icons)
+        // The width is read from a clear view that takes exactly what the sidebar offers. The segments have minimum
+        // widths, so the row itself is never narrower than its titles: measured on the row, it never asked for icons,
+        // and a 312 pt sidebar cut "Usage" off at its edge.
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.height)
+            .measuredWidth("hub.modes", narrowerThan: Self.titlesWidth(waiting: inbox.waitingCount), $icons)
+            .overlay {
+                HStack(spacing: Self.spacing) {
+                    ForEach(HubMode.allCases, id: \.self) { mode in
+                        segment(mode, icons: icons)
+                    }
+                }
+                .padding(Self.outerPadding)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(ReviewPalette.hairline))
             }
-        }
-        .padding(Self.outerPadding)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(ReviewPalette.hairline))
-        .frame(maxWidth: .infinity)
-        .measuredWidth("hub.modes", narrowerThan: Self.titlesWidth(waiting: inbox.waitingCount), $icons)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("Mode"))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text("Mode"))
     }
 
     private func segment(_ mode: HubMode, icons: Bool) -> some View {
