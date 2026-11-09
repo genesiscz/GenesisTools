@@ -255,6 +255,22 @@ struct CardSpans {
     var leadUs: Int64 { intro.map { Int64(($0.seconds * 1_000_000).rounded()) } ?? 0 }
     var tailUs: Int64 { end.map { Int64(($0.seconds * 1_000_000).rounded()) } ?? 0 }
 
+    /// How long the exported file of the whole edit plays: its intro card, the movie and its end card, as
+    /// info().exportTime.exportSeconds says. The movie's own length (`outputDurationUs`) stays without the cards; a part
+    /// export has none.
+    static func exportLengthUs(_ project: EditProject) -> Int64 {
+        let spans = CardSpans(project: project, enabled: true)
+        return spans.leadUs + project.outputDurationUs + spans.tailUs
+    }
+
+    /// The cards a whole export adds, "3.0 s intro + 4.0 s end card"; nil without any.
+    static func cardsNote(_ project: EditProject) -> String? {
+        let spans = CardSpans(project: project, enabled: true)
+        let parts = [spans.intro.map { String(format: "%.1f s intro", $0.seconds) },
+                     spans.end.map { String(format: "%.1f s end card", $0.seconds) }].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " + ")
+    }
+
     /// The card at a movie output time (negative is the intro), or nil inside the movie.
     func card(atOutput outUs: Int64, movieUs: Int64) -> Frame? {
         if let intro, outUs < 0 {
