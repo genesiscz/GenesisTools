@@ -21,9 +21,9 @@ const AUDIO_PIECE = /^(\d+(?:\.\d+)?)-d(\d+)-audio-(mic|system)\.m4a$/;
 const EVEN_SIZE = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
 
 /**
- * The video filter for the shown frames: one size keeps the frames as they are (even sides); several sizes (a plan
- * over displays of different shapes) fit each frame into the largest width and height with black bars, because one
- * H.264 stream cannot change its size and ffmpeg would stretch every later frame to the first one's.
+ * The video filter for the frame sizes of a recording's displays: one size keeps the frames as they are (even sides);
+ * several sizes (displays of different shapes) fit each frame into the largest width and height with black bars,
+ * because one H.264 stream cannot change its size and ffmpeg would stretch every later frame to the first one's.
  */
 export function proxyVideoFilter(sizes: ReadonlyArray<{ width: number; height: number }>): string {
     const canvas = proxyCanvas(sizes);
@@ -37,8 +37,8 @@ export function proxyVideoFilter(sizes: ReadonlyArray<{ width: number; height: n
 }
 
 /**
- * The proxy's picture for the shown frame sizes, as proxyVideoFilter makes it: one size fills the picture; several are
- * each fitted into the largest width and height (even sides) and centred with black bars.
+ * The proxy's picture for the frame sizes of a recording's displays, as proxyVideoFilter makes it: one size fills the
+ * picture; several are each fitted into the largest width and height (even sides) and centred with black bars.
  */
 export function proxyCanvas(sizes: ReadonlyArray<{ width: number; height: number }>): {
     width: number;
@@ -84,8 +84,35 @@ export function boxInProxy(
     };
 }
 
-/** The pixel size of the first shown frame of each display (frames of one display share a size). */
-function shownSizes(frames: readonly SourceFrame[]): Array<{ width: number; height: number }> {
+/**
+ * A box of the proxy's picture (fractions of it, from its top left) as fractions of a frame shown in it: the inverse of
+ * boxInProxy, so a box made over one picture can be placed in another. A box over the bars falls outside 0...1.
+ */
+export function boxInFrame(
+    box: { x: number; y: number; width: number; height: number },
+    frame: { width: number; height: number },
+    canvas: { width: number; height: number; letterboxed: boolean }
+): { x: number; y: number; width: number; height: number } {
+    if (!canvas.letterboxed) {
+        return { ...box };
+    }
+
+    const scale = Math.min(canvas.width / frame.width, canvas.height / frame.height);
+    const shown = { width: frame.width * scale, height: frame.height * scale };
+    const left = (canvas.width - shown.width) / 2;
+    const top = (canvas.height - shown.height) / 2;
+    return {
+        x: (box.x * canvas.width - left) / shown.width,
+        y: (box.y * canvas.height - top) / shown.height,
+        width: (box.width * canvas.width) / shown.width,
+        height: (box.height * canvas.height) / shown.height,
+    };
+}
+
+/** The pixel size of each display's first frame (frames of one display share a size); a missing file is left out. */
+export function frameSizesOf(
+    frames: readonly SourceFrame[]
+): Map<number | undefined, { width: number; height: number }> {
     const firstOf = new Map<number | undefined, string>();
 
     for (const frame of frames) {
@@ -94,7 +121,9 @@ function shownSizes(frames: readonly SourceFrame[]): Array<{ width: number; heig
         }
     }
 
-    return [...firstOf.values()].filter((path) => existsSync(path)).map((path) => imageSize(path));
+    return new Map(
+        [...firstOf].filter(([, path]) => existsSync(path)).map(([id, path]) => [id, imageSize(path)] as const)
+    );
 }
 
 export interface ProxyResult {
@@ -237,13 +266,15 @@ export function overrideRanges(ranges: readonly DisplayRange[], overrides: reado
 
 /**
  * The frames the movie shows for a plan: in each range the frames of its display, led by the frame of that display that
- * was still on its screen when the range starts. The first frame is moved to 0, so movie time is recording time.
+ * was still on its screen when the range starts. The first frame is moved to 0, so movie time is recording time. An
+ * empty range (a plan saved with a switch past the last frame) shows nothing, so it never pulls in a frame at its start.
  */
 export function framesForPlan(frames: readonly SourceFrame[], ranges: readonly DisplayRange[]): SourceFrame[] {
     const shown: SourceFrame[] = [];
+    const live = ranges.filter((range) => range.toUs > range.fromUs);
 
-    for (const [index, range] of ranges.entries()) {
-        const toUs = index === ranges.length - 1 ? Number.POSITIVE_INFINITY : range.toUs;
+    for (const [index, range] of live.entries()) {
+        const toUs = index === live.length - 1 ? Number.POSITIVE_INFINITY : range.toUs;
         const own = frames.filter((frame) => frame.displayId === range.displayId);
         const lead = own.findLast((frame) => frame.atUs <= range.fromUs) ?? own.find((frame) => frame.atUs < toUs);
 
@@ -320,7 +351,10 @@ export function chosenPlan(frames: readonly SourceFrame[], options: ProxyOptions
         version: 1,
         policy: single !== undefined ? "display" : "most-change",
         windowSec,
-        ranges: ranges.map((range) => ({ ...range, toUs: Math.min(range.toUs, endUs) })),
+        // A switch past the last frame leaves a piece of the plan after the end: clamped, it would start after it ends.
+        ranges: ranges
+            .map((range) => ({ ...range, toUs: Math.min(range.toUs, endUs) }))
+            .filter((range) => range.toUs > range.fromUs),
     };
 }
 
@@ -395,10 +429,17 @@ export async function makeProxy(folder: string, options: ProxyOptions = {}): Pro
     const chosen = ranges.length > 0 ? framesForPlan(frames, ranges) : frames;
     const shownDisplays = [...new Set(ranges.map((range) => range.displayId))];
     const display = shownDisplays.length === 1 ? shownDisplays[0] : undefined;
-    const videoFilter = proxyVideoFilter(shownSizes(chosen));
+    // The picture holds every display that has frames, whichever the plan shows, and the movie runs to the last frame
+    // of any display: a display switch then changes neither, so an edit's fractions (hidden parts, shapes, a zoom's
+    // focus) and its source size stay true. find-screen places its boxes in this same picture.
+    const videoFilter = proxyVideoFilter([...frameSizesOf(frames).values()]);
     const list = join(folder, ".proxy-frames.txt");
     const lastUs = chosen.at(-1)?.atUs ?? 0;
-    const durationUs = framesDurationUs({ lastUs, startedAt: manifest?.startedAt, endedAt: manifest?.endedAt });
+    const durationUs = framesDurationUs({
+        lastUs: Math.max(lastUs, frames.at(-1)?.atUs ?? 0),
+        startedAt: manifest?.startedAt,
+        endedAt: manifest?.endedAt,
+    });
     await writeFile(
         list,
         concatList(

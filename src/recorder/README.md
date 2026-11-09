@@ -85,7 +85,10 @@ tools recorder proxy <recording> [--display most-change|ID] [--window S] [--swit
                                                  # proxy.mp4 for a frames-only recording or a meeting: per 10 s window
                                                  # the display that changed most (default; proxy.json is the plan),
                                                  # or one display; a meeting also gets its transcript as captions
-                                                 # with the speakers' names
+                                                 # with the speakers' names. The picture holds every display that
+                                                 # has frames (bars round a smaller one), so a switch never moves
+                                                 # an edit's hidden parts; an edit made on an older proxy is moved
+                                                 # onto the new picture once (one undo step, fitToProxy)
 tools recorder proxy <recording> --plan <file>   # the proxy with exactly that display plan (a copy of an earlier
                                                  # proxy.json)
 tools recorder proxy <recording> --undo-switch   # takes the last display switch back (--redo-switch makes it again):

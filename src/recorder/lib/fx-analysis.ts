@@ -138,12 +138,8 @@ function framesScreenText(folder: string): ScreenTextFrame[] {
     );
     const plan = readDisplayPlan(folder);
     const sizes = displaySizes(folder, frames);
-    const shownDisplays = plan ? new Set(plan.ranges.map((range) => range.displayId)) : undefined;
-    const canvas = proxyCanvas(
-        [...sizes]
-            .filter(([id]) => !shownDisplays || (id !== undefined && shownDisplays.has(id)))
-            .map(([, size]) => size)
-    );
+    // The proxy's picture holds every display that has frames, whichever the plan shows (makeProxy).
+    const canvas = proxyCanvas([...sizes.values()]);
     const lastMs = frames.at(-1)?.atMs ?? 0;
     const endUs = (lastMs + 2000) * 1000;
     const visible = plan ? visibleSpans(frames, plan.ranges, endUs) : undefined;

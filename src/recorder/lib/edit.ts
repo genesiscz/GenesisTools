@@ -153,7 +153,7 @@ function movieFor(path: string): string {
 
 /** Opens a recording's edit (a library id, `last`, a folder, a movie or an edit file), or a new one of the whole movie. */
 /** A recording the editor opens may be a whole meeting: up to 12 h and 64 GiB, not the evidence pipeline's 10 minutes. */
-const EDITOR_VIDEO_LIMITS: VideoProbeLimits = {
+export const EDITOR_VIDEO_LIMITS: VideoProbeLimits = {
     maxBytes: 64 * 1024 ** 3,
     maxDurationUs: 12 * 3600 * 1_000_000,
     maxPixels: 48_000_000,
