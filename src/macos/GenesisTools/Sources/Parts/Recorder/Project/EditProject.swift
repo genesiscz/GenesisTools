@@ -288,6 +288,14 @@ struct EditProject: Codable, Equatable {
         var durationMs = 450
         /// A soft tick at each click in the sound; nil is off.
         var sound: Bool?
+
+        /// The clicks after the Click sound switch turns the tick on or off. A clicks object this switch makes starts
+        /// with the rings off, so asking for the tick never draws rings; rings that are already on stay on.
+        static func settingSound(_ on: Bool, in clicks: Clicks?) -> Clicks {
+            var next = clicks ?? Clicks(highlight: false)
+            next.sound = on ? true : nil
+            return next
+        }
     }
 
     struct Cursor: Codable, Equatable {

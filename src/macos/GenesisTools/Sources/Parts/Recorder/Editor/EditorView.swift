@@ -700,11 +700,7 @@ struct CursorInspector: View {
                 .accessibilityIdentifier("recorder.style.clicks")
                 .instantTooltip("A ring at each click as it plays. To move or delete single marks, Annotate → Circle Every Click adds editable circles instead.")
                 SwitchRow("Click sound", isOn: Binding(get: { clicks?.sound == true }, set: { on in
-                    model.setLooks { project in
-                        var next = project.clicks ?? EditProject.Clicks()
-                        next.sound = on ? true : nil
-                        project.clicks = next
-                    }
+                    model.setLooks { $0.clicks = EditProject.Clicks.settingSound(on, in: $0.clicks) }
                 }))
                 .instantTooltip("A soft tick at each click in the movie's sound; off by default")
                 .accessibilityIdentifier("recorder.style.clickSound")
