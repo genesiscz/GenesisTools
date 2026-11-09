@@ -43,8 +43,8 @@ final class MeetingDetailModel {
     private var speakersGeneration = 0
     private var proposalsGeneration = 0
     @ObservationIgnored private var refreshGeneration = 0
-    /// The read in flight per part. A new read of a part cancels the one before it, which stops its process or server
-    /// call; `cancelReads()` stops them all.
+    /// The read in flight per part. A new read of a part cancels the one before it, which stops its process, its
+    /// server call or its Meetings service call (`$/cancel`); `cancelReads()` stops them all.
     @ObservationIgnored private var inFlight: [AnyKeyPath: Task<Void, Never>] = [:]
     /// The window let this meeting go (another one opened): no read starts, and one that still lands is ignored.
     @ObservationIgnored private(set) var isDropped = false
@@ -141,22 +141,37 @@ final class MeetingDetailModel {
     func loadSpeakers() { readSpeakers(quiet: false) }
     func loadProposals() { readProposals(quiet: false) }
 
+    /// The record: the Meetings service's `meeting.show`, or `show <id> --json` when no service answers.
+    static func recordRead(_ id: String) -> MeetingsRead<MeetingRecordView> {
+        .service(MeetingsAPI.Show.self, .init(ref: id), orRun: ["show", id, "--json"])
+    }
+
+    /// The corrected transcript: `meeting.transcript`, or `transcript <id> --format json`.
+    static func transcriptRead(_ id: String) -> MeetingsRead<MeetingTranscript> {
+        .service(MeetingsAPI.Transcript.self, .init(ref: id), orRun: ["transcript", id, "--format", "json"], timeoutSeconds: 120)
+    }
+
+    /// The revision token per part: `meeting.revisions`, or `revisions <id> --json`.
+    static func revisionsRead(_ id: String) -> MeetingsRead<MeetingRevisions> {
+        .service(MeetingsAPI.Revisions.self, .init(ref: id), orRun: ["revisions", id, "--json"])
+    }
+
     private func readRecord(quiet: Bool) {
-        read(\.record, generation: \.recordGeneration, ["show", id, "--json"], quiet: quiet, revision: .record) { [weak self] record in
+        read(\.record, generation: \.recordGeneration, Self.recordRead(id), quiet: quiet, revision: .record) { [weak self] record in
             self?.recordLanded(record)
         }
     }
 
     private func readTranscript(quiet: Bool) {
         transcriptStale = false
-        read(\.transcript, generation: \.transcriptGeneration, ["transcript", id, "--format", "json"], timeoutSeconds: 120,
-             quiet: quiet, revision: .transcript)
+        read(\.transcript, generation: \.transcriptGeneration, Self.transcriptRead(id), quiet: quiet, revision: .transcript)
     }
 
     private func readTimeline(quiet: Bool) {
         let all = MeetingsPreferences.timelineLines() == .all
-        read(\.timeline, generation: \.timelineGeneration, ["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []),
-             timeoutSeconds: 120, quiet: quiet, revision: .timeline)
+        read(\.timeline, generation: \.timelineGeneration,
+             .command(["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []), timeoutSeconds: 120),
+             quiet: quiet, revision: .timeline)
     }
 
     /// Every OCR line of one frame, for the frame sheet's "All text" when the timeline was read with changed lines only.
@@ -167,21 +182,22 @@ final class MeetingDetailModel {
     }
 
     private func readSpeakers(quiet: Bool) {
-        read(\.speakers, generation: \.speakersGeneration, ["speakers", "stats", id, "--json"], timeoutSeconds: 120,
+        read(\.speakers, generation: \.speakersGeneration, .command(["speakers", "stats", id, "--json"], timeoutSeconds: 120),
              quiet: quiet, revision: .speakers)
     }
 
     private func readProposals(quiet: Bool) {
-        read(\.proposals, generation: \.proposalsGeneration, ["assign", "proposals", id, "--json"], quiet: quiet)
+        read(\.proposals, generation: \.proposalsGeneration, .command(["assign", "proposals", id, "--json"]), quiet: quiet)
     }
 
-    /// One read of a part. A `quiet` read (a refresh) keeps what the pane shows until the answer lands, and an answer
-    /// equal to the shown one is not set again, so an unchanged pane redraws nothing. A failed read forgets the part's
-    /// revision token, so the next return reads it again.
+    /// One read of a part: through the Meetings service when it answers the read, else as its command. A `quiet` read
+    /// (a refresh) keeps what the pane shows until the answer lands, and an answer equal to the shown one is not set
+    /// again, so an unchanged pane redraws nothing. A failed read forgets the part's revision token, so the next return
+    /// reads it again.
     private func read<Value: Decodable & Equatable>(
         _ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>,
         generation: ReferenceWritableKeyPath<MeetingDetailModel, Int>,
-        _ args: [String], timeoutSeconds: Int = 60, quiet: Bool, revision: RevisionPart? = nil,
+        _ source: MeetingsRead<Value>, quiet: Bool, revision: RevisionPart? = nil,
         then landed: ((Value) -> Void)? = nil
     ) {
         guard !isDropped else { return }
@@ -191,7 +207,7 @@ final class MeetingDetailModel {
         inFlight[part]?.cancel()
         inFlight[part] = Task { [weak self] in
             do {
-                let value = try await MeetingsCLI.json(Value.self, args, timeoutSeconds: timeoutSeconds)
+                let value = try await source.run()
                 guard let self, !self.isDropped, current == self[keyPath: generation] else { return }
                 self.settle(part, .loaded(value))
                 landed?(value)
@@ -308,7 +324,7 @@ final class MeetingDetailModel {
         let key: AnyKeyPath = \MeetingDetailModel.refreshGeneration
         inFlight[key]?.cancel()
         inFlight[key] = Task { [weak self] in
-            let revisions = try? await MeetingsCLI.json(MeetingRevisions.self, ["revisions", id, "--json"])
+            let revisions = try? await Self.revisionsRead(id).run()
             guard let self, !Task.isCancelled, !self.isDropped, generation == self.refreshGeneration else { return }
             if self.mustRead(.record, revisions?.show) || force { self.readRecord(quiet: true) }
             if self.transcript != .idle, self.mustRead(.transcript, revisions?.transcript) || force { self.readTranscript(quiet: true) }
