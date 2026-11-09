@@ -1,10 +1,12 @@
 import { type RpcHandlers, type RpcTable, toRpcTable } from "@genesiscz/utils/api-descriptor";
+import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import {
     MEETINGS_CONFLICT_CODES,
     MEETINGS_STATE_CODES,
     MeetingsConflictError,
     MeetingsStateError,
 } from "@genesiscz/utils/meetings/conflict";
+import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { RpcError } from "@genesiscz/utils/rpc/errors";
 import { meetingListRow, selectMeetings } from "../list-rows";
@@ -14,7 +16,9 @@ import { correctedTranscriptRead, revisionsRead, transcriptJsonView } from "../w
 import {
     MEETINGS_REFUSED,
     type MeetingsErrorCode,
+    type MeetingsEvent,
     type MeetingsHello,
+    type MeetingsNotification,
     type MeetingsResult,
     meetingsApi,
     meetingsErrorDataSchema,
@@ -33,6 +37,13 @@ export interface MeetingsCallContext {
     signal?: AbortSignal;
     /** `hello` answers through the adapter that owns the connection. */
     hello: (hello: MeetingsHello) => MeetingsResult<"hello">;
+    /**
+     * True when the handler runs in the caller's own process (the in-process adapter): a caller without a harness in
+     * its hello is then this process, whose agent identity a decision reads itself.
+     */
+    local?: boolean;
+    /** Tells the subscribers (the service's connections, or this process's listeners) what a write did. */
+    emit?: <E extends MeetingsEvent>(event: E, params: MeetingsNotification<E>) => void;
 }
 
 export interface MeetingsHandlerDeps {
@@ -40,6 +51,14 @@ export interface MeetingsHandlerDeps {
     store?: () => MeetingStore;
     /** The transcript source of a record; tests pass a fake one, production asks the record's linked source. */
     linkedSource?: (record: MeetingRecord) => LinkedSource | undefined;
+    /** Where a decision's corrections go (tests keep them); the corrections ledger by default. */
+    ledger?: (corrections: Correction[]) => void;
+    /** The corrections ledger a plan's dictionary reach reads (tests pass lines); the ledger file by default. */
+    readLedger?: () => Correction[];
+    /** The meetings config (tests pass one); the config file by default. */
+    config?: () => Promise<MeetingsConfig>;
+    /** The clock of a decision's time (tests fix it). */
+    now?: () => Date;
 }
 
 /** A refusal: JSON-RPC error 1100 with `data.code`, the same through the socket and in-process. */
@@ -73,11 +92,12 @@ export function refusalCode(error: RpcError): MeetingsErrorCode | undefined {
     return data.success ? data.data.code : undefined;
 }
 
-/** A refusal the service did not class as a conflict or a meeting state; `code` names it. */
+/** A refusal the service did not class as a conflict or a meeting state; `code` names it, `data` is its error data. */
 export class MeetingsServiceError extends Error {
     constructor(
         readonly code: MeetingsErrorCode,
-        message: string
+        message: string,
+        readonly data?: unknown
     ) {
         super(message);
         this.name = "MeetingsServiceError";
@@ -109,11 +129,11 @@ export function clientError(error: unknown): Error {
         return new MeetingsStateError(code, error.message);
     }
 
-    return new MeetingsServiceError(code, error.message);
+    return new MeetingsServiceError(code, error.message, error.data);
 }
 
 /** The record a command names, or the refusal the CLI printed for it before the service. */
-function recordOf(store: MeetingStore, ref: string): MeetingRecord {
+export function recordOf(store: MeetingStore, ref: string): MeetingRecord {
     let record: MeetingRecord | undefined;
 
     try {
@@ -128,6 +148,8 @@ function recordOf(store: MeetingStore, ref: string): MeetingRecord {
 
     return record;
 }
+
+const decisions = () => import("./decision-handlers");
 
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
@@ -162,6 +184,13 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             const record = recordOf(store, params.ref);
             return revisionsRead({ store, record, linked: deps.linkedSource?.(record) });
         },
+        // The decisions load the journal and its rules (about 40 ms) only when a call decides.
+        "decision.plan": async (params, context) => (await decisions()).planDecision(params, context, storeOf(), deps),
+        "decision.apply": async (params, context) =>
+            (await decisions()).applyDecision(params, context, storeOf(), deps),
+        "decision.revert": async (params, context) =>
+            (await decisions()).revertDecision(params, context, storeOf(), deps),
+        "journal.read": async (params) => (await decisions()).readJournal(params, storeOf()),
     };
 }
 

@@ -175,6 +175,8 @@ export class InProcessMeetingsClient implements MeetingsClient {
                 this.caller = hello;
                 return helloAnswer();
             },
+            local: true,
+            emit: (event, params) => (this.options.events ?? localMeetingsEvents).emit(event, params),
         };
 
         try {
@@ -252,19 +254,30 @@ export class SocketMeetingsClient implements MeetingsClient {
         params: MeetingsParams<M>,
         options: { signal?: AbortSignal; timeoutMs?: number } = {}
     ): Promise<MeetingsResult<M>> {
+        // The service went before this call left (it stopped for a code change while a listen round waited): nothing
+        // reached it, so any call, a decision included, answers in this process.
+        if (this.client.closed) {
+            log.debug({ method }, "the meetings service went before this call; answering in-process");
+            return this.inProcess().call(method, params, options);
+        }
+
         try {
             return await this.client.call<MeetingsResult<M>>(method, params, options);
         } catch (error) {
             // The connection went (the service stopped for a code change between the hello and this call): a read
-            // answers in this process, as it would have with no service.
+            // answers in this process, as it would have with no service. A write may have reached it, so it throws.
             if (!(error instanceof RpcError) && meetingsMethod(method).effect === "read") {
                 log.debug({ error, method }, "the meetings service went during a read; answering in-process");
-                this.fallback ??= new InProcessMeetingsClient({ hello: this.hello });
-                return this.fallback.call(method, params, options);
+                return this.inProcess().call(method, params, options);
             }
 
             throw clientError(error);
         }
+    }
+
+    private inProcess(): InProcessMeetingsClient {
+        this.fallback ??= new InProcessMeetingsClient({ hello: this.hello });
+        return this.fallback;
     }
 
     async subscribe(

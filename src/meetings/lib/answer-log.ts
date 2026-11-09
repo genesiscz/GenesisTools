@@ -40,8 +40,13 @@ export type AnswerEvent =
     | { event: "round-end"; at: string; reason: RoundEndReason; asked: number; open: number };
 
 export function appendAnswerEvent(path: string, event: AnswerEvent): void {
+    appendAnswerEvents(path, [event]);
+}
+
+/** Several events in one append, so a reader that follows the file sees them together. */
+export function appendAnswerEvents(path: string, events: AnswerEvent[]): void {
     mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `${SafeJSON.stringify(event, { jsonl: true })}\n`);
+    appendFileSync(path, events.map((event) => `${SafeJSON.stringify(event, { jsonl: true })}\n`).join(""));
 }
 
 function isAnswerEvent(value: unknown): value is AnswerEvent {

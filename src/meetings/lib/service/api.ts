@@ -4,6 +4,7 @@ import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
 import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
+import { decisionActionSchema, journalEntrySchema, skipSchema } from "../decision-actions";
 
 /**
  * The Meetings service's interface: one descriptor for the window, every `tools meetings` command, the REPL and an MCP
@@ -159,13 +160,108 @@ const revisions = defineMethod({
     effect: "read",
 });
 
+/** A decision's request: the meeting, one action, and the reason kept with it (one word for a comment and a reason). */
+const decisionParams = z
+    .object({
+        meeting: meetingRef,
+        action: decisionActionSchema,
+        /** Why: kept on the journal entry and on each item it decides (`decision.entry.reason`). */
+        reason: z.string().optional(),
+    })
+    .strict();
+
+/** What a decision did: its journal entry (absent when it changed nothing) and each named item it left, with why. */
+const decidedSchema = z.object({
+    entry: journalEntrySchema.optional(),
+    skipped: z.array(skipSchema),
+    /** Notes besides the skips: an added finding whose transcript anchor did not match. */
+    warnings: z.array(z.string()).optional(),
+});
+
+/** What a planned decision reaches beyond the items it names (`DecisionReach`, decision-journal.ts). */
+export const decisionReachSchema = z.object({
+    items: z.array(z.object({ id: z.string(), match: z.literal("same") })),
+    lines: z.number().int().nonnegative().optional(),
+    dictionary: z.array(
+        z.object({
+            project: z.string().optional(),
+            heard: z.string(),
+            fixed: z.string(),
+            seenBefore: z.number().int().nonnegative(),
+            teaches: z.boolean(),
+        })
+    ),
+});
+
+const decisionPlan = defineMethod({
+    name: "decision.plan",
+    params: decisionParams,
+    result: decidedSchema.extend({ reach: decisionReachSchema }),
+    resultName: "{ entry?, skipped, reach: { items, lines?, dictionary } }",
+    doc: "The decision `decision.apply` would make now, and what it reaches beyond the named items (look-alikes it settles, the lines a spelling changes, the dictionary it teaches), without saving anything. The window asks it before an answer or a spelling with a reach (R22).",
+    effect: "read",
+});
+
+const decisionApply = defineMethod({
+    name: "decision.apply",
+    params: decisionParams.extend({
+        /**
+         * `refuse`: an item someone else decided since the caller saw it refuses the call with `already-decided`, its
+         * data naming the items and the entry that decided them (the window). `skip` (the default, the CLI's): such
+         * an item is skipped with its reason.
+         */
+        onDecided: z.enum(["skip", "refuse"]).optional(),
+    }),
+    result: decidedSchema,
+    resultName: "{ entry?, skipped, warnings? }",
+    doc: "Makes one decision through the decision journal, as the connection's hello names the actor (window, listen, an agent and its session, or a command), and tells the subscribers `decision.applied` with the entry. Refused when an item is unknown (`failed`) or, with onDecided: refuse, decided already (`already-decided`).",
+    effect: "reversible",
+});
+
+const decisionRevert = defineMethod({
+    name: "decision.revert",
+    params: z
+        .object({
+            meeting: meetingRef,
+            /** The entry to undo: `decision.apply`'s entry token, `confirm --json`'s token, an item's `decision.token`. */
+            token: z.string().min(1),
+            /** Only these of its items (ids or Q12); all of them when absent. A question named brings back its whole answer. */
+            items: z.array(z.string().min(1)).optional(),
+            reason: z.string().optional(),
+        })
+        .strict(),
+    result: decidedSchema,
+    resultName: "{ entry?, skipped }",
+    doc: "Undoes one journal entry, or only some of its items, and tells the subscribers `decision.reverted`. Refused with `item-changed` when a later decision changed one of them.",
+    effect: "reversible",
+});
+
+const journalRead = defineMethod({
+    name: "journal.read",
+    params: z
+        .object({
+            meeting: meetingRef,
+            /** Only the entries that changed this item (an id or Q12). */
+            item: z.string().min(1).optional(),
+            limit: z.number().int().positive().optional(),
+        })
+        .strict(),
+    result: z.object({
+        meeting: z.string(),
+        entries: z.array(journalEntrySchema.extend({ revertedBy: z.string().optional() })),
+    }),
+    resultName: "{ meeting, entries: JournalEntry & { revertedBy? }[] }",
+    doc: "A meeting's decision journal, newest first, as `journal <meeting> --json` prints it: who decided what, when and why, with every item before and after.",
+    effect: "read",
+});
+
 export const meetingsApi = defineApi({
     id: "meetings-service",
     global: "meetings",
     title: "Meetings service",
     summary:
         "The one owner of the meetings store while it runs: typed reads for the Meetings window, the CLI and agents, and events for the open meeting.",
-    methods: [hello, list, show, transcript, revisions],
+    methods: [hello, list, show, transcript, revisions, decisionPlan, decisionApply, decisionRevert, journalRead],
     notes: [
         "`subscribe { meeting?, events? }` (answered by the transport) starts the notifications; no events: all of them, no meeting: every meeting's.",
         "A refusal is JSON-RPC error 1100 with `data.code` naming why (MEETINGS_ERROR_CODES).",
@@ -175,6 +271,8 @@ export const meetingsApi = defineApi({
 export type MeetingsMethod = (typeof meetingsApi)["methods"][number]["name"];
 type MethodNamed<M extends MeetingsMethod> = Extract<(typeof meetingsApi)["methods"][number], { name: M }>;
 export type MeetingsParams<M extends MeetingsMethod> = z.input<MethodNamed<M>["params"]>;
+/** A method's params as its handler gets them: parsed by the descriptor (defaults filled, times as seconds). */
+export type MeetingsParsedParams<M extends MeetingsMethod> = z.output<MethodNamed<M>["params"]>;
 export type MeetingsResult<M extends MeetingsMethod> = z.output<MethodNamed<M>["result"]>;
 
 /** The method a name names. */
@@ -201,10 +299,10 @@ export const UNSUBSCRIBE = "unsubscribe";
 export const MEETING_PARTS = ["show", "transcript", "speakers", "timeline"] as const;
 
 /**
- * The events a subscriber can name. F5 adds `decision.applied`, `decision.reverted` and `recording.state` with their
- * schemas; until then a subscription to them is kept and hears nothing.
+ * The events a subscriber can name. A decision through the service tells `decision.applied` or `decision.reverted`
+ * with its journal entry; a write by anyone else (the recorder, an import, a hand edit) tells `meeting.changed`.
  */
-export const MEETINGS_EVENTS = ["meeting.changed"] as const;
+export const MEETINGS_EVENTS = ["meeting.changed", "decision.applied", "decision.reverted"] as const;
 export type MeetingsEvent = (typeof MEETINGS_EVENTS)[number];
 
 export const subscribeParamsSchema = z.object({
@@ -218,6 +316,10 @@ export const subscribeResultSchema = z.object({ events: z.array(z.string()) });
 export const NOTIFICATION_SCHEMAS = {
     /** A meeting's files changed: the parts whose `meeting.revisions` token would differ now. */
     "meeting.changed": z.object({ meeting: z.string(), parts: z.array(z.enum(MEETING_PARTS)).min(1) }),
+    /** A decision was made through the service: its journal entry, with its actor, reason and every item it changed. */
+    "decision.applied": z.object({ meeting: z.string(), entry: journalEntrySchema }),
+    /** An entry was undone (`token`), whole or in part: the revert's own entry. */
+    "decision.reverted": z.object({ meeting: z.string(), token: z.string(), entry: journalEntrySchema }),
 } satisfies Record<MeetingsEvent, z.ZodType>;
 export type MeetingsNotification<E extends MeetingsEvent> = z.output<(typeof NOTIFICATION_SCHEMAS)[E]>;
 
@@ -240,6 +342,11 @@ export const MEETINGS_ERROR_CODES = [
     "protocol-mismatch",
     /** `hello` named another checkout's code, or the service's code changed since it started. */
     "code-mismatch",
+    /**
+     * `decision.apply` with onDecided: refuse named an item someone decided since: data `{ code, items, entry? }`,
+     * the entry that decided the first of them.
+     */
+    "already-decided",
     /** The first call on the connection was not `hello`. */
     "no-hello",
     /** Anything else: the message says what. */

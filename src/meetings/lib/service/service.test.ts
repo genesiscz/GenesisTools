@@ -8,6 +8,7 @@ import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/util
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { z } from "zod";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
 import fixture from "./__fixtures__/meetings-protocol.json";
@@ -154,10 +155,21 @@ function serviceDir(): string {
 
 const hello: MeetingsHello = { role: "cli", protocol: MEETINGS_PROTOCOL, code: CODE, pid: 4242 };
 
+/** The time every decision in these tests is made at, so the fixture's entries read the same each run. */
+const NOW = new Date("2026-11-03T10:00:00.000Z");
+const quietDeps = { now: () => NOW, ledger: () => undefined, readLedger: () => [] };
+
 async function startService(options: { dir?: string } = {}) {
     const { store, linkedSource } = scratchStore();
     const dir = options.dir ?? serviceDir();
-    const start = await startMeetingsService({ dir, store: () => store, linkedSource, idleMs: 0, code: CODE });
+    const start = await startMeetingsService({
+        dir,
+        store: () => store,
+        linkedSource,
+        idleMs: 0,
+        code: CODE,
+        ...quietDeps,
+    });
 
     if (start.status !== "started") {
         throw new Error("the meetings service did not start");
@@ -170,22 +182,36 @@ async function startService(options: { dir?: string } = {}) {
 interface Adapter {
     client: MeetingsClient;
     emit: (event: "meeting.changed", params: { meeting: string; parts: Array<"show" | "transcript"> }) => void;
+    store: MeetingStore;
 }
 
-const ADAPTERS: Record<"socket" | "in-process", () => Promise<Adapter>> = {
-    socket: async () => {
-        const { service } = await startService();
-        const client = await SocketMeetingsClient.connect(service.entry, hello);
+const ADAPTERS: Record<"socket" | "in-process", (caller?: MeetingsHello) => Promise<Adapter>> = {
+    socket: async (caller = hello) => {
+        const { service, store } = await startService();
+        const client = await SocketMeetingsClient.connect(service.entry, caller);
         closing.push(() => client.close());
-        return { client, emit: (event, params) => service.emit(event, params) };
+        return { client, store, emit: (event, params) => service.emit(event, params) };
     },
-    "in-process": async () => {
+    "in-process": async (caller = hello) => {
         const { store, linkedSource } = scratchStore();
         const events = new LocalMeetingsEvents();
-        const client = new InProcessMeetingsClient({ hello, deps: { store: () => store, linkedSource }, events });
+        const client = new InProcessMeetingsClient({
+            hello: caller,
+            deps: { store: () => store, linkedSource, ...quietDeps },
+            events,
+        });
         closing.push(() => client.close());
-        return { client, emit: (event, params) => events.emit(event, params) };
+        return { client, store, emit: (event, params) => events.emit(event, params) };
     },
+};
+
+/** An agent's hello: its decisions name its harness and session. */
+const agentHello: MeetingsHello = {
+    role: "agent",
+    harness: "claude-code",
+    session: "11111111-2222-4333-8444-555555555555",
+    protocol: MEETINGS_PROTOCOL,
+    code: CODE,
 };
 
 /** The error a call rejects with. */
@@ -294,6 +320,81 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(heard).toEqual([
             { method: "meeting.changed", params: { meeting: REVIEW.id, parts: ["show", "transcript"] } },
         ]);
+    });
+
+    test("decision.apply decides as the hello's actor, tells decision.applied, and decision.revert undoes it", async () => {
+        const { client, store } = await ADAPTERS[kind](agentHello);
+        const heard: MeetingsEventMessage[] = [];
+        await client.subscribe({ meeting: REVIEW.id, events: ["decision.applied", "decision.reverted"] }, (event) =>
+            heard.push(event)
+        );
+        const applied = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+            reason: "the calendar says so",
+        });
+
+        const agent = { kind: "agent", harness: "claude-code", session: agentHello.session };
+        expect(applied.entry).toMatchObject({ actor: agent, reason: "the calendar says so", decided: ["i1"] });
+        expect(store.read(REVIEW.id)?.items[0]).toMatchObject({ status: "confirmed", decision: { actor: agent } });
+        const reverted = await client.call("decision.revert", { meeting: REVIEW.id, token: applied.entry!.token });
+        expect(reverted.entry?.action).toEqual({ kind: "revert", token: applied.entry!.token });
+        expect(store.read(REVIEW.id)?.items[0]?.status).toBe("suggested");
+        const journal = await client.call("journal.read", { meeting: REVIEW.id });
+        expect(journal.entries.map((entry) => [entry.action.kind, entry.revertedBy])).toEqual([
+            ["revert", undefined],
+            ["confirm", reverted.entry!.token],
+        ]);
+        await client.call("meetings.list", { limit: 1 });
+
+        expect(heard.map((event) => event.method)).toEqual(["decision.applied", "decision.reverted"]);
+        expect(heard[0]?.params).toEqual({ meeting: REVIEW.id, entry: applied.entry });
+        expect(heard[1]?.params).toEqual({ meeting: REVIEW.id, token: applied.entry!.token, entry: reverted.entry });
+    });
+
+    test("decision.plan answers the entry and its reach and writes nothing", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const before = store.read(REVIEW.id);
+        const planned = await client.call("decision.plan", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+        });
+
+        expect(planned.entry?.decided).toEqual(["i1"]);
+        expect(planned.reach).toEqual({ items: [], dictionary: [] });
+        expect(store.read(REVIEW.id)).toEqual(before);
+        expect((await client.call("journal.read", { meeting: REVIEW.id })).entries).toEqual([]);
+    });
+
+    test("onDecided refuse: an item decided since is refused with already-decided and the entry that decided it", async () => {
+        const { client } = await ADAPTERS[kind](agentHello);
+        const first = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+        });
+        const again = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+        });
+        const refused = await failure(
+            client.call("decision.apply", {
+                meeting: REVIEW.id,
+                action: { kind: "reject", items: ["i1"] },
+                onDecided: "refuse",
+            })
+        );
+
+        expect(again).toEqual({ skipped: [{ id: "i1", reason: "it is confirmed already", needs: "nothing" }] });
+        expect(refused).toBeInstanceOf(MeetingsServiceError);
+        expect(refused).toMatchObject({ code: "already-decided" });
+        expect(refused.message).toBe(
+            "i1 is confirmed already by an agent (Claude Code, session 11111111); nothing was decided"
+        );
+        expect((refused as MeetingsServiceError).data).toMatchObject({
+            code: "already-decided",
+            items: ["i1"],
+            entry: { token: first.entry!.token },
+        });
     });
 
     test("a subscription with an empty meeting is refused as invalid params instead of hearing every meeting", async () => {
@@ -549,6 +650,56 @@ async function captureExamples(): Promise<Example[]> {
     );
     await ask(window, UNSUBSCRIBE, {}, "The end of the subscription: no event reaches it until it subscribes again.");
 
+    const agent = await rawConnection(service.entry.socket);
+    await ask(
+        agent,
+        "hello",
+        { ...agentHello, role: "agent" },
+        "An agent (the REPL, an MCP door): its decisions name its harness and session."
+    );
+    await ask(
+        window,
+        SUBSCRIBE,
+        { meeting: REVIEW.id, events: ["decision.applied", "decision.reverted"] },
+        "The window hears every decision on the open meeting, with its journal entry."
+    );
+    await ask(
+        agent,
+        "decision.plan",
+        { meeting: REVIEW.id, action: { kind: "confirm", items: ["i1"] } },
+        "What a confirm would do and reach; nothing is written."
+    );
+    const applied = await agent.request("decision.apply", {
+        meeting: REVIEW.id,
+        action: { kind: "confirm", items: ["i1"] },
+        reason: "the calendar says so",
+    });
+    examples.push({
+        method: "decision.apply",
+        direction: "client→service",
+        note: "The actor comes from the connection's hello; the reason is kept on the entry and the item.",
+        ...applied,
+    });
+    const { token } = z.object({ entry: z.object({ token: z.string() }) }).parse(applied.reply.result).entry;
+    await ask(
+        agent,
+        "decision.revert",
+        { meeting: REVIEW.id, token },
+        "The Undo of one entry, whole; items: [...] undoes only those."
+    );
+    await ask(agent, "decision.apply", { meeting: REVIEW.id, action: { kind: "confirm", items: ["i1"] } });
+    await ask(
+        window,
+        "decision.apply",
+        { meeting: REVIEW.id, action: { kind: "reject", items: ["i1"] }, onDecided: "refuse" },
+        "The window's click on an item decided since: already-decided, with the entry that decided it."
+    );
+    await ask(window, "journal.read", { meeting: REVIEW.id, limit: 2 }, "Newest first; revertedBy names the Undo.");
+    for (const method of ["decision.applied", "decision.reverted"]) {
+        const heard = window.lines.find((line) => line.method === method);
+        examples.push({ method, direction: "service→client", ...(heard ? { notification: heard } : {}) });
+    }
+
     const cli = await rawConnection(service.entry.socket);
     await ask(
         cli,
@@ -574,13 +725,15 @@ async function captureExamples(): Promise<Example[]> {
     return examples;
 }
 
-/** Revision tokens hash file identities (inode, times), so they differ each run; everything else is fixed. */
+/**
+ * Revision tokens hash file identities (inode, times), and a decision's token is a fresh UUID, so they differ each run;
+ * everything else is fixed (the decisions' clock is `NOW`).
+ */
 function normalized(examples: Example[]): unknown {
     return SafeJSON.parse(
-        SafeJSON.stringify(examples, { strict: true }).replace(
-            /"(show|transcript|speakers|timeline)":"[0-9a-z]+"/g,
-            '"$1":"<token>"'
-        ),
+        SafeJSON.stringify(examples, { strict: true })
+            .replace(/"(show|transcript|speakers|timeline)":"[0-9a-z]+"/g, '"$1":"<token>"')
+            .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>"),
         { strict: true }
     );
 }
@@ -652,6 +805,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
         });
         expect([...new Set(codes)].sort()).toEqual(
             [
+                "already-decided",
                 "code-mismatch",
                 "meeting-not-found",
                 "meeting-ref",

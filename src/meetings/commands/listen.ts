@@ -40,6 +40,7 @@ import {
     questionLabel,
     questionView,
 } from "../lib/questions";
+import { openMeetingsClient } from "../lib/service/client";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 const PAD_CHOICES = [5, 10] as const;
@@ -560,6 +561,9 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             return;
         }
 
+        // The round decides through the Meetings service when one runs (the window hears each answer as it lands),
+        // else in this process: the person in this terminal as `listen`, an `--answer` as whoever runs it.
+        const client = await openMeetingsClient({ role: opts.answer === undefined ? "listen" : "cli" });
         const session = new ListenSession({
             store,
             meeting,
@@ -572,6 +576,10 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             ...(chosen.joinRunningRound ? { joinRunningRound: true } : {}),
             actor: chosen.actor,
             ...(opts.reason ? { reason: opts.reason } : {}),
+            decisions: {
+                apply: (request) => client.call("decision.apply", request),
+                revert: (request) => client.call("decision.revert", request),
+            },
             split: {
                 transcript: async () => (await opened.meeting()).transcript,
                 micShare: async () => (await opened.energy()).share,
@@ -588,6 +596,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         } finally {
             process.off("exit", onExit);
             process.off("SIGINT", onSigint);
+            client.close();
         }
 
         // `--answer --json`: the decision journal entry of the answer, for the agent that relayed it.
@@ -595,8 +604,9 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             const entry = session.applied().at(-1);
 
             if (!entry) {
+                const why = session.skippedLast()[0]?.reason ?? `${opts.item} is not open any more`;
                 fail(
-                    `${opts.item} was decided elsewhere meanwhile; nothing was answered (${TOOL} journal ${meeting.id})`
+                    `${why}; nothing was answered (who decided it: ${TOOL} journal ${meeting.id} --item ${opts.item})`
                 );
                 return;
             }

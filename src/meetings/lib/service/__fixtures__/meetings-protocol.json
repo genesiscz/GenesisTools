@@ -27,13 +27,19 @@
             "meeting.show",
             "meeting.transcript",
             "meeting.revisions",
+            "decision.plan",
+            "decision.apply",
+            "decision.revert",
+            "journal.read",
             "subscribe",
             "unsubscribe"
           ],
           "events": [
-            "meeting.changed"
+            "meeting.changed",
+            "decision.applied",
+            "decision.reverted"
           ],
-          "version": "73374ddffc14"
+          "version": "0dd409c4c7a9"
         }
       }
     },
@@ -517,6 +523,975 @@
     {
       "method": "hello",
       "direction": "client→service",
+      "note": "An agent (the REPL, an MCP door): its decisions name its harness and session.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "hello",
+        "params": {
+          "role": "agent",
+          "harness": "claude-code",
+          "session": "11111111-2222-4333-8444-555555555555",
+          "protocol": 1,
+          "code": "0123456789ab"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocol": 1,
+          "code": "0123456789ab",
+          "methods": [
+            "hello",
+            "meetings.list",
+            "meeting.show",
+            "meeting.transcript",
+            "meeting.revisions",
+            "decision.plan",
+            "decision.apply",
+            "decision.revert",
+            "journal.read",
+            "subscribe",
+            "unsubscribe"
+          ],
+          "events": [
+            "meeting.changed",
+            "decision.applied",
+            "decision.reverted"
+          ],
+          "version": "0dd409c4c7a9"
+        }
+      }
+    },
+    {
+      "method": "subscribe",
+      "direction": "client→service",
+      "note": "The window hears every decision on the open meeting, with its journal entry.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 15,
+        "method": "subscribe",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "events": [
+            "decision.applied",
+            "decision.reverted"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 15,
+        "result": {
+          "events": [
+            "decision.applied",
+            "decision.reverted"
+          ]
+        }
+      }
+    },
+    {
+      "method": "decision.plan",
+      "direction": "client→service",
+      "note": "What a confirm would do and reach; nothing is written.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "decision.plan",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": {
+            "kind": "confirm",
+            "items": [
+              "i1"
+            ]
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "entry": {
+            "token": "9c1ec92e-5ea6-4d0d-9b13-f4202d8f4c50",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "action": {
+              "kind": "confirm",
+              "items": [
+                "i1"
+              ]
+            },
+            "decided": [
+              "i1"
+            ],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "9c1ec92e-5ea6-4d0d-9b13-f4202d8f4c50",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm"
+                    }
+                  }
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          },
+          "skipped": [],
+          "reach": {
+            "items": [],
+            "dictionary": []
+          }
+        }
+      }
+    },
+    {
+      "method": "decision.apply",
+      "direction": "client→service",
+      "note": "The actor comes from the connection's hello; the reason is kept on the entry and the item.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "decision.apply",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": {
+            "kind": "confirm",
+            "items": [
+              "i1"
+            ]
+          },
+          "reason": "the calendar says so"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "entry": {
+            "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "reason": "the calendar says so",
+            "action": {
+              "kind": "confirm",
+              "items": [
+                "i1"
+              ]
+            },
+            "decided": [
+              "i1"
+            ],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm",
+                      "reason": "the calendar says so"
+                    }
+                  }
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          },
+          "skipped": []
+        }
+      }
+    },
+    {
+      "method": "decision.revert",
+      "direction": "client→service",
+      "note": "The Undo of one entry, whole; items: [...] undoes only those.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "decision.revert",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "entry": {
+            "token": "185d1bb6-84d2-4a85-8f60-b55c4165bbdd",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "action": {
+              "kind": "revert",
+              "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb"
+            },
+            "decided": [],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm",
+                      "reason": "the calendar says so"
+                    }
+                  }
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          },
+          "skipped": []
+        }
+      }
+    },
+    {
+      "method": "decision.apply",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "decision.apply",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": {
+            "kind": "confirm",
+            "items": [
+              "i1"
+            ]
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "entry": {
+            "token": "f98f02db-b93d-4ecc-a2a4-1778a181ad3b",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "action": {
+              "kind": "confirm",
+              "items": [
+                "i1"
+              ]
+            },
+            "decided": [
+              "i1"
+            ],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "f98f02db-b93d-4ecc-a2a4-1778a181ad3b",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm"
+                    }
+                  }
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          },
+          "skipped": []
+        }
+      }
+    },
+    {
+      "method": "decision.apply",
+      "direction": "client→service",
+      "note": "The window's click on an item decided since: already-decided, with the entry that decided it.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 16,
+        "method": "decision.apply",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": {
+            "kind": "reject",
+            "items": [
+              "i1"
+            ]
+          },
+          "onDecided": "refuse"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 16,
+        "error": {
+          "code": 1100,
+          "message": "i1 is confirmed already by an agent (Claude Code, session 11111111); nothing was decided",
+          "data": {
+            "code": "already-decided",
+            "items": [
+              "i1"
+            ],
+            "entry": {
+              "token": "f98f02db-b93d-4ecc-a2a4-1778a181ad3b",
+              "at": "2026-11-03T10:00:00.000Z",
+              "meeting": "2026-11-03-1000-design-review",
+              "actor": {
+                "kind": "agent",
+                "harness": "claude-code",
+                "session": "11111111-2222-4333-8444-555555555555"
+              },
+              "action": {
+                "kind": "confirm",
+                "items": [
+                  "i1"
+                ]
+              },
+              "decided": [
+                "i1"
+              ],
+              "settled": [],
+              "skipped": [],
+              "changes": [
+                {
+                  "id": "i1",
+                  "before": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "suggested",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z"
+                  },
+                  "after": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "confirmed",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z",
+                    "decidedAt": "2026-11-03T10:00:00.000Z",
+                    "decision": {
+                      "token": "f98f02db-b93d-4ecc-a2a4-1778a181ad3b",
+                      "previous": {
+                        "status": "suggested",
+                        "speaker": "Alex Example"
+                      },
+                      "actor": {
+                        "kind": "agent",
+                        "harness": "claude-code",
+                        "session": "11111111-2222-4333-8444-555555555555"
+                      },
+                      "entry": {
+                        "action": "confirm"
+                      }
+                    }
+                  }
+                }
+              ],
+              "labels": [],
+              "corrections": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "journal.read",
+      "direction": "client→service",
+      "note": "Newest first; revertedBy names the Undo.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 17,
+        "method": "journal.read",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "limit": 2
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 17,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "entries": [
+            {
+              "token": "f98f02db-b93d-4ecc-a2a4-1778a181ad3b",
+              "at": "2026-11-03T10:00:00.000Z",
+              "meeting": "2026-11-03-1000-design-review",
+              "actor": {
+                "kind": "agent",
+                "harness": "claude-code",
+                "session": "11111111-2222-4333-8444-555555555555"
+              },
+              "action": {
+                "kind": "confirm",
+                "items": [
+                  "i1"
+                ]
+              },
+              "decided": [
+                "i1"
+              ],
+              "settled": [],
+              "skipped": [],
+              "changes": [
+                {
+                  "id": "i1",
+                  "before": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "suggested",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z"
+                  },
+                  "after": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "confirmed",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z",
+                    "decidedAt": "2026-11-03T10:00:00.000Z",
+                    "decision": {
+                      "token": "f98f02db-b93d-4ecc-a2a4-1778a181ad3b",
+                      "previous": {
+                        "status": "suggested",
+                        "speaker": "Alex Example"
+                      },
+                      "actor": {
+                        "kind": "agent",
+                        "harness": "claude-code",
+                        "session": "11111111-2222-4333-8444-555555555555"
+                      },
+                      "entry": {
+                        "action": "confirm"
+                      }
+                    }
+                  }
+                }
+              ],
+              "labels": [],
+              "corrections": []
+            },
+            {
+              "token": "185d1bb6-84d2-4a85-8f60-b55c4165bbdd",
+              "at": "2026-11-03T10:00:00.000Z",
+              "meeting": "2026-11-03-1000-design-review",
+              "actor": {
+                "kind": "agent",
+                "harness": "claude-code",
+                "session": "11111111-2222-4333-8444-555555555555"
+              },
+              "action": {
+                "kind": "revert",
+                "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb"
+              },
+              "decided": [],
+              "settled": [],
+              "skipped": [],
+              "changes": [
+                {
+                  "id": "i1",
+                  "before": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "confirmed",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z",
+                    "decidedAt": "2026-11-03T10:00:00.000Z",
+                    "decision": {
+                      "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb",
+                      "previous": {
+                        "status": "suggested",
+                        "speaker": "Alex Example"
+                      },
+                      "actor": {
+                        "kind": "agent",
+                        "harness": "claude-code",
+                        "session": "11111111-2222-4333-8444-555555555555"
+                      },
+                      "entry": {
+                        "action": "confirm",
+                        "reason": "the calendar says so"
+                      }
+                    }
+                  },
+                  "after": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "suggested",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z"
+                  }
+                }
+              ],
+              "labels": [],
+              "corrections": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "decision.applied",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "decision.applied",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "entry": {
+            "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "reason": "the calendar says so",
+            "action": {
+              "kind": "confirm",
+              "items": [
+                "i1"
+              ]
+            },
+            "decided": [
+              "i1"
+            ],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm",
+                      "reason": "the calendar says so"
+                    }
+                  }
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          }
+        }
+      }
+    },
+    {
+      "method": "decision.reverted",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "decision.reverted",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb",
+          "entry": {
+            "token": "185d1bb6-84d2-4a85-8f60-b55c4165bbdd",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "action": {
+              "kind": "revert",
+              "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb"
+            },
+            "decided": [],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "7b57a83e-f6df-4b15-936e-67e0709e2abb",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm",
+                      "reason": "the calendar says so"
+                    }
+                  }
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          }
+        }
+      }
+    },
+    {
+      "method": "hello",
+      "direction": "client→service",
       "note": "A CLI in an agent session: the harness and session come from whoIsCalling.",
       "request": {
         "jsonrpc": "2.0",
@@ -542,13 +1517,19 @@
             "meeting.show",
             "meeting.transcript",
             "meeting.revisions",
+            "decision.plan",
+            "decision.apply",
+            "decision.revert",
+            "journal.read",
             "subscribe",
             "unsubscribe"
           ],
           "events": [
-            "meeting.changed"
+            "meeting.changed",
+            "decision.applied",
+            "decision.reverted"
           ],
-          "version": "73374ddffc14"
+          "version": "0dd409c4c7a9"
         }
       }
     },

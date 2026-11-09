@@ -97,6 +97,8 @@ export const DECISION_ACTIONS = [
     "rename",
     "reopen",
     "revert",
+    "add",
+    "set",
 ] as const;
 export type DecisionActionKind = (typeof DECISION_ACTIONS)[number];
 
