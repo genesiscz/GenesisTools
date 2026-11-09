@@ -1136,7 +1136,8 @@ final class EditExporter {
     nonisolated static func export(project: EditProject, to url: URL, isCancelled: @escaping @MainActor () -> Bool = { false },
                                    onProgress: @escaping @MainActor (Double) -> Void) async throws -> Result {
         let started = Date()
-        guard url.standardizedFileURL.path != URL(fileURLWithPath: project.source.video).standardizedFileURL.path else {
+        // Symlinks resolved on both sides (as the CLI's renderInto does), so a link to the movie or /private/tmp is refused.
+        guard url.resolvingSymlinksInPath().path != URL(fileURLWithPath: project.source.video).resolvingSymlinksInPath().path else {
             throw ExportError.overwritesInput(url.path)
         }
         let asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
