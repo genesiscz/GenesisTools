@@ -170,7 +170,11 @@ export function registerCaptureSessionCommands(capture: Command): void {
 
                 control?.observe(event);
 
-                if (event.event === "state" || event.event === "error") {
+                // Each state event re-anchors the floating controls' clock on the movie time; an error changes only
+                // the entry.
+                if (event.event === "state") {
+                    void control?.status().then((status) => live?.notifyStatus(status));
+                } else if (event.event === "error") {
                     void control
                         ?.status()
                         .then((status) => live?.update({ state: status.state, warning: status.warning }));

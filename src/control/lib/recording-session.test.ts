@@ -6,6 +6,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chosenPlan } from "@app/recorder/lib/proxy";
+import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
@@ -1560,6 +1561,136 @@ describe("start flags for a target", () => {
         expect(() => parseWindowIdList("41,x", "--exclude-window-ids")).toThrow(
             "--exclude-window-ids takes CG window ids"
         );
+    });
+});
+
+describe("a movie recording's clock on the live socket", () => {
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `movie-clock-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        await rm(root, { recursive: true, force: true });
+    });
+
+    it("every session state notifies the recorded time and whether it grows, so arming, a pause and a restart re-anchor the floating controls' clock", async () => {
+        const { recorder, runs } = fakeRecorder({ armLater: true });
+        let clock = 1_000_000;
+        let control: SessionRecorderControl | undefined;
+        let server: LiveRecordingServer | undefined;
+        const recording = new RecordingSession({
+            target: display,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async ({ output }) => {
+                await writeFile(output, "joined");
+                return { durationMs: 1000 };
+            },
+            measure: async () => 1000,
+            // The live wiring of video-recording.ts and capture-session.ts.
+            emit: (event) => {
+                control?.observe(event);
+
+                if (event.event === "state") {
+                    void control?.status().then((status) => server?.notifyStatus(status));
+                }
+            },
+            now: () => clock,
+            tickMs: 0,
+            slowStartMs: 0,
+            maxSeconds: 600,
+        });
+        control = new SessionRecorderControl(recording, { target: display });
+        const dir = join(root, "live");
+        server = new LiveRecordingServer({ id: "movie-clock", kind: control.kind, title: "Movie", control, dir });
+        const client = await RecorderClient.connect("movie-clock", { dir });
+        const notes: unknown[] = [];
+        const all = Promise.withResolvers<void>();
+        await client.subscribe(
+            (notification) => {
+                notes.push(notification.params);
+
+                if (notes.length === 7) {
+                    all.resolve();
+                }
+            },
+            ["state"]
+        );
+
+        expect(await client.status()).toMatchObject({ state: "recording", elapsedMs: 0, elapsedRunning: false });
+        await recording.start();
+        clock += 1500;
+        runs[0].arm();
+        clock += 2000;
+        await client.pause();
+        clock += 4000;
+        await client.resume();
+        runs[1].arm();
+        clock += 1000;
+        await client.restart();
+        runs[2].arm();
+        await withTimeout(
+            all.promise,
+            2_000,
+            new Error(`7 state notifications timed out: ${SafeJSON.stringify(notes)}`)
+        );
+        client.close();
+        server.close();
+        await recording.command({ cmd: "discard" });
+
+        const limitMs = 600_000;
+        expect(notes).toEqual([
+            { state: "recording", elapsedMs: 0, elapsedRunning: false, limitMs },
+            { state: "recording", elapsedMs: 0, elapsedRunning: true, limitMs },
+            { state: "paused", elapsedMs: 2000, elapsedRunning: false, limitMs },
+            { state: "recording", elapsedMs: 2000, elapsedRunning: false, limitMs },
+            { state: "recording", elapsedMs: 2000, elapsedRunning: true, limitMs },
+            { state: "recording", elapsedMs: 0, elapsedRunning: false, limitMs },
+            { state: "recording", elapsedMs: 0, elapsedRunning: true, limitMs },
+        ]);
+    });
+
+    it("update() still notifies a state only when it changes, for a recorder that keeps no movie time", async () => {
+        const { recorder } = fakeRecorder({ armLater: true });
+        const recording = new RecordingSession({
+            target: display,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async () => ({ durationMs: 0 }),
+            measure: async () => 0,
+            emit: () => {},
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        const control = new SessionRecorderControl(recording, { target: display });
+        const dir = join(root, "live");
+        const server = new LiveRecordingServer({ id: "plain", kind: "meeting", title: "Plain", control, dir });
+        const client = await RecorderClient.connect("plain", { dir });
+        const notes: unknown[] = [];
+        const ended = Promise.withResolvers<void>();
+        await client.subscribe(
+            (notification) => {
+                notes.push(notification.params);
+
+                if (notification.event === "ended") {
+                    ended.resolve();
+                }
+            },
+            ["state", "ended"]
+        );
+        server.update({ state: "recording" });
+        server.update({ state: "paused" });
+        server.update({ state: "paused", frames: 2 });
+        server.close();
+        await withTimeout(ended.promise, 2_000, new Error("ended timed out"));
+        client.close();
+
+        expect(notes).toEqual([{ state: "paused" }, {}]);
     });
 });
 
