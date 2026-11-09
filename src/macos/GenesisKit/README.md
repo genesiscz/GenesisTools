@@ -70,9 +70,9 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Window/` | `WindowTitlebar`: `.titlebarZone()`, `.titlebarBackground`, `.titlebarRow()`, the snapshot audit; `HostWindow` + `HostWindowReader` (the window a view is in, without SwiftUI state); `WindowSnapshot` (a `--snapshot` PNG as the window server composes it, Liquid Glass included); `WindowRaise` (one window forward, not the whole app); `SingleInstance` (one process of a kind per login session: a later launch hands its arguments over and exits) |
 | `Permissions/` | `PermissionKind` (every privacy grant: title, reason, exact System Settings pane, request style), `PermissionAccess` (status and in-place request through TCC, with the `GenesisToolsSimulateDeniedPermissions` denial simulation on top), `PermissionCenter` + `PermissionNeed` (the one permission dialog: one per kind at a time, grants in place where macOS allows it, otherwise explains and opens the pane, offers Relaunch for a grant only a new process sees, closes itself when the grant arrives), `PermissionDialogView` / `PermissionPanelPresenter` |
 | `Perf/` | `PerfLog`, `HangWatch`, `MainStackSampler`, `MonitorPerf`, `RenderProbe`, `PerfConfiguration`, `MainBusy` (main-thread busy time after an event, `measureUntilSettled`, and a `Meter` for benches), `SessionOpenBench` (times one open of a session screen for the bench tests of both apps) |
-| `Tools/` | `ToolsBridge` (runs `tools`), `ToolsLineStream` (one long-running `tools` child, stdout as whole lines on the main queue, stdin held open so the child ends with the app), `MonitorJSON`, `TitleFormatter`, `SessionTranscriptClient` (the `tools ai sessions tail` envelope), `TranscriptPromptPart`, `DiskCache` (last answers on disk; `load` / `loadData` read off the main thread), `DirectoryWatcher` (one FSEvents stream over several folders, a path filter, main-queue callback) |
+| `Tools/` | `ToolsBridge` (runs `tools`), `JSONRPCSocketClient` (a `tools` service's JSON-RPC socket), `ToolsLineStream` (one long-running `tools` child, stdout as whole lines on the main queue, stdin held open so the child ends with the app), `MonitorJSON`, `TitleFormatter`, `SessionTranscriptClient` (the `tools ai sessions tail` envelope), `TranscriptPromptPart`, `DiskCache` (last answers on disk; `load` / `loadData` read off the main thread), `DirectoryWatcher` (one FSEvents stream over several folders, a path filter, main-queue callback) |
 | `Providers/` | `AIProviderMeta`, `AIProviders`, `AIProviderGlyph` |
-| `Recording/` | screen recording for any host: `ScreenRecorder` (picker, grant, session, floating controls) with `ScreenRecordingHost`, `RecordingTargetPicker`, `RecordingControlsView`, `RecordingSessionController` (one `tools control capture session`), `RecordingTarget(s)`, `RecordingSettings` + `RecordingSettingsView`; `Live/`: `LiveRecordingStore` (the `recordings/live/` entries other processes write), `LiveRecordingRPCClient` (their JSON-RPC control socket) and `LiveRecordingsStatusItem` (their menu bar item and floating controls) |
+| `Recording/` | screen recording for any host: `ScreenRecorder` (picker, grant, session, floating controls) with `ScreenRecordingHost`, `RecordingTargetPicker`, `RecordingControlsView`, `RecordingSessionController` (one `tools control capture session`), `RecordingTarget(s)`, `RecordingSettings` + `RecordingSettingsView`; `Live/`: `LiveRecordingStore` (the `recordings/live/` entries other processes write), their JSON-RPC control socket through `JSONRPCSocketClient` (`Tools/`) and `LiveRecordingsStatusItem` (their menu bar item and floating controls) |
 | `Sessions/` | `SessionPalette`, `SessionFormat` |
 | `Sessions/Transcript/` | `SessionTranscriptList`, `TranscriptDocument`, prompt parts, `TranscriptScrollAnchor`, `TranscriptBus` / `TranscriptFilters`, `TranscriptMarkdownStyle`, `TranscriptLiveTail` (one `tools ai sessions tail --live` child, or a server subscription, per open screen; its `TranscriptLiveActivity` says what the agent does now, the list's last row through a `TranscriptActivityFeed` only that row observes) |
 | `Sessions/ToolCalls/` | `SessionToolCallView` + `TranscriptServices`, `SessionNativeLog` + `SessionNativeLogStore`, `SessionToolChanges`, `BatchedToolChangeSource` + `ToolChangeBatcher` (rows that ask within 100 ms share one `tools agents changes` run) |
@@ -6861,17 +6861,13 @@ paused, nil while stopping or when the recorder does not list it in `controls`),
 `displayNames`. `LiveRecordingsWatcher` reads the folder again on each change (a DispatchSource on the folder) and
 once a second, off the main thread, and publishes `recordings`.
 
-#### `LiveRecordingRPCClient`, `LiveRecordingOverlay`
+#### The live recording's socket, `LiveRecordingOverlay`
 
-The control channel of a live recording: the Unix domain socket its entry names (`socket`), JSON-RPC 2.0 with one
-JSON message per line. Methods: `status`, `pause`, `resume`, `stop`, `displays.list`, `displays.add {displayId}`,
-`displays.remove {displayId}`, `displays.switch {displayId}`, `displays.mode {mode}` and `subscribe`, after which the
-connection gets the notifications `state`, `frame` (`{displayId, at, file}`), `displays`, `warning` and `ended`.
-
-- `init(path: String, callbackQueue: DispatchQueue = .main)`; `connect() throws` (a refused socket throws `.connect`).
-- `call(_ method: String, params: [String: Any]?, timeout: TimeInterval = 3)`, async or with a completion: a
-  JSON-RPC error is `.remote(code:message:)`, no answer in time is `.timeout(method:)`, a dropped connection `.closed`.
-- `onNotification: (String, Any?) -> Void`, `onClose: () -> Void`, `close()`.
+The control channel of a live recording: the Unix domain socket its entry names (`socket`), spoken through
+`JSONRPCSocketClient` (see Tools; `LiveRecordingRPCClient` is its old name, kept as a typealias). Methods: `status`,
+`pause`, `resume`, `stop`, `displays.list`, `displays.add {displayId}`, `displays.remove {displayId}`,
+`displays.switch {displayId}`, `displays.mode {mode}` and `subscribe`, after which the connection gets the
+notifications `state`, `frame` (`{displayId, at, file}`), `displays`, `warning` and `ended`.
 
 `LiveRecordingOverlay` is what the socket said (`applyStatus`, `applyFrame`, `applyDisplays`, `applyWarning`), laid
 over the entry by `merged(into:)`: state, frames, the connected displays with `recorded`, the mode and the last error.
@@ -9895,6 +9891,34 @@ let stream = try ToolsLineStream(
     onExit: { exit in print("exit", exit.status, "stopped:", exit.stopped) })
 // later
 stream.stop()
+```
+
+#### `JSONRPCSocketClient`
+
+A JSON-RPC 2.0 peer over a Unix domain socket, one JSON message per line, as every `tools` service speaks it
+(src/utils/rpc): a live recording's control socket, the recorder service and the Meetings service. `LiveRecordingRPCClient`
+is its old name, kept as a typealias.
+
+- `init(path: String, callbackQueue: DispatchQueue = .main, sendTimeout: TimeInterval = 2)`; `connect() throws` (a
+  refused socket throws `.connect`).
+- `call(_ method: String, params: [String: Any]?, timeout: TimeInterval = 3)`, async or with a completion: a
+  JSON-RPC error is `Failure.remote(code:message:)`, no answer in time is `.timeout(method:)`, a dropped connection
+  `.closed`.
+- `request(_:params:timeout:errorData:onProgress:completion:) -> Int`: `call` with the request id for `cancel(_:)`
+  and the peer's `$/progress`. With `errorData: true` an error answer arrives as `RemoteError` (`code`, `message`,
+  `data` as JSON bytes, `decodeData(_:)`), for a service that names its reason in `data` (the Meetings service's
+  `data.code`).
+- `answer(_ method:, with: Handler)`: this side answers the peer's requests; `notify(_:params:)` sends a notification.
+- `onNotification: (String, Any?) -> Void`, `onClose: () -> Void`, `close()`.
+
+```swift
+let client = JSONRPCSocketClient(path: socket, callbackQueue: DispatchQueue(label: "my.service"))
+try client.connect()
+client.request("meeting.show", params: ["ref": id], timeout: 30, errorData: true) { result in
+    if case let .failure(error as JSONRPCSocketClient.RemoteError) = result {
+        print(error.code, error.decodeData([String: String].self)?["code"] ?? "")
+    }
+}
 ```
 
 #### `MonitorJSON`
