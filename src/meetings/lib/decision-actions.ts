@@ -1,8 +1,9 @@
 import { correctionSchema } from "@genesiscz/utils/meetings/corrections";
-import { meetingItemSchema, savedDecisionActorSchema } from "@genesiscz/utils/meetings/record";
+import { meetingItemSchema, savedDecisionActorSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
 import { sentCommentSchema } from "./comment-schema";
 import { findingSchema } from "./findings";
+import { linePointSchema } from "./moment-schema";
 
 /**
  * The decision journal's saved shapes: one action per decision, and one entry per line of `decisions.ndjson`. Kept
@@ -36,6 +37,27 @@ export const DECISION_ACTION_OPTIONS = [
     z.object({ kind: z.literal("split"), question: itemRef }),
     /** A diarization label renamed for this meeting; the label's own name removes the rename. */
     z.object({ kind: z.literal("rename"), label: z.string().min(1), name: z.string() }),
+    /**
+     * Lines given to a person for this meeting (R21, R44, G-SPK-2): each stretch's lines of its label (of every label
+     * in it when absent), and each transcript line named by its start (`lines`). The record keeps one
+     * `speakers.assignments` entry per label and stretch; the corrected transcript and the speaker stats show them as
+     * the person. `email`: the person's address, when the people directory knows it.
+     */
+    z.object({
+        kind: z.literal("assign"),
+        person: z.string().trim().min(1),
+        email: z.string().trim().min(1).optional(),
+        stretches: z
+            .array(
+                z.object({
+                    label: z.string().min(1).optional(),
+                    fromSec: z.number().min(0),
+                    toSec: z.number().min(0),
+                })
+            )
+            .optional(),
+        lines: z.array(linePointSchema).optional(),
+    }),
     /** Items back to suggested, each to the state before its own last decision. */
     z.object({ kind: z.literal("reopen"), items: z.array(itemRef).min(1) }),
     /** Findings added as suggested items (`items add`): an agent's or a person's suggestions, kept with who made them. */
@@ -96,6 +118,14 @@ export const labelChangeSchema = z.object({
 });
 export type LabelChange = z.infer<typeof labelChangeSchema>;
 
+/** A speaker assignment a decision added, changed or removed: before (absent: it made it) and after (absent: gone). */
+export const assignmentChangeSchema = z.object({
+    id: z.string(),
+    before: speakerAssignmentSchema.optional(),
+    after: speakerAssignmentSchema.optional(),
+});
+export type AssignmentChange = z.infer<typeof assignmentChangeSchema>;
+
 /** The meeting fields a `set` changes; each is one value of the record, put back whole by an Undo. */
 export const MEETING_FIELDS = ["project", "title", "labels"] as const;
 
@@ -120,7 +150,7 @@ export type DecisionSkip = z.infer<typeof skipSchema>;
  * One line of the journal: who decided what on a meeting, when and why, and everything it changed, so its token
  * undoes exactly it. `decided`: the items it decided (their status or decision time changed); `settled`: the
  * look-alike questions an answer settled; `corrections`: the ledger lines it wrote; `fields`: the meeting's own fields
- * it changed (`set`).
+ * it changed (`set`); `assignments`: the speaker assignments it changed (`assign`).
  */
 export const journalEntrySchema = z.object({
     token: z.string().min(1),
@@ -138,6 +168,8 @@ export const journalEntrySchema = z.object({
     changes: z.array(itemChangeSchema).default([]),
     labels: z.array(labelChangeSchema).default([]),
     fields: z.array(fieldChangeSchema).optional(),
+    /** The speaker assignments it changed (`assign`, or the Undo of one); absent when it changed none. */
+    assignments: z.array(assignmentChangeSchema).optional(),
     corrections: z.array(correctionSchema).default([]),
 });
 export type JournalEntry = z.infer<typeof journalEntrySchema>;

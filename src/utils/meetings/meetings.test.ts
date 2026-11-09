@@ -587,7 +587,7 @@ describe("meeting records", () => {
                     token: "t-future",
                     previous: { status: "suggested" },
                     actor: { kind: "person", name: "Dana Example" },
-                    entry: { action: "assign", reason: "her voice" },
+                    entry: { action: "regroup", reason: "her voice" },
                 },
             },
         ];

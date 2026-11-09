@@ -5,7 +5,13 @@ import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
-import { MEETING_FILE, type MeetingRecord, MeetingStore, MOMENTS_FOLDER } from "@genesiscz/utils/meetings/record";
+import {
+    MEETING_FILE,
+    type MeetingRecord,
+    MeetingStore,
+    MOMENTS_FOLDER,
+    type SpeakerAssignment,
+} from "@genesiscz/utils/meetings/record";
 import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
 import { type SpeakerStats, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./assign";
@@ -190,7 +196,7 @@ export function dictionaryShowRead(config: MeetingsConfig, project?: string): Di
     return { project: project ?? null, abbrExpansion: merged.abbrExpansion, entries: rows };
 }
 
-export type SpeakerStatsView = { meeting: string; gapSec: number } & SpeakerStats;
+export type SpeakerStatsView = { meeting: string; gapSec: number; assignments?: SpeakerAssignment[] } & SpeakerStats;
 
 /** `meetings speakers stats <id>`: per label its turns, spoken time and spans, on the stays the record keeps. */
 export async function speakerStatsRead(options: {
@@ -209,7 +215,8 @@ export async function speakerStatsRead(options: {
         participants: meeting.speakers,
         presence: await opened.presence(options.attendance),
     });
-    return { meeting: record.id, gapSec, ...stats };
+    const assignments = record.speakers.assignments ?? [];
+    return { meeting: record.id, gapSec, ...stats, ...(assignments.length > 0 ? { assignments } : {}) };
 }
 
 /**
