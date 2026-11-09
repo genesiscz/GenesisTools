@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
@@ -8,7 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { fillerListsOf, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
-import { bubbleFromSidecar, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
+import { bubbleFromSidecar, cameraMoviePath, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
 import { cutIssues, type EditIssue } from "@genesiscz/utils/recording-editor/check";
 import {
     audioTrackCount,
@@ -1062,12 +1062,22 @@ export function exportProgressPrinter(print: (line: string) => void): (fraction:
 export async function renderInto({
     target,
     overwrite,
+    inputs,
     render,
 }: {
     target: string;
     overwrite?: boolean;
+    /** The files the export reads (exportInputsOf); the target may be none of them, overwrite or not. */
+    inputs: string[];
     render: (out: string) => Promise<ExportAnswer>;
 }): Promise<ExportAnswer & { replaced?: boolean }> {
+    // The renderer's own check sees only the staging name, and the move below would replace the recording itself.
+    const refused = overwritesInput(target, inputs);
+
+    if (refused) {
+        return refused;
+    }
+
     const exists = existsSync(target);
 
     if (exists && !overwrite) {
@@ -1094,6 +1104,39 @@ export async function renderInto({
     await rename(answer.path, target);
     log.debug({ target, replaced: exists }, "the export moved over its target");
     return { ...answer, path: target, ...(exists ? { replaced: true } : {}) };
+}
+
+/**
+ * The path as the disk names it: symlinks followed (/tmp is /private/tmp) and the case the file has on a
+ * case-insensitive volume. A path that does not exist yet keeps its name under its folder's real path.
+ */
+function canonicalPath(path: string): string {
+    const absolute = resolve(path);
+
+    if (existsSync(absolute)) {
+        return realpathSync.native(absolute);
+    }
+
+    const folder = dirname(absolute);
+    return existsSync(folder) ? join(realpathSync.native(folder), basename(absolute)) : absolute;
+}
+
+/** The refusal for a target that is one of the export's inputs (the window's ExportError.overwritesInput words). */
+function overwritesInput(target: string, inputs: string[]): ExportAnswer | undefined {
+    const canonicalTarget = canonicalPath(target);
+    const input = inputs.find((path) => canonicalPath(path) === canonicalTarget);
+    return input ? { ok: false, error: `the export would overwrite its input ${input}; pick another file` } : undefined;
+}
+
+/** The files an export of the edit reads: the source movie, the camera movie, the music and every voiceover. */
+export function exportInputsOf(project: EditProject): string[] {
+    const video = project.source.video;
+    return [
+        video,
+        ...(project.camera ? [cameraMoviePath(project.camera, video)] : []),
+        ...(project.audio.music ? [resolve(dirname(video), project.audio.music.file)] : []),
+        ...(project.audio.voiceovers ?? []).map((voiceover) => resolve(dirname(video), voiceover.file)),
+    ];
 }
 
 /** `<stem>.<ext>`, or `-2`, `-3`…: an export never overwrites a file. */
@@ -1467,12 +1510,20 @@ async function renderExport(
         out: options.out,
         overwrite: options.overwrite,
     });
+    // The denoised render reads a cleaned copy, but the target is still checked against the recording's own files.
+    const inputs = exportInputsOf(opened.project);
+    const refused = overwritesInput(output, inputs);
+
+    if (refused) {
+        return refused;
+    }
 
     if (asked === "mp4") {
         if (opened.project.audio.denoise) {
             return renderInto({
                 target: output,
                 overwrite: options.overwrite,
+                inputs,
                 render: (to) => withDenoisedSource(opened, (edit) => hostExport({ path: edit, out: to, ...host })),
             });
         }
@@ -1481,6 +1532,7 @@ async function renderExport(
         return renderInto({
             target: output,
             overwrite: options.overwrite,
+            inputs,
             render: (to) => hostExport({ path: recording, out: to, ...host }),
         });
     }
@@ -1514,6 +1566,7 @@ async function renderExport(
         return await renderInto({
             target: output,
             overwrite: options.overwrite,
+            inputs,
             render: async (to) => {
                 await runVideoCommand({
                     // The window's render already holds one mixed audio track.

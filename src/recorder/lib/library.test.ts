@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    symlinkSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import * as cli from "@genesiscz/utils/cli";
@@ -16,6 +26,7 @@ import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-sto
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import {
     computeEdit,
+    exportAs,
     exportProgressPrinter,
     exportTargetOf,
     parseExportSize,
@@ -52,6 +63,7 @@ import {
 import { currentGif, shareableMovie, trashRecording, trashRecordings } from "./quick-actions";
 import { screenHitsWithOps } from "./screen-ops";
 import { findOnScreen } from "./screen-search";
+import * as serviceClient from "./service-client";
 
 function writeState(state: Record<string, unknown>): void {
     mkdirSync(dirname(editorOpenStatePath()), { recursive: true });
@@ -1250,6 +1262,7 @@ describe("an export into a file that exists", () => {
         let rendered = 0;
         const refused = await renderInto({
             target,
+            inputs: [],
             render: async (out) => {
                 rendered++;
                 return fakeRender("new")(out);
@@ -1258,7 +1271,7 @@ describe("an export into a file that exists", () => {
         expect(refused.ok).toBe(false);
         expect(refused.error).toContain("overwrite: true, --overwrite");
         expect(rendered).toBe(0);
-        const replaced = await renderInto({ target, overwrite: true, render: fakeRender("new") });
+        const replaced = await renderInto({ target, overwrite: true, inputs: [], render: fakeRender("new") });
         expect(replaced).toMatchObject({ ok: true, path: target, replaced: true });
         expect(readFileSync(target, "utf8")).toBe("new");
         expect(existsSync(join(folder, ".demo.rendering.mp4"))).toBe(false);
@@ -1266,6 +1279,7 @@ describe("an export into a file that exists", () => {
         const failed = await renderInto({
             target,
             overwrite: true,
+            inputs: [],
             render: async () => ({ ok: false, error: "boom" }),
         });
         expect(failed.ok).toBe(false);
@@ -1285,5 +1299,67 @@ describe("an export into a file that exists", () => {
             progress(fraction);
         }
         expect(lines).toEqual(["export 0%", "export 10%", "export 50%", "export 90%", "export 100%"]);
+    });
+});
+
+describe("an export never writes over its own input", () => {
+    /** A recording folder whose movie is screen.mp4 and an edit of it, with chapters off so no ffmpeg runs. */
+    function screenEdit(): { path: string; root: string; movie: string; restore: () => void } {
+        const root = mkdtempSync(join(tmpdir(), "rs-overwrite-source-"));
+        const movie = join(root, "screen.mp4");
+        writeFileSync(movie, "original");
+        const path = join(root, "screen.edit.json");
+        const project = wholeProject({ video: movie, durationUs: 4_000_000, width: 100, height: 100 });
+        writeProject(path, { ...project, export: { ...project.export, chapters: false } });
+        const host = spyOn(serviceClient, "hostExport").mockImplementation(async ({ out }) => {
+            const to = out ?? "";
+            writeFileSync(to, "exported");
+            return { ok: true, path: to };
+        });
+        return { path, root, movie, restore: () => host.mockRestore() };
+    }
+
+    // Round 2 hunt (r2-export-overwrite-source): with --overwrite the export rendered into a staging file, which
+    // passed the renderer's own check, and then moved it over the recording's movie, so the recording was lost.
+    it("refuses an overwrite of the source movie, by its path, through /private and through a symlink", async () => {
+        const { path, root, movie, restore } = screenEdit();
+
+        try {
+            const direct = await exportAs(path, { out: movie, overwrite: true });
+            expect(direct.ok).toBe(false);
+            expect(direct.error).toContain("would overwrite its input");
+            expect(readFileSync(movie, "utf8")).toBe("original");
+
+            const real = await exportAs(path, { out: realpathSync(movie).toUpperCase(), overwrite: true });
+            expect(real.error).toContain("would overwrite its input");
+
+            const link = join(root, "link.mp4");
+            symlinkSync(movie, link);
+            const linked = await renderInto({
+                target: link,
+                overwrite: true,
+                inputs: [movie],
+                render: async (to) => ({ ok: true, path: to }),
+            });
+            expect(linked.error).toContain("would overwrite its input");
+            expect(readFileSync(movie, "utf8")).toBe("original");
+        } finally {
+            restore();
+        }
+    });
+
+    it("still replaces another existing file when asked", async () => {
+        const { path, root, movie, restore } = screenEdit();
+        const other = join(root, "other.mp4");
+        writeFileSync(other, "old");
+
+        try {
+            const answer = await exportAs(path, { out: other, overwrite: true });
+            expect(answer).toMatchObject({ ok: true, path: other, replaced: true });
+            expect(readFileSync(other, "utf8")).toBe("exported");
+            expect(readFileSync(movie, "utf8")).toBe("original");
+        } finally {
+            restore();
+        }
     });
 });
