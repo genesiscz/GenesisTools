@@ -24,8 +24,10 @@ import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "
 import { requireRecorderPart } from "@app/recorder/lib/library";
 import {
     chapterMetadata,
+    chapterPoints,
     chaptersOf,
     chaptersOfPart,
+    EMBEDDED_CHAPTER_MIN_SECONDS,
     markersOf,
     recordingFolderOf,
     spreadTimes,
@@ -888,6 +890,22 @@ describe("movie chapters", () => {
         expect(recordingFolderOf({ path: join(original, "edit.json"), project })).toBe(original);
         const loose = wholeProject({ video: join(plain, "movie.mp4"), durationUs: 1_000_000, width: 10, height: 10 });
         expect(recordingFolderOf({ path: join(plain, "movie.edit.json"), project: loose })).toBeUndefined();
+    });
+});
+
+describe("embedded movie chapters and the progress bar", () => {
+    test("markers under a second apart make one chapter named by the first, as the bar divides", () => {
+        const markers = [
+            { plays: 0.4, label: "Start" },
+            { plays: 5, label: "Five" },
+            { plays: 5.4, label: "Five and a bit" },
+            { plays: 9, label: "Nine" },
+        ];
+        expect(chapterPoints(markers, { minSeconds: EMBEDDED_CHAPTER_MIN_SECONDS })).toEqual([
+            { at: 0, label: "Start" },
+            { at: 5, label: "Five" },
+            { at: 9, label: "Nine" },
+        ]);
     });
 });
 
