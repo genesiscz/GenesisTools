@@ -52,6 +52,7 @@ import {
     shortcutsOf,
     sourceTimeOf,
     TEXT_ALIGNS,
+    transcriptCachePath,
     transcriptLines,
     voiceoverExportSpans,
     wholeProject,
@@ -69,7 +70,7 @@ import cardVoiceovers from "./__fixtures__/card-voiceovers.json";
 import editMarkers from "./__fixtures__/edit-markers.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
-import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise";
+import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema, syncDenoisedTranscript } from "./denoise";
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, sampleFpsFilter, speedArgv, trimArgv } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
@@ -2470,6 +2471,30 @@ describe("noise reduction on export", () => {
         expect(denoisedSourcePath(movie, denoiseSchema.parse({ reductionDb: 20 }))).not.toBe(first);
         writeFileSync(movie, "ab");
         expect(denoisedSourcePath(movie, denoiseSchema.parse({}))).not.toBe(first);
+    });
+});
+
+describe("the transcript beside a cleaned copy", () => {
+    // Round 1 hunt (denoise-render-sidecars): the transcript beside the cleaned movie was copied only once, so after
+    // a new transcription a denoised export burned in the old captions while the subtitle file had the new ones.
+    test("the transcript beside the cleaned copy follows the source's on every export, and goes when the source's goes", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-denoise-"));
+        mkdirSync(join(dir, ".denoise"));
+        const transcript = transcriptCachePath(join(dir, "screen.mp4"));
+        const copy = transcriptCachePath(join(dir, ".denoise", "screen-x.mp4"));
+
+        writeFileSync(transcript, '{"segments":[{"start":0,"end":1,"text":"OLD"}]}');
+        syncDenoisedTranscript({ transcript, copy });
+        expect(readFileSync(copy, "utf8")).toContain("OLD");
+
+        writeFileSync(transcript, '{"segments":[{"start":0,"end":1,"text":"NEW"}]}');
+        syncDenoisedTranscript({ transcript, copy });
+        expect(readFileSync(copy, "utf8")).toContain("NEW");
+
+        unlinkSync(transcript);
+        syncDenoisedTranscript({ transcript, copy });
+        expect(existsSync(copy)).toBe(false);
+        expect(() => syncDenoisedTranscript({ transcript, copy })).not.toThrow();
     });
 });
 

@@ -727,6 +727,61 @@ describe("finishing an export", () => {
     });
 });
 
+describe("a denoised export's render copy", () => {
+    // Round 1 hunt (denoise-render-sidecars): the copy renders from .denoise/, where the renderer finds no
+    // recording.json, so the burned-in progress bar lost every marker set while recording.
+    test("denoisedRenderProject carries the recording's markers beside the edit's own, in time order, and renders the cleaned movie", () => {
+        const folder = mkdtempSync(join(tmpdir(), "rs-denoise-"));
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id: "video-denoise",
+                title: "denoise",
+                startedAt: "2026-11-09T10:00:00Z",
+                displays: [],
+                frames: [],
+                settings: {
+                    markers: [
+                        { atMs: 4_000, label: "second step" },
+                        { atMs: 1_500, label: "x".repeat(100) },
+                    ],
+                },
+            })
+        );
+        const path = join(folder, "edit.json");
+        const whole = wholeProject({
+            video: join(folder, "screen.mp4"),
+            durationUs: 10_000_000,
+            width: 100,
+            height: 100,
+        });
+        writeProject(path, {
+            ...whole,
+            markers: [{ id: "m1", atUs: 2_000_000, label: "edit marker" }],
+            audio: { ...whole.audio, denoise: { method: "afftdn", reductionDb: 12 } },
+        });
+        const cleanedPath = join(folder, ".denoise", "screen-abc.mp4");
+        const copy = edits.denoisedRenderProject({
+            opened: { path, project: readProject(path), fresh: false },
+            cleanedPath,
+        });
+
+        expect(copy.source.video).toBe(cleanedPath);
+        expect(copy.audio).not.toHaveProperty("denoise");
+        expect(copy.markers).toEqual([
+            { id: "recorded-1", atUs: 1_500_000, label: "x".repeat(80) },
+            { id: "m1", atUs: 2_000_000, label: "edit marker" },
+            { id: "recorded-0", atUs: 4_000_000, label: "second step" },
+        ]);
+        // The renderer reads the copy as an edit: a recorded label over the edit markers' cap must not break it.
+        const written = join(folder, "denoised.edit.json");
+        writeProject(written, copy);
+        expect(readProject(written).markers).toHaveLength(3);
+        expect(readProject(path).markers).toEqual([{ id: "m1", atUs: 2_000_000, label: "edit marker" }]);
+    });
+});
+
 describe("the REPL's and the CLI's way to the service", () => {
     /** A saved edit as text, with its folder and its random ids out, so two copies compare. */
     function comparable(path: string): unknown {

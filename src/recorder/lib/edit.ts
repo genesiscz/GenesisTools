@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { copyFile, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -10,7 +10,11 @@ import { fillerListsOf, MeetingsConfigStore } from "@genesiscz/utils/meetings/co
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { bubbleFromSidecar, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
 import { cutIssues, type EditIssue } from "@genesiscz/utils/recording-editor/check";
-import { audioTrackCount, ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise";
+import {
+    audioTrackCount,
+    ensureDenoisedSource,
+    syncDenoisedTranscript,
+} from "@genesiscz/utils/recording-editor/denoise";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness } from "@genesiscz/utils/recording-editor/loudness";
@@ -18,10 +22,12 @@ import { cardsLeadUs } from "@genesiscz/utils/recording-editor/overlays";
 import { type TimeValue, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     applyOp,
+    type EditMarker,
     type EditOp,
     type EditProject,
     EXPORT_FORMATS,
     type ExportFormat,
+    editMarkerSchema,
     editProjectSchema,
     type OpFacts,
     opPlacementWarnings,
@@ -1232,9 +1238,42 @@ export async function finishExport({
 }
 
 /**
+ * The edit a denoised export renders: the cleaned movie as its source, no denoise left, the camera file absolute (the
+ * copy sits in a scratch folder), and the markers set while it recorded (`recordedMarkersOf`, the reader the MP4
+ * chapters use) folded into its own markers. The renderer reads those from the recording.json beside the source movie,
+ * and `.denoise/` has none, so without them the progress bar lost them. A label is clipped to the edit markers' cap,
+ * and a marker without a label or before the movie's start is left out, so the copy stays a valid edit.
+ */
+export function denoisedRenderProject(options: { opened: OpenedProject; cleanedPath: string }): EditProject {
+    const { project } = options.opened;
+    const { denoise: _denoise, ...audio } = project.audio;
+    const camera = project.camera;
+    const recorded = recordedMarkersOf(options.opened).flatMap((marker, index): EditMarker[] => {
+        const label = marker.label.trim().slice(0, editMarkerSchema.shape.label.maxLength ?? undefined);
+
+        if (!label || marker.atMs < 0) {
+            log.debug({ marker }, "a recorded marker the edit markers cannot hold is left out of the render copy");
+            return [];
+        }
+
+        return [{ id: `recorded-${index}`, atUs: Math.round(marker.atMs * 1000), label }];
+    });
+    const markers = [...recorded, ...(project.markers ?? [])].sort((a, b) => a.atUs - b.atUs);
+
+    return {
+        ...project,
+        source: { ...project.source, video: options.cleanedPath },
+        ...(camera ? { camera: { ...camera, file: resolve(dirname(project.source.video), camera.file) } } : {}),
+        audio,
+        ...(markers.length ? { markers } : {}),
+    };
+}
+
+/**
  * Runs `render` on the edit as it should export: the edit itself, or with `audio.denoise` a copy in a scratch folder
- * whose source is the cleaned movie (`ensureDenoisedSource`, cached beside the source) and which has no denoise left.
- * The transcript cache goes beside the cleaned movie too, so captions and ducking still find it.
+ * (`denoisedRenderProject`) whose source is the cleaned movie (`ensureDenoisedSource`, cached beside the source). The
+ * renderer reads the transcript beside its source movie for captions and ducking, so the source's transcript is copied
+ * beside the cleaned movie on every export (`syncDenoisedTranscript`), and a new transcription reaches the export.
  */
 async function withDenoisedSource<T>(opened: OpenedProject, render: (editPath: string) => Promise<T>): Promise<T> {
     const settings = opened.project.audio.denoise;
@@ -1250,24 +1289,12 @@ async function withDenoisedSource<T>(opened: OpenedProject, render: (editPath: s
         { source, cleaned: cleaned.path, made: cleaned.made, ms: Math.round(performance.now() - started) },
         "the export renders from the cleaned sound"
     );
-    const transcript = transcriptCachePath(source);
-
-    if (existsSync(transcript) && !existsSync(transcriptCachePath(cleaned.path))) {
-        await copyFile(transcript, transcriptCachePath(cleaned.path));
-    }
-
+    syncDenoisedTranscript({ transcript: transcriptCachePath(source), copy: transcriptCachePath(cleaned.path) });
     const scratch = await mkdtemp(join(tmpdir(), "recorder-denoise-"));
 
     try {
         const copy = join(scratch, "denoised.edit.json");
-        const { denoise: _denoise, ...audio } = opened.project.audio;
-        const camera = opened.project.camera;
-        writeProject(copy, {
-            ...opened.project,
-            source: { ...opened.project.source, video: cleaned.path },
-            ...(camera ? { camera: { ...camera, file: resolve(dirname(source), camera.file) } } : {}),
-            audio,
-        });
+        writeProject(copy, denoisedRenderProject({ opened, cleanedPath: cleaned.path }));
         return await render(copy);
     } finally {
         await rm(scratch, { recursive: true, force: true });
