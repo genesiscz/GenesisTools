@@ -270,6 +270,18 @@ struct CardSpans {
 extension Looks {
     static let cardFadeUs: Int64 = 400_000
 
+    /// The size of the editor's card still: the export's canvas (`EditRenderer.plannedOutput`, so the frame's shape and
+    /// a fixed export size count) scaled so its long side is `longSide`, in whole pixels. The card is drawn on the
+    /// export's real canvas, so a 9:16 or 1:1 export gets a still of that shape, not a 16:9 one.
+    static func cardStillSize(_ project: EditProject, longSide: CGFloat = 640) -> CGSize {
+        let source = CGSize(width: project.source.width, height: project.source.height)
+        let canvas = EditRenderer.plannedOutput(export: project.export, source: source, aspect: project.frame?.aspect,
+                                                nominalFps: nil).canvas
+        guard canvas.width > 0, canvas.height > 0 else { return CGSize(width: longSide, height: (longSide * 9 / 16).rounded()) }
+        let scale = longSide / max(canvas.width, canvas.height)
+        return CGSize(width: max(1, (canvas.width * scale).rounded()), height: max(1, (canvas.height * scale).rounded()))
+    }
+
     /// A card on the frame's background (its gradient, colour or picture; the default gradient without a frame): the
     /// intro's logo, title, subtitle and date, or the end card's text, link and QR code, centred, fading in and out.
     static func drawCard(_ card: CardSpans.Frame, project: EditProject, plates: TextPlates, size: CGSize) -> CIImage {

@@ -232,20 +232,23 @@ private struct CardStill: View {
     @State private var image: CGImage?
 
     var body: some View {
+        // The export's canvas shape (9:16, 1:1, a portrait source), so the still is the card the export plays.
+        let size = Looks.cardStillSize(project)
         Group {
             if let image {
                 Image(decorative: image, scale: 2).resizable().aspectRatio(contentMode: .fit)
             } else {
-                Rectangle().fill(Color.white.opacity(0.05)).aspectRatio(16 / 9, contentMode: .fit)
+                Rectangle().fill(Color.white.opacity(0.05)).aspectRatio(size.width / size.height, contentMode: .fit)
             }
         }
+        // A tall still would make the sidebar long.
+        .frame(maxHeight: 240)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .accessibilityLabel("A still of the card")
-        .task(id: "\(kind)|\(String(describing: project.frame?.background))") {
+        .task(id: "\(kind)|\(String(describing: project.frame?.background))|\(size.width)x\(size.height)") {
             let project = project
             let kind = kind
             image = await Task.detached(priority: .utility) {
-                let size = CGSize(width: 640, height: 360)
                 let frame = CardSpans.Frame(kind: kind, sinceUs: Looks.cardFadeUs, lengthUs: Looks.cardFadeUs * 3)
                 let drawn = Looks.drawCard(frame, project: project, plates: TextPlates(), size: size)
                 return CIContext().createCGImage(drawn, from: CGRect(origin: .zero, size: size))
