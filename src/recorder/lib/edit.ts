@@ -935,6 +935,27 @@ function isExportFormat(value: string): value is ExportFormat {
 }
 
 /**
+ * The format an export makes: the asked one, else the out file's extension, else the edit's export.format, else mp4.
+ * A whole export and a part both use it, so `--out clip.mp4` writes an MP4 whatever format the window picked. An
+ * unknown extension comes back as it is, for the caller to refuse (`formatRefusal`).
+ */
+export function askedExportFormat({
+    format,
+    out,
+    project,
+}: {
+    format?: ExportFormat;
+    out?: string;
+    project: { export: { format?: ExportFormat } };
+}): string {
+    return format ?? (out ? extname(out).slice(1).toLowerCase() : (project.export.format ?? "mp4"));
+}
+
+function formatRefusal(asked: string): { ok: false; error: string } {
+    return { ok: false, error: `the format is one of ${EXPORT_FORMATS.join(", ")} (got "${asked}")` };
+}
+
+/**
  * The default export name, the same rule as the editor's: the recording's title made safe for a file name ("cursor
  * test 1"), else `<movie>-edited` for a plain movie.
  */
@@ -1317,6 +1338,13 @@ export async function exportAs(
     if (options.part) {
         // A part is a trimmed copy of the edit in a scratch folder; the edit on disk stays as it is.
         const whole = await openProject(value);
+        // The copy is told the whole edit's answer, so the out extension beats export.format here too.
+        const asked = askedExportFormat({ format: options.format, out: options.out, project: whole.project });
+
+        if (!isExportFormat(asked)) {
+            return formatRefusal(asked);
+        }
+
         const scratch = await mkdtemp(join(tmpdir(), "recorder-part-"));
 
         try {
@@ -1327,7 +1355,7 @@ export async function exportAs(
             log.debug({ value, part: options.part, clips: trimmed.clips.length }, "exporting a part of the edit");
             return await exportAs(copy, {
                 out: options.out,
-                format: options.format ?? whole.project.export.format,
+                format: asked,
                 subtitles: options.subtitles ?? whole.project.export.subtitles,
                 overwrite: options.overwrite,
                 size: options.size,
@@ -1339,12 +1367,10 @@ export async function exportAs(
     }
 
     const opened = await openProject(value);
-    const asked =
-        options.format ??
-        (options.out ? extname(options.out).slice(1).toLowerCase() : (opened.project.export.format ?? "mp4"));
+    const asked = askedExportFormat({ format: options.format, out: options.out, project: opened.project });
 
     if (!isExportFormat(asked)) {
-        return { ok: false, error: `the format is one of ${EXPORT_FORMATS.join(", ")} (got "${asked}")` };
+        return formatRefusal(asked);
     }
 
     const subtitles = options.subtitles ?? opened.project.export.subtitles;

@@ -44,6 +44,7 @@ import { EDITOR_TABS, shortRecordingId } from "./library";
 import { applyEdit, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
+import * as serviceClient from "./service-client";
 import { hostCloseEditor, hostStill, ServiceConnectionLost, ServiceHost, withServiceClient } from "./service-client";
 import {
     HOST_METHODS,
@@ -815,6 +816,98 @@ describe("finishing a part export of an edit with cards", () => {
         expect(answer.chapters).toBe(3);
         expect(written[0]).not.toContain("title=Demo");
         expect(written[0]).toContain("START=1000\nEND=2500\ntitle=Step one");
+    });
+});
+
+describe("the format an export asks for", () => {
+    /** A 10 s edit whose window picked `format`, with chapters off so the MP4 route needs no ffmpeg. */
+    function formattedEdit(prefix: string, format: "mp4" | "gif"): { path: string; root: string } {
+        const root = mkdtempSync(join(tmpdir(), prefix));
+        const path = join(root, "talk.edit.json");
+        const project = wholeProject({
+            video: join(root, "talk.mp4"),
+            durationUs: 10_000_000,
+            width: 100,
+            height: 100,
+        });
+        writeProject(path, { ...project, export: { ...project.export, format, chapters: false } });
+        return { path, root };
+    }
+
+    /** Records what reaches the renderer and ffmpeg; each writes its output, as the real ones do. */
+    function spyRenders(): { hostOuts: string[]; ffmpegOuts: string[] } {
+        const hostOuts: string[] = [];
+        const ffmpegOuts: string[] = [];
+        const host = spyOn(serviceClient, "hostExport").mockImplementation(async ({ out }) => {
+            const to = out ?? "";
+            hostOuts.push(to);
+            writeFileSync(to, "movie");
+            return { ok: true, path: to };
+        });
+        const ffmpeg = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            const to = command.at(-1) ?? "";
+            ffmpegOuts.push(to);
+            writeFileSync(to, "movie");
+            return "";
+        });
+        closing.push(
+            () => host.mockRestore(),
+            () => ffmpeg.mockRestore()
+        );
+        return { hostOuts, ffmpegOuts };
+    }
+
+    // Round 1 hunt (part-export-format): a part took the edit's export.format over the --out extension, so
+    // `export --from --to -o clip.mp4` wrote a GIF, while the same call without --from/--to wrote an MP4.
+    test("askedExportFormat: an asked format, then the out extension, then the edit's format, then mp4", () => {
+        const gif = { export: { format: "gif" as const } };
+        expect(edits.askedExportFormat({ out: "/x/clip.mp4", project: gif })).toBe("mp4");
+        expect(edits.askedExportFormat({ out: "/x/clip.GIF", project: { export: { format: "mp4" } } })).toBe("gif");
+        expect(edits.askedExportFormat({ project: gif })).toBe("gif");
+        expect(edits.askedExportFormat({ project: { export: {} } })).toBe("mp4");
+        expect(edits.askedExportFormat({ format: "webm", out: "/x/clip.mp4", project: gif })).toBe("webm");
+        expect(edits.askedExportFormat({ out: "/x/clip.mov", project: gif })).toBe("mov");
+    });
+
+    test("a part export to clip.mp4 of an edit set to GIF writes an MP4, as a whole export does", async () => {
+        const { path, root } = formattedEdit("rs-part-format-", "gif");
+        const renders = spyRenders();
+        const out = join(root, "clip.mp4");
+
+        const answer = await edits.exportAs(path, { part: { fromUs: 2_000_000, toUs: 5_000_000 }, out });
+
+        expect(answer).toMatchObject({ ok: true, path: out });
+        expect(renders.hostOuts).toEqual([out]);
+        expect(renders.ffmpegOuts).toEqual([]);
+        expect(readProject(path).export.format).toBe("gif");
+    });
+
+    test("a part export to clip.gif of an edit set to MP4 makes the GIF from the rendered movie", async () => {
+        const { path, root } = formattedEdit("rs-part-format-gif-", "mp4");
+        const renders = spyRenders();
+        const out = join(root, "clip.gif");
+
+        const answer = await edits.exportAs(path, { part: { fromUs: 2_000_000, toUs: 5_000_000 }, out });
+
+        expect(answer).toMatchObject({ ok: true, path: out });
+        expect(renders.ffmpegOuts).toEqual([out]);
+        expect(renders.hostOuts).not.toContain(out);
+        expect(existsSync(out)).toBe(true);
+    });
+
+    test("a part export to an unknown extension is refused, as a whole export is", async () => {
+        const { path, root } = formattedEdit("rs-part-format-mov-", "gif");
+        const renders = spyRenders();
+
+        const part = await edits.exportAs(path, {
+            part: { fromUs: 2_000_000, toUs: 5_000_000 },
+            out: join(root, "clip.mov"),
+        });
+        const whole = await edits.exportAs(path, { out: join(root, "clip.mov") });
+
+        expect(part).toEqual(whole);
+        expect(part.ok).toBe(false);
+        expect(renders.hostOuts).toEqual([]);
     });
 });
 
