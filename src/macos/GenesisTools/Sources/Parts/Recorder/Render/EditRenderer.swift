@@ -555,8 +555,10 @@ enum MusicMix {
 
     /// Lays the music under the movie and returns its mix parameters; nil (logged) when the file has no sound.
     /// `offsetUs`: where the movie starts in the composition (after an intro card); the speech moves by it.
+    /// `lines`: the transcript the captions are drawn from (the render's ZoomState), so the preview ducks under the
+    /// lines it shows and the export under the ones it read.
     static func add(_ music: EditProject.Music, to composition: AVMutableComposition, lengthUs: Int64,
-                    project: EditProject, offsetUs: Int64 = 0, cards: CardSpans? = nil,
+                    project: EditProject, lines: [CaptionTrack.Line], offsetUs: Int64 = 0, cards: CardSpans? = nil,
                     movieUs: Int64? = nil) async throws -> AVMutableAudioMixInputParameters? {
         let asset = AVURLAsset(url: URL(fileURLWithPath: music.file))
         guard let source = try? await asset.loadTracks(withMediaType: .audio).first,
@@ -581,7 +583,7 @@ enum MusicMix {
         }
         // Played once, the music fades out at its own end.
         let playedUs = min(lengthUs, Int64((at.seconds * 1_000_000).rounded()))
-        var speech = speech(lines: CaptionTrack.load(video: project.source.video)?.lines ?? [], project: project)
+        var speech = speech(lines: lines, project: project)
             .map { (fromUs: $0.fromUs + offsetUs, toUs: $0.toUs + offsetUs) }
         // Round 3 (2026-11-08): a card's voiceover ducks the music over its card too (in the file's time already).
         if let cards, project.audio.ducking?.voiceovers ?? true {
@@ -922,8 +924,8 @@ struct EditRenderer {
         }
         // R4 9 intro and end cards: the music runs under the cards too; everything the movie times moves by the intro.
         if let music = project.audio.music, let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()),
-                                                                                    project: project, offsetUs: cardSpans.leadUs,
-                                                                                    cards: cardSpans, movieUs: movieUs) {
+                                                                                    project: project, lines: zoom.captionLines,
+                                                                                    offsetUs: cardSpans.leadUs, cards: cardSpans, movieUs: movieUs) {
             inputs.append(parameters)
         }
         if project.clicks?.sound == true, let parameters = try await ClickSound.add(to: composition, project: project, offsetUs: cardSpans.leadUs) {

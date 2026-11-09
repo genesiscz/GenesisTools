@@ -125,6 +125,10 @@ final class EditorModel {
     @ObservationIgnored let cursor: CursorTrack?
     /// The review comments beside the recording (comments.jsonl), watched so an agent's comment shows at once.
     @ObservationIgnored let commentsStore: ReviewCommentsStore
+    /// The transcript cache beside the movie, watched so a transcription made outside the window (the REPL's
+    /// `movie.transcript({ refresh: true })`, `tools transcribe -o`) or a deleted file reaches the captions.
+    @ObservationIgnored let transcriptWatch: FileWatch
+    @ObservationIgnored var transcriptReload: DispatchWorkItem?
     private(set) var reviewComments: [ReviewComment] = []
     /// The comment whose popover is open over the marks lane.
     var openComment: String?
@@ -199,6 +203,7 @@ final class EditorModel {
         recordingMarkers = Self.readMarkers(video: project.source.video)
         commentsStore = ReviewCommentsStore(video: project.source.video)
         reviewComments = commentsStore.comments
+        transcriptWatch = FileWatch(url: CaptionTrack.cacheURL(video: project.source.video))
         displayPlan = DisplayPlan.read(video: project.source.video)
         asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
         player.actionAtItemEnd = .pause
@@ -216,6 +221,8 @@ final class EditorModel {
         session.start()
         commentsStore.onChange = { [weak self] comments in self?.reviewComments = comments }
         commentsStore.watch()
+        transcriptWatch.onChange = { [weak self] in self?.transcriptWritten() }
+        transcriptWatch.start()
         let video = URL(fileURLWithPath: project.source.video)
         filmstrip.load(video: video, durationUs: project.source.durationUs)
         waveform.load(video: video)
@@ -457,6 +464,26 @@ final class EditorModel {
             != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count, b.markers?.count)
             || (a.camera == nil, a.camera?.hidden.count) != (b.camera == nil, b.camera?.hidden.count) { parts.append("count") }
         return parts
+    }
+
+    /// Whether the preview's movie must be made again for the change from `a` to `b`: an input changed that
+    /// EditRenderer.render reads once per build. Those are the clips' spans and speeds (not their ids), the sound, the
+    /// click sound's ticks, the canvas shape and the codec (outputSizes sizes the render from both), and the camera
+    /// movie (CameraFeed opens it, so a camera added to an edit that had none counts). Everything else reaches the
+    /// next frame drawn through ZoomState.
+    nonisolated static func needsNewMovie(_ a: EditProject, _ b: EditProject) -> Bool {
+        a.clips.count != b.clips.count
+            || zip(a.clips, b.clips).contains { $0.fromUs != $1.fromUs || $0.toUs != $1.toUs || $0.speed != $1.speed }
+            || a.audio != b.audio
+            || (a.clicks?.sound == true) != (b.clicks?.sound == true)
+            || a.frame?.aspect?.ratio != b.frame?.aspect?.ratio
+            || a.export.codec != b.export.codec
+            || a.camera?.file != b.camera?.file
+    }
+
+    /// Whether the transcript's lines reach the preview's sound: the music ducks under them.
+    nonisolated static func transcriptAffectsSound(_ project: EditProject) -> Bool {
+        project.audio.music != nil && (project.audio.ducking?.transcript ?? true)
     }
 
     /// What ⌘Z would take back ("Move Text", "Delete Zoom"), for the Edit menu and the notice; nil when nothing.
@@ -1042,7 +1069,8 @@ final class EditorModel {
         self.change { change(&$0.audio) }
     }
 
-    /// The looks (frame and click highlight): drawn per frame from the project, so no movie rebuild.
+    /// The looks (frame and clicks): drawn per frame from the project, except the canvas shape and the click sound,
+    /// which make the movie again (needsNewMovie).
     func setLooks(_ change: (inout EditProject) -> Void) {
         self.change(change)
     }
@@ -1244,15 +1272,37 @@ final class EditorModel {
                 self.show("The transcription failed: \(failure.reason)", error: true)
                 return
             }
-            guard self.zoom.reloadCaptions() else {
+            self.reloadTranscript()
+            guard self.hasTranscript else {
                 self.show("The transcription failed: no transcript was written", error: true)
                 return
             }
-            self.hasTranscript = true
-            self.lineWords = nil
             self.setLooks { $0.captions = $0.captions ?? EditProject.Captions() }
             self.show("Captions are on.", error: false)
         }
+    }
+
+    /// The transcript cache changed on disk. It is read once the writer rests for 0.15 s, because a file written in
+    /// pieces fires an event per piece.
+    func transcriptWritten() {
+        transcriptReload?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.reloadTranscript() }
+        transcriptReload = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    /// Draws the cached transcript as it is now: its captions, its words read again at the next pick, and the music's
+    /// ducking under speech. Nothing changes when the lines are the same. The window's own Transcribe reads the file
+    /// when it ends, so the events of its writes wait for that.
+    func reloadTranscript() {
+        guard !isTranscribing else { return }
+        let before = zoom.captionLines
+        let has = zoom.reloadCaptions()
+        if has != hasTranscript { hasTranscript = has }
+        guard zoom.captionLines != before else { return }
+        lineWords = nil
+        refreshFrame()
+        if Self.transcriptAffectsSound(project) { rebuild() }
     }
 
     private(set) var isMarkingClicks = false
@@ -1654,6 +1704,8 @@ final class EditorModel {
         session.stop()
         store.stopWatching()
         commentsStore.stopWatching()
+        transcriptWatch.stop()
+        transcriptReload?.cancel()
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         timeObserver = nil
