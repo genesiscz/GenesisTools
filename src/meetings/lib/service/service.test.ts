@@ -177,6 +177,11 @@ const quietDeps: MeetingsHandlerDeps = {
         mkdirSync(dirname(path), { recursive: true });
         writeFileSync(path, "RIFF");
     },
+    // Ten seconds of 100 ms blocks: quiet, then the left channel loud from 4 s to 5 s.
+    energy: async () => ({
+        left: Float32Array.from({ length: 100 }, (_, block) => (block >= 40 && block < 50 ? 800 : 100)),
+        right: Float32Array.from({ length: 100 }, () => 200),
+    }),
 };
 
 async function startService(options: { dir?: string } = {}) {
@@ -450,6 +455,30 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(tone.path).toContain("meetings-cache/tones/tone-");
         const none = await failure(client.call("meeting.audio", { meeting: RETRO.id }));
         expect(none).toMatchObject({ code: "unplayable", data: { code: "unplayable", reason: "no-audio" } });
+    });
+
+    test("the timeline reads: line ends, speakers, screen, waveform; and the overview", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const transcript = await client.call("meeting.transcript", { ref: REVIEW.id });
+        const speakers = await client.call("meeting.speakers", { meeting: REVIEW.id });
+        const screen = await client.call("meeting.screen", { meeting: REVIEW.id });
+        const waveform = await client.call("meeting.waveform", {
+            meeting: REVIEW.id,
+            fromSec: 0,
+            toSec: 10,
+            buckets: 5,
+        });
+        const overview = await client.call("meetings.overview", { days: 3650 });
+
+        expect(transcript.entries.map((entry) => [entry.startSec, entry.endSec])).toEqual([
+            [2, 9],
+            [9, expect.any(Number)],
+        ]);
+        expect(speakers).toMatchObject({ meeting: REVIEW.id, timed: true });
+        expect(speakers.speakers.map((one) => one.label).sort()).toEqual(["Dana Example", "Speaker 2"]);
+        expect(screen).toEqual({ meeting: REVIEW.id, recorded: false, displays: [], frames: [] });
+        expect(waveform).toEqual({ meeting: REVIEW.id, fromSec: 0, toSec: 10, peaks: [0.25, 0.25, 1, 0.25, 0.25] });
+        expect(overview.meetings.map((one) => one.id)).toEqual([RETRO.id, REVIEW.id]);
     });
 
     test("a subscription with an empty meeting is refused as invalid params instead of hearing every meeting", async () => {
@@ -781,6 +810,18 @@ async function captureExamples(): Promise<Example[]> {
         { sound: { hz: 880, sec: 0.15, volume: 0.6 } },
         "The tone alone, for a Play button."
     );
+    await ask(window, "meeting.speakers", { meeting: REVIEW.id }, "Talk time per label, its spans, and the hints.");
+    await ask(window, "meeting.screen", { meeting: REVIEW.id }, "No screen recording: no frames, no pane.");
+    await ask(
+        window,
+        "meeting.waveform",
+        { meeting: REVIEW.id, fromSec: 0, toSec: 10, buckets: 5 },
+        "Peaks for the strip, 0 to 1 of the loudest 100 ms."
+    );
+    await ask(window, "meetings.overview", { days: 3650 }, "The meetings with what each waits for.");
+    await ask(window, "config.read", { path: "global.playback.listen.longestClipSec" });
+    await ask(window, "config.set", { path: "global.playback.listen.longestClipSec", value: 25 });
+    await ask(window, "config.unset", { path: "global.playback.listen.longestClipSec" }, "Back to its default.");
     for (const method of ["decision.applied", "decision.reverted"]) {
         const heard = window.lines.find((line) => line.method === method);
         examples.push({ method, direction: "service→client", ...(heard ? { notification: heard } : {}) });
@@ -822,7 +863,9 @@ function normalized(examples: Example[]): unknown {
             .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>")
             // Paths under the run's sandbox home and temp folders, and a clip's key (it hashes the recording's path).
             .replace(/"(path)":"[^"]*?(\/meetings-cache\/[^"]*?)-[0-9a-z]+\.wav"/g, '"$1":"<home>$2-<key>.wav"')
-            .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>"'),
+            .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>"')
+            .replace(/"path":"[^"]*\/meetings\/config\.json"/g, '"path":"<config>"')
+            .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"'),
         { strict: true }
     );
 }
