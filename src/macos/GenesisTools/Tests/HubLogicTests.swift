@@ -747,6 +747,69 @@ final class HubLogicTests: XCTestCase {
         }
     }
 
+    /// A link's one commit, read from the checkout before the forge lists it, opens on that commit.
+    @MainActor
+    func testALinkCommitFromTheCheckoutOpensOnTheCommit() throws {
+        let (pr, _, _, _) = try rewrittenFixture()
+        let full = "c3e3ad8307c9a875bc8a93d90d3232184bb67f6a"
+        let local = HubLocalCommits(first: full, last: nil, count: 1, unpushed: 1, title: "feat: vouchers")
+
+        let (scope, range) = PRsModel.localScope(local, parent: nil, commits: [], pr: pr, whole: PRsModel.scope(pr, detail: nil))
+
+        XCTAssertEqual(scope, .commit(sha: full, title: "feat: vouchers"))
+        XCTAssertNil(range)
+    }
+
+    /// A range starts at the first parent the checkout named, else at `<first>^`; the listed commits it covers are marked.
+    @MainActor
+    func testALinkRangeFromTheCheckoutStartsAtTheParentOfItsFirstCommit() throws {
+        let (pr, _, _, _) = try rewrittenFixture()
+        let commits = ["1111111aaa", "2222222bbb", "3333333ccc"].map {
+            HubPRDetail.Commit(sha: $0, title: $0, author: nil, authorLogin: nil, date: nil, body: nil)
+        }
+        let local = HubLocalCommits(first: "2222222bbb", last: "4444444ddd", count: 3, unpushed: 1, title: "last")
+        let whole = PRsModel.scope(pr, detail: nil)
+
+        let (scope, range) = PRsModel.localScope(local, parent: "1111111aaa", commits: commits, pr: pr, whole: whole)
+        let (guessed, _) = PRsModel.localScope(local, parent: nil, commits: commits, pr: pr, whole: whole)
+
+        guard case .range(let base, let head, let label, nil) = scope else { return XCTFail("\(scope)") }
+        XCTAssertEqual(base, "1111111aaa")
+        XCTAssertEqual(head, "4444444ddd")
+        XCTAssertTrue(label.hasSuffix("2222222..4444444 (3 commits)"), label)
+        XCTAssertEqual(range?.shas, ["2222222bbb", "3333333ccc"])
+        guard case .range(let guessedBase, _, _, _) = guessed else { return XCTFail("\(guessed)") }
+        XCTAssertEqual(guessedBase, "2222222bbb^")
+    }
+
+    /// A range that starts at the PR's first listed commit starts at the PR's own base, as the forge's list would.
+    @MainActor
+    func testALinkRangeFromThePRsFirstCommitStartsAtThePRBase() throws {
+        let (pr, _, _, _) = try rewrittenFixture()
+        let first = HubPRDetail.Commit(sha: "1111111aaa", title: "one", author: nil, authorLogin: nil, date: nil, body: nil)
+        let local = HubLocalCommits(first: "1111111aaa", last: "2222222bbb", count: 2, unpushed: 0, title: "two")
+        let whole = DiffScope.range(base: "basesha", head: "abcdef0123", label: "whole", fallbackBase: "origin/develop")
+
+        let (scope, _) = PRsModel.localScope(local, parent: "parentsha", commits: [first], pr: pr, whole: whole)
+
+        guard case .range(let base, "2222222bbb", _, let fallback) = scope else { return XCTFail("\(scope)") }
+        XCTAssertEqual(base, "basesha")
+        XCTAssertEqual(fallback, "origin/develop")
+    }
+
+    /// A new head moves only the whole PR on screen: a commit, a link's range at the same head and an older whole PR stay.
+    @MainActor
+    func testOnlyTheWholePRAtTheShownHeadFollowsANewHead() throws {
+        let (pr, _, _, _) = try rewrittenFixture()
+        let whole = PRsModel.scope(pr, detail: nil)
+        let linked = DiffScope.range(base: "1111111aaa", head: "abcdef0123", label: "\(pr.label) 2222222..abcdef0 (2 commits)")
+
+        XCTAssertTrue(PRsModel.showsWholePR(whole, pr: pr, head: "abcdef0123"))
+        XCTAssertFalse(PRsModel.showsWholePR(whole, pr: pr, head: "9999999999"), "the reader moved to a newer push already")
+        XCTAssertFalse(PRsModel.showsWholePR(linked, pr: pr, head: "abcdef0123"))
+        XCTAssertFalse(PRsModel.showsWholePR(.commit(sha: "abcdef0123", title: "t"), pr: pr, head: "abcdef0123"))
+    }
+
     @MainActor
     private func rewrittenFixture() throws -> (HubPR, PRsModel, ReviewModel, PRCommitPick) {
         let json = """

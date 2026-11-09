@@ -1786,6 +1786,21 @@ final class ReviewModel: ObservableObject {
         restartLoad()
     }
 
+    /// The same diff at a newer push or base of its PR (`PRsModel.moveHead`): the files on screen stay until the new
+    /// answer replaces them, so the pane never blanks, and the page keeps its place and parses again only the files
+    /// whose text changed (web/diff-viewer `parsed`). git reads the new diff in full, so a force push or a moved base
+    /// shows as it is. `head` replaces the remote head (a fresh fetch); nil moves it with the scope, as `setScope` does.
+    func follow(_ next: DiffScope, remoteHead head: ReviewRemoteHead?) {
+        if let head { remoteHead = head }
+        guard next != scope else { return }
+        scope = next
+        if head == nil { remoteHead = remoteHead?.following(next) }
+        workingMarks = [:]
+        pendingRefresh = [:]
+        updateNews()
+        reload()
+    }
+
     /// A new question for the same window (scope, base, checkout): nothing of the old answer stays.
     private func restartLoad() {
         defer { updateNews() }
