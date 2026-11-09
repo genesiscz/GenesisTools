@@ -1,591 +1,547 @@
-# Automate
+# tools automate
 
-![Status](https://img.shields.io/badge/Status-Active-success?style=flat-square)
-![Platform](https://img.shields.io/badge/Platform-macOS-blue?style=flat-square)
-![Runtime](https://img.shields.io/badge/Runtime-Bun-orange?style=flat-square)
+`tools automate` chains steps into a JSON preset and runs it on demand or on a schedule. A step can be an HTTP
+request, a file, git, JSON, text or language operation, a desktop or Telegram notification, a shell command, or any
+other `tools` command. Use it for checks and reports you repeat: an API health check, a weekly git summary, a backup.
 
-> **Chain any GenesisTools commands into reusable, schedulable automation presets.**
-
-Define multi-step workflows as JSON presets, run them on demand or on a schedule, and get notified via desktop alerts, clipboard, or Telegram.
-
----
-
-## Key Features
-
-| Feature | Description |
-|---------|-------------|
-| **40+ Step Types** | HTTP, file, git, JSON, text, array, NLP, notifications, and more |
-| **Variable Interpolation** | Reference previous step outputs and variables with `{{ }}` syntax |
-| **Scheduled Execution** | Cron-like intervals with a background daemon |
-| **SQLite History** | Every run and step result is persisted for auditing |
-| **Telegram Notifications** | Send results to Telegram via bot integration |
-| **macOS Daemon** | Install as a launchd service for always-on scheduling |
-| **Parallel Execution** | Run steps concurrently with `parallel` |
-| **Conditional Branching** | `if`/`then`/`else` flow control between steps |
-| **Credential Management** | Secure storage (0600 permissions) for API keys and tokens |
-| **Dry Run Mode** | Preview what a preset will do without executing anything |
-
----
-
-## Quick Start
+## Quick start
 
 ```bash
-# List all available presets
+# See the presets (seven bundled presets are copied in on the first start)
 tools automate preset list
 
-# Run a preset
-tools automate preset run api-health-check
+# Preview a preset: prints its steps, runs nothing, records nothing
+tools automate preset run weekly-git-summary --dry-run
 
-# Run with variable overrides
-tools automate preset run api-health-check --var url=https://example.com
+# Run a preset and override one of its variables
+tools automate preset run scheduled-health-check --var url=https://example.com/health
 
-# Dry run (preview without executing)
-tools automate preset run api-health-check --dry-run
-
-# Create a new preset interactively
-tools automate preset create
-
-# Browse available step types
+# Browse the step types and their parameters
 tools automate step list
+
+# Run a preset on a schedule: create the task, then install the background daemon
+tools automate task create
+tools automate daemon install
 ```
 
----
+## Commands
 
-## Command Reference
+`tools automate` with no arguments prints the help. `tools automate step` and `tools automate task` without a
+subcommand run their `list`. The tool also takes `-v, --verbose` (debug logs; `-v` works anywhere on the command
+line), `--readme` (print this file) and `-V, --version`.
 
 ### Presets
 
-| Command | Description |
-|---------|-------------|
-| `tools automate preset run <name>` | Execute a preset by name or file path |
-| `tools automate preset list` | List all saved presets with metadata |
-| `tools automate preset show [name]` | Display the full JSON of a preset |
-| `tools automate preset create` | Interactive wizard to create a new preset |
+```
+tools automate preset run <preset> [options]   # run a preset by name or by path to a .json file
+tools automate preset list                     # alias ls: valid presets, step count, last run, run count
+tools automate preset show [preset]            # variables, steps, run history; no name lists all names
+tools automate preset create                   # wizard that writes a new preset file
+```
 
-**Run options:**
+| `preset run` flag      | What it does                                                        |
+|------------------------|---------------------------------------------------------------------|
+| `--dry-run`            | Walk the steps and print what each would do. Nothing runs or saves. |
+| `--var <key=value...>` | Set a variable. Repeat the flag, or list several pairs after one.   |
+| `-v, --verbose`        | Debug logs, including each `tools` command line before it runs.     |
 
-| Flag | Alias | Description |
-|------|-------|-------------|
-| `--dry-run` | | Preview steps without executing |
-| `--var key=val` | | Override preset variables (repeatable) |
-| `--verbose` | `-v` | Show detailed step output |
+- `<preset>` resolves in this order: a path to an existing file that ends in `.json`, then
+  `~/.genesis-tools/automate/presets/<preset>.json`, then `~/.genesis-tools/automate/presets/<preset>` exactly as
+  typed, with no `.json` added. The name is the file name (`weekly-git-summary`), not the display name
+  (`Weekly Git Summary`).
+- `--var` takes several values, so put the preset name first. In `preset run --var a=1 my-preset`, the name is read
+  as a second `--var` value and the command fails with a missing argument.
+- A `--var` value keeps everything after the first `=` (`--var query=a=b` sets `query` to `a=b`). A pair without
+  `=` is reported and ignored. A `--var` value stays a string; a value typed at a prompt is converted to the
+  variable's declared type.
+- Before the first step, the run prompts for every variable that still has no value, unless the variable sets
+  `"required": false`. A dry run prompts too.
+- A dry run lists every top-level step once, in file order, except the steps that a `parallel` step names in its
+  `steps` list. It follows no `if` jump and does not expand loops. A `tools` step prints its command line
+  (`Would run: tools github search ...`).
+- In that command line, `vars` and `env` resolve exactly. A param that reads an earlier step's output does not,
+  because no step ran: each earlier step is `skipped`, with a placeholder text as its output. Such a param shows
+  `undefined`, empty text or that placeholder. A JavaScript expression that reads into such an output
+  (`{{ steps.fetch.output.body.count > 5 }}`) can stop the dry run with `Expression evaluation failed`.
+- The run prints one line per step (`[2/4] Check endpoint (312ms)`) and a summary. It exits 1 when the preset does
+  not load or when any step ends in error, also a step with `onError: "continue"`.
+
+`preset list` skips a file that fails validation without a word. Run `preset show <file name>` to see the error.
+
+`preset show` labels every action that is not a built-in as `tools <action>`. That includes step handlers such as
+`http.get`, which run inside the process and start no `tools` command.
+
+`preset create` asks for a name and a description, then for steps one by one: a `tools` command, `shell`, `if`,
+`log`, `prompt` or `set`. It previews the JSON and saves it as `presets/<name in lowercase, dashes>.json` with a
+manual trigger and no variables. It replaces an existing `presets/<name>.json` without asking, also your edited
+copy of a bundled preset. Write step handlers (`http.*`, `file.*`, loops) and variables in a text editor.
+The wizard also asks "Store step output in a variable?" and writes the `output` field, which the engine ignores
+(see [Step fields](#step-fields)).
 
 ### Steps
 
-| Command | Description |
-|---------|-------------|
-| `tools automate step list` | List all available step types with descriptions |
-| `tools automate step show <action>` | Show detailed info and parameters for a step type |
+```
+tools automate step list            # alias ls: every step handler and its actions
+tools automate step show <action>   # the parameters of a handler group; * marks a required one
+```
 
-### Tasks (Scheduled Runs)
+`step show http` and `step show http.get` both print the whole `http` group. The catalog covers the step handlers
+only. The five built-ins (`if`, `log`, `prompt`, `shell`, `set`) and `tools` commands are described in
+[Step reference](#step-reference).
 
-| Command | Description |
-|---------|-------------|
-| `tools automate task create` | Interactive wizard to schedule a preset |
-| `tools automate task list` | List all scheduled tasks |
-| `tools automate task show <name-or-id>` | Show task details and recent runs |
-| `tools automate task enable <name>` | Enable a disabled task |
-| `tools automate task disable <name>` | Disable a task without deleting it |
-| `tools automate task delete <name>` | Permanently remove a scheduled task |
-| `tools automate task run <name>` | Manually trigger a scheduled task |
-| `tools automate task history [-n 20]` | Show execution history across all tasks |
+### Tasks (schedules)
+
+```
+tools automate task list                # alias ls: name, preset, interval, enabled, last run, next run
+tools automate task create              # wizard: pick a preset, name the task, give an interval
+tools automate task show <name-or-id>   # a task by name, or one run by its numeric id
+tools automate task enable <name>       # computes the next run from now
+tools automate task disable <name>
+tools automate task delete <name>       # asks for confirmation
+tools automate task run <name> [-v]     # run the task's preset now, in this terminal
+tools automate task history [-n <n>]    # the latest runs of every preset (default 20)
+```
+
+- A task is a database row that names a preset and an interval. Only the daemon runs tasks on time; `task create`
+  prints the next run time and reminds you to start it.
+- `task create` shows each preset as its display name and description, and stores the preset's file name in the
+  task. A task name allows letters, digits, `-` and `_`, and must be unique. The wizard asks for no variables, so
+  a scheduled run uses the preset defaults.
+- `task show <name>` prints the task. It lists recent scheduled runs, taken from the last 10 runs of all presets,
+  only when the preset's display name equals its file name. The task stores the file name
+  (`scheduled-health-check`), a run stores the display name (`Scheduled Health Check`), and no bundled preset has
+  the two equal. Find a task's runs with `task history` (Preset shows the display name, Trigger shows `schedule`)
+  or in the `runs` table by `schedule_id` ([For agents](#for-agents)).
+- `task show 42` prints run 42 and a table of its steps: action, status, duration, the first 80 characters of an
+  error.
+- `task enable` also writes the current time into the task's last run.
+- `task run` uses the task's stored variables, records the run as `manual` with the task's id, and does not move
+  the next run. It exits 1 when a step fails.
+- `task history` lists runs from `preset run`, `task run` and the daemon. Dry runs are not recorded.
+- Times in `task list`, `task show` and `task history` are UTC.
 
 ### Daemon
 
-| Command | Description |
-|---------|-------------|
-| `tools automate daemon start` | Run the scheduler in the foreground |
-| `tools automate daemon status` | Check if the daemon is running and show recent logs |
-| `tools automate daemon tail` | Tail daemon logs in real-time |
-| `tools automate daemon install` | Install as a macOS launchd service (auto-start on login) |
-| `tools automate daemon uninstall` | Remove the launchd service |
+```
+tools automate daemon start       # run the scheduler in this terminal (Ctrl+C stops it)
+tools automate daemon status      # launchd or foreground, its PID, the last 20 lines of each log
+tools automate daemon tail        # follow the launchd daemon's two log files
+tools automate daemon install     # write and load the launchd agent (starts at login)
+tools automate daemon uninstall   # unload and remove the launchd agent
+```
 
-### Configuration
+- `daemon start` while a daemon already runs tails its logs instead of starting a second scheduler. The PID file
+  `~/.genesis-tools/automate/daemon.pid` keeps two schedulers from running at once.
+- `daemon install` is safe to run again. It unloads the old agent first, and puts the old plist back when the new
+  one fails to load.
+- When `daemon status` says the daemon "runs outside GenesisTools.app", run `daemon install` again. The new plist
+  starts the daemon through the app, so it shares the app's privacy grants.
+- `daemon tail` and the log lines of `daemon status` read the launchd log files. A daemon from `daemon start`
+  writes to its terminal instead.
 
-| Command | Description |
-|---------|-------------|
-| `tools automate configure` | Run the configuration wizard |
-| `tools automate configure credentials add` | Store a new API credential |
-| `tools automate configure credentials list` | List all stored credentials |
-| `tools automate configure credentials show` | Display a credential (masked) |
-| `tools automate configure credentials delete` | Remove a stored credential |
+### Configure and credentials
 
----
+```
+tools automate configure                           # Telegram status; offers tools telegram-bot configure
+tools automate configure credentials add <name>    # add or replace one (alias creds); asks type and values
+tools automate configure credentials list          # alias ls
+tools automate configure credentials show <name>   # values masked
+tools automate configure credentials delete <name>
+```
 
-## Preset Format
+- A credential name allows letters, digits, `-` and `_`.
+- `credentials add` shows what you type. Type an expression such as `{{ env.API_TOKEN }}` instead of the secret to
+  keep it off the screen and out of the file.
+- `credentials show` prints the first four characters of each value and stars for the rest (a value of four
+  characters or fewer is all stars). A value that starts with `{{` prints as it is.
+- `credentials show` exits 1 for an unknown name. `credentials delete` reports an unknown name and exits 0.
 
-Presets are JSON files stored in `~/.genesis-tools/automate/presets/`. Each preset follows this schema:
+## How it works
+
+A run loads the preset and validates it, fills the variables (defaults, then `--var`, then prompts), and walks the
+steps in order. Each result is stored as `steps.<id>`, so later steps can read it. An `if` step jumps to another
+step. A failed step stops the run unless its `onError` says otherwise. After a real run, the preset's run counter
+and last-run time go up, whether the run passed or failed.
+
+Each step's `action` resolves in this order:
+
+1. A built-in (`if`, `log`, `prompt`, `shell`, `set`), handled by the engine.
+2. A step handler, found by the whole action when it is a handler name (`forEach`, `notify`), else by the part
+   before the dot (`http.get` goes to `http`). It runs inside the process. There are 40 actions in 11 handlers:
+   `http`, `file`, `git`, `json`, `text`, `array`, `notify`, `nlp`, `forEach`, `while`, `parallel`.
+3. Anything else is a `tools` command: `"action": "github search"` runs `tools github search` as a child process.
+
+An action that is only a handler name never reaches `tools`. `"action": "notify"` goes to the `notify` handler and
+fails with `Unknown notify action: undefined`; it does not run `tools notify`. The same holds for `git` and
+`json`. For such a tool, put its subcommand in `action` (`"action": "json convert"`), or use a `shell` step
+(`"command": "tools notify 'Backup done'"`).
+
+### Where data lives
+
+Paths start at `~/.genesis-tools/automate/`, except the launchd plist:
+
+```
+presets/<name>.json        preset files; missing bundled presets are copied here on every start
+config.json                lastRun and runCount of each preset, under meta, keyed by display name
+automate.db                SQLite (WAL, foreign keys on): schedules, runs, run_logs
+credentials/<name>.json    one file per credential, mode 0600, in a folder with mode 0700
+logs/daemon-stdout.log     output of the launchd daemon
+logs/daemon-stderr.log     errors of the launchd daemon
+daemon.pid                 PID of the running daemon
+cache/                     created on start, not used
+~/Library/LaunchAgents/com.genesis-tools.automate.plist
+```
+
+- Every start of `tools automate`, `--help` included, creates `presets/` and `cache/` and copies each bundled
+  preset that is missing from `presets/`. The other files appear when first needed. A bundled preset you delete
+  comes back on the next start. A bundled preset you edit keeps your edits.
+- `run_logs` keeps each step's output as text, cut at 65,536 characters.
+- The scheduler, the step runner and the top-level error handler also write to the shared GenesisTools day log,
+  `~/.genesis-tools/logs/<date>.log` (pino JSON).
+
+### Bundled presets
+
+These ship in `src/automate/presets/` and are copied into `presets/`:
+
+- `api-health-check`: splits a list of URLs, checks each with `http.get` (5 at a time), shows a desktop
+  notification. As shipped it fails at its first step ([Troubleshooting](#troubleshooting)).
+- `claude-usage-report`: runs `tools claude usage --json`, formats each account's limits, sends them to Telegram.
+- `email-sentiment-check`: language, sentiment and named entities of `--var text=...`, with the `nlp.*` steps.
+- `pr-review-digest`: open pull requests of `--var owner=... --var repo=...` from the GitHub API (reads
+  `GITHUB_TOKEN`), written to `./pr-digest.md` and copied. As shipped it fails at its second step.
+- `project-backup`: finds files by a glob pattern and copies them to a backup folder. As shipped it fails at its
+  second step.
+- `scheduled-health-check`: one `http.get`, then a Telegram message with the result.
+- `weekly-git-summary`: the last 50 commits of the current repository as markdown, copied to the clipboard.
+
+### The scheduler
+
+The daemon reads the due tasks from `automate.db`, runs each one's preset, then computes its next run from the
+moment the run ends. Between checks it sleeps until the next task is due: at least 1 second, at most 60 seconds. A
+task that is still running when it comes due again is skipped.
+
+On stop (Ctrl+C on `daemon start`, or the SIGTERM that launchd sends), the scheduler only sets a flag. The loop
+ends after its current sleep, so `daemon start` can take up to a minute to end. Then the scheduler waits up to 30
+seconds for runs in progress. The daemon closes its database at the signal itself, so a run still in progress
+cannot write its result and can stay `running` in the history. This is read from the code, not tested live.
+
+The launchd agent has the label `com.genesis-tools.automate` and these keys: `RunAtLoad` (starts at login),
+`KeepAlive` (restarts after a crash), `ThrottleInterval` 10 seconds, `ProcessType` Background. It runs
+`bun run <checkout>/src/automate/lib/daemon.ts`, through GenesisTools.app when the app is installed. Its working
+directory is your home folder. The plist sets only two environment variables: `HOME`, and a fixed `PATH`
+(`/usr/local/bin`, `/usr/bin`, `/bin` and the folder of `bun`).
+
+### What it needs and what it costs
+
+- macOS: the daemon uses launchd, `notify.desktop` uses `osascript`, `notify.sound` uses `afplay`, and `nlp.*` uses
+  the macOS NaturalLanguage framework through DarwinKit.
+- `notify.telegram` needs a bot set up with `tools telegram-bot configure`.
+- Runtime: Bun (`Bun.spawn`, `bun:sqlite`, Bun file APIs).
+- Cost: automate calls no paid service by itself. An `http.*` step or a `tools` step costs what that API or tool
+  costs.
+
+## Configuration
+
+### Preset files
+
+A preset is a JSON file in `~/.genesis-tools/automate/presets/`, or anywhere when you run it by path. This one
+alerts when a queue grows past a threshold:
 
 ```json
 {
   "$schema": "genesis-tools-preset-v1",
-  "name": "My Automation",
-  "description": "What this preset does",
+  "name": "Queue Watch",
+  "description": "Alert when the job queue is too long",
   "trigger": { "type": "manual" },
   "vars": {
-    "url": {
-      "type": "string",
-      "description": "Target URL to check",
-      "default": "https://example.com"
-    },
-    "threshold": {
-      "type": "number",
-      "description": "Alert threshold",
-      "default": 5
-    }
+    "url": { "type": "string", "description": "Queue stats URL", "default": "https://api.example.com/queue" },
+    "threshold": { "type": "number", "description": "Alert threshold", "default": 5 }
   },
   "steps": [
-    {
-      "id": "fetch",
-      "name": "Fetch data",
-      "action": "http.get",
-      "params": { "url": "{{ vars.url }}" }
-    },
+    { "id": "fetch", "name": "Fetch queue stats", "action": "http.get", "params": { "url": "{{ vars.url }}" } },
     {
       "id": "check",
-      "name": "Check threshold",
+      "name": "Over the threshold?",
       "action": "if",
-      "condition": "{{ steps.fetch.output.count > vars.threshold }}",
-      "then": "notify",
-      "else": "done"
+      "condition": "{{ steps.fetch.output.body.count > vars.threshold }}",
+      "then": "alert",
+      "else": "ok"
     },
     {
-      "id": "notify",
+      "id": "alert",
       "name": "Send alert",
       "action": "notify.telegram",
-      "params": { "message": "Count exceeded: {{ steps.fetch.output.count }}" }
+      "params": { "message": "Queue length: {{ steps.fetch.output.body.count }}" }
     },
-    {
-      "id": "done",
-      "name": "Log result",
-      "action": "log",
-      "params": { "message": "All clear ({{ steps.fetch.output.count }})" }
-    }
+    { "id": "end-alert", "name": "Skip the all-clear", "action": "if", "condition": "{{ true }}", "then": "done" },
+    { "id": "ok", "name": "All clear", "action": "log", "params": { "message": "Queue is fine" } },
+    { "id": "done", "name": "Summary", "action": "log", "params": { "message": "Checked {{ vars.url }}" } }
   ]
 }
 ```
 
-### Top-Level Fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `$schema` | `string` | Yes | Must be `"genesis-tools-preset-v1"` |
-| `name` | `string` | Yes | Display name for the preset |
-| `description` | `string` | No | What the preset does |
-| `trigger` | `object` | Yes | `{ "type": "manual" }` or `{ "type": "schedule", "interval": "..." }` |
-| `vars` | `object` | No | Variable definitions with type, description, and default |
-| `steps` | `array` | Yes | Ordered list of steps to execute |
-
-### Step Fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | `string` | Yes | Unique step identifier (alphanumeric, hyphens, underscores) |
-| `name` | `string` | Yes | Human-readable label shown in progress output |
-| `action` | `string` | Yes | Step type (e.g. `http.get`, `shell`, `if`) |
-| `params` | `object` | No | Parameters passed to the action |
-| `onError` | `string` | No | `"stop"` (default), `"continue"`, or `"skip"` |
-| `interactive` | `boolean` | No | If true, subprocess inherits stdin for interactive prompts |
-| `condition` | `string` | No | For `if` action: expression returning a boolean |
-| `then` | `string` | No | For `if` action: step ID to jump to when truthy |
-| `else` | `string` | No | For `if` action: step ID to jump to when falsy |
-
-### Variable Definition
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | `string` | Yes | `"string"`, `"number"`, or `"boolean"` |
-| `description` | `string` | Yes | Shown in prompts and documentation |
-| `default` | `any` | No | Default value if not provided at runtime |
-| `required` | `boolean` | No | If true, the user must supply a value |
-
----
-
-## Interpolation
-
-All string values in `params` support `{{ }}` expressions. Expressions are evaluated against the execution context which contains variables, previous step outputs, and environment variables.
-
-### Syntax
-
-| Pattern | Description | Example |
-|---------|-------------|---------|
-| `{{ vars.name }}` | Preset variable | `{{ vars.url }}` |
-| `{{ steps.id.output }}` | Previous step output | `{{ steps.fetch.output.body }}` |
-| `{{ steps.id.output.field }}` | Nested output field | `{{ steps.fetch.output.status }}` |
-| `{{ steps['my-id'].output }}` | Bracket notation for hyphenated IDs | `{{ steps['health-check'].output }}` |
-| `{{ env.HOME }}` | Environment variable | `{{ env.PATH }}` |
-| `{{ expression }}` | JavaScript expression | `{{ steps.count.output > 0 ? 'yes' : 'no' }}` |
-
-### Expression Details
-
-- **Simple paths** (e.g. `vars.url`, `steps.fetch.output.count`) are resolved via direct property access -- fast and safe.
-- **Complex expressions** (e.g. `steps.a.output + steps.b.output`, ternary operators) are evaluated via `new Function()` with a sandboxed context containing only `vars`, `steps`, and `env`.
-- **Hyphenated step IDs** in dot paths are automatically rewritten to bracket notation before evaluation. `steps.my-step.output` becomes `steps["my-step"].output`.
-- If an entire `{{ }}` expression resolves to a non-string type (number, boolean, array, object), the raw value is preserved. Mixed expressions with surrounding text always produce strings.
-
----
-
-## Step Types
-
-### HTTP
-
-Perform HTTP requests with automatic JSON parsing, credential injection, and timeout handling.
-
-| Action | Description |
-|--------|-------------|
-| `http.get` | GET request |
-| `http.post` | POST request with body |
-| `http.put` | PUT request with body |
-| `http.patch` | PATCH request with body |
-| `http.delete` | DELETE request |
-
-**Parameters:**
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `url` | `string` | Yes | Request URL (supports interpolation) |
-| `headers` | `object` | No | Additional HTTP headers |
-| `query` | `object` | No | URL query parameters |
-| `body` | `any` | No | Request body (auto-serialized to JSON) |
-| `credential` | `string` | No | Name of a stored credential to inject |
-| `timeout` | `number` | No | Timeout in milliseconds |
-| `validateStatus` | `string` | No | Expected status code or range |
-
-**Output:** `{ status, statusText, headers, body }`
-
-### File
-
-Read, write, copy, move, and search files.
-
-| Action | Description |
-|--------|-------------|
-| `file.read` | Read file contents |
-| `file.write` | Write content to a file |
-| `file.append` | Append content to a file |
-| `file.delete` | Delete a file |
-| `file.glob` | Find files matching a glob pattern |
-| `file.copy` | Copy a file |
-| `file.move` | Move/rename a file |
-
-**Parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `path` | `string` | Target file path |
-| `content` | `string` | Content to write or append |
-| `source` | `string` | Source path (copy/move) |
-| `destination` | `string` | Destination path (copy/move) |
-| `pattern` | `string` | Glob pattern (file.glob) |
-| `cwd` | `string` | Working directory for glob |
-| `encoding` | `string` | `"utf-8"` (default) or `"base64"` |
-
-### Git
-
-Query and interact with local git repositories.
-
-| Action | Description |
-|--------|-------------|
-| `git.status` | Get working tree status |
-| `git.log` | Get recent commits |
-| `git.diff` | Show changes between commits or working tree |
-| `git.branch` | List or get current branch |
-| `git.commit` | Create a commit |
-
-**Parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `cwd` | `string` | Repository path (default: current directory) |
-| `limit` | `number` | Max number of commits (git.log) |
-| `message` | `string` | Commit message (git.commit) |
-| `files` | `string[]` | Files to stage (git.commit) |
-| `from` | `string` | Start ref (git.diff) |
-| `to` | `string` | End ref (git.diff) |
-
-### JSON
-
-Parse, stringify, and query JSON data with JSONPath.
-
-| Action | Description |
-|--------|-------------|
-| `json.parse` | Parse a JSON string into an object |
-| `json.stringify` | Serialize an object to a JSON string |
-| `json.query` | Query data using JSONPath expressions |
-
-**Parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `input` | `string` | JSON string or expression reference |
-| `query` | `string` | JSONPath query string (json.query) |
-| `indent` | `number` | Indentation spaces (json.stringify) |
-
-### Text
-
-String manipulation and templating.
-
-| Action | Description |
-|--------|-------------|
-| `text.regex` | Apply a regex pattern with optional replacement |
-| `text.template` | Render a template string with interpolation |
-| `text.split` | Split a string into an array |
-| `text.join` | Join an array into a string |
-
-**Parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `input` | `string` | Input text |
-| `pattern` | `string` | Regex pattern (text.regex) |
-| `replacement` | `string` | Replacement string (text.regex) |
-| `flags` | `string` | Regex flags, e.g. `"gi"` (text.regex) |
-| `template` | `string` | Template string (text.template) |
-| `separator` | `string` | Delimiter for split/join |
-
-### Array
-
-Transform and filter array data from previous steps.
-
-| Action | Description |
-|--------|-------------|
-| `array.filter` | Filter items by expression |
-| `array.map` | Transform each item |
-| `array.sort` | Sort items by key |
-| `array.flatten` | Flatten nested arrays |
-
-**Parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `input` | `string` | Expression referencing an array |
-| `expression` | `string` | Filter/map expression (`item` is the current element) |
-| `key` | `string` | Sort key (array.sort) |
-| `order` | `string` | `"asc"` (default) or `"desc"` (array.sort) |
-
-### Notifications
-
-Send results to various outputs.
-
-| Action | Description |
-|--------|-------------|
-| `notify.desktop` | macOS notification center alert |
-| `notify.clipboard` | Copy text to the system clipboard |
-| `notify.sound` | Play a system sound |
-| `notify.telegram` | Send a message via Telegram bot |
-
-**Parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `title` | `string` | Notification title (desktop) |
-| `message` | `string` | Notification body (desktop, telegram) |
-| `content` | `string` | Text to copy (clipboard) |
-| `sound` | `string` | System sound name (sound) |
-| `parse_mode` | `string` | Telegram parse mode: `"HTML"` or `"Markdown"` |
-
-> **Note:** `notify.telegram` requires prior configuration via `tools telegram-bot configure`.
-
-### NLP (macOS)
-
-Natural language processing using macOS NaturalLanguage framework.
-
-| Action | Description |
-|--------|-------------|
-| `nlp.sentiment` | Analyze sentiment of text (-1.0 to 1.0) |
-| `nlp.language` | Detect the language of text |
-| `nlp.tag` | Tag parts of speech, named entities, lemmas |
-| `nlp.distance` | Compute semantic distance between two texts |
-| `nlp.embed` | Generate text embeddings |
-
-**Parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `text` | `string` | Text to analyze |
-| `text2` | `string` | Second text (nlp.distance) |
-| `schemes` | `string[]` | Tag schemes: `lexicalClass`, `nameType`, `lemma`, etc. |
-| `language` | `string` | BCP-47 language code (default: `"en"`) |
-| `type` | `string` | `"word"` or `"sentence"` for embeddings (default: `"sentence"`) |
-
-### Flow Control
-
-| Action | Description |
-|--------|-------------|
-| `forEach` | Loop over an array, executing a sub-step for each item |
-| `while` | Repeat a sub-step while a condition is true |
-| `parallel` | Run multiple steps concurrently |
-
-**forEach parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `items` | `string` | Expression referencing an array |
-| `step` | `object` | Step definition to run for each item |
-| `concurrency` | `number` | Max parallel executions (default: 1) |
-| `as` | `string` | Variable name for current item (default: `"item"`) |
-| `indexAs` | `string` | Variable name for current index |
-
-**while parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `condition` | `string` | Expression that must be truthy to continue |
-| `step` | `object` | Step definition to repeat |
-| `maxIterations` | `number` | Safety limit to prevent infinite loops |
-
-**parallel parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `steps` | `string[]` | List of step IDs to run concurrently |
-| `onError` | `string` | `"stop"` or `"continue"` on failure |
-
-### Built-in Actions
-
-These actions are handled directly by the engine without spawning a subprocess.
-
-| Action | Description |
-|--------|-------------|
-| `shell` | Run a raw shell command via bash |
-| `if` | Conditional branching (evaluate expression, jump to `then`/`else` step) |
-| `log` | Print a message to the console |
-| `prompt` | Ask the user for input interactively |
-| `set` | Set key-value pairs into the variables context |
-
-**shell parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `command` | `string` | Shell command to execute |
-| `cwd` | `string` | Working directory (default: current directory) |
-| `timeout` | `number` | Timeout in seconds (default: 300) |
-
-**set parameters:** Any key-value pairs in `params` are written to `vars`.
-
----
-
-## Scheduling
-
-### Creating a Scheduled Task
-
-Use the interactive wizard:
-
-```bash
-tools automate task create
-```
-
-This prompts for:
-1. A task name
-2. Which preset to run
-3. An interval expression
-4. Optional variable overrides
-
-### Interval Syntax
-
-| Expression | Meaning |
-|------------|---------|
-| `every 30 seconds` | Run every 30 seconds |
-| `every 5 minutes` | Run every 5 minutes |
-| `every 1 hour` | Run every hour |
-| `every day at 09:00` | Run daily at 9:00 AM |
-| `every day at 17:30` | Run daily at 5:30 PM |
-| `every 7 days` | Run weekly |
-
-### Managing Tasks
-
-```bash
-# List all tasks with status and next run time
-tools automate task list
-
-# Disable a task (keeps config, stops execution)
-tools automate task disable my-health-check
-
-# Re-enable
-tools automate task enable my-health-check
-
-# Manually trigger a scheduled task
-tools automate task run my-health-check
-
-# View execution history
-tools automate task history
-tools automate task history -n 50
-```
-
-### Running the Daemon
-
-The daemon polls the SQLite database for due tasks and executes them.
-
-```bash
-# Foreground (for testing) -- Ctrl+C to stop
-tools automate daemon start
-
-# Install as macOS launchd service (starts on login, auto-restarts)
-tools automate daemon install
-
-# Check status
-tools automate daemon status
-
-# Tail logs in real-time
-tools automate daemon tail
-
-# Uninstall the launchd service
-tools automate daemon uninstall
-```
-
-When installed via launchd, the daemon:
-- Starts automatically on login (`RunAtLoad`)
-- Restarts on crash (`KeepAlive`)
-- Logs to `~/.genesis-tools/automate/logs/daemon-stdout.log` and `daemon-stderr.log`
-- Runs as a background process with minimal resource usage
-
----
-
-## Credentials
-
-Store API credentials securely for use in HTTP steps.
-
-### Credential Types
-
-| Type | Fields | Produces |
-|------|--------|----------|
-| `bearer` | `token` | `Authorization: Bearer <token>` |
-| `basic` | `username`, `password` | `Authorization: Basic <base64>` |
-| `apikey` | `key`, `headerName` | `<headerName>: <key>` (default: `X-API-Key`) |
-| `custom` | `headers` | Arbitrary headers object |
-
-### Managing Credentials
-
-```bash
-# Add a new credential (interactive)
-tools automate configure credentials add
-
-# List stored credentials
-tools automate configure credentials list
-
-# Show a credential (values masked)
-tools automate configure credentials show my-api
-
-# Delete a credential
-tools automate configure credentials delete my-api
-```
-
-### Using Credentials in Steps
-
-Reference a stored credential by name in any HTTP step:
+After a jump, the run goes on in list order. That is why the `end-alert` step jumps over `ok`: without it, the
+alert branch would also log "Queue is fine".
+
+Top-level fields:
+
+- `$schema` (required): any string. The wizard writes `genesis-tools-preset-v1`.
+- `name` (required, not empty): the display name. The wizard makes the file name from it.
+- `description` (optional): shown by `preset list` and at the start of a run.
+- `trigger` (required): `{ "type": "manual" }` or `{ "type": "schedule", "interval": "every 5 minutes" }`. It is
+  only validated. A schedule trigger schedules nothing; use `task create`.
+- `vars` (optional): the variables, by name.
+- `steps` (required, at least one): the steps, in order.
+
+Loading refuses a preset with two steps of the same id, or with an `if` whose `then` or `else` names no step.
+
+#### Variable fields
+
+- `type` (required): `string`, `number` or `boolean`. A prompted value is converted to it; a boolean is true only
+  for the answer `true`.
+- `description` (required): the prompt text, also shown by `preset show`.
+- `default` (optional): the value when no `--var` sets one.
+- `required` (optional): a variable with no value is prompted for unless `required` is `false`. A variable without
+  a default is therefore required unless it says otherwise.
+
+#### Step fields
+
+- `id` (required): unique; letters, digits, `-` and `_`.
+- `name` (required): the label in the progress output.
+- `action` (required): a built-in, a step handler action, or a `tools` command.
+- `params` (optional): the action's parameters.
+- `onError` (optional): `stop` (default), `continue` or `skip`. See [Errors](#errors).
+- `condition`, `then`, `else`: fields of an `if` step, beside `params`, not inside it.
+- `interactive` (optional): `true` gives a `shell` step this terminal's input. Other steps ignore it.
+- `output` (optional): accepted and shown by `preset show`, but the engine ignores it. Read a result as
+  `steps.<id>.output`.
+
+### Expressions
+
+A field takes one of three forms:
+
+- **Template fields** take `{{ expression }}`. These are most parameters and the `if` condition. Text around an
+  expression makes the whole field a string. A field that is exactly one expression depends on the action:
+  - In built-ins (`if`, `log`, `prompt`, `shell`, `set`) and in `tools` params, it keeps the value's type (number,
+    boolean, array, object). So `set` stores a number as a number, and a `tools` flag whose expression gives
+    `false` is left out.
+  - In step-handler params (`http.*`, `file.*`, `notify.*` and the rest), it always becomes a string. A number
+    becomes its digits, and an object or array becomes JSON text. So
+    `"content": "{{ steps.fetch.output.body }}"` in `notify.clipboard` or `file.write` gives JSON text.
+- **Expression fields** take a bare expression, with no braces: `items` of `forEach`, `condition` of `while`,
+  `validateStatus` of `http.*`, and `input` of `json.stringify`, `json.query`, `text.regex`, `text.split`,
+  `text.join` and every `array.*` action. With braces they fail with
+  `Expression evaluation failed: "{{ {{ ... }} }}"`.
+- **Literal fields** are read as written and never resolve `{{ }}`. Give them the value itself (a JSON number,
+  string or array): `timeout` of `http.*`, `limit` of `git.log`, `indent` of `json.stringify`, `flags` of
+  `text.regex`, `key` and `order` of `array.sort`, `sound` of `notify.sound`, `parse_mode` of `notify.telegram`,
+  `language`, `schemes` and `type` of `nlp.*`, `concurrency`, `as` and `indexAs` of `forEach`, `maxIterations` of
+  `while`, and `steps` and `onError` of `parallel`. So `"limit": "{{ vars.count }}"` passes that text to git as it
+  is.
+
+An expression sees:
+
+- `vars.<name>`: a variable.
+- `steps.<id>.output`, `.status` (`success`, `error` or `skipped`), `.error`, `.exitCode`, `.duration` (ms).
+- `env.<NAME>`: the process environment.
+- In a `forEach` body: `item` (or the `as` name), `item.<field>`, and `index` (or the `indexAs` name).
+
+How an expression is evaluated:
+
+- A plain path (`vars.url`, `steps.fetch.output.body`) is read directly.
+- Anything else is JavaScript, run with `new Function`: `{{ steps.count.output > 0 ? 'yes' : 'no' }}`. `vars`,
+  `steps` and `env` are passed in, and the expression also sees every global (`process`, `Bun`, `fetch`). It is
+  not a sandbox: an expression can do anything this process can do. A preset is code: run only presets you trust.
+- A dashed step id works in a dot path: `steps.my-step.output` is rewritten to `steps["my-step"].output`.
+  `steps['my-step'].output` works too.
+- A missing value inside surrounding text prints as empty text.
+- An object inside surrounding text prints as `[object Object]`. An array prints its items joined with commas, so
+  an array of objects prints `[object Object],[object Object]`. Format it in the expression instead:
+  `"{{ steps.log.output.commits.map(c => c.sha + ' ' + c.message).join('\\n') }}"`.
+- In a `forEach` body, `{{ item }}` and `{{ item.<field> }}` print an object as JSON text, also inside text.
+- An `if` condition without braces is always true, because the text itself is not empty.
+
+### Step reference
+
+Every result has `status` and `duration`. An error has `error`. `shell` and `tools` steps also have `exitCode`.
+
+#### Built-ins
+
+- `shell`: `command` (or `cmd`), `cwd` (default: the current directory), `timeout` in seconds (default 300). Runs
+  `bash -c`. Output: stdout parsed as JSON when it is JSON, otherwise the trimmed text. A non-zero exit is an error
+  with stderr as its message.
+- `if`: `condition`, `then`, `else` (step ids). True jumps to `then`, false to `else`; no target means the next
+  step. A jump back to an earlier step runs it again, with no loop limit. Output: the boolean.
+- `log`: `message`. Prints it. Output: the message.
+- `prompt`: `message` (default `Enter value:`), `default`. Output: the answer. Cancel makes the step an error.
+- `set`: each param becomes a variable (`vars.<key>`); only strings, numbers and booleans are kept. Output: the
+  params.
+
+#### `tools` commands
+
+- `action` is the command after `tools`, split at spaces.
+- A param key that starts with `-` is a flag: `true` adds the flag alone, `false` leaves it out, an array is joined
+  with commas, any other value follows the flag. Any other key is a positional argument: only its value is used,
+  in key order, and an array adds one argument per item.
+- stdout is parsed as JSON when it is JSON, otherwise kept as trimmed text. Ask the tool for JSON
+  (`--json` or `--format json`, whichever it supports). A non-zero exit is an error with stderr as its message.
+- The command gets no input and no time limit. A command that asks a question gets no answer.
 
 ```json
 {
-  "id": "fetch",
-  "name": "Call protected API",
-  "action": "http.get",
-  "params": {
-    "url": "https://api.example.com/data",
-    "credential": "my-api"
-  }
+  "id": "search",
+  "name": "Search issues",
+  "action": "github search",
+  "params": { "query": "crash", "--repo": "owner/repo", "--format": "json" }
 }
 ```
 
-Credential values support `{{ }}` expressions, so you can reference environment variables:
+This runs `tools github search crash --repo owner/repo --format json`.
+
+#### HTTP: `http.get`, `http.post`, `http.put`, `http.patch`, `http.delete`
+
+- `url` (required), `query` (object), `headers` (object), `credential` (a stored credential's name), `timeout` in ms
+  (default 30000), `validateStatus` (an expression on `status`, such as `status < 500`; default: 200 to 299).
+- `body` (not for GET): an object is sent as JSON, with `{{ }}` resolved in its strings; a string is sent as it is.
+- Sends `Content-Type: application/json` and `Accept: application/json` unless `headers` says otherwise.
+- Output: `{ status, statusText, headers, body }`. `body` is parsed when the response is JSON. A rejected status is
+  an error that keeps this output. A network error or a timeout is an error with no output.
+- An unknown `credential` logs a warning, and the request goes out without it.
+
+#### File: `file.read`, `file.write`, `file.copy`, `file.move`, `file.delete`, `file.glob`, `file.template`
+
+- `file.read`: `path`. Output: `{ path, content, size }`. A missing file is an error.
+- `file.write`: `path`, `content`. Replaces the file and creates missing folders. Output: `{ path, size }`.
+- `file.copy`, `file.move`: `source`, `destination`. Creates the destination folder. Output: `{ source,
+  destination }`.
+- `file.delete`: `path`. A missing file is not an error. Output: `{ path, existed }`.
+- `file.glob`: `pattern`, `cwd`. Output: `{ pattern, cwd, files, count }`, with absolute paths of files only.
+- `file.template`: `templatePath` or `content`, `variables` (each replaces `{{ key }}` first), `path`. Output:
+  `{ content }`, or `{ path, content }` after it writes `path`.
+- Relative paths resolve from the current directory. `~` is not expanded: write `{{ env.HOME }}/notes.md`.
+
+#### Git: `git.status`, `git.commit`, `git.branch`, `git.diff`, `git.log`
+
+Each takes `cwd`, the repository (default: the current directory).
+
+- `git.status`: output `{ branch, hasChanges, files: [{ status, path }] }`.
+- `git.commit`: `message` (default `Automated commit`), `files`. Without `files` it stages everything
+  (`git add -A`). Output: `{ committed, sha, message }`; nothing to commit is a success with `committed: false`.
+- `git.branch`: `branch` (required), `from`. Runs `git checkout -b`, so it also switches to the new branch. Output:
+  `{ branch }`.
+- `git.diff`: `from` (default `HEAD~1`), `to` (default `HEAD`). Output: `{ from, to, diff }`.
+- `git.log`: `limit` (default 10), `from`, `to` (default `HEAD`). Output: `{ commits: [{ sha, message }], count }`.
+
+#### JSON: `json.parse`, `json.stringify`, `json.query`
+
+- `json.parse`: `input` (a template field). Output: the parsed value.
+- `json.stringify`: `input` (an expression field), `indent` (default 2). Output: a string.
+- `json.query`: `input` (an expression field), `query` (JSONPath, such as `$.items[*].name`). Output: an array.
+
+#### Text: `text.regex`, `text.template`, `text.split`, `text.join`
+
+- `text.regex`: `input` (an expression field), `pattern`, `flags` (default `g`), `replacement`. With a replacement:
+  `{ result, matchCount }`. Without one: `{ matches: [{ match, groups, index }], count }`.
+- `text.template`: `template`. Output: the resolved string.
+- `text.split`: `input` (an expression field), `separator` (default: a newline). Output: an array.
+- `text.join`: `input` (an expression field, an array), `separator` (default: a newline). Output: a string.
+
+#### Array: `array.filter`, `array.map`, `array.sort`, `array.flatten`
+
+`input` is an expression field and must give an array.
+
+- `array.filter`, `array.map`: `expression`, plain JavaScript with no braces, with `item`, `index`, `vars`, `steps`
+  and `env` in scope, such as `item.count > 0`. Dashed ids are not rewritten here: write `steps['my-id']`.
+- `array.sort`: `key` (sort objects by this field), `order` (`asc` default, or `desc`).
+- `array.flatten`: flattens every level.
+
+#### Notify: `notify.desktop`, `notify.clipboard`, `notify.sound`, `notify.telegram`
+
+- `notify.desktop`: `title` (default `GenesisTools Automate`), `message`. A macOS notification.
+- `notify.clipboard`: `content` (or `message`). Output: `{ copied, length }`.
+- `notify.sound`: `sound` (default `Glass`), a name from `/System/Library/Sounds/`.
+- `notify.telegram`: `message`, `parse_mode` (`MarkdownV2` or `HTML`). Sends to the bot's notifications chat.
+  Output: `{ messageId, chatId }`. Without a configured bot the step is `skipped` and the run goes on.
+
+#### NLP: `nlp.sentiment`, `nlp.language`, `nlp.tag`, `nlp.distance`, `nlp.embed`
+
+Each takes `text`. Output: the result object from DarwinKit.
+
+- `nlp.sentiment`: a score from -1.0 to 1.0.
+- `nlp.language`: the detected language.
+- `nlp.tag`: `schemes` (default `["lexicalClass"]`; also `nameType`, `lemma`, `sentimentScore`, `language`),
+  `language` (BCP-47, default `en`).
+- `nlp.distance`: `text2`, `type` (`word` or `sentence`, default `sentence`), `language`.
+- `nlp.embed`: `type` (`word` or `sentence`, default `sentence`), `language`.
+
+#### Flow: `forEach`, `while`, `parallel`
+
+- `forEach`: `items` (an expression field that gives an array), `step` (one step object), `concurrency` (default 1;
+  higher runs batches of that size), `as` (default `item`), `indexAs` (default `index`). Output:
+  `{ results, count, failures }`. Each pass is also stored as `steps['<id>[<n>]']`. The step is an error when any
+  pass fails.
+- `while`: `condition` (an expression field, checked before each pass), `step`, `maxIterations` (default 100).
+  Output: `{ results, iterations, failures }`. It stops at the first failed pass unless the `while` step has
+  `onError: "continue"`.
+- `parallel`: `steps` (ids of other top-level steps), `onError` (`stop` default, or `continue`). The listed steps
+  run together inside this step and are skipped where they stand in the list. Output: each child's result by id;
+  each child is also stored as `steps.<id>`.
+- A `forEach` or `while` body and a `parallel` child must be a step handler action. A built-in or a `tools` command
+  there fails with `Unknown action in forEach body: shell` (or `Unknown action: ...` in `parallel`).
+
+### Errors
+
+`onError` decides what a failed step does to the run:
+
+- `stop` (default): the run ends at this step.
+- `continue` and `skip`: the run goes on with the next step. The two behave the same. The step stays an error, its
+  message prints, and the run still counts as failed (exit code 1, status `error` in the history).
+
+A run passes only when every step that ran is `success` or `skipped`. A step is `skipped` in a dry run, or when a
+Telegram step has no bot. A step that throws (for example a broken expression in `forEach`) is treated as a
+failed step: its error is stored as `steps.<id>.error`, and its `onError` applies.
+
+### Schedules
+
+```
+every 30 seconds
+every 5 minutes
+every 1 hour
+every 7 days
+every 2 weeks
+every day at 09:00      # local time, 24-hour clock
+```
+
+The form is `every <N> <second|minute|hour|day|week>`, with or without a plural `s`, in any letter case, or
+`every day at HH:MM`. Nothing else parses: `every hour` without a number fails. For `every <N> <unit>`, the next
+run is counted from the end of the previous one, so the start time drifts by the length of each run. `every day at`
+keeps its clock time: the next run is the next HH:MM local time. `task list` shows the UTC time of a local
+`every day at` run.
+
+A scheduled run differs from one in your terminal:
+
+- It has no terminal. A variable without a value opens a prompt that nobody can answer, so give every variable of
+  a scheduled preset a default.
+- Its working directory is your home folder. Relative paths, `git.*` steps without `cwd` and `shell` steps without
+  `cwd` start there.
+- The plist sets only `HOME` and `PATH`. An `{{ env.NAME }}` that works in your shell can be
+  empty in the daemon, and `GENESIS_TOOLS_HOME` is not passed on.
+- It runs the code of the checkout where you ran `daemon install`. Install from the main checkout, not from a
+  worktree you will remove.
+
+### Credentials
+
+A credential adds headers to an `http.*` step that names it with `"credential": "<name>"`.
+
+| Type     | Fields               | Header sent                                  |
+|----------|----------------------|----------------------------------------------|
+| `bearer` | `token`              | `Authorization: Bearer <token>`              |
+| `basic`  | `username, password` | `Authorization: Basic <base64>`              |
+| `apikey` | `key, headerName`    | `<headerName>: <key>` (default `X-API-Key`)  |
+| `custom` | `headers`            | each header as given                         |
+
+A value can hold any `{{ }}` expression. It resolves when the request is made, so a file can name an environment
+variable instead of holding the secret:
 
 ```json
 {
@@ -595,29 +551,43 @@ Credential values support `{{ }}` expressions, so you can reference environment 
 }
 ```
 
-### Storage
+```json
+{
+  "id": "fetch",
+  "name": "Call the protected API",
+  "action": "http.get",
+  "params": { "url": "https://api.example.com/data", "credential": "github-token" }
+}
+```
 
-Credentials are stored as individual JSON files in `~/.genesis-tools/automate/credentials/` with `0600` (owner read/write only) permissions. The directory itself is created with `0700` permissions.
+Each credential is `credentials/<name>.json`, mode 0600, in a folder with mode 0700. When `credentials add` finds a
+file it cannot read as a credential, it keeps a copy of that file before it writes the new one.
 
----
+### Environment variables
+
+- `GENESIS_TOOLS_HOME`: puts the whole `.genesis-tools` tree (presets, database, credentials, logs, PID file) under
+  another home folder. The launchd plist stays in `~/Library/LaunchAgents`, and the launchd daemon does not get
+  this variable.
+- Steps read the process environment as `env.<NAME>`.
 
 ## Examples
 
-### 1. API Health Check with Telegram Alert
+### API health check
 
-Checks multiple endpoints concurrently and sends a Telegram notification with the results.
+Checks several endpoints at once and shows the result as a desktop notification. Note the bare expressions in
+`input` and `items`.
 
 ```json
 {
   "$schema": "genesis-tools-preset-v1",
   "name": "API Health Check",
-  "description": "Check multiple API endpoints and notify on results",
+  "description": "Check API endpoints and notify on results",
   "trigger": { "type": "manual" },
   "vars": {
     "endpoints": {
       "type": "string",
       "description": "Comma-separated list of URLs to check",
-      "default": "https://httpstat.us/200,https://httpstat.us/500"
+      "default": "https://api.example.com/health,https://api.example.com/status"
     }
   },
   "steps": [
@@ -625,28 +595,23 @@ Checks multiple endpoints concurrently and sends a Telegram notification with th
       "id": "split-urls",
       "name": "Parse endpoint list",
       "action": "text.split",
-      "params": {
-        "input": "{{ vars.endpoints }}",
-        "separator": ","
-      }
+      "params": { "input": "vars.endpoints", "separator": "," }
     },
     {
       "id": "check-all",
       "name": "Check all endpoints",
       "action": "forEach",
       "params": {
-        "items": "{{ steps.split-urls.output }}",
+        "items": "steps.split-urls.output",
         "concurrency": 5,
         "step": {
           "id": "check",
           "name": "Check endpoint",
           "action": "http.get",
-          "params": {
-            "url": "{{ item }}",
-            "timeout": 10000
-          }
+          "params": { "url": "{{ item }}", "timeout": 10000 }
         }
-      }
+      },
+      "onError": "continue"
     },
     {
       "id": "notify",
@@ -661,35 +626,43 @@ Checks multiple endpoints concurrently and sends a Telegram notification with th
 }
 ```
 
-Run it:
 ```bash
-tools automate preset run api-health-check
-tools automate preset run api-health-check --var endpoints=https://myapi.com/health,https://myapi.com/status
+tools automate preset run ~/Projects/app/presets/api-health-check.json \
+  --var endpoints=https://api.example.com/health,https://api.example.com/v2
 ```
 
-### 2. Weekly Git Summary with Clipboard
+Run it by name (`preset run api-health-check`) only after you save this JSON as
+`~/.genesis-tools/automate/presets/api-health-check.json`. The name finds that file, and the bundled copy there
+fails at its first step.
 
-Collects recent commits, formats them as markdown, and copies the result to the clipboard.
+With `onError: "continue"`, the notification is sent even when an endpoint fails. The run still exits 1 then.
+
+### Weekly git summary
+
+Collects the recent commits of a repository, formats them as markdown, and copies the text to the clipboard.
 
 ```json
 {
   "$schema": "genesis-tools-preset-v1",
   "name": "Weekly Git Summary",
-  "description": "Get recent commits, format as markdown, copy to clipboard",
+  "description": "Recent commits as markdown, copied to the clipboard",
   "trigger": { "type": "manual" },
+  "vars": {
+    "repo": { "type": "string", "description": "Repository folder", "default": "." }
+  },
   "steps": [
     {
       "id": "log",
       "name": "Get recent commits",
       "action": "git.log",
-      "params": { "limit": 50 }
+      "params": { "limit": 50, "cwd": "{{ vars.repo }}" }
     },
     {
       "id": "format",
       "name": "Format as markdown",
       "action": "text.template",
       "params": {
-        "template": "# Weekly Git Summary\n\nCommits: {{ steps.log.output.count }}\n\n{{ steps.log.output.commits }}"
+        "template": "# Weekly Git Summary\n\nCommits: {{ steps.log.output.count }}\n\n{{ steps.log.output.commits.map(c => '- ' + c.sha + ' ' + c.message).join('\\n') }}"
       }
     },
     {
@@ -702,31 +675,27 @@ Collects recent commits, formats them as markdown, and copies the result to the 
       "id": "done",
       "name": "Show notification",
       "action": "notify.desktop",
-      "params": {
-        "title": "Git Summary",
-        "message": "{{ steps.log.output.count }} commits copied to clipboard"
-      }
+      "params": { "title": "Git Summary", "message": "{{ steps.log.output.count }} commits copied to clipboard" }
     }
   ]
 }
 ```
 
-### 3. Scheduled Health Check with Telegram
+The bundled `weekly-git-summary` puts `{{ steps.log.output.commits }}` straight into the text, which prints
+`[object Object]` for each commit. The `map` expression above writes one line per commit.
 
-Runs every 5 minutes via the daemon and sends results to Telegram.
+### Scheduled health check with Telegram
+
+Every 5 minutes, checks one URL and sends the result to Telegram.
 
 ```json
 {
   "$schema": "genesis-tools-preset-v1",
   "name": "Scheduled Health Check",
-  "description": "Check API endpoints periodically, notify via Telegram on completion",
-  "trigger": { "type": "schedule", "interval": "every 5 minutes" },
+  "description": "Check an endpoint, notify via Telegram",
+  "trigger": { "type": "manual" },
   "vars": {
-    "url": {
-      "type": "string",
-      "description": "URL to check",
-      "default": "https://httpstat.us/200"
-    }
+    "url": { "type": "string", "description": "URL to check", "default": "https://api.example.com/health" }
   },
   "steps": [
     {
@@ -740,59 +709,102 @@ Runs every 5 minutes via the daemon and sends results to Telegram.
       "id": "notify",
       "name": "Send Telegram notification",
       "action": "notify.telegram",
-      "params": {
-        "message": "Health check: {{ vars.url }} -- {{ steps.check.status }}"
-      }
+      "params": { "message": "Health check: {{ vars.url }}, step status {{ steps.check.status }}" }
     }
   ]
 }
 ```
 
-To schedule it:
 ```bash
-# Create the task
-tools automate task create
-# (select "Scheduled Health Check", enter interval "every 5 minutes")
-
-# Start the daemon
-tools automate daemon start
-# or install as a service:
-tools automate daemon install
+tools telegram-bot configure      # once, if the bot is not set up yet
+tools automate task create        # pick "Scheduled Health Check", interval "every 5 minutes"
+tools automate daemon install     # or: tools automate daemon start, to watch it in a terminal
+tools automate task history -n 5  # check the first runs
 ```
 
----
+## For agents
 
-## File Locations
+- No command has `--json` output. Every command prints for people. Read results from the database instead, with
+  `-readonly` so nothing changes:
 
-| Path | Description |
-|------|-------------|
-| `~/.genesis-tools/automate/presets/` | Saved preset JSON files |
-| `~/.genesis-tools/automate/automate.db` | SQLite database (schedules, runs, logs) |
-| `~/.genesis-tools/automate/credentials/` | Stored credentials (0600 permissions) |
-| `~/.genesis-tools/automate/logs/` | Daemon stdout/stderr logs |
-| `~/Library/LaunchAgents/com.genesis-tools.automate.plist` | launchd service definition |
+  ```bash
+  sqlite3 -readonly ~/.genesis-tools/automate/automate.db \
+    "SELECT id, preset_name, trigger_type, status, started_at, duration_ms FROM runs ORDER BY id DESC LIMIT 5"
+  sqlite3 -readonly ~/.genesis-tools/automate/automate.db \
+    "SELECT step_index, step_id, status, error, substr(output, 1, 200) FROM run_logs WHERE run_id = 42"
+  ```
 
----
+  Tables: `schedules` (name, preset_name, interval, enabled, last_run_at, next_run_at, vars_json), `runs`
+  (schedule_id, preset_name, trigger_type, started_at, finished_at, status, step_count, duration_ms, error) and
+  `run_logs` (run_id, step_index, step_id, step_name, action, status, output, duration_ms, error).
+- Exit codes: `preset run` and `task run` exit 1 when a step fails or the preset does not load; an uncaught error
+  exits 1. Ctrl+C on `daemon start` or `daemon tail` exits 130. These print an error but exit 0:
+  - "Not found" from `task show`, `enable`, `disable`, `delete` and `run`, from `credentials delete`, and an
+    unknown type from `step show`.
+  - `task create` with a task name that already exists.
+  - `daemon install` when the install fails, for example when launchd does not load the agent (`Failed: ...`).
+  - A cancelled variable prompt (`Operation cancelled`).
+- To find the runs of one task, filter `runs` by `schedule_id`:
 
-## Error Handling
+  ```bash
+  sqlite3 -readonly ~/.genesis-tools/automate/automate.db \
+    "SELECT r.id, r.trigger_type, r.status, r.started_at FROM runs r
+     JOIN schedules s ON s.id = r.schedule_id WHERE s.name = 'my-task' ORDER BY r.id DESC LIMIT 5"
+  ```
+- These need a terminal: `preset create`, `task create`, `task delete` (it confirms), `configure`,
+  `credentials add`, and the variable prompts of a run. Write the preset JSON yourself and pass every variable that
+  has no default with `--var`.
+- `--dry-run` prints each `tools` command line with `vars` and `env` resolved. A param that reads an earlier
+  step's output shows `undefined`, empty text or a placeholder, because no step ran. Use it to check a preset's
+  steps and variables before the real run, not the values that steps pass on.
+- The plugin command `gt:automate` (`plugins/genesis-tools/commands/automate.md`) helps an agent write presets. Its
+  examples use the old short forms `tools automate run|list|show|create`; those commands now sit under `preset`
+  (`tools automate preset run`).
 
-Each step has an `onError` field that controls what happens when it fails:
+## Troubleshooting
 
-| Value | Behavior |
-|-------|----------|
-| `"stop"` | Halt the entire preset (default) |
-| `"continue"` | Record the error and proceed to the next step |
-| `"skip"` | Skip the step silently and continue |
+- **`Expression evaluation failed: "{{ {{ ... }} }}"`.** An expression field got braces. Remove them
+  ([Expressions](#expressions) lists those fields). The bundled `api-health-check` (`input`, `items`),
+  `pr-review-digest` (`input` of `json.query`) and `project-backup` (`items`) ship this way and fail. Fix your copy
+  in `presets/`; your edits stay.
+- **`Unknown action in forEach body: shell`.** A loop body or a `parallel` child is a built-in or a `tools`
+  command. Use a step handler action there, or move the command to a top-level step.
+- **A message shows empty values.** A path names something that does not exist, and a missing value prints as
+  empty text. The bundled `email-sentiment-check` reads `steps.languageResult`, a name from its `output` field,
+  which the engine ignores. Use the step id: `steps.detect-language.output`.
+- **A message shows `[object Object]`.** An object or array sits inside surrounding text. Format it with an
+  expression, as in [Weekly git summary](#weekly-git-summary).
+- **An `if` always takes `then`.** Its condition has no `{{ }}`, so it is a non-empty string.
+- **Both branches of an `if` run.** After a jump, the run goes on in list order. End the first branch with an `if`
+  on `{{ true }}` that jumps past the second ([Preset files](#preset-files) shows it).
+- **The run fails although the step has `onError: "continue"`.** That is by design: `continue` lets later steps
+  run, but the run still counts as failed.
+- **A preset is missing from `preset list`.** The file fails validation. `preset show <file name>` prints the error.
+- **`Preset "..." not found. Searched: ...`.** Use the file name without `.json`, or a path that ends in `.json`.
+- **A task never runs.** Check `daemon status`, then `task list`: the task must be enabled, and the daemon must
+  run. It checks for due tasks at least once a minute.
+- **A preset works in the terminal but not in the daemon.** The daemon has no terminal, starts in your home folder,
+  and gets only `HOME` and `PATH`. See [Schedules](#schedules).
+- **`daemon status` says the daemon "runs outside GenesisTools.app".** Run `tools automate daemon install` again.
+- **`No daemon logs found. Is the daemon installed?`** from `daemon tail`. Only the launchd daemon writes log files.
+  Run `daemon install`, or watch a foreground daemon in its own terminal.
+- **A run stays `running` in `task history`.** The process ended before the run finished (Ctrl+C, a kill, or a
+  daemon stop while the run was in progress). Nothing closes that row later.
+- **`task show <name>` lists no recent runs.** The task stores the preset's file name, and a run stores its display
+  name, so the two match only when they are equal. Use `task history`, or the `schedule_id` query in
+  [For agents](#for-agents).
+- **`Unknown notify action: undefined`.** The action is a bare handler name (`notify`, `git`, `json`), which goes to
+  the step handler, not to `tools`. Name an action of the handler (`notify.desktop`), or put the `tools`
+  command's subcommand in `action`.
+- **A Telegram step is `skipped`.** No bot is set up. Run `tools telegram-bot configure`, or
+  `tools automate configure`.
+- **A task shows a last run, but the history has none.** `task enable` writes the current time into the last run.
 
-Step results always include a `status` field (`"success"`, `"error"`, or `"skipped"`) and a `duration` in milliseconds. Errors include an `error` message and, for shell/process steps, an `exitCode`.
+## Related
 
----
-
-## Technical Details
-
-- **Runtime**: Bun (uses `Bun.spawn`, `bun:sqlite`, and Bun file APIs)
-- **Database**: SQLite with WAL mode and foreign keys enabled
-- **Expression Engine**: Simple paths resolved via property access; complex expressions via `new Function()` with `vars`, `steps`, `env` in scope
-- **Credential Security**: Files stored with `0600` permissions in a `0700` directory; values can reference `{{ env.* }}` to avoid storing secrets on disk
-- **Daemon**: Polls the database on a timer; installed via macOS launchd with `KeepAlive` and `RunAtLoad`
-- **Logging**: All operations logged via pino to `logs/` directory; daemon logs separately to `~/.genesis-tools/automate/logs/`
+- [tools telegram-bot](../telegram-bot/README.md): sets up the bot that `notify.telegram` sends through.
+- [tools darwinkit](../darwinkit/README.md): the macOS NaturalLanguage features behind `nlp.*`.
+- [tools claude](../claude/README.md): `tools claude usage --json` feeds the bundled `claude-usage-report`.
+- [tools github](../github/README.md): a common target for `tools` steps (`github search`).
+- [tools task](../task/README.md): runs one command with saved logs, where a preset chains many steps.
+- [tools notify](../notify/README.md): desktop notifications from the shell, outside a preset.
