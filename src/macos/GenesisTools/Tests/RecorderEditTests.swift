@@ -1044,9 +1044,10 @@ final class RecorderEditTests: XCTestCase {
     }
 
     func testMotionBlurSmearsOnlyAMovingZoom() {
-        // A sharp edge: black left half, white right half.
-        let size = CGRect(x: 0, y: 0, width: 200, height: 100)
-        let image = CIImage(color: .white).cropped(to: CGRect(x: 100, y: 0, width: 100, height: 100))
+        // A sharp edge: black left half, white right half. 2000 px wide: the longest smear is a share of the width
+        // (about 21 px here), so a narrow picture would smear less than the 4 px to the sampled pixel.
+        let size = CGRect(x: 0, y: 0, width: 2000, height: 100)
+        let image = CIImage(color: .white).cropped(to: CGRect(x: 1000, y: 0, width: 1000, height: 100))
             .composited(over: CIImage(color: .black).cropped(to: size))
         let context = CIContext()
         func gray(_ result: CIImage, _ x: Int) -> UInt8 {
@@ -1056,12 +1057,12 @@ final class RecorderEditTests: XCTestCase {
             return pixel[0]
         }
         let still = ZoomCurve.View(scale: 2, centerX: 0.5, centerY: 0.5)
-        XCTAssertEqual(gray(Looks.motionBlur(from: still, to: still, amount: 0.5, on: image), 96), 0, "a still zoom stays sharp")
+        XCTAssertEqual(gray(Looks.motionBlur(from: still, to: still, amount: 0.5, on: image), 996), 0, "a still zoom stays sharp")
         let panned = ZoomCurve.View(scale: 2, centerX: 0.55, centerY: 0.5)
         let blurred = Looks.motionBlur(from: still, to: panned, amount: 0.5, on: image)
-        XCTAssertGreaterThan(gray(blurred, 96), 20, "a pan smears the edge sideways")
+        XCTAssertGreaterThan(gray(blurred, 996), 20, "a pan smears the edge sideways")
         XCTAssertEqual(blurred.extent, size, "the picture keeps its size")
-        XCTAssertEqual(gray(Looks.motionBlur(from: still, to: panned, amount: 0, on: image), 96), 0, "0 is off")
+        XCTAssertEqual(gray(Looks.motionBlur(from: still, to: panned, amount: 0, on: image), 996), 0, "0 is off")
     }
 
     func testASpotlightDimsEverythingButItsRectangle() {

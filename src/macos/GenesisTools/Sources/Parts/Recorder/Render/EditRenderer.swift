@@ -10,6 +10,8 @@ final class ZoomState: @unchecked Sendable {
     private var project: EditProject
     private var cursor: CursorTrack?
     private var captions: CaptionTrack?
+    /// One frame of the movie the renderer last made (`render` sets it), so the motion blur covers one exported frame.
+    private var frameUs = EditRenderer.defaultFrameUs
     /// The keys overlay's plates, one per shortcut label and size.
     let keyPlates = TextPlates()
 
@@ -37,6 +39,13 @@ final class ZoomState: @unchecked Sendable {
     private var sourceFrames: SourceFrames?
     /// The hidden parts as drawn (RedactionEdges), for the project and the frame times they were made from.
     private var drawnRedactions: (key: RedactionEdges.Key, frames: SourceFrames?, parts: [EditProject.Redaction])?
+
+    /// One frame of the output at the rate `render` picked (`EditRenderer.exportFps`).
+    func setFrameUs(_ us: Int64) {
+        lock.lock()
+        frameUs = max(1, us)
+        lock.unlock()
+    }
 
     /// The source movie's frame times, read by the renderer once it has the movie.
     func setSourceFrames(_ frames: SourceFrames?) {
@@ -172,6 +181,7 @@ final class ZoomState: @unchecked Sendable {
         let project = project
         let cursor = cursor
         let captions = captions
+        let frameUs = frameUs
         drawn += 1
         lock.unlock()
         let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
@@ -183,10 +193,10 @@ final class ZoomState: @unchecked Sendable {
         let drawn = redactions(for: project)
         let motionBlur = (project.motion ?? .init()).blur
         var previousView: ZoomCurve.View?
-        if motionBlur > 0, outUs >= Self.frameUs, !project.zooms.isEmpty {
-            let previousUs = TimelineMap.sourceTime(atOutput: outUs - Self.frameUs, in: project)
+        if motionBlur > 0, outUs >= frameUs, !project.zooms.isEmpty {
+            let previousUs = TimelineMap.sourceTime(atOutput: outUs - frameUs, in: project)
             // A cut jumps in source time; the frame after it has no move to smear.
-            if sourceUs > previousUs, sourceUs - previousUs <= Self.frameUs * 17 {
+            if sourceUs > previousUs, sourceUs - previousUs <= frameUs * 17 {
                 previousView = ZoomCurve.view(atSource: previousUs, project: project, cursor: cursor)
             }
         }
@@ -268,9 +278,6 @@ final class ZoomState: @unchecked Sendable {
               let shown = TimelineMap.shown(fromUs: spot.startUs, toUs: spot.endUs, placed: placed) else { return 1 }
         return shown.fade(atOutput: outUs, overUs: min(asked, max(1, shown.playedUs / 3)))
     }
-
-    /// One output frame at 60 fps.
-    static let frameUs: Int64 = 16_667
 
     /// A redaction that follows the cursor, centred on it (averaged over ±150 ms, so it glides) and kept inside the
     /// picture; any other one as it is.
@@ -612,6 +619,8 @@ struct EditRenderer {
         let videoComposition: AVMutableVideoComposition
         let audioMix: AVAudioMix?
         let renderSize: CGSize
+        /// One frame at the rate the movie plays (`exportFps`), in µs.
+        let frameUs: Int64
     }
 
     enum RenderError: LocalizedError {
@@ -686,6 +695,12 @@ struct EditRenderer {
         if nominal >= 23.5 { return nominal.rounded() }
         return 30
     }
+
+    /// One output frame at 60 fps: the frame a ZoomState uses until `render` tells it the movie's own.
+    static let defaultFrameUs: Int64 = 16_667
+
+    /// One frame at `fps`, in µs.
+    static func frameUs(fps: Double) -> Int64 { Int64((1_000_000 / max(1, fps)).rounded()) }
 
     /// The export's picture, canvas and frame rate (`plannedOutput`).
     struct OutputPlan: Equatable {
@@ -793,6 +808,7 @@ struct EditRenderer {
         rule.size = fixed
         let plan = plannedOutput(export: rule, source: natural, aspect: project.frame?.aspect, nominalFps: Double(nominalFps))
         let fps = plan.fps
+        zoom.setFrameUs(frameUs(fps: fps))
         try checkSize(fixed, source: natural, aspect: project.frame?.aspect)
         let (picture, size) = (plan.picture, plan.canvas)
         let outputScale = picture.height / natural.height
@@ -967,7 +983,8 @@ struct EditRenderer {
             mix.inputParameters = inputs
             audioMix = mix
         }
-        return Rendered(composition: composition, videoComposition: videoComposition, audioMix: audioMix, renderSize: size)
+        return Rendered(composition: composition, videoComposition: videoComposition, audioMix: audioMix, renderSize: size,
+                        frameUs: frameUs(fps: fps))
     }
 }
 

@@ -230,7 +230,7 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 - `zooms`: `startUs`, `endUs`, `scale` 1 to 4, `mode` `manual` (a `focusX`/`focusY` point) or `follow` (the cursor),
   `easeInMs`/`easeOutMs` on a (0.16, 1, 0.3, 1) curve.
 - `motion` (optional): `blur` 0 to 1 (0.5 when absent) smears the picture along a zoom's pan or change of scale, as a
-  camera shutter would (at most 24 px a frame, so text stays readable through a fast ease); 0 keeps every frame sharp. Op `motion {blur}`; the Zoom tab's slider.
+  camera shutter would over one frame of the exported movie (24, 25, 30 or 60 fps; a GIF made from the MP4 keeps the MP4 rate's smear), at most about 1 % of the picture's width a frame, so text stays readable through a fast ease; 0 keeps every frame sharp. Op `motion {blur}`; the Zoom tab's slider.
 - `audio`: `include`, `volume` 0 to 2, `mutedTracks`, `music` (optional): `file` looped under the movie, `volume` 0 to
   1 (0.25), `fadeMs` (1500) at both ends, and `duck` (0.6): while a transcript line plays the music drops by that
   much, with a 0.3 s ramp. Op `music {file?, volume?, duck?, fadeMs?, enabled?}`; the Audio tab's Music section.

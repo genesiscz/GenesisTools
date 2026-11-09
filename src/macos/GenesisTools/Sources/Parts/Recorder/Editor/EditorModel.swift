@@ -335,9 +335,27 @@ final class EditorModel {
         player.seek(to: EditRenderer.us(clamped), toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    /// One frame of the preview's movie (its `exportFps`), set by each render; 60 fps until the first.
+    @ObservationIgnored private(set) var frameUs = EditRenderer.defaultFrameUs
+
     func step(frames: Int) {
         player.pause()
-        seek(clock.outUs + Int64(frames) * 16_667)
+        seek(Self.steppedUs(from: clock.outUs, frames: frames, frameUs: frameUs))
+    }
+
+    /// The frames a second at a frame of `frameUs` (30 for 33 333 µs).
+    nonisolated static func framesPerSecond(frameUs: Int64) -> Int {
+        max(1, Int((1_000_000 / Double(max(1, frameUs))).rounded()))
+    }
+
+    /// `frames` frames on from `fromUs` on the movie's frame grid (frame n starts at n / fps s, as the composition
+    /// draws them): a clock between two frames counts from the frame it shows, so every press shows a new frame.
+    nonisolated static func steppedUs(from fromUs: Int64, frames: Int, frameUs: Int64) -> Int64 {
+        let fps = Double(framesPerSecond(frameUs: frameUs))
+        let position = Double(fromUs) * fps / 1_000_000
+        // Within a thousandth of a frame counts as on it: grid times are rounded to whole µs.
+        let shown = frames >= 0 ? (position + 0.001).rounded(.down) : (position - 0.001).rounded(.up)
+        return Int64(((shown + Double(frames)) * 1_000_000 / fps).rounded())
     }
 
     /// The arrow keys: with a shape selected they nudge it by 0.2 % of the picture (⇧: 2 %); otherwise ← and → step
@@ -349,7 +367,7 @@ final class EditorModel {
             return
         }
 
-        if dx != 0 { step(frames: dx * (shift ? 60 : 1)) }
+        if dx != 0 { step(frames: dx * (shift ? Self.framesPerSecond(frameUs: frameUs) : 1)) }
     }
 
     /// ⌥← and ⌥→: the selected zoom, hidden part, text, shape or camera part starts `byUs` earlier or later, its
@@ -1232,6 +1250,7 @@ final class EditorModel {
                 let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1440)
                 span.end()
                 guard !Task.isCancelled, let self else { return }
+                self.frameUs = rendered.frameUs
                 let item = AVPlayerItem(asset: rendered.composition)
                 item.videoComposition = rendered.videoComposition
                 item.audioMix = rendered.audioMix

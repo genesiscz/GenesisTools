@@ -132,9 +132,12 @@ enum Looks {
         return context.makeImage()
     }
 
-    /// The longest smear a motion blur draws, in output pixels; a faster move is clamped, so a jump stays readable.
-    /// The longest smear a motion blur draws, in output pixels; a faster move is clamped, so a jump stays readable.
-    static let maxMotionBlur = 24.0
+    /// The longest smear a motion blur draws, as a share of the picture's width (24 px on the 2228 px wide preview);
+    /// a faster move is clamped, so a jump stays readable, and the clamp keeps its look at any output size.
+    static let maxMotionBlurShare = 24.0 / 2228
+
+    /// The longest smear on a picture `width` pixels wide.
+    static func maxMotionBlur(width: Double) -> Double { maxMotionBlurShare * width }
 
     /// Smears the zoomed picture along the move from `previous` to `view` over one frame: a directional blur for a
     /// pan, a radial one for a change of scale. `amount` is the shutter (0.5: half the move). A move under a pixel
@@ -147,17 +150,18 @@ enum Looks {
         let dx = -(view.centerX - previous.centerX) / width * extent.width
         let dy = (view.centerY - previous.centerY) / width * extent.height
         var result = image
+        let cap = maxMotionBlur(width: extent.width)
         // Each smear is a length in pixels; the filters' own units were measured against a lit 2 px dot (2026-11-04):
         // CIMotionBlur spreads about 5.6 px per unit of radius, CIZoomBlur about 0.0226 px per unit of amount and pixel
         // of distance from its centre.
-        let pan = min(maxMotionBlur, (dx * dx + dy * dy).squareRoot() * amount)
+        let pan = min(cap, (dx * dx + dy * dy).squareRoot() * amount)
         if pan >= 1 {
             result = result.clampedToExtent()
                 .applyingFilter("CIMotionBlur", parameters: [kCIInputRadiusKey: pan / 5.6, kCIInputAngleKey: atan2(dy, dx)])
                 .cropped(to: extent)
         }
         let halfWidth = extent.width / 2
-        let grow = min(maxMotionBlur, abs(view.scale / max(1, previous.scale) - 1) * halfWidth * amount)
+        let grow = min(cap, abs(view.scale / max(1, previous.scale) - 1) * halfWidth * amount)
         if grow >= 1 {
             result = result.clampedToExtent()
                 .applyingFilter("CIZoomBlur", parameters: [kCIInputCenterKey: CIVector(x: extent.midX, y: extent.midY),
