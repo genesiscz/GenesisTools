@@ -1668,6 +1668,49 @@ final class PRsModel: ObservableObject {
         return "\(ref.label) at \(parent.prefix(10)), \(at) of \(commits.count) commits"
     }
 
+    /// HubBench `headmove`: `ref`'s row and detail at `head` in memory, as a list from before a push, with the detail
+    /// counted as fresh so that no forge answer moves it by itself. Returns the head it replaced, and a note.
+    func benchSetHead(_ ref: HubPRRef, head: String) -> (real: String?, note: String) {
+        guard let index = prs.firstIndex(where: ref.matches) else { return (nil, "no row for \(ref.label)") }
+        let id = prs[index].id
+        guard let (row, detail, real) = Self.benchShow(ref, id: id, head: head) else { return (nil, "no cached detail of \(ref.label)") }
+        var shown = row
+        shown.localWorktree = prs[index].localWorktree
+        prs[index] = shown
+        details[id] = detail
+        detailFetched[id] = Date()
+        return (real, "\(ref.label) at \(head.prefix(10)), its head \(real?.prefix(10) ?? "-")")
+    }
+
+    /// HubBench `headmove`: what a forge answer with a new head does in `loadDetail`: the row, its threads and its diff
+    /// move to `head`.
+    func benchMoveHead(_ ref: HubPRRef, to head: String) -> String {
+        guard let index = prs.firstIndex(where: ref.matches) else { return "no row for \(ref.label)" }
+        let id = prs[index].id
+        guard let (row, detail, _) = Self.benchShow(ref, id: id, head: head) else { return "no cached detail of \(ref.label)" }
+        var moved = row
+        moved.localWorktree = prs[index].localWorktree
+        details[id] = detail
+        prs[index] = moved
+        if selectedID == id {
+            prefetchThreads(moved, headMoved: true)
+            showDiff(moved)
+        }
+        return "\(ref.label) moved to \(head.prefix(10))"
+    }
+
+    /// The PR's cached `hub pr show` answer with its head replaced, as its row and detail, and the head it had.
+    private static func benchShow(_ ref: HubPRRef, id: String, head: String) -> (HubPR, HubPRDetail, String?)? {
+        guard let data = PRListCache.readDetail(id) ?? PRListCache.readDetail(for: ref),
+              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let real = json["headSha"] as? String
+        json["headSha"] = head
+        guard let changed = try? JSONSerialization.data(withJSONObject: json),
+              let row = try? JSONDecoder().decode(HubPR.self, from: changed),
+              let detail = try? JSONDecoder().decode(HubPRDetail.self, from: changed) else { return nil }
+        return (row, detail, real)
+    }
+
     /// The PR's own base, not the branch scope's guess (which picks master for a stacked PR). The
     /// base commit the host recorded wins over `origin/<base>`, which can be stale or gone: a merged
     /// PR showed +50473 lines against an old `origin/` ref where the host shows +1895. A fetched head
