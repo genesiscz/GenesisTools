@@ -37,8 +37,16 @@ Root options: `-v, --verbose` (debug logging), `--readme` (print this file), `-V
   copy when the Teams cache has not changed since the last sync. `--force` re-reads it anyway; stored history is kept
   either way.
 - `doctor`: read-only check. It reports the IndexedDB (present and readable), the blob folder, the Python venv,
-  whether Teams runs, and the store (its last sync time and its counts of chats, messages, people and calls). It
-  never writes.
+  whether Teams runs, whether its sign-in tokens renew (from the web-client log, as `auth` reads it), and the store
+  (its last sync time and its counts of chats, messages, people and calls). It never writes.
+- `auth [--all] [--copy-to <dir>] [--json]`: read-only check of the Teams sign-in. It reads the web-client log and
+  shows, for each token resource, how many silent renews worked, the last success, the last failure and its error
+  codes (`invalid_grant`, `token_expired`, `InteractionRequired`). It also counts failures of the chat-list query
+  (`SimpleCollabLeftRailQuery`) and `REDUCED_CAPABILITIES_*` reports. The verdict is `healthy`, `needs-sign-in` (a
+  chat token cannot renew without an interactive sign-in), `chat-errors` (tokens renew, the chat list still fails),
+  `other-sign-in` (only a non-chat resource wants a sign-in) or `no-log`. Without `--all` it lists the chat
+  resources and the failing ones. `--copy-to <dir>` first copies the whole log folder into
+  `<dir>/teams-web-log-<ms>/`, because Teams deletes the log within one to two hours.
 
 ### Find and read conversations
 
@@ -257,7 +265,7 @@ that `--root` replaces) is:
 Under its profile folder `EBWebView/WV2Profile_tfw/`:
 
 - `IndexedDB/https_teams.microsoft.com_0.indexeddb.leveldb` and the `.blob` folder beside it: the conversation store.
-- `File System/`: the web-client log, read for meeting attendance.
+- `File System/`: the web-client log, read for meeting attendance and for the sign-in check (`auth`, `doctor`).
 
 Inline images come from the Chromium disk cache, `EBWebView/WV2Profile_tfw/Cache/Cache_Data` under:
 
@@ -313,14 +321,14 @@ There is no config file and no account setup: the tool reads the Teams profile o
 ## For agents
 
 - **JSON.** Every listing command takes `--json` and prints JSON on stdout: `conversations`, `show`, `search`,
-  `people`, `members`, `files ls`, `calls`, `meetings`, `meetings attendance`, `mentions`, `transcripts` and
-  `repair probe`.
+  `people`, `members`, `files ls`, `calls`, `meetings`, `meetings attendance`, `mentions`, `transcripts`,
+  `auth` and `repair probe`.
 - **Exit codes.** An error exits 1 with the message on stderr. A missing store fails with "No Teams cache yet" and
   names `tools ms-teams sync`. `meetings attendance` exits 1 when the query does not resolve to one conversation.
   `repair idb`, `cache` and `restore` exit 1 without `--yes` or `--dry-run`. `show`, `members`, `files` and
   `transcripts` print a message and exit 0 when nothing matches, so check the output, not only the exit code.
-- **What writes.** Only `repair quit`, `idb`, `cache` and `restore` change the live Teams. `doctor`, `repair status`
-  and `repair probe` write nothing. The other commands write only under `~/.genesis-tools/ms-teams/` (the store and
+- **What writes.** Only `repair quit`, `idb`, `cache` and `restore` change the live Teams. `doctor`, `auth`,
+  `repair status` and `repair probe` write nothing (`auth --copy-to` writes only into the folder you name). The other commands write only under `~/.genesis-tools/ms-teams/` (the store and
   `media/`) and to the path you give with `--out`.
 - **MCP.** `tools ms-teams mcp` is a stdio server:
 
@@ -345,6 +353,14 @@ There is no config file and no account setup: the tool reads the Teams profile o
 ## Troubleshooting
 
 - **"No Teams cache yet. Run tools ms-teams sync first."** The store does not exist. Run `tools ms-teams sync`.
+- **Teams shows "Chats are temporarily unavailable" with `REDUCED_CAPABILITIES_CHATS` and
+  `SimpleCollabLeftRailQuery`.** Run `tools ms-teams auth --copy-to <dir>` first. On 2026-11-09 the verdict was
+  `needs-sign-in`: the silent renew of the `https://api.spaces.skype.com` token failed with `invalid_grant`,
+  `token_expired` and `InteractionRequired`, so the chat list could not load while calls still worked. A restart of
+  Teams did not help, and on 2026-10-12 the same error survived `repair idb` and `repair cache`. The token renewed
+  inside the running app after its account menu and Settings were opened; the exact trigger is not known, because
+  the log of those minutes had already rotated. If the verdict stays `needs-sign-in`, sign out and sign in again in
+  the Teams app. A verdict of `chat-errors` means the tokens are fine and the problem is elsewhere.
 - **"Teams IndexedDB not found" on `sync`, or `doctor` shows the IndexedDB as missing or not readable.** Full Disk
   Access is missing for the responsible app, or New Teams never ran on this Mac. Grant the access (see
   [How it works](#how-it-works)), then run `tools ms-teams doctor` again. Both the sync error and the `doctor` hint

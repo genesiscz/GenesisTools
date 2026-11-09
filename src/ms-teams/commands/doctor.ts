@@ -1,4 +1,4 @@
-import { inspectDoctor } from "@app/ms-teams/lib/doctor";
+import { type DoctorReport, inspectDoctor } from "@app/ms-teams/lib/doctor";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
@@ -34,6 +34,7 @@ export function registerDoctorCommand(program: Command): void {
                 "Teams process",
                 formatDotStatus(report.teamsProcess ? "ok" : "dim", report.teamsProcess ? "running" : "not running"),
             ]);
+            table.push(["Sign-in", formatAuthStatus(report.auth)]);
             table.push([
                 "SQLite cache",
                 formatDotStatus(
@@ -64,5 +65,24 @@ export function registerDoctorCommand(program: Command): void {
             if (!report.cacheExists) {
                 out.println(suggestCommand("tools ms-teams", { replaceCommand: ["sync"] }));
             }
+
+            if (report.auth.verdict !== "healthy" && report.auth.verdict !== "no-log") {
+                out.println(suggestCommand("tools ms-teams", { replaceCommand: ["auth"] }));
+            }
         });
+}
+
+function formatAuthStatus(auth: DoctorReport["auth"]): string {
+    switch (auth.verdict) {
+        case "healthy":
+            return formatDotStatus("ok", "tokens renew");
+        case "needs-sign-in":
+            return formatDotStatus("err", "chat token needs a sign-in in the app");
+        case "chat-errors":
+            return formatDotStatus("warn", "chat list fails, tokens renew");
+        case "other-sign-in":
+            return formatDotStatus("warn", `sign-in wanted: ${auth.needsSignIn.join(", ")}`);
+        case "no-log":
+            return formatDotStatus("dim", "no web-client log");
+    }
 }
