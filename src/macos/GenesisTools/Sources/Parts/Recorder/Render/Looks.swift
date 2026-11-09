@@ -177,7 +177,9 @@ enum Looks {
 
     /// Hides each rectangle with a blur, big pixels or black, or dims everything around a spotlight's rectangle. The
     /// blur reads the picture clamped at the rectangle's edges, so nothing from outside bleeds in and its edge stays sharp.
-    static func redact(_ redactions: [EditProject.Redaction], on image: CIImage, spotlightFade: Double = 1) -> CIImage {
+    /// `spotlightFades` is how far each spotlight has faded in, by id; one missing from it takes `spotlightFade`.
+    static func redact(_ redactions: [EditProject.Redaction], on image: CIImage, spotlightFade: Double = 1,
+                       spotlightFades: [String: Double] = [:]) -> CIImage {
         guard !redactions.isEmpty else { return image }
         let extent = image.extent
         var result = image
@@ -208,21 +210,36 @@ enum Looks {
         }
         // Every spotlight showing together: one dim over the picture, then each lit rectangle put back from the
         // picture before the dim, so two spotlights both stay lit and the rest is dimmed once.
-        // The darkest dim asked for wins; the lit shapes are one mask, so overlapping ones never dim each other.
-        let lit = redactions.filter { $0.style == .spotlight }.map { ($0, rectOf($0)) }.filter { $0.1.width > 1 && $0.1.height > 1 }
-        if !lit.isEmpty, spotlightFade > 0 {
-            let level = lit.map { $0.0.dim ?? spotlightDim }.max() ?? spotlightDim
-            let dim = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: level * min(1, spotlightFade))).cropped(to: extent)
+        // The dim is the darkest of each spotlight's dim times its own fade, so it comes and goes with each one. Each lit
+        // shape is weighted by its fade against the furthest faded in, and the shapes join by their maximum: a spotlight
+        // fading out closes its hole while another holds the dim, and overlapping ones never dim each other.
+        let lit = redactions.filter { $0.style == .spotlight }
+            .map { spot in (spot, rectOf(spot), max(0, min(1, spotlightFades[spot.id] ?? spotlightFade))) }
+            .filter { $0.1.width > 1 && $0.1.height > 1 && $0.2 > 0 }
+        let alpha = lit.map { ($0.0.dim ?? spotlightDim) * $0.2 }.max() ?? 0
+        let furthest = lit.map(\.2).max() ?? 0
+        if alpha > 0, furthest > 0 {
+            let dim = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: alpha)).cropped(to: extent)
             let dimmed = dim.composited(over: result)
             var mask = CIImage(color: .clear).cropped(to: extent)
-            for (spot, rect) in lit {
-                mask = spotlightMask(spot.cutout ?? .rounded, in: rect).composited(over: mask)
+            func weighted(_ shape: CIImage, _ weight: Double) -> CIImage {
+                guard weight < 0.999 else { return shape }
+                let w = CGFloat(weight)
+                return shape.applyingFilter("CIColorMatrix", parameters: [
+                    "inputRVector": CIVector(x: w, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: w, z: 0, w: 0),
+                    "inputBVector": CIVector(x: 0, y: 0, z: w, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: w),
+                ])
+            }
+            for (spot, rect, fade) in lit {
+                let weight = fade / furthest
+                mask = weighted(spotlightMask(spot.cutout ?? .rounded, in: rect), weight).cropped(to: extent)
+                    .applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: mask])
                 // R8 11: a soft edge lights a ring around the shape that fades out over dimAround.
                 if let around = spot.dimAround, around > 0 {
                     let reach = around * min(extent.width, extent.height)
                     let soft = spotlightMask(spot.cutout ?? .rounded, in: rect.insetBy(dx: -reach / 2, dy: -reach / 2))
                         .applyingGaussianBlur(sigma: reach / 4).cropped(to: extent)
-                    mask = soft.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: mask])
+                    mask = weighted(soft, weight).applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: mask])
                 }
             }
             result = result.applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: dimmed, kCIInputMaskImageKey: mask])

@@ -142,8 +142,11 @@ final class ZoomState: @unchecked Sendable {
         var redactions: [EditProject.Redaction] = []
         /// The texts showing at the frame's source time, each with its fade and how long it has played (its `animate`).
         var texts: [(note: EditProject.TextNote, opacity: Double, sinceUs: Int64)] = []
-        /// How far the spotlights' dim has faded in (0...1): it comes and goes over 0.2 s, where a hiding style never fades.
-        var spotlightFade = 1.0
+        /// How far each spotlight's dim has faded in (0...1), by its id: each comes and goes over its own `fadeMs`, where a
+        /// hiding style never fades.
+        var spotlightFades: [String: Double] = [:]
+        /// The furthest any spotlight has faded in (1 without one).
+        var spotlightFade: Double { spotlightFades.values.max() ?? 1 }
         /// The shapes showing at the frame's source time: how far each has drawn itself on (0...1) and its fade.
         var shapes: [(shape: EditProject.Shape, drawn: Double, opacity: Double)] = []
         /// The zoom one output frame earlier, for the motion blur; nil at the start and across a cut.
@@ -234,9 +237,9 @@ final class ZoomState: @unchecked Sendable {
         look.progress = project.progress.flatMap { ProgressMark.at(outUs: outUs, project: project, recorded: recordedMarkers, settings: $0) }
         look.shapes = Self.shapes(atSourceUs: sourceUs, project: project)
         look.speedBadge = SpeedBadge.badge(atOutput: outUs, project: project)
-        look.spotlightFade = look.redactions.filter { $0.style == .spotlight }.map { spot in
-            Self.spotlightFade(spot, atSourceUs: sourceUs, project: project)
-        }.max() ?? 1
+        for spot in look.redactions where spot.style == .spotlight {
+            look.spotlightFades[spot.id] = Self.spotlightFade(spot, atSourceUs: sourceUs, project: project)
+        }
         // Round 4 fx-render.
         look.transition = TransitionLook.mark(atOutputUs: outUs, project: project, track: cursor, drawn: drawn)
         look.lenses = LensLook.marks(atSourceUs: sourceUs, project: project, track: cursor)
@@ -835,9 +838,9 @@ struct EditRenderer {
                 // Each side is hidden by its own parts before the blend; only the spotlights dim the blended frame.
                 image = TransitionLook.compose(live: image, liveRedactions: look.redactions, still: still, mark: mark, liveView: view)
                 result = Looks.redact(look.redactions.filter { $0.style == .spotlight }, on: image,
-                                      spotlightFade: look.spotlightFade).cropped(to: extent)
+                                      spotlightFades: look.spotlightFades).cropped(to: extent)
             } else {
-                result = Looks.redact(look.redactions, on: image, spotlightFade: look.spotlightFade).cropped(to: extent)
+                result = Looks.redact(look.redactions, on: image, spotlightFades: look.spotlightFades).cropped(to: extent)
                 result = RedactionTrack.leaveVisible(look.redactions, original: image, on: result).cropped(to: extent) // fx B
             }
             for drawn in look.shapes {
