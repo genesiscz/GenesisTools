@@ -625,6 +625,9 @@ const OVERLAY_CLOSE_MS = 1_500;
 /** The longest a held countdown waits past its last second for the recorder's first frame. */
 export const COUNTDOWN_HOLD_MS = 10_000;
 
+/** How long the last second waits for the overlay's window id (osascript puts the panel up 0.1 to 0.3 s after start). */
+const OVERLAY_ID_WAIT_MS = 500;
+
 /**
  * A countdown that reaches zero when the recording records, not when its last second ends. ax-tool takes about a
  * second to arm (0.74 to 1.14 s from its start to the first frame, measured 2026-11-08), so a recorder started at
@@ -632,9 +635,10 @@ export const COUNTDOWN_HOLD_MS = 10_000;
  */
 export interface CountdownHold {
     /**
-     * The last second begins: start the recorder now. `excludeWindowIds` holds the overlay's CG window id when it is
-     * on screen by then. Its sharing type keeps it out of a capture on macOS 27, but ScreenCaptureKit has ignored
-     * that on macOS 15, so a recorder that can leave windows out leaves it out too.
+     * The last second begins: start the recorder now. `excludeWindowIds` holds the overlay's CG window id once it is
+     * on screen (empty when osascript did not put it up within 0.5 s). Its sharing type keeps it out of a capture on
+     * macOS 27, but ScreenCaptureKit has ignored that on macOS 15, so a recorder that can leave windows out leaves it
+     * out too.
      */
     lastSecond: (overlay: { excludeWindowIds: number[] }) => void;
     /** The last second's text stays on screen until this settles, at most `COUNTDOWN_HOLD_MS` past that second. */
@@ -664,22 +668,18 @@ export async function runCountdown(
         }
     );
     overlay.unref();
-    const excludeWindowIds: number[] = [];
-    void overlayWindowId(overlay.stdout)
-        .then((id) => {
-            if (id !== undefined) {
-                excludeWindowIds.push(id);
-            }
-        })
-        .catch((error: unknown) => {
-            logger.debug({ error }, "the countdown overlay named no window");
-        });
+    const windowId = overlayWindowId(overlay.stdout).catch((error: unknown) => {
+        logger.debug({ error }, "the countdown overlay named no window");
+        return undefined;
+    });
 
     for (let i = sec; i >= 1; i--) {
         console.error(`${text.who}: recording in ${i}… ${text.line}`);
 
-        if (i === 1) {
-            hold?.lastSecond({ excludeWindowIds: [...excludeWindowIds] });
+        if (i === 1 && hold) {
+            // A 1 s countdown is at its last second before osascript has the panel up: wait a little for its id.
+            const id = await withTimeout(windowId, OVERLAY_ID_WAIT_MS).catch(() => undefined);
+            hold.lastSecond({ excludeWindowIds: id === undefined ? [] : [id] });
         }
 
         try {
