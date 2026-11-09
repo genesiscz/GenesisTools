@@ -37,12 +37,14 @@ export interface ScreenTimeline {
 /**
  * Every frame of a meeting's screen recording in time order, each with the OCR lines that changed since the same
  * display's earlier frame. A frame's size is read once per display (every frame of one display has its size). Reads
- * only. `all` adds every line of each frame.
+ * only. `all` adds every line of each frame. `frame` keeps only the frame with that file (its changed lines still
+ * compare with the display's earlier frame) and adds its every line.
  */
 export async function screenTimeline(options: {
     store: MeetingStore;
     record: MeetingRecord;
     all?: boolean;
+    frame?: string;
 }): Promise<ScreenTimeline> {
     const { store, record } = options;
     const folder = store.folder(record.id);
@@ -75,6 +77,11 @@ export async function screenTimeline(options: {
         const boxes = frameBoxes(row.blocks, size).lines;
         const changed = changedLines(previous.get(row.displayId), boxes);
         previous.set(row.displayId, boxes);
+
+        if (options.frame && row.file !== options.frame) {
+            continue;
+        }
+
         frames.push({
             file: row.file,
             path,
@@ -85,7 +92,7 @@ export async function screenTimeline(options: {
             height: size.height,
             lineCount: boxes.length,
             changed,
-            ...(options.all ? { lines: boxes } : {}),
+            ...(options.all || options.frame ? { lines: boxes } : {}),
         });
     }
 

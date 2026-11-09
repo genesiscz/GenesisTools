@@ -68,6 +68,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `overview [--days 14] [--json]` | The recent meetings by day with their badges (no project, open questions, unclear speakers, recording only, transcript only, suggestions at or above `global.suggest.applyAbove`) and the meetings that wait for you; the Meetings window reads it |
 | `projects preview [--draft <json>] [--limit 20] [--json]` | Which project each recent meeting matches by the saved rules, and with a draft (`{"work":{"titleWords":["sync"],"calendars":[],"folders":{"wisprflow":[]}}}`); reads only |
 | `screen <meeting> --timeline [--all] [--json]` | Every frame in time order with the OCR lines that changed since the display's earlier frame, in frame pixels |
+| `screen <meeting> --timeline --frame <file> [--json]` | One frame of that timeline (its file as the timeline names it), with its changed lines and every line |
 | `record cost [--json]` | The CPU each capture choice costs: 268.6 ms per kept frame (the meetings-ocr bench) and the newest recording's frame rate |
 | `export <meeting> [--to <folder>] [--dry-run] [--if-edited beside\|refuse\|replace] [--json]` | The polished transcript (md, play links, dictionary, confirmed items) as `<folder>/<meeting id>.md`; the folder is `projects.<p>.export.folder` unless `--to` names one; the same meeting again replaces its file. When the note holds edits that the last export did not write, `--if-edited` decides (default `global.export.ifEdited`, `beside`): `beside` writes the new note as `<meeting id>.export-<local time>.md` next to it, `refuse` writes nothing and exits 1 with `[export-edited]`, `replace` overwrites the edits |
 | `window [meeting] [--place needs\|all\|<project>] [--tab transcript\|screen\|items\|speakers\|context] [--no-focus] [--no-build]` | Open the Meetings window of GenesisTools.app (the `meetings` app part); Settings → Meetings holds its pages. When the installed app lacks the Meetings part, the command builds it first; `--no-build` fails instead and says how to build it |
@@ -151,9 +152,12 @@ each capture and each display switch is always read whole.
 
 `capture.ocr.read` selects `frame` or `tiles` (default) for a full-frame read, including the first frame and display switches.
 `frame` keeps the existing whole-image read with language correction. `tiles` reads the original image through Vision
-regions, with language correction off: two side-by-side strips when width / height is at least 2, otherwise one region.
-Each strip extends 3% of the full image width past its inner edge. Spatially overlapping duplicate lines are dropped;
-block bounds stay in full-image coordinates. No tile crop files are made. The existing vertical-crop fallback for images
+regions, with language correction off: a grid whose tiles are at most `capture.ocr.tilePx` (default 960) frame pixels
+on their longest side, top row first, so a 2880 px frame is read as 3×2. Each tile extends 3% of the image past its
+inner edges. A line read twice, or a seam tile's cut piece of a line another tile read whole, is kept once (the whole
+line); block bounds stay in full-image coordinates. On 12 kept frames of three displays (2026-11-09) the 3×2 grid read
+86% of the words any grid read, against 80% for the two strips and 42% for one region, at about 400 ms CPU per frame
+against 180 ms; a smaller `tilePx` reads smaller text and costs more CPU (720: 88%, 440 ms). No tile crop files are made. The existing vertical-crop fallback for images
 larger than 6000 pixels remains unchanged. `region: changed` still controls changed-area crops independently; `read`
 applies when a full-frame read is needed. The default and second-meeting measurements are recorded in
 `docs/benchmarks-cpu.md`.

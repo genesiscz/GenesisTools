@@ -158,6 +158,13 @@ final class MeetingDetailModel {
              timeoutSeconds: 120, quiet: quiet, revision: .timeline)
     }
 
+    /// Every OCR line of one frame, for the frame sheet's "All text" when the timeline was read with changed lines only.
+    func frameLines(file: String) async throws -> [OcrBox] {
+        let view = try await MeetingsCLI.json(ScreenTimeline.self, ["screen", id, "--timeline", "--json", "--frame", file],
+                                              timeoutSeconds: 120)
+        return view.frames.first?.lines ?? []
+    }
+
     private func readSpeakers(quiet: Bool) {
         read(\.speakers, generation: \.speakersGeneration, ["speakers", "stats", id, "--json"], timeoutSeconds: 120,
              quiet: quiet, revision: .speakers)

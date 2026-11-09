@@ -531,6 +531,7 @@ async function runCommand(id: string, opts: { display?: string; audio?: string }
 interface ScreenOptions {
     timeline?: boolean;
     all?: boolean;
+    frame?: string;
     at?: string;
     window?: string;
     json?: boolean;
@@ -543,7 +544,7 @@ interface ScreenOptions {
 
 async function timeline(store: MeetingStore, record: MeetingRecord, opts: ScreenOptions): Promise<void> {
     try {
-        const view = await screenTimeline({ store, record, all: opts.all === true });
+        const view = await screenTimeline({ store, record, all: opts.all === true, frame: opts.frame });
 
         if (opts.json) {
             out.result(windowJson(view));
@@ -850,6 +851,10 @@ export function registerRecordCommands(program: Command): void {
             "every frame in time order with the OCR lines that changed since the display's earlier one"
         )
         .option("--all", "with --timeline: every line of each frame too")
+        .option(
+            "--frame <file>",
+            "with --timeline: only this frame (its file, as the timeline names it), with every line"
+        )
         .option("--json", "print JSON")
         .action(screen);
 }
