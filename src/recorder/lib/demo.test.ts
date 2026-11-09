@@ -5,13 +5,14 @@ import { join } from "node:path";
 import * as captureRunner from "@app/control/lib/capture-runner";
 import * as runner from "@app/control/lib/runner";
 import * as cli from "@genesiscz/utils/cli";
+import { cutIssues } from "@genesiscz/utils/recording-editor/check";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
 import * as projectOps from "@genesiscz/utils/recording-editor/project";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
-import { type DemoDriver, demoEditOps, demoScriptSchema, runDemo, subtractRanges } from "./demo";
+import { type DemoDriver, type DemoStepTiming, demoEditOps, demoScriptSchema, runDemo, subtractRanges } from "./demo";
 import * as edit from "./edit";
 import * as library from "./library";
 import * as serviceClient from "./service-client";
@@ -77,6 +78,70 @@ describe("demoEditOps", () => {
         expect(
             demoEditOps({ steps, durationMs: 20_000, edit: { cutWaits: false, captions: false, cutIdle: false } })
         ).toEqual([]);
+    });
+});
+
+describe("demoEditOps keeps a caption's minimum on screen", () => {
+    /** The demo's ops applied to a whole movie of `durationMs`, as runDemo's driver.edit does. */
+    function applied(ops: EditOp[], durationMs: number) {
+        return ops.reduce(
+            (project, op) => projectOps.applyOp(project, op),
+            projectOps.wholeProject({
+                video: "/tmp/screen.mp4",
+                durationUs: durationMs * 1000,
+                width: 1920,
+                height: 1080,
+            })
+        );
+    }
+
+    const shortened = (ops: EditOp[], durationMs: number) =>
+        cutIssues(applied(ops, durationMs)).filter((issue) => issue.kind === "cut-shortens-text");
+
+    test("a quick step's caption plays its captionMinSeconds: the wait cut after it starts at the caption's end", () => {
+        const quick: DemoStepTiming[] = [
+            { caption: "Open the settings", startMs: 1000, runEndMs: 1200, endMs: 2200 },
+            { caption: "Pick Dark", startMs: 6000, runEndMs: 6200, endMs: 7200 },
+        ];
+        const ops = demoEditOps({ steps: quick, durationMs: 10_000 });
+
+        expect(ops.filter((op) => op.op === "cut")).toEqual([
+            { op: "cut", from: 2.8, to: 5.7 },
+            { op: "cut", from: 8.2, to: 10 },
+        ]);
+        expect(ops.filter((op) => op.op === "text").map((op) => [op.from, op.to])).toEqual([
+            [1, 2.8],
+            [6, 7.8],
+        ]);
+        expect(shortened(ops, 10_000)).toEqual([]);
+    });
+
+    test("a quick last step keeps its caption's minimum: the tail cut starts after the caption", () => {
+        const quickLast: DemoStepTiming[] = [
+            { caption: "Open the settings", startMs: 1000, runEndMs: 2500, endMs: 3500 },
+            { caption: "Pick Settings", startMs: 3500, runEndMs: 3700, endMs: 3700 },
+        ];
+        const ops = demoEditOps({ steps: quickLast, durationMs: 8000 });
+
+        expect(ops.filter((op) => op.op === "cut")).toEqual([{ op: "cut", from: 5.3, to: 8 }]);
+        expect(shortened(ops, 8000)).toEqual([]);
+    });
+
+    test("without a caption the wait and tail cuts still start keepSeconds and tailSeconds after the step", () => {
+        const quick: DemoStepTiming[] = [
+            { caption: "Open the settings", startMs: 1000, runEndMs: 1200, endMs: 2200 },
+            { caption: " ", startMs: 6000, runEndMs: 6200, endMs: 6300 },
+        ];
+
+        expect(demoEditOps({ steps: quick, durationMs: 10_000, edit: { captions: false } })).toEqual([
+            { op: "cut", from: 2.5, to: 5.7 },
+            { op: "cut", from: 7.3, to: 10 },
+        ]);
+        // The blank caption of the last step draws nothing, so its minimum keeps nothing either.
+        expect(demoEditOps({ steps: quick, durationMs: 10_000 }).filter((op) => op.op === "cut")).toEqual([
+            { op: "cut", from: 2.8, to: 5.7 },
+            { op: "cut", from: 7.3, to: 10 },
+        ]);
     });
 });
 

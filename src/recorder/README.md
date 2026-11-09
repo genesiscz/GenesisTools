@@ -367,8 +367,11 @@ the edit cuts the still, silent stretches while a step's code ran (idle.ts; the 
 never cut), the time before the first and after the last step, adds a caption per step while it plays, and exports.
 A step that throws is listed in `failed` and the next one runs; the recording always stops. `edit` takes `cutIdle`,
 `idleMinSeconds` (1), `cutWaits`, `minWaitSeconds` (0.8), `keepSeconds` (0.3), `leadSeconds` (0.5), `tailSeconds` (1),
-`captions`, `captionPosition` (`bottom` | `top`), `captionMinSeconds` (1.8) and `markers`. The planner is pure
-(`demoEditOps` in lib/demo.ts), so the result stays an ordinary edit: undo, retime or export it again.
+`captions`, `captionPosition` (`bottom` | `top`), `captionMinSeconds` (1.8) and `markers`. `captionMinSeconds` is the
+least time a caption stays on screen in the finished demo, so a quick step's caption can still be read: a cut wait after
+a step starts no earlier than the end of its caption, and a caption never runs into the next step (a cut of the idle
+time inside a long step can still shorten it). The planner is pure (`demoEditOps` in lib/demo.ts), so the result stays
+an ordinary edit: undo, retime or export it again.
 
 The CLI door takes JSON steps that run a `tools` command, a shell line or a wait:
 
