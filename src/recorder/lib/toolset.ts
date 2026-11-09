@@ -1584,7 +1584,7 @@ export const moviesApi = defineApi({
             params: z.object({ limit: z.number().int().positive().optional() }).strict(),
             result: z.unknown(),
             resultName: "{ id, title, folder, startedAt, seconds, bytes, movie?, edited }[]",
-            doc: "The recordings library, newest first. `seconds` is the recording's length (null while it runs); `bytes` is its movie's size (null without a movie).",
+            doc: "The recordings library, newest first. `seconds` is the movie's length, as the library window shows it (null while it runs); `bytes` is its movie's size (null without a movie).",
             effect: "read",
         }),
         defineMethod({
@@ -1800,9 +1800,21 @@ export function silentMovieReason(facts: MediaFacts | undefined, action: string)
     return `this movie has no sound to ${action}: its video ${basename(facts.path)} has no audio track`;
 }
 
+/**
+ * The movie's length as the library window and `tools recorder list` show it (durationMs, rounded to a second); the
+ * wall time from start to stop only for a row without it, because a pause or a slow start makes that longer.
+ */
+function lengthSeconds(row: LibraryRow): number | null {
+    if (row.durationMs !== undefined) {
+        return Math.round(row.durationMs / 1000);
+    }
+
+    return row.endedAt ? Math.round((Date.parse(row.endedAt) - Date.parse(row.startedAt)) / 1000) : null;
+}
+
 /** A library row with its length and its movie's size: an agent that wants a short recording had to open each one (NR33). */
 export function withLength(row: LibraryRow): LibraryRow & { seconds: number | null; bytes: number | null } {
-    const seconds = row.endedAt ? Math.round((Date.parse(row.endedAt) - Date.parse(row.startedAt)) / 1000) : null;
+    const seconds = row.recording ? null : lengthSeconds(row);
     const bytes = row.movie && existsSync(row.movie) ? statSync(row.movie).size : null;
     return { ...row, seconds, bytes };
 }

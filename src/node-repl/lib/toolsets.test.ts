@@ -561,6 +561,24 @@ test("a library row carries its length and its movie's size", () => {
     expect(withLength({ ...row, endedAt: undefined, movie: undefined })).toMatchObject({ seconds: null, bytes: null });
 });
 
+// Round 2 hunt (r2-movies-list-length): seconds was the wall time from start to stop, so a paused recording read longer
+// than its movie and a plain-movie duplicate read 0 s.
+test("a library row's length is its movie's length, the wall span only without one", () => {
+    const row = {
+        id: "rec",
+        title: "Rec",
+        folder: "/nowhere",
+        startedAt: "2026-11-05T10:00:00.000Z",
+        endedAt: "2026-11-05T10:00:30.000Z",
+        frames: 0,
+        edited: false,
+    };
+    expect(withLength({ ...row, durationMs: 12_400 }).seconds).toBe(12);
+    expect(withLength(row).seconds).toBe(30);
+    expect(withLength({ ...row, endedAt: row.startedAt, durationMs: 5_000 }).seconds).toBe(5);
+    expect(withLength({ ...row, endedAt: undefined, recording: true }).seconds).toBeNull();
+});
+
 // NR37: removeLane('zooms') removed the built-in zoom lane, and the movie had no lane for zooms after it.
 test("the last lane that holds zooms cannot be removed; another lane for zooms lets it go", () => {
     expect(laneRemovalReason([{ id: "zooms", kinds: ["zoom"] }], "zooms")).toContain(
