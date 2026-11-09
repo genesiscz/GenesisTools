@@ -352,7 +352,7 @@ struct MeetingsWindowPage: View {
             Divider()
             NativeSettingsSegmented("Notices float at", identifier: "meetings.window.noticePlace", options: [
                 NativeSettingsOption(MeetingsPreferences.NoticePlace.bottom.rawValue, "Bottom", detail: "Over the last rows of the meeting, newest on top."),
-                NativeSettingsOption(MeetingsPreferences.NoticePlace.top.rawValue, "Top", detail: "Under the meeting's header, over its first rows."),
+                NativeSettingsOption(MeetingsPreferences.NoticePlace.top.rawValue, "Top", detail: "Under the meeting's header, over its first rows, newest at the bottom."),
             ], selection: binding($noticePlace, key: MeetingsPreferences.noticePlaceKey))
         }
         .nativeSettingsAnchor(MeetingsSettingsPages.noticesAnchor)
