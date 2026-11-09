@@ -5,8 +5,9 @@ import { dirname, join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { movieContentKey } from "@genesiscz/utils/recording-editor/analysis-cache";
 import { framePresentationUs, gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
-import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
+import { type FractionBox, type PrivateHit, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
 import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import type { ChangeStep } from "@genesiscz/utils/recording-editor/waits";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { computeEdit } from "./edit";
@@ -15,6 +16,7 @@ import {
     exportFrameCache,
     exportRangeOf,
     findText,
+    leaveFixedVisible,
     ocrVideo,
     scanOf,
     textHitsOf,
@@ -470,6 +472,34 @@ describe("verifyHidden checks the names it is given", () => {
         await expect(
             verifyHidden("/nonexistent/verify.edit.json", { names: ["Alice Example"], private: false })
         ).rejects.toThrow(/names are private data/);
+    });
+});
+
+describe("excludeFixed leaves a still toast visible on every source", () => {
+    test("a hit that moves past a toast that stays still gets the toast as an excluded area", () => {
+        const grid = { columns: 4, rows: 3 };
+        // Every cell changes while it scrolls but cell 5 (row 1, column 1): the toast.
+        const scrolling: ChangeStep = { changed: 11, cells: 12, mask: "fdf", dy: -3 };
+        const still: ChangeStep = { changed: 0, cells: 12 };
+        const steps = [still, still, still, still, still, scrolling, scrolling, scrolling, still];
+        const box = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
+        const hit: PrivateHit = {
+            id: "h1",
+            kind: "text",
+            label: "Text",
+            masked: "a…e",
+            fromUs: 1_250_000,
+            toUs: 2_000_000,
+            box,
+            keys: [
+                { atUs: 1_250_000, x: 0.1, y: 0.8, width: 0.8, height: 0.1 },
+                { atUs: 2_000_000, x: 0.1, y: 0.1, width: 0.8, height: 0.1 },
+            ],
+        };
+        const [left] = leaveFixedVisible([hit], { steps, fps: 4, grid });
+        expect(left.exclude?.length).toBe(1);
+        const [resting] = leaveFixedVisible([{ ...hit, keys: hit.keys.slice(0, 1) }], { steps, fps: 4, grid });
+        expect(resting.exclude).toBeUndefined();
     });
 });
 

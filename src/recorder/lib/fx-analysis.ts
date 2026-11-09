@@ -700,7 +700,22 @@ export async function trackedHits(
     // The proxy shows each frame as a still until the next one, so a hit jumps with its frames instead of gliding.
     if (source === "frames") {
         options.onRead?.(coarse);
-        return textHits(coarse, matcher, { aspect, exclude, stills: true });
+        const hits = textHits(coarse, matcher, { aspect, exclude, stills: true });
+
+        if (!options.excludeFixed) {
+            return hits;
+        }
+
+        // The OCR boxes are placed on the proxy's canvas, so the still areas come from the proxy's change steps.
+        if (!existsSync(project.source.video)) {
+            log.warn(
+                { video: project.source.video },
+                "excludeFixed needs the proxy movie, which is not there; nothing was left visible"
+            );
+            return hits;
+        }
+
+        return leaveFixedVisible(hits, await changeStepsOf(project));
     }
 
     const { steps, fps, grid } = await changeStepsOf(project);
@@ -775,10 +790,17 @@ export async function trackedHits(
         hits = await follow(mergeWindows([...merged, ...more]), moving);
     }
 
-    if (!options.excludeFixed) {
-        return hits;
-    }
+    return options.excludeFixed ? leaveFixedVisible(hits, { steps, fps, grid }) : hits;
+}
 
+/**
+ * excludeFixed: adds, to each hit that moved, the areas that stayed still meanwhile (a toast over the scroll), which
+ * its hidden part leaves visible. `steps` are the change steps of the movie the hits are placed on.
+ */
+export function leaveFixedVisible(
+    hits: readonly PrivateHit[],
+    { steps, fps, grid }: { steps: readonly ChangeStep[]; fps: number; grid: { columns: number; rows: number } }
+): PrivateHit[] {
     return hits.map((hit) => {
         if (hit.keys.length < 2) {
             return hit;
