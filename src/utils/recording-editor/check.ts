@@ -284,7 +284,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
     issues.push(...redactionEdgeIssues(project));
     issues.push(...zoomEaseAtCutIssues(project));
     // R7 10 zoom edge text
-    issues.push(...zoomEdgeIssues(project, facts.screenText ?? []));
+    issues.push(...zoomEdgeIssues(project, facts));
     // R6 1 moving text
     issues.push(...uncertainHideIssues(project));
     // R5 11 clamps: an op time past the end was clamped to it; the edit call said so once, check() keeps saying it.
@@ -1005,26 +1005,158 @@ export function zoomView(zoom: { scale: number; focusX: number; focusY: number }
     return { x: centerX - half, y: centerY - half, width: side, height: side };
 }
 
+/** A part of the picture: fractions of its width and height, y from the top. */
+interface PictureRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+/** The part of the (zoomed) picture the frame keeps in view, and what cropped it ("cover", "layout"); empty: none. */
+export interface FrameCrop extends PictureRect {
+    by: Array<"cover" | "layout">;
+}
+
+type ScreenLine = NonNullable<EditFacts["screenText"]>[number]["lines"][number];
+
+/**
+ * What the frame leaves in view of the picture it is given (after the zoom: the zoomed view, scaled back to the whole
+ * picture), as Looks.swift `framePlacement` crops it: under `fit: "cover"` the room's shape around `focus` (0..1 of
+ * the picture from its top left; the renderer passes the cursor there, else the centre), then, when `layout.scale`
+ * grows the picture past the room, the room's part of that around `layout.focus`. No frame: the whole picture.
+ * RecorderHuntZoomEdgeFrameCropTests.swift pins the Swift side with the same cases as the TS test.
+ */
+export function frameCrop(project: EditProject, focus: { x: number; y: number } = { x: 0.5, y: 0.5 }): FrameCrop {
+    const frame = project.frame;
+    if (!frame) {
+        return { x: 0, y: 0, width: 1, height: 1, by: [] };
+    }
+
+    // Canvas units with its short side 1; the picture's height is the canvas's short side, as in the export.
+    const canvas = canvasShape(project);
+    const picture = { width: (project.source.width || 16) / (project.source.height || 9), height: 1 };
+    const pixel = 1 / CHECK_SHORT_SIDE_PX;
+    const room = {
+        width: Math.max(2 * pixel, canvas.width - 2 * frame.padding),
+        height: Math.max(2 * pixel, canvas.height - 2 * frame.padding),
+    };
+    const by: FrameCrop["by"] = [];
+    let crop = { x: 0, y: 0, width: picture.width, height: picture.height };
+
+    if (frame.fit === "cover") {
+        const aspect = room.width / room.height;
+        const width = picture.width / picture.height > aspect ? picture.height * aspect : picture.width;
+        const height = picture.width / picture.height > aspect ? picture.height : picture.width / aspect;
+        const centerX = Math.min(Math.max(focus.x * picture.width, width / 2), picture.width - width / 2);
+        const centerY = Math.min(Math.max(focus.y * picture.height, height / 2), picture.height - height / 2);
+        crop = { x: centerX - width / 2, y: centerY - height / 2, width, height };
+        by.push("cover");
+    }
+
+    const grow = Math.min(3, Math.max(0.5, frame.layout?.scale ?? 1));
+    const scale = Math.max(0.05, Math.min(room.width / crop.width, room.height / crop.height)) * grow;
+
+    if (crop.width * scale > room.width + pixel / 2 || crop.height * scale > room.height + pixel / 2) {
+        const visible = {
+            width: Math.min(crop.width * scale, room.width) / scale,
+            height: Math.min(crop.height * scale, room.height) / scale,
+        };
+        const keep = frame.layout?.focus ?? { x: 0.5, y: 0.5 };
+        const centerX = Math.min(
+            Math.max(crop.x + keep.x * crop.width, crop.x + visible.width / 2),
+            crop.x + crop.width - visible.width / 2
+        );
+        const centerY = Math.min(
+            Math.max(crop.y + keep.y * crop.height, crop.y + visible.height / 2),
+            crop.y + crop.height - visible.height / 2
+        );
+        crop = { x: centerX - visible.width / 2, y: centerY - visible.height / 2, ...visible };
+        by.push("layout");
+    }
+
+    return {
+        x: crop.x / picture.width,
+        y: crop.y / picture.height,
+        width: crop.width / picture.width,
+        height: crop.height / picture.height,
+        by,
+    };
+}
+
+/**
+ * What a picture zoom shows once the frame has cropped it (`shown`: the zoom's view, then the frame's crop of it), the
+ * frame's crop of the zoomed picture, and what the frame alone shows at the same moment (`alone`). The renderer
+ * centres a cover crop on the cursor (EditRenderer.coverFocus), which check() cannot place: with a cursor track it
+ * puts the cursor at the zoom's focus; without one the renderer centres it, and so does this.
+ */
+function shownByZoom(
+    project: EditProject,
+    zoom: { scale: number; focusX: number; focusY: number },
+    followsCursor: boolean
+): { shown: PictureRect; crop: FrameCrop; alone: FrameCrop } {
+    const view = zoomView(zoom);
+    const crop = frameCrop(
+        project,
+        followsCursor
+            ? { x: (zoom.focusX - view.x) / view.width, y: (zoom.focusY - view.y) / view.height }
+            : { x: 0.5, y: 0.5 }
+    );
+    const shown = {
+        x: view.x + crop.x * view.width,
+        y: view.y + crop.y * view.height,
+        width: crop.width * view.width,
+        height: crop.height * view.height,
+    };
+    const alone = frameCrop(project, followsCursor ? { x: zoom.focusX, y: zoom.focusY } : { x: 0.5, y: 0.5 });
+    return { shown, crop, alone };
+}
+
+/** How much of a line's width and height is outside `rect`, and whether any of it is inside. */
+function lineOutside(line: ScreenLine, rect: PictureRect): { outX: number; outY: number; seen: boolean } {
+    const insideX = Math.max(0, Math.min(line.x + line.width, rect.x + rect.width) - Math.max(line.x, rect.x));
+    const insideY = Math.max(0, Math.min(line.y + line.height, rect.y + rect.height) - Math.max(line.y, rect.y));
+    return {
+        outX: 1 - insideX / Math.max(1e-6, line.width),
+        outY: 1 - insideY / Math.max(1e-6, line.height),
+        seen: insideX > 0 && insideY > 0,
+    };
+}
+
+/** A line partly in view with at least CUT_SHARE of its width or height outside `rect`. */
+function cutBy(line: ScreenLine, rect: PictureRect): boolean {
+    const { outX, outY, seen } = lineOutside(line, rect);
+    return seen && (outX >= CUT_SHARE || outY >= CUT_SHARE);
+}
+
+/** The lines the zoom cuts: cut in what it shows with the frame, and not already cut by the frame alone. */
+function zoomCutLines(lines: readonly ScreenLine[], at: { shown: PictureRect; alone: PictureRect }): ScreenLine[] {
+    return lines.filter((line) => cutBy(line, at.shown) && !cutBy(line, at.alone));
+}
+
 /**
  * Picture zooms whose view cuts screen text at its edge (round 7: 1.2x on a phone cut the side labels in half), from
- * the screen text already read (never an OCR here). One issue per zoom, with a setZoom that fits the cut lines when a
- * smaller zoom (1.05x or more) can. A follow zoom moves with the cursor and a canvas zoom has no picture view: neither
- * is checked.
+ * the screen text already read (never an OCR here). The view is what the viewer sees: the zoom's view, then the
+ * frame's cover or grown-layout crop of it (`shownByZoom`); a line the frame alone cuts is not the zoom's. One issue
+ * per zoom, with a setZoom that keeps the cut lines whole when a smaller zoom (1.05x or more) does, checked again
+ * through the same view; otherwise the message says so and names the frame's crop. A follow zoom moves with the
+ * cursor and a canvas zoom has no picture view: neither is checked.
  */
-function zoomEdgeIssues(project: EditProject, screenText: NonNullable<EditFacts["screenText"]>): EditIssue[] {
+function zoomEdgeIssues(project: EditProject, facts: EditFacts): EditIssue[] {
+    const screenText = facts.screenText ?? [];
     if (screenText.length === 0) {
         return [];
     }
 
     const issues: EditIssue[] = [];
+    const followsCursor = project.frame?.fit === "cover" && facts.hasCursorTrack;
 
     for (const zoom of project.zooms) {
         if (zoom.mode === "follow" || zoom.target === "canvas" || keptUs(project, zoom.startUs, zoom.endUs) === 0) {
             continue;
         }
 
-        const view = zoomView(zoom);
-        const cut = new Map<string, { text: string; x: number; y: number; width: number; height: number }>();
+        const during = new Map<string, ScreenLine>();
 
         for (const frame of screenText) {
             if (frame.untilUs <= zoom.startUs || frame.atUs >= zoom.endUs) {
@@ -1032,49 +1164,64 @@ function zoomEdgeIssues(project: EditProject, screenText: NonNullable<EditFacts[
             }
 
             for (const line of frame.lines) {
-                const insideX = Math.max(
-                    0,
-                    Math.min(line.x + line.width, view.x + view.width) - Math.max(line.x, view.x)
-                );
-                const insideY = Math.max(
-                    0,
-                    Math.min(line.y + line.height, view.y + view.height) - Math.max(line.y, view.y)
-                );
-                const outX = 1 - insideX / Math.max(1e-6, line.width);
-                const outY = 1 - insideY / Math.max(1e-6, line.height);
-
-                if (insideX > 0 && insideY > 0 && (outX >= CUT_SHARE || outY >= CUT_SHARE)) {
-                    cut.set(`${line.text}@${Math.round(line.x * 100)},${Math.round(line.y * 100)}`, line);
-                }
+                during.set(`${line.text}@${Math.round(line.x * 100)},${Math.round(line.y * 100)}`, line);
             }
         }
 
-        if (cut.size === 0) {
+        const all = [...during.values()];
+        const now = shownByZoom(project, zoom, followsCursor);
+        const lines = zoomCutLines(all, now);
+
+        if (lines.length === 0) {
             continue;
         }
 
-        const lines = [...cut.values()];
-        const left = Math.min(view.x, ...lines.map((line) => line.x));
-        const right = Math.max(view.x + view.width, ...lines.map((line) => line.x + line.width));
-        const top = Math.min(view.y, ...lines.map((line) => line.y));
-        const bottom = Math.max(view.y + view.height, ...lines.map((line) => line.y + line.height));
-        const fitted = Math.floor((1 / Math.max(right - left + 0.02, bottom - top + 0.02)) * 100) / 100;
+        const { shown, crop } = now;
+        const left = Math.min(shown.x, ...lines.map((line) => line.x));
+        const right = Math.max(shown.x + shown.width, ...lines.map((line) => line.x + line.width));
+        const top = Math.min(shown.y, ...lines.map((line) => line.y));
+        const bottom = Math.max(shown.y + shown.height, ...lines.map((line) => line.y + line.height));
+        // The shown part of a zoom at scale s is the crop's size over s: the largest s that holds the lines and what
+        // shows now, with the view's centre placed so the crop's part lands on their centre.
+        const fitted =
+            Math.floor(Math.min(crop.width / (right - left + 0.02), crop.height / (bottom - top + 0.02)) * 100) / 100;
         const focus = {
-            x: Math.round(((left + right) / 2) * 1000) / 1000,
-            y: Math.round(((top + bottom) / 2) * 1000) / 1000,
+            x: Math.round(((left + right) / 2 + (0.5 - crop.x - crop.width / 2) / Math.max(1, fitted)) * 1000) / 1000,
+            y: Math.round(((top + bottom) / 2 + (0.5 - crop.y - crop.height / 2) / Math.max(1, fitted)) * 1000) / 1000,
         };
+        const after =
+            fitted >= 1.05 && fitted < zoom.scale
+                ? shownByZoom(project, { scale: fitted, focusX: focus.x, focusY: focus.y }, followsCursor)
+                : undefined;
+        const fits =
+            after !== undefined &&
+            lines.every((line) => {
+                const { outX, outY } = lineOutside(line, after.shown);
+                return outX < CUT_SHARE && outY < CUT_SHARE;
+            }) &&
+            zoomCutLines(all, after).length === 0;
+        const cropName = crop.by.length > 0 ? `the frame's ${crop.by.join(" and ")} crop` : undefined;
         const named = lines
             .slice(0, 2)
             .map((line) => `"${line.text.length > 24 ? `${line.text.slice(0, 23)}…` : line.text}"`)
             .join(", ");
+        const where = cropName ? `the edge of what ${cropName} leaves in view` : "its edge";
+        const remedy = fits
+            ? `${fitted}x around them keeps them whole`
+            : cropName
+              ? `no zoom of 1.05x or more keeps them whole inside ${cropName}, so move its focus, remove it or change the frame`
+              : "a smaller zoom or another focus keeps them whole";
+        const cursorNote = followsCursor
+            ? " (the export moves the cover crop with the cursor; this judges it with the cursor at the zoom's focus)"
+            : "";
         issues.push({
             severity: "check",
             kind: "zoom-cuts-text",
             item: `zoom ${zoom.id}`,
-            message: `The zoom at ${tenths(zoom.startUs)} s (${zoom.scale}x) cuts ${lines.length} line${lines.length === 1 ? "" : "s"} of screen text at its edge (${named}${lines.length > 2 ? ", …" : ""}); ${fitted >= 1.05 && fitted < zoom.scale ? `${fitted}x around them keeps them whole` : "a smaller zoom or another focus keeps them whole"}`,
+            message: `The zoom at ${tenths(zoom.startUs)} s (${zoom.scale}x) cuts ${lines.length} line${lines.length === 1 ? "" : "s"} of screen text at ${where} (${named}${lines.length > 2 ? ", …" : ""}); ${remedy}${cursorNote}`,
             at: tenths(zoom.startUs),
             target: { list: "zooms", id: zoom.id },
-            ...(fitted >= 1.05 && fitted < zoom.scale
+            ...(fits
                 ? {
                       fix: `movie.apply([{ op: "setZoom", id: "${zoom.id}", scale: ${fitted}, focus: { x: ${focus.x}, y: ${focus.y} } }])`,
                       action: {

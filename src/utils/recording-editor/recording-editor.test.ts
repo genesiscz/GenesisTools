@@ -20,6 +20,7 @@ import {
     canvasShape,
     checkProject,
     fixOps,
+    frameCrop,
     groupIssues,
     issueSummary,
     textBox,
@@ -1464,6 +1465,147 @@ describe("edit project (edit.json)", () => {
             false
         );
         expect(zoomView({ scale: 2, focusX: 0.9, focusY: 0.1 })).toEqual({ x: 0.5, y: 0, width: 0.5, height: 0.5 });
+    });
+
+    // A 1.2x zoom passed check() inside a phone layout grown 1.5x or a 9:16 cover, yet the frame cut what it showed
+    // again, and the Fit Text it offered still cut the lines.
+    describe("a zoom judged inside the frame's cover or grown-layout crop", () => {
+        type Project = Parameters<typeof checkProject>[0];
+        type ScreenText = NonNullable<Parameters<typeof checkProject>[1]["screenText"]>;
+        const phone = { video: "/movies/phone.mp4", durationUs: 10_000_000, width: 590, height: 1278 };
+        const zoomCuts = (project: Project, screenText: ScreenText) =>
+            checkProject(project, {
+                hasTranscript: true,
+                hasCursorTrack: false,
+                musicFileExists: true,
+                screenText,
+            }).filter((issue) => issue.kind === "zoom-cuts-text");
+        const fittedBy = (project: Project, issue: ReturnType<typeof checkProject>[number] | undefined) =>
+            (issue?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
+        const rounded = (rect: { x: number; y: number; width: number; height: number }) =>
+            [rect.x, rect.y, rect.width, rect.height].map((n) => Math.round(n * 10_000) / 10_000);
+
+        test("frameCrop is what framePlacement keeps in view (the same cases as RecorderHuntZoomEdgeFrameCropTests)", () => {
+            // A phone grown 1.5x in a 16:9 frame, its bottom kept: the whole width, the lower two thirds.
+            const grown = frameCrop(
+                applyOp(wholeProject(phone), {
+                    op: "frame",
+                    aspect: "16:9",
+                    padding: 0.04,
+                    layout: { align: "left", scale: 1.5, focus: { x: 0.5, y: 1 } },
+                })
+            );
+            expect(rounded(grown)).toEqual([0, 0.3333, 1, 0.6667]);
+            expect(grown.by).toEqual(["layout"]);
+            // A wide movie covering a 9:16 canvas: its middle 0.316, or its right edge for a focus far right.
+            const cover = applyOp(wholeProject(source), { op: "frame", aspect: "9:16", fit: "cover", padding: 0 });
+            expect(rounded(frameCrop(cover))).toEqual([0.3418, 0, 0.3164, 1]);
+            expect(rounded(frameCrop(cover, { x: 0.9, y: 0.2 }))).toEqual([0.6836, 0, 0.3164, 1]);
+            expect(frameCrop(cover).by).toEqual(["cover"]);
+            // Both: a cover grown 1.5x is cropped inside the cover, around the layout's focus.
+            const both = frameCrop(
+                applyOp(wholeProject(source), {
+                    op: "frame",
+                    aspect: "9:16",
+                    fit: "cover",
+                    padding: 0.05,
+                    layout: { scale: 1.5, focus: { x: 0.45, y: 0.4 } },
+                })
+            );
+            expect(rounded(both)).toEqual([0.3843, 0.0667, 0.2012, 0.6667]);
+            expect(both.by).toEqual(["cover", "layout"]);
+            // No frame, or a phone frame at its fitted size: the whole picture.
+            expect(rounded(frameCrop(wholeProject(source)))).toEqual([0, 0, 1, 1]);
+            expect(rounded(frameCrop(applyOp(wholeProject(phone), { op: "frame", preset: "phone-left" })))).toEqual([
+                0, 0, 1, 1,
+            ]);
+        });
+
+        test("check judges a zoom by what the frame's grown layout leaves in view, and its Fit Text keeps the lines whole there", () => {
+            const framed = applyOp(wholeProject(source), {
+                op: "frame",
+                aspect: "16:9",
+                layout: { align: "left", scale: 1.5, focus: { x: 0.5, y: 1 } },
+            });
+            const zoomed = applyOp(framed, { op: "zoom", from: 1, to: 5, scale: 1.2, focus: { x: 0.5, y: 0.5 } });
+            const screenText = [
+                {
+                    atUs: 0,
+                    untilUs: 6_000_000,
+                    lines: [
+                        { text: "Status 9:41", x: 0.4, y: 0.35, width: 0.2, height: 0.03 },
+                        { text: "Invoices", x: 0.16, y: 0.9, width: 0.2, height: 0.03 },
+                    ],
+                },
+            ];
+            const issues = zoomCuts(zoomed, screenText);
+            expect(issues).toHaveLength(1);
+            expect(issues[0]?.message).toContain(
+                'cuts 2 lines of screen text at the edge of what the frame\'s layout crop leaves in view ("Status 9:41", "Invoices"); 1.07x'
+            );
+            expect(issues[0]?.action?.ops).toEqual([
+                { op: "setZoom", id: zoomed.zooms[0]?.id ?? "", scale: 1.07, focus: { x: 0.477, y: 0.484 } },
+            ]);
+            expect(zoomCuts(fittedBy(zoomed, issues[0]), screenText)).toEqual([]);
+            // The frame alone keeps both lines whole: no zoom, no issue.
+            expect(zoomCuts(framed, screenText)).toEqual([]);
+        });
+
+        test("a phone-left frame grown 1.4x and a 1.3x zoom cut a line near the phone's top that the zoom view alone keeps", () => {
+            const framed = applyOp(wholeProject(phone), { op: "frame", preset: "phone-left", layout: { scale: 1.4 } });
+            const zoomed = applyOp(framed, { op: "zoom", from: 1, to: 5, scale: 1.3, focus: { x: 0.5, y: 0.5 } });
+            const screenText = [
+                {
+                    atUs: 0,
+                    untilUs: 6_000_000,
+                    lines: [
+                        { text: "9:41 Inbox", x: 0.3, y: 0.2, width: 0.4, height: 0.04 },
+                        { text: "Compose", x: 0.35, y: 0.5, width: 0.3, height: 0.04 },
+                    ],
+                },
+            ];
+            const zoom = zoomed.zooms[0];
+            expect(zoomView(zoom ?? { scale: 1, focusX: 0.5, focusY: 0.5 }).y).toBeLessThan(0.2);
+            const issues = zoomCuts(zoomed, screenText);
+            expect(issues).toHaveLength(1);
+            expect(issues[0]?.message).toContain('("9:41 Inbox")');
+            expect(issues[0]?.action?.ops[0]).toMatchObject({ op: "setZoom", id: zoom?.id });
+            expect(zoomCuts(fittedBy(zoomed, issues[0]), screenText)).toEqual([]);
+        });
+
+        test("under a cover frame a line the cover alone cuts is not the zoom's, and no Fit Text is offered when none keeps the lines whole", () => {
+            const cover = applyOp(wholeProject(source), { op: "frame", aspect: "9:16", fit: "cover", padding: 0 });
+            const zoomed = applyOp(cover, { op: "zoom", from: 2, to: 4, scale: 1.2 });
+            const line = (text: string, x: number, width: number) => [
+                { atUs: 0, untilUs: 6_000_000, lines: [{ text, x, y: 0.5, width, height: 0.03 }] },
+            ];
+            // Whole in the cover alone (x 0.342 to 0.658), cut in the zoom's part of it (x 0.368 to 0.632).
+            const issues = zoomCuts(zoomed, [
+                ...line("Left label", 0.36, 0.08),
+                { atUs: 0, untilUs: 6_000_000, lines: [{ text: "Total", x: 0.45, y: 0.6, width: 0.1, height: 0.03 }] },
+            ]);
+            expect(issues).toHaveLength(1);
+            expect(issues[0]?.message).toContain('the frame\'s cover crop leaves in view ("Left label"); 1.08x');
+            expect(zoomCuts(fittedBy(zoomed, issues[0]), line("Left label", 0.36, 0.08))).toEqual([]);
+            // The cover alone already cuts a line across its edge at 0.342: that is the frame's, not the zoom's.
+            expect(zoomCuts(zoomed, line("Edge", 0.3, 0.1))).toEqual([]);
+            // Too wide for any zoom of 1.05x or more inside the cover: the issue stays, with no setZoom.
+            const stuck = zoomCuts(zoomed, line("Left label", 0.35, 0.1));
+            expect(stuck).toHaveLength(1);
+            expect(stuck[0]?.action).toBeUndefined();
+            expect(stuck[0]?.message).toContain(
+                "no zoom of 1.05x or more keeps them whole inside the frame's cover crop"
+            );
+            // With a cursor track the export moves the cover with it; the message says where check() put it.
+            expect(
+                checkProject(zoomed, {
+                    hasTranscript: true,
+                    hasCursorTrack: true,
+                    musicFileExists: true,
+                    screenText: line("Left label", 0.36, 0.08),
+                }).find((issue) => issue.kind === "zoom-cuts-text")?.message
+            ).toContain("with the cursor at the zoom's focus");
+        });
     });
 
     // R5 4: a phone in 16:9 filled a quarter of the width, with no way to move it aside or zoom the whole canvas.
