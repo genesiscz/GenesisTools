@@ -863,6 +863,50 @@ describe("edit project (edit.json)", () => {
         expect(() => autoZoom(manual, [{ ms: 1, x: 0, y: 0 }])).toThrow("no clicks");
     });
 
+    describe("autoZoom replaces only its own zooms", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 30_000_000, width: 1920, height: 1080 };
+        const clicks = [
+            { ms: 5000, x: 0.3, y: 0.3, click: "left" },
+            { ms: 12_000, x: 0.7, y: 0.7, click: "left" },
+        ];
+        const spans = (project: ReturnType<typeof wholeProject>) =>
+            project.zooms.map((zoom) => [
+                zoom.startUs / 1e6,
+                zoom.endUs / 1e6,
+                zoom.target ?? "picture",
+                zoom.origin ?? "-",
+            ]);
+
+        test("keeps a hand-made follow zoom and a canvas zoom, replaces an earlier auto zoom, and zooms under a canvas zoom", () => {
+            let project = autoZoom(wholeProject(source), [clicks[1]], 1.6);
+            expect(spans(project)).toEqual([[11.4, 13.6, "picture", "auto"]]);
+            project = applyOp(project, { op: "zoom", from: 20, to: 22, follow: true, scale: 2.5 });
+            project = applyOp(project, { op: "zoom", from: 4, to: 7, target: "canvas", scale: 2.5 });
+
+            const again = autoZoom(project, clicks, 1.6);
+            expect(spans(again)).toEqual([
+                [4, 7, "canvas", "-"],
+                [4.4, 6.6, "picture", "auto"],
+                [11.4, 13.6, "picture", "auto"],
+                [20, 22, "picture", "-"],
+            ]);
+        });
+
+        test("a picture zoom still blocks a click group, and setZoom and duplicate make an auto zoom the user's", () => {
+            const manual = applyOp(wholeProject(source), { op: "zoom", from: 5, to: 6 });
+            expect(spans(autoZoom(manual, clicks, 1.6))).toEqual([
+                [5, 6, "picture", "-"],
+                [11.4, 13.6, "picture", "auto"],
+            ]);
+
+            const auto = autoZoom(wholeProject(source), clicks, 1.6);
+            const id = auto.zooms[0]?.id ?? "";
+            expect(applyOp(auto, { op: "setZoom", id, scale: 2 }).zooms[0]).not.toHaveProperty("origin");
+            const copied = applyOp(auto, { op: "duplicate", id });
+            expect(copied.zooms.filter((zoom) => zoom.origin === "auto")).toHaveLength(2);
+        });
+    });
+
     test("check names a zoom whose ease out starts before a cut, so its last frames before the cut snap out", () => {
         // The zoom runs into the cut at 5 s, but its 450 ms ease out starts at 4.75 s: the 0.25 s before the cut
         // show the fast start of the ease out, a snap. Ending it at 5.5 s puts the whole ease out in the cut.

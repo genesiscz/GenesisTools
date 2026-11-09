@@ -194,6 +194,8 @@ struct EditProject: Codable, Equatable {
         // R5 4 canvas zoom
         /// `.canvas` zooms the whole framed export (its focus is 0...1 of the canvas); nil zooms inside the picture.
         var target: ZoomTarget?
+        /// "auto" when autoZoom made it (a later autoZoom replaces only those); nil is the user's own zoom.
+        var origin: String?
     }
 
     // R5 4 canvas zoom

@@ -84,8 +84,10 @@ export function setZoom(project: EditProject, op: Op<"setZoom">): EditProject {
     // Placing the focus by hand makes a zoom that followed the cursor a manual one, unless the op names the mode. A
     // canvas zoom saved with follow before the rule renders at its focus, so a change to it stores that manual mode.
     const mode = canvas ? "manual" : (op.mode ?? (op.focus ? "manual" : zoom.mode));
+    // A tuned auto zoom becomes the user's: dropping origin keeps it through a later autoZoom.
+    const { origin: _origin, ...own } = zoom;
     const next = {
-        ...zoom,
+        ...own,
         mode,
         ...(op.scale === undefined ? {} : { scale: clamp(op.scale, 1, 4) }),
         ...(op.focus ? { focusX: clamp(op.focus.x, 0, 1), focusY: clamp(op.focus.y, 0, 1) } : {}),
@@ -300,7 +302,9 @@ export function duplicateItem(project: EditProject, id: string): EditProject {
             throw new RangeError("no room after this zoom for a copy; zooms cannot overlap");
         }
 
-        const zooms = [...project.zooms, { ...zoom, id: newId("z"), ...span }].sort((a, b) => a.startUs - b.startUs);
+        // A copy is the user's own zoom, so a later autoZoom keeps it.
+        const { origin: _origin, ...own } = zoom;
+        const zooms = [...project.zooms, { ...own, id: newId("z"), ...span }].sort((a, b) => a.startUs - b.startUs);
         return { ...project, zooms };
     }
 

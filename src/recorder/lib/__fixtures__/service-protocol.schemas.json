@@ -4358,6 +4358,12 @@
                     "picture",
                     "canvas"
                   ]
+                },
+                "origin": {
+                  "type": "string",
+                  "enum": [
+                    "auto"
+                  ]
                 }
               },
               "required": [

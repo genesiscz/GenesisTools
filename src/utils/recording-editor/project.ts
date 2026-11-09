@@ -153,6 +153,11 @@ const zoomSchema = z.object({
      * Its focus is then 0...1 of the canvas. A canvas zoom may overlap a picture zoom; two of one kind may not.
      */
     target: z.enum(["picture", "canvas"]).optional(),
+    /**
+     * Who made it: "auto" is autoZoom, which replaces only its own zooms on a later run; absent is the user's. setZoom
+     * and duplicate drop it, so an auto zoom the user tuned stays theirs.
+     */
+    origin: z.enum(["auto"]).optional(),
 });
 
 export const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
@@ -1823,8 +1828,9 @@ export function zoomShownAt(
 /**
  * Zooms on the recorded clicks, as the window's Auto zoom does: clicks that play under 3 s apart (a cut between them
  * brings them closer) are one zoom from 0.6 s before the first to 1.6 s after the last, following the cursor, and a
- * click in a cut part gets none. It replaces the zooms an earlier auto zoom made (mode `follow`) and keeps the manual
- * ones; a group that would overlap a manual zoom is left out. No clicks that play is an error, and nothing changes.
+ * click in a cut part gets none. Its zooms carry origin "auto": a later run replaces those and keeps every other zoom
+ * (a hand-made follow zoom and a canvas zoom too); a group that would overlap a kept picture zoom is left out, while a
+ * canvas zoom never blocks one. No clicks that play is an error, and nothing changes.
  */
 export function autoZoom(project: EditProject, samples: readonly CursorSample[], scale = 1.6): EditProject {
     const groups = groupClicks(samples, {
@@ -1844,7 +1850,8 @@ export function autoZoom(project: EditProject, samples: readonly CursorSample[],
         );
     }
 
-    const manual = project.zooms.filter((zoom) => zoom.mode === "manual");
+    const kept = project.zooms.filter((zoom) => zoom.origin !== "auto");
+    const pictures = kept.filter((zoom) => (zoom.target ?? "picture") === "picture");
     const added = groups.map((group) =>
         zoomSchema.parse({
             id: newId("z"),
@@ -1852,14 +1859,15 @@ export function autoZoom(project: EditProject, samples: readonly CursorSample[],
             endUs: Math.min(project.source.durationUs, ((group.at(-1)?.ms ?? 0) + 1600) * 1000),
             scale,
             mode: "follow",
+            origin: "auto",
             focusX: group.reduce((sum, sample) => sum + sample.x, 0) / group.length,
             focusY: group.reduce((sum, sample) => sum + sample.y, 0) / group.length,
         })
     );
     const free = added.filter(
-        (zoom) => !manual.some((other) => zoom.startUs < other.endUs && zoom.endUs > other.startUs)
+        (zoom) => !pictures.some((other) => zoom.startUs < other.endUs && zoom.endUs > other.startUs)
     );
-    return { ...project, zooms: [...manual, ...free].sort((a, b) => a.startUs - b.startUs) };
+    return { ...project, zooms: [...kept, ...free].sort((a, b) => a.startUs - b.startUs) };
 }
 
 /**
@@ -3422,8 +3430,12 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             return { ...project, texts: rest.length ? rest : undefined };
         }
         case "autoZoom":
-            // The editor window's rule: without a scale the zooms take the first zoom's, else 1.6.
-            return autoZoom(project, readCursorTrack(project.source.cursor), op.scale ?? project.zooms[0]?.scale);
+            // The editor window's rule: without a scale the zooms take the first picture zoom's, else 1.6.
+            return autoZoom(
+                project,
+                readCursorTrack(project.source.cursor),
+                op.scale ?? project.zooms.find((zoom) => (zoom.target ?? "picture") === "picture")?.scale
+            );
         case "annotateClicks":
             return annotateClicks(project, readCursorTrack(project.source.cursor), {
                 fromUs: op.from === undefined ? undefined : timeToUs(op.from),

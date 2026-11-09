@@ -1212,11 +1212,13 @@ final class EditorModel {
     }
 
     /// One zoom on every click of the cursor track (the `autoZoom` op): clicks closer than 3 s share a zoom, which
-    /// starts 0.6 s before its first click and holds 1.6 s after its last; the manual zooms stay.
+    /// starts 0.6 s before its first click and holds 1.6 s after its last; it replaces only an earlier auto zoom's
+    /// zooms (origin "auto"), so the user's zooms stay.
     func autoZoom() {
         let clicks = cursor?.clicks.count ?? 0
-        edit([.autoZoom(EditOp.AutoZoom())], then: { [weak self] _, after in
-            let added = after.zooms.filter { $0.mode == .follow }.count
+        edit([.autoZoom(EditOp.AutoZoom())], then: { [weak self] before, after in
+            let had = Set(before.zooms.map(\.id))
+            let added = after.zooms.filter { !had.contains($0.id) }.count
             self?.show("Added \(Plural.count(added, "zoom")) from \(Plural.count(clicks, "click")).", error: false)
         }, failed: { [weak self] reason in
             self?.show(reason, error: false)

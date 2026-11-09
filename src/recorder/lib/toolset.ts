@@ -423,7 +423,7 @@ const movieMethods = [
     edit(
         "autoZoom",
         z.object({ scale: z.number().min(1).max(4).optional() }).strict(),
-        "One zoom per group of recorded clicks (the groups clickGroups() lists), following the cursor; replaces earlier auto zooms, keeps manual ones, and throws when there are no clicks."
+        'One zoom per group of recorded clicks (the groups clickGroups() lists), following the cursor; its zooms carry origin "auto" and a later run replaces only those, keeping every zoom you made (follow and canvas zooms too); a picture zoom you made blocks a group, a canvas zoom does not; throws when there are no clicks.'
     ),
     edit(
         "titleMarkers",
@@ -2313,7 +2313,7 @@ export class Movie {
                     step === "removeIdle"
                         ? `${edited.removedIdleUs?.length ?? 0} still part(s) cut, ${seconds(outputDurationUs(edited.project))} s left`
                         : step === "autoZoom"
-                          ? `${edited.project.zooms.filter((zoom) => zoom.mode === "follow").length} zoom(s) on the clicks`
+                          ? `${edited.project.zooms.filter((zoom) => zoom.origin === "auto").length} zoom(s) on the clicks`
                           : step === "normalize"
                             ? `volume ${Math.round(edited.project.audio.volume * 100)} % (measured ${edited.loudness?.measuredLufs} LUFS)`
                             : "gradient frame with padding and a shadow";
