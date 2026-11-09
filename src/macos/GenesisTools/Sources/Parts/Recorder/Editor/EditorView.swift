@@ -9,6 +9,16 @@ struct EditorView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(EditorModel.lanesShownKey) private var lanesShown = 4
 
+    /// Why the Style tab offers no cursor settings, or nil when the editor draws the cursor. A track that names cursor
+    /// pictures without them beside it (a copy that left cursor-shapes/ behind) is not a system-cursor movie.
+    static func cursorNote(for track: CursorTrack) -> String? {
+        if track.drawsCursor { return nil }
+        if track.shapeChanges.isEmpty {
+            return "This recording has the system cursor in its picture. Record without --system-cursor to draw a smoothed cursor of any size."
+        }
+        return "This recording's cursor pictures are missing: copy its cursor-shapes folder beside its cursor track to draw the cursor."
+    }
+
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
@@ -766,8 +776,8 @@ struct CursorInspector: View {
                     }
                 }
                 if cursor.show { SmoothCursorSection(model: model) } // fx B (round 4)
-            } else if model.cursor != nil {
-                Text("This recording has the system cursor in its picture. Record without --system-cursor to draw a smoothed cursor of any size.")
+            } else if let track = model.cursor, let note = EditorView.cursorNote(for: track) {
+                Text(note)
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
