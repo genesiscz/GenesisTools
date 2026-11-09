@@ -263,7 +263,7 @@ export async function trashRecordings(
     try {
         raw = SafeJSON.parse(result.stdout, { strict: true });
     } catch {
-        log.debug({ stdout: result.stdout.slice(0, 200) }, "tools rm --json answered no JSON");
+        log.debug({ stdout: result.stdout.slice(0, 200) }, `${toolCommand("rm", "--json")} answered no JSON`);
     }
 
     const answer = removalResultSchema.safeParse(raw);
