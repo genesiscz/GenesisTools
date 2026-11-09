@@ -2,6 +2,7 @@ import { prepareFindings } from "@app/meetings/lib/add-findings";
 import { captureCost } from "@app/meetings/lib/capture-cost";
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
+import { callerActor, DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { testPhrase } from "@app/meetings/lib/dictionary-test";
 import { itemWhat } from "@app/meetings/lib/item-text";
 import { matchPreview } from "@app/meetings/lib/match-preview";
@@ -393,7 +394,13 @@ export class MeetingsToolset extends ReplToolset {
                         );
                     }
 
-                    return describe(await store.renameSpeaker(id, parsed.label, parsed.name));
+                    // A rename is a decision: journaled with who made it, so its token undoes it (`reopen --token`).
+                    await new DecisionJournal({ store }).apply({
+                        meeting: id,
+                        action: { kind: "rename", label: parsed.label, name: parsed.name },
+                        actor: callerActor(),
+                    });
+                    return describe(current());
                 },
             },
             assign: {
