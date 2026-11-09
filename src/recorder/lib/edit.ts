@@ -1303,7 +1303,9 @@ export async function finishExport({
     }
 
     const { project } = await openProject(value);
-    const format = subtitles ?? project.export.subtitles;
+    // The Export tab hides the subtitle file for a GIF, so the edit's default writes none beside one; an ask still does.
+    const isGif = extname(movie).toLowerCase() === ".gif";
+    const format = subtitles ?? (isGif ? undefined : project.export.subtitles);
     const warnings: string[] = [];
     // R4 9 intro card: the renderer plays it before the movie, so writeSubtitles and embedChapters move a whole
     // export's subtitles and chapters by its length. A part is a clip of the movie without the cards on every route
@@ -1407,7 +1409,7 @@ export async function exportAs(
         out?: string;
         format?: ExportFormat;
         part?: { fromUs: number; toUs: number };
-        /** A subtitle file beside the export; absent is the edit's export.subtitles. */
+        /** A subtitle file beside the export; absent is the edit's export.subtitles (none beside a GIF). */
         subtitles?: SubtitleFormat;
     } & ExportRun = {}
 ): Promise<ExportAnswer & { subtitles?: string; chapters?: number; warnings?: string[]; replaced?: boolean }> {
@@ -1439,7 +1441,7 @@ export async function exportAs(
             return await exportAs(copy, {
                 out,
                 format: asked,
-                subtitles: options.subtitles ?? whole.project.export.subtitles,
+                subtitles: options.subtitles,
                 overwrite: options.overwrite,
                 size: options.size,
                 onProgress: options.onProgress,
@@ -1456,7 +1458,8 @@ export async function exportAs(
         return formatRefusal(asked);
     }
 
-    const subtitles = options.subtitles ?? opened.project.export.subtitles;
+    // finishExport applies the edit's export.subtitles default, which a GIF leaves out.
+    const subtitles = options.subtitles;
 
     const host = { size: options.size, onProgress: options.onProgress };
     const output = exportTargetOf({

@@ -801,6 +801,30 @@ describe("finishing an export", () => {
             `${movie} does not exist`
         );
     });
+
+    // Round 2 hunt (r2-intermediate-format-settings): the Export tab hides the subtitle file for a GIF, so the edit's
+    // export.subtitles default writes none beside a GIF; an explicit ask still does.
+    test("a GIF gets no subtitle file from the edit's default, an MP4 does, and an explicit ask writes one", async () => {
+        const root = mkdtempSync(join(tmpdir(), "rs-finish-gif-"));
+        const path = join(root, "clip.edit.json");
+        const base = wholeProject({ video: join(root, "clip.mp4"), durationUs: 4_000_000, width: 100, height: 100 });
+        writeProject(path, { ...base, export: { ...base.export, subtitles: "srt", chapters: false } });
+        writeFileSync(join(root, "clip.transcript.json"), '{"segments":[{"start":0.5,"end":1.5,"text":"Hello"}]}');
+        const gif = join(root, "clip.gif");
+        const mp4 = join(root, "out.mp4");
+        writeFileSync(gif, "movie");
+        writeFileSync(mp4, "movie");
+
+        const fromGif = await edits.finishExport({ value: path, answer: { ok: true, path: gif } });
+        expect(fromGif.subtitles).toBeUndefined();
+        expect(existsSync(join(root, "clip.srt"))).toBe(false);
+
+        const fromMp4 = await edits.finishExport({ value: path, answer: { ok: true, path: mp4 } });
+        expect(fromMp4.subtitles).toBe(join(root, "out.srt"));
+
+        const asked = await edits.finishExport({ value: path, answer: { ok: true, path: gif }, subtitles: "vtt" });
+        expect(asked.subtitles).toBe(join(root, "clip.vtt"));
+    });
 });
 
 describe("finishing a part export of an edit with cards", () => {
