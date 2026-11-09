@@ -1340,7 +1340,7 @@ program
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .option(
         "--out <file>",
-        "the file to write (default <name>-edited.<format> beside the source; never an existing file)"
+        "the file to write; the extension follows the format (default: the file chosen in the editor, else <name>-edited.<format> beside the source; a part adds -part-<from>-<to>; never an existing file without --overwrite)"
     )
     .option(
         "--format <format>",
