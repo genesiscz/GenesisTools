@@ -373,7 +373,7 @@ const movieMethods = [
                 to: sourceTimeSchema.optional(),
             })
             .strict(),
-        'Moves or trims a zoom, hidden part, text or shape by its id (info() lists them). To MOVE it with its length kept: `at` (its new start) or `by` (seconds, negative is earlier). To TRIM it: `from` and/or `to` set a new start or end, so `from` alone makes it longer or shorter. Source seconds or "m:ss". retime({ id: "z1", at: 1 }), retime({ id: "t1", by: 2 }), retime({ id: "s1", to: 9 }).'
+        'Moves or trims a zoom, hidden part, text or shape by its id (info() lists them). To MOVE it with its length kept: `at` (its new start) or `by` (seconds, negative is earlier). To TRIM it: `from` and/or `to` set a new start or end, so `from` alone makes it longer or shorter. Source seconds or "m:ss". A zoom meets only zooms of its own target (a canvas zoom may overlap a picture zoom): moved onto one, it goes past it with its length kept and a warning says where, or it is refused when no room is left after it; trimmed into one, it stops at it. retime({ id: "z1", at: 1 }), retime({ id: "t1", by: 2 }), retime({ id: "s1", to: 9 }).'
     ),
     edit(
         "fixLine",

@@ -2664,9 +2664,9 @@ describe("the editor window's item ops", () => {
             [4_000_000, 6_000_000],
         ]);
         expect(spans(applyOp(project, { op: "retime", id: second.id, by: -3.5 }))).toEqual([
-            // Moved 3.5 s back from 4–6 s, it stops at the first zoom's end and keeps what is left of the asked span.
+            // Moved 3.5 s back from 4-6 s onto the first zoom, it goes past it with its length kept.
             [1_000_000, 2_000_000],
-            [2_000_000, 2_500_000],
+            [2_000_000, 4_000_000],
         ]);
 
         let texted = applyOp(wholeProject(source), { op: "text", from: 1, to: 3, text: "Hi" });
@@ -2675,6 +2675,64 @@ describe("the editor window's item ops", () => {
         expect(texted.texts?.[0]).toMatchObject({ startUs: 1_000_000, endUs: 1_100_000 });
         texted = applyOp(texted, { op: "retime", id: text, from: 4 });
         expect(texted.texts?.[0]).toMatchObject({ startUs: 4_000_000, endUs: 4_100_000 });
+    });
+
+    describe("a zoom meets only zooms of its own target, and retime at or by keeps its length", () => {
+        const longer = { ...source, durationUs: 20_000_000 };
+        const spanOf = (project: ReturnType<typeof wholeProject>, id: string) => {
+            const zoom = project.zooms.find((item) => item.id === id);
+            return [zoom?.startUs, zoom?.endUs];
+        };
+
+        test("retime moves or stretches a zoom over a zoom of the other target, and a drag still stops at its own target", () => {
+            let project = applyOp(wholeProject(longer), { op: "zoom", from: 2, to: 4, target: "canvas" });
+            project = applyOp(project, { op: "zoom", from: 5, to: 7 });
+            const canvas = project.zooms.find((zoom) => zoom.target === "canvas")?.id ?? "";
+            const picture = project.zooms.find((zoom) => !zoom.target)?.id ?? "";
+            expect(spanOf(applyOp(project, { op: "retime", id: canvas, to: 8 }), canvas)).toEqual([
+                2_000_000, 8_000_000,
+            ]);
+            // The editor's drag sends both edges.
+            expect(spanOf(applyOp(project, { op: "retime", id: canvas, from: 6, to: 8 }), canvas)).toEqual([
+                6_000_000, 8_000_000,
+            ]);
+            expect(spanOf(applyOp(project, { op: "retime", id: canvas, at: 6 }), canvas)).toEqual([
+                6_000_000, 8_000_000,
+            ]);
+            expect(spanOf(applyOp(project, { op: "retime", id: picture, at: 2 }), picture)).toEqual([
+                2_000_000, 4_000_000,
+            ]);
+
+            let same = applyOp(wholeProject(longer), { op: "zoom", from: 2, to: 4 });
+            same = applyOp(same, { op: "zoom", from: 5, to: 7 });
+            const first = same.zooms[0]?.id ?? "";
+            expect(spanOf(applyOp(same, { op: "retime", id: first, from: 6, to: 8 }), first)).toEqual([
+                4_800_000, 5_000_000,
+            ]);
+        });
+
+        test("retime at or by keeps a zoom's length: it reaches free space past a zoom, goes past a zoom it meets with a warning, and no room is refused", () => {
+            let project = applyOp(wholeProject(longer), { op: "zoom", from: 1, to: 3 });
+            project = applyOp(project, { op: "zoom", from: 7, to: 9 });
+            const [first, second] = project.zooms.map((zoom) => zoom.id);
+            const met = { op: "retime", id: first ?? "", at: 6.5 } as const;
+            const moved = applyOp(project, met);
+            expect(spanOf(moved, first ?? "")).toEqual([9_000_000, 11_000_000]);
+            expect(opPlacementWarnings(met, project, moved)).toEqual([
+                `retime: ${first} met another zoom at 6.5 s, so it went to 9-11 s (two zooms of one target cannot overlap)`,
+            ]);
+            const free = { op: "retime", id: first ?? "", at: 12 } as const;
+            const clear = applyOp(project, free);
+            expect(spanOf(clear, first ?? "")).toEqual([12_000_000, 14_000_000]);
+            expect(opPlacementWarnings(free, project, clear)).toEqual([]);
+            expect(spanOf(applyOp(project, { op: "retime", id: second ?? "", by: -5.5 }), second ?? "")).toEqual([
+                3_000_000, 5_000_000,
+            ]);
+
+            let full = applyOp(wholeProject(longer), { op: "zoom", from: 1, to: 3 });
+            full = applyOp(full, { op: "zoom", from: 7, to: 19.5 });
+            expect(() => applyOp(full, { op: "retime", id: full.zooms[0]?.id ?? "", at: 18 })).toThrow("no room");
+        });
     });
 
     test("auto zoom takes the first zoom's scale, and a range spotlight follows a recorded cursor", () => {

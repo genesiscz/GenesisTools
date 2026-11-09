@@ -1210,6 +1210,31 @@ export interface ZoomOptions {
     target?: "picture" | "canvas";
 }
 
+/**
+ * The zooms of one target (absent is "picture") but the one with `exceptId`: the only zooms a zoom of that target may
+ * not meet, because a canvas zoom may overlap a picture zoom.
+ */
+function zoomsOfTarget(project: EditProject, target: "picture" | "canvas", exceptId?: string): EditZoom[] {
+    return project.zooms.filter((zoom) => zoom.id !== exceptId && (zoom.target ?? "picture") === target);
+}
+
+/** `span` moved later with its length kept, past each of `zooms` it would meet (in start order). */
+function pastZooms(
+    zooms: readonly EditZoom[],
+    span: { startUs: number; endUs: number }
+): { startUs: number; endUs: number } {
+    const length = span.endUs - span.startUs;
+    let startUs = span.startUs;
+
+    for (const zoom of [...zooms].sort((a, b) => a.startUs - b.startUs)) {
+        if (startUs < zoom.endUs && startUs + length > zoom.startUs) {
+            startUs = zoom.endUs;
+        }
+    }
+
+    return { startUs, endUs: startUs + length };
+}
+
 /** Adds a zoom over a source range; one that overlaps another zoom is refused with the zoom it meets. */
 /**
  * Where a zoom asked for from `fromUs` to `toUs` goes (the editor window's rule): at least 0.5 s long, moved past
@@ -1223,15 +1248,8 @@ export function placeZoom(
     target: "picture" | "canvas" = "picture"
 ): { startUs: number; endUs: number } | undefined {
     const length = Math.max(toUs - fromUs, 500_000);
-    let startUs = Math.max(0, fromUs);
-    const same = project.zooms.filter((zoom) => (zoom.target ?? "picture") === target);
-
-    for (const zoom of [...same].sort((a, b) => a.startUs - b.startUs)) {
-        if (startUs < zoom.endUs && startUs + length > zoom.startUs) {
-            startUs = zoom.endUs;
-        }
-    }
-
+    const same = zoomsOfTarget(project, target);
+    const { startUs } = pastZooms(same, { startUs: Math.max(0, fromUs), endUs: Math.max(0, fromUs) + length });
     const endUs = Math.min(project.source.durationUs, startUs + length);
     const meets = same.some((zoom) => startUs < zoom.endUs && endUs > zoom.startUs);
     return endUs - startUs >= MINIMUM_ZOOM_US && !meets ? { startUs, endUs } : undefined;
@@ -2419,8 +2437,13 @@ export interface OpFacts {
     waits?: readonly WaitStretch[];
 }
 
-/** A `zoom` op whose zoom went past a zoom it met (`placeZoom`), as a sentence a caller can return. */
+/**
+ * A `zoom` op whose zoom went past a zoom it met (`placeZoom`), or a `retime` with `at` or `by` whose zoom went past a
+ * zoom of its target it met (`retimeItem`), as a sentence a caller can return.
+ */
 export function opPlacementWarnings(op: EditOp, before: EditProject, after: EditProject): string[] {
+    const seconds = (us: number) => Math.round(us / 1000) / 1000;
+
     // R6 1: a hide that could not follow a moving text says where, so its ok is not a guess.
     if (op.op === "hideText" || op.op === "hidePrivate") {
         return hidingOf(before, after).uncertain.map(
@@ -2434,6 +2457,25 @@ export function opPlacementWarnings(op: EditOp, before: EditProject, after: Edit
         return ["unhide: nothing hidden (no part was made by hideText or hidePrivate)"];
     }
 
+    if (op.op === "retime") {
+        const zoom = before.zooms.find((item) => item.id === op.id);
+        const moved = after.zooms.find((item) => item.id === op.id);
+
+        if (!zoom || !moved || (op.at === undefined && op.by === undefined)) {
+            return [];
+        }
+
+        const asked = retimeMovedSpan({ op, item: zoom, durationUs: before.source.durationUs });
+
+        if (Math.abs(moved.startUs - asked.startUs) < 1000) {
+            return [];
+        }
+
+        return [
+            `retime: ${op.id} met another zoom at ${seconds(asked.startUs)} s, so it went to ${seconds(moved.startUs)}-${seconds(moved.endUs)} s (two zooms of one target cannot overlap)`,
+        ];
+    }
+
     if (op.op !== "zoom") {
         return [];
     }
@@ -2445,7 +2487,6 @@ export function opPlacementWarnings(op: EditOp, before: EditProject, after: Edit
         return [];
     }
 
-    const seconds = (us: number) => Math.round(us / 1000) / 1000;
     return [
         `zoom: ${seconds(timeToUs(op.from))} s met another zoom, so it went to ${seconds(added.startUs)}–${seconds(added.endUs)} s (zooms cannot overlap)`,
     ];
@@ -2482,11 +2523,29 @@ export function opTimeWarnings(op: EditOp, sourceDurationUs: number): string[] {
     return warnings;
 }
 
+/** Where a `retime` with `at` or `by` asks an item to go: its length kept, held inside the recording. */
+function retimeMovedSpan({
+    op,
+    item,
+    durationUs,
+}: {
+    op: Extract<EditOp, { op: "retime" }>;
+    item: { startUs: number; endUs: number };
+    durationUs: number;
+}): { startUs: number; endUs: number } {
+    const length = item.endUs - item.startUs;
+    const start = op.at !== undefined ? timeToUs(op.at) : item.startUs + Math.round((op.by ?? 0) * 1e6);
+    const moved = Math.min(Math.max(0, start), Math.max(0, durationUs - length));
+    return { startUs: moved, endUs: moved + length };
+}
+
 /** Applies one op; throws a RangeError a caller can show as it is. */
 /**
  * Moves or trims the zoom, hidden part, text or shape with this id: `at` (a new start) or `by` seconds moves it with
  * its length kept; `from` and `to` set its start and end, so `from` alone makes it longer or shorter (source time).
- * Held inside the recording; a zoom may not meet another zoom.
+ * Held inside the recording. A zoom may not meet another zoom of its target (a canvas zoom may overlap a picture
+ * zoom): moved with `at` or `by` onto one, it goes past it with its length kept, as a new zoom asked there would, and
+ * is refused when no room is left after it; stretched or dragged with `from` and `to` into one, it stops at it.
  */
 function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>): EditProject {
     const moves = [op.at, op.by].filter((value) => value !== undefined).length;
@@ -2507,10 +2566,7 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
     const keepsLength = moves > 0;
     const wanted = (startUs: number, endUs: number): { startUs: number; endUs: number } => {
         if (keepsLength) {
-            const length = endUs - startUs;
-            const start = op.at !== undefined ? timeToUs(op.at) : startUs + Math.round((op.by ?? 0) * 1e6);
-            const moved = Math.min(Math.max(0, start), Math.max(0, durationUs - length));
-            return { startUs: moved, endUs: moved + length };
+            return retimeMovedSpan({ op, item: { startUs, endUs }, durationUs });
         }
 
         return {
@@ -2534,16 +2590,33 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
     const zoom = project.zooms.find((item) => item.id === op.id);
 
     if (zoom) {
-        // The editor window's rule: a zoom moved or stretched into a neighbour stops at it, 0.2 s long at least.
-        const others = project.zooms.filter((other) => other.id !== op.id);
-        const lower = Math.max(0, ...others.filter((other) => other.endUs <= zoom.startUs).map((other) => other.endUs));
-        const upper = Math.min(
-            durationUs,
-            ...others.filter((other) => other.startUs >= zoom.endUs).map((other) => other.startUs)
-        );
-        const target = wanted(zoom.startUs, zoom.endUs);
-        const startUs = Math.max(lower, Math.min(target.startUs, upper - MINIMUM_ZOOM_US));
-        const span = { startUs, endUs: Math.min(upper, Math.max(target.endUs, startUs + MINIMUM_ZOOM_US)) };
+        const others = zoomsOfTarget(project, zoom.target ?? "picture", zoom.id);
+        const asked = wanted(zoom.startUs, zoom.endUs);
+        let span: { startUs: number; endUs: number };
+
+        if (keepsLength) {
+            span = pastZooms(others, asked);
+
+            if (span.endUs > durationUs) {
+                const seconds = (us: number) => Math.round(us / 1000) / 1000;
+                throw new RangeError(
+                    `no room for the ${seconds(asked.endUs - asked.startUs)} s zoom ${op.id} at ${seconds(asked.startUs)} s or later; two zooms of one target cannot overlap`
+                );
+            }
+        } else {
+            // The editor window's rule: a zoom dragged or stretched into a neighbour stops at it, 0.2 s long at least.
+            const lower = Math.max(
+                0,
+                ...others.filter((other) => other.endUs <= zoom.startUs).map((other) => other.endUs)
+            );
+            const upper = Math.min(
+                durationUs,
+                ...others.filter((other) => other.startUs >= zoom.endUs).map((other) => other.startUs)
+            );
+            const startUs = Math.max(lower, Math.min(asked.startUs, upper - MINIMUM_ZOOM_US));
+            span = { startUs, endUs: Math.min(upper, Math.max(asked.endUs, startUs + MINIMUM_ZOOM_US)) };
+        }
+
         return { ...project, zooms: project.zooms.map((item) => (item.id === op.id ? { ...item, ...span } : item)) };
     }
 
