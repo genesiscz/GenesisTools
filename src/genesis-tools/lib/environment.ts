@@ -387,7 +387,7 @@ export function realSources(): EnvironmentSources {
             }));
         },
         recorder: () => {
-            // Through the shared process layer (lint rule no-process-tool-spawn), registered in call-sites.ts.
+            // lint-rules-ignore: the recorder faces are found by their command line, which only ps lists (registered in scripts/benchmarks/process/call-sites.ts)
             const ps = captureSync("ps", ["-Ao", "pid=,command="], { timeoutMs: 3_000 }).stdout;
             const facePids = ps
                 .split("\n")
