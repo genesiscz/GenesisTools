@@ -1281,8 +1281,8 @@ final class EditorModel {
         guard !isTranscribing else { return }
         isTranscribing = true
         show("Transcribing the movie…", error: false)
-        let cache = CaptionTrack.cacheURL(video: project.source.video).path
-        movie("transcript", argv: ["transcribe", project.source.video, "--format", "json", "-o", cache], timeout: 60 * 60) { [weak self] result, _ in
+        // `tools recorder transcribe` is movie.transcript(): it hears the tracks the export plays, on the movie's clock.
+        movie("transcript", argv: ["recorder", "transcribe", store.url.path], timeout: 60 * 60) { [weak self] result, _ in
             guard let self else { return }
             self.isTranscribing = false
             if case let .failure(failure) = result {
