@@ -1349,7 +1349,11 @@ function buildLightboxScript(): string {
             return;
         }
         pointers[event.pointerId] = { x: event.clientX, y: event.clientY };
-        stage.setPointerCapture(event.pointerId);
+        try {
+            stage.setPointerCapture(event.pointerId);
+        } catch (err) {
+            // A pointer the browser no longer tracks: the drag still works while it stays over the stage.
+        }
         var ids = Object.keys(pointers);
         if (ids.length === 2) {
             var a = pointers[ids[0]];
