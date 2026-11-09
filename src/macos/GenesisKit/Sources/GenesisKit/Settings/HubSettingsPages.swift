@@ -21,7 +21,7 @@ public enum HubSettingsPages {
                 },
                 NativeSettingsPage(
                     id: panesPageID, title: "Panes", symbol: "rectangle.split.3x1", tint: .teal,
-                    subtitle: "Defaults for the diff, the Inbox, the Agents list, the Agent processes pane and the Worktree cleanup pane."
+                    subtitle: "Defaults for the diff, the Inbox, the PR overview, the Agents list, the Agent processes pane and the Worktree cleanup pane."
                 ) {
                     HubPaneSettings(preferences: preferences)
                 },
@@ -98,6 +98,7 @@ private struct HubPaneSettings: View {
     @AppStorage(HubInboxCards.contextOpenKey) private var inboxContextOpen = false
     @AppStorage(HubAgentsEntry.openNewestKey) private var agentsOpenNewest = true
     @AppStorage(HubAgentsEntry.foldFinishedKey) private var agentsFoldFinished = true
+    @AppStorage(HubPROverview.descriptionWholeKey) private var prDescriptionWhole = false
 
     var body: some View {
         VStack(spacing: 18) {
@@ -115,6 +116,12 @@ private struct HubPaneSettings: View {
                     "Show each decision's context in full",
                     detail: "Off: a card shows two lines of its context and Show more, so the question and its options come first.",
                     identifier: "hub.inbox.contextOpen", isOn: $inboxContextOpen)
+            }
+            NativeSettingsCard("PR overview") {
+                NativeSettingsToggle(
+                    "Show each PR's whole description",
+                    detail: "Off: a PR opens on the first paragraph of its description and Show description. The hub remembers what you open per PR.",
+                    identifier: "hub.prs.descriptionWhole", isOn: $prDescriptionWhole)
             }
             NativeSettingsCard("Agents list") {
                 NativeSettingsToggle(

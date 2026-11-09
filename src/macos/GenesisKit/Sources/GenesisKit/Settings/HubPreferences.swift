@@ -120,6 +120,17 @@ public enum HubAgentsEntry {
     public static let foldFinishedKey = "hub.agents.foldFinished"
 }
 
+/// The PR overview beside a PR's diff. Both faces read and write the keys through `@AppStorage`.
+public enum HubPROverview {
+    /// The description opens in full; off (the default), it opens on its first paragraph with Show description,
+    /// so the old waves and notes do not push the commits and checks out of sight (hub UX council, 2026-11-09).
+    public static let descriptionWholeKey = "hub.prs.descriptionWhole"
+    /// The PRs whose description the reader opened or closed by hand, newest last, one id per line.
+    public static let descriptionChoicesKey = "hub.prs.descriptionChoices"
+    /// The commit list opens folded. A new key: the old `hub.prs.fold.commits` was stored as open by every first fold.
+    public static let commitsFoldedKey = "hub.prs.fold.commitList"
+}
+
 /// How the Agents list lands a refresh that moves a few rows: at their new places at once, or with a slide there.
 /// The slide moves every row between a moved row's old and new place on each frame of the spring. With about 700 rows
 /// a one-row slide kept the main thread busy for about 300 ms, against about 60 ms for a refresh that moved more than
