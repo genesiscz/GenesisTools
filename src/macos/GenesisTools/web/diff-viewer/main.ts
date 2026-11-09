@@ -579,6 +579,13 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
         unsafeCSS:
             "[data-diffs-header] { cursor: pointer; } [data-diffs-header][data-sticky] { z-index: 10; } [data-diffs-header] [data-title], [data-diffs-header] [data-prev-name] { -webkit-user-select: all; user-select: all; cursor: text; }" +
             " [data-line-annotation] { -webkit-user-select: none; user-select: none; }" +
+            // A whole new or deleted file keeps its green or red bar in the gutter and drops the fill on every line: a
+            // new file read as one green block (the checklist's "a whole added or removed block gets a left strip",
+            // hub UX council 2026-11-09). The header and the code share the file's shadow root, so the header's
+            // change type reaches the lines through `~`.
+            ' [data-diffs-header][data-change-type="new"] ~ pre :is([data-line], [data-no-newline], [data-gutter-buffer]),' +
+            ' [data-diffs-header][data-change-type="deleted"] ~ pre :is([data-line], [data-no-newline], [data-gutter-buffer])' +
+            " { --diffs-diff-line-mix-target: var(--diffs-bg); }" +
             ` [data-code] { padding-bottom: calc(max(0px, calc(var(--diffs-gap-block, var(--diffs-gap-fallback)) - var(--diffs-scrollbar-gutter))) + ${FILE_GAP}px); }`,
         lineDiffType: "word-alt",
         hunkSeparators: "line-info",

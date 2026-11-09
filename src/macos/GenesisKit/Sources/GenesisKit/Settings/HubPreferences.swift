@@ -60,6 +60,49 @@ public enum HubResizeGrips: String, CaseIterable, Identifiable, Sendable {
     public func showsAtRest(prominent: Bool) -> Bool { self == .always || (self == .auto && prominent) }
 }
 
+/// How a review's diff lays out its two sides. Auto shows them side by side while each side has `autoSideWidth`, and
+/// one column in a narrower pane: in a 530 pt Changes pane beside the transcript, split sides wrapped every line to a
+/// few words (hub UX council, 2026-11-09). The header's Split / Unified button still picks for the review on screen.
+/// Both faces read and write `key` through `@AppStorage`.
+public enum HubDiffLayout: String, CaseIterable, Identifiable, Sendable {
+    case auto, split, unified
+    public static let key = "review.diffLayout"
+    /// The narrowest side a split diff keeps; narrower, Auto shows one column.
+    public static let autoSideWidth: CGFloat = 420
+    /// The diff pane's width below which Auto shows one column: two sides of `autoSideWidth` and the pane's gutters.
+    public static let autoSplitBelow: CGFloat = 2 * autoSideWidth + 20
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .auto: return "Auto"
+        case .split: return "Side by side"
+        case .unified: return "One column"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .auto: return "Side by side while each side has about 420 pt, one column in a narrower pane."
+        case .split: return "Old and new side by side, whatever the pane's width."
+        case .unified: return "Old and new lines in one column, whatever the pane's width."
+        }
+    }
+
+    /// Unset or unknown reads as Auto.
+    public static func stored(in defaults: UserDefaults) -> HubDiffLayout {
+        HubDiffLayout(rawValue: defaults.string(forKey: key) ?? "") ?? .auto
+    }
+
+    /// Whether a pane `narrow` for two sides shows one column.
+    public func unified(narrow: Bool) -> Bool {
+        switch self {
+        case .auto: return narrow
+        case .split: return false
+        case .unified: return true
+        }
+    }
+}
+
 /// How the Agents list lands a refresh that moves a few rows: at their new places at once, or with a slide there.
 /// The slide moves every row between a moved row's old and new place on each frame of the spring. With about 700 rows
 /// a one-row slide kept the main thread busy for about 300 ms, against about 60 ms for a refresh that moved more than
