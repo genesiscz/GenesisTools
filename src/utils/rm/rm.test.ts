@@ -1057,6 +1057,11 @@ describe("approval window choices", () => {
                 note: "  ",
             })
         ).toEqual({ selected: ["/a"], disposal: "permanent", remember: "session", note: null });
+        // The rows by location, so two rows of one path are told apart; a non-string is dropped.
+        expect(replyChoices({ decision: "allow", selected: ["/a"], selectedAt: ["/aside/a", 7] })).toMatchObject({
+            selected: ["/a"],
+            selectedAt: ["/aside/a"],
+        });
         expect(replyChoices({ decision: "allow", disposal: "shred", remember: "forever" })).toMatchObject({
             disposal: "trash",
             remember: "once",
@@ -1119,7 +1124,14 @@ describe("request lookups", () => {
     }
 
     test("another pending request naming the same path is listed as alsoIn", () => {
-        const all = [request("aaaaaa"), request("bbbbbb"), request("cccccc", { status: "denied" })];
+        // An aside copy of the path is its own object: an approval of the path does not decide it.
+        const aside = { path: "/w/a", stored: "/aside/a", kind: "file" as const, rule: "default", reason: "r" };
+        const all = [
+            request("aaaaaa"),
+            request("bbbbbb"),
+            request("cccccc", { status: "denied" }),
+            request("dddddd", { targets: [aside] }),
+        ];
 
         expect(requestsAlsoNaming(["/w/a", "/w/b"], "aaaaaa", all)).toEqual(new Map([["/w/a", ["bbbbbb"]]]));
     });
