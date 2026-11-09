@@ -6314,13 +6314,13 @@
               "lastFrameAt": {
                 "type": "string"
               },
+              "firstFrameAt": {
+                "type": "string"
+              },
               "warning": {
                 "type": "string"
               },
               "folder": {
-                "type": "string"
-              },
-              "firstFrameAt": {
                 "type": "string"
               },
               "controls": {
