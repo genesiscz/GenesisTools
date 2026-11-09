@@ -696,7 +696,7 @@ export function registerItemCommands(program: Command): void {
                     : "Reject items: they are never suggested again"
             )
             .option("--min-confidence <0..1>", "every suggested item at or above this confidence")
-            .option("--reason <text>", "why: kept in the decision journal (tools meetings journal)");
+            .option("--reason <text>", `why: kept in the decision journal (${toolCommand("meetings", "journal")})`);
 
         // Only a confirm takes a value: a reject keeps nothing of the item.
         if (status === "confirmed") {
@@ -734,7 +734,7 @@ export function registerItemCommands(program: Command): void {
         )
         .option(
             "--token <token>",
-            "the decision to undo (confirm/reject --json prints it, tools meetings journal lists them): refused with [item-changed] when another decision changed an item since; a question named brings back its whole answer"
+            `the decision to undo (confirm/reject --json prints it, ${toolCommand("meetings", "journal")} lists them): refused with [item-changed] when another decision changed an item since; a question named brings back its whole answer`
         )
         .option("--reason <text>", "why: kept in the decision journal")
         .option("--json", "print { reopened, skipped, entry } as JSON")
