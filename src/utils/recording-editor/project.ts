@@ -5,7 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
-import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
+import { bubbleRect, CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { cursorSmoothSchema } from "./cursor-smooth";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
 import {
@@ -712,6 +712,18 @@ export function wholeProject(source: EditProject["source"]): EditProject {
     return editProjectSchema.parse({ source, clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: source.durationUs }] });
 }
 
+// R6 9 rendered text boxes
+/** The canvas's width and height with the short side 1: the frame's aspect, else the movie's. */
+export function canvasShape(project: EditProject): { width: number; height: number } {
+    const aspect = project.frame?.aspect;
+    const [w, h] =
+        aspect && aspect !== "source"
+            ? aspect.split(":").map(Number)
+            : [project.source.width || 16, project.source.height || 9];
+    const ratio = (w ?? 16) / (h ?? 9);
+    return ratio >= 1 ? { width: ratio, height: 1 } : { width: 1, height: 1 / ratio };
+}
+
 // R6 10 effects sheet
 /**
  * The edit with its effects and its clips replaced by the whole recording at speed 1, so an output second is the same
@@ -727,6 +739,25 @@ export function effectsOnSourceTime(project: EditProject): EditProject {
         ...(project.redactions ? { redactions: snappedRedactionSpans(project) } : {}),
         clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: project.source.durationUs, speed: 1 }],
     };
+}
+
+/**
+ * A camera op that gives x or y makes the bubble custom. A corner bubble (or none yet) takes the axis the op leaves out
+ * from where it is drawn now (bubbleRect, the renderer's Camera.rect), not from the stored custom default; a custom
+ * bubble keeps its stored axis.
+ */
+function cameraPlacedAt(
+    project: EditProject,
+    change: { x?: number; y?: number },
+    file: string
+): { corner: "custom"; x?: number; y?: number } {
+    if (project.camera?.corner === "custom") {
+        return { corner: "custom" };
+    }
+
+    const canvas = canvasShape(project);
+    const drawn = bubbleRect(cameraBubbleSchema.parse({ ...project.camera, file }), canvas);
+    return { corner: "custom", x: change.x ?? drawn.x / canvas.width, y: change.y ?? drawn.y / canvas.height };
 }
 
 /** Reads an edit file; refuses a newer version instead of reading it wrongly. */
@@ -3666,8 +3697,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
-            const custom = change.x !== undefined || change.y !== undefined ? { corner: "custom" as const } : {};
-            return { ...project, camera: cameraBubbleSchema.parse({ ...project.camera, ...change, ...custom, file }) };
+            const placed =
+                change.x !== undefined || change.y !== undefined ? cameraPlacedAt(project, change, file) : {};
+            return { ...project, camera: cameraBubbleSchema.parse({ ...project.camera, ...change, ...placed, file }) };
         }
         case "cameraHide":
         case "cameraShow": {

@@ -676,7 +676,7 @@ const movieMethods = [
     edit(
         "camera",
         cameraOpSchema.omit({ op: true }),
-        'The camera bubble (a recording made with the camera on has one from its camera.json; info() shows camera): corner "bottomRight" | "bottomLeft" | "topRight" | "topLeft", or x and y (the centre, 0–1, makes it "custom"); size (its side over the short side, 0.08–0.6, 0.24); shape "circle" | "rounded" | "square"; mirror; show; offsetMs (camera time = source time - offsetMs); file for an edit without one; enabled: false removes it.'
+        'The camera bubble (a recording made with the camera on has one from its camera.json; info() shows camera): corner "bottomRight" | "bottomLeft" | "topRight" | "topLeft", or x and y (the centre, 0–1, makes it "custom"; one of them alone keeps the other where the bubble is drawn now); size (its side over the short side, 0.08–0.6, 0.24); shape "circle" | "rounded" | "square"; mirror; show; offsetMs (camera time = source time - offsetMs); file for an edit without one; enabled: false removes it.'
     ),
     edit(
         "cameraHide",

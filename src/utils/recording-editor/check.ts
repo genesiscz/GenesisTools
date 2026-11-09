@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     applyOp,
+    canvasShape,
     cutEdgesOf,
     type EditOp,
     type EditProject,
@@ -468,16 +469,8 @@ export function issueSummary(issues: readonly EditIssue[]): {
 }
 
 // R6 9 rendered text boxes
-/** The canvas's width and height with the short side 1: the frame's aspect, else the movie's. */
-export function canvasShape(project: EditProject): { width: number; height: number } {
-    const aspect = project.frame?.aspect;
-    const [w, h] =
-        aspect && aspect !== "source"
-            ? aspect.split(":").map(Number)
-            : [project.source.width || 16, project.source.height || 9];
-    const ratio = (w ?? 16) / (h ?? 9);
-    return ratio >= 1 ? { width: ratio, height: 1 } : { width: 1, height: 1 / ratio };
-}
+// canvasShape lives in project.ts, where the camera op reads it too; check.ts callers keep importing it from here.
+export { canvasShape };
 
 /**
  * The canvas's short side in pixels that check() lays texts out at, since it does not know the export's size. The size

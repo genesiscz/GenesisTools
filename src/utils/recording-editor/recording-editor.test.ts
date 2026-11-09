@@ -3114,6 +3114,30 @@ describe("a redact op's style options", () => {
     });
 });
 
+describe("camera({ x }) without y", () => {
+    const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+
+    test("keeps the other axis where the corner bubble is drawn", () => {
+        const project = applyOp(wholeProject(source), { op: "camera", file: "camera.mov" });
+        const canvas = canvasShape(project);
+        if (!project.camera) {
+            throw new Error("the camera op made no bubble");
+        }
+
+        const drawn = bubbleRect(project.camera, canvas);
+        const moved = applyOp(project, { op: "camera", x: 0.2 });
+        expect(moved.camera?.corner).toBe("custom");
+        expect(moved.camera?.x).toBe(0.2);
+        expect(moved.camera?.y).toBeCloseTo(drawn.y / canvas.height, 9);
+        expect(moved.camera?.y).not.toBe(0.82);
+    });
+
+    test("a custom bubble keeps its stored axis", () => {
+        const placed = applyOp(wholeProject(source), { op: "camera", file: "camera.mov", x: 0.5, y: 0.3 });
+        expect(applyOp(placed, { op: "camera", x: 0.2 }).camera).toMatchObject({ corner: "custom", x: 0.2, y: 0.3 });
+    });
+});
+
 describe("the effects sheet on source time", () => {
     test("bakes the export's cut snap into the hidden parts and leaves the export-clock tilt and progress bar out", () => {
         const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
