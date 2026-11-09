@@ -8,6 +8,9 @@ struct EditGesture {
     let id: String
     /// The edit when the gesture began: every preview's ops start from it.
     let mark: EditProject
+    /// The mark with the window's own steps on it (`change`): the next step is built on it, not on the service's
+    /// answer, so an agent's item or the service's order in that answer never becomes part of the drag's ops.
+    var draft: EditProject?
     var ops: [EditOp] = []
     /// The previews sent; only the answer to the newest one is drawn.
     var sent = 0
@@ -26,19 +29,30 @@ extension EditorModel {
     /// A change the window's controls make on a copy of the edit (a slider, a toggle, a drag of an item's place):
     /// drawn at once, sent as the ops that name it (EditOpDiff), and merged with the steps that follow within 0.6 s.
     func change(_ build: (inout EditProject) -> Void) {
-        var candidate = project
+        // The open gesture's draft is the base: the frame draws the service's answers, the ops name only this window's.
+        var base = gesture?.draft ?? project
+        var candidate = base
         build(&candidate)
-        guard candidate != project else { return }
-        let parts = Self.changedParts(project, candidate)
-        let key = parts.joined(separator: ",")
-        if gesture?.key != key { finishGesture() }
-        let mark = gesture?.mark ?? project
+        guard candidate != base else { return }
+        var parts = Self.changedParts(base, candidate)
+        var key = parts.joined(separator: ",")
+        if let open = gesture, open.key != key {
+            finishGesture()
+            base = project
+            candidate = base
+            build(&candidate)
+            guard candidate != base else { return }
+            parts = Self.changedParts(base, candidate)
+            key = parts.joined(separator: ",")
+        }
+        let mark = gesture?.mark ?? base
         guard let ops = EditOpDiff.ops(from: mark, to: candidate) else {
             HubPerf.log("recorder.editor: a change of \(key) has no op; it was not sent")
             show("This change cannot be sent to the edit.", error: true)
             return
         }
         step(key: key, ops: ops)
+        gesture?.draft = candidate
         adopt(candidate, rebuild: Self.needsNewMovie(project, candidate), debounceAudio: parts == ["audio"])
     }
 
@@ -116,7 +130,11 @@ extension EditorModel {
                     if let at = self.undoStack.lastIndex(of: .edit(open.mark)) { self.undoStack.remove(at: at) }
                     self.refreshUndoState()
                     self.show(EditorSession.reason(error), error: true)
-                    self.adopt(open.mark, rebuild: Self.needsNewMovie(self.project, open.mark))
+                    // The service's edit, not the mark: an agent's change it holds stays drawn.
+                    self.session.refetch { [weak self] next in
+                        guard let self else { return }
+                        self.adopt(next, rebuild: Self.needsNewMovie(self.project, next))
+                    }
                 }
                 self.refetchIfOutsideChanged()
                 if case .success = result { self.gestureSaved(true) } else { self.gestureSaved(false) }

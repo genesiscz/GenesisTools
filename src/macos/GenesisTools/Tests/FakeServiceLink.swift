@@ -23,7 +23,7 @@ final class FakeServiceLink: RecorderServiceLink {
     private var undo: [EditProject] = []
     private var redo: [EditProject] = []
     private var marks: [String: EditProject] = [:]
-    private var drafts: [String: EditProject] = [:]
+    private var previewOps: [String: [[String: Any]]] = [:]
     /// While true the answers wait for `deliver()`, as a real service's answers come a moment later (in order).
     var holdAnswers = false
     private var held: [() -> Void] = []
@@ -123,16 +123,18 @@ final class FakeServiceLink: RecorderServiceLink {
             marks[gesture] = project
             return ["project": try json(project), "revision": revision]
         case "gesture.preview":
-            let draft = try apply(params["ops"] as? [[String: Any]] ?? [], to: marks[gesture] ?? project)
-            drafts[gesture] = draft
-            return ["project": try json(draft)]
+            // As edit-session.ts: a preview's ops run on the edit as it is now, so an agent's change made during the
+            // drag shows in the answer, and the commit runs the last preview's ops on the edit as it is then.
+            let ops = params["ops"] as? [[String: Any]] ?? []
+            previewOps[gesture] = ops
+            return ["project": try json(try apply(ops, to: project))]
         case "gesture.commit":
-            let draft = drafts.removeValue(forKey: gesture) ?? project
+            let ops = previewOps.removeValue(forKey: gesture)
             marks[gesture] = nil
-            return try change(to: draft)
+            return try change(to: try ops.map { try apply($0, to: project) } ?? project)
         case "gesture.cancel":
             marks[gesture] = nil
-            drafts[gesture] = nil
+            previewOps[gesture] = nil
             return ["project": try json(project), "revision": revision]
         case "movies.search": return movieAnswer(method, params)
         case let name where name.hasPrefix("movie."):
