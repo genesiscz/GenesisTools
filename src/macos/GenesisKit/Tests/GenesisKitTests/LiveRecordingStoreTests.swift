@@ -76,13 +76,23 @@ final class LiveRecordingStoreTests: XCTestCase {
         try write("alive.commands.jsonl", #"{"command":"stop"}"#)
         try write(".hidden.json", #"{"id":"hidden","pid":100,"startedAt":"2026-11-03T18:41:00Z"}"#)
 
-        let store = LiveRecordingStore(folder: folder, isAlive: { $0 < 200 })
+        let store = LiveRecordingStore(folder: folder, isAlive: { $0.pid < 200 })
         XCTAssertEqual(store.load().map(\.id), ["older", "alive"])
     }
 
     func testMissingFolderIsNoRecording() {
         let store = LiveRecordingStore(folder: folder.appendingPathComponent("absent"), isAlive: { _ in true })
         XCTAssertEqual(store.load(), [])
+    }
+
+    /// A recorder that crashed leaves its entry; when its pid now belongs to a process that started after the entry
+    /// was written, the entry is gone, as `tools recorder list --live` says.
+    func testAnEntryWhosePidStartedLaterIsGone() throws {
+        let formatter = ISO8601DateFormatter()
+        let pid = getpid()
+        try write("recycled.json", #"{"id":"recycled","pid":\#(pid),"startedAt":"\#(formatter.string(from: Date().addingTimeInterval(-3600)))"}"#)
+        try write("own.json", #"{"id":"own","pid":\#(pid),"startedAt":"\#(formatter.string(from: Date()))"}"#)
+        XCTAssertEqual(LiveRecordingStore(folder: folder).load().map(\.id), ["own"])
     }
 
     func testProcessLivenessUsesTheRealProcessTable() {

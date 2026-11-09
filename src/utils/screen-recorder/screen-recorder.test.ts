@@ -18,6 +18,7 @@ import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { pixelBox } from "@genesiscz/utils/macos/ocr-boxes";
 import * as bounded from "@genesiscz/utils/process/bounded-command";
+import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import * as rm from "@genesiscz/utils/rm";
 import { z } from "zod";
 import {
@@ -36,9 +37,11 @@ import { FrameOutput, type OcrRow, ocrSinkFor, SidecarOcrSink, sipsJpegWithin } 
 import { readRecordingManifest, renameRecording } from "./library";
 import {
     callTimeoutFor,
+    isLiveEntryAlive,
     type LiveNotification,
     LiveRecordingServer,
     listLiveRecordings,
+    liveEntrySchema,
     liveSocketPath,
     RecorderClient,
     RPC_ERRORS,
@@ -646,7 +649,8 @@ describe("live recordings", () => {
                 kind: "meeting",
                 title: "",
                 pid,
-                startedAt: "2026-11-03T12:00:00.000Z",
+                // Now: an entry older than its process reads as a recycled pid.
+                startedAt: new Date().toISOString(),
                 state: "recording",
                 socket: join(dir, `${id}.sock`),
             });
@@ -662,6 +666,31 @@ describe("live recordings", () => {
 
         expect(Buffer.byteLength(path)).toBeLessThanOrEqual(103);
         expect(path).toMatch(/[0-9a-f]{16}\.sock$/);
+    });
+});
+
+describe("a live entry whose pid a later process took", () => {
+    const entry = (startedAt: Date, pidCommand?: string) =>
+        liveEntrySchema.parse({
+            version: 1,
+            id: "recycled",
+            kind: "video",
+            title: "t",
+            pid: process.pid,
+            ...(pidCommand ? { pidCommand } : {}),
+            startedAt: startedAt.toISOString(),
+            state: "recording",
+            socket: "/tmp/none.sock",
+        });
+
+    test("reads as gone when its process started after the entry, with or without a command", () => {
+        const hourAgo = new Date(Date.now() - 3_600_000);
+        expect(isLiveEntryAlive(entry(hourAgo))).toBe(false);
+        expect(isLiveEntryAlive(entry(hourAgo, readProcessCommand(process.pid) ?? undefined))).toBe(false);
+    });
+
+    test("reads as alive when its process started before the entry", () => {
+        expect(isLiveEntryAlive(entry(new Date()))).toBe(true);
     });
 });
 

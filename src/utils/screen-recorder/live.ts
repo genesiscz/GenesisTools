@@ -5,7 +5,7 @@ import type { JobInfo } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
-import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
+import { classifyPid, processStartMs, readProcessCommand, START_MS_TOLERANCE } from "@genesiscz/utils/process-identity";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { RpcSocketServer } from "@genesiscz/utils/rpc/socket-server";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -105,10 +105,21 @@ function parseOrNull(text: string): unknown {
     }
 }
 
-/** False when the entry's process ended or its pid now belongs to another program. */
+/**
+ * False when the entry's process ended or its pid now belongs to another program: a process that started after the
+ * entry was written took a recycled pid (the recorder writes `startedAt` after its own start), with or without a
+ * command to compare. The app's LiveRecordingStore.entryIsAlive keeps the same rule.
+ */
 export function isLiveEntryAlive(entry: LiveEntry): boolean {
     const status = classifyPid(entry.pid, entry.pidCommand).status;
-    return status === "live" || status === "unverified";
+
+    if (status !== "live" && status !== "unverified") {
+        return false;
+    }
+
+    const processStarted = processStartMs(entry.pid);
+    const entryStarted = Date.parse(entry.startedAt);
+    return processStarted === null || Number.isNaN(entryStarted) || processStarted <= entryStarted + START_MS_TOLERANCE;
 }
 
 /** The running recordings, for a UI. An entry whose process is gone is left out, never deleted here. */
