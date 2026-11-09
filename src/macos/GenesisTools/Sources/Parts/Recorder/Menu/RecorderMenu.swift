@@ -286,11 +286,13 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             let failure = !hasMovie && settings?["outcome"] as? String == "failed"
                 ? (root["warnings"] as? [String])?.first ?? "The recording failed before it recorded anything"
                 : nil
+            // A frames or meeting recording writes no settings.video.durationMs: its movie (the proxy) names the length.
+            let durationMs = (video?["durationMs"] as? NSNumber)?.doubleValue ?? movie.flatMap(RecordingMovie.lengthMs)
             let open = ReviewComments.read(dir.appendingPathComponent("comments.jsonl")).filter { !$0.isResolved }
             list.append(Recent(folder: dir, title: (root["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name,
                                started: started, thumbnail: movie ?? firstFrame, hasMovie: hasMovie,
                                edited: manager.fileExists(atPath: dir.appendingPathComponent("edit.json").path),
-                               durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue, isMeeting: isMeeting,
+                               durationMs: durationMs, isMeeting: isMeeting,
                                openComments: open.count, firstOpenCommentUs: open.first?.atUs, failure: failure,
                                recording: liveFolders.contains(dir.standardizedFileURL.path)))
         }

@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 /// Which file is the movie of a recording folder, for every list that asks: the menu bar's Recent rows, the library
@@ -15,6 +16,23 @@ enum RecordingMovie {
     /// The recording's own movie, nil for a frames recording that has no proxy yet.
     static func own(in folder: URL) -> URL? {
         names.map { folder.appendingPathComponent($0) }.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// A movie file's length in milliseconds, nil when it has none or is not a movie. A frames or meeting recording writes
+    /// no settings.video.durationMs, so the library card reads its proxy's own length. Blocks for the read: call it off
+    /// the main thread (readRecents runs on a background queue).
+    nonisolated static func lengthMs(_ url: URL) -> Double? {
+        final class Box: @unchecked Sendable { var ms: Double? }
+        let box = Box()
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            if let duration = try? await AVURLAsset(url: url).load(.duration), duration.isNumeric, duration.seconds > 0 {
+                box.ms = duration.seconds * 1000
+            }
+            done.signal()
+        }
+        guard done.wait(timeout: .now() + 3) == .success else { return nil }
+        return box.ms
     }
 
     /// The file a drag or Copy Movie hands out: the newest finished export beside the recording (an MP4, GIF, WebM
