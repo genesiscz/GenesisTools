@@ -162,7 +162,8 @@ struct MeetingListRow: Decodable, Equatable {
 /// (`tools meetings serve --detach`), at most once per `startThrottle`; the read that found none does not wait for it.
 /// A service whose code is changing refuses the hello with `code-mismatch` and exits within a minute: the window looks
 /// again only after `refusedBackoff`. The connection closes after `idleClose` with no call and no subscription, so the
-/// service can exit when it is idle.
+/// service can exit when it is idle. A kept subscription keeps a connection: when it closes, this side connects again
+/// by itself (`resumeSubscription`).
 @MainActor
 final class MeetingsService {
     /// The window's service: nil in the preview build and under XCTest, for a sandbox home (`GENESIS_TOOLS_HOME`) and
@@ -191,6 +192,9 @@ final class MeetingsService {
         var refusedBackoff: TimeInterval = 60
         /// The connection closes after this long with no call and no subscription.
         var idleClose: TimeInterval = 120
+        /// A kept subscription with no connection looks again after this long, then twice as long each time, up to
+        /// `refusedBackoff`.
+        var reconnectDelay: TimeInterval = 1
     }
 
     enum State: Equatable {
@@ -224,11 +228,16 @@ final class MeetingsService {
     private var failedStarts = 0
     private var starting: Task<Void, Never>?
     private var subscription: MeetingsAPI.Subscribe.Params?
+    /// Connects again while a subscription is kept and no connection is open (`resumeSubscription`).
+    private var resuming: Task<Void, Never>?
     private var callsInFlight = 0
     private var idleGeneration = 0
 
     /// A `meeting.changed` the subscription hears, on the main actor.
     var onMeetingChanged: ((MeetingsAPI.MeetingChanged) -> Void)?
+    /// The kept subscription was sent again on a new connection, on the main actor. Events between the two connections
+    /// were not heard, so the subscriber reads what it shows again (its revisions).
+    var onSubscriptionResumed: (() -> Void)?
 
     init(folder: URL, timing: Timing = Timing(), pid: Int32 = ProcessInfo.processInfo.processIdentifier,
          startService: @escaping ServiceStarter = { _ = try await MeetingsCLI.run(["serve", "--detach"], timeoutSeconds: 60) }) {
@@ -262,8 +271,9 @@ final class MeetingsService {
         }
     }
 
-    /// From now on the connection hears these events (on `onMeetingChanged`); a reconnect subscribes again. Throws
-    /// `Unavailable` while no service answers; the subscription is kept, and the next connection sends it.
+    /// From now on the connection hears these events (on `onMeetingChanged`). The subscription is kept: while no
+    /// connection is open (the service hung up, exited on a code change, was not running yet), this side connects
+    /// again by itself and sends it, then calls `onSubscriptionResumed`. Throws `Unavailable` while no service answers.
     @discardableResult
     func subscribe(meeting: String? = nil, events: [String]? = nil) async throws -> [String] {
         let params = MeetingsAPI.Subscribe.Params(meeting: meeting, events: events)
@@ -271,17 +281,22 @@ final class MeetingsService {
         // call would send it a second time.
         let connected = await connection()
         subscription = params
-        guard connected != nil else { throw Unavailable(reason: "no Meetings service answers; the next connection subscribes") }
+        guard connected != nil else {
+            resumeSubscription()
+            throw Unavailable(reason: "no Meetings service answers; the next connection subscribes")
+        }
         return try await call(MeetingsAPI.Subscribe.self, params, timeout: timing.helloTimeout).events
     }
 
     /// Forgets the subscription and closes the connection: the transport has no unsubscribe.
     func unsubscribe() {
         subscription = nil
+        resuming?.cancel()
+        resuming = nil
         disconnect()
     }
 
-    /// Closes the connection; the next call opens a new one.
+    /// Closes the connection; the next call opens a new one, and a kept subscription opens one by itself.
     func disconnect() {
         guard let client else { return }
         drop(client)
@@ -404,6 +419,7 @@ final class MeetingsService {
                     HubPerf.log("meetings.service: the service closed the connection")
                     self.client = nil
                     self.state = .idle
+                    self.resumeSubscription()
                 }
             }
         }
@@ -420,6 +436,7 @@ final class MeetingsService {
             Task {
                 do {
                     _ = try await Self.send(MeetingsAPI.Subscribe.self, subscription, on: connected, timeout: timing.helloTimeout)
+                    onSubscriptionResumed?()
                 } catch {
                     HubPerf.log("meetings.service: subscribe again failed: \(error.localizedDescription)")
                 }
@@ -437,6 +454,35 @@ final class MeetingsService {
             state = .idle
         }
         if let backoff { refusedUntil = Date().addingTimeInterval(backoff) }
+        resumeSubscription()
+    }
+
+    /// While a subscription is kept and no connection is open, connects again by itself: after `reconnectDelay`, then
+    /// twice as long each time up to `refusedBackoff`, never before a refusal's backoff ends. `connection()` starts the
+    /// service when none runs, and `attach` sends the kept subscription. Nothing else would connect: the window reads
+    /// on events, not on a timer.
+    private func resumeSubscription() {
+        guard subscription != nil, client == nil, resuming == nil else { return }
+        let first = timing.reconnectDelay
+        resuming = Task { [weak self] in
+            var delay = first
+            while true {
+                let refused = self?.refusedUntil?.timeIntervalSinceNow ?? 0
+                try? await Task.sleep(for: .seconds(max(delay, refused)))
+                // Cancelled: `unsubscribe` cleared `resuming` itself, and a later subscription may own it now.
+                guard let self, !Task.isCancelled else { return }
+                var done = self.subscription == nil || self.client != nil
+                if !done { done = await self.connection() != nil }
+                guard !Task.isCancelled else { return }
+                if done {
+                    self.resuming = nil
+                    // A connection that closed again before this line got no new look from its close: give it one.
+                    self.resumeSubscription()
+                    return
+                }
+                delay = min(delay * 2, self.timing.refusedBackoff)
+            }
+        }
     }
 
     /// Starts the service in the background, at most once per `startThrottle`; the next call finds it.
