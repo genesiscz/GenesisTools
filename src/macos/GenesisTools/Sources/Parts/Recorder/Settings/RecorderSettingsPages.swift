@@ -75,6 +75,16 @@ private struct RecorderRecordingSettings: View {
                 identifier: "recorder.settings.threshold",
                 options: CaptureOptions.thresholds.map { NativeSettingsOption($0, "\(Self.number($0)) %") },
                 selection: model.capture(\.threshold), minSegmentWidth: 52)
+            Divider()
+            NativeSettingsSegmented(
+                "When another app takes the focus", detail: "What the open capture picker does when you click another app or window.",
+                identifier: "recorder.settings.pickerFocusLoss",
+                options: [
+                    NativeSettingsOption(CapturePickerFocusLoss.stayOpen, "Stay open",
+                                         detail: "It stays until its close button, Escape, a choice or a start from the menu bar."),
+                    NativeSettingsOption(CapturePickerFocusLoss.close, "Close", detail: "It closes as a cancel."),
+                ],
+                selection: model.choice(CapturePickerFocusLoss.key, CapturePickerFocusLoss.stayOpen), minSegmentWidth: 80)
         }
     }
 
