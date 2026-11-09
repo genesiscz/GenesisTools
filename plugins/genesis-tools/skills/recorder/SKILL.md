@@ -59,8 +59,9 @@ before and while recording and stays out of the movie. The edit's `camera` place
 mirror); each part where it is hidden is a `cameraHide` item on the effect lanes. Change it with
 `m.camera({ corner: "topLeft", size: 0.2 })`, `m.cameraHide(from, to)` or the ops `camera`, `cameraHide` (with
 `lane`), `cameraShow`, `retime` and `moveToLane`. In the editor's Style tab the user drags the bubble on the preview
-and sizes it by its grip; that writes the same `camera` op, so an agent reads the result with `m.info()` as usual. From a script, `record: { camera: true }` asks for the camera without a
-preview on screen.
+and sizes it by its grip; that writes the same `camera` op, so an agent reads the result with `m.info()` as usual. From a script, `record: { camera: true }` (or `tools recorder start --camera`) asks for the camera too: the
+preview shows while it records unless Settings → Recorder → "Show the camera preview" says otherwise, and the movie
+always leaves it out, so the export shows only the bubble the edit draws.
 
 ## Rules
 
