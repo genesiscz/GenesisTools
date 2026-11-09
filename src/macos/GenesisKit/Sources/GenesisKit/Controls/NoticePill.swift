@@ -44,9 +44,27 @@ public struct NoticeFix: Identifiable {
     }
 }
 
-/// A status line: icon, message, optional dim detail, the fixes, and the full message behind "Details". A success
-/// notice without fixes fades after six seconds; an error, a warning or a notice with a fix stays until it is
-/// dismissed or no longer applies.
+/// Where a `NoticePill` is drawn. In the layout, it hugs its text and fades a plain success by itself; in a
+/// `NoticeStack`, it fills the stack's width and the stack owns its time, so one notice has one timer.
+public enum NoticePillPlacement: Sendable {
+    case inline, stacked
+}
+
+private struct NoticePillPlacementKey: EnvironmentKey {
+    static let defaultValue = NoticePillPlacement.inline
+}
+
+public extension EnvironmentValues {
+    var noticePillPlacement: NoticePillPlacement {
+        get { self[NoticePillPlacementKey.self] }
+        set { self[NoticePillPlacementKey.self] = newValue }
+    }
+}
+
+/// A status line: icon, message, optional dim detail, the fixes, and the full message behind "Details". In the
+/// layout, a success notice without fixes fades after `NoticeStackTiming.standard.plainSeconds` (six seconds); an
+/// error, a warning or a notice with a fix stays until it is dismissed or no longer applies. In a `NoticeStack` the
+/// stack decides how long it stays.
 public struct NoticePill: View {
     public enum Tone: Sendable {
         case success, warning, error
@@ -73,6 +91,7 @@ public struct NoticePill: View {
     @State private var showsMore = false
     @State private var confirming: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.noticePillPlacement) private var placement
 
     public init(text: String, detail: String? = nil, more: String? = nil, isError: Bool = false,
                 fixes: [NoticeFix] = [], dismiss: (() -> Void)? = nil) {
@@ -130,6 +149,7 @@ public struct NoticePill: View {
             }
             .textSelection(.enabled)
             .multilineTextAlignment(.leading)
+            .frame(maxWidth: placement == .stacked ? .infinity : nil, alignment: .leading)
             if let dismiss {
                 IconButton(systemName: "xmark", tooltip: "Dismiss", size: 9, action: dismiss)
             }
@@ -140,9 +160,18 @@ public struct NoticePill: View {
         .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color.white.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(Color.white.opacity(0.1)))
         .task(id: text) {
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            if tone == .success, fixes.isEmpty { dismiss?() }
+            guard Self.fadesByItself(placement: placement, tone: tone, hasFixes: !fixes.isEmpty,
+                                     canDismiss: dismiss != nil) else { return }
+            try? await Task.sleep(for: .seconds(NoticeStackTiming.standard.plainSeconds))
+            guard !Task.isCancelled else { return }
+            dismiss?()
         }
+    }
+
+    /// Only a plain success in the layout fades by itself. In a stack the stack owns the time: two timers for one
+    /// notice made it leave at the shorter of the two (ArchitectureReview A3, 2026-11-09).
+    static func fadesByItself(placement: NoticePillPlacement, tone: Tone, hasFixes: Bool, canDismiss: Bool) -> Bool {
+        placement == .inline && tone == .success && !hasFixes && canDismiss
     }
 
     @ViewBuilder
