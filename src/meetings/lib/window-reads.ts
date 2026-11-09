@@ -15,6 +15,7 @@ import { transcriptMarkdown } from "./export";
 import { type MatchDraft, type MatchPreviewRow, matchDraftSchema, matchPreview } from "./match-preview";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingsOverview, meetingsOverview } from "./overview";
+import type { ReviewRows } from "./review-row-schema";
 import { type LinkedSource, meetingSource, sourceRefOf } from "./sources";
 import { type CorrectedTranscript, correctTranscript } from "./transcript-corrections";
 
@@ -209,6 +210,36 @@ export async function speakerStatsRead(options: {
         presence: await opened.presence(options.attendance),
     });
     return { meeting: record.id, gapSec, ...stats };
+}
+
+/**
+ * The review rows of a meeting (`meetings rows --json`, `meeting.rows`). A meeting without a readable transcript still
+ * has rows, without the words said. `minPriority`: the config's `playback.listen.minPriority` when absent.
+ */
+export async function rowsRead(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    linked?: LinkedSource;
+    minPriority?: number;
+    lowPriority?: "hide" | "show";
+}): Promise<ReviewRows> {
+    const { store, record } = options;
+    const opened = OpenedMeeting.of(store, record, options.linked);
+    const transcript = await opened
+        .meeting()
+        .then((meeting) => meeting.transcript)
+        .catch((error: unknown) => {
+            log.debug({ error, meeting: record.id }, "rows without the words said: the transcript does not read");
+            return undefined;
+        });
+    const minPriority = options.minPriority ?? (await opened.config()).global.playback.listen.minPriority;
+    // Loaded here: the row builder reads the decision journal's actor words, which no other window read needs.
+    const { reviewRows } = await import("./review-rows");
+    return reviewRows(record, {
+        ...(transcript ? { transcript } : {}),
+        minPriority,
+        ...(options.lowPriority ? { lowPriority: options.lowPriority } : {}),
+    });
 }
 
 /** The transcript flags that change what `meetings transcript` applies or prints. */

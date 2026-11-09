@@ -226,6 +226,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "config.read": async (params) => (await reads()).readConfig(params),
         "config.set": async (params) => (await reads()).setConfig(params),
         "config.unset": async (params) => (await reads()).unsetConfig(params),
+        "meeting.rows": async (params) => (await reads()).readRows(params, storeOf(), deps),
         "comment.stage": async (params, context) => (await comments()).stageComment(params, context, storeOf(), deps),
         "comment.list": async (params) => (await comments()).listComments(params, storeOf(), deps),
         "comment.unstage": async (params, context) =>

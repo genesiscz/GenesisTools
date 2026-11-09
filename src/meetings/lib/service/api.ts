@@ -9,6 +9,7 @@ import { commentListenerSchema, meetingCommentSchema } from "../comment-schema";
 import { decisionActionSchema, journalEntrySchema, skipSchema } from "../decision-actions";
 import { MOMENT_ERROR_CODES, MOMENT_STATE_CODES, momentSchema, momentTargetSchema } from "../moment-schema";
 import type { MeetingsOverview } from "../overview";
+import { reviewRowsSchema } from "../review-row-schema";
 
 /**
  * The Meetings service's interface: one descriptor for the window, every `tools meetings` command, the REPL and an MCP
@@ -483,6 +484,21 @@ const configUnset = defineMethod({
     effect: "reversible",
 });
 
+const meetingRows = defineMethod({
+    name: "meeting.rows",
+    params: z
+        .object({
+            meeting: meetingRef,
+            /** `show` keeps the open questions under `playback.listen.minPriority`; `hide` (the default) counts them. */
+            lowPriority: z.enum(["hide", "show"]).optional(),
+        })
+        .strict(),
+    result: reviewRowsSchema,
+    resultName: "{ meeting, rows: ReviewRow[], hidden }",
+    doc: "The review rows (`meetings rows --json`): one per item in the order `listen` asks, each with its question as parts (who, said, when, asks, settles, reason), its typed choices with confidence, its edit kind, what it needs, its sources, its Moment and its last decision. A decided row keeps its place.",
+    effect: "read",
+});
+
 const commentStage = defineMethod({
     name: "comment.stage",
     params: z
@@ -573,6 +589,7 @@ export const meetingsApi = defineApi({
         configRead,
         configSet,
         configUnset,
+        meetingRows,
         commentStage,
         commentList,
         commentUnstage,
