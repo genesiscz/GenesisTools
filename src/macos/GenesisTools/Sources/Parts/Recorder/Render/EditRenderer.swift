@@ -644,6 +644,13 @@ struct EditRenderer {
 
     static func us(_ value: Int64) -> CMTime { CMTime(value: value, timescale: 1_000_000) }
 
+    /// The picture's size as it plays: `natural` turned by the track's preferred transform (a phone clip stored 1920×1080
+    /// with a 90° turn plays 1080×1920).
+    nonisolated static func displaySize(_ natural: CGSize, transform: CGAffineTransform) -> CGSize {
+        let turned = CGRect(origin: .zero, size: natural).applying(transform)
+        return CGSize(width: abs(turned.width), height: abs(turned.height))
+    }
+
     /// The pixels a second the H.264 export preset keeps at full rate: 2560×1600 at 60 fps. Measured 2026-11-04 on a
     /// 60 fps recording: 2560×1600 kept 60 fps, 2880×1798 and 3456×2160 came out at 30, 3724×2326 at 15. HEVC kept
     /// 4112×2570 at 60.
@@ -751,7 +758,10 @@ struct EditRenderer {
             throw RenderError.noVideoTrack(asset.url.path)
         }
         let audio = project.audio.include ? try await asset.loadTracks(withMediaType: .audio) : []
-        let (natural, nominalFps) = try await video.load(.naturalSize, .nominalFrameRate)
+        let (stored, nominalFps, transform) = try await video.load(.naturalSize, .nominalFrameRate, .preferredTransform)
+        // A movie turned 90° or 270° (a phone clip) plays upright: the composition track takes its turn, and every size
+        // below is the upright one, as ffmpeg decodes it and the TypeScript side stores it.
+        let natural = displaySize(stored, transform: transform)
         // A picture of 0 pixels made the output scale infinite (every frame's transform), so refuse it with its size.
         guard natural.width.isFinite, natural.height.isFinite, natural.width >= 1, natural.height >= 1 else {
             throw RenderError.badComposition("the movie's picture is \(natural.width)×\(natural.height)")
@@ -766,6 +776,7 @@ struct EditRenderer {
         guard let videoOut = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw RenderError.emptyEdit
         }
+        videoOut.preferredTransform = transform
         let audioOut = audio.compactMap { _ in
             composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         }

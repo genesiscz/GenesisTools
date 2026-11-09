@@ -199,7 +199,8 @@ final class TransitionStills: @unchecked Sendable {
 
     private static func generator(_ asset: AVAsset, maximumSize: CGSize) -> AVAssetImageGenerator {
         let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = false
+        // Upright, as the composition plays the live side (its track takes the movie's turn).
+        generator.appliesPreferredTrackTransform = true
         generator.maximumSize = maximumSize
         // Exactly the frame on screen at the time, the one the clip itself shows there. Any tolerance lets the
         // generator answer with an earlier key frame: 0.25 s gave the incoming still from the CUT part before the clip
