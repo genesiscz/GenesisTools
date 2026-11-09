@@ -101,7 +101,7 @@ export function clickGroupsOf(project: EditProject, options: { gapSeconds?: numb
 
     const round = (us: number) => Math.round(us / 1000) / 1000;
     const gapMs = options.gapSeconds === undefined ? CLICK_GROUP_GAP_MS : options.gapSeconds * 1000;
-    return groupClicks(readCursorTrack(track), gapMs).map((group) => {
+    return groupClicks(readCursorTrack(track), { gapMs }).map((group) => {
         const played = group.flatMap((click) => {
             const plays = outputTimeOf(project, Math.round(click.ms * 1000));
             return plays === undefined ? [] : [round(plays)];

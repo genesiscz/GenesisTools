@@ -858,7 +858,8 @@ describe("edit project (edit.json)", () => {
         // show the fast start of the ease out, a snap. Ending it at 5.5 s puts the whole ease out in the cut.
         let project = applyOp(wholeProject(source), { op: "cut", from: 5, to: 7 });
         project = applyOp(project, { op: "zoom", from: 2, to: 5.2, scale: 1.5 });
-        project = applyOp(project, { op: "zoom", from: 7.5, to: 9, scale: 1.5 });
+        // The zoom after the cut plays 1.5 s after it: too far to link with, so the first one eases out.
+        project = applyOp(project, { op: "zoom", from: 8.5, to: 9.5, scale: 1.5 });
         const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
         const snaps = checkProject(project, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut");
         expect(snaps).toHaveLength(1);
@@ -867,6 +868,93 @@ describe("edit project (edit.json)", () => {
         expect(snaps[0]?.action?.ops).toEqual([{ op: "retime", id: project.zooms[0]?.id, to: 5.5 }]);
         const fixed = applyOp(project, { op: "retime", id: project.zooms[0]?.id ?? "", to: 5.5 });
         expect(checkProject(fixed, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut")).toEqual([]);
+    });
+
+    describe("played time: the renderer's ramps and links", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 30_000_000, width: 1920, height: 1080 };
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const comingIn = (project: projectOps.EditProject) =>
+            checkProject(project, facts).filter((issue) => issue.kind === "text-animation-too-long");
+
+        test("check names a text still coming in when it ends, in the time the viewer sees", () => {
+            // A 1 s text that types over 3 s never shows its last words; one that types in 0.5 s leaves 0.5 s to read.
+            const slow = applyOp(wholeProject(source), {
+                op: "text",
+                from: 1,
+                to: 2,
+                text: "Typing the address",
+                animate: { kind: "typewriter", ms: 3000 },
+            });
+            const id = slow.texts?.[0]?.id ?? "";
+            const issues = comingIn(slow);
+            expect(issues).toHaveLength(1);
+            expect(issues[0]).toMatchObject({ severity: "check", at: 1, target: { list: "texts" } });
+            expect(issues[0]?.action?.ops).toEqual([{ op: "setText", id, animate: { kind: "typewriter", ms: 600 } }]);
+            const fixed = applyOp(slow, { op: "setText", id, animate: { kind: "typewriter", ms: 600 } });
+            expect(comingIn(fixed)).toEqual([]);
+            const quick = applyOp(wholeProject(source), {
+                op: "text",
+                from: 1,
+                to: 2,
+                text: "Typing the address",
+                animate: { kind: "typewriter", ms: 500 },
+            });
+            expect(comingIn(quick)).toEqual([]);
+
+            // 4 s of the movie at 4x play 1 s: a 900 ms way in leaves 0.1 s.
+            let sped = applyOp(wholeProject(source), { op: "speed", from: 1, to: 5, factor: 4 });
+            sped = applyOp(sped, { op: "text", from: 1, to: 5, text: "Fast", animate: { kind: "slideUp", ms: 900 } });
+            expect(comingIn(sped)).toHaveLength(1);
+            expect(comingIn(sped)[0]?.message).toContain("plays for 1 s");
+        });
+
+        test("zooms whose played gap is shorter than one ease out and one ease in are linked, across a cut too", () => {
+            let project = applyOp(wholeProject(source), { op: "zoom", from: 2, to: 5, scale: 2 });
+            project = applyOp(project, { op: "zoom", from: 10, to: 13, scale: 2 });
+            const [first, second] = project.zooms;
+            expect(projectOps.zoomsLinked(project, first, second)).toBe(false);
+            const cut = applyOp(project, { op: "cut", from: 5, to: 10 });
+            expect(projectOps.zoomsLinked(cut, cut.zooms[0], cut.zooms[1])).toBe(true);
+            expect(projectOps.zoomsLinked(cut, cut.zooms[1], cut.zooms[0])).toBe(false);
+            // A canvas zoom never links with a picture zoom: each kind has its own view.
+            const canvas = { ...cut.zooms[1], target: "canvas" as const };
+            expect(projectOps.zoomsLinked(cut, cut.zooms[0], canvas)).toBe(false);
+        });
+
+        test("check names no ease out at a cut for a zoom linked to the next one, because the view holds or glides on", () => {
+            // 2-5 s and 5.3-8 s with 4.8-6 s cut touch in what plays. Alone, the first one eases out 0.25 s before the cut.
+            const first = { op: "zoom", from: 2, to: 5, scale: 2, focus: { x: 0.3, y: 0.3 } } as const;
+            const cutOp = { op: "cut", from: 4.8, to: 6 } as const;
+            const easesAtCut = (project: projectOps.EditProject) =>
+                checkProject(project, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut");
+            const alone = applyOp(applyOp(wholeProject(source), first), cutOp);
+            expect(easesAtCut(alone).map((issue) => issue.message)).toEqual([
+                expect.stringContaining("starts its ease out 0.25 s before the cut at 4.8 s"),
+            ]);
+
+            for (const focus of [
+                { x: 0.3, y: 0.3 },
+                { x: 0.7, y: 0.7 },
+            ]) {
+                let linked = applyOp(wholeProject(source), first);
+                linked = applyOp(linked, { op: "zoom", from: 5.3, to: 8, scale: 2, focus });
+                expect(easesAtCut(applyOp(linked, cutOp))).toEqual([]);
+            }
+        });
+
+        test("auto zoom joins clicks that play under 3 s apart after a cut, and zooms on no click that is cut", () => {
+            const samples = [
+                { ms: 5000, x: 0.3, y: 0.3, click: "left" },
+                { ms: 8000, x: 0.9, y: 0.9, click: "left" },
+                { ms: 14000, x: 0.5, y: 0.5, click: "left" },
+            ];
+            const cut = applyOp(wholeProject(source), { op: "cut", from: 6.8, to: 13.2 });
+            expect(autoZoom(cut, samples).zooms.map((zoom) => [zoom.startUs, zoom.endUs])).toEqual([
+                [4_400_000, 15_600_000],
+            ]);
+            // Without the cut the clicks play 3 s and 6 s apart: three zooms, as before.
+            expect(autoZoom(wholeProject(source), samples).zooms).toHaveLength(3);
+        });
     });
 
     test("a voiceover on the intro or end card plays from the card's start, and the export lays each clip as the golden file says", () => {

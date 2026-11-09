@@ -146,6 +146,7 @@ export const clicksSchema = z.object({
     color: hexColor.default("#FFD60A"),
     /** The disc's largest radius, as a fraction of the output height. */
     radius: z.number().min(0.005).max(0.2).default(0.03),
+    /** How long a disc grows and fades, in the movie as it plays (a sped-up part does not shorten it); a cut ends it. */
     durationMs: z.number().int().min(100).max(3000).default(450),
     /** A soft tick at each recorded click in the sound; absent is off. */
     sound: z.boolean().optional(),
@@ -293,8 +294,9 @@ export const redactionSchema = z.object({
     exclude: z.array(boxSchema).optional(),
     // R5 5 redaction edges
     /**
-     * A spotlight's dim fades in and out over this many ms (at most a third of its length); 0 is a hard cut, absent is
-     * 200. The hiding styles never fade: they cover fully from their first frame to their last.
+     * A spotlight's dim fades in and out over this many ms of the movie as it plays (at most a third of the time it
+     * plays); 0 is a hard cut, absent is 200. The hiding styles never fade: they cover fully from their first frame to
+     * their last.
      */
     fadeMs: z.number().int().min(0).max(2000).optional(),
     /** A pixelate block's side in source pixels (2 to 256); absent is 1.8 % of the picture's height, at least 8. */
@@ -454,7 +456,8 @@ export const SHAPE_APPEARS = ["draw", "fade", "none"] as const;
  * An arrow, a box or a circle over the SOURCE picture (so it moves with a zoom, like a hidden part) from `startUs` to
  * `endUs`. An arrow runs from (x1, y1) to its head at (x2, y2); a box or circle fills the rectangle between the two
  * points. `width` is the line's thickness as a fraction of the picture's short side. It draws itself on over 0.3 s
- * and fades out over 0.2 s.
+ * and fades out over 0.2 s, in the movie as it plays: a sped-up part does not shorten them, and a shape whose start
+ * was cut draws itself on from its first shown frame.
  */
 export const shapeSchema = z.object({
     id: z.string(),
@@ -713,6 +716,35 @@ export function clipOutputUs(clip: EditClip): number {
 
 export function outputDurationUs(project: EditProject): number {
     return project.clips.reduce((sum, clip) => sum + clipOutputUs(clip), 0);
+}
+
+/**
+ * The output stretches that play the source range `fromUs`..`toUs`: one per kept clip it overlaps, at the clip's speed.
+ * A range that was cut plays nowhere. The Swift twin is TimelineMap.outputSpans.
+ */
+export function outputSpansOf(
+    project: EditProject,
+    fromUs: number,
+    toUs: number
+): Array<{ fromUs: number; toUs: number }> {
+    const spans: Array<{ fromUs: number; toUs: number }> = [];
+    let start = 0;
+
+    for (const clip of project.clips) {
+        const from = Math.max(fromUs, clip.fromUs);
+        const to = Math.min(toUs, clip.toUs);
+
+        if (to > from) {
+            spans.push({
+                fromUs: start + Math.round((from - clip.fromUs) / clip.speed),
+                toUs: start + Math.round((to - clip.fromUs) / clip.speed),
+            });
+        }
+
+        start += clipOutputUs(clip);
+    }
+
+    return spans;
 }
 
 /** The output time of a source time, or undefined when that moment was cut. */
@@ -1376,37 +1408,85 @@ export function readCursorTrack(path: string | undefined): CursorSample[] {
 /** Clicks closer than this are one group: one auto zoom, one row of a movie's clickGroups(). */
 export const CLICK_GROUP_GAP_MS = 3000;
 
-/** The recorded clicks in time order, in groups: a click less than `gapMs` after the one before joins its group. */
-export function groupClicks(samples: readonly CursorSample[], gapMs = CLICK_GROUP_GAP_MS): CursorSample[][] {
+/**
+ * The recorded clicks in time order, in groups: a click less than `gapMs` after the one before joins its group. With
+ * `playedMs` (a click's ms to the output ms it plays at, undefined when it was cut) the gap is the one the viewer sees
+ * and a cut click is left out; without it, the gap is the recording's own.
+ */
+export function groupClicks(
+    samples: readonly CursorSample[],
+    options: { gapMs?: number; playedMs?: (ms: number) => number | undefined } = {}
+): CursorSample[][] {
+    const gapMs = options.gapMs ?? CLICK_GROUP_GAP_MS;
     const groups: CursorSample[][] = [];
+    let lastMs = 0;
 
     for (const click of samples.filter((sample) => sample.click)) {
+        const ms = options.playedMs ? options.playedMs(click.ms) : click.ms;
+
+        if (ms === undefined) {
+            continue;
+        }
+
         const group = groups.at(-1);
 
-        if (group && click.ms - (group.at(-1)?.ms ?? 0) < gapMs) {
+        if (group && ms - lastMs < gapMs) {
             group.push(click);
         } else {
             groups.push([click]);
         }
+
+        lastMs = ms;
     }
 
     return groups;
 }
 
 /**
- * Zooms on the recorded clicks, as the window's Auto zoom does: clicks under 3 s apart are one zoom from 0.6 s before
- * the first to 1.6 s after the last, following the cursor. It replaces the zooms an earlier auto zoom made (mode
- * `follow`) and keeps the manual ones; a group that would overlap a manual zoom is left out. No clicks is an error,
- * and nothing changes.
+ * Whether two zooms next to each other in play order are linked, the rule of the window's renderer (ZoomCurve.linked
+ * in TimelineMap.swift): both zoom the picture or both the canvas, the second starts to play after the first, and less
+ * time plays between the first one's last kept moment and the second one's first than one ease out and one ease in
+ * take. The view then glides from one zoom to the other and never shows the whole frame between them, across a cut too.
+ */
+export function zoomsLinked(project: EditProject, first: EditZoom, second: EditZoom): boolean {
+    if ((first.target === "canvas") !== (second.target === "canvas")) {
+        return false;
+    }
+
+    const firstSpans = outputSpansOf(project, first.startUs, first.endUs);
+    const firstStart = firstSpans[0]?.fromUs;
+    const firstEnd = firstSpans.at(-1)?.toUs;
+    const secondStart = outputSpansOf(project, second.startUs, second.endUs)[0]?.fromUs;
+
+    if (firstStart === undefined || firstEnd === undefined || secondStart === undefined) {
+        return false;
+    }
+
+    const later = secondStart > firstStart || (secondStart === firstStart && second.startUs > first.startUs);
+    return later && secondStart - firstEnd < (first.easeOutMs + second.easeInMs) * 1000;
+}
+
+/**
+ * Zooms on the recorded clicks, as the window's Auto zoom does: clicks that play under 3 s apart (a cut between them
+ * brings them closer) are one zoom from 0.6 s before the first to 1.6 s after the last, following the cursor, and a
+ * click in a cut part gets none. It replaces the zooms an earlier auto zoom made (mode `follow`) and keeps the manual
+ * ones; a group that would overlap a manual zoom is left out. No clicks that play is an error, and nothing changes.
  */
 export function autoZoom(project: EditProject, samples: readonly CursorSample[], scale = 1.6): EditProject {
-    const groups = groupClicks(samples);
+    const groups = groupClicks(samples, {
+        playedMs: (ms) => {
+            const outUs = outputTimeOf(project, ms * 1000);
+            return outUs === undefined ? undefined : outUs / 1000;
+        },
+    });
 
     if (groups.length === 0) {
         throw new RangeError(
             samples.length === 0
                 ? "this movie has no cursor track, so there are no clicks to zoom on; the zooms are unchanged"
-                : "the cursor track has no clicks to zoom on; the zooms are unchanged"
+                : samples.some((sample) => sample.click)
+                  ? "every click of the cursor track is in a cut part, so there is nothing to zoom on; the zooms are unchanged"
+                  : "the cursor track has no clicks to zoom on; the zooms are unchanged"
         );
     }
 

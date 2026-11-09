@@ -27,7 +27,7 @@ export const TEXT_ANIMATIONS = ["fade", "typewriter", "slideUp"] as const;
 
 export const textAnimateSchema = z.object({
     kind: z.enum(TEXT_ANIMATIONS),
-    /** How long the way in takes. */
+    /** How long the way in takes, in the movie as it plays: a sped-up part does not shorten it. */
     ms: z.number().int().min(100).max(5000).default(600),
 });
 export type EditTextAnimate = z.infer<typeof textAnimateSchema>;

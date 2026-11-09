@@ -5,8 +5,10 @@ import {
     type EditProject,
     type EditTextNote,
     outputDurationUs,
+    outputSpansOf,
     outputTimeOf,
     type TEXT_ALIGNS,
+    zoomsLinked,
 } from "./project";
 import { layoutText } from "./text-metrics";
 
@@ -108,6 +110,33 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             });
         }
     }
+
+    // A text's way in runs in played time (the renderer's TextMotion): one still coming in when less than the shortest
+    // readable time is left is never read whole. A text too short to read at all is the issue above.
+    for (const note of project.texts ?? []) {
+        const played = playedUs(project, note.startUs, note.endUs);
+        const wayInUs = (note.animate?.ms ?? 0) * 1000;
+
+        if (!note.animate || played < SHORTEST_READABLE_US || wayInUs <= played - SHORTEST_READABLE_US) {
+            continue;
+        }
+
+        const fitsMs = Math.floor((played - SHORTEST_READABLE_US) / 100_000) * 100;
+        const animate = { kind: note.animate.kind, ms: fitsMs };
+        issues.push({
+            severity: "check",
+            kind: "text-animation-too-long",
+            item: `text ${note.id}`,
+            message: `The text "${note.text}" takes ${seconds(wayInUs)} s to come in (${note.animate.kind}) but plays for ${seconds(played)} s, so the viewer has under ${seconds(SHORTEST_READABLE_US)} s to read it whole`,
+            at: seconds(note.startUs),
+            target: { list: "texts", id: note.id },
+            ...(fitsMs >= 100 && {
+                fix: `movie.apply([{ op: "setText", id: "${note.id}", animate: { kind: "${animate.kind}", ms: ${fitsMs} } }])`,
+                action: { label: "Come In Faster", ops: [{ op: "setText", id: note.id, animate }] },
+            }),
+        });
+    }
+
     for (const part of project.redactions ?? []) {
         if (part.follow && !facts.hasCursorTrack) {
             issues.push({
@@ -593,18 +622,23 @@ function cutEdgesOf(project: EditProject): { ends: number[]; starts: number[] } 
 /**
  * A zoom that runs into a cut but starts its ease out before it: the frames between the start of the ease out and the
  * cut show the view starting to leave, and the cut then jumps from that half-way view. Ending the zoom one ease out
- * after the cut puts the whole ease out inside the cut.
+ * after the cut puts the whole ease out inside the cut. The ease runs on the renderer's zoom clock (ZoomCurve.clockUs
+ * in TimelineMap.swift): a kept part as long as it plays, a cut part as long as it was recorded. A zoom linked to the
+ * zoom after it has no ease out: the view holds, or glides on across the cut, so nothing jumps there.
  */
 function zoomEaseAtCutIssues(project: EditProject): EditIssue[] {
     const issues: EditIssue[] = [];
     const ends = cutEdgesOf(project).ends;
     const seconds = (us: number) => Math.round(us / 1000) / 1000;
+    const clockUs = (fromUs: number, toUs: number) =>
+        playedUs(project, fromUs, toUs) + (toUs - fromUs) - keptUs(project, fromUs, toUs);
+    const linked = zoomsLinkedToNext(project);
 
     for (const zoom of project.zooms) {
         const easeUs = zoom.easeOutMs * 1000;
-        const cut = ends.find((end) => end > zoom.endUs - easeUs && end < zoom.endUs);
+        const cut = ends.find((end) => end > zoom.startUs && end < zoom.endUs && clockUs(end, zoom.endUs) < easeUs);
 
-        if (cut === undefined || easeUs <= 0) {
+        if (cut === undefined || easeUs <= 0 || linked.has(zoom.id)) {
             continue;
         }
 
@@ -613,7 +647,7 @@ function zoomEaseAtCutIssues(project: EditProject): EditIssue[] {
             severity: "check",
             kind: "zoom-eases-out-at-cut",
             item: `zoom ${zoom.id}`,
-            message: `The zoom at ${tenths(zoom.startUs)} s starts its ease out ${seconds(cut - (zoom.endUs - easeUs))} s before the cut at ${seconds(cut)} s, so its last frames before the cut start to zoom out and the cut jumps from there`,
+            message: `The zoom at ${tenths(zoom.startUs)} s starts its ease out ${seconds(easeUs - clockUs(cut, zoom.endUs))} s before the cut at ${seconds(cut)} s, so its last frames before the cut start to zoom out and the cut jumps from there`,
             fix: `movie.retime({ id: "${zoom.id}", to: ${to} })`,
             at: tenths(cut),
             target: { list: "zooms", id: zoom.id },
@@ -622,6 +656,31 @@ function zoomEaseAtCutIssues(project: EditProject): EditIssue[] {
     }
 
     return issues;
+}
+
+/** The ids of the zooms linked to the zoom that plays after them, paired per target in play order as ZoomCurve does. */
+function zoomsLinkedToNext(project: EditProject): Set<string> {
+    const linked = new Set<string>();
+
+    for (const canvas of [false, true]) {
+        const ordered = project.zooms
+            .filter((zoom) => (zoom.target === "canvas") === canvas)
+            .flatMap((zoom) => {
+                const startOut = outputSpansOf(project, zoom.startUs, zoom.endUs)[0]?.fromUs;
+                return startOut === undefined ? [] : [{ zoom, startOut }];
+            })
+            .sort((a, b) => a.startOut - b.startOut || a.zoom.startUs - b.zoom.startUs);
+
+        for (const [index, { zoom }] of ordered.entries()) {
+            const next = ordered[index + 1];
+
+            if (next && zoomsLinked(project, zoom, next.zoom)) {
+                linked.add(zoom.id);
+            }
+        }
+    }
+
+    return linked;
 }
 
 /**
