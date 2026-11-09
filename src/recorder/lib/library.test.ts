@@ -17,6 +17,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
+import { analysisCachePath } from "@genesiscz/utils/recording-editor/analysis-cache";
 import type { MovieEvent } from "@genesiscz/utils/recording-editor/events";
 import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { RecorderControl, type RecorderMethod, type StopAnswer } from "@genesiscz/utils/screen-recorder/control";
@@ -35,7 +36,7 @@ import {
 } from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
-import { eventsOut, privateData } from "./fx-analysis";
+import { eventsOut, findOnScreenOf, privateData, screenTextEverySeconds } from "./fx-analysis";
 import {
     describeLiveEntries,
     editorOpenStatePath,
@@ -356,6 +357,69 @@ function screenFolder(ranges?: Array<{ fromUs: number; toUs: number; displayId: 
 }
 
 // The editor's Find tab decodes these hits (RecorderEditTests.swift), so it reads what find-screen prints.
+describe("find-screen on a movie recording", () => {
+    // A movie recording keeps no frames, so the Find tab and find-screen read the movie's screen text the way the Hide
+    // tab and findText do: screenTextOf's Vision read, cached once per movie. The cache is seeded, so no Vision runs.
+    function movieRecording() {
+        const folder = mkdtempSync(join(tmpdir(), "gt-screen-movie-"));
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({ ...screenSearch.recording.manifest, frames: [] })
+        );
+        const video = join(folder, "screen.mp4");
+        const bytes = Buffer.alloc(64 * 1024);
+        bytes.write("gt-screen-movie-find", 0);
+        writeFileSync(video, bytes);
+        const durationUs = 6_000_000;
+        const line = { text: "Notification sound", x: 0, y: 0.19, width: 0.06, height: 0.02 };
+        const cache = analysisCachePath(video, "screen-text");
+        mkdirSync(dirname(cache), { recursive: true });
+        writeFileSync(
+            cache,
+            SafeJSON.stringify({
+                key: `every=${screenTextEverySeconds(durationUs)},editor-time,pts`,
+                data: [
+                    {
+                        atUs: 0,
+                        untilUs: 1_000_000,
+                        lines: [line, { text: "Inbox", x: 0.5, y: 0.5, width: 0.1, height: 0.02 }],
+                    },
+                    { atUs: 1_000_000, untilUs: 2_000_000, lines: [line] },
+                    {
+                        atUs: 2_000_000,
+                        untilUs: 3_000_000,
+                        lines: [{ text: "Settings", x: 0.2, y: 0.3, width: 0.1, height: 0.02 }],
+                    },
+                ],
+            })
+        );
+        return { folder, project: wholeProject({ video, durationUs, width: 1920, height: 1080 }) };
+    }
+
+    it("answers from the movie's screen text, with the boxes, ops and a run over the frames that keep the line", async () => {
+        const { folder, project } = movieRecording();
+        const hits = await findOnScreenOf(folder, async () => project, "notification");
+
+        expect(hits.map((hit) => [hit.sec, hit.untilSec, hit.shown, hit.file, hit.lines])).toEqual([
+            [0, 1, true, undefined, ["Notification sound"]],
+            [1, 2, true, undefined, ["Notification sound"]],
+        ]);
+        expect(hits[0].boxes).toEqual([
+            { text: "Notification sound", x: 0, y: 0.19, width: 0.06, height: 0.02, untilSec: 2 },
+        ]);
+        const [first] = screenHitsWithOps(hits, 6);
+        expect(first.ops.hide[0]).toMatchObject({ op: "redact", from: 0, to: 2 });
+        expect(first.ops.cut).toHaveLength(1);
+        expect(await findOnScreenOf(folder, async () => project, "notification", { limit: 1 })).toHaveLength(1);
+        expect(await findOnScreenOf(folder, async () => project, "   ")).toEqual([]);
+    });
+
+    it("reads a plain movie, which has no recording folder", async () => {
+        const { project } = movieRecording();
+        expect((await findOnScreenOf(undefined, async () => project, "inbox")).map((hit) => hit.sec)).toEqual([0]);
+    });
+});
+
 describe("text on the screen", () => {
     for (const ending of ["run", "moved", "display", "gap"] as const) {
         it(`extends a line's hide and mark through consecutive frames: ${ending}`, () => {

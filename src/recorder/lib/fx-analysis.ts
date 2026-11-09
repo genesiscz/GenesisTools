@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { foldText } from "@genesiscz/utils/macos/ocr-boxes";
 import { recognizeTextBoxesQueued } from "@genesiscz/utils/macos/ocr-queue";
 import {
     type AnalysisCacheRequest,
@@ -78,7 +79,7 @@ import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { exportAs, exportProgressPrinter, openProject, readTranscriptSegments } from "./edit";
 import { boxInProxy, proxyCanvas, readDisplayPlan } from "./proxy";
-import { displaySizes, frameShows, frameTexts } from "./screen-search";
+import { displaySizes, extendBoxRuns, findOnScreen, frameShows, frameTexts, type ScreenHit } from "./screen-search";
 
 const { log } = logger.scoped("recorder-fx-analysis");
 
@@ -436,6 +437,55 @@ export async function screenTextOf(
         },
     });
     return { frames, source: "movie", cached: !read };
+}
+
+/**
+ * find-screen, the REPL's findOnScreen and the editor's Find tab: where a text was on the screen, oldest first. A frames
+ * recording or a meeting answers from its frames' OCR (screen-search.ts); a movie recording and a plain movie (no
+ * `folder`) answer from screenTextOf, the read findText and the Hide tab make, so the first search of a movie reads
+ * its screen once with Vision and later ones read the cache. A folder without recording.json is screen-search's to refuse.
+ */
+export async function findOnScreenOf(
+    folder: string | undefined,
+    movie: () => Promise<EditProject>,
+    query: string,
+    options: { limit?: number } = {}
+): Promise<ScreenHit[]> {
+    const manifest = folder ? readRecordingManifest(folder) : undefined;
+
+    if (folder && (!manifest || manifest.frames.length > 0)) {
+        return findOnScreen(folder, query, options);
+    }
+
+    const wanted = foldText(query);
+
+    if (!wanted) {
+        return [];
+    }
+
+    const project = await movie();
+    const { frames } = await screenTextOf(project);
+    const hits: ScreenHit[] = [];
+
+    for (const frame of [...frames].sort((a, b) => a.atUs - b.atUs)) {
+        const lines = frame.lines.filter((line) => foldText(line.text).includes(wanted));
+
+        if (lines.length === 0) {
+            continue;
+        }
+
+        // The read's lines are already placed over the movie picture, which shows every moment.
+        hits.push({
+            sec: frame.atUs / 1_000_000,
+            untilSec: frame.untilUs / 1_000_000,
+            lines: lines.map((line) => line.text),
+            shown: true,
+            boxes: lines.map(({ text, x, y, width, height }) => ({ text, x, y, width, height })),
+        });
+    }
+
+    log.debug({ video: project.source.video, query, hits: hits.length }, "find-screen read the movie's screen text");
+    return extendBoxRuns(hits, options.limit ?? 50);
 }
 
 /** Frames a second around a hit's edges and while it moves: a scrolling line is placed every 0.2 s. */

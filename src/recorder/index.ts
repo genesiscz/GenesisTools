@@ -42,6 +42,7 @@ import {
     stepDisplaySwitch,
 } from "./lib/frames-movie";
 import { framesDoneLine, framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "./lib/frames-recording";
+import { findOnScreenOf } from "./lib/fx-analysis";
 import { importMovie, parseImportMarker } from "./lib/import";
 import {
     alreadyInState,
@@ -69,7 +70,6 @@ import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay, parseDisp
 import { copyRecording, revealRecording, trashRecordings } from "./lib/quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
 import { screenHitsWithOps } from "./lib/screen-ops";
-import { findOnScreen } from "./lib/screen-search";
 import { hostCloseEditor, hostOpenEditor } from "./lib/service-client";
 import {
     checkTargetOnScreen,
@@ -1707,7 +1707,9 @@ async function movieSeconds(folder: string): Promise<number | undefined> {
 
 program
     .command("find-screen")
-    .description("Where a text was on the screen of a frames recording or a meeting (OCR), at source seconds")
+    .description(
+        "Where a text was on the screen, at source seconds: a frames recording or a meeting from its OCR, a movie from its screen text (the first search reads it once, which can take minutes)"
+    )
     .argument("<recording>", "a library id, `last`, a meeting id or a recording folder")
     .argument("<text>", "the text to look for (case and accents ignored)")
     .option("--limit <n>", "at most this many frames", "50")
@@ -1715,7 +1717,9 @@ program
     .action(async (value: string, text: string, flags: { limit?: string; json?: boolean }) => {
         try {
             const folder = resolveRecording(value);
-            const hits = findOnScreen(folder, text, { limit: Number(flags.limit ?? 50) });
+            const hits = await findOnScreenOf(folder, async () => (await openProject(folder)).project, text, {
+                limit: Number(flags.limit ?? 50),
+            });
 
             if (flags.json) {
                 out.result(screenHitsWithOps(hits, await movieSeconds(folder)));

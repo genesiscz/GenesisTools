@@ -47,7 +47,8 @@ export interface ScreenHit {
      */
     untilSec: number;
     displayId?: number;
-    file: string;
+    /** The frame file; absent for a movie recording, whose text is read off the movie itself. */
+    file?: string;
     /** The OCR lines of the frame that hold the query. */
     lines: string[];
     /** The proxy movie shows this display then (always true without a display plan). */
@@ -284,8 +285,15 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
 
     // Oldest first, so --limit keeps the earliest moments: a frame the plan shows twice has a hit per showing, and
     // a later frame can play between them. The file breaks a tie, so the order never depends on the frame list.
-    hits.sort((a, b) => a.sec - b.sec || a.file.localeCompare(b.file));
+    hits.sort((a, b) => a.sec - b.sec || (a.file ?? "").localeCompare(b.file ?? ""));
+    return extendBoxRuns(hits, limit);
+}
 
+/**
+ * The first `limit` hits (oldest first), each box running on while the same line stays in the same place in the
+ * next hits: its untilSec is where that run ends, so hiding it covers the whole time the line shows.
+ */
+export function extendBoxRuns(hits: ScreenHit[], limit: number): ScreenHit[] {
     // Compare every later box to the starting box: no cumulative drift. OCR may jitter by 0.2% of the proxy
     // picture in x, y, width or height (inside the hide/mark padding); the full line text must be identical.
     // A missing line, an intervening frame or a proxy display switch ends the run, even if it returns later.

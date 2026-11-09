@@ -112,7 +112,9 @@ tools recorder find-screen <recording> <text>    # where a text was on the scree
                                                  # Hide This Text (or a box's eye on the preview) blurs them, Mark It
                                                  # draws a box round them, Cut This Moment cuts the frame's time;
                                                  # --json (and the REPL's findOnScreen) names those ops per hit:
-                                                 # ops.hide[i] and ops.mark[i] for boxes[i], ops.cut, for apply
+                                                 # ops.hide[i] and ops.mark[i] for boxes[i], ops.cut, for apply;
+                                                 # a movie recording reads its screen text as findText does (the
+                                                 # first search reads it once with Vision, which can take minutes)
 tools recorder words <recording> [--at T]       # each transcript line's words as cut-words splits and times them
 tools recorder cut-words <recording> --at T --words "you know" [--occurrence N] [--dry-run]  # cut words out of the
                                                  # line at T: every place, or with --occurrence only the Nth
