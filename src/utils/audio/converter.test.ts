@@ -156,7 +156,9 @@ function onsetSeconds(samples: Float32Array): number {
 }
 
 function decodeMono16k(path: string): Float32Array {
-    const proc = Bun.spawnSync(["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", "16000", "-f", "f32le", "-"]);
+    const proc = Bun.spawnSync(["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", "16000", "-f", "f32le", "-"], {
+        env: process.env,
+    });
     const bytes = proc.stdout;
     return new Float32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 4));
 }
@@ -178,32 +180,35 @@ describe("the transcription input keeps the movie clock and hears the asked trac
         beforeAll(() => {
             dir = mkdtempSync(join(tmpdir(), "gt-late-audio-"));
             movie = join(dir, "late-audio.mp4");
-            const made = Bun.spawnSync([
-                "ffmpeg",
-                "-v",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-                "color=c=black:s=64x64:d=2",
-                "-itsoffset",
-                "0.5",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=f=440:r=48000:d=1",
-                "-map",
-                "0:v",
-                "-map",
-                "1:a",
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                movie,
-            ]);
+            const made = Bun.spawnSync(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=64x64:d=2",
+                    "-itsoffset",
+                    "0.5",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=f=440:r=48000:d=1",
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "1:a",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    movie,
+                ],
+                { env: process.env }
+            );
             expect(made.exitCode).toBe(0);
         });
 
