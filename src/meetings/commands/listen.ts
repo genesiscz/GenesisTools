@@ -10,7 +10,7 @@ import {
     MeetingsConfigStore,
     resolveDictionary,
 } from "@genesiscz/utils/meetings/config";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type DecisionActor, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { type ChoiceRow, choiceChip, choiceSelect, heardMark } from "@genesiscz/utils/prompts/clack/choice-select";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
@@ -19,6 +19,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
 import { clipPlayer, cutClip, playClip } from "../lib/audio";
+import { callerActor } from "../lib/decision-journal";
 import { type ListenSettings, questionClip, writeQuestionClips } from "../lib/listen-clips";
 import {
     type AskedQuestion,
@@ -273,6 +274,7 @@ interface ListenOptions {
     item?: string;
     answer?: string;
     comment?: string;
+    reason?: string;
     subscribeAnswers?: boolean;
     follow?: boolean;
     fromStart?: boolean;
@@ -396,6 +398,11 @@ class TerminalAdapter implements ListenAdapter {
             return;
         }
 
+        if (note.kind === "not-undone") {
+            ui.warn(`${note.label} keeps its answer: ${note.reason}`);
+            return;
+        }
+
         ui.ok(`${note.decided} decided; ${note.open} open questions stay, marked in ${TOOL} transcript ${meeting.id}.`);
 
         if (note.reason === "budget" && note.open > 0) {
@@ -415,11 +422,15 @@ interface AdapterContext {
     settings: MeetingsConfig;
 }
 
-/** The adapter the session asks through, the budget it gets, and whether it joins a round already running. */
+/**
+ * The adapter the session asks through, the budget it gets, whether it joins a round already running, and who decides:
+ * the person in the terminal, or whoever runs `--answer` (an agent relaying a person, or a person at a command).
+ */
 interface AdapterChoice {
     adapter: ListenAdapter;
     budget: number;
     joinRunningRound?: boolean;
+    actor: DecisionActor;
 }
 
 const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promise<AdapterChoice | undefined>> = {
@@ -431,7 +442,7 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
 
         const answer = { answer: opts.answer, ...(opts.comment ? { comment: opts.comment } : {}) };
         const adapter = new GivenAnswerAdapter(answer, (line, tone) => (tone === "ok" ? ui.ok(line) : ui.dim(line)));
-        return { adapter, budget: 1, joinRunningRound: true };
+        return { adapter, budget: 1, joinRunningRound: true, actor: callerActor() };
     },
     terminal: async ({ store, meeting, opened, first, settings }) => {
         if (!isInteractive()) {
@@ -479,7 +490,7 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
             padSec,
             listen,
         });
-        return { adapter, budget: listen.roundCap };
+        return { adapter, budget: listen.roundCap, actor: { kind: "listen" } };
     },
 };
 
@@ -559,6 +570,8 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             minPriority: settings.global.playback.listen.minPriority,
             listenBelow: settings.global.suggest.listenBelow,
             ...(chosen.joinRunningRound ? { joinRunningRound: true } : {}),
+            actor: chosen.actor,
+            ...(opts.reason ? { reason: opts.reason } : {}),
             split: {
                 transcript: async () => (await opened.meeting()).transcript,
                 micShare: async () => (await opened.energy()).share,
@@ -576,6 +589,20 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             process.off("exit", onExit);
             process.off("SIGINT", onSigint);
         }
+
+        // `--answer --json`: the decision journal entry of the answer, for the agent that relayed it.
+        if (opts.json && opts.answer !== undefined) {
+            const entry = session.applied().at(-1);
+
+            if (!entry) {
+                fail(
+                    `${opts.item} was decided elsewhere meanwhile; nothing was answered (${TOOL} journal ${meeting.id})`
+                );
+                return;
+            }
+
+            out.result(SafeJSON.stringify(entry, null, 2));
+        }
     } catch (err) {
         fail(errorText(err));
     }
@@ -591,6 +618,7 @@ export function registerListenCommand(program: Command): void {
         .option("--item <Q12|id>", "only this question: its number as listen shows it (Q12), or its item id")
         .option("--answer <text>", `answer --item without listening ("${NONE_OF_THESE}" rejects what it decides)`)
         .option("--comment <text>", "with --answer: a note kept on the question")
+        .option("--reason <text>", "why: kept in the decision journal with each answer")
         .option(
             "--subscribe-answers",
             "for an agent: print each answer as one JSON line while the person answers; exit when the round ends"
@@ -608,6 +636,9 @@ export function registerListenCommand(program: Command): void {
             "--clip-out <dir>",
             "cut each open question's clip (only --item's with it) into <dir>/<Q12>.wav as listen plays it; plays nothing and changes nothing"
         )
-        .option("--json", "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, toneAtSec }]")
+        .option(
+            "--json",
+            "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, toneAtSec }]; with --answer: print the decision journal entry"
+        )
         .action(listen);
 }
