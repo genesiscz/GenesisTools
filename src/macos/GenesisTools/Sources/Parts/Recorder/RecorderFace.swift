@@ -237,6 +237,11 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         window.delegate = self
         let monitor = EditorKeys.install(model: model, window: window)
         open[ObjectIdentifier(window)] = (window, model, monitor)
+        model.onTitleChange = { [weak self, weak window] title in
+            guard let self, let window else { return }
+            window.title = title
+            self.writeOpenState(front: window.isKeyWindow ? window : nil)
+        }
         if wanted {
             NSApp.setActivationPolicy(.regular)
             focus(window)

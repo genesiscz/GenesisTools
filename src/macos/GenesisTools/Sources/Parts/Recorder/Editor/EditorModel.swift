@@ -128,6 +128,12 @@ final class EditorModel {
     /// The transcript cache beside the movie, watched so a transcription made outside the window (the REPL's
     /// `movie.transcript({ refresh: true })`, `tools transcribe -o`) or a deleted file reaches the captions.
     @ObservationIgnored let transcriptWatch: FileWatch
+    /// The recording's manifest: recording.json is the title's truth, and only a file watch sees every rename route
+    /// (the library, the REPL, and the CLI, which writes the file with no service involved).
+    @ObservationIgnored let titleWatch: FileWatch
+    /// Runs with the new title after a rename rewrote recording.json; the editor window shows it.
+    @ObservationIgnored var onTitleChange: ((String) -> Void)?
+    @ObservationIgnored private var shownTitle = ""
     @ObservationIgnored var transcriptReload: DispatchWorkItem?
     private(set) var reviewComments: [ReviewComment] = []
     /// The comment whose popover is open over the marks lane.
@@ -204,6 +210,8 @@ final class EditorModel {
         commentsStore = ReviewCommentsStore(video: project.source.video)
         reviewComments = commentsStore.comments
         transcriptWatch = FileWatch(url: CaptionTrack.cacheURL(video: project.source.video))
+        titleWatch = FileWatch(url: URL(fileURLWithPath: project.source.video).deletingLastPathComponent()
+            .appendingPathComponent("recording.json"))
         displayPlan = DisplayPlan.read(video: project.source.video)
         asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
         player.actionAtItemEnd = .pause
@@ -223,6 +231,9 @@ final class EditorModel {
         commentsStore.watch()
         transcriptWatch.onChange = { [weak self] in self?.transcriptWritten() }
         transcriptWatch.start()
+        shownTitle = title
+        titleWatch.onChange = { [weak self] in self?.titleWritten() }
+        titleWatch.start()
         let video = URL(fileURLWithPath: project.source.video)
         filmstrip.load(video: video, durationUs: project.source.durationUs)
         waveform.load(video: video)
@@ -236,6 +247,13 @@ final class EditorModel {
 
     /// The recording's title from its manifest (the name the library shows), else its folder's name, else the file's.
     var title: String { Self.readTitle(video: project.source.video) }
+
+    private func titleWritten() {
+        let now = title
+        guard now != shownTitle else { return }
+        shownTitle = now
+        onTitleChange?(now)
+    }
 
     static func readTitle(video: String) -> String {
         let url = URL(fileURLWithPath: video)
@@ -1734,6 +1752,7 @@ final class EditorModel {
         store.stopWatching()
         commentsStore.stopWatching()
         transcriptWatch.stop()
+        titleWatch.stop()
         transcriptReload?.cancel()
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
