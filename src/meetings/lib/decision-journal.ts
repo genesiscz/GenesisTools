@@ -22,6 +22,7 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { prepareFindings } from "./add-findings";
 import { ANSWER_LOG_FILE, type AnswerEvent, appendAnswerEvent, appendAnswerEvents, roundRunning } from "./answer-log";
 import {
+    type CommentAction,
     type Decided,
     type DecisionAction,
     type DecisionSkip,
@@ -67,8 +68,10 @@ export {
     SKIP_NEEDS,
 } from "./decision-actions";
 
-type JournalActionKind = JournalAction["kind"];
-type ActionOf<K extends JournalActionKind> = Extract<JournalAction, { kind: K }>;
+/** The actions that change the record; a `comment` entry is history only (`note`). */
+type RecordAction = Exclude<JournalAction, { kind: "comment" }>;
+type JournalActionKind = RecordAction["kind"];
+type ActionOf<K extends JournalActionKind> = Extract<RecordAction, { kind: K }>;
 
 export type MicShare = (fromSec: number, toSec: number) => number | undefined;
 
@@ -1073,14 +1076,49 @@ export class DecisionJournal {
         return this.run(request.meeting, request.action, request, false);
     }
 
-    /** Undoes the entry `token` names, or only `items` of it. Refused (`item-changed`) when a later decision changed one. */
+    /**
+     * Undoes the entry `token` names, or only `items` of it. Refused (`item-changed`) when a later decision changed one,
+     * and for comments sent to the listening agent: it has them.
+     */
     async revert(request: RevertRequest): Promise<Decided> {
-        const action: JournalAction = {
+        const target = this.entries(request.meeting).find((entry) => entry.token === request.token);
+
+        if (target?.action.kind === "comment") {
+            throw new Error(
+                `${request.token} sent comments to the listening agent; a sent comment cannot be taken back.`
+            );
+        }
+
+        const action: RecordAction = {
             kind: "revert",
             token: request.token,
             ...(request.items ? { items: request.items } : {}),
         };
         return this.run(request.meeting, action, request, true);
+    }
+
+    /**
+     * An entry that changes nothing in the record, so the history shows it (comments sent to the listening agent,
+     * G63). Appended alone: no record write, answer log line or ledger line.
+     */
+    note(request: { meeting: string; action: CommentAction; actor: DecisionActor; reason?: string }): JournalEntry {
+        const entry: JournalEntry = {
+            token: randomUUID(),
+            at: (this.options.now?.() ?? new Date()).toISOString(),
+            meeting: request.meeting,
+            actor: request.actor,
+            ...(request.reason?.trim() ? { reason: request.reason.trim() } : {}),
+            action: request.action,
+            decided: [],
+            settled: [],
+            skipped: [],
+            changes: [],
+            labels: [],
+            corrections: [],
+        };
+        appendFileSync(this.path(request.meeting), `${SafeJSON.stringify(entry, { jsonl: true })}\n`, { mode: 0o600 });
+        log.debug({ meeting: entry.meeting, action: "comment", token: entry.token }, "comments journaled");
+        return entry;
     }
 
     /** A meeting's entries, newest first; `item`: only those that changed it. */
@@ -1149,7 +1187,7 @@ export class DecisionJournal {
 
     private async run(
         meeting: string,
-        action: JournalAction,
+        action: RecordAction,
         request: { actor: DecisionActor; reason?: string },
         save: boolean
     ): Promise<Decided> {
@@ -1273,7 +1311,7 @@ export class DecisionJournal {
         before: MeetingItem[],
         stamp: {
             token: string;
-            action: JournalAction;
+            action: RecordAction;
             request: { actor: DecisionActor; reason?: string };
             question?: string;
         }

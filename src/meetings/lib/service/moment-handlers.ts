@@ -65,6 +65,7 @@ export async function planMomentCall(
             target: params.target,
             opened,
             ...(params.padSec === undefined ? {} : { padSec: params.padSec }),
+            ...(params.lengthSec === undefined ? {} : { lengthSec: params.lengthSec }),
             ...(params.screen === undefined ? {} : { screen: params.screen }),
         });
     } catch (error) {
@@ -100,6 +101,7 @@ export async function clipMomentCall(
             target: params.target,
             opened,
             ...(params.padSec === undefined ? {} : { padSec: params.padSec }),
+            ...(params.lengthSec === undefined ? {} : { lengthSec: params.lengthSec }),
             ...(params.screen === undefined ? {} : { screen: params.screen }),
             ...(deps.cut ? { cut: deps.cut } : {}),
             ...(deps.probe ? { probe: deps.probe } : {}),

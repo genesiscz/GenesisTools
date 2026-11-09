@@ -19,6 +19,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
 import { clipPlayer, cutClip, playClip } from "../lib/audio";
+import { MeetingComments } from "../lib/comments";
 import { callerActor } from "../lib/decision-journal";
 import { type ListenSettings, questionClip, writeQuestionClips } from "../lib/listen-clips";
 import {
@@ -250,7 +251,8 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
     const path = join(store.folder(meeting.id), ANSWER_LOG_FILE);
     const roundRunning = runningRound(readAnswerEvents(path)).length > 0;
 
-    if (!roundRunning && !opts.fromStart && openQuestions(meeting).length === 0) {
+    // A listener for comments waits for them even with no question open.
+    if (!roundRunning && !opts.fromStart && !opts.withComments && openQuestions(meeting).length === 0) {
         process.stderr.write(`No open questions in ${meeting.id} and no listen round running.\n`);
         return;
     }
@@ -262,13 +264,25 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
         return;
     }
 
-    process.exitCode = await subscribeAnswers({
-        path,
-        fromStart: opts.fromStart === true,
-        timeoutMs: minutes * 60_000,
-        write: (line) => out.print(`${line}\n`),
-        follow: opts.follow === true,
-    });
+    const write = (line: string): void => out.print(`${line}\n`);
+    // `--with-comments`: this process counts as a listener while it runs (a sender names it), and prints each comment.
+    const comments = opts.withComments ? MeetingComments.of(store, meeting.id) : undefined;
+    comments?.join({ pid: process.pid, actor: callerActor() });
+    const following = comments?.follow({ fromStart: opts.fromStart === true, write });
+
+    try {
+        process.exitCode = await subscribeAnswers({
+            path,
+            fromStart: opts.fromStart === true,
+            timeoutMs: minutes * 60_000,
+            write,
+            follow: opts.follow === true,
+            ...(comments ? { typed: true } : {}),
+        });
+    } finally {
+        following?.stop();
+        comments?.leave(process.pid);
+    }
 }
 
 interface ListenOptions {
@@ -277,6 +291,7 @@ interface ListenOptions {
     comment?: string;
     reason?: string;
     subscribeAnswers?: boolean;
+    withComments?: boolean;
     follow?: boolean;
     fromStart?: boolean;
     timeout?: string;
@@ -632,6 +647,10 @@ export function registerListenCommand(program: Command): void {
         .option(
             "--subscribe-answers",
             "for an agent: print each answer as one JSON line while the person answers; exit when the round ends"
+        )
+        .option(
+            "--with-comments",
+            'with --subscribe-answers: also print each comment the person sends from the window, one JSON line with type "comment" (every line then has a type)'
         )
         .option("--from-start", "with --subscribe-answers: print every earlier round first")
         .option(

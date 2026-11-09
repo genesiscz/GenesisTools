@@ -426,6 +426,8 @@ export interface MomentInput {
     listen: ListenSettings;
     /** Audio around an `around` span; else `listen.padSec`, else `DEFAULT_PAD_SEC`. */
     padSec?: number;
+    /** At most this long from the span's start (the window's "Clip 5s" on a selection: 5); the pad stays. */
+    lengthSec?: number;
 }
 
 function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment {
@@ -462,7 +464,11 @@ function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment 
 
 /** The Moment of one target. Throws a `MomentError` for a target the meeting does not have. Reads nothing. */
 export function planMoment(input: MomentInput & { target: MomentTarget }): Moment {
-    const span = targetSpan(input.record, input.target, linesOf(input.transcript));
+    const whole = targetSpan(input.record, input.target, linesOf(input.transcript));
+    const span =
+        input.lengthSec === undefined
+            ? whole
+            : { ...whole, toSec: Math.min(whole.toSec, whole.fromSec + input.lengthSec) };
     refuseTooLong(input.record, input.target, span, input.listen.longestClipSec);
     return momentOf(input, input.target, span);
 }
@@ -701,6 +707,8 @@ export interface OpenMomentOptions {
     record: MeetingRecord;
     target: MomentTarget;
     padSec?: number;
+    /** At most this long from the span's start (`MomentInput.lengthSec`). */
+    lengthSec?: number;
     screen?: boolean;
     /** The meeting already opened by the caller (a service that holds it, a test with its own source). */
     opened?: OpenedMeeting;
@@ -715,6 +723,7 @@ async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Prom
         listen: config.global.playback.listen,
         target: options.target,
         ...(options.padSec === undefined ? {} : { padSec: options.padSec }),
+        ...(options.lengthSec === undefined ? {} : { lengthSec: options.lengthSec }),
     });
 
     if (options.screen === false) {

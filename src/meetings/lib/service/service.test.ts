@@ -10,6 +10,7 @@ import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/
 import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
+import { MeetingComments } from "../comments";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
 import fixture from "./__fixtures__/meetings-protocol.json";
@@ -219,8 +220,11 @@ const fakeCut: NonNullable<MeetingsHandlerDeps["cut"]> = async (options) => {
     options.onProgress?.(0.5);
     writeFileSync(options.outPath, "RIFF");
 };
+/** The pid of a `listen --subscribe-answers --with-comments` the tests say runs; every other pid is gone. */
+const LISTENER_PID = 4343;
 const quietDeps: MeetingsHandlerDeps = {
     now: () => NOW,
+    listenerAlive: (pid) => pid === LISTENER_PID,
     ledger: () => undefined,
     readLedger: () => [],
     cut: fakeCut,
@@ -511,6 +515,81 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(none).toMatchObject({ code: "unplayable", data: { code: "unplayable", reason: "no-audio" } });
     });
 
+    test("comments: staged until sent, sent to the listeners with a journal entry and comment.sent, and never taken back", async () => {
+        const { client, store } = await ADAPTERS[kind](agentHello);
+        const heard: MeetingsEventMessage[] = [];
+        await client.subscribe({ meeting: REVIEW.id, events: ["comment.sent"] }, (event) => heard.push(event));
+        const selection = { kind: "selection" as const, from: { atSec: 2, line: 0 }, to: { atSec: 9, line: 1 } };
+        const staged = await client.call("comment.stage", {
+            meeting: REVIEW.id,
+            target: selection,
+            text: "The button is the checkout button",
+            quote: "The button moved",
+        });
+        await client.call("comment.stage", { meeting: REVIEW.id, target: { kind: "time", atSec: 4 }, text: "Drop it" });
+        const unstaged = await client.call("comment.unstage", { meeting: REVIEW.id, id: "c2" });
+        MeetingComments.of(store, REVIEW.id, { now: () => NOW }).join({ pid: LISTENER_PID, actor: { kind: "listen" } });
+        const listed = await client.call("comment.list", { meeting: REVIEW.id });
+        const sent = await client.call("comment.send", { meeting: REVIEW.id, reason: "for the next round" });
+        const nothing = await client.call("comment.send", { meeting: REVIEW.id });
+
+        const agent = { kind: "agent" as const, harness: "claude-code", session: agentHello.session ?? null };
+        const listener = { pid: LISTENER_PID, at: NOW.toISOString(), actor: { kind: "listen" as const } };
+        expect(staged).toEqual({
+            id: "c1",
+            at: NOW.toISOString(),
+            target: selection,
+            text: "The button is the checkout button",
+            quote: "The button moved",
+            actor: agent,
+            state: "staged",
+        });
+        expect(unstaged).toMatchObject({ id: "c2", text: "Drop it", state: "staged" });
+        expect(listed.comments.map((comment) => comment.id)).toEqual(["c1"]);
+        expect(listed.listeners).toEqual([listener]);
+        expect(sent.sent).toEqual([{ ...staged, state: "sent", sentAt: NOW.toISOString(), token: sent.entry!.token }]);
+        expect(sent.listeners).toEqual([listener]);
+        expect(sent.entry).toMatchObject({
+            actor: agent,
+            reason: "for the next round",
+            action: {
+                kind: "comment",
+                comments: [{ id: "c1", target: selection, text: staged.text, quote: staged.quote }],
+            },
+            changes: [],
+        });
+        expect(nothing).toEqual({ sent: [], listeners: [listener] });
+        expect(heard).toEqual([
+            {
+                method: "comment.sent",
+                params: { meeting: REVIEW.id, token: sent.entry!.token, comments: sent.sent, listeners: [listener] },
+            },
+        ]);
+        expect((await client.call("journal.read", { meeting: REVIEW.id })).entries[0]?.action.kind).toBe("comment");
+        const again = await failure(client.call("comment.unstage", { meeting: REVIEW.id, id: "c1" }));
+        expect(again).toMatchObject({ code: "already-sent" });
+        const unknown = await failure(client.call("comment.send", { meeting: REVIEW.id, ids: ["c7"] }));
+        expect(unknown).toMatchObject({ code: "unknown-comment" });
+        const undo = await failure(client.call("decision.revert", { meeting: REVIEW.id, token: sent.entry!.token }));
+        expect(undo.message).toContain("a sent comment cannot be taken back");
+    });
+
+    test("Clip 5s: a Moment of a selection with lengthSec ends that long after the selection's start", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const selection = { kind: "selection" as const, from: { atSec: 2, line: 0 }, to: { atSec: 9, line: 1 } };
+        const whole = await client.call("moment.plan", { meeting: REVIEW.id, target: selection, padSec: 0 });
+        const clip = await client.call("moment.plan", {
+            meeting: REVIEW.id,
+            target: selection,
+            padSec: 0,
+            lengthSec: 5,
+        });
+
+        expect(whole.moment).toMatchObject({ fromSec: 2 });
+        expect(whole.moment!.toSec).toBeGreaterThan(7);
+        expect(clip.moment).toMatchObject({ fromSec: 2, toSec: 7, startSec: 2, endSec: 7 });
+    });
+
     test("the timeline reads: line ends, speakers, screen, waveform; and the overview", async () => {
         const { client } = await ADAPTERS[kind]();
         const transcript = await client.call("meeting.transcript", { ref: REVIEW.id });
@@ -788,7 +867,7 @@ interface Example {
 
 /** Every example of the fixture, from a live service on a scratch store over raw sockets. */
 async function captureExamples(): Promise<Example[]> {
-    const { service } = await startService();
+    const { service, store } = await startService();
     const examples: Example[] = [];
     const ask = async (
         connection: Awaited<ReturnType<typeof rawConnection>>,
@@ -844,8 +923,8 @@ async function captureExamples(): Promise<Example[]> {
     await ask(
         window,
         SUBSCRIBE,
-        { meeting: REVIEW.id, events: ["decision.applied", "decision.reverted"] },
-        "The window hears every decision on the open meeting, with its journal entry."
+        { meeting: REVIEW.id, events: ["decision.applied", "decision.reverted", "comment.sent"] },
+        "The window hears every decision on the open meeting, with its journal entry, and each send of its comments."
     );
     await ask(
         agent,
@@ -922,7 +1001,27 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "config.read", { path: "global.playback.listen.longestClipSec" });
     await ask(window, "config.set", { path: "global.playback.listen.longestClipSec", value: 25 });
     await ask(window, "config.unset", { path: "global.playback.listen.longestClipSec" }, "Back to its default.");
-    for (const method of ["decision.applied", "decision.reverted"]) {
+    const selection = { kind: "selection", from: { atSec: 2, line: 0 }, to: { atSec: 9, line: 1 } };
+    await ask(
+        window,
+        "moment.plan",
+        { meeting: REVIEW.id, target: selection, lengthSec: 5 },
+        "Clip 5s: the selection's Moment, 5 s from its start."
+    );
+    await ask(
+        window,
+        "comment.stage",
+        { meeting: REVIEW.id, target: selection, text: "The button is the checkout button", quote: "The button moved" },
+        "A comment on the selected words, for the listening agent."
+    );
+    await ask(window, "comment.stage", { meeting: REVIEW.id, target: { kind: "time", atSec: 4 }, text: "Drop it" });
+    await ask(window, "comment.unstage", { meeting: REVIEW.id, id: "c2" }, "Taken back before it was sent.");
+    MeetingComments.of(store, REVIEW.id, { now: () => NOW }).join({ pid: LISTENER_PID, actor: { kind: "listen" } });
+    await ask(window, "comment.list", { meeting: REVIEW.id }, "Who listens now: a send names them, or keeps them.");
+    await ask(window, "comment.send", { meeting: REVIEW.id }, "Every staged comment; the journal keeps the entry.");
+    await ask(window, "comment.unstage", { meeting: REVIEW.id, id: "c1" }, "A sent comment: already-sent.");
+    await ask(window, "comment.send", { meeting: REVIEW.id, ids: ["c7"] }, "No such comment: unknown-comment.");
+    for (const method of ["decision.applied", "decision.reverted", "comment.sent"]) {
         const heard = window.lines.find((line) => line.method === method);
         examples.push({ method, direction: "service→client", ...(heard ? { notification: heard } : {}) });
     }
@@ -1039,6 +1138,8 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
             [
                 "already-decided",
                 "unplayable",
+                "unknown-comment",
+                "already-sent",
                 "code-mismatch",
                 "meeting-not-found",
                 "meeting-ref",

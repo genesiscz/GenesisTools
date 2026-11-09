@@ -5,6 +5,7 @@ import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/
 import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SpeakerHint, SpeakerLeave } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
+import { commentListenerSchema, meetingCommentSchema } from "../comment-schema";
 import { decisionActionSchema, journalEntrySchema, skipSchema } from "../decision-actions";
 import { MOMENT_ERROR_CODES, MOMENT_STATE_CODES, momentSchema, momentTargetSchema } from "../moment-schema";
 import type { MeetingsOverview } from "../overview";
@@ -271,6 +272,8 @@ const momentParams = z
         padSec: z.number().min(0).max(60).optional(),
         /** False skips the screen frames at the spot. */
         screen: z.boolean().optional(),
+        /** At most this long from the span's start (the window's "Clip 5s" on a selection: 5); the pad stays. */
+        lengthSec: z.number().positive().max(600).optional(),
     })
     .strict();
 
@@ -480,6 +483,69 @@ const configUnset = defineMethod({
     effect: "reversible",
 });
 
+const commentStage = defineMethod({
+    name: "comment.stage",
+    params: z
+        .object({
+            meeting: meetingRef,
+            /** What the comment is on: the selected words (`selection`), or any Moment target. */
+            target: momentTargetSchema,
+            text: z.string().trim().min(1),
+            /** The selected words as the window shows them; the listening agent reads them with the comment. */
+            quote: z.string().trim().min(1).optional(),
+        })
+        .strict(),
+    result: meetingCommentSchema,
+    resultName: "MeetingComment",
+    doc: "Stages a comment for the agent that listens to the meeting, kept in the meeting's comments.ndjson until it is sent or unstaged (a closed window loses none). Its id is `c1`, `c2`, … in the order comments were staged.",
+    effect: "reversible",
+});
+
+const commentList = defineMethod({
+    name: "comment.list",
+    params: z.object({ meeting: meetingRef }).strict(),
+    result: z.object({
+        meeting: z.string(),
+        comments: z.array(meetingCommentSchema),
+        /** The `listen --subscribe-answers --with-comments` processes that run now: who a send reaches (G60). */
+        listeners: z.array(commentListenerSchema),
+    }),
+    resultName: "{ meeting, comments, listeners }",
+    doc: "The meeting's staged and sent comments, in the order they were staged, and who listens now.",
+    effect: "read",
+});
+
+const commentUnstage = defineMethod({
+    name: "comment.unstage",
+    params: z.object({ meeting: meetingRef, id: z.string().min(1) }).strict(),
+    result: meetingCommentSchema,
+    resultName: "MeetingComment",
+    doc: "Takes a staged comment back and answers it as it was. Refused with `unknown-comment`, or `already-sent` for a sent one (the listening agent has it).",
+    effect: "reversible",
+});
+
+const commentSend = defineMethod({
+    name: "comment.send",
+    params: z
+        .object({
+            meeting: meetingRef,
+            /** Only these staged comments; absent: every staged one. */
+            ids: z.array(z.string().min(1)).min(1).optional(),
+            reason: z.string().optional(),
+        })
+        .strict(),
+    result: z.object({
+        sent: z.array(meetingCommentSchema),
+        /** Who listened when they were sent; none: they wait in the file for the next listener with --from-start. */
+        listeners: z.array(commentListenerSchema),
+        /** The journal entry of the send (kind `comment`); absent when nothing was staged. */
+        entry: journalEntrySchema.optional(),
+    }),
+    resultName: "{ sent, listeners, entry? }",
+    doc: "Sends the staged comments to the listening agent: each `listen --subscribe-answers --with-comments` prints them, the journal keeps an entry of kind `comment` (it cannot be undone), and the subscribers hear `comment.sent`. Refused with `unknown-comment` or `already-sent` for an id it cannot send.",
+    effect: "destructive",
+});
+
 export const meetingsApi = defineApi({
     id: "meetings-service",
     global: "meetings",
@@ -507,6 +573,10 @@ export const meetingsApi = defineApi({
         configRead,
         configSet,
         configUnset,
+        commentStage,
+        commentList,
+        commentUnstage,
+        commentSend,
     ],
     notes: [
         "`subscribe { meeting?, events? }` (answered by the transport) starts the notifications; no events: all of them, no meeting: every meeting's.",
@@ -548,7 +618,7 @@ export const MEETING_PARTS = ["show", "transcript", "speakers", "timeline"] as c
  * The events a subscriber can name. A decision through the service tells `decision.applied` or `decision.reverted`
  * with its journal entry; a write by anyone else (the recorder, an import, a hand edit) tells `meeting.changed`.
  */
-export const MEETINGS_EVENTS = ["meeting.changed", "decision.applied", "decision.reverted"] as const;
+export const MEETINGS_EVENTS = ["meeting.changed", "decision.applied", "decision.reverted", "comment.sent"] as const;
 export type MeetingsEvent = (typeof MEETINGS_EVENTS)[number];
 
 export const subscribeParamsSchema = z.object({
@@ -566,6 +636,13 @@ export const NOTIFICATION_SCHEMAS = {
     "decision.applied": z.object({ meeting: z.string(), entry: journalEntrySchema }),
     /** An entry was undone (`token`), whole or in part: the revert's own entry. */
     "decision.reverted": z.object({ meeting: z.string(), token: z.string(), entry: journalEntrySchema }),
+    /** Comments went to the listening agent: the journal entry's token, the comments, and who listened (G61). */
+    "comment.sent": z.object({
+        meeting: z.string(),
+        token: z.string(),
+        comments: z.array(meetingCommentSchema),
+        listeners: z.array(commentListenerSchema),
+    }),
 } satisfies Record<MeetingsEvent, z.ZodType>;
 export type MeetingsNotification<E extends MeetingsEvent> = z.output<(typeof NOTIFICATION_SCHEMAS)[E]>;
 
@@ -595,6 +672,10 @@ export const MEETINGS_ERROR_CODES = [
     "already-decided",
     /** A Moment cannot be cut or the recording read: data `{ code, reason }`, reason a `moment.plan` code. */
     "unplayable",
+    /** No staged comment has that id. */
+    "unknown-comment",
+    /** The comment was sent: it cannot be unstaged or sent again. */
+    "already-sent",
     /** The first call on the connection was not `hello`. */
     "no-hello",
     /** Anything else: the message says what. */
