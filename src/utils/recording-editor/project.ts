@@ -57,7 +57,10 @@ import {
 import { outputTimeSchema, sourceTimeSchema, timeSchema, timeToUs } from "./plan";
 import {
     describeTextQuery,
+    type FractionBox,
     HIDE_UNITS,
+    type LineMatcher,
+    maskPrivate,
     PRIVATE_KINDS,
     PRIVATE_STYLES,
     type PrivateHit,
@@ -982,6 +985,78 @@ export function leakSourceKeys(
             )[0];
         return nearest ? [{ at, ...nearest }] : [];
     });
+}
+
+/** The edit's own overlay that draws a leak: a text (by its id) or the caption line (by its start, source seconds). */
+export type LeakOverlay = { kind: "text"; id: string } | { kind: "caption"; at: number };
+
+/**
+ * The edit's own overlay that draws a text verifyHidden read on the export from `fromUs` to `toUs` (SOURCE
+ * microseconds), so no redact op can hide it: the export draws texts and captions over the redacted picture. A text
+ * whose time meets the leak's and whose words hold its value (the same masked value, by `matcher`, the one the export
+ * was read with), else, with captions on, a caption line then that holds it (`captionLines`: the transcript's lines
+ * with their fixes, as transcriptLines gives them). Undefined when no overlay draws it, and when the source picture
+ * shows the same value then (a source hit of the same masked value), which a redact op does hide: with no frame and no
+ * zoom the export shows the source as it is, so there only a hit at the place it was read (`canvasBox`) counts.
+ */
+export function leakOverlay(
+    project: EditProject,
+    options: {
+        fromUs: number;
+        toUs: number;
+        masked: string;
+        matcher: LineMatcher;
+        captionLines?: ReadonlyArray<Pick<TranscriptLine, "from" | "to" | "text">>;
+        /** The leak's box on the export frame (fractions of the export's picture). */
+        canvasBox?: FractionBox;
+        sourceHits?: readonly PrivateHit[];
+    }
+): LeakOverlay | undefined {
+    const meets = (startUs: number, endUs: number, slackUs = 100_000) =>
+        startUs <= options.toUs + slackUs && endUs >= options.fromUs - slackUs;
+    // OCR reads each line on its own; a name broken over two lines reads as one in the whole text.
+    const draws = (text: string) =>
+        [text.replace(/\s*\n\s*/g, " "), ...text.split("\n")].some((line) =>
+            options.matcher(line).some((match) => maskPrivate(match.value) === options.masked)
+        );
+    const note = (project.texts ?? []).find((item) => meets(item.startUs, item.endUs) && draws(item.text));
+    const line = project.captions?.show
+        ? options.captionLines?.find(
+              (item) => meets(Math.round(item.from * 1_000_000), Math.round(item.to * 1_000_000)) && draws(item.text)
+          )
+        : undefined;
+    const overlay: LeakOverlay | undefined = note
+        ? { kind: "text", id: note.id }
+        : line
+          ? { kind: "caption", at: line.from }
+          : undefined;
+
+    if (!overlay) {
+        return undefined;
+    }
+
+    // The source's reads sit up to 300 ms off the export's, as leakSourceBox takes them.
+    const hitSlackUs = 300_000;
+    const zoomed = project.zooms.some((zoom) => zoom.startUs < options.toUs && zoom.endUs > options.fromUs);
+    const asIs = !project.frame && !zoomed;
+    const at = options.canvasBox;
+    const meetsBox = (box: FractionBox) =>
+        !at ||
+        (box.x < at.x + at.width && at.x < box.x + box.width && box.y < at.y + at.height && at.y < box.y + box.height);
+    const pictureShows = (options.sourceHits ?? []).some((hit) => {
+        if (hit.masked !== options.masked || !meets(hit.fromUs, hit.toUs, hitSlackUs)) {
+            return false;
+        }
+
+        if (!asIs) {
+            return true;
+        }
+
+        const keys = hit.keys.filter((key) => meets(key.atUs, key.atUs, hitSlackUs));
+        return (keys.length > 0 ? keys : [hit.box]).some(meetsBox);
+    });
+
+    return pictureShows ? undefined : overlay;
 }
 
 /**

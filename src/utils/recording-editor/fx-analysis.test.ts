@@ -28,18 +28,21 @@ import {
 import {
     applyOp,
     boundaryWindows,
+    captionsSchema,
     describeProject,
     editOpSchema,
     editProjectSchema,
     exportToOutputUs,
     hidingOf,
     leakFixOps,
+    leakOverlay,
     leakSourceBox,
     leakSourceKeys,
     type OpFacts,
     opPlacementWarnings,
     parseProject,
     sourceTimeOf,
+    transcriptLines,
     wholeProject,
 } from "./project";
 import {
@@ -929,6 +932,84 @@ describe("verifyHidden reads every frame at the edges and says how to fix a leak
         ]);
         const [k0, k1] = part?.track ?? [];
         expect(k0.y - k1.y).toBeCloseTo((k1.y - (part?.track?.[2].y ?? 0)) / 5, 3);
+    });
+});
+
+describe("verifyHidden: a leak the edit's own text or caption draws gets a note, not a redact op", () => {
+    const mail = "alice@example.com";
+    const masked = maskPrivate(mail);
+    const matcher = privateMatcher();
+    // Read on the export where the text sits (no frame, no zoom: the export box is also a place in the source).
+    const canvasBox = { x: 0.4, y: 0.1, width: 0.2, height: 0.04 };
+    const texted = applyOp(wholeProject(source), op({ op: "text", from: 2, to: 5, text: `Mail ${mail}` }));
+
+    test("a leak the edit's own text draws gets no redact op, because the renderer draws texts over the redactions", () => {
+        const id = texted.texts?.[0]?.id ?? "";
+        expect(leakOverlay(texted, { fromUs: 3_000_000, toUs: 3_500_000, masked, matcher, canvasBox })).toEqual({
+            kind: "text",
+            id,
+        });
+        // The source fallback alone places it at the export box: a redact op the renderer draws under the text.
+        const keys = [{ atUs: 3_000_000, ...canvasBox }];
+        const sourceKeys = leakSourceKeys(texted, { keys, label: "Email", masked, sourceHits: [] });
+        expect(
+            leakFixOps([{ label: "Email", source: { at: 3, until: 3.5 }, sourceKeys, sourceBox: canvasBox }])
+        ).toHaveLength(1);
+        // Marked as the text's (no source keys, no source box), it gets no op.
+        expect(
+            leakFixOps([{ label: "Email", source: { at: 3, until: 3.5 }, sourceKeys: [], sourceBox: null }])
+        ).toEqual([]);
+    });
+
+    test("a leak when no text shows, or of another value, is the source picture's and keeps its source box", () => {
+        expect(leakOverlay(texted, { fromUs: 6_000_000, toUs: 7_000_000, masked, matcher, canvasBox })).toBeUndefined();
+        const other = maskPrivate("bob@example.org");
+        expect(
+            leakOverlay(texted, { fromUs: 3_000_000, toUs: 3_500_000, masked: other, matcher, canvasBox })
+        ).toBeUndefined();
+        const unplaced = { fromUs: 6_000_000, toUs: 7_000_000, label: "Email", masked, sourceHits: [] };
+        expect(leakSourceBox(texted, { ...unplaced, canvasBox })).toEqual(canvasBox);
+    });
+
+    test("the same value in the source picture where it was read keeps its source op", () => {
+        const read: PrivateHit = {
+            id: "h1",
+            kind: "email",
+            label: "Email",
+            masked,
+            fromUs: 2_500_000,
+            toUs: 4_000_000,
+            box: canvasBox,
+            keys: [{ atUs: 2_500_000, ...canvasBox }],
+        };
+        const there = { fromUs: 3_000_000, toUs: 3_500_000, masked, matcher, canvasBox };
+        expect(leakOverlay(texted, { ...there, sourceHits: [read] })).toBeUndefined();
+        // Elsewhere in the picture (no frame, no zoom): the read at the text's place is the text's.
+        const elsewhere = { ...read, box: { x: 0.1, y: 0.8, width: 0.2, height: 0.04 } };
+        elsewhere.keys = [{ atUs: 2_500_000, ...elsewhere.box }];
+        expect(leakOverlay(texted, { ...there, sourceHits: [elsewhere] })?.kind).toBe("text");
+        // In a frame the two places cannot be compared: the picture's read keeps the op.
+        const framed = applyOp(texted, op({ op: "frame", aspect: "16:9" }));
+        expect(leakOverlay(framed, { ...there, sourceHits: [elsewhere] })).toBeUndefined();
+    });
+
+    test("a leak the caption line draws gets a note naming the line, with the transcript's fixes applied", () => {
+        const names = privateMatcher(["Alice Fictive"]);
+        const name = maskPrivate("alice fictive");
+        const raw = { segments: [{ text: "Hi Alice Fictive, welcome", start: 10, end: 13 }] };
+        // The captions op needs the transcript file on disk; the edit's captions setting is what leakOverlay reads.
+        const captioned = { ...wholeProject(source), captions: captionsSchema.parse({ show: true }) };
+        const at = { fromUs: 11_000_000, toUs: 12_000_000, masked: name, matcher: names, canvasBox };
+        expect(leakOverlay(captioned, { ...at, captionLines: transcriptLines(raw, captioned) })).toEqual({
+            kind: "caption",
+            at: 10,
+        });
+        // Captions off: the line is not drawn.
+        const off = { ...captioned, captions: captionsSchema.parse({ show: false }) };
+        expect(leakOverlay(off, { ...at, captionLines: transcriptLines(raw, off) })).toBeUndefined();
+        // A fix that took the name out: the caption no longer draws it.
+        const fixed = applyOp(captioned, op({ op: "fixLine", from: 10, text: "Hi there, welcome" }));
+        expect(leakOverlay(fixed, { ...at, captionLines: transcriptLines(raw, fixed) })).toBeUndefined();
     });
 });
 

@@ -49,7 +49,9 @@ import {
     type EditOp,
     type EditProject,
     exportToOutputUs,
+    type LeakOverlay,
     leakFixOps,
+    leakOverlay,
     leakSourceBox,
     leakSourceKeys,
     outputDurationUs,
@@ -57,6 +59,7 @@ import {
     readCursorTrack,
     sourceTimeOf,
     transcriptCachePath,
+    transcriptLines,
 } from "@genesiscz/utils/recording-editor/project";
 import { refineSceneTimes } from "@genesiscz/utils/recording-editor/scene-times";
 import {
@@ -1056,6 +1059,11 @@ export interface Leak {
     sourceBox: FractionBox | null;
     /** R8 4: its place in the SOURCE picture at each frame it was read (source seconds and fractions); fixOps follow it. */
     sourceKeys: Array<{ at: number; x: number; y: number; width: number; height: number }>;
+    /**
+     * The edit's own text (its id) or caption line (its start, source seconds) that draws it; absent when the picture
+     * shows it. The export draws texts and captions over every redact op, so such a leak gets a note, not a fix op.
+     */
+    overlay?: LeakOverlay;
 }
 
 /**
@@ -1201,7 +1209,8 @@ async function verifyExport(value: string, options: VerifyHiddenOptions, movie: 
     );
     // The export's own picture: a frame or a zoom can give it another shape than the source.
     const aspect = (info.displayWidth || info.width) / (info.displayHeight || info.height);
-    const leaks = textHits(frames, edgeFragments(matcher, values), { aspect, gapUs: 0 }).map((hit) => {
+    const hitMatcher = edgeFragments(matcher, values);
+    const leaks = textHits(frames, hitMatcher, { aspect, gapUs: 0 }).map((hit) => {
         const atUs = hit.keys[0]?.atUs ?? hit.fromUs;
         const from = exportToOutputUs(project, atUs);
         const to = exportToOutputUs(project, Math.min(hit.toUs, endUs));
@@ -1224,29 +1233,67 @@ async function verifyExport(value: string, options: VerifyHiddenOptions, movie: 
     });
     // R7 3: each leak's place in the source picture, from the source's own reads, and the redact ops that cover it.
     const sourceHits = leaks.some((leak) => leak.source) ? await trackedHits(project, matcher, { scan }) : [];
-    const placed: Leak[] = leaks.map(({ keys, ...leak }) => ({
-        ...leak,
-        // R8 4: its place in the source at every frame it was read, the track of its fix.
-        sourceKeys: leak.source
-            ? leakSourceKeys(project, { keys, label: leak.label, masked: leak.masked, sourceHits })
-            : [],
-        sourceBox: leak.source
-            ? leakSourceBox(project, {
+    // The caption lines the export draws (each with its fix), so a leak in one gets a note instead of a source op.
+    const captionLines =
+        project.captions?.show &&
+        leaks.some((leak) => leak.source) &&
+        existsSync(transcriptCachePath(project.source.video))
+            ? transcriptLines({ segments: readTranscriptSegments(project) }, project)
+            : [];
+    const placed: Leak[] = leaks.map(({ keys, ...leak }) => {
+        const overlay = leak.source
+            ? leakOverlay(project, {
                   fromUs: Math.round(leak.source.at * 1_000_000),
                   toUs: Math.round(leak.source.until * 1_000_000),
-                  label: leak.label,
                   masked: leak.masked,
+                  matcher: hitMatcher,
+                  captionLines,
                   canvasBox: leak.box,
                   sourceHits,
               })
-            : null,
-    }));
+            : undefined;
+
+        if (overlay) {
+            return { ...leak, overlay, sourceKeys: [], sourceBox: null };
+        }
+
+        return {
+            ...leak,
+            // R8 4: its place in the source at every frame it was read, the track of its fix.
+            sourceKeys: leak.source
+                ? leakSourceKeys(project, { keys, label: leak.label, masked: leak.masked, sourceHits })
+                : [],
+            sourceBox: leak.source
+                ? leakSourceBox(project, {
+                      fromUs: Math.round(leak.source.at * 1_000_000),
+                      toUs: Math.round(leak.source.until * 1_000_000),
+                      label: leak.label,
+                      masked: leak.masked,
+                      canvasBox: leak.box,
+                      sourceHits,
+                  })
+                : null,
+        };
+    });
     // R8 4: a leak with no place in the source gets no fix op (never a box over the whole frame), but a note; so does
-    // a leak inside an intro or end card (CLI-F4), so fixOps plus notes name every leak.
+    // a leak inside an intro or end card (CLI-F4) and one the edit's own text or caption draws, so fixOps plus notes
+    // name every leak.
     const notes = placed.flatMap((leak) => {
         if (!leak.source) {
             return [
                 `the leak at ${leak.at} to ${leak.until} s of the export is inside an intro or end card, which no redact op reaches: change the card's text (introCard() or endCard())`,
+            ];
+        }
+
+        if (leak.overlay?.kind === "text") {
+            return [
+                `the leak at ${leak.source.at} to ${leak.source.until} s (source) is in the edit's own text ${leak.overlay.id}, which the export draws over every redact op: change its words with a setText op or remove it with untext`,
+            ];
+        }
+
+        if (leak.overlay?.kind === "caption") {
+            return [
+                `the leak at ${leak.source.at} to ${leak.source.until} s (source) is in the caption line at ${leak.overlay.at} s, which the export draws over every redact op: change its words with replaceWords() or a fixLine op at ${leak.overlay.at} ("" hides the line), or turn captions off`,
             ];
         }
 
