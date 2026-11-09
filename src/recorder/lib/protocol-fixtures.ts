@@ -601,8 +601,9 @@ export interface EditorGolden {
 }
 
 /**
- * Three hits of a meeting's screen search (a shown line, a display the movie does not show, a line in the letterboxed
- * display), as screen-search.json held them on 2026-11-05; kept here so this fixture does not move with that one.
+ * Four hits of a meeting's screen search (a shown line, a display the movie does not show, a line in the letterboxed
+ * display), as screen-search.json held them on 2026-11-05; kept here so this fixture does not move with that one. The
+ * last is the first frame again, because the plan shows it a second time: one file, two moments.
  */
 const SCREEN_HITS: ScreenHit[] = [
     {
@@ -631,6 +632,15 @@ const SCREEN_HITS: ScreenHit[] = [
         lines: ["Tokén list"],
         shown: true,
         boxes: [{ text: "Tokén list", x: 0.2, y: 0.725, width: 0.25, height: 0.045 }],
+    },
+    {
+        sec: 14.5,
+        untilSec: 15,
+        displayId: 1,
+        file: "frames/0001.jpg",
+        lines: ["API token: sk-123"],
+        shown: true,
+        boxes: [{ text: "API token: sk-123", x: 0.1, y: 0.35, width: 0.4, height: 0.05 }],
     },
 ];
 

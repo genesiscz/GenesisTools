@@ -32,7 +32,9 @@ struct ScreenHit: Decodable, Equatable, Identifiable {
     /// these ops as they are and builds none itself.
     let ops: ScreenHitOps
 
-    var id: String { file }
+    /// A moment, not a frame: the plan can show one frame twice, and find-screen answers a hit per showing. The
+    /// showings of one file never overlap, so its file and time are unique and keep a row's identity across searches.
+    var id: String { "\(file)@\(sourceUs)" }
     var sourceUs: Int64 { Int64((sec * 1_000_000).rounded()) }
     var untilUs: Int64 { Int64((untilSec * 1_000_000).rounded()) }
 

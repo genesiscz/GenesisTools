@@ -282,15 +282,17 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
         }
     }
 
+    // Oldest first, so --limit keeps the earliest moments: a frame the plan shows twice has a hit per showing, and
+    // a later frame can play between them. The file breaks a tie, so the order never depends on the frame list.
+    hits.sort((a, b) => a.sec - b.sec || a.file.localeCompare(b.file));
+
     // Compare every later box to the starting box: no cumulative drift. OCR may jitter by 0.2% of the proxy
     // picture in x, y, width or height (inside the hide/mark padding); the full line text must be identical.
     // A missing line, an intervening frame or a proxy display switch ends the run, even if it returns later.
-    const chronological = [...hits].sort((a, b) => a.sec - b.sec);
-    for (const hit of hits.slice(0, limit)) {
-        const index = chronological.indexOf(hit);
+    for (const [index, hit] of hits.slice(0, limit).entries()) {
         for (const box of hit.boxes) {
             let end = hit.untilSec;
-            for (const later of chronological.slice(index + 1)) {
+            for (const later of hits.slice(index + 1)) {
                 if (later.displayId !== hit.displayId) {
                     continue;
                 }

@@ -479,6 +479,21 @@ describe("text on the screen", () => {
         ]);
     });
 
+    it("lists the moments oldest first, so --limit keeps the earliest, when the plan shows a frame twice", () => {
+        const back = screenFolder([
+            { fromUs: 0, toUs: 5_000_000, displayId: 1 },
+            { fromUs: 5_000_000, toUs: 7_000_000, displayId: 4 },
+            { fromUs: 7_000_000, toUs: 12_500_001, displayId: 1 },
+        ]);
+        const all = findOnScreen(back, "token");
+
+        expect(all.map((hit) => hit.sec)).toEqual([...all.map((hit) => hit.sec)].sort((a, b) => a - b));
+        expect(findOnScreen(back, "token", { limit: 2 }).map((hit) => [hit.file, hit.sec])).toEqual([
+            ["frames/0001.jpg", 0],
+            ["frames/0002.jpg", 5],
+        ]);
+    });
+
     it("lists a text of a display the plan never shows as not shown, without boxes", () => {
         const only1 = screenFolder([{ fromUs: 0, toUs: 12_500_001, displayId: 1 }]);
 
