@@ -135,6 +135,11 @@ final class MeetingDetailModel {
         }
     }
 
+    /// The transcript pane beside the rows shows: the transcript reads now if nothing read it yet.
+    func ensureTranscript() {
+        if case .idle = transcript { loadTranscript() } else if transcriptStale { readTranscript(quiet: true) }
+    }
+
     func reloadRecord() { readRecord(quiet: false) }
     func loadTranscript() { readTranscript(quiet: false) }
     func loadTimeline() { readTimeline(quiet: false) }

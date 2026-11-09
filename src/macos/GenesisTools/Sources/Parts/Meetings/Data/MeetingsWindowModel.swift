@@ -78,6 +78,9 @@ final class MeetingsWindowModel {
     private(set) var settings: Loadable<MeetingsSettings> = .idle
     private(set) var detail: MeetingDetailModel?
     var days: Int
+    /// The settings side panel is open in the meeting's trailing pane slot (it replaces the transcript pane there).
+    /// b-swift-settings-contacts adds its toggle and remembers it.
+    var sidePanelOpen = false
     /// The meeting audio that plays from a transcript time, shown and stopped by the bar under the window.
     var playback = MeetingsPlayback()
     private var overviewGeneration = 0

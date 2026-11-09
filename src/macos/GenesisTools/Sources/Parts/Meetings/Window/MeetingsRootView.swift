@@ -4,22 +4,34 @@ import SwiftUI
 struct MeetingsRootView: View {
     @Bindable var model: MeetingsWindowModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The playback dock's height: the columns keep that much room at their bottom (`meetingsDockInset`), so their
+    /// last rows scroll above the dock instead of under it.
+    @State private var dockHeight: CGFloat = 0
 
     var body: some View {
-        VStack(spacing: 0) {
-            panes
-            MeetingsPlayerBar(playback: model.playback,
-                              title: model.playback.meeting.flatMap { model.meeting($0)?.displayTitle })
-        }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.playback.state == .idle)
+        // The dock floats over the columns with a bottom inset (G-LAYOUT-1). As the second child of a VStack it took its
+        // height from the columns, so starting a Moment shrank the list under the pointer.
+        panes
+            .environment(\.meetingsDockInset, dockHeight)
+            .overlay(alignment: .bottom) {
+                ZStack(alignment: .bottom) {
+                    Color.clear.frame(height: 0)
+                    MeetingsPlayerBar(playback: model.playback,
+                                      title: model.playback.meeting.flatMap { model.meeting($0)?.displayTitle })
+                }
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { dockHeight = $0 }
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.playback.state == .idle)
     }
 
     private var panes: some View {
         NavigationSplitView {
             MeetingsSidebar(model: model)
+                .safeAreaPadding(.bottom, dockHeight)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } content: {
             MeetingsListPane(model: model)
+                .safeAreaPadding(.bottom, dockHeight)
                 .heightFromWindow()
                 .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 480)
         } detail: {
@@ -34,6 +46,19 @@ struct MeetingsRootView: View {
             .heightFromWindow()
         }
         // ⌘1 Needs you, ⌘2 All meetings and ⌘R Reload are View menu items (MeetingsMenu), so they work wherever focus is.
+    }
+}
+
+private struct MeetingsDockInsetKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    /// The playback dock's height over the window's bottom edge: a scrolling pane keeps that much room below its last
+    /// row (`.safeAreaPadding(.bottom, inset)`), so nothing it lists hides under the dock.
+    var meetingsDockInset: CGFloat {
+        get { self[MeetingsDockInsetKey.self] }
+        set { self[MeetingsDockInsetKey.self] = newValue }
     }
 }
 

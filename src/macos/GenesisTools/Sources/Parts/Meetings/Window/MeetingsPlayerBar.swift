@@ -16,6 +16,8 @@ struct MeetingsPlayerBar: View {
                     .padding(.horizontal, 14).padding(.vertical, 7)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // It floats over the columns (MeetingsRootView), so it carries its own bar material.
+            .background(.bar)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Audio")
             .accessibilityIdentifier("meetings.player")
