@@ -421,6 +421,75 @@ describe("smooth cursor and old files", () => {
     });
 });
 
+describe("a frames recording's hidden parts hold each frame's place", () => {
+    const shown = (atUs: number, untilUs: number, y?: number): ScreenTextFrame => ({
+        atUs,
+        untilUs,
+        lines: y === undefined ? [] : [{ text: "mail alice@example.com", x: 0.1, y, width: 0.3, height: 0.03 }],
+    });
+    /** The part, placed as the renderer places it (redactionBoxAt), covers the whole height of the line shown then. */
+    const covers = (part: FractionBox & { track?: readonly TrackKey[] }, atUs: number, y: number) => {
+        const box = redactionBoxAt(part, atUs);
+        return box.y <= y && box.y + box.height >= y + 0.03;
+    };
+    const partOf = (hit: PrivateHit) => ({ ...hit.box, track: hit.keys });
+
+    test("a scroll that comes to rest: the part jumps with each frame and stays on the last one", () => {
+        const frames = [
+            shown(0, 200_000),
+            shown(200_000, 400_000, 0.9),
+            shown(400_000, 600_000, 0.8),
+            shown(600_000, 10_000_000, 0.7),
+            shown(10_000_000, 12_000_000),
+        ];
+        const [hit, ...rest] = textHits(frames, privateMatcher(), { aspect, stills: true });
+        expect(rest).toEqual([]);
+        const part = partOf(hit);
+        expect(covers(part, hit.fromUs, 0.9)).toBe(true);
+        expect(covers(part, 300_000, 0.9)).toBe(true);
+        expect(covers(part, 500_000, 0.8)).toBe(true);
+        expect(covers(part, 700_000, 0.7)).toBe(true);
+        expect(covers(part, 3_000_000, 0.7)).toBe(true);
+        expect(covers(part, 9_900_000, 0.7)).toBe(true);
+    });
+
+    test("a read that jitters between two frames far apart does not drift off the text", () => {
+        const frames = [shown(0, 10_000_000, 0.5), shown(10_000_000, 600_000_000, 0.503)];
+        const [hit, ...rest] = textHits(frames, privateMatcher(), { aspect, stills: true });
+        expect(rest).toEqual([]);
+        const part = partOf(hit);
+        expect(covers(part, 5_000_000, 0.5)).toBe(true);
+        expect(covers(part, 300_000_000, 0.503)).toBe(true);
+        expect(covers(part, 599_000_000, 0.503)).toBe(true);
+    });
+
+    test("hideText's part over still frames covers the text of each frame", () => {
+        const hits = textHits(
+            [shown(2_000_000, 2_200_000, 0.9), shown(2_200_000, 2_400_000, 0.6)],
+            textMatcher({ text: "alice@example.com" }),
+            { aspect, stills: true }
+        );
+        const [part] =
+            applyOp(wholeProject(source), op({ op: "hideText", text: "alice@example.com" }), {
+                textHits: hits,
+            }).redactions ?? [];
+        expect(covers(part, 2_100_000, 0.9)).toBe(true);
+        expect(covers(part, 2_300_000, 0.6)).toBe(true);
+    });
+
+    test("without stills the keys stay the reads, and a hit that stands still keeps one key", () => {
+        const [moving] = textHits([shown(0, 1_000_000, 0.5), shown(1_000_000, 2_000_000, 0.6)], privateMatcher(), {
+            aspect,
+        });
+        expect(moving.keys.map((key) => key.atUs)).toEqual([0, 1_000_000]);
+        const [still] = textHits([shown(0, 1_000_000, 0.5), shown(1_000_000, 2_000_000, 0.5)], privateMatcher(), {
+            aspect,
+            stills: true,
+        });
+        expect(still.keys.map((key) => key.atUs)).toEqual([0]);
+    });
+});
+
 describe("tracked text, exclusions and events", () => {
     const frame = (ms: number, lines: ScreenTextFrame["lines"]): ScreenTextFrame => ({
         atUs: ms * 1000,

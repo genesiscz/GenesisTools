@@ -665,6 +665,42 @@ const sameBox = (a: FractionBox, b: FractionBox): boolean =>
     Math.abs(a.width - b.width) < 0.001 &&
     Math.abs(a.height - b.height) < 0.001;
 
+/**
+ * The keys of a hit read on still frames (each shown until the next): every read's place holds until 1 µs before the
+ * next read of another place, the first from `fromUs` and the last until `toUs`, so the renderer, which moves a part
+ * straight between keys and runs on past the last, places the part where the frame on screen shows the text. A hit
+ * whose reads all stand in one place keeps its keys (it is a still part).
+ */
+function steppedKeys(keys: readonly TrackKey[], span: { fromUs: number; toUs: number }): TrackKey[] {
+    if (keys.every((key) => sameBox(key, keys[0]))) {
+        return [...keys];
+    }
+
+    const out: TrackKey[] = [{ ...keys[0], atUs: Math.min(span.fromUs, keys[0].atUs) }];
+
+    for (const key of keys.slice(1)) {
+        const held = out[out.length - 1];
+
+        if (sameBox(held, key)) {
+            continue;
+        }
+
+        if (key.atUs - 1 > held.atUs) {
+            out.push({ ...held, atUs: key.atUs - 1 });
+        }
+
+        out.push(key);
+    }
+
+    const last = out[out.length - 1];
+
+    if (span.toUs > last.atUs) {
+        out.push({ ...last, atUs: span.toUs });
+    }
+
+    return out;
+}
+
 function hitId(kind: string, value: string, fromUs: number, box: FractionBox): string {
     const key = `${kind}|${value}|${Math.round(fromUs / 100_000)}|${box.x.toFixed(2)},${box.y.toFixed(2)}`;
     return `p${createHash("sha1").update(key).digest("hex").slice(0, 8)}`;
@@ -915,6 +951,11 @@ export function sweptBand(options: {
  * can miss a line OCR read on its neighbours). A hit starts half way between the last sample without it and the first
  * with it (at most 0.5 s early), and lasts until the sample after its last.
  *
+ * With `stills` (a frames recording: its proxy shows each frame unchanged until the next one), a hit holds each read's
+ * place until the next read and jumps there, and holds its first and last place to its start and end, so its part
+ * stands where the picture shows the text. The renderer moves a part straight from one key to the next and runs on past
+ * the last at the speed of the last two, which slid the part off a text that moved or jittered between two frames.
+ *
  * `aspect` is the picture's width over its height in pixels: every pad around a hit keeps the pixels it has on 16:9.
  */
 export function textHits(
@@ -926,12 +967,14 @@ export function textHits(
         maxShift = 0.35,
         exclude = [],
         motion,
+        stills = false,
     }: {
         aspect: number;
         gapUs?: number;
         maxShift?: number;
         exclude?: readonly FractionBox[];
         motion?: MotionModel;
+        stills?: boolean;
     }
 ): PrivateHit[] {
     interface Open {
@@ -1156,10 +1199,14 @@ export function textHits(
                     index === all.length - 1 ||
                     !(sameBox(all[index - 1], key) && sameBox(all[index + 1], key))
             );
-            const keys = (motion ? simplifyKeys(deduped) : deduped).map((key) => ({
+            const placed = (motion ? simplifyKeys(deduped) : deduped).map((key) => ({
                 atUs: key.atUs,
                 ...rounded(clipped(key)),
             }));
+            const keys =
+                stills && !motion
+                    ? steppedKeys(placed, { fromUs: Math.round(track.fromUs), toUs: Math.round(track.toUs) })
+                    : placed;
 
             // R8 2: the renderer runs a part on past its first and last key at their speed; a followed hit already has
             // keys for its whole motion, and running on from a sliver read at the edge to a whole line made a box of

@@ -696,9 +696,10 @@ export async function trackedHits(
     // The screen text is placed over the source movie (a frames recording's proxy canvas), so its pads take its shape.
     const aspect = project.source.width / project.source.height;
 
+    // The proxy shows each frame as a still until the next one, so a hit jumps with its frames instead of gliding.
     if (source === "frames") {
         options.onRead?.(coarse);
-        return textHits(coarse, matcher, { aspect, exclude });
+        return textHits(coarse, matcher, { aspect, exclude, stills: true });
     }
 
     const { steps, fps, grid } = await changeStepsOf(project);
