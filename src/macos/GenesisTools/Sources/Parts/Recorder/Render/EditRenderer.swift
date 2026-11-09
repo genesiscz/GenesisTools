@@ -837,7 +837,7 @@ struct EditRenderer {
         let stillSize = { TransitionStills.maximumSize(source: natural, picture: picture, zoomScale: zoom.largestZoomScale) }
         let stills = TransitionStills(asset: asset, maximumSize: stillSize())
         let videoComposition = AVMutableVideoComposition(asset: composition) { request in
-            var image = request.sourceImage
+            let image = request.sourceImage
             let extent = image.extent
             // R4 9 intro and end cards: the composition's time less the intro is the movie's output time.
             let outUs = Int64((request.compositionTime.seconds * 1_000_000).rounded()) - cardSpans.leadUs
@@ -851,6 +851,17 @@ struct EditRenderer {
             // A crossfade whose sides differ in canvas zoom or cover crop: the still goes through its own canvas below and
             // the two finished canvases blend; the live side is drawn here as if no transition ran.
             var ownCanvasStill: (mark: TransitionLook.Mark, still: CIImage)?
+            let drawOverlays = { (picture: CIImage) -> CIImage in
+                var drawnOn = picture
+                for drawn in look.shapes {
+                    drawnOn = Looks.drawShape(drawn.shape, drawn: drawn.drawn, opacity: drawn.opacity, on: drawnOn).cropped(to: extent)
+                }
+                if let clicks = look.clicks, !look.marks.isEmpty {
+                    drawnOn = Looks.drawClicks(look.marks, on: drawnOn, settings: clicks).cropped(to: extent)
+                }
+                return drawnOn
+            }
+            var overlaysDrawn = false
             if let mark = look.transition,
                mark.needsOwnCanvas(liveCanvasView: look.canvasView, liveCoverFocus: look.coverFocus, cover: look.frame?.fit == .cover),
                let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent, maximumSize: stillSize()) {
@@ -858,22 +869,29 @@ struct EditRenderer {
                 result = Looks.redact(look.redactions, on: image, spotlightFades: look.spotlightFades).cropped(to: extent)
                 result = RedactionTrack.leaveVisible(look.redactions, original: image, on: result).cropped(to: extent)
             } else if let mark = look.transition, let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent, maximumSize: stillSize()) {
-                // Each side is hidden by its own parts before the blend; only the spotlights dim the blended frame.
-                image = TransitionLook.compose(live: image, liveRedactions: look.redactions, still: still, mark: mark, liveView: view)
-                result = Looks.redact(look.redactions.filter { $0.style == .spotlight }, on: image,
-                                      spotlightFades: look.spotlightFades).cropped(to: extent)
+                // Each side is hidden by its own parts before the blend. The live side's spotlights, shapes and click
+                // rings go onto its own picture too, so a zoom or blur transition scales, wipes and blurs them with it.
+                let spotlights = look.redactions.filter { $0.style == .spotlight }
+                result = TransitionLook.compose(live: image, liveRedactions: look.redactions, still: still, mark: mark, liveView: view,
+                                                decorateLive: { live in
+                                                    drawOverlays(Looks.redact(spotlights, on: live, spotlightFades: look.spotlightFades)
+                                                        .cropped(to: extent))
+                                                })
+                overlaysDrawn = true
             } else {
                 result = Looks.redact(look.redactions, on: image, spotlightFades: look.spotlightFades).cropped(to: extent)
                 result = RedactionTrack.leaveVisible(look.redactions, original: image, on: result).cropped(to: extent) // fx B
             }
-            for drawn in look.shapes {
-                result = Looks.drawShape(drawn.shape, drawn: drawn.drawn, opacity: drawn.opacity, on: result).cropped(to: extent)
-            }
-            if let clicks = look.clicks, !look.marks.isEmpty {
-                result = Looks.drawClicks(look.marks, on: result, settings: clicks).cropped(to: extent)
+            if !overlaysDrawn {
+                result = drawOverlays(result)
             }
             // The cursor is its own layer: zoomed and framed like the picture, laid over the captions and plates last.
+            // In a transition it takes the live side's scale and blur, at full opacity.
             var cursor = look.cursor.map { Looks.cursorSprite($0, extent: extent).cropped(to: extent) }
+            if let mark = look.transition, ownCanvasStill == nil {
+                let side = TransitionLook.side(mark, live: true, extent: extent)
+                cursor = cursor.map { TransitionLook.applySide(side, toLayer: $0, extent: extent) }
+            }
             let toPictureBy = { (layer: CIImage, view: ZoomCurve.View) -> CIImage in
                 var image = layer
                 if view.scale > 1.0005 {

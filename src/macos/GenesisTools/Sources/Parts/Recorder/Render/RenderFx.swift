@@ -98,11 +98,13 @@ enum TransitionLook {
     /// source time, each before the blend. Round 3 (2026-11-08): the live side's parts were laid over the BLENDED frame,
     /// so the zoom transition's grown live picture showed the edges of a hidden block around its part, and the still's
     /// own picture under the live side's parts was hidden too. Spotlights are not hiding parts and stay for the caller.
+    /// `decorateLive` draws the live side's own overlays (spotlights, shapes, click rings) on its hidden picture before
+    /// the blend, so they scale, wipe and blur with that picture.
     static func compose(live: CIImage, liveRedactions: [EditProject.Redaction], still: CIImage, mark: Mark,
-                        liveView: ZoomCurve.View = .whole) -> CIImage {
+                        liveView: ZoomCurve.View = .whole, decorateLive: (CIImage) -> CIImage = { $0 }) -> CIImage {
         let extent = live.extent
         let framed = reframe(hidden(mark.otherRedactions, on: still, extent: extent), from: mark.otherView, to: liveView, extent: extent)
-        return blend(live: hidden(liveRedactions, on: live, extent: extent), still: framed, mark: mark)
+        return blend(live: decorateLive(hidden(liveRedactions, on: live, extent: extent)).cropped(to: extent), still: framed, mark: mark)
     }
 
     /// `picture` with the hiding parts of `parts` drawn (spotlights are left to the caller).
@@ -128,6 +130,44 @@ enum TransitionLook {
         return still.clampedToExtent().transformed(by: fill(own).concatenating(fill(live).inverted())).cropped(to: extent)
     }
 
+    /// How one side of a transition is drawn: its scale about the picture's centre and its blur (a Gaussian sigma in
+    /// pixels). `blend` and the live side's overlays (shapes, click rings, the cursor) read it, so the overlays scale and
+    /// blur with their own picture instead of sitting unscaled over the blended frame.
+    struct Side: Equatable {
+        var scale: Double = 1
+        var blur: Double = 0
+    }
+
+    /// The live side (the frame playing) or the other side (the still) of `mark`.
+    static func side(_ mark: Mark, live: Bool, extent: CGRect) -> Side {
+        let p = smooth(mark.progress)
+        switch mark.kind {
+        case .none, .crossfade:
+            return Side()
+        case .zoom:
+            // The outgoing side rushes toward the viewer, the incoming side settles from 1.4×, crossing at the join.
+            let outgoing = live != mark.incoming
+            return Side(scale: outgoing ? 1 + 0.6 * p : 1 + 0.4 * (1 - p))
+        case .blur:
+            // Both sides blur, most at the join.
+            return Side(blur: sin(.pi * mark.progress) * extent.height * 0.018)
+        }
+    }
+
+    /// An overlay layer (transparent around what it draws) given its side's scale and blur.
+    static func applySide(_ side: Side, toLayer layer: CIImage, extent: CGRect) -> CIImage {
+        var image = layer
+        if side.scale > 1.0001 {
+            image = image.transformed(by: CGAffineTransform(translationX: -extent.midX, y: -extent.midY)
+                .concatenating(CGAffineTransform(scaleX: side.scale, y: side.scale))
+                .concatenating(CGAffineTransform(translationX: extent.midX, y: extent.midY)))
+        }
+        if side.blur > 0.5 {
+            image = image.applyingGaussianBlur(sigma: side.blur)
+        }
+        return image.cropped(to: extent)
+    }
+
     static func blend(live: CIImage, still: CIImage, mark: Mark) -> CIImage {
         let extent = live.extent
         let outgoing = mark.incoming ? still : live
@@ -139,9 +179,8 @@ enum TransitionLook {
         case .crossfade:
             return dissolve(outgoing, incoming, p, extent: extent)
         case .zoom:
-            // The outgoing side rushes toward the viewer, the incoming side settles from 1.4×, crossing at the join.
-            let a = scaled(outgoing, by: 1 + 0.6 * p, extent: extent)
-            let b = scaled(incoming, by: 1 + 0.4 * (1 - p), extent: extent)
+            let a = scaled(outgoing, by: side(mark, live: !mark.incoming, extent: extent).scale, extent: extent)
+            let b = scaled(incoming, by: side(mark, live: mark.incoming, extent: extent).scale, extent: extent)
             return dissolve(a, b, p, extent: extent)
         case .blur:
             // A soft edge wipes from left to right while both sides blur, most at the join.
@@ -155,7 +194,7 @@ enum TransitionLook {
             let mask = (gradient.outputImage ?? CIImage(color: .white)).cropped(to: extent)
             let wiped = incoming.applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: outgoing, kCIInputMaskImageKey: mask])
                 .cropped(to: extent)
-            let sigma = sin(.pi * mark.progress) * extent.height * 0.018
+            let sigma = side(mark, live: true, extent: extent).blur
             guard sigma > 0.5 else { return wiped }
             return wiped.clampedToExtent().applyingGaussianBlur(sigma: sigma).cropped(to: extent)
         }
