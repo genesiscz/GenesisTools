@@ -210,8 +210,17 @@ final class CursorTrack: @unchecked Sendable {
         return sumW > 0 ? (sumX / sumW, sumY / sumW) : point(atMs: ms)
     }
 
+    /// The movie as it plays at one frame: the clips and the frame's output time. The keys plate, the hide after
+    /// standing still and the smooth cursor's fade measure their time on it, so a sped-up part does not shorten them
+    /// and a cut part takes no time (a press inside a cut shows no plate).
+    struct PlayedClock {
+        var placed: [TimelineMap.Placed]
+        var outUs: Int64
+    }
+
     /// 1 while the pointer moved within `hideAfterMs`, then down to 0 over 300 ms; back to 1 the moment it moves.
-    func visibility(atMs ms: Double, hideAfterMs: Int) -> Double {
+    /// With a clock, the stillness is the played time since the last move; without one, the recording's.
+    func visibility(atMs ms: Double, hideAfterMs: Int, clock: PlayedClock? = nil) -> Double {
         guard hideAfterMs > 0, !moveTimes.isEmpty else { return 1 }
         var low = 0, high = moveTimes.count
         while low < high {
@@ -221,20 +230,40 @@ final class CursorTrack: @unchecked Sendable {
         // A move row lands one sample after the motion starts; the next one counts from that sample.
         if low < moveTimes.count, moveTimes[low] - ms <= 16.7 { return 1 }
         guard low > 0 else { return 1 }
-        let still = ms - moveTimes[low - 1] - Double(hideAfterMs)
+        let lastMove = moveTimes[low - 1]
+        let stillMs = clock.map {
+            Double(TimelineMap.outputSpans(fromUs: Int64(lastMove * 1000), toUs: Int64(ms * 1000), placed: $0.placed)
+                .reduce(0) { $0 + $1.toUs - $1.fromUs }) / 1000
+        } ?? ms - lastMove
+        let still = stillMs - Double(hideAfterMs)
         return max(0, min(1, 1 - still / 300))
     }
 
     /// The shortcut showing at the time: the last press within `durationMs`, with its opacity (out over the last
-    /// 250 ms). A newer press replaces an older one at once.
-    func key(atMs ms: Double, durationMs: Int) -> (label: String, opacity: Double)? {
+    /// 250 ms). A newer press replaces an older one at once. With a clock, a press inside a cut never shows (as
+    /// shortcuts() and the timeline say) and its age is played time, so it holds its time in a sped-up part and over
+    /// a later cut (the plate is drawn over the picture, not on it).
+    func key(atMs ms: Double, durationMs: Int, clock: PlayedClock? = nil) -> (label: String, opacity: Double)? {
         var low = 0, high = keys.count
         while low < high {
             let mid = (low + high) / 2
             if keys[mid].ms <= ms { low = mid + 1 } else { high = mid }
         }
-        guard low > 0, let label = keys[low - 1].key else { return nil }
-        let age = ms - keys[low - 1].ms
+        var index = low - 1
+        var age: Double?
+        while index >= 0 {
+            guard let clock else {
+                age = ms - keys[index].ms
+                break
+            }
+            if let pressOut = TimelineMap.outputTime(ofSource: Int64(keys[index].ms * 1000), placed: clock.placed),
+               pressOut <= clock.outUs {
+                age = Double(clock.outUs - pressOut) / 1000
+                break
+            }
+            index -= 1
+        }
+        guard let age, let label = keys[index].key else { return nil }
         let duration = Double(max(300, durationMs))
         guard age < duration else { return nil }
         return (label, min(1, (duration - age) / 250))
@@ -301,10 +330,11 @@ extension CursorTrack {
 
     /// Where the smooth cursor is drawn and how visible it is: on the track without jitter, averaged over up to
     /// ±400 ms × strength (exact at a click), fading after `idleFadeSeconds` without a move.
-    func smoothMark(atMs ms: Double, settings: EditProject.CursorSmooth, aspect: Double) -> (x: Double, y: Double, opacity: Double)? {
+    func smoothMark(atMs ms: Double, settings: EditProject.CursorSmooth, aspect: Double,
+                    clock: PlayedClock? = nil) -> (x: Double, y: Double, opacity: Double)? {
         let track = dejittered(points: settings.jitterPx, aspect: aspect)
         guard let point = track.drawnPoint(atMs: ms, halfMs: max(0, min(1, settings.strength)) * Self.smoothMaxHalfMs) else { return nil }
-        let opacity = track.visibility(atMs: ms, hideAfterMs: Int((settings.idleFadeSeconds * 1000).rounded()))
+        let opacity = track.visibility(atMs: ms, hideAfterMs: Int((settings.idleFadeSeconds * 1000).rounded()), clock: clock)
         return (point.x, point.y, opacity)
     }
 }

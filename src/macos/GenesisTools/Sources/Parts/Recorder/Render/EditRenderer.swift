@@ -188,6 +188,7 @@ final class ZoomState: @unchecked Sendable {
         drawn += 1
         lock.unlock()
         let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
+        let clock = CursorTrack.PlayedClock(placed: TimelineMap.placed(project), outUs: outUs)
         var marks: [Looks.ClickMark] = []
         if let clicks = project.clicks, clicks.highlight, let cursor {
             marks = Looks.marks(atSourceMs: Double(sourceUs) / 1000, clicks: cursor.clicks, durationMs: clicks.durationMs, project: project)
@@ -208,7 +209,8 @@ final class ZoomState: @unchecked Sendable {
                          marks: marks, clicks: project.clicks,
                          cursor: Self.cursorMark(atSourceUs: sourceUs, track: cursor, settings: project.cursor ?? .init(),
                                                  videoWidth: Double(project.source.width), smooth: project.cursorSmooth,
-                                                 aspect: Double(project.source.height) / Double(max(1, project.source.width))),
+                                                 aspect: Double(project.source.height) / Double(max(1, project.source.width)),
+                                                 clock: clock),
                          coverFocus: Self.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view),
                          frame: project.frame,
                          caption: project.captions.flatMap { settings in
@@ -223,7 +225,7 @@ final class ZoomState: @unchecked Sendable {
                              return CaptionMark(line: line, track: captions, settings: settings, highlight: highlight)
                          },
                          key: project.keys.flatMap { settings in
-                             guard settings.show, let shown = cursor?.key(atMs: Double(sourceUs) / 1000, durationMs: settings.durationMs) else { return nil }
+                             guard settings.show, let shown = cursor?.key(atMs: Double(sourceUs) / 1000, durationMs: settings.durationMs, clock: clock) else { return nil }
                              return KeyMark(label: shown.label, opacity: shown.opacity, settings: settings)
                          },
                          redactions: drawn.filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
@@ -322,16 +324,17 @@ final class ZoomState: @unchecked Sendable {
     }
 
     static func cursorMark(atSourceUs us: Int64, track: CursorTrack?, settings: EditProject.Cursor, videoWidth: Double,
-                           smooth: EditProject.CursorSmooth? = nil, aspect: Double = 9.0 / 16) -> Looks.CursorMark? {
+                           smooth: EditProject.CursorSmooth? = nil, aspect: Double = 9.0 / 16,
+                           clock: CursorTrack.PlayedClock? = nil) -> Looks.CursorMark? {
         guard settings.show, let track, track.drawsCursor else { return nil }
         let ms = Double(us) / 1000
         // fx B (round 4): the smooth cursor, when on, takes the place of the cursor's own smoothing and hiding.
         let placed: (x: Double, y: Double, opacity: Double)?
         if let smooth {
-            placed = track.smoothMark(atMs: ms, settings: smooth, aspect: aspect)
+            placed = track.smoothMark(atMs: ms, settings: smooth, aspect: aspect, clock: clock)
         } else {
             placed = track.drawnPoint(atMs: ms, smoothing: settings.smoothing).map {
-                (x: $0.x, y: $0.y, opacity: track.visibility(atMs: ms, hideAfterMs: settings.hideAfterMs ?? 0))
+                (x: $0.x, y: $0.y, opacity: track.visibility(atMs: ms, hideAfterMs: settings.hideAfterMs ?? 0, clock: clock))
             }
         }
         guard let shape = track.shape(atMs: ms), let placed else { return nil }
