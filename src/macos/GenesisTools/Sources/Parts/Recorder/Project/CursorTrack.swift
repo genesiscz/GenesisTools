@@ -6,8 +6,9 @@ import Foundation
 /// press. ax-tool's capture writes it beside `--video-out` (`--cursor-track`). Read once, kept sorted.
 ///
 /// A movie recorded without the system cursor (`--hide-cursor --cursor-shapes`) has `"shape": "<hash>"` on the row
-/// where the cursor's image changed and `"pw"` (the recorded width in points) on the first row; the images are
-/// `cursor-shapes/<hash>.png` (2x) and `.json` (hotspot) beside the track. The editor then draws the cursor itself.
+/// where the cursor's image changed and `"pw"` (the recorded width in points) on the first row of each segment and
+/// the first row after a display switch; the images are `cursor-shapes/<hash>.png` (2x) and `.json` (hotspot) beside
+/// the track. The editor then draws the cursor itself.
 final class CursorTrack: @unchecked Sendable {
     struct Sample: Equatable {
         var ms: Double
@@ -34,8 +35,16 @@ final class CursorTrack: @unchecked Sendable {
     /// The rows where the cursor's image changed. Empty when the system cursor is in the picture.
     let shapeChanges: [Sample]
     let shapes: [String: Shape]
-    /// The recorded rectangle's width in points, so a movie pixel can be measured in cursor points.
-    let pointWidth: Double?
+    /// A row's `pw`: the recorded rectangle's width in points from that time on.
+    struct PointWidth: Equatable {
+        var ms: Double
+        var width: Double
+    }
+
+    /// The recorded rectangle's width in points, so a movie pixel can be measured in cursor points: one entry per row
+    /// that names it, in time order. A joined recording has one per segment and a recording that moved to another
+    /// display one per display, because each part can show a display of another size at another scale.
+    let pointWidths: [PointWidth]
 
     /// The shortcuts pressed, in time order.
     let keys: [Sample]
@@ -50,7 +59,12 @@ final class CursorTrack: @unchecked Sendable {
     /// The movie has no system cursor in it, so the editor draws one.
     var drawsCursor: Bool { !shapeChanges.isEmpty && !shapes.isEmpty }
 
-    init(samples: [Sample], shapes: [String: Shape] = [:], pointWidth: Double? = nil) {
+    /// A track whose whole length was recorded at one point width.
+    convenience init(samples: [Sample], shapes: [String: Shape] = [:], pointWidth: Double? = nil) {
+        self.init(samples: samples, shapes: shapes, pointWidths: pointWidth.map { [PointWidth(ms: 0, width: $0)] } ?? [])
+    }
+
+    init(samples: [Sample], shapes: [String: Shape] = [:], pointWidths: [PointWidth]) {
         self.samples = samples.sorted { $0.ms < $1.ms }
         clicks = self.samples.filter { $0.click != nil }
         shapeChanges = self.samples.filter { $0.shape != nil }
@@ -66,25 +80,25 @@ final class CursorTrack: @unchecked Sendable {
         }
         moveTimes = moves
         self.shapes = shapes
-        self.pointWidth = pointWidth
+        self.pointWidths = pointWidths.sorted { $0.ms < $1.ms }
     }
 
     static func load(_ path: String?) -> CursorTrack? {
         guard let path, let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
         var samples: [Sample] = []
-        var pointWidth: Double?
+        var pointWidths: [PointWidth] = []
         for line in text.split(separator: "\n") {
             guard let data = line.data(using: .utf8),
                   let row = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let ms = row["t"] as? Double, let x = row["x"] as? Double, let y = row["y"] as? Double else { continue }
             samples.append(Sample(ms: ms, x: x, y: y, click: row["click"] as? String, shape: row["shape"] as? String,
                                   key: row["key"] as? String))
-            if let width = row["pw"] as? Double, width > 0 { pointWidth = width }
+            if let width = row["pw"] as? Double, width > 0 { pointWidths.append(PointWidth(ms: ms, width: width)) }
         }
         guard !samples.isEmpty else { return nil }
         let ids = Set(samples.compactMap(\.shape))
         let folder = ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent("cursor-shapes")
-        return CursorTrack(samples: samples, shapes: loadShapes(ids, folder: folder), pointWidth: pointWidth)
+        return CursorTrack(samples: samples, shapes: loadShapes(ids, folder: folder), pointWidths: pointWidths)
     }
 
     private static func loadShapes(_ ids: Set<String>, folder: String) -> [String: Shape] {
@@ -109,6 +123,17 @@ final class CursorTrack: @unchecked Sendable {
         }
         let change = low > 0 ? shapeChanges[low - 1] : shapeChanges.first
         return change?.shape.flatMap { shapes[$0] }
+    }
+
+    /// The recorded width in points at the time: the last `pw` at or before it (the first one before the first);
+    /// nil for a track that names none.
+    func pointWidth(atMs ms: Double) -> Double? {
+        var low = 0, high = pointWidths.count
+        while low < high {
+            let mid = (low + high) / 2
+            if pointWidths[mid].ms <= ms { low = mid + 1 } else { high = mid }
+        }
+        return (low > 0 ? pointWidths[low - 1] : pointWidths.first)?.width
     }
 
     /// Where the pointer was. A row is written only when it moved (60 Hz), so a gap means it stood still: it holds
@@ -229,17 +254,17 @@ extension CursorTrack {
             return cached
         }
         smoothLock.unlock()
-        // A recording without its width in points is taken as a 1440-point display.
-        let threshold = points / (pointWidth ?? 1440)
         var kept: [Sample] = []
         for sample in samples {
+            // A recording without its width in points is taken as a 1440-point display.
+            let threshold = points / (pointWidth(atMs: sample.ms) ?? 1440)
             if let last = kept.last, sample.click == nil, sample.shape == nil, sample.key == nil,
                hypot(sample.x - last.x, (sample.y - last.y) * aspect) < threshold {
                 continue
             }
             kept.append(sample)
         }
-        let track = CursorTrack(samples: kept, shapes: shapes, pointWidth: pointWidth)
+        let track = CursorTrack(samples: kept, shapes: shapes, pointWidths: pointWidths)
         smoothLock.lock()
         smoothTracks[key] = track
         smoothLock.unlock()

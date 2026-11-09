@@ -324,8 +324,9 @@ final class ZoomState: @unchecked Sendable {
         }
         guard let shape = track.shape(atMs: ms), let placed else { return nil }
         let point = (x: placed.x, y: placed.y)
-        // A recording without the width in points is taken as a Retina display.
-        let perPoint = track.pointWidth.map { videoWidth / $0 } ?? 2
+        // A recording without the width in points is taken as a Retina display. A joined recording or one that moved
+        // to another display names a width per part.
+        let perPoint = track.pointWidth(atMs: ms).map { videoWidth / $0 } ?? 2
         let opacity = placed.opacity
         guard opacity > 0.001 else { return nil }
         return Looks.CursorMark(shape: shape, x: point.x, y: point.y, pixelsPerPoint: perPoint * max(0.5, min(3, settings.size)),
