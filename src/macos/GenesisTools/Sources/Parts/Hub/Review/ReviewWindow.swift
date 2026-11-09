@@ -557,6 +557,14 @@ final class ReviewModel: ObservableObject {
     @Published var collapsed: Set<String> = [] {
         didSet { fileListRowsCache = nil }
     }
+    /// Folders the reader opened that started folded by their size (`HubFileTreeFold`); they stay open.
+    @Published var opened: Set<String> = [] {
+        didSet { fileListRowsCache = nil }
+    }
+    /// A folder with more changed files than this starts folded (Settings → Hub → Panes → Files; 0 never folds).
+    @Published var foldAbove = HubFileTreeFold.stored(in: HubDefaults.store) {
+        didSet { if foldAbove != oldValue { fileListRowsCache = nil } }
+    }
     /// Set only when the diff moves to a file on its own (a find match), so a click in the list never scrolls the list.
     @Published var sidebarScrollTarget: String?
     /// PR thread ids picked for "Fix threads": the cards' Fix checkboxes, the threads list, and x.
@@ -808,7 +816,8 @@ final class ReviewModel: ObservableObject {
         if let fileListRowsCache {
             return fileListRowsCache
         }
-        let made = ChangedFilesTree.rows(filteredFiles, tree: fileListIsTree, collapsed: collapsed, roots: fileListTreeRoots)
+        let made = ChangedFilesTree.rows(
+            filteredFiles, tree: fileListIsTree, collapsed: collapsed, roots: fileListTreeRoots, foldAbove: foldAbove, opened: opened)
         fileListRowsCache = made
         return made
     }
@@ -3780,15 +3789,20 @@ struct FileSidebar: View {
     @GenReduceMotion private var reduceMotion
     /// The table's scroll view, for `sidebarScrollTarget`.
     @State private var box = GenTreeScrollBox()
+    /// The size above which a folder starts folded; a change in Settings reaches an open list.
+    @AppStorage(HubFileTreeFold.key, store: HubDefaults.store) private var foldAbove = HubFileTreeFold.defaultAbove
 
-    /// Folds or opens a folder in one `GenMotion` animation (the list is lazy: only the rows on screen move).
+    /// Folds or opens a folder in one `GenMotion` animation (the list is lazy: only the rows on screen move). A folder
+    /// can start folded by its size, so its row's state decides, not `collapsed` alone.
     private func toggleFolder(_ id: String) {
-        let opening = model.collapsed.contains(id)
+        let opening = !(model.fileListRows.first { $0.id == id }?.expanded ?? !model.collapsed.contains(id))
         GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) {
             if opening {
                 model.collapsed.remove(id)
+                model.opened.insert(id)
             } else {
                 model.collapsed.insert(id)
+                model.opened.remove(id)
             }
         }
     }
@@ -3835,10 +3849,13 @@ struct FileSidebar: View {
             list.equatable()
                 .onChange(of: model.sidebarScrollTarget) { id in
                     guard let id else { return }
-                    // Unfold the folders above the target so the row exists, then scroll only as far as needed.
+                    // Unfold the folders above the target so the row exists, then scroll only as far as needed. A folder
+                    // folded by its size opens too: every folder on the path counts as opened by the reader.
                     for folder in model.collapsed where id.hasPrefix(String(folder.dropFirst(4)) + "/") {
                         model.collapsed.remove(folder)
                     }
+                    let parts = id.split(separator: "/").dropLast()
+                    model.opened.formUnion(parts.indices.map { "dir:" + parts[...$0].joined(separator: "/") })
                     DispatchQueue.main.async {
                         guard let index = model.fileListRows.firstIndex(where: { $0.id == id }),
                               let table = box.scrollView?.documentView as? NSTableView, index < table.numberOfRows else { return }
@@ -3847,6 +3864,7 @@ struct FileSidebar: View {
                 }
         }
         .hubSurface(.chrome)
+        .onChange(of: foldAbove) { _, above in model.foldAbove = above }
         // ⌘F with the keyboard in the file list focuses its filter (Hub/HubPanelFind.swift).
         .panelFindNative("files") { filterFocused = true }
     }

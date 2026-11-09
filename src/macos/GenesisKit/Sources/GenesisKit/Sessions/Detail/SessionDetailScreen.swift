@@ -360,7 +360,8 @@ public struct SessionDetailHeader: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(SessionPalette.text)
                     .lineLimit(1)
-                    .truncationMode(.tail)
+                    // The middle gives way: a title's ending tells similar sessions apart ("… wave 1" and "… wave 1b").
+                    .truncationMode(.middle)
                     .layoutPriority(1)
                     .instantTooltip(info.title)
                     // The title and the ids behind it can be copied.
