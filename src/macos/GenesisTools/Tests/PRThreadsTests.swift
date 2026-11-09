@@ -9,13 +9,28 @@ final class PRThreadsTests: XCTestCase {
 
     // MARK: bar
 
+    func testOpenCountsUnresolvedThreadsThatAreNotOutdated() {
+        func thread(_ id: String, resolved: Bool, outdated: Bool) -> PRThread {
+            PRThread(id: id, path: "a.swift", oldPath: nil, side: .additions, line: 1, startLine: nil, outdated: outdated,
+                     resolved: resolved, resolvable: true, comments: [])
+        }
+        let counts = PRThreadCounts([
+            thread("1", resolved: false, outdated: false), thread("2", resolved: false, outdated: true),
+            thread("3", resolved: true, outdated: false), thread("4", resolved: true, outdated: true),
+        ])
+        XCTAssertEqual(counts, PRThreadCounts(total: 4, open: 1, outdated: 1))
+    }
+
     func testTheBarCountShortensInWholeWordsAndDropsZeroDraftsFirst() {
         let none = PRReviewBar.summaryVariants(threads: 137, open: 48, drafts: 0)
         XCTAssertEqual(none, ["137 threads · 48 open", "48/137 open", "48 open"])
+        let outdated = PRReviewBar.summaryVariants(threads: 333, open: 26, outdated: 118, drafts: 0)
+        XCTAssertEqual(outdated, ["333 threads · 26 open · 118 outdated", "26 open · 118 outdated", "26/333 open", "26 open"],
+                       "open is the PR list row's count; the outdated ones are named, never folded into open")
         let some = PRReviewBar.summaryVariants(threads: 137, open: 48, drafts: 2)
         XCTAssertEqual(some.last, "2 drafts", "the narrowest bar still says how many drafts Submit review sends")
         XCTAssertEqual(PRReviewBar.summaryVariants(threads: 3, open: 1, drafts: 1).last, "1 draft")
-        for variant in none + some {
+        for variant in none + some + outdated {
             let words = variant.split(whereSeparator: { $0 == " " || $0 == "·" || $0 == "/" })
             XCTAssertFalse(words.contains { word in word.count > 1 && word.last?.isLetter == true && word.first?.isNumber == true },
                            "\"\(variant)\" glues a number to a letter, like 0d")

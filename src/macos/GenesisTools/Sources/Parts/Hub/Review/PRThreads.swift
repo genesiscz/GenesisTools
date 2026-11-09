@@ -218,6 +218,30 @@ struct PRThread: Decodable, Identifiable, Equatable {
     var isMyDraft: Bool { comments.first?.isDraft ?? false }
 }
 
+/// The PR's thread counts, one definition each. "Open" is what the PR list row's readiness badge counts
+/// (`judgeReadiness` in src/hub/lib/pr-readiness.ts): unresolved and not outdated on the host. The bar said
+/// "333 threads · 144 open" beside a row that said "26 open" for the same PR, because the bar also counted the
+/// 118 unresolved threads a later push had made outdated (hub UX council, 2026-11-09).
+struct PRThreadCounts: Equatable {
+    let total: Int
+    /// Unresolved, and the host does not call them outdated: they still ask for something on the current code.
+    let open: Int
+    /// Unresolved, but a later push moved their lines. They no longer block the PR.
+    let outdated: Int
+
+    init(total: Int, open: Int, outdated: Int) {
+        self.total = total
+        self.open = open
+        self.outdated = outdated
+    }
+
+    init(_ threads: [PRThread]) {
+        total = threads.count
+        open = threads.filter { !$0.resolved && !$0.outdated }.count
+        outdated = threads.filter { !$0.resolved && $0.outdated }.count
+    }
+}
+
 struct PRThreadsPayload: Decodable, Equatable {
     let pr: PRInfo
     let threads: [PRThread]
