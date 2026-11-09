@@ -347,15 +347,99 @@ export function localSelfName(id: string): string | undefined {
 }
 
 /** The newest meeting the app has not ended: the one it is recording now, if any. */
+/**
+ * The meeting Wispr Flow records now: one it has not ended, or the newest one whose live transcript says it resumed
+ * after its end. Wispr writes `endedAt` when a recording stops and keeps it through a resume (2026-11-09: ended 14:45,
+ * resumed 14:49, recorded to 16:58 with the old `endedAt` until the final stop), so `endedAt` alone ended the screen
+ * recording two hours early.
+ */
 export function liveLocalMeeting(): { id: string; title: string; start: string } | undefined {
     return withDb((db) => {
-        const row = db
+        const open = db
             .query<{ id: string; title: string; createdAt: string }, []>(
                 "SELECT id, title, createdAt FROM Meetings WHERE endedAt IS NULL AND isDeleted = 0 ORDER BY createdAt DESC LIMIT 1"
             )
             .get();
-        return row ? { id: row.id, title: row.title, start: toIso(row.createdAt) } : undefined;
+
+        if (open) {
+            return { id: open.id, title: open.title, start: toIso(open.createdAt) };
+        }
+
+        const newest = db
+            .query<{ id: string; title: string; createdAt: string; endedAt: number | string | null }, []>(
+                "SELECT id, title, createdAt, endedAt FROM Meetings WHERE isDeleted = 0 ORDER BY createdAt DESC LIMIT 1"
+            )
+            .get();
+        const endedMs = newest?.endedAt === null || newest?.endedAt === undefined ? NaN : Number(newest.endedAt);
+
+        if (!newest || !Number.isFinite(endedMs)) {
+            return undefined;
+        }
+
+        const marker = lastLiveMarker(newest.id);
+
+        if (marker?.marker !== "resumed" || marker.epochMs <= endedMs) {
+            return undefined;
+        }
+
+        log.debug(
+            { meeting: newest.id, endedMs, resumedMs: marker.epochMs },
+            "a resumed meeting is live despite its endedAt"
+        );
+        return { id: newest.id, title: newest.title, start: toIso(newest.createdAt) };
     });
+}
+
+interface LiveMarker {
+    marker: string;
+    epochMs: number;
+}
+
+/** A live transcript line as read before its fields are checked. */
+interface UncheckedMarkerLine {
+    marker?: unknown;
+    epochMs?: unknown;
+}
+
+const markerCache = new Map<string, { key: string; marker: LiveMarker | null }>();
+
+/** The last `paused` / `resumed` marker of a meeting's live transcript, read again only when the file changed. */
+export function lastLiveMarker(meetingId: string, dir = WISPR_DIR): LiveMarker | null {
+    const path = join(dir, "meetings", meetingId, "live.ndjson");
+    const identity = fileIdentity(path);
+
+    if (!identity) {
+        return null;
+    }
+
+    const key = `${identity.ino}:${identity.size}:${identity.mtimeMs}`;
+    const cached = markerCache.get(path);
+
+    if (cached?.key === key) {
+        return cached.marker;
+    }
+
+    let marker: LiveMarker | null = null;
+    const lines = readFileSync(path, "utf8").split("\n");
+
+    for (let index = lines.length - 1; index >= 0 && !marker; index--) {
+        if (!lines[index].includes('"marker"')) {
+            continue;
+        }
+
+        try {
+            const line = SafeJSON.parse(lines[index], { strict: true }) as UncheckedMarkerLine;
+
+            if (typeof line.marker === "string" && typeof line.epochMs === "number") {
+                marker = { marker: line.marker, epochMs: line.epochMs };
+            }
+        } catch (err) {
+            log.debug({ err, path, index }, "a live transcript line with a marker is not JSON");
+        }
+    }
+
+    markerCache.set(path, { key, marker });
+    return marker;
 }
 
 /** The user's Wispr Flow dictionary: words the app was taught to spell. */
