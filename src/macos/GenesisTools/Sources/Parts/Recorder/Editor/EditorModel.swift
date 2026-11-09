@@ -456,28 +456,7 @@ final class EditorModel {
 
     /// Which parts of the edit differ, for telling one continuous change from the next.
     nonisolated static func changedParts(_ a: EditProject, _ b: EditProject) -> [String] {
-        var parts: [String] = []
-        if a.clips != b.clips { parts.append("clips") }
-        if a.zooms != b.zooms { parts.append("zooms") }
-        if a.audio != b.audio { parts.append("audio") }
-        if a.export != b.export { parts.append("export") }
-        if a.clicks != b.clicks { parts.append("clicks") }
-        if a.frame != b.frame { parts.append("frame") }
-        if a.cursor != b.cursor { parts.append("cursor") }
-        if a.captions != b.captions { parts.append("captions") }
-        if a.keys != b.keys { parts.append("keys") }
-        if a.redactions != b.redactions { parts.append("redactions") }
-        if a.texts != b.texts { parts.append("texts") }
-        if a.shapes != b.shapes { parts.append("shapes") }
-        if a.transcript != b.transcript { parts.append("transcript") }
-        if a.motion != b.motion { parts.append("motion") }
-        if a.lanes != b.lanes { parts.append("lanes") }
-        if a.camera != b.camera { parts.append("camera") }
-        if a.markers != b.markers { parts.append("markers") }
-        // Round 4 fx-render.
-        if a.transitions != b.transitions { parts.append("transitions") }
-        if a.lens != b.lens { parts.append("lens") }
-        if a.tilt != b.tilt { parts.append("tilt") }
+        var parts = EditParts.all.filter { $0.differs(a, b) }.map(\.key)
         // A count change (an add or a delete) is its own step, never part of a drag.
         if (a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count, a.markers?.count)
             != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count, b.markers?.count)
@@ -522,32 +501,11 @@ final class EditorModel {
         let parts = changedParts(a, b).filter { $0 != "count" }
         // A lane change pins items to their lanes too, so it touches several parts at once.
         if parts.contains("lanes") { return ("Lane Change", nil) }
-        guard parts.count == 1, let part = parts.first else { return ("Changes", nil) }
-        let counts: (Int, Int)
-        let named: (String, InspectorTab?)
-        switch part {
-        case "clips": named = ("Cut", .clip); counts = (a.clips.count, b.clips.count)
-        case "zooms": named = ("Zoom", .zoom); counts = (a.zooms.count, b.zooms.count)
-        case "redactions": named = ("Hidden Part", .hide); counts = (a.redactions?.count ?? 0, b.redactions?.count ?? 0)
-        case "texts": named = ("Text", .text); counts = (a.texts?.count ?? 0, b.texts?.count ?? 0)
-        case "shapes": named = ("Shape", .text); counts = (a.shapes?.count ?? 0, b.shapes?.count ?? 0)
-        case "markers": named = ("Marker", nil); counts = (a.markers?.count ?? 0, b.markers?.count ?? 0)
-        case "audio": return ("Sound Change", .audio)
-        case "export": return ("Export Settings", .export)
-        case "clicks": return ("Click Style", .style)
-        case "frame": return ("Background", .style)
-        case "motion": return ("Motion Blur", .zoom)
-        case "cursor": return ("Cursor Style", .cursor)
-        case "captions": return ("Captions", .captions)
-        case "keys": return ("Shortcuts", .captions)
-        case "transcript": return ("Caption Fix", .captions)
-        // Round 4 fx-render.
-        case "transitions": return ("Transitions", .style)
-        case "lens": return ("Lens", .style)
-        case "tilt": return ("3D Tilt", .style)
-        default: return ("Changes", nil)
-        }
-        if part == "clips" { return (counts.1 > counts.0 ? "Split" : counts.1 < counts.0 ? "Delete Clip" : "Clip Change", .clip) }
+        guard parts.count == 1, let part = EditParts.all.first(where: { $0.key == parts[0] }) else { return ("Changes", nil) }
+        guard let count = part.count else { return (part.name, part.tab) }
+        let counts = (count(a), count(b))
+        let named = (part.name, part.tab)
+        if part.key == "clips" { return (counts.1 > counts.0 ? "Split" : counts.1 < counts.0 ? "Delete Clip" : "Clip Change", .clip) }
         if counts.1 > counts.0 { return ("Add \(named.0)", named.1) }
         if counts.1 < counts.0 { return ("Delete \(named.0)", named.1) }
         return ("\(named.0) Change", named.1)

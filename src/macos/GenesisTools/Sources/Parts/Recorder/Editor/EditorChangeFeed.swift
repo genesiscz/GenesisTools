@@ -50,10 +50,15 @@ enum EditDiff {
         var starts: [Int64] = []
         var picture = false
 
-        func clock(_ sourceUs: Int64) -> String {
-            formatClock(TimelineMap.outputTime(ofSource: sourceUs, in: new) ?? sourceUs, tenths: true)
+        // Times as the edit plays them: a source time never stands in for an output time, and an item the edit cuts
+        // says so and adds no start.
+        func played(_ sourceUs: Int64) -> String? {
+            TimelineMap.outputTime(ofSource: sourceUs, in: new).map { formatClock($0, tenths: true) }
         }
-        func span(_ start: Int64, _ end: Int64) -> String { "\(clock(start)) to \(clock(end))" }
+        func span(_ start: Int64, _ end: Int64) -> String { editRange(new, fromUs: start, toUs: end).edit }
+        func start(_ from: Int64, _ to: Int64) {
+            if let shown = TimelineMap.shown(fromUs: from, toUs: to, in: new) { starts.append(shown.startOut) }
+        }
 
         /// One line per item, or "Added 2 spotlights" for two or more of one kind (an undo brings several back at once).
         func grouped<Item>(_ items: [Item], verb: String, symbol: String, noun: (Item) -> String, one: (Item) -> String) {
@@ -80,30 +85,30 @@ enum EditDiff {
             let next = Set(after.map(\.id))
             var added: [Item] = []
             for item in after {
-                let (start, end) = times(item)
+                let (startUs, endUs) = times(item)
                 guard let was = previous[item.id] else {
                     added.append(item)
                     ids.append(item.id)
-                    starts.append(TimelineMap.outputTime(ofSource: start, in: new) ?? start)
+                    start(startUs, endUs)
                     continue
                 }
                 guard was != item else { continue }
                 let (oldStart, oldEnd) = times(was)
                 let verb: String
-                if (oldStart, oldEnd) == (start, end) {
+                if (oldStart, oldEnd) == (startUs, endUs) {
                     verb = "Changed \(name(item))"
-                } else if oldEnd - oldStart == end - start {
-                    verb = "Moved \(name(item)), now \(span(start, end))"
+                } else if oldEnd - oldStart == endUs - startUs {
+                    verb = "Moved \(name(item)), now \(span(startUs, endUs))"
                 } else {
-                    verb = "Trimmed \(name(item)), now \(span(start, end))"
+                    verb = "Trimmed \(name(item)), now \(span(startUs, endUs))"
                 }
                 lines.append(.init(symbol: symbol, text: verb))
                 ids.append(item.id)
-                starts.append(TimelineMap.outputTime(ofSource: start, in: new) ?? start)
+                start(startUs, endUs)
             }
             grouped(added, verb: "Added", symbol: symbol, noun: noun) { item in
-                let (start, end) = times(item)
-                return "Added \(name(item)), \(span(start, end))"
+                let (startUs, endUs) = times(item)
+                return "Added \(name(item)), \(span(startUs, endUs))"
             }
             grouped(before.filter { !next.contains($0.id) }, verb: "Removed", symbol: "trash", noun: noun) { "Removed \(name($0))" }
         }
@@ -117,20 +122,27 @@ enum EditDiff {
              name: { "the text “\($0.text)”" }, noun: { _ in "text" }, times: { ($0.startUs, $0.endUs) })
         walk(old.shapes ?? [], new.shapes ?? [], symbol: "scribble",
              name: { "a \($0.kind.rawValue)" }, noun: { $0.kind.rawValue }, times: { ($0.startUs, $0.endUs) })
+        // Camera-hidden parts and lenses are lane items too, so their ids flash.
+        walk(old.camera?.hidden ?? [], new.camera?.hidden ?? [], symbol: "video.slash",
+             name: { _ in "a camera-hidden part" }, noun: { _ in "camera-hidden part" }, times: { ($0.startUs, $0.endUs) })
+        walk(old.lens?.items ?? [], new.lens?.items ?? [], symbol: "magnifyingglass.circle",
+             name: { _ in "a lens" }, noun: { _ in "lens" }, times: { ($0.startUs, $0.endUs) })
 
         // A marker is a point: its time, not a span.
         let oldMarkers = old.markers ?? []
         let newMarkers = new.markers ?? []
         let markerIDs = Set(oldMarkers.map(\.id))
         let addedMarkers = newMarkers.filter { !markerIDs.contains($0.id) }
-        grouped(addedMarkers, verb: "Added", symbol: "flag", noun: { _ in "marker" }) { "Added the marker “\($0.label)” at \(clock($0.atUs))" }
-        starts += addedMarkers.map { TimelineMap.outputTime(ofSource: $0.atUs, in: new) ?? $0.atUs }
+        grouped(addedMarkers, verb: "Added", symbol: "flag", noun: { _ in "marker" }) { marker in
+            "Added the marker “\(marker.label)” \(played(marker.atUs).map { "at \($0)" } ?? "in a cut")"
+        }
+        starts += addedMarkers.compactMap { TimelineMap.outputTime(ofSource: $0.atUs, in: new) }
         grouped(oldMarkers.filter { marker in !newMarkers.contains { $0.id == marker.id } }, verb: "Removed", symbol: "trash",
                 noun: { _ in "marker" }) { "Removed the marker “\($0.label)”" }
         for marker in newMarkers {
             guard let was = oldMarkers.first(where: { $0.id == marker.id }), was != marker else { continue }
             lines.append(.init(symbol: "flag", text: was.atUs == marker.atUs
-                ? "Renamed the marker “\(was.label)” to “\(marker.label)”" : "Moved the marker “\(marker.label)” to \(clock(marker.atUs))"))
+                ? "Renamed the marker “\(was.label)” to “\(marker.label)”" : "Moved the marker “\(marker.label)” \(played(marker.atUs).map { "to \($0)" } ?? "into a cut")"))
         }
 
         if old.clips != new.clips {
@@ -160,12 +172,37 @@ enum EditDiff {
             return aspect
         }
         setting(old.captions, new.captions, symbol: "captions.bubble", name: "the captions", shown: { $0.show })
-        setting(old.clicks, new.clicks, symbol: "cursorarrow.click", name: "the click rings")
+        // The rings are on only while `highlight` is; the click sound is a switch of its own on the same object.
+        func rings(_ clicks: EditProject.Clicks?) -> EditProject.Clicks? {
+            guard var clicks, clicks.highlight else { return nil }
+            clicks.sound = nil
+            return clicks
+        }
+        setting(rings(old.clicks), rings(new.clicks), symbol: "cursorarrow.click", name: "the click rings")
+        let soundOn = new.clicks?.sound == true
+        if (old.clicks?.sound == true) != soundOn {
+            lines.append(.init(symbol: "speaker.wave.1", text: "Turned the click sound \(soundOn ? "on" : "off")"))
+        }
         setting(old.cursor, new.cursor, symbol: "cursorarrow", name: "the cursor", shown: { $0.show }) { cursor in
             " (\(String(format: "%.1f", cursor.size))× size, \(Int((cursor.smoothing * 100).rounded())) % smoothing)"
         }
         setting(old.keys, new.keys, symbol: "command", name: "the shortcut keys", shown: { $0.show })
         setting(old.motion, new.motion, symbol: "wind", name: "the zoom motion")
+        setting(EditParts.bubble(old.camera), EditParts.bubble(new.camera), symbol: "video", name: "the camera bubble",
+                shown: { $0.show })
+        setting(old.transitions, new.transitions, symbol: "rectangle.2.swap", name: "the transitions")
+        setting(old.tilt, new.tilt, symbol: "rotate.3d", name: "the 3D tilt")
+        setting(old.cards?.intro, new.cards?.intro, symbol: "rectangle.on.rectangle", name: "the intro card")
+        setting(old.cards?.end, new.cards?.end, symbol: "rectangle.on.rectangle", name: "the end card")
+        setting(old.progress, new.progress, symbol: "chart.bar.xaxis", name: "the progress bar", shown: { $0.show })
+        setting(old.captionsStyle, new.captionsStyle, symbol: "captions.bubble", name: "the caption animation")
+        setting(old.cursorSmooth, new.cursorSmooth, symbol: "cursorarrow.motionlines", name: "the smooth cursor")
+        setting(old.autoSpeed, new.autoSpeed, symbol: "forward", name: "the speed badge")
+        setting(old.redactionJoins, new.redactionJoins, symbol: "eye.slash", name: "the hidden part edges")
+        setting(old.privacy, new.privacy, symbol: "lock", name: "the private data hiding")
+        if old.lanes != new.lanes {
+            lines.append(.init(symbol: "square.stack.3d.up", text: "Changed the effect lanes"))
+        }
         // Caption line fixes by what happened to each line: a fix is no switch, and Replace All touches many lines.
         let fixesBefore = old.transcript?.fixes ?? [:]
         let fixesAfter = new.transcript?.fixes ?? [:]
