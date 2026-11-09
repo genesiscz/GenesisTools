@@ -18,6 +18,11 @@ checklist.md or motion.md as well.
     line, Show folder, and the log rendered with `MarkdownContentView` (warnings with pretty JSON and stacks folded
     to their first frame, then every step on one line; Raw log as a tab). Rule: a failure that carries a log gets a
     window an agent can be handed, not a pill.
+  - *First try:* the details repeated the headline as their first section, and the posted row of the draft window
+    gave every child its own identifier, so `tools control press --id issue-draft.done` found nothing. Fix: the
+    details start at the warnings; one identifier per element. Commits **90d29a7267**, **397df157ff**, draft window
+    **a6aec2e5bd**, form-shaped body **e042908699**. Rule: an `.accessibilityIdentifier` on a container names every
+    child that has none; put it on the element a test presses.
 - 2026-11-01 21:52 — **Markdown viewer: task boxes, the reading position after a change on disk, file names as links.**
   - *The first task box drew at the small macOS control size (about 11 pt beside 16 px text).* `width:1em` on an
     `<input>` uses the input's own 13.33 px control font, and WebKit picks the control size from that. Fix:
