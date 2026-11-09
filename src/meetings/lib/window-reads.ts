@@ -5,7 +5,7 @@ import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
-import { MEETING_FILE, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { MEETING_FILE, type MeetingRecord, MeetingStore, MOMENTS_FOLDER } from "@genesiscz/utils/meetings/record";
 import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
 import { type SpeakerStats, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./assign";
@@ -109,11 +109,12 @@ export async function revisionsRead(options: {
     }
 
     // The timeline reads ocr.jsonl and checks each frame file; a frame added or removed changes its folder's identity.
+    // Cut Moment clips are no screen data: a play must not make the window read the Screen tab again.
     const screen = [
         fileIdentity(join(folder, "ocr.jsonl")),
         fileIdentity(folder),
         ...readdirSync(folder, { withFileTypes: true })
-            .filter((entry) => entry.isDirectory())
+            .filter((entry) => entry.isDirectory() && entry.name !== MOMENTS_FOLDER)
             .map((entry) => [entry.name, fileIdentity(join(folder, entry.name))]),
     ];
     return revisionTokens({ meeting: record.id, recordFile, config, source, screen });

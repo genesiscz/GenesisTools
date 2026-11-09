@@ -3,7 +3,12 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig, ToneSound } from "@genesiscz/utils/meetings/config";
-import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import {
+    type MeetingItem,
+    type MeetingRecord,
+    type MeetingStore,
+    MOMENTS_FOLDER,
+} from "@genesiscz/utils/meetings/record";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -511,7 +516,7 @@ export async function cutMoment(
 export function momentClipPath(folder: string, moment: Moment): string {
     const name = moment.label.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "moment";
     const key = Bun.hash(SafeJSON.stringify([moment.startSec, moment.endSec, moment.tone ?? null])).toString(36);
-    return join(folder, "moments", `${name}-${key}.wav`);
+    return join(folder, MOMENTS_FOLDER, `${name}-${key}.wav`);
 }
 
 /** The frame on each display at `atSec`; none without a screen recording at that time. Never throws. */
