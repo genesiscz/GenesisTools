@@ -1694,6 +1694,29 @@ describe("the window's REPL methods on the service", () => {
         expect(info.audio.volume).toBe(0.3);
         expect(readProject(path).audio.volume).toBe(0.3);
     });
+
+    // H1-112: zod drops an unknown key from a plain object, so fix({ dryRun: true }) ran the fix and saved an undo step.
+    test("a movie method refuses a key it does not take instead of running without it", async () => {
+        const { service } = await serviceFixture();
+        const path = editFixture("rs-strict-");
+        writeProject(path, applyOp(readProject(path), { op: "marker", at: 6.2, label: "Step" }));
+        writeProject(path, applyOp(readProject(path), { op: "cut", from: 3, to: 6.5 }));
+        const before = readFileSync(path, "utf8");
+        const agent = await connect(service.entry);
+        await agent.call<unknown>("hello", hello("client"));
+
+        await expect(agent.call<unknown>("movie.fix", { recording: path, dryRun: true })).rejects.toThrow(
+            'Unrecognized key: "dryRun"'
+        );
+        await expect(agent.call<unknown>("movie.clickGroups", { recording: path, gap: 1 })).rejects.toThrow(
+            "did you mean gapSeconds?"
+        );
+        expect(readFileSync(path, "utf8")).toBe(before);
+        // Control: the same call with the keys it takes runs.
+        await expect(agent.call<{ fixed: string[] }>("movie.fix", { recording: path })).resolves.toMatchObject({
+            fixed: [expect.stringContaining("Step")],
+        });
+    });
 });
 
 describe("the protocol fixture the Swift host tests read", () => {

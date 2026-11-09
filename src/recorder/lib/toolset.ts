@@ -251,7 +251,7 @@ const edit = (name: string, params: z.ZodType, doc: string, positional?: string[
 const movieMethods = [
     defineMethod({
         name: "info",
-        params: z.object({}),
+        params: z.object({}).strict(),
         result: z.unknown(),
         resultName: movieDoc.replace(" }", ", title, folder }"),
         doc: "The edit as it is on disk now (the window may have changed it), with the recording's title and folder (null for a plain movie).",
@@ -259,7 +259,7 @@ const movieMethods = [
     }),
     defineMethod({
         name: "check",
-        params: z.object({}),
+        params: z.object({}).strict(),
         result: z.unknown(),
         resultName:
             '{ ok, clean, counts: { fix, check, note }, summary: string[], groups: { kind, severity, count, message, items, at, fix?, fixable }[], issues: { severity: "fix" | "check" | "note", kind, item, message, fix?, at?, target?, action?: { label, ops } }[] }',
@@ -268,19 +268,19 @@ const movieMethods = [
     }),
     defineMethod({
         name: "fix",
-        params: z.object({}),
+        params: z.object({}).strict(),
         result: z.unknown(),
         resultName:
             "{ summary, path, revision, outputSeconds, warnings? } plus fixed (the issues check() no longer finds) and unchanged (the issues whose action changed nothing)",
         doc: "Runs every fix check() offers (each issue's action.ops: remove what never shows, move an edit marker a cut hides to the nearest kept moment, lengthen what is too short to read, move a text off another) in one save and one undo() step. Issues with no fix (a missing transcript or music file) stay; check() again lists them. An issue its action did not remove is reported as no change, never as fixed.",
         effect: "reversible",
     }),
-    edit("split", z.object({ at: sourceTimeSchema }), "Splits the clip at a source time.", ["at"]),
-    edit("cut", z.object(range), "Removes a source range from the movie.", ["from", "to"]),
-    edit("keep", z.object(range), "Keeps only a source range (trims both ends).", ["from", "to"]),
+    edit("split", z.object({ at: sourceTimeSchema }).strict(), "Splits the clip at a source time.", ["at"]),
+    edit("cut", z.object(range).strict(), "Removes a source range from the movie.", ["from", "to"]),
+    edit("keep", z.object(range).strict(), "Keeps only a source range (trims both ends).", ["from", "to"]),
     edit(
         "speed",
-        z.object({ ...range, factor: z.number().min(0.25).max(16) }),
+        z.object({ ...range, factor: z.number().min(0.25).max(16) }).strict(),
         "Plays a source range faster (2) or slower (0.5).",
         ["from", "to", "factor"]
     ),
@@ -289,7 +289,7 @@ const movieMethods = [
         zoomSchema,
         'Zooms over a source range: scale 1–4, focus {x,y} 0..1 from the top left, or follow: true for the cursor (a picture zoom only). target "canvas" zooms the whole framed export instead of the picture inside it (focus is then 0..1 of the canvas, and it holds that focus: the cursor moves inside the picture, so follow with target "canvas" is refused): a phone on the left of a 16:9 frame fills it with zoom({ from, to, scale: 2.5, focus: { x: 0.15, y: 0.5 }, target: "canvas" }). A canvas zoom may overlap a picture zoom; texts, captions and keys stay where they are. easeInMs / easeOutMs (450 each when absent) set how long it grows and shrinks, in the movie as it plays (a sped-up part does not shorten them; the part of an ease that falls in a cut is not seen); an ease in as long as the zoom is a slow push over a still screen. Two zooms that play closer than one ease out and one ease in, a cut between them included, glide from one to the other.'
     ),
-    edit("unzoom", z.object({ id: z.string() }), "Removes a zoom by its id.", ["id"]),
+    edit("unzoom", z.object({ id: z.string() }).strict(), "Removes a zoom by its id.", ["id"]),
     edit(
         "redact",
         z
@@ -333,7 +333,7 @@ const movieMethods = [
     ),
     edit(
         "unredact",
-        z.object({ id: z.string() }),
+        z.object({ id: z.string() }).strict(),
         "Removes a redaction by its id. A part hideText() or hidePrivate() made is forgotten as hidden too, so the same hide adds it again; unhide({ text }) takes back a whole hide at once.",
         ["id"]
     ),
@@ -366,7 +366,7 @@ const movieMethods = [
             .strict(),
         'animate { kind: "typewriter" | "slideUp" | "fade", ms (600) } is how it comes in (a fade by default). Puts a line of text over the picture from `from` to `to` (source seconds or "m:ss"): a title or a step\'s name. x, y is its centre (the centre of its block, below) as 0...1 of the CANVAS from the top left (0.5, 0.12, top middle, by default), so it stays put through a zoom; size is the text height as a fraction of the short side (0.055); style "plate" (white on a dark plate, default) | "plain" (white with a shadow). It fades in and out. The result lists texts with their ids. Several lines: "\\n" starts a new line (text: "Step 1\\nOpen the inbox"), and a line longer than the block wraps; the whole text is drawn, up to 500 characters (a longer one is refused, never cut). block { width: 0.15–0.95 of the canvas width (0.8), align: "left" | "center" | "right" } is the box the text sits in, centred on x: its lines wrap at its width, and align lines them up and places the text in the box by what shows of it: a "plate" text\'s plate, a "plain" text\'s letters (it draws no plate). "left" puts that left edge at the block\'s left edge (x - width / 2), "right" puts its right edge at the block\'s right edge (x + width / 2), and "center" (the default) centres the text on x; the plate, or a plain text\'s letters, stays inside the canvas. So texts with the same x, block and style line up whatever their lengths and sizes: with block: { width: 0.35, align: "left" } beside a phone (frame({ preset: "phone-left" }), x 0.62), a title and its subtitle both start at 0.445 of the width. info().texts[].lines counts the lines it was written with.'
     ),
-    edit("untext", z.object({ id: z.string() }), "Removes a text by its id.", ["id"]),
+    edit("untext", z.object({ id: z.string() }).strict(), "Removes a text by its id.", ["id"]),
     edit(
         "retime",
         z
@@ -400,12 +400,14 @@ const movieMethods = [
     ),
     edit(
         "fixLines",
-        z.object({
-            fixes: z
-                .array(z.object({ at: sourceTimeSchema, text: z.string().max(300) }).strict())
-                .min(1)
-                .max(500),
-        }),
+        z
+            .object({
+                fixes: z
+                    .array(z.object({ at: sourceTimeSchema, text: z.string().max(300) }).strict())
+                    .min(1)
+                    .max(500),
+            })
+            .strict(),
         "Corrects many transcript lines at once, saved once and undone with one undo(): [{ at, text }] where at is any source time inside the line (a line's from from transcript()). Use it to polish a whole transcript: read transcript(), then send only the lines whose words change. A time where nobody speaks is refused with the nearest lines, and nothing is saved.",
         ["fixes"]
     ),
@@ -453,15 +455,17 @@ const movieMethods = [
             .strict(),
         'Marks every recorded click from `from` to `to` (source seconds; the whole recording by default) with a shape for `seconds` (1.2): kind "circle" (default) round the point, "box", or "arrow" pointing at it. A double click is one mark; a click that already has a mark of that kind is left alone, so running it again adds nothing. One undo takes them all back. Throws when the range has no clicks.'
     ),
-    edit("volume", z.object({ volume: z.number().min(0).max(2) }), "Sets the volume, 0 to 2.", ["volume"]),
+    edit("volume", z.object({ volume: z.number().min(0).max(2) }).strict(), "Sets the volume, 0 to 2.", ["volume"]),
     edit(
         "mute",
-        z.object({ track: z.number().int().nonnegative() }),
+        z.object({ track: z.number().int().nonnegative() }).strict(),
         "Mutes an audio track (0 is the first). A track the movie does not have is refused (a frames recording has one track, 0, with the mic and the system sound mixed), and so is a movie whose video has no audio track.",
         ["track"]
     ),
-    edit("unmute", z.object({ track: z.number().int().nonnegative() }), "Unmutes an audio track.", ["track"]),
-    edit("apply", z.object({ ops: z.array(editOpSchema).min(1) }), "Several ops at once, saved once.", ["ops"]),
+    edit("unmute", z.object({ track: z.number().int().nonnegative() }).strict(), "Unmutes an audio track.", ["track"]),
+    edit("apply", z.object({ ops: z.array(editOpSchema).min(1) }).strict(), "Several ops at once, saved once.", [
+        "ops",
+    ]),
     edit(
         "undo",
         z.object({ all: z.boolean().optional() }).strict(),
@@ -610,7 +614,7 @@ const movieMethods = [
     ),
     edit(
         "reset",
-        z.object({}),
+        z.object({}).strict(),
         "Starts over: the whole movie with default audio and export. Everything else goes too: cuts, zooms, texts, hidden parts, music, voiceovers, cards, frame, markers of the edit; undo() takes a reset back."
     ),
     edit(
@@ -890,7 +894,7 @@ const movieMethods = [
     }),
     defineMethod({
         name: "itemsAt",
-        params: z.object({ at: outputTimeSchema }),
+        params: z.object({ at: outputTimeSchema }).strict(),
         positional: ["at"],
         result: z.unknown(),
         resultName: "{ output, source, zoom, canvasZoom, redactions, texts, shapes, lenses, caption, spoken }",
@@ -899,12 +903,14 @@ const movieMethods = [
     }),
     defineMethod({
         name: "still",
-        params: z.object({
-            at: surveyTimeSchema.optional(),
-            out: z.string().optional(),
-            full: z.boolean().optional(),
-            source: z.boolean().optional(),
-        }),
+        params: z
+            .object({
+                at: surveyTimeSchema.optional(),
+                out: z.string().optional(),
+                full: z.boolean().optional(),
+                source: z.boolean().optional(),
+            })
+            .strict(),
         positional: ["at", "out", "full", "source"],
         result: z.unknown(),
         resultName: "{ path, width, height, source, output, export }",
@@ -913,7 +919,7 @@ const movieMethods = [
     }),
     defineMethod({
         name: "find",
-        params: z.object({ text: z.string().min(1) }),
+        params: z.object({ text: z.string().min(1) }).strict(),
         positional: ["text"],
         result: z.unknown(),
         resultName: "{ from, to, plays, text }[]",
@@ -957,7 +963,7 @@ const movieMethods = [
     }),
     defineMethod({
         name: "markers",
-        params: z.object({}),
+        params: z.object({}).strict(),
         result: z.unknown(),
         resultName: "{ at, plays, label }[]",
         doc:
@@ -968,7 +974,16 @@ const movieMethods = [
     }),
     defineMethod({
         name: "clickGroups",
-        params: z.object({ gapSeconds: z.number().min(0.1).max(60).optional() }),
+        params: z.strictObject(
+            { gapSeconds: z.number().min(0.1).max(60).optional() },
+            {
+                // The CLI flag is --gap: say the REPL name instead of only "unrecognized key".
+                error: (issue) =>
+                    issue.code === "unrecognized_keys" && issue.keys.includes("gap")
+                        ? 'Unrecognized key: "gap"; did you mean gapSeconds? (the CLI flag is --gap)'
+                        : undefined,
+            }
+        ),
         result: z.unknown(),
         resultName: "{ from, to, count, plays: { from, to } | null, cut }[]",
         doc: "The recorded clicks in groups, as autoZoom() groups them (a click under gapSeconds, default 3, after the one before joins its group), in time order. from and to are SOURCE seconds of the first and last click; plays is where they play in OUTPUT seconds (the first and last click not cut, null when a cut hides all of them); cut counts the clicks in cut time. Sort by count for the part with the most clicking. Throws when the movie has no cursor track. Reads only.",
@@ -1065,7 +1080,7 @@ const movieMethods = [
     }),
     defineMethod({
         name: "rename",
-        params: z.object({ title: z.string().min(1).max(120) }),
+        params: z.object({ title: z.string().min(1).max(120) }).strict(),
         positional: ["title"],
         result: z.unknown(),
         resultName: "{ id, title, folder }",
@@ -1074,11 +1089,13 @@ const movieMethods = [
     }),
     defineMethod({
         name: "chapters",
-        params: z.object({
-            intro: z.string().optional(),
-            minSeconds: z.number().positive().optional(),
-            clock: z.enum(["export", "output"]).optional(),
-        }),
+        params: z
+            .object({
+                intro: z.string().optional(),
+                minSeconds: z.number().positive().optional(),
+                clock: z.enum(["export", "output"]).optional(),
+            })
+            .strict(),
         result: z.unknown(),
         resultName: "string[]",
         doc: 'The markers as video chapters, "0:00 Intro" lines for the YouTube or Vimeo description of the exported file, on its clock: none without markers; with markers a first chapter at 0:00 (named intro, by default the intro card\'s title, else "Intro"), every marker the intro card\'s length later, cut markers left out, a marker under minSeconds (10) after the one before it left out. clock: "output" gives the movie\'s own times (no card).',
@@ -1086,7 +1103,7 @@ const movieMethods = [
     }),
     defineMethod({
         name: "shortcuts",
-        params: z.object({}),
+        params: z.object({}).strict(),
         result: z.unknown(),
         resultName: "{ at, plays, key }[]",
         doc: 'The ⌘/⌃ shortcuts the recording kept ("⌘C"), at source seconds, plays: where each shows in the edit (null when cut). keys() draws them.',
@@ -1497,17 +1514,29 @@ const movieMethods = [
 const recordingMethods = [
     defineMethod({
         name: "status",
-        params: z.object({}),
+        params: z.object({}).strict(),
         result: z.unknown(),
         resultName: "{ state, elapsedMs, limitMs, segments }",
         doc: "The recording's state.",
         effect: "read",
     }),
-    defineMethod({ name: "pause", params: z.object({}), result: z.unknown(), doc: "Pauses.", effect: "reversible" }),
-    defineMethod({ name: "resume", params: z.object({}), result: z.unknown(), doc: "Resumes.", effect: "reversible" }),
+    defineMethod({
+        name: "pause",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        doc: "Pauses.",
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "resume",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        doc: "Resumes.",
+        effect: "reversible",
+    }),
     defineMethod({
         name: "mark",
-        params: z.object({ label: z.string().min(1).max(80) }),
+        params: z.object({ label: z.string().min(1).max(80) }).strict(),
         positional: ["label"],
         result: z.unknown(),
         resultName: "{ atMs, label }",
@@ -1516,7 +1545,7 @@ const recordingMethods = [
     }),
     defineMethod({
         name: "settings",
-        params: z.object({}),
+        params: z.object({}).strict(),
         result: z.unknown(),
         resultName: "{ settings, audio, fixed }",
         doc: "The movie's rates (activeFps, idleFps: the same as activeFps when it keeps one rate) and threshold, its audio, and fixed: the keys a movie keeps as they are, with why.",
@@ -1532,7 +1561,7 @@ const recordingMethods = [
     }),
     defineMethod({
         name: "stop",
-        params: z.object({}),
+        params: z.object({}).strict(),
         result: z.unknown(),
         resultName: "Movie",
         doc: "Stops, waits for the movie, and returns it as a Movie to edit.",
