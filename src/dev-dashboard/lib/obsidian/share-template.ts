@@ -1193,6 +1193,12 @@ function buildLightboxScript(): string {
         return { w: stage.clientWidth, h: stage.clientHeight };
     }
 
+    // By the pointer's position: with the pointer captured on the stage, a click or double click targets the stage.
+    function overImage(event) {
+        var b = view.getBoundingClientRect();
+        return event.clientX >= b.left && event.clientX <= b.right && event.clientY >= b.top && event.clientY <= b.bottom;
+    }
+
     function apply() {
         var s = stageSize();
         var w = natural.w * scale;
@@ -1361,7 +1367,7 @@ function buildLightboxScript(): string {
             pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, scale: scale };
             drag = null;
         } else if (ids.length === 1) {
-            drag = { startX: event.clientX, startY: event.clientY, x0: x, y0: y, moved: false, onImage: event.target === view };
+            drag = { startX: event.clientX, startY: event.clientY, x0: x, y0: y, moved: false, onImage: overImage(event) };
         }
     });
 
@@ -1416,7 +1422,7 @@ function buildLightboxScript(): string {
     stage.addEventListener("pointercancel", endPointer);
 
     stage.addEventListener("dblclick", function (event) {
-        if (event.target !== view) {
+        if (!overImage(event)) {
             return;
         }
         var r = stage.getBoundingClientRect();
