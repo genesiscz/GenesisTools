@@ -106,6 +106,29 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         HubPerf.log("recorder: menu bar item installed (saved choice \(saved), visible \(item.isVisible))")
         // The bar lays the item out after this turn; look once it had time to.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.checkOnScreen() }
+        listenForSampleFailures()
+    }
+
+    /// A test door to the failure window without recording anything: while the defaults key `recorder.debug.notices`
+    /// is on, the distributed notification `<namespace>.recorder.sampleFailure` shows a start failure built from the
+    /// log file named in its `log` key (else a short made-up output). Off by default; nothing records.
+    static let sampleFailureNotification = Notification.Name(NativePreview.namespace + ".recorder.sampleFailure")
+
+    private func listenForSampleFailures() {
+        DistributedNotificationCenter.default().addObserver(forName: Self.sampleFailureNotification, object: nil, queue: .main) { note in
+            let log = note.userInfo?["log"] as? String
+            MainActor.assumeIsolated {
+                guard UserDefaults.standard.bool(forKey: "recorder.debug.notices") else { return }
+                let output = log.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+                    ?? "error: The sample failure printed one line."
+                let failure = ToolsRunner.EarlyFailure(argv: ["recorder", "start", "--window", "1", "--camera"], status: 1,
+                                                       output: output, logFile: log ?? "", logLine: log == nil ? nil : 1)
+                HubPerf.log("recorder: sample failure from \(log ?? "the built-in text")")
+                RecorderNotice.startFailed(failure) {
+                    HubPerf.log("recorder: sample failure Try again pressed")
+                }
+            }
+        }
     }
 
     enum Placement: String, Equatable {
@@ -393,10 +416,10 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     func startRecording(arguments args: [String], onFailure: (() -> Void)? = nil) {
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
         do {
-            try ToolsRunner.detached(args) { status, output in
+            try ToolsRunner.detachedRun(args) { failure in
                 onFailure?()
-                RecorderNotice.failure("The recording stopped at once (exit \(status))", output: output,
-                                       fallback: "See ~/.genesis-tools/logs/recorder-start.log")
+                // Try again runs the same start; the picker's countdown is over by then, so it has no `onFailure`.
+                RecorderNotice.startFailed(failure) { [weak self] in self?.startRecording(arguments: args) }
             }
         } catch {
             onFailure?()

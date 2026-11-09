@@ -192,13 +192,57 @@ private struct RecorderRecordingSettings: View {
                 identifier: "recorder.settings.failureStyle",
                 options: [
                     NativeSettingsOption(RecorderFailureStyle.notice, "Notice",
-                                         detail: "A note under the menu bar item that stays until you close it, with the details behind a click. Rename asks in a small panel. Neither brings the recorder's windows to the front."),
+                                         detail: "A small window with the error, its log and buttons to try again or copy the context for an agent. Rename asks in a small panel. Neither brings the recorder's windows to the front."),
                     NativeSettingsOption(RecorderFailureStyle.alert, "Alert",
                                          detail: "A dialog that brings the recorder and its windows to the front and waits for you."),
                 ],
                 selection: model.choice(RecorderFailureStyle.key, RecorderFailureStyle.notice), minSegmentWidth: 72)
+            failureNoticeRows
+                .disabled(model.choice(RecorderFailureStyle.key, RecorderFailureStyle.notice).wrappedValue != .notice)
         }
         .nativeSettingsAnchor("menu-bar")
+    }
+
+    /// The notice's own choices; they do nothing while failures show as an alert, so they grey out then.
+    @ViewBuilder
+    private var failureNoticeRows: some View {
+        Divider()
+        NativeSettingsSegmented(
+            "Notice details", detail: "Whether the notice opens with its log showing: each warning and every step, or the raw output.",
+            identifier: "recorder.settings.failureDetails",
+            options: [
+                NativeSettingsOption(RecorderFailureDetails.open, "Open",
+                                     detail: "The log shows under the error; drag the window's edge to make it larger."),
+                NativeSettingsOption(RecorderFailureDetails.folded, "Folded",
+                                     detail: "Only the error and its buttons; Show details opens the log."),
+            ],
+            selection: model.choice(RecorderFailureDetails.key, RecorderFailureDetails.open), minSegmentWidth: 64)
+        Divider()
+        NativeSettingsSegmented(
+            "Notice place", detail: "Where the failure notice appears.",
+            identifier: "recorder.settings.failurePlacement",
+            options: [
+                NativeSettingsOption(FailureNoticePlacement.belowAnchor, "Menu bar item",
+                                     detail: "Under the recorder's menu bar item, or the top right corner while the item is hidden."),
+                NativeSettingsOption(FailureNoticePlacement.topRight, "Top right",
+                                     detail: "The top right corner, where macOS shows notifications."),
+                NativeSettingsOption(FailureNoticePlacement.center, "Centre",
+                                     detail: "The middle of the screen's upper part, where macOS shows an alert."),
+            ],
+            selection: model.choice(RecorderFailureStyle.placementKey, FailureNoticePlacement.belowAnchor), minSegmentWidth: 72)
+        Divider()
+        NativeSettingsSegmented(
+            "Notice closes", detail: "Whether the notice goes away by itself. The pointer on it holds it open.",
+            identifier: "recorder.settings.failureAutoClose",
+            options: [
+                NativeSettingsOption(RecorderFailureAutoClose.never, "Never",
+                                     detail: "It stays until you close it (Escape, or its close button)."),
+                NativeSettingsOption(RecorderFailureAutoClose.oneMinute, "After 1 min",
+                                     detail: "It closes a minute after it appeared or after the pointer left it."),
+                NativeSettingsOption(RecorderFailureAutoClose.fiveMinutes, "After 5 min",
+                                     detail: "It closes five minutes after it appeared or after the pointer left it."),
+            ],
+            selection: model.choice(RecorderFailureAutoClose.key, RecorderFailureAutoClose.never), minSegmentWidth: 72)
     }
 
     private static func number(_ value: Double) -> String {

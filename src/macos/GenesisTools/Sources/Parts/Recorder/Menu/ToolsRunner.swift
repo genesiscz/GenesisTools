@@ -4,12 +4,35 @@ import Foundation
 /// launches it and watches the live folder. Its output goes to `~/.genesis-tools/logs/recorder-start.log`, which a
 /// failed start names.
 enum ToolsRunner {
+    /// A command that exited non-zero soon after it started: its exit status, this run's output, and where that
+    /// output sits in the shared log (the file and the 1-based line it starts at).
+    struct EarlyFailure {
+        let argv: [String]
+        let status: Int32
+        let output: String
+        let logFile: String
+        let logLine: Int?
+
+        /// The command as a person would type it.
+        var command: String { (["tools"] + argv).joined(separator: " ") }
+    }
+
     /// `onEarlyFailure` runs on the main thread when the command exits non-zero within `earlyWindow` seconds (a
     /// refused flag, a missing grant), with the end of the log, so a start that never began does not stay silent.
     static func detached(
         _ argv: [String],
         earlyWindow: TimeInterval = 15,
         onEarlyFailure: ((Int32, String) -> Void)? = nil
+    ) throws {
+        try detachedRun(argv, earlyWindow: earlyWindow, onFailure: onEarlyFailure.map { report in { report($0.status, $0.output) } })
+    }
+
+    /// `detached` with everything the failure notice names: the command, its exit, this run's output and its place in
+    /// the log file.
+    static func detachedRun(
+        _ argv: [String],
+        earlyWindow: TimeInterval = 15,
+        onFailure: ((EarlyFailure) -> Void)? = nil
     ) throws {
         let binary = ToolsBridge.defaultBinaryPath()
         let plan = ToolsBridge.launchPlan(binaryPath: binary, argv: argv)
@@ -36,11 +59,20 @@ enum ToolsRunner {
             let status = finished.terminationStatus
             guard status != 0 else { return }
             HubPerf.log("recorder: tools \(argv.joined(separator: " ")) exited \(status); see \(log.path)")
-            guard let onEarlyFailure, Date().timeIntervalSince(started) < earlyWindow else { return }
-            let output = Self.output(of: log, from: start)
-            DispatchQueue.main.async { onEarlyFailure(status, output) }
+            guard let onFailure, Date().timeIntervalSince(started) < earlyWindow else { return }
+            let failure = EarlyFailure(argv: argv, status: status, output: Self.output(of: log, from: start), logFile: log.path,
+                                       logLine: Self.line(of: log, at: start))
+            DispatchQueue.main.async { onFailure(failure) }
         }
         try process.run()
+    }
+
+    /// The 1-based line of `log` that starts at byte `offset`.
+    private static func line(of log: URL, at offset: UInt64) -> Int? {
+        guard let reader = try? FileHandle(forReadingFrom: log) else { return nil }
+        defer { try? reader.close() }
+        guard let data = try? reader.read(upToCount: Int(offset)) else { return nil }
+        return data.reduce(1) { $1 == 0x0A ? $0 + 1 : $0 }
     }
 
     /// One run's output in the shared log, from its offset, at most the last 120 lines.
@@ -55,8 +87,11 @@ enum ToolsRunner {
     /// The line of a failed command's output that names the problem. Commander prints `error: …` and then its whole
     /// help, whose last lines name nothing (a note once showed six lines of `tools recorder` help, review 2026-11-06):
     /// that `error:` line, else a note that it printed its usage, else the last line. Nil for no output.
+    /// Only lines at column 0 count: an indented `    error: {` is a field of a log entry, and it once made the
+    /// note's title end in "{" (2026-11-09).
     nonisolated static func problem(in output: String) -> String? {
-        let lines = output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let lines = output.split(separator: "\n").filter { $0.first.map { !$0.isWhitespace } ?? false }
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         if let error = lines.first(where: { $0.lowercased().hasPrefix("error:") }) {
             return error.dropFirst("error:".count).trimmingCharacters(in: .whitespaces)
         }
