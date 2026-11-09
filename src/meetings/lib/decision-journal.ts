@@ -11,12 +11,12 @@ import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { appendCorrections, type Correction, correctionSchema } from "@genesiscz/utils/meetings/corrections";
 import {
     type DecisionActor,
-    decisionActorSchema,
     type MeetingChange,
     type MeetingItem,
     type MeetingRecord,
     type MeetingStore,
     meetingItemSchema,
+    savedDecisionActorSchema,
 } from "@genesiscz/utils/meetings/record";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { z } from "zod";
@@ -113,7 +113,8 @@ export const journalEntrySchema = z.object({
     token: z.string().min(1),
     at: z.string().min(1),
     meeting: z.string().min(1),
-    actor: decisionActorSchema,
+    /** An actor kind a newer build wrote reads as `unknown`, so its entry still reads and its token still reverts. */
+    actor: savedDecisionActorSchema,
     reason: z.string().optional(),
     action: journalActionSchema,
     /** The question it decided (an answer, a skip, a split) or gave back (the Undo of one). */

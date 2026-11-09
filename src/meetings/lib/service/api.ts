@@ -191,6 +191,9 @@ export function meetingsMethod<M extends MeetingsMethod>(name: M): MethodNamed<M
 /** The transport's subscription method, which every Meetings service answers besides its descriptor's methods. */
 export const SUBSCRIBE = "subscribe";
 
+/** The transport's end of a subscription: the connection hears no event until it subscribes again. */
+export const UNSUBSCRIBE = "unsubscribe";
+
 /**
  * The parts of a meeting a `meeting.changed` names: the window parts of `meeting.revisions`, so a subscriber reads
  * again only those.
@@ -205,7 +208,7 @@ export const MEETINGS_EVENTS = ["meeting.changed"] as const;
 export type MeetingsEvent = (typeof MEETINGS_EVENTS)[number];
 
 export const subscribeParamsSchema = z.object({
-    /** Only this meeting's events (an exact id); absent: every meeting's. */
+    /** Only this meeting's events (an exact id); absent: every meeting's. Anything else is refused (-32602). */
     meeting: z.string().min(1).optional(),
     /** Only these events; absent or empty: all of them. */
     events: z.array(z.string()).optional(),
@@ -246,8 +249,12 @@ export type MeetingsErrorCode = (typeof MEETINGS_ERROR_CODES)[number];
 
 export const meetingsErrorDataSchema = z.object({ code: z.enum(MEETINGS_ERROR_CODES) });
 
-/** Every method `hello` lists: the descriptor's and the transport's `subscribe`. */
-export const MEETINGS_METHODS: readonly string[] = [...meetingsApi.methods.map((method) => method.name), SUBSCRIBE];
+/** Every method `hello` lists: the descriptor's and the transport's `subscribe` and `unsubscribe`. */
+export const MEETINGS_METHODS: readonly string[] = [
+    ...meetingsApi.methods.map((method) => method.name),
+    SUBSCRIBE,
+    UNSUBSCRIBE,
+];
 
 /** The protocol's fingerprint, which `hello` answers: a change of the method or event list is a new version. */
 export function meetingsProtocolVersion(): string {

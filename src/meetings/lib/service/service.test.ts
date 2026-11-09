@@ -22,6 +22,7 @@ import {
     SUBSCRIBE,
     subscribeParamsSchema,
     subscribeResultSchema,
+    UNSUBSCRIBE,
 } from "./api";
 import {
     InProcessMeetingsClient,
@@ -294,6 +295,14 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             { method: "meeting.changed", params: { meeting: REVIEW.id, parts: ["show", "transcript"] } },
         ]);
     });
+
+    test("a subscription with an empty meeting is refused as invalid params instead of hearing every meeting", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const refused = await failure(client.subscribe({ meeting: "" }, () => undefined));
+
+        expect(refused).toMatchObject({ code: -32602 });
+        expect(refused.message).toStartWith("subscribe: meeting:");
+    });
 });
 
 describe("the Meetings service's connections", () => {
@@ -319,6 +328,24 @@ describe("the Meetings service's connections", () => {
             SocketMeetingsClient.connect(service.entry, { ...hello, code: "ffffffffffff" })
         );
         expect(otherCode.message).toBe(`the meetings service runs the code of another checkout (${CODE})`);
+    });
+
+    test("the service refuses a meeting filter that does not read, and after unsubscribe a connection hears nothing", async () => {
+        const { service } = await startService();
+        const raw = await rawConnection(service.entry.socket);
+        await raw.request("hello", { role: "window", protocol: MEETINGS_PROTOCOL });
+        await raw.request(SUBSCRIBE, { meeting: REVIEW.id, events: ["meeting.changed"] });
+        const refused = await raw.request(SUBSCRIBE, { meeting: 42 });
+        service.emit("meeting.changed", { meeting: RETRO.id, parts: ["show"] });
+        service.emit("meeting.changed", { meeting: REVIEW.id, parts: ["show"] });
+        await raw.request(UNSUBSCRIBE, {});
+        service.emit("meeting.changed", { meeting: REVIEW.id, parts: ["transcript"] });
+        await raw.request("meetings.list", { limit: 1 });
+
+        expect(refused.reply.error).toMatchObject({ code: -32602 });
+        expect(raw.lines.filter((line) => line.method === "meeting.changed")).toEqual([
+            { jsonrpc: "2.0", method: "meeting.changed", params: { meeting: REVIEW.id, parts: ["show"] } },
+        ]);
     });
 
     test("a second start in the folder answers the running service", async () => {
@@ -514,6 +541,13 @@ async function captureExamples(): Promise<Example[]> {
         direction: "service→client",
         ...(notification ? { notification } : {}),
     });
+    await ask(
+        window,
+        SUBSCRIBE,
+        { meeting: "" },
+        "A meeting filter that does not read: -32602, and the subscription before stays."
+    );
+    await ask(window, UNSUBSCRIBE, {}, "The end of the subscription: no event reaches it until it subscribes again.");
 
     const cli = await rawConnection(service.entry.socket);
     await ask(
@@ -576,9 +610,10 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
         const examples = fixture.examples as Example[];
 
         for (const example of examples) {
-            if (example.method === SUBSCRIBE) {
-                expect(subscribeParamsSchema.safeParse(example.request?.params).success).toBe(true);
-                expect(subscribeResultSchema.safeParse(example.reply?.result).success).toBe(true);
+            if (example.method === SUBSCRIBE || example.method === UNSUBSCRIBE) {
+                const refused = (example.reply?.error as { code?: number } | undefined)?.code === -32602;
+                expect(subscribeParamsSchema.safeParse(example.request?.params).success).toBe(!refused);
+                expect(subscribeResultSchema.safeParse(example.reply?.result).success).toBe(!refused);
                 continue;
             }
 
@@ -607,7 +642,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
 
         const named = new Set(examples.map((example) => example.method));
         expect(
-            [...meetingsApi.methods.map((method) => method.name), SUBSCRIBE, ...MEETINGS_EVENTS].filter(
+            [...meetingsApi.methods.map((method) => method.name), SUBSCRIBE, UNSUBSCRIBE, ...MEETINGS_EVENTS].filter(
                 (method) => !named.has(method)
             )
         ).toEqual([]);

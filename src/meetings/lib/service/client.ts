@@ -1,6 +1,6 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { RpcError } from "@genesiscz/utils/rpc/errors";
+import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { readLiveServiceEntry, type ServiceEntry } from "@genesiscz/utils/rpc/service-host";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -19,6 +19,7 @@ import {
     meetingsProtocolVersion,
     SUBSCRIBE,
     subscribeParamsSchema,
+    UNSUBSCRIBE,
 } from "./api";
 import {
     asRefusal,
@@ -79,6 +80,27 @@ export function subscriptionHears(
 ): boolean {
     const events = filter.events ?? [];
     return (events.length === 0 || events.includes(event)) && (!filter.meeting || filter.meeting === meetingOf(params));
+}
+
+/**
+ * The filter as both adapters accept it: an empty or non-string meeting would widen the subscription to every meeting,
+ * so it is refused as invalid params (-32602), as the service refuses it.
+ */
+function checkedFilter<F extends { meeting?: string; events?: readonly string[] }>(filter: F): F {
+    const parsed = subscribeParamsSchema.safeParse({
+        ...filter,
+        ...(filter.events ? { events: [...filter.events] } : {}),
+    });
+
+    if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        throw new RpcError(
+            JSON_RPC_ERRORS.invalidParams,
+            `subscribe: ${issue?.path.join(".") || "params"}: ${issue?.message}`
+        );
+    }
+
+    return filter;
 }
 
 /**
@@ -168,7 +190,7 @@ export class InProcessMeetingsClient implements MeetingsClient {
         filter: { meeting?: string; events?: readonly MeetingsEvent[] },
         listener: (event: MeetingsEventMessage) => void
     ): Promise<() => void> {
-        const stop = (this.options.events ?? localMeetingsEvents).listen(filter, listener);
+        const stop = (this.options.events ?? localMeetingsEvents).listen(checkedFilter(filter), listener);
         this.stops.add(stop);
         return () => {
             this.stops.delete(stop);
@@ -249,7 +271,7 @@ export class SocketMeetingsClient implements MeetingsClient {
         filter: { meeting?: string; events?: readonly MeetingsEvent[] },
         listener: (event: MeetingsEventMessage) => void
     ): Promise<() => void> {
-        const entry = { filter, listener };
+        const entry = { filter: checkedFilter(filter), listener };
         this.listeners.add(entry);
         // One subscription per connection on the service: the union of the listeners' events and meetings.
         await this.resubscribe();
@@ -267,8 +289,16 @@ export class SocketMeetingsClient implements MeetingsClient {
         this.client.close();
     }
 
-    /** The service's filter of this connection: every listener's events, and one meeting only when all name it. */
+    /**
+     * The service's filter of this connection: every listener's events, and one meeting only when all name it. With no
+     * listener left it unsubscribes: an empty event list would read as every event.
+     */
     private async resubscribe(): Promise<void> {
+        if (this.listeners.size === 0) {
+            await this.client.call(UNSUBSCRIBE, {});
+            return;
+        }
+
         const filters = [...this.listeners].map((each) => each.filter);
         const anyEvent = filters.some((filter) => !filter.events || filter.events.length === 0);
         const events = anyEvent ? [] : [...new Set(filters.flatMap((filter) => filter.events ?? []))];
