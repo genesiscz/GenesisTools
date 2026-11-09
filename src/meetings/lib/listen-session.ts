@@ -3,6 +3,7 @@ import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { type AnswerEvent, appendAnswerEvent, type RoundEndReason, roundRunning } from "./answer-log";
+import type { Decided, DecisionAction, DecisionSkip } from "./decision-actions";
 import { DecisionJournal, type JournalEntry, type MicShare, type SplitInputs } from "./decision-journal";
 import { openQuestions, type QuestionItem, questionLabel } from "./questions";
 
@@ -53,6 +54,15 @@ export interface ListenAdapter {
     note(note: SessionNote): void;
 }
 
+/**
+ * Where a round's decisions go: the decision journal in this process (the default), or the Meetings service through
+ * `MeetingsClient` (`decision.apply`, `decision.revert`), which takes the actor from the connection's hello.
+ */
+export interface RoundDecisions {
+    apply(request: { meeting: string; action: DecisionAction; reason?: string }): Promise<Decided>;
+    revert(request: { meeting: string; token: string; reason?: string }): Promise<Decided>;
+}
+
 export interface ListenSessionOptions {
     store: MeetingStore;
     meeting: MeetingRecord;
@@ -73,6 +83,8 @@ export interface ListenSessionOptions {
     actor?: DecisionActor;
     /** Why, kept with each decision of the round. */
     reason?: string;
+    /** Where the decisions go; the decision journal in this process, with `actor`, when absent. */
+    decisions?: RoundDecisions;
 }
 
 /** One decision of the round, by its decision journal token, so Esc can undo exactly that. */
@@ -96,16 +108,24 @@ export class ListenSession {
     private readonly steps: Step[] = [];
     /** A part made by a split in this round, and the question it was cut from. */
     private readonly parentOf = new Map<string, string>();
-    private readonly journal: DecisionJournal;
+    private readonly decisions: RoundDecisions;
     private readonly entries: JournalEntry[] = [];
+    /** What the last decision left without deciding it, with why (a question decided elsewhere meanwhile). */
+    private lastSkipped: DecisionSkip[] = [];
     private micShare?: Promise<MicShare | undefined>;
     private ownsRound = false;
     private ended = false;
     private roundEnded = false;
 
     constructor(private readonly options: ListenSessionOptions) {
-        const { split } = options;
-        this.journal = new DecisionJournal({
+        this.decisions = options.decisions ?? this.journalDecisions();
+    }
+
+    /** The decision journal in this process, deciding as `actor`. */
+    private journalDecisions(): RoundDecisions {
+        const { split } = this.options;
+        const options = this.options;
+        const journal = new DecisionJournal({
             store: options.store,
             listenBelow: options.listenBelow,
             ...(options.ledger ? { ledger: options.ledger } : {}),
@@ -118,6 +138,15 @@ export class ListenSession {
                 },
             },
         });
+        return {
+            apply: (request) => journal.apply({ ...request, actor: this.actor() }),
+            revert: (request) => journal.revert({ ...request, actor: this.actor() }),
+        };
+    }
+
+    /** What the round's last decision left undecided, with why (empty when it decided). */
+    skippedLast(): DecisionSkip[] {
+        return [...this.lastSkipped];
     }
 
     /** The decision journal entries this round made, oldest first (an Esc'd one stays: its revert is an entry too). */
@@ -323,7 +352,7 @@ export class ListenSession {
     }
 
     private async decide(question: QuestionItem, outcome: ListenAnswer | "skip"): Promise<void> {
-        const { entry } = await this.journal.apply({
+        const { entry, skipped } = await this.decisions.apply({
             meeting: this.options.meeting.id,
             action:
                 outcome === "skip"
@@ -334,9 +363,9 @@ export class ListenSession {
                           answer: outcome.answer,
                           ...(outcome.comment ? { comment: outcome.comment } : {}),
                       },
-            actor: this.actor(),
             ...this.reason(),
         });
+        this.lastSkipped = skipped;
 
         // The question was decided elsewhere while it was asked: that decision stays, and this one is dropped.
         if (!entry) {
@@ -373,10 +402,9 @@ export class ListenSession {
         }
 
         try {
-            const { entry } = await this.journal.revert({
+            const { entry } = await this.decisions.revert({
                 meeting: this.options.meeting.id,
                 token: last.token,
-                actor: this.actor(),
                 ...this.reason(),
             });
 
@@ -410,10 +438,9 @@ export class ListenSession {
     /** "Several voices": cuts the question into parts that come next; false when there is nothing to cut at. */
     private async split(question: QuestionItem): Promise<boolean> {
         const label = questionLabel(this.current(), question.id);
-        const { entry } = await this.journal.apply({
+        const { entry } = await this.decisions.apply({
             meeting: this.options.meeting.id,
             action: { kind: "split", question: question.id },
-            actor: this.actor(),
             ...this.reason(),
         });
         const parts = (entry?.changes ?? []).flatMap((change) =>

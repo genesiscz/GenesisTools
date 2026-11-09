@@ -7,8 +7,9 @@ import type { AgentIdentity } from "@genesiscz/utils/agent/identity";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { mergeLabels } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
-import { appendCorrections, type Correction, correctionSchema } from "@genesiscz/utils/meetings/corrections";
+import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
 import {
     type DecisionActor,
     type MeetingChange,
@@ -16,11 +17,24 @@ import {
     type MeetingRecord,
     type MeetingStore,
     meetingItemSchema,
-    savedDecisionActorSchema,
 } from "@genesiscz/utils/meetings/record";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
-import { z } from "zod";
-import { ANSWER_LOG_FILE, type AnswerEvent, appendAnswerEvent } from "./answer-log";
+import { prepareFindings } from "./add-findings";
+import { ANSWER_LOG_FILE, type AnswerEvent, appendAnswerEvent, appendAnswerEvents, roundRunning } from "./answer-log";
+import {
+    type Decided,
+    type DecisionAction,
+    type DecisionSkip,
+    type FieldChange,
+    type ItemChange,
+    JOURNAL_FILE,
+    type JournalAction,
+    type JournalEntry,
+    type JournalReadEntry,
+    journalEntrySchema,
+    type LabelChange,
+    MEETING_FIELDS,
+} from "./decision-actions";
 import {
     answerQuestion,
     DEFAULT_LISTEN_BELOW,
@@ -38,104 +52,23 @@ import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 
 const { log } = logger.scoped("meetings-journal");
 
-/** The file in a meeting's folder that keeps its decision journal: one entry per line, oldest first, append-only. */
-export const JOURNAL_FILE = "decisions.ndjson";
+export {
+    type Decided,
+    type DecisionAction,
+    type DecisionSkip,
+    decisionActionSchema,
+    type FieldChange,
+    type ItemChange,
+    JOURNAL_FILE,
+    type JournalEntry,
+    type JournalReadEntry,
+    journalEntrySchema,
+    type LabelChange,
+    SKIP_NEEDS,
+} from "./decision-actions";
 
-const itemRef = z.string().min(1);
-
-/** One decision a person, an agent or a rule makes on a meeting. Item references take an id (`i42`) or `Q12`. */
-const DECISION_ACTION_OPTIONS = [
-    z.object({
-        kind: z.literal("confirm"),
-        items: z.array(itemRef),
-        /** Every suggested item at or above this confidence instead of `items`. */
-        minConfidence: z.number().optional(),
-        /** Whose voice a speaker range is. */
-        speaker: z.string().optional(),
-        /** A term's right spelling, when the proposal is wrong. */
-        proposed: z.string().optional(),
-    }),
-    z.object({ kind: z.literal("reject"), items: z.array(itemRef), minConfidence: z.number().optional() }),
-    /** The item's value edited in place (a term's spelling, a range's speaker, a join's word): it is confirmed so. */
-    z.object({ kind: z.literal("respell"), item: itemRef, text: z.string() }),
-    z.object({ kind: z.literal("answer"), question: itemRef, answer: z.string(), comment: z.string().optional() }),
-    z.object({ kind: z.literal("skip"), question: itemRef }),
-    /** "Several voices": the question is cut into one question per line and voice. */
-    z.object({ kind: z.literal("split"), question: itemRef }),
-    /** A diarization label renamed for this meeting; the label's own name removes the rename. */
-    z.object({ kind: z.literal("rename"), label: z.string().min(1), name: z.string() }),
-    /** Items back to suggested, each to the state before its own last decision. */
-    z.object({ kind: z.literal("reopen"), items: z.array(itemRef).min(1) }),
-] as const;
-
-export const decisionActionSchema = z.discriminatedUnion("kind", [...DECISION_ACTION_OPTIONS]);
-export type DecisionAction = z.infer<typeof decisionActionSchema>;
-
-/** The Undo of one entry (`items`: only these of its items; a question named brings back its whole answer). */
-const revertActionSchema = z.object({
-    kind: z.literal("revert"),
-    token: z.string().min(1),
-    items: z.array(itemRef).optional(),
-});
-
-const journalActionSchema = z.discriminatedUnion("kind", [...DECISION_ACTION_OPTIONS, revertActionSchema]);
-type JournalAction = z.infer<typeof journalActionSchema>;
 type JournalActionKind = JournalAction["kind"];
 type ActionOf<K extends JournalActionKind> = Extract<JournalAction, { kind: K }>;
-
-/** One item a decision changed: its state before (absent: the decision made it) and after (absent: it removed it). */
-const itemChangeSchema = z.object({
-    id: z.string(),
-    before: meetingItemSchema.optional(),
-    after: meetingItemSchema.optional(),
-});
-export type ItemChange = z.infer<typeof itemChangeSchema>;
-
-/** A speaker label's name before and after (absent: the source's own label). */
-const labelChangeSchema = z.object({ label: z.string(), before: z.string().optional(), after: z.string().optional() });
-export type LabelChange = z.infer<typeof labelChangeSchema>;
-
-export const SKIP_NEEDS = ["speaker", "proposed", "listen", "nothing"] as const;
-
-/**
- * An item a decision named and left, with the reason. `needs`: what decides it, a `speaker` or `proposed` value, or an
- * answer by ear (`listen`); `nothing` when it is decided that way already, which is no failure.
- */
-const skipSchema = z.object({ id: z.string(), reason: z.string(), needs: z.enum(SKIP_NEEDS).optional() });
-export type DecisionSkip = z.infer<typeof skipSchema>;
-
-/**
- * One line of the journal: who decided what on a meeting, when and why, and everything it changed, so its token
- * undoes exactly it. `decided`: the items it decided (their status or decision time changed); `settled`: the
- * look-alike questions an answer settled; `corrections`: the ledger lines it wrote.
- */
-export const journalEntrySchema = z.object({
-    token: z.string().min(1),
-    at: z.string().min(1),
-    meeting: z.string().min(1),
-    /** An actor kind a newer build wrote reads as `unknown`, so its entry still reads and its token still reverts. */
-    actor: savedDecisionActorSchema,
-    reason: z.string().optional(),
-    action: journalActionSchema,
-    /** The question it decided (an answer, a skip, a split) or gave back (the Undo of one). */
-    question: z.string().optional(),
-    decided: z.array(z.string()).default([]),
-    settled: z.array(z.string()).default([]),
-    skipped: z.array(skipSchema).default([]),
-    changes: z.array(itemChangeSchema).default([]),
-    labels: z.array(labelChangeSchema).default([]),
-    corrections: z.array(correctionSchema).default([]),
-});
-export type JournalEntry = z.infer<typeof journalEntrySchema>;
-
-/** An entry as `read` lists it: `revertedBy` names the later entry that gave back every item it decided. */
-export type JournalReadEntry = JournalEntry & { revertedBy?: string };
-
-/** What a decision did: its saved entry, or none when it changed nothing; and what it left, with the reason. */
-export interface Decided {
-    entry?: JournalEntry;
-    skipped: DecisionSkip[];
-}
 
 export type MicShare = (fromSec: number, toSec: number) => number | undefined;
 
@@ -168,9 +101,15 @@ export interface DecisionJournalOptions {
     listenBelow?: number;
     /** Where the corrections a decision confirms or withdraws go; the corrections ledger by default. */
     ledger?: (corrections: Correction[]) => void;
-    /** The transcript and microphone share a split needs. */
+    /** The transcript and microphone share a split needs; an `add` anchors its findings to the same transcript. */
     split?: SplitInputs;
     now?: () => Date;
+    /**
+     * An answer, a skip or a split made while no listen round runs writes its own one-question round around its answer
+     * log line (round-start, the line, round-end in one append), as `listen --answer` does, so a subscriber that waits
+     * for a round's end hears it. The Meetings service sets it; a listen round writes its own round lines.
+     */
+    ownRound?: boolean;
 }
 
 /** What one action did to the record, besides the item and label changes the journal measures itself. */
@@ -183,12 +122,57 @@ interface ActionOutcome {
     question?: string;
     /** False for an action that puts items back (reopen, revert): it stamps no decision on them. */
     stamps: boolean;
+    /** Notes besides the skips (an added finding whose transcript anchor did not match). */
+    warnings?: string[];
 }
 
 /** Read before the record's lock, for the actions that need more than the record (a split's transcript). */
 interface Prepared {
     transcript?: TranscriptEntry[];
     micShare?: MicShare;
+}
+
+type FieldValues = Record<(typeof MEETING_FIELDS)[number], string | string[] | undefined>;
+
+/** The meeting's own fields as a `set` and its Undo see them. */
+function fieldValues(record: MeetingRecord): FieldValues {
+    return { project: record.project, title: record.title, labels: [...record.labels] };
+}
+
+function fieldChanges(was: FieldValues, now: FieldValues): FieldChange[] {
+    return MEETING_FIELDS.flatMap((field) =>
+        same(was[field], now[field])
+            ? []
+            : [
+                  {
+                      field,
+                      ...(was[field] !== undefined ? { before: was[field] } : {}),
+                      ...(now[field] !== undefined ? { after: now[field] } : {}),
+                  },
+              ]
+    );
+}
+
+/** Puts one field of the record back to `value` (absent: no value). */
+function putField(record: MeetingRecord, field: FieldChange["field"], value: FieldChange["before"]): void {
+    if (field === "labels") {
+        record.labels = Array.isArray(value) ? [...value] : [];
+        return;
+    }
+
+    const text = typeof value === "string" ? value : undefined;
+
+    if (field === "project") {
+        if (text === undefined) {
+            delete record.project;
+        } else {
+            record.project = text;
+        }
+
+        return;
+    }
+
+    record.title = text ?? record.title;
 }
 
 interface ActionContext {
@@ -726,6 +710,46 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             };
         },
     },
+    add: {
+        prepare: async (record, _action, inputs) => {
+            // The transcript anchors each join and line-bound term to one line; with none at hand, items go in as given.
+            const transcript = await inputs?.transcript(record).catch((error: unknown) => {
+                log.debug({ error, meeting: record.id }, "no transcript to check the anchors against");
+                return undefined;
+            });
+            return transcript ? { transcript } : {};
+        },
+        mutate: (record, action, { prepared }) => {
+            const { added, warnings } = prepareFindings({
+                findings: action.findings,
+                items: record.items,
+                ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
+            });
+            record.items.push(...added);
+            return {
+                history: { command: "items add", change: `${action.findings.length} findings` },
+                warnings,
+                stamps: false,
+            };
+        },
+    },
+    set: {
+        mutate: (record, action) => {
+            const labels = action.labels ?? [];
+            const unlabel = action.unlabel ?? [];
+            const removed = new Set(unlabel.map((label) => label.toLowerCase()));
+            record.project = action.project ?? record.project;
+            record.title = action.title ?? record.title;
+            record.labels = mergeLabels(record.labels, labels).filter((label) => !removed.has(label.toLowerCase()));
+            const change = [
+                action.project ? `project ${action.project}` : "",
+                action.title ? `title "${action.title}"` : "",
+                labels.length > 0 ? `labels + ${labels.join(", ")}` : "",
+                unlabel.length > 0 ? `labels - ${unlabel.join(", ")}` : "",
+            ].filter(Boolean);
+            return { history: { command: "set", change: change.join(", ") }, stamps: false };
+        },
+    },
     revert: {
         mutate: (record, action, { now, entryOf }) => {
             const target = entryOf(action.token);
@@ -783,6 +807,24 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                     "item-changed",
                     `${labelsSince.map((label) => label.label).join(", ")} was renamed again after the decision this Undo names; nothing was undone`
                 );
+            }
+
+            // A meeting field already back needs nothing; one changed again since refuses the Undo, as an item does.
+            const values = fieldValues(record);
+            const fields = action.items
+                ? []
+                : (target.fields ?? []).filter((field) => !same(values[field.field], field.before));
+            const fieldsSince = fields.filter((field) => !same(values[field.field], field.after));
+
+            if (fieldsSince.length > 0) {
+                throw new MeetingsConflictError(
+                    "item-changed",
+                    `the ${fieldsSince.map((field) => field.field).join(" and ")} of ${record.id} changed again after the decision this Undo names; nothing was undone`
+                );
+            }
+
+            for (const field of fields) {
+                putField(record, field.field, field.before);
             }
 
             const corrections: Correction[] = [];
@@ -910,21 +952,102 @@ export function actorOf(item: MeetingItem): DecisionActor {
     return item.decision?.actor ?? { kind: "unknown" };
 }
 
-/** An actor in words, for a row or a journal line: "you in the window", "agent claude-code (session 3f98b772)". */
+/**
+ * What a planned decision reaches beyond the items it names, for the window's "This also affects" sheet (R22, G9,
+ * G26, G27): the other items it changes, the transcript lines a spelling changes, and the dictionary it teaches.
+ */
+export interface DecisionReach {
+    /**
+     * Items besides the named ones: the look-alike questions an answer settles and the items it decides. `same`: the
+     * engine settles only questions with the same evidence (heard words and choices, or the same voice signature).
+     */
+    items: Array<{ id: string; match: "same" }>;
+    /** Transcript lines whose heard words a confirmed spelling fixes (a term fixed everywhere); absent without a transcript. */
+    lines?: number;
+    /**
+     * Spellings fixed everywhere also teach the dictionary: `dictionary suggest` proposes a fix confirmed in
+     * `CORRECTION_REPEATS` meetings. `seenBefore`: other confirmed sightings in the ledger (this project's); `teaches`:
+     * this decision makes it a suggestion.
+     */
+    dictionary: Array<{ project?: string; heard: string; fixed: string; seenBefore: number; teaches: boolean }>;
+}
+
+/** The reach of a planned entry, from the record it was planned on, its transcript (when read) and the ledger. */
+export function decisionReach(options: {
+    entry: JournalEntry;
+    /** The items the action names, which are not reach. */
+    named: string[];
+    transcript?: readonly TranscriptEntry[];
+    ledger: readonly Correction[];
+    repeats: number;
+}): DecisionReach {
+    const { entry } = options;
+    const named = new Set([...options.named, ...(entry.question ? [entry.question] : [])]);
+    const items = [...new Set([...entry.settled, ...entry.decided])]
+        .filter((id) => !named.has(id))
+        .map((id) => ({ id, match: "same" as const }));
+    const taught = entry.corrections.filter(
+        (correction) => correction.kind === "term" && correction.scope === "everywhere" && !correction.retracted
+    );
+    const lines = options.transcript
+        ? options.transcript.filter((line) => {
+              const text = line.text.toLowerCase();
+              return taught.some((correction) => text.includes(correction.heard.toLowerCase()));
+          }).length
+        : undefined;
+    const dictionary = taught.map((correction) => {
+        // One live confirmation per other meeting item, as `dictionary suggest` counts them (an Undo withdraws one).
+        const live = new Map<string, boolean>();
+
+        for (const line of options.ledger) {
+            if (
+                line.kind === "term" &&
+                line.scope === "everywhere" &&
+                line.project === correction.project &&
+                line.heard === correction.heard &&
+                line.fixed === correction.fixed &&
+                !(line.meeting === correction.meeting && line.item === correction.item)
+            ) {
+                live.set(`${line.meeting}\n${line.item}`, !line.retracted);
+            }
+        }
+
+        const seenBefore = [...live.values()].filter(Boolean).length;
+        return {
+            ...(correction.project ? { project: correction.project } : {}),
+            heard: correction.heard,
+            fixed: correction.fixed,
+            seenBefore,
+            teaches: seenBefore + 1 >= options.repeats,
+        };
+    });
+    return { items, ...(taught.length > 0 && lines !== undefined ? { lines } : {}), dictionary };
+}
+
+/** The agent harnesses by the name a person knows them by; another harness shows its own id. */
+const HARNESS_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok" };
+
+/**
+ * An actor in words, after "by" on a row or a journal line (GLOSSARY.md, "Decision journal"): "by you" (the window),
+ * "by you in the terminal" (listen), "by you at the command line", "by an agent (Claude Code, session 3f98b772)",
+ * "by rule E2", and "by someone, before the history existed" for a decision older than the journal (never "unknown").
+ */
 export function actorText(actor: DecisionActor): string {
     switch (actor.kind) {
         case "window":
-            return "you in the window";
+            return "you";
         case "listen":
-            return "you in listen";
+            return "you in the terminal";
         case "cli":
-            return "the command line";
-        case "agent":
-            return `agent ${actor.harness}${actor.session ? ` (session ${actor.session.slice(0, 8)})` : ""}`;
+            return "you at the command line";
+        case "agent": {
+            const session = actor.session ? `, session ${actor.session.slice(0, 8)}` : "";
+            return `an agent (${HARNESS_NAMES[actor.harness] ?? actor.harness}${session})`;
+        }
         case "rule":
             return `rule ${actor.rule}`;
         case "unknown":
-            return "unknown";
+            return "someone, before the history existed";
     }
 }
 
@@ -1062,20 +1185,27 @@ export class DecisionJournal {
             },
         };
         let result: Decided = { skipped: [] };
+        /** Open questions once the decision is made: the round-end of a round it writes itself says it. */
+        let openAfter = 0;
         // Filled in by the handler: the store reads it after the change, for the record's history line.
         const history: MeetingChange = { command: action.kind, change: "" };
         const decide = (record: MeetingRecord): boolean => {
             const items = structuredClone(record.items);
             const labels = { ...record.speakers.labels };
+            const fieldsBefore = fieldValues(record);
             const outcome = handler.mutate(record, action, context);
             Object.assign(history, outcome.history);
             let changes = itemChanges(items, record.items);
             const labelled = labelChanges(labels, record.speakers.labels);
+            const fielded = fieldChanges(fieldsBefore, fieldValues(record));
+            const warnings = outcome.warnings?.length ? { warnings: outcome.warnings } : {};
 
-            if (changes.length === 0 && labelled.length === 0) {
-                result = { skipped: outcome.skipped ?? [] };
+            if (changes.length === 0 && labelled.length === 0 && fielded.length === 0) {
+                result = { skipped: outcome.skipped ?? [], ...warnings };
                 return false;
             }
+
+            openAfter = openQuestions(record).length;
 
             const decided = changes
                 .filter(
@@ -1106,9 +1236,11 @@ export class DecisionJournal {
                     skipped: outcome.skipped ?? [],
                     changes,
                     labels: labelled,
+                    ...(fielded.length > 0 ? { fields: fielded } : {}),
                     corrections: outcome.corrections ?? [],
                 },
                 skipped: outcome.skipped ?? [],
+                ...warnings,
             };
             return true;
         };
@@ -1124,7 +1256,10 @@ export class DecisionJournal {
             (record) => decide(record),
             () => {
                 if (result.entry) {
-                    this.write(result.entry, action.kind === "revert" ? context.entryOf(action.token) : undefined);
+                    this.write(result.entry, {
+                        reverted: action.kind === "revert" ? context.entryOf(action.token) : undefined,
+                        openAfter,
+                    });
                 }
             }
         );
@@ -1172,13 +1307,30 @@ export class DecisionJournal {
     }
 
     /** The entry's line, its answer log line and its ledger lines, in that order, under the record's lock. */
-    private write(entry: JournalEntry, reverted: JournalEntry | undefined): void {
+    private write(entry: JournalEntry, after: { reverted: JournalEntry | undefined; openAfter: number }): void {
         const { store } = this.options;
         appendFileSync(this.path(entry.meeting), `${SafeJSON.stringify(entry, { jsonl: true })}\n`, { mode: 0o600 });
-        const event = answerEventOf(entry, reverted);
+        const event = answerEventOf(entry, after.reverted);
 
         if (event) {
-            appendAnswerEvent(join(store.folder(entry.meeting), ANSWER_LOG_FILE), event);
+            const logPath = join(store.folder(entry.meeting), ANSWER_LOG_FILE);
+
+            // One append for the three lines, so a subscriber reads the round's start and end together.
+            if (this.options.ownRound && event.event !== "reopened" && !roundRunning(logPath)) {
+                appendAnswerEvents(logPath, [
+                    { event: "round-start", at: entry.at, pid: process.pid, open: 1 },
+                    event,
+                    {
+                        event: "round-end",
+                        at: entry.at,
+                        reason: "done",
+                        asked: event.event === "split" ? 0 : 1,
+                        open: after.openAfter,
+                    },
+                ]);
+            } else {
+                appendAnswerEvent(logPath, event);
+            }
         }
 
         (this.options.ledger ?? appendCorrections)(entry.corrections);

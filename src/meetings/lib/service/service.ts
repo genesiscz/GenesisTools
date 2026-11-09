@@ -74,6 +74,15 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
     // `host` is set once it listens; no call reaches `hello` before.
     let host: ServiceHost<ConnectionState> | undefined;
 
+    /** A notification to every connection subscribed to the event and to its meeting (or to every meeting). */
+    const emit = <E extends MeetingsEvent>(event: E, params: MeetingsNotification<E>): void => {
+        host?.emit(
+            event,
+            { ...params },
+            (connection) => !connection.state.meeting || connection.state.meeting === params.meeting
+        );
+    };
+
     const greet = (connection: RpcConnection<ConnectionState>, hello: MeetingsHello) => {
         if (hello.protocol !== MEETINGS_PROTOCOL) {
             throw refusal(
@@ -113,6 +122,7 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
                     ...(connection.state.hello ? { caller: connection.state.hello } : {}),
                     signal: context.signal,
                     hello: (hello) => greet(connection, hello),
+                    emit: (event, notification) => emit(event, notification),
                 });
             } catch (error) {
                 throw asRefusal(error);
@@ -164,12 +174,7 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
                           ]
                         : [];
                 }),
-            emit: (event, params) =>
-                listening.emit(
-                    event,
-                    { ...params },
-                    (connection) => !connection.state.meeting || connection.state.meeting === params.meeting
-                ),
+            emit,
             stop: listening.stop,
             stopped: listening.stopped,
         },

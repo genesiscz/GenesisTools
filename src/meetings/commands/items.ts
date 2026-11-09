@@ -29,13 +29,12 @@ import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
-import { prepareFindings } from "../lib/add-findings";
-import { decideEntry, decideResult, reopenEntry, reopenResult } from "../lib/decide";
-import { callerActor, DecisionJournal } from "../lib/decision-journal";
+import { decideResult, decisionOf, reopenResult } from "../lib/decide";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
 import { questionLabel, questionWarnings } from "../lib/questions";
+import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
 import { meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
@@ -311,24 +310,14 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
     });
 
     try {
-        let added: MeetingItem[] = [];
-        let anchorWarnings: string[] = [];
-        const updated = await store.update(
-            record.id,
-            { command: "items add", change: `${parsed.data.length} findings` },
-            (current) => {
-                const prepared = prepareFindings({
-                    findings: parsed.data,
-                    items: current.items,
-                    transcript: meeting?.transcript,
-                });
-                added = prepared.added;
-                anchorWarnings = prepared.warnings;
-                current.items.push(...added);
-            }
+        // Through the decision journal, so the history says who suggested them (an agent, a person) and an Undo removes them.
+        const decided = await withMeetingsClient((client) =>
+            client.call("decision.apply", { meeting: record.id, action: { kind: "add", findings: parsed.data } })
         );
+        const added = (decided.entry?.changes ?? []).flatMap((change) => (change.after ? [change.after] : []));
+        const updated = store.read(record.id) ?? record;
 
-        for (const warning of anchorWarnings) {
+        for (const warning of decided.warnings ?? []) {
             ui.warn(warning);
         }
 
@@ -398,17 +387,13 @@ async function decide(
     const failed = (skipped: Array<{ needs: string }>) => skipped.some((skip) => skip.needs !== "nothing");
 
     try {
-        const decided = await decideEntry({
-            store,
-            record,
-            status,
-            ids,
-            minConfidence,
-            speaker: opts.speaker,
-            proposed: opts.proposed,
-            actor: callerActor(),
-            ...(opts.reason ? { reason: opts.reason } : {}),
-        });
+        const decided = await withMeetingsClient((client) =>
+            client.call("decision.apply", {
+                meeting: record.id,
+                action: decisionOf({ status, ids, minConfidence, speaker: opts.speaker, proposed: opts.proposed }),
+                ...(opts.reason ? { reason: opts.reason } : {}),
+            })
+        );
         const result = decideResult(decided);
 
         if (opts.json) {
@@ -450,14 +435,16 @@ async function reopen(
     }
 
     try {
-        const decided = await reopenEntry({
-            store,
-            record,
-            ids,
-            ...(opts.token ? { token: opts.token } : {}),
-            actor: callerActor(),
-            ...(opts.reason ? { reason: opts.reason } : {}),
-        });
+        const reason = opts.reason ? { reason: opts.reason } : {};
+        const decided = await withMeetingsClient((client) =>
+            opts.token
+                ? client.call("decision.revert", { meeting: record.id, token: opts.token, items: ids, ...reason })
+                : client.call("decision.apply", {
+                      meeting: record.id,
+                      action: { kind: "reopen", items: ids },
+                      ...reason,
+                  })
+        );
         const result = reopenResult(decided);
 
         if (opts.json) {
@@ -528,12 +515,13 @@ async function speakersRename(ref: string, label: string, name: string, opts: { 
             return;
         }
 
-        await new DecisionJournal({ store }).apply({
-            meeting: record.id,
-            action: { kind: "rename", label, name },
-            actor: callerActor(),
-            ...(opts.reason ? { reason: opts.reason } : {}),
-        });
+        await withMeetingsClient((client) =>
+            client.call("decision.apply", {
+                meeting: record.id,
+                action: { kind: "rename", label, name },
+                ...(opts.reason ? { reason: opts.reason } : {}),
+            })
+        );
         ui.ok(
             name.trim() === label
                 ? `${record.id}: ${label} is ${label} again (the rename is gone)`

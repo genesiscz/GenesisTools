@@ -246,7 +246,8 @@ final class MeetingsServiceTests: XCTestCase {
                 if let result { XCTAssertNotNil(try MeetingsService.decode(MeetingsAPI.Revisions.Result.self, result).show) }
             case MeetingsAPI.Subscribe.name:
                 try roundTrip(MeetingsAPI.Subscribe.Params.self, params, label)
-                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.Subscribe.Result.self, result).events, ["meeting.changed"]) }
+                // The transport answers the events it subscribed the connection to: the request's own list.
+                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.Subscribe.Result.self, result).events, params["events"] as? [String] ?? []) }
             case MeetingsAPI.MeetingChanged.name:
                 let notification = try XCTUnwrap((example["notification"] as? [String: Any])?["params"])
                 let changed = try MeetingsService.decode(MeetingsAPI.MeetingChanged.self, notification)
