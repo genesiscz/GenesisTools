@@ -228,7 +228,7 @@ describe("calendar candidates with the meeting's people", () => {
     test("an entry that names others but none of the meeting's people is left out; shared people rank first", () => {
         const start = "2026-11-09T13:32:00.000Z";
         const end = "2026-11-09T15:58:00.000Z";
-        const someoneElse = { name: "Holko Anna", email: "anna@example.com" };
+        const someoneElse = { name: "Dana Example", email: "dana@example.com" };
         const entries = [
             entry({
                 entryId: "other",
