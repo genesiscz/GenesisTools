@@ -17,6 +17,8 @@ public final class FailureNoticeModel: ObservableObject {
     /// The tallest the details may grow before they scroll, while the window fits its content.
     @Published public var detailsCap: CGFloat
     let retry: (@MainActor () -> Void)?
+    /// Opens the "Draft an issue" window; nil hides the button.
+    var draftIssue: (@MainActor () -> Void)?
     let dismiss: @MainActor () -> Void
     /// The details as markdown and the time line, built once per report rather than per body.
     private(set) var detailsMarkdown: String
@@ -174,6 +176,11 @@ public struct FailureNoticeView: View {
                         symbol: model.copied == .context ? "checkmark" : "sparkles",
                         tooltip: "Copy the error, what ran, the app's build, the log files and the whole output as markdown (⌘C)",
                         identifier: "failure-notice.copy-context") { model.copyContext() }
+            if let draftIssue = model.draftIssue {
+                GhostButton("Draft an issue", symbol: "exclamationmark.bubble",
+                            tooltip: "Review the issue's title and body, redact what is private, then post it to GitHub",
+                            identifier: "failure-notice.draft-issue") { draftIssue() }
+            }
             if model.report.hasLog {
                 GhostButton(model.copied == .log ? "Copied" : "Copy log", symbol: model.copied == .log ? "checkmark" : "doc.on.doc",
                             tooltip: "Copy the command's whole output", identifier: "failure-notice.copy-log") { model.copyLog() }

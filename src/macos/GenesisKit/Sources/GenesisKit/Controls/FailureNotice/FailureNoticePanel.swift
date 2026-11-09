@@ -13,6 +13,19 @@ public enum FailureNoticePlacement: String, CaseIterable, Identifiable, Sendable
     public var id: String { rawValue }
 }
 
+/// Where "Draft an issue" posts: the repository, how (`ToolsIssuePoster` in the app) and the labels.
+public struct FailureNoticeIssueTarget {
+    public var repo: String
+    public var poster: IssuePosting
+    public var labels: [String]
+
+    public init(repo: String, poster: IssuePosting, labels: [String] = ["bug"]) {
+        self.repo = repo
+        self.poster = poster
+        self.labels = labels
+    }
+}
+
 /// How a failure window behaves; the host stores each choice as a setting.
 public struct FailureNoticeOptions: Equatable, Sendable {
     /// The log is open when the window appears.
@@ -61,7 +74,7 @@ public final class FailureNoticePanel: NSObject, NSWindowDelegate {
     public var window: NSWindow? { panel }
 
     public func show(_ report: FailureReport, options: FailureNoticeOptions = FailureNoticeOptions(),
-                     retry: (@MainActor () -> Void)? = nil) {
+                     retry: (@MainActor () -> Void)? = nil, issue: FailureNoticeIssueTarget? = nil) {
         generation += 1
         let shown = generation
         let anchor = anchor()
@@ -81,6 +94,12 @@ public final class FailureNoticePanel: NSObject, NSWindowDelegate {
         let model = FailureNoticeModel(report: report, detailsOpen: options.detailsOpen, detailsCap: cap, retry: again,
                                        dismiss: { [weak self] in self?.close(shown) })
         model.userSized = saved != nil
+        if let issue {
+            model.draftIssue = { [weak self] in
+                IssueDraftWindow.show(IssueDraft.failure(report, repo: issue.repo, labels: issue.labels), poster: issue.poster,
+                                      near: self?.panel)
+            }
+        }
         self.model = model
         let root = FailureNoticeRoot(model: model, resized: { [weak self] height in self?.fit(height, generation: shown) },
                                      hovering: { [weak self] inside in self?.hover(inside, generation: shown) })

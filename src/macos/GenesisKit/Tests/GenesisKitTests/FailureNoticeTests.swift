@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import GenesisKit
 
@@ -203,5 +204,103 @@ final class FailureNoticeTests: XCTestCase {
         let time = Date(timeIntervalSince1970: 1_762_689_600) // 2025-11-09 12:00 UTC
         XCTAssertEqual(FailureReport.dayLogPath(home: "/Users/alice", time: time, timeZone: TimeZone(identifier: "Europe/Prague")!),
                        "/Users/alice/.genesis-tools/logs/2025-11-09.log")
+    }
+}
+
+/// "Draft an issue": the title it starts from, the `tools github issues post` call, its answer, and the window's states.
+@MainActor
+final class IssueDraftTests: XCTestCase {
+    private struct FakePoster: IssuePosting {
+        var result: Result<IssuePostResult, IssuePostError>
+        var browser: String? = "Brave Browser"
+        func post(_ draft: IssueDraft) async -> Result<IssuePostResult, IssuePostError> { result }
+        func browserName(for url: String) async -> String? { browser }
+    }
+
+    func testTheTitleIsTheFailureCutAtAWordBoundary() {
+        let report = FailureReport(title: "Recording failed", headline: "The camera did not start.")
+        XCTAssertEqual(IssueDraft.defaultTitle(for: report), "Recording failed: The camera did not start")
+        let long = FailureReport(title: "Recording failed", headline: String(repeating: "word ", count: 60))
+        let title = IssueDraft.defaultTitle(for: long)
+        XCTAssertLessThanOrEqual(title.count, 121)
+        XCTAssertTrue(title.hasSuffix("…"))
+        XCTAssertFalse(title.dropLast().hasSuffix(" "))
+    }
+
+    func testThePostRunsTheGitHubCommandWithTheBodyFile() {
+        let draft = IssueDraft(repo: "shop/storefront", title: "T", body: "B", redact: true, labels: ["bug"])
+        XCTAssertEqual(ToolsIssuePoster.arguments(draft, bodyFile: "/tmp/body.md", dryRun: false),
+                       ["issue", "post", "--repo", "shop/storefront", "--title", "T", "--body-file", "/tmp/body.md",
+                        "--json", "--redact", "--label", "bug"])
+        let plain = IssueDraft(repo: "shop/storefront", title: "T", body: "B", redact: false)
+        XCTAssertEqual(ToolsIssuePoster.arguments(plain, bodyFile: "/tmp/b.md", dryRun: true).suffix(2), ["--json", "--dry-run"])
+    }
+
+    func testTheCommandsAnswerIsReadBack() {
+        let posted = ToolsIssuePoster.parse(exitCode: 0, stdout: #"{"posted":true,"number":42,"url":"https://github.com/shop/storefront/issues/42","title":"T","body":"B","replaced":{"paths":2,"emails":1,"markers":0}}"#, stderr: "")
+        XCTAssertEqual(try posted.get(), IssuePostResult(posted: true, number: 42, url: "https://github.com/shop/storefront/issues/42",
+                                                         replaced: 3))
+        let dry = ToolsIssuePoster.parse(exitCode: 0, stdout: #"{"posted":false,"number":null,"url":null,"replaced":{}}"#, stderr: "")
+        XCTAssertEqual(try dry.get(), IssuePostResult(posted: false, number: nil, url: nil, replaced: 0))
+        let failed = ToolsIssuePoster.parse(exitCode: 1, stdout: "", stderr: "noise\nError: Not Found\n")
+        XCTAssertEqual(failed, .failure(IssuePostError(message: "Not Found")))
+        XCTAssertEqual(ToolsIssuePoster.browserName(fromJSON: #"{"defaultBrowser":{"name":"GenesisTools"},"defaultBrowserEffective":{"name":"Brave Browser"}}"#),
+                       "Brave Browser")
+        XCTAssertNil(ToolsIssuePoster.browserName(fromJSON: #"{"defaultBrowserEffective":null}"#))
+    }
+
+    /// `ISSUE_DRAFT_SHOTS=<folder>` writes the draft window in each state as a PNG (no window comes to the front).
+    func testDrawsTheDraftWindowInEachStateWhenAskedForShots() throws {
+        guard let folder = ProcessInfo.processInfo.environment["ISSUE_DRAFT_SHOTS"] else {
+            throw XCTSkip("ISSUE_DRAFT_SHOTS is not set")
+        }
+        let report = FailureReport(title: "Recording failed", headline: "The camera was asked for, but it did not start.",
+                                   summary: "Recording a window stopped at once (exit 1).", action: "Start a recording",
+                                   command: "tools recorder start --window 101344 --camera", exitStatus: 1,
+                                   folder: "/Users/alice/.genesis-tools/recordings/library/video-1",
+                                   logFile: "/Users/alice/.genesis-tools/logs/recorder-start.log", logLine: 812,
+                                   dayLog: "/Users/alice/.genesis-tools/logs/2026-11-09.log",
+                                   log: FailureNoticeTests.cameraFailure,
+                                   app: FailureAppFacts(name: "GenesisTools", version: "1.0", branch: "feat/x", commit: "d9695acca14929f8"))
+        let opened = IssueDraft.failure(report, repo: "genesiscz/GenesisTools")
+        var edited = opened
+        edited.title = "Recorder: the camera does not start from the menu bar"
+        edited.body = edited.body.replacingOccurrences(of: "/Users/alice", with: "~")
+        let ok = IssuePostResult(posted: true, number: 812, url: "https://github.com/genesiscz/GenesisTools/issues/812", replaced: 14)
+        let poster = FakePoster(result: .success(ok))
+        let states: [(String, IssueDraft, IssueDraftModel.State)] = [
+            ("empty", IssueDraft(repo: "genesiscz/GenesisTools", title: "", body: ""), .editing),
+            ("opened", opened, .editing),
+            ("edited", edited, .editing),
+            ("posting", edited, .posting),
+            ("posted", edited, .posted(ok)),
+            ("error", edited, .failed("Resource not accessible by integration (HTTP 403): the token cannot open issues in genesiscz/GenesisTools")),
+        ]
+        for (name, draft, state) in states {
+            let model = IssueDraftModel(draft: draft, poster: poster, state: state, browserName: "Brave Browser")
+            let view = IssueDraftView(model: model, close: {}).background(Color(white: 0.16)).environment(\.colorScheme, .dark)
+            try HostedShot.write(view, size: CGSize(width: 880, height: 620), settle: 0.6,
+                                 to: URL(fileURLWithPath: folder).appendingPathComponent("issue-draft-\(name).png"))
+        }
+    }
+
+    func testPostingGoesThroughPostingToPostedOrToTheErrorAndBack() async {
+        let ok = IssuePostResult(posted: true, number: 7, url: "https://github.com/shop/storefront/issues/7", replaced: 0)
+        let model = IssueDraftModel(draft: IssueDraft(repo: "shop/storefront", title: "T", body: "B"),
+                                    poster: FakePoster(result: .success(ok)))
+        XCTAssertEqual(model.state, .editing)
+        await model.post()
+        XCTAssertEqual(model.state, .posted(ok))
+        XCTAssertEqual(model.browserName, "Brave Browser")
+
+        let failing = IssueDraftModel(draft: IssueDraft(repo: "shop/storefront", title: "T", body: "B"),
+                                      poster: FakePoster(result: .failure(IssuePostError(message: "Not Found"))))
+        await failing.post()
+        XCTAssertEqual(failing.state, .failed("Not Found"))
+        XCTAssertEqual(failing.draft.body, "B", "a failed post keeps what the person wrote")
+
+        let empty = IssueDraftModel(draft: IssueDraft(repo: "shop/storefront", title: "  ", body: "B"),
+                                    poster: FakePoster(result: .success(ok)))
+        XCTAssertFalse(empty.canPost)
     }
 }
