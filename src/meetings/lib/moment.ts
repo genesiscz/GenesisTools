@@ -551,15 +551,17 @@ export async function momentFrames(store: MeetingStore, record: MeetingRecord, a
  * on each display at the spot is named when the screen was recorded (R41). `screen: false` skips the frame lookup.
  */
 export async function openMoment(options: OpenMomentOptions): Promise<Moment> {
-    return await momentIn(OpenedMeeting.of(options.store, options.record), options);
+    return await momentIn(options.opened ?? OpenedMeeting.of(options.store, options.record), options);
 }
 
-interface OpenMomentOptions {
+export interface OpenMomentOptions {
     store: MeetingStore;
     record: MeetingRecord;
     target: MomentTarget;
     padSec?: number;
     screen?: boolean;
+    /** The meeting already opened by the caller (a service that holds it, a test with its own source). */
+    opened?: OpenedMeeting;
 }
 
 async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Promise<Moment> {
@@ -586,7 +588,7 @@ export async function clipMoment(
     options: OpenMomentOptions & { cut?: typeof cutClip }
 ): Promise<Moment & { path: string }> {
     const { store, record } = options;
-    const opened = OpenedMeeting.of(store, record);
+    const opened = options.opened ?? OpenedMeeting.of(store, record);
     const moment = await momentIn(opened, options);
     const path = momentClipPath(store.folder(record.id), moment);
     await cutMoment(moment, {

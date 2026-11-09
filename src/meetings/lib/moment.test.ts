@@ -1,24 +1,32 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
+import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { Command } from "commander";
+import { MEETINGS_REGISTRARS } from "../registrars";
 import type { cutClip } from "./audio";
 import { writeQuestionClips } from "./listen-clips";
 import {
+    clipMoment,
     clipPlan,
     cutMoment,
     type MomentTarget,
     momentClipPath,
     momentFrames,
     momentsInText,
+    openMoment,
     planMoment,
     SPEAKER_PAD_SEC,
     speakerStretches,
 } from "./moment";
+import { OpenedMeeting } from "./opened-meeting";
 import { askedSpotSec, heardClip, type QuestionItem } from "./questions";
 
 const now = "2026-11-09T10:00:00.000Z";
@@ -342,5 +350,109 @@ describe("the screen at a Moment (R41)", () => {
         ]);
         expect(await momentFrames(store, recorded, 2)).toEqual([]);
         expect(await momentFrames(store, { ...recorded, id: "2026-11-09_11-00-other" }, 30)).toEqual([]);
+    });
+});
+
+/** A source that answers this file's transcript and keeps the recording at `audioPath`. */
+function fakeSource(audioPath: string): TranscriptSource {
+    const sourceMeeting: SourceMeeting = {
+        sourceMeetingId: "abc",
+        title: "Planning",
+        start: now,
+        participants: [],
+        speakers: [],
+        transcript,
+        folders: [],
+    };
+    const evidence: MeetingEvidence = { audioPath, segments: [], speaking: [], files: [] };
+    return {
+        id: "wisprflow",
+        label: "Fake",
+        load: async () => sourceMeeting,
+        revision: async () => null,
+        describe: () => ({ meetingId: "abc" }),
+        dictionary: async () => [],
+        recordingClock: async () => null,
+        evidence: async () => evidence,
+        liveRecording: async () => null,
+        calendarEntries: async () => ({ ok: true, from: "wisprflow", entries: [] }),
+        folders: async () => [],
+        meetingFolders: async () => [],
+        folderWrite: { supported: false, reason: "fake", manualStep: "none" },
+    };
+}
+
+describe("a Moment of a saved meeting", () => {
+    test("its source transcript and the saved settings make the Moment, and the clip goes to moments/ in its folder", async () => {
+        const store = new MeetingStore(new Storage("meetings-moment-saved"));
+        const saved = await store.create(
+            {
+                title: "Planning",
+                start: now,
+                createdBy: "new",
+                sources: { wisprflow: { meetingId: "abc" } },
+                items: meeting.items,
+            },
+            { command: "new", change: "test" }
+        );
+        const opened = OpenedMeeting.of(store, saved, {
+            source: fakeSource("/clips/call.ogg"),
+            sourceMeetingId: "abc",
+        });
+        const target: MomentTarget = { kind: "item", id: "Q1" };
+        const cuts: Array<Parameters<typeof cutClip>[0]> = [];
+        const cut = await clipMoment({
+            store,
+            record: saved,
+            target,
+            opened,
+            cut: async (options) => {
+                cuts.push(options);
+            },
+        });
+        const planned = planMoment({ record: saved, transcript, listen, target });
+
+        expect(await openMoment({ store, record: saved, target, opened })).toEqual({ ...planned, meeting: saved.id });
+        expect(cut).toEqual({ ...planned, meeting: saved.id, path: momentClipPath(store.folder(saved.id), planned) });
+        expect(cut.path).toStartWith(join(store.folder(saved.id), "moments", "Q1-"));
+        expect(cuts).toEqual([{ audioPath: "/clips/call.ogg", outPath: cut.path, ...clipPlan(planned) }]);
+    });
+});
+
+describe("tools meetings play: what the flags name", () => {
+    afterEach(() => {
+        process.exitCode = 0;
+    });
+
+    async function refusal(...args: string[]): Promise<string[]> {
+        const errors: string[] = [];
+        const err = spyOn(ui, "err").mockImplementation((line: string) => {
+            errors.push(line);
+        });
+
+        try {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+            await program.parseAsync(["play", ...args], { from: "user" });
+        } finally {
+            err.mockRestore();
+        }
+
+        expect(process.exitCode).toBe(1);
+        return errors;
+    }
+
+    test("one of --at, --item and --target names what to play, and --to needs --at", async () => {
+        expect(await refusal("m1")).toEqual(["Name what to play: --at <time>, --item <id> or --target <json>."]);
+        expect(await refusal("m1", "--at", "5", "--item", "Q1")).toEqual([
+            "--at, --item and --target each name what to play; give one of them.",
+        ]);
+        expect(await refusal("m1", "--item", "Q1", "--to", "1:00")).toEqual(["--to ends the range that --at starts."]);
+    });
+
+    test("--target is checked against the Moment targets before any meeting is read", async () => {
+        expect(await refusal("m1", "--target", "{nope")).toEqual(["--target is not JSON: {nope"]);
+        const [line] = await refusal("m1", "--target", '{"kind":"range","fromSec":-1,"toSec":5}');
+        expect(line).toStartWith("--target is not a Moment target (");
     });
 });
