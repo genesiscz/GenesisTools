@@ -774,15 +774,29 @@ final class EditorModel {
 
     /// Each recording marker in the kept movie as a 2.5 s step title, "1. Open the settings", in one undo step: the
     /// REPL's titleMarkers() on the service.
+    /// The step titles titleMarkers adds without the service, as markerTitleOps in project.ts does: one per marker
+    /// in the kept movie, playing 2.5 s of the finished movie (a cut or a speed-up after the marker moves its end later
+    /// in source time), ending by the next marker's title. A marker with a text starting within 0.1 s keeps it.
+    nonisolated static func markerTitleTexts(_ markers: [(us: Int64, label: String)], in project: EditProject) -> [EditOp.Text] {
+        let kept = markers.compactMap { marker in
+            TimelineMap.outputTime(ofSource: marker.us, in: project).map { (marker: marker, outUs: $0) }
+        }
+        let starts = kept.map(\.marker.us)
+        return kept.enumerated().compactMap { index, entry in
+            let marker = entry.marker
+            guard !(project.texts ?? []).contains(where: { abs($0.startUs - marker.us) <= 100_000 }) else { return nil }
+            let nextUs = starts.first { $0 > marker.us } ?? project.source.durationUs
+            let playedEndUs = TimelineMap.sourceTime(atOutput: entry.outUs + 2_500_000, in: project)
+            let endUs = min(playedEndUs, nextUs, project.source.durationUs)
+            guard endUs > marker.us else { return nil }
+            return EditOp.Text(from: EditOpDiff.seconds(marker.us), to: EditOpDiff.seconds(endUs),
+                text: String("\(index + 1). \(marker.label)".prefix(200)))
+        }
+    }
+
     func titleMarkers() {
         if !session.isOnline {
-            let kept = markers.filter { TimelineMap.outputTime(ofSource: $0.us, in: project) != nil }
-            let ops = kept.enumerated().compactMap { index, marker -> EditOp? in
-                guard !(project.texts ?? []).contains(where: { abs($0.startUs - marker.us) <= 100_000 }) else { return nil }
-                return .text(EditOp.Text(from: EditOpDiff.seconds(marker.us),
-                    to: EditOpDiff.seconds(min(project.source.durationUs, marker.us + 2_500_000)),
-                    text: String("\(index + 1). \(marker.label)".prefix(200))))
-            }
+            let ops = Self.markerTitleTexts(markers.map { (us: $0.us, label: $0.label) }, in: project).map(EditOp.text)
             guard !ops.isEmpty else {
                 show("No new marker titles in the kept movie.", error: false)
                 return

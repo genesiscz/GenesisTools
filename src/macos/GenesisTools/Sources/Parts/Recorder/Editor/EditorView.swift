@@ -1045,7 +1045,7 @@ private struct TextInspector: View {
             }
             if !model.markers.isEmpty {
                 WideButton(title: "Title Every Marker", systemImage: "list.number") { model.titleMarkers() }
-                    .instantTooltip("A 2.5 s step title at each of the \(Plural.count(model.markers.count, "marker")) set while recording (\"1. \(model.markers[0].label)\"); ⌘Z takes them back")
+                    .instantTooltip("A step title that plays 2.5 s of the finished movie at each of the \(Plural.count(model.markers.count, "marker")) set while recording (\"1. \(model.markers[0].label)\"); ⌘Z takes them back")
                     .accessibilityIdentifier("recorder.text.titleMarkers")
             }
             if let clicks = model.cursor?.clicks.count, clicks > 0 {
