@@ -158,6 +158,15 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
         model.windowVisible = (notification.object as? NSWindow)?.occlusionState.contains(.visible) ?? true
     }
 
+    /// ⌘Z and Edit → Undo go to the window's undo manager; with no text field in focus it presses the newest notice's
+    /// Undo (G39), and in a field it is the field's own undo.
+    private lazy var noticeUndoManager = MeetingsUndoManager(model: model)
+
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        noticeUndoManager.window = window
+        return noticeUndoManager
+    }
+
     /// The window is the face: closing it ends the process, as the hub's window does.
     func windowWillClose(_ notification: Notification) {
         NSApp.terminate(nil)
@@ -226,4 +235,36 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
         NSApp.run()
     }
     exit(0)
+}
+
+/// The Meetings window's undo manager (G39). A text field in focus (the field editor is the first responder) keeps its
+/// own undo; otherwise ⌘Z and Edit → Undo press the newest notice's Undo, and the menu item names it.
+final class MeetingsUndoManager: UndoManager {
+    weak var window: NSWindow?
+    private weak var model: MeetingsWindowModel?
+
+    init(model: MeetingsWindowModel) {
+        self.model = model
+        super.init()
+    }
+
+    private var textHasFocus: Bool {
+        MainActor.assumeIsolated { window?.firstResponder is NSText }
+    }
+
+    private var noticeUndo: String? {
+        MainActor.assumeIsolated { model?.newestUndo }
+    }
+
+    override var canUndo: Bool { textHasFocus ? super.canUndo : noticeUndo != nil }
+
+    override var undoMenuItemTitle: String {
+        guard !textHasFocus else { return super.undoMenuItemTitle }
+        return noticeUndo.map { "Undo \($0)" } ?? "Undo"
+    }
+
+    override func undo() {
+        guard !textHasFocus else { return super.undo() }
+        MainActor.assumeIsolated { _ = model?.undoNewest() }
+    }
 }

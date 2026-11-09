@@ -285,8 +285,8 @@ final class MeetingsUXTests: XCTestCase {
         [{"id":"r1","kind":"speaker-range","status":"suggested","fromSec":20,"toSec":30,"label":"Speaker 1","speaker":"Alice"},
          {"id":"r2","kind":"speaker-range","status":"suggested","fromSec":20.2,"toSec":20.8,"label":"Speaker 1"}]
         """.utf8))
-        XCTAssertEqual(MeetingsWords.itemTitle(items[0]), "Speaker 1 from 0:20 to 0:30 is Alice", "MU17")
-        XCTAssertEqual(MeetingsWords.itemTitle(items[1]), "Speaker 1 at 0:20 is someone else")
+        XCTAssertEqual(MeetingsWords.itemTitle(items[0]), "Speaker 1 from 00:20 to 00:30 is Alice", "MU17")
+        XCTAssertEqual(MeetingsWords.itemTitle(items[1]), "Speaker 1 at 00:20 is someone else")
     }
 
     func testTheMeetingLanguageReadsAsItsName() {
@@ -301,7 +301,7 @@ final class MeetingsUXTests: XCTestCase {
          "hints":[{"kind":"several-people","label":"Speaker 2","share":0.4,"strength":"weak"},
                   {"kind":"label-drift","label":"Speaker 2"}]}
         """.utf8))
-        XCTAssertEqual(MeetingsWords.speakerSpan(stats.speakers[0]), "0:12 to 25:40", "MU8")
+        XCTAssertEqual(MeetingsWords.speakerSpan(stats.speakers[0]), "00:12 to 25:40", "MU8")
         XCTAssertNil(MeetingsWords.speakerSpan(stats.speakers[1]))
         XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 2"),
                        ["May hold several people (weak sign)", "Silent while in the call, so the voice is under other labels"])
@@ -437,7 +437,7 @@ final class MeetingsUXTests: XCTestCase {
          {"kind":"a-future-kind","label":"Dan"}]
         """.utf8))
         func words(_ label: String) -> [String] { MeetingsWords.speakerHints(hints, for: label) }
-        XCTAssertEqual(words("Alice"), ["Silent from 6:15 to 30:00 while in the call, so the voice is under other labels (weak sign)"],
+        XCTAssertEqual(words("Alice"), ["Silent from 06:15 to 30:00 while in the call, so the voice is under other labels (weak sign)"],
                        "R2-MU7: label-drift is the person's own label staying silent, not a switch partway")
         XCTAssertEqual(words("Bob"), ["Speaks while not in the call, so 3 lines are someone else (strong sign)"])
         XCTAssertEqual(words("Speaker 1"), ["Only you were in the call, so its 12 lines are you (strong sign)"])

@@ -2,108 +2,107 @@ import SwiftUI
 
 // MARK: - Items
 
-/// The items a person decides: open questions and suggestions first (in transcript order), then the decided ones,
-/// folded. Each decision leaves a note with Undo for the window's undo time.
+/// The review rows of one meeting (`meeting.rows`, F6): questions and suggestions in the order `tools meetings listen`
+/// asks, one `ReviewRowView` each. A decided row folds in place (R16) or leaves the list (`meetings.rows.decided`).
+/// The keyboard reaches every row (G11): Up and Down select, Return edits or confirms (`meetings.rows.returnKey`), a
+/// second Return in the editor saves (R11), 1 to 9 pick a choice (`meetings.rows.choiceKeys`, G23), Delete picks
+/// "none of these", Esc closes the editor.
 struct ItemsTab: View {
     @Bindable var detail: MeetingDetailModel
-    @State private var showDecided = false
-    /// The keyboard's row: Up and Down move it, Return confirms, Delete rejects; its buttons stay live.
-    @State private var selected: String?
     @FocusState private var focused: Bool
+    @AppStorage(MeetingsPreferences.Rows.order.key) private var order = MeetingsPreferences.Rows.order.defaultValue.rawValue
+    @AppStorage(MeetingsPreferences.Rows.decided.key) private var decided = MeetingsPreferences.Rows.decided.defaultValue.rawValue
+    @AppStorage(MeetingsPreferences.Rows.choiceKeys.key) private var choiceKeys = MeetingsPreferences.Rows.choiceKeys.defaultValue.rawValue
+    @AppStorage(MeetingsPreferences.Rows.returnKey.key) private var returnKey = MeetingsPreferences.Rows.returnKey.defaultValue.rawValue
+    @AppStorage(MeetingsPreferences.Rows.lowPriority.key) private var lowPriority = MeetingsPreferences.Rows.lowPriority.defaultValue.rawValue
 
     var body: some View {
-        LoadablePane(state: detail.record, reading: "Reading the items…", retry: detail.reloadRecord) { record in
-            let questions = record.items.filter { $0.kind == "question" && $0.status == "suggested" }
-            let suggested = record.items.filter { $0.kind != "question" && $0.status == "suggested" }
-                .sorted { ($0.seconds ?? 0) < ($1.seconds ?? 0) }
-            let decided = record.items.filter { $0.status != "suggested" }
-            if record.items.isEmpty {
-                let hasTranscript = detail.window?.meeting(record.id)?.hasTranscript ?? true
+        LoadablePane(state: detail.rows, reading: "Reading the items…", retry: detail.loadRows) { rows in
+            if rows.rows.isEmpty, rows.hidden.lowPriority == 0 {
+                let hasTranscript = detail.window?.meeting(detail.id)?.hasTranscript ?? true
                 EmptyState(symbol: "checklist", text: "No items yet",
                            detail: hasTranscript ? "The rules suggest items from the transcript." : "The rules need a transcript, and this meeting has none.",
                            actionTitle: !hasTranscript ? nil : detail.isBusy("suggest") ? "Suggesting…" : "Suggest items") { detail.suggest() }
             } else {
-                let rows = suggested.map(\.id) + (showDecided ? decided.map(\.id) : [])
-                // A lazy stack, not a List: for an accessibility client a List built, measured and recycled every row
-                // it held, so a walk of 430 suggestions timed out, and of 60 it failed on rows that changed height and
-                // identity under it (2026-11-06/07). The stack holds only the rows near the viewport, as the
-                // Transcript does; selection and the keys are its own.
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            if !questions.isEmpty {
-                                ItemsHeader(text: "Questions to answer (\(questions.count))")
-                                ForEach(questions) { item in
-                                    QuestionRow(item: item, busy: detail.isBusy("answer.\(item.id)"),
-                                                play: { detail.play(at: $0) }, answer: { detail.answer(item, with: $0) })
-                                        .padding(.horizontal, 16)
-                                }
-                            }
-                            ItemsHeader(text: suggested.isEmpty ? "No suggestion waits" : "Suggested (\(suggested.count))")
-                            ForEach(suggested) { item in
-                                selectable(item.id, ItemRow(item: item, busy: detail.busyItems.contains(item.id), selected: selected == item.id,
-                                                            play: { detail.play(at: $0) },
-                                                            decide: { confirm, speaker in detail.decide(item, confirm: confirm, speaker: speaker) },
-                                                            reopen: nil).equatable())
-                            }
-                            if !decided.isEmpty {
-                                Button {
-                                    showDecided.toggle()
-                                } label: {
-                                    Label("Decided (\(decided.count))", systemImage: showDecided ? "chevron.down" : "chevron.right")
-                                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                                }
-                                .buttonStyle(.genHoverPlain())
-                                .accessibilityValue(showDecided ? "Expanded" : "Collapsed")
-                                .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
-                                if showDecided {
-                                    ForEach(decided) { item in
-                                        selectable(item.id, ItemRow(item: item, busy: detail.isBusy("reopen.\(item.id)"), selected: selected == item.id,
-                                                                    play: { detail.play(at: $0) },
-                                                                    decide: nil, reopen: item.kind == "question" ? nil : { detail.reopen(item, token: nil) })
-                                            .equatable())
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.vertical, 6)
-                    }
-                    .focusable()
-                    .focused($focused)
-                    .focusEffectDisabled()
-                    .onKeyPress(.upArrow) { step(-1, rows: rows, proxy: proxy) }
-                    .onKeyPress(.downArrow) { step(1, rows: rows, proxy: proxy) }
-                    .onKeyPress(.return) { act(on: record, confirm: true) }
-                    .onKeyPress(.delete) { act(on: record, confirm: false) }
-                }
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    BulkConfirmBar(detail: detail, items: record.items,
-                                   applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
-                }
+                list(rows)
             }
         }
+        .onChange(of: lowPriority) { _, _ in detail.readRows(quiet: true) }
     }
 
-    /// A suggestion or decided item as a row the keyboard can select: a click selects it (its buttons keep their own
-    /// clicks), and the selected row is filled.
-    private func selectable(_ id: String, _ row: some View) -> some View {
-        row
-            .padding(.horizontal, 10)
-            .background(RoundedRectangle(cornerRadius: 6).fill(selected == id ? Color.accentColor.opacity(focused ? 0.28 : 0.16) : .clear))
-            .contentShape(Rectangle())
-            .onTapGesture {
-                selected = id
-                focused = true
+    private func list(_ rows: ReviewRows) -> some View {
+        let shown = MeetingDetailModel.visibleRows(rows.rows, order: MeetingsPreferences.Rows.Order(rawValue: order) ?? .priority,
+                                                   decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace)
+        let ids = shown.map(\.id)
+        let open = rows.rows.filter(\.isOpen).count
+        return ScrollViewReader { proxy in
+            ScrollView {
+                // A lazy stack, not a List: for an accessibility client a List built, measured and recycled every row
+                // it held (2026-11-06/07). The stack holds only the rows near the viewport.
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ItemsHeader(text: open == 0 ? "Nothing waits for you in this meeting"
+                                    : "\(Plural.count(open, "row")) \(open == 1 ? "waits" : "wait") for you")
+                    if rows.hidden.lowPriority > 0 {
+                        HStack(spacing: 8) {
+                            Text(verbatim: "\(Plural.count(rows.hidden.lowPriority, "low-priority question")) hidden, as the terminal hides them")
+                                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                            Button("Show") { lowPriority = MeetingsPreferences.Rows.LowPriority.show.rawValue }
+                                .buttonStyle(.link).font(.system(size: 11.5))
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                    ForEach(shown) { row in
+                        ReviewRowView(row: row, detail: detail, player: detail.window?.player, selected: detail.selectedRow == row.id,
+                                      editing: detail.editingRow == row.id, busy: detail.busyItems.contains(row.id),
+                                      meanwhile: detail.decidedMeanwhile[row.id], choiceKeys: choiceKeys == "on")
+                            .padding(.horizontal, 10)
+                            .background(RoundedRectangle(cornerRadius: 6)
+                                .fill(detail.selectedRow == row.id ? Color.accentColor.opacity(focused ? 0.22 : 0.12) : .clear))
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                detail.selectedRow = row.id
+                                focused = true
+                            }
+                            .id(row.id)
+                            .padding(.horizontal, 6)
+                    }
+                    if open == 0, !rows.rows.isEmpty {
+                        Text("Every question is answered and every suggestion decided. Revert and edit reopens one.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 16).padding(.top, 8)
+                    }
+                }
+                .padding(.vertical, 6)
             }
-            .id(id)
-            .padding(.horizontal, 6)
+            .focusable()
+            .focused($focused)
+            .focusEffectDisabled()
+            .onKeyPress(.upArrow) { step(-1, rows: ids, proxy: proxy) }
+            .onKeyPress(.downArrow) { step(1, rows: ids, proxy: proxy) }
+            .onKeyPress(.return) { returnPressed(shown) }
+            .onKeyPress(.delete) { pickRole("none", in: shown) }
+            .onKeyPress(.escape) {
+                guard detail.editingRow != nil else { return .ignored }
+                detail.closeEditor()
+                return .handled
+            }
+            .onKeyPress(characters: .decimalDigits) { press in pickNumber(press.characters, in: shown) }
+            .onChange(of: detail.selectedRow) { _, id in
+                guard let id else { return }
+                proxy.scrollTo(id)
+                if let row = shown.first(where: { $0.id == id }), row.isOpen { detail.window?.player.precut(row.target, in: detail.id) }
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            BulkConfirmBar(detail: detail, items: detail.record.value?.items ?? [],
+                           applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
+        }
     }
 
     /// Up and Down: the next row in list order, kept in view.
     private func step(_ offset: Int, rows: [String], proxy: ScrollViewProxy) -> KeyPress.Result {
-        guard let next = Self.step(from: selected, by: offset, in: rows) else { return .ignored }
-        selected = next
+        guard let next = Self.step(from: detail.selectedRow, by: offset, in: rows) else { return .ignored }
+        detail.selectedRow = next
         proxy.scrollTo(next)
         return .handled
     }
@@ -115,22 +114,59 @@ struct ItemsTab: View {
         return rows[min(max(index + offset, 0), rows.count - 1)]
     }
 
-    /// Return confirms and Delete rejects the selected suggestion (a range with no speaker waits for its menu).
-    private func act(on record: MeetingRecordView, confirm: Bool) -> KeyPress.Result {
-        guard let id = selected, let item = record.items.first(where: { $0.id == id }), Self.keyActs(on: item, confirm: confirm)
-        else { return .ignored }
-        detail.decide(item, confirm: confirm)
+    /// Return (G7): `edit` opens the row's editor (its second Return saves), `confirm` takes the suggested choice. A
+    /// row with no editor takes its suggested choice either way.
+    private func returnPressed(_ rows: [ReviewRow]) -> KeyPress.Result {
+        guard let row = selected(rows), row.isOpen else { return .ignored }
+        let key = MeetingsPreferences.Rows.ReturnKey(rawValue: returnKey) ?? .edit
+        switch Self.returnAction(for: row, key: key) {
+        case .edit: detail.edit(row)
+        case .choose(let choice): detail.choose(choice, on: row)
+        case .none: return .ignored
+        }
         return .handled
     }
 
-    /// Whether Return (confirm) or Delete (reject) decides the item: the same rule as its buttons, so Return never
-    /// confirms a term with no spelling or a range with no speaker.
+    enum ReturnAction: Equatable {
+        case edit
+        case choose(RowChoice)
+        case none
+    }
+
+    /// What Return does on an open row.
+    static func returnAction(for row: ReviewRow, key: MeetingsPreferences.Rows.ReturnKey) -> ReturnAction {
+        if key == .edit, row.edit != "none" { return .edit }
+        guard let choice = row.choices.first(where: { $0.role == "suggested" }) ?? row.choices.first(where: { $0.role != "skip" })
+        else { return row.edit != "none" ? .edit : .none }
+        return .choose(choice)
+    }
+
+    private func pickNumber(_ characters: String, in rows: [ReviewRow]) -> KeyPress.Result {
+        guard choiceKeys == "on", detail.editingRow == nil, let digit = Int(characters), digit >= 1,
+              let row = selected(rows), row.isOpen, digit <= row.choices.count else { return .ignored }
+        detail.choose(row.choices[digit - 1], on: row)
+        return .handled
+    }
+
+    private func pickRole(_ role: String, in rows: [ReviewRow]) -> KeyPress.Result {
+        guard detail.editingRow == nil, let row = selected(rows), row.isOpen,
+              let choice = row.choices.first(where: { $0.role == role }) else { return .ignored }
+        detail.choose(choice, on: row)
+        return .handled
+    }
+
+    private func selected(_ rows: [ReviewRow]) -> ReviewRow? {
+        detail.selectedRow.flatMap { id in rows.first { $0.id == id } }
+    }
+
+    /// Whether Return (confirm) or Delete (reject) decides an item by the rule of its buttons: Return never confirms a
+    /// term with no spelling or a range with no speaker. Kept for the item-level keys of the bulk bar's items.
     static func keyActs(on item: MeetingItem, confirm: Bool) -> Bool {
         confirm ? item.canConfirm : item.isDecidable
     }
 }
 
-/// A section title of the Items list, in the List's section style.
+/// A section title of the Items list.
 private struct ItemsHeader: View {
     let text: String
 
@@ -142,7 +178,7 @@ private struct ItemsHeader: View {
     }
 }
 
-/// Above the items: how many suggestions are at the apply line, and one menu that confirms all of them at or above a
+/// Above the rows: how many suggestions are at the apply line, and one menu that confirms all of them at or above a
 /// line, with one Undo. Before it every suggestion took its own click, 40 of them in a long meeting.
 private struct BulkConfirmBar: View {
     let detail: MeetingDetailModel
@@ -195,173 +231,3 @@ private struct BulkConfirmBar: View {
         return menu
     }
 }
-
-private struct ItemRow: View, Equatable {
-    let item: MeetingItem
-    let busy: Bool
-    var selected = false
-    let play: (Double) -> Void
-    let decide: ((Bool, String?) -> Void)?
-    let reopen: (() -> Void)?
-
-    /// The item, the spinner, the selection and which buttons it has; the closures never compare equal, so only their
-    /// presence counts.
-    nonisolated static func == (a: ItemRow, b: ItemRow) -> Bool {
-        MainActor.assumeIsolated {
-            a.item == b.item && a.busy == b.busy && a.selected == b.selected
-                && (a.decide == nil) == (b.decide == nil) && (a.reopen == nil) == (b.reopen == nil)
-        }
-    }
-
-    /// "Type a name…" in the speaker menu: the popover and what was typed in it.
-    @State private var naming = false
-    @State private var typedName = ""
-
-    private var needsSpeaker: Bool { item.kind == "speaker-range" && item.speaker == nil }
-    private var needsSpelling: Bool { item.needsSpelling }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(MeetingsWords.itemKind(item)).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    if let seconds = item.seconds {
-                        LiveButton(tooltip: "Play from \(MeetingsFormat.clock(seconds))", action: { play(seconds) }) {
-                            Text(verbatim: MeetingsFormat.clock(seconds)).font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(KitPalette.renamed)
-                        }
-                    }
-                    if let confidence = MeetingsWords.confidence(item.confidence) {
-                        Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
-                    }
-                    if item.status != "suggested" {
-                        Badge(MeetingsWords.status(item.status), color: item.status == "confirmed" ? KitPalette.added : KitPalette.faint)
-                    }
-                }
-                Text(verbatim: MeetingsWords.itemTitle(item)).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
-                if let reason = item.reason {
-                    Text(verbatim: reason).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3)
-                }
-            }
-            Spacer(minLength: 8)
-            if busy {
-                ProgressView().controlSize(.small)
-            } else if let decide {
-                HStack(spacing: 6) {
-                    if needsSpeaker {
-                        MenuButton(items: {
-                            let candidates = item.candidates ?? []
-                            var items: [MenuButtonItem] = candidates.map { name in .action(name) { decide(true, name) } }
-                            if !candidates.isEmpty { items.append(.divider) }
-                            items.append(.action("Type a name…") { naming = true })
-                            return items
-                        }) {
-                            Text("Confirm as…").font(.system(size: 12))
-                        }
-                        .instantTooltip("Whose voice this range is; confirming needs a name")
-                        .popover(isPresented: $naming, arrowEdge: .bottom) {
-                            SpeakerNamePopover(name: $typedName) { name in
-                                naming = false
-                                decide(true, name)
-                            }
-                        }
-                    } else {
-                        LiveButton(tooltip: needsSpelling ? "It has no spelling yet: answer it by ear" : "Confirm: transcripts apply it",
-                                   enabled: item.canConfirm, action: { decide(true, nil) }) {
-                            Text("Confirm").font(.system(size: 12))
-                        }
-                    }
-                    LiveButton(tooltip: "Reject: it is never suggested again", action: { decide(false, nil) }) {
-                        Text("Reject").font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                }
-            } else if let reopen {
-                LiveButton(tooltip: "Put it back to suggested", action: reopen) {
-                    Text("Reopen").font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(.vertical, 3)
-        .contentShape(Rectangle())
-        .liveRow(selected: selected)
-        // One element per item with its actions, instead of a node per text, badge and button: with 425 suggestions a
-        // walk ran out of its budget after 887 nodes (2026-11-06).
-        .accessibilityElement(children: .combine)
-        .accessibilityAction(named: "Confirm") { if let decide, item.canConfirm { decide(true, nil) } }
-        .accessibilityAction(named: "Reject") { decide?(false, nil) }
-        .accessibilityAction(named: "Reopen") { reopen?() }
-        .accessibilityAction(named: "Play") { if let seconds = item.seconds { play(seconds) } }
-        .accessibilityActions {
-            if needsSpeaker, let decide {
-                ForEach(item.candidates ?? [], id: \.self) { name in
-                    Button("Confirm as \(name)") { decide(true, name) }
-                }
-                Button("Confirm as a typed name…") { naming = true }
-            }
-        }
-    }
-}
-
-
-private struct QuestionRow: View {
-    let item: MeetingItem
-    let busy: Bool
-    let play: (Double) -> Void
-    let answer: (String) -> Void
-    @State private var typed = ""
-    @AppStorage(MeetingsPreferences.typedAnswerKey) private var typedAnswer = MeetingsPreferences.TypedAnswer.always.rawValue
-
-    private var showsField: Bool {
-        (MeetingsPreferences.TypedAnswer(rawValue: typedAnswer) ?? .always).shows(choices: item.choices ?? [])
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "ear").foregroundStyle(KitPalette.renamed).font(.system(size: 11))
-                    .accessibilityHidden(true)
-                Text(verbatim: item.question ?? "").font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
-            }
-            WrapLayout(spacing: 6, lineSpacing: 6) {
-                if let from = item.fromSec {
-                    GhostButton("Play \(MeetingsFormat.clock(from))", symbol: "play.fill", tooltip: "Play the asked range in the meetings player") {
-                        play(from)
-                    }
-                }
-                ForEach(item.choices ?? [], id: \.self) { choice in
-                    GhostButton(choice, symbol: "checkmark", tooltip: "Answer “\(choice)”; it decides the items this question settles") {
-                        answer(choice)
-                    }
-                    .disabled(busy)
-                }
-                GhostButton("None of these", symbol: "xmark", tooltip: "None of the choices is right; what it decides is rejected") {
-                    answer("none of these")
-                }
-                .disabled(busy)
-                if busy { ProgressView().controlSize(.small) }
-            }
-            if showsField {
-                HStack(spacing: 6) {
-                    TextField(item.choices?.isEmpty == false ? "Or type what you heard" : "Type what you heard", text: $typed)
-                        .textFieldStyle(.roundedBorder).frame(maxWidth: 260)
-                        .onSubmit(submit)
-                        .accessibilityLabel("Answer to: \(item.question ?? "the question")")
-                    GhostButton("Answer", symbol: "return", tooltip: "Answer with the typed text; it decides the items this question settles") {
-                        submit()
-                    }
-                    .disabled(busy || MeetingsWords.typedAnswer(typed) == nil)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-        .onChange(of: item.status) { typed = "" }
-    }
-
-    /// The typed answer stays in the field until the answer is saved: the question then leaves the list, or its
-    /// status changes (`.onChange` above), so a refused answer keeps what was typed.
-    private func submit() {
-        guard !busy, let text = MeetingsWords.typedAnswer(typed) else { return }
-        answer(text)
-    }
-}
-

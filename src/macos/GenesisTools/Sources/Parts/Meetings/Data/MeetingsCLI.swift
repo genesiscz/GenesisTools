@@ -1,22 +1,11 @@
 import Foundation
 
-/// The one way this part reads and changes meetings: `tools meetings …` through GenesisKit's `ToolsBridge` (the
-/// resident server when it has the door, else a process). No Swift copy of any meetings rule lives here.
+/// The way this part runs `tools meetings …` when the Meetings service does not answer (`MeetingsRead`), and for the
+/// commands the service has no method for: GenesisKit's `ToolsBridge`, one process per call. No Swift copy of any
+/// meetings rule lives here. The hub server's meetings door retired in Wave B: the service answers the window's reads.
 enum MeetingsCLI {
-    /// The resident hub server answers the window's reads (src/hub/server/doors/meetings.ts) without a `tools` process
-    /// each: about 330 ms of CPU per read went to starting the process (2026-11-06). Every other argv, and a read the
-    /// door declines, still runs the process. The server reads the real home's store with the main checkout's code, so
-    /// a window on a sandbox home (`GENESIS_TOOLS_HOME`), on a worktree's `tools` (`GENESIS_TOOLS_BIN`), the preview
-    /// build and `GENESIS_HUB_SERVER=0` keep processes only.
-    static let server: ToolsServerClient? = {
-        let environment = ProcessInfo.processInfo.environment
-        guard !NativePreview.enabled, environment["GENESIS_HUB_SERVER"] != "0",
-              environment["GENESIS_TOOLS_HOME"] == nil, environment["GENESIS_TOOLS_BIN"] == nil else { return nil }
-        return ToolsServerClient(startServer: { ToolsServerClient.startHubServer(binaryPath: ToolsBridge.defaultBinaryPath()) })
-    }()
-
     /// Resolved at each call, so `GENESIS_TOOLS_BIN` (a worktree's `tools`) and a moved checkout apply at once.
-    static let bridge = ToolsBridge(resolveBinaryPath: { ToolsBridge.defaultBinaryPath() }, server: server)
+    static let bridge = ToolsBridge(resolveBinaryPath: { ToolsBridge.defaultBinaryPath() })
 
     /// A failed command: one sentence for the pane, the CLI's own text for Details, and the conflict code a refused
     /// write names (`✗ [config-stale] …`, src/utils/meetings/conflict.ts), so the pane can answer it.
@@ -24,7 +13,13 @@ enum MeetingsCLI {
         let sentence: String
         let detail: String
         var code: String? = nil
+        /// A Meetings service refusal's `data` (`already-decided` names the entry that decided the items).
+        var data: Data? = nil
         var description: String { sentence }
+
+        func decodeData<T: Decodable>(_ type: T.Type) -> T? {
+            data.flatMap { try? JSONDecoder().decode(T.self, from: $0) }
+        }
     }
 
     /// Runs `tools meetings <args>`; stdout on success. A nonzero exit throws its last stderr line as the sentence.

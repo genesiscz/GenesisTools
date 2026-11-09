@@ -59,6 +59,8 @@ struct MeetingDetailView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
+        .sheet(item: $detail.pendingReach) { pending in ReachSheet(pending: pending, detail: detail) }
+        .sheet(item: $detail.history) { history in HistorySheetView(detail: detail, history: history) }
         .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")
     }
@@ -94,9 +96,21 @@ struct MeetingDetailView: View {
                                  identifier: "meetings.detail.recorder") { detail.openInRecorder() }
                         .disabled(detail.isBusy("recorder"))
                 }
+                headerAction("History", symbol: "clock.arrow.circlepath",
+                             tooltip: "Every decision on this meeting: who made it, when and why, each with an Undo",
+                             identifier: "meetings.detail.history") { detail.openHistory() }
                 headerAction("Export", symbol: "square.and.arrow.up", tooltip: exportTooltip(record),
                              identifier: "meetings.detail.export") { detail.export() }
                     .disabled(record == nil || detail.isBusy("export"))
+            }
+            if window.liveUpdatesOff {
+                // R36, G46: without events a row decided elsewhere would not change; say so, with the way back.
+                HStack(spacing: 8) {
+                    Label("Live updates off: changes made elsewhere show after a reload", systemImage: "antenna.radiowaves.left.and.right.slash")
+                        .font(.system(size: 12)).foregroundStyle(KitPalette.modified)
+                    Button("Reload") { window.reloadAll() }.buttonStyle(.link).font(.system(size: 12))
+                        .accessibilityIdentifier("meetings.detail.reload")
+                }
             }
             WrapLayout(spacing: 8, lineSpacing: 8) {
                 Text(verbatim: whenLine(overview)).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
@@ -162,7 +176,7 @@ struct MeetingDetailView: View {
         guard let record else { return tab.title }
         switch tab {
         case .items:
-            let open = record.items.filter { $0.status == "suggested" }.count
+            let open = detail.rows.value?.rows.filter(\.isOpen).count ?? record.items.filter { $0.status == "suggested" }.count
             return open > 0 ? "Items \(open)" : "Items"
         case .context: return record.context.isEmpty ? "Context" : "Context \(record.context.count)"
         default: return tab.title
