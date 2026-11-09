@@ -45,6 +45,8 @@ private final class FakeMeetingsService: @unchecked Sendable {
     let path = "/tmp/ms-\(UUID().uuidString.prefix(8)).sock"
     var helloAnswer: [String: Any]
     var silent: Set<String> = []
+    /// A method's reply (without its id) in place of the fixture's.
+    var answers: [String: [String: Any]] = [:]
     private var listener: Int32 = -1
     private var connection: Int32 = -1
     private let condition = NSCondition()
@@ -169,6 +171,8 @@ private final class FakeMeetingsService: @unchecked Sendable {
         guard let id = request["id"], !silent.contains(method) else { return }
         if method == "hello" {
             send(["jsonrpc": "2.0", "id": id].merging(helloAnswer) { $1 })
+        } else if let reply = answers[method] {
+            send(["jsonrpc": "2.0", "id": id].merging(reply) { $1 })
         } else if let reply = MeetingsFixture.reply(method, params: params) {
             send(reply.merging(["id": id]) { $1 })
         } else {
@@ -379,6 +383,25 @@ final class MeetingsServiceTests: XCTestCase {
             XCTAssertEqual(failure.sentence, "No meeting \"nope\". List them: tools meetings list.")
         }
         XCTAssertEqual(commands.runs, [], "a refusal is the answer: the command does not run it again")
+    }
+
+    /// The window's hello names no code, so a service started from another checkout can answer it with shapes this
+    /// app cannot read. That answer is not the read's answer: the command answers, as with no service, and the window
+    /// does not ask that service again before the backoff.
+    func testAnAnswerTheWindowCannotDecodeRunsTheCommand() async throws {
+        try writeServiceEntry()
+        fake.answers["meeting.show"] = ["result": ["id": 7]]
+        let service = makeService()
+        for _ in 0..<2 {
+            do {
+                _ = try await MeetingDetailModel.recordRead(Self.design).run(service: service, command: command())
+                XCTFail("the fallback fails in this test")
+            } catch let failure as MeetingsCLI.Failure {
+                XCTAssertEqual(failure.sentence, "The command ran.", "the command answered, not a format error")
+            }
+        }
+        XCTAssertEqual(commands.runs, [["show", Self.design, "--json"], ["show", Self.design, "--json"]])
+        XCTAssertEqual(fake.count("meeting.show"), 1, "the service the window cannot read is not asked again before the backoff")
     }
 
     func testNoServiceRunsTheCommandAndStartsOneInTheBackground() async throws {
