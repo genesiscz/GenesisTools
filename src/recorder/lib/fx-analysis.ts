@@ -78,7 +78,7 @@ import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { exportAs, exportProgressPrinter, openProject, readTranscriptSegments } from "./edit";
 import { boxInProxy, proxyCanvas, readDisplayPlan } from "./proxy";
-import { displaySizes, frameTexts, visibleSpans } from "./screen-search";
+import { displaySizes, frameShows, frameTexts } from "./screen-search";
 
 const { log } = logger.scoped("recorder-fx-analysis");
 
@@ -139,13 +139,15 @@ function framesScreenText(folder: string): ScreenTextFrame[] {
         "",
         Number.POSITIVE_INFINITY
     );
-    const plan = readDisplayPlan(folder);
+    const shows = frameShows({
+        frames,
+        plan: readDisplayPlan(folder),
+        startedAt: manifest.startedAt,
+        endedAt: manifest.endedAt,
+    });
     const sizes = displaySizes(folder, frames);
     // The proxy's picture holds every display that has frames, whichever the plan shows (makeProxy).
     const canvas = proxyCanvas([...sizes.values()]);
-    const lastMs = frames.at(-1)?.atMs ?? 0;
-    const endUs = (lastMs + 2000) * 1000;
-    const visible = plan ? visibleSpans(frames, plan.ranges, endUs) : undefined;
     const out: ScreenTextFrame[] = [];
 
     for (const [index, frame] of frames.entries()) {
@@ -169,13 +171,8 @@ function framesScreenText(folder: string): ScreenTextFrame[] {
                 canvas
             ),
         }));
-        const next = frames.slice(index + 1).find((later) => later.displayId === frame.displayId);
-        const spans =
-            visible && frame.displayId !== undefined
-                ? (visible.get(frame.file) ?? [])
-                : [{ fromUs: frame.atMs * 1000, toUs: (next?.atMs ?? lastMs + 2000) * 1000 }];
 
-        for (const span of spans) {
+        for (const span of shows[index].spans) {
             out.push({ atUs: span.fromUs, untilUs: span.toUs, lines });
         }
     }

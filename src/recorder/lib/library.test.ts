@@ -10,9 +10,10 @@ import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-
 import { applyOp, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
-import { exportProgressPrinter, parseExportSize, renderInto, withEditCancel } from "./edit";
+import { computeEdit, exportProgressPrinter, parseExportSize, renderInto, withEditCancel } from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
+import { privateData } from "./fx-analysis";
 import {
     describeLiveEntries,
     editorOpenStatePath,
@@ -447,7 +448,7 @@ describe("text on the screen", () => {
         expect(findOnScreen(back, "sprint board").map((hit) => [hit.file, hit.sec, hit.untilSec])).toEqual([
             ["frames/0001.jpg", 0, 5],
             ["frames/0001.jpg", 7, 9],
-            ["frames/0003.jpg", 9, 14.5],
+            ["frames/0003.jpg", 9, 13.5],
         ]);
         expect(findOnScreen(back, "token rotation").map((hit) => [hit.sec, hit.untilSec, hit.shown])).toEqual([
             [5, 7, true],
@@ -512,6 +513,121 @@ describe("text on the screen", () => {
         const single = proxyCanvas([sizes[0], sizes[0]]);
         expect(single.letterboxed).toBe(false);
         expect(boxInProxy(box, sizes[0], single)).toEqual(box);
+    });
+});
+
+/**
+ * A frames recording that ends 10 s after it starts, its last frame at 1 s: proxy.mp4 holds that frame until 10 s
+ * (makeProxy). `frames` are its frames with their OCR text; `plan` is its proxy.json ranges, if any.
+ */
+function tailFolder(
+    frames: Array<{ file: string; atMs: number; displayId: number; text: string }>,
+    plan?: Array<{ fromUs: number; toUs: number; displayId: number }>
+): string {
+    const folder = mkdtempSync(join(tmpdir(), "gt-screen-tail-"));
+    mkdirSync(join(folder, "frames"));
+    // The first 33 bytes of a 1600x1000 PNG: enough for imageSize, which reads only the header.
+    const header = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+    header.writeUInt32BE(13, 8);
+    header.write("IHDR", 12, "ascii");
+    header.writeUInt32BE(1600, 16);
+    header.writeUInt32BE(1000, 20);
+    header.writeUInt8(8, 24);
+    header.writeUInt8(6, 25);
+
+    for (const frame of frames) {
+        writeFileSync(join(folder, frame.file), header);
+        const blocks = frame.text ? [{ text: frame.text, bounds: { x: 0.2, y: 0.47, width: 0.4, height: 0.03 } }] : [];
+        writeFileSync(join(folder, `${frame.file}.ocr.json`), SafeJSON.stringify({ text: frame.text, blocks }));
+    }
+
+    writeFileSync(
+        join(folder, "recording.json"),
+        SafeJSON.stringify({
+            version: 1,
+            id: "tail",
+            title: "Tail",
+            startedAt: "2026-11-09T10:00:00.000Z",
+            endedAt: "2026-11-09T10:00:10.000Z",
+            displays: [
+                { id: 1, name: "Main" },
+                { id: 2, name: "Side" },
+            ],
+            frames: frames.map(({ file, atMs, displayId }) => ({ file, atMs, displayId })),
+        })
+    );
+
+    if (plan) {
+        writeFileSync(
+            join(folder, "proxy.json"),
+            SafeJSON.stringify({ version: 1, policy: "most-change", windowSec: 10, ranges: plan })
+        );
+    }
+
+    return folder;
+}
+
+const still = [
+    { file: "frames/f0.png", atMs: 0, displayId: 1, text: "Inbox" },
+    { file: "frames/f1.png", atMs: 1000, displayId: 1, text: "Mail alice@example.com now" },
+];
+
+describe("a frames recording's last frame shows until the recording ends", () => {
+    it("find-screen ends the last frame's hit at the recording's end, with or without a display plan", () => {
+        const plan = chosenPlan(
+            still.map((frame) => ({ path: frame.file, atUs: frame.atMs * 1000, displayId: frame.displayId })),
+            { display: 1 }
+        ).ranges;
+
+        for (const folder of [tailFolder(still), tailFolder(still, plan)]) {
+            const hits = findOnScreen(folder, "alice");
+            expect(hits.map((hit) => [hit.sec, hit.untilSec, hit.shown])).toEqual([[1, 10, true]]);
+            expect(screenHitsWithOps(hits, 10)[0].ops.hide[0]).toMatchObject({ from: 1, to: 10 });
+            // A frame followed by another frame of its display still ends at that frame.
+            expect(findOnScreen(folder, "inbox").map((hit) => [hit.sec, hit.untilSec, hit.shown])).toEqual([
+                [0, 1, true],
+            ]);
+        }
+    });
+
+    it("lists a frame the plan shows after the last frame as shown until the recording ends", () => {
+        const folder = tailFolder(
+            [
+                { file: "frames/a.png", atMs: 0, displayId: 1, text: "Inbox" },
+                { file: "frames/b.png", atMs: 500, displayId: 2, text: "Invoice 2026" },
+                { file: "frames/c.png", atMs: 1000, displayId: 1, text: "Inbox" },
+            ],
+            [
+                { fromUs: 0, toUs: 5_000_000, displayId: 1 },
+                { fromUs: 5_000_000, toUs: 10_000_000, displayId: 2 },
+            ]
+        );
+
+        expect(findOnScreen(folder, "invoice").map((hit) => [hit.sec, hit.untilSec, hit.shown])).toEqual([
+            [5, 10, true],
+        ]);
+        expect(findOnScreen(folder, "inbox").map((hit) => [hit.file, hit.sec, hit.untilSec])).toEqual([
+            ["frames/a.png", 0, 1],
+            ["frames/c.png", 1, 5],
+        ]);
+    });
+
+    it("hidePrivate and hideText blur the last frame's text until the recording ends", async () => {
+        const folder = tailFolder(still);
+        const project = wholeProject({
+            video: join(folder, "proxy.mp4"),
+            durationUs: 10_000_000,
+            width: 1600,
+            height: 1000,
+        });
+
+        expect((await privateData(project)).map((hit) => hit.to)).toEqual([10]);
+
+        for (const op of [{ op: "hidePrivate" as const }, { op: "hideText" as const, text: "alice" }]) {
+            const edit = await computeEdit({ project, ops: [op], fresh: true });
+            expect(edit.project.redactions?.map((part) => part.endUs)).toEqual([10_000_000]);
+        }
     });
 });
 

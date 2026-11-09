@@ -28,6 +28,27 @@ export function framesDurationUs({
     return Number.isFinite(elapsedUs) && elapsedUs > 0 ? Math.max(lastUs + 1, elapsedUs) : lastUs + 1_000_000;
 }
 
+/**
+ * Where the movie of a frames recording ends: its last frame, or the last frame its display plan shows (`schedule`,
+ * which can start after it), held until the recording ends (framesDurationUs). makeProxy ends proxy.mp4 here, so a
+ * reader of when a frame shows ends the last one here too.
+ */
+export function framesMovieEndUs({
+    frames,
+    schedule = [],
+    startedAt,
+    endedAt,
+}: {
+    frames: ReadonlyArray<{ atUs: number }>;
+    schedule?: ReadonlyArray<{ atUs: number }>;
+    startedAt?: string;
+    endedAt?: string;
+}): number {
+    const latestUs = (list: ReadonlyArray<{ atUs: number }>) =>
+        list.reduce((last, frame) => Math.max(last, frame.atUs), 0);
+    return framesDurationUs({ lastUs: Math.max(latestUs(frames), latestUs(schedule)), startedAt, endedAt });
+}
+
 /** Where a source is, found without reading it: what the receipts and the input guard need first. */
 export interface LocatedSource {
     kind: "video" | "frames";

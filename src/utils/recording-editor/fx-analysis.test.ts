@@ -45,6 +45,7 @@ import {
     transcriptLines,
     wholeProject,
 } from "./project";
+import { framesMovieEndUs } from "./source";
 import {
     type ChangeStep,
     compareFrames,
@@ -134,6 +135,27 @@ describe("private hits over time", () => {
             /no private hit pnope/
         );
         expect(() => applyOp(wholeProject(source), op({ op: "hidePrivate" }))).toThrow(/screen text/);
+    });
+});
+
+describe("where a frames movie ends", () => {
+    const startedAt = "2026-11-09T10:00:00.000Z";
+    const endedAt = "2026-11-09T10:00:10.000Z";
+    const frames = [{ atUs: 0 }, { atUs: 1_000_000 }];
+
+    test("the last frame holds until the recording ends, as the proxy movie holds it", () => {
+        expect(framesMovieEndUs({ frames, startedAt, endedAt })).toBe(10_000_000);
+    });
+
+    test("a plan that shows a frame after the recording's end runs the movie past that frame, as makeProxy does", () => {
+        expect(framesMovieEndUs({ frames, schedule: [{ atUs: 0 }, { atUs: 12_000_000 }], startedAt, endedAt })).toBe(
+            12_000_001
+        );
+    });
+
+    test("a folder without an end holds its last frame for one second", () => {
+        expect(framesMovieEndUs({ frames })).toBe(2_000_000);
+        expect(framesMovieEndUs({ frames: [] })).toBe(1_000_000);
     });
 });
 

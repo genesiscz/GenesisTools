@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { imageSize } from "@genesiscz/utils/macos/ocr-boxes";
 import { concatList } from "@genesiscz/utils/recording-editor/ffmpeg";
-import { framesDurationUs, readFrameFolder, type SourceFrame } from "@genesiscz/utils/recording-editor/source";
+import { framesMovieEndUs, readFrameFolder, type SourceFrame } from "@genesiscz/utils/recording-editor/source";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
@@ -435,8 +435,9 @@ export async function makeProxy(folder: string, options: ProxyOptions = {}): Pro
     const videoFilter = proxyVideoFilter([...frameSizesOf(frames).values()]);
     const list = join(folder, ".proxy-frames.txt");
     const lastUs = chosen.at(-1)?.atUs ?? 0;
-    const durationUs = framesDurationUs({
-        lastUs: Math.max(lastUs, frames.at(-1)?.atUs ?? 0),
+    const durationUs = framesMovieEndUs({
+        frames,
+        schedule: chosen,
         startedAt: manifest?.startedAt,
         endedAt: manifest?.endedAt,
     });

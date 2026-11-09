@@ -5,9 +5,10 @@ import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { foldText, imageSize } from "@genesiscz/utils/macos/ocr-boxes";
+import { framesMovieEndUs } from "@genesiscz/utils/recording-editor/source";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { z } from "zod";
-import { boxInProxy, type DisplayRange, framesForPlan, proxyCanvas, readDisplayPlan } from "./proxy";
+import { boxInProxy, type DisplayPlan, framesForPlan, proxyCanvas, readDisplayPlan } from "./proxy";
 
 const { log } = logger.scoped("recorder-screen-search");
 
@@ -40,7 +41,10 @@ export interface ScreenBox {
 export interface ScreenHit {
     /** Seconds on the recording's clock (the proxy movie's and the editor's source time). */
     sec: number;
-    /** Until when this frame shows: the next frame of its display, else the recording's last frame plus 2 s. */
+    /**
+     * Until when this frame shows: the next frame of its display, else until the recording ends (the proxy holds its
+     * last frame).
+     */
     untilSec: number;
     displayId?: number;
     file: string;
@@ -120,31 +124,62 @@ export function displaySizes(folder: string, frames: ReadonlyArray<{ file: strin
     return sizes;
 }
 
+/** When the proxy movie shows a frame of a frames recording, and until when the frame was on its own screen. */
+export interface FrameShow {
+    /** The spans the proxy movie shows the frame; empty when its display plan never shows it. */
+    spans: Array<{ fromUs: number; toUs: number }>;
+    /** The next frame of its display, else the end of the movie. */
+    untilUs: number;
+}
+
 /**
- * When the proxy movie shows each frame: the spans of `framesForPlan`'s schedule, a frame ending where the next shown
- * frame begins (the last at `endUs`). A frame the movie never shows has no entry. A frame can show more than once,
- * because the plan may leave its display and come back before the display's next frame.
+ * When the proxy movie shows each frame (`frames` sorted by time, the answer in their order). With a display plan:
+ * the spans of `framesForPlan`'s schedule, a frame ending where the next shown frame begins. A frame the movie never
+ * shows has none, and a frame can show more than once, because the plan may leave its display and come back before
+ * the display's next frame. Without a plan: from the frame to the next frame of its display. The last frame shows
+ * until the movie ends (framesMovieEndUs), as makeProxy holds it, which is the recording's end when it has one.
  */
-export function visibleSpans(
-    frames: ReadonlyArray<{ file: string; atMs: number; displayId?: number }>,
-    ranges: readonly DisplayRange[],
-    endUs: number
-): Map<string, Array<{ fromUs: number; toUs: number }>> {
-    const schedule = framesForPlan(
-        frames.map((frame) => ({ path: frame.file, atUs: frame.atMs * 1000, displayId: frame.displayId })),
-        ranges
-    );
-    const spans = new Map<string, Array<{ fromUs: number; toUs: number }>>();
+export function frameShows({
+    frames,
+    plan,
+    startedAt,
+    endedAt,
+}: {
+    frames: ReadonlyArray<{ file: string; atMs: number; displayId?: number }>;
+    plan: Pick<DisplayPlan, "ranges"> | undefined;
+    startedAt?: string;
+    endedAt?: string;
+}): FrameShow[] {
+    const timed = frames.map((frame) => ({ path: frame.file, atUs: frame.atMs * 1000, displayId: frame.displayId }));
+    const schedule = plan ? framesForPlan(timed, plan.ranges) : [];
+    const endUs = framesMovieEndUs({ frames: timed, schedule, startedAt, endedAt });
+    const visible = new Map<string, Array<{ fromUs: number; toUs: number }>>();
 
     for (const [index, shown] of schedule.entries()) {
         const toUs = schedule[index + 1]?.atUs ?? endUs;
 
         if (toUs > shown.atUs) {
-            spans.set(shown.path, [...(spans.get(shown.path) ?? []), { fromUs: shown.atUs, toUs }]);
+            visible.set(shown.path, [...(visible.get(shown.path) ?? []), { fromUs: shown.atUs, toUs }]);
         }
     }
 
-    return spans;
+    const nextUs = new Map<number | undefined, number>();
+    const shows: FrameShow[] = [];
+
+    for (let index = frames.length - 1; index >= 0; index--) {
+        const frame = frames[index];
+        const untilUs = nextUs.get(frame.displayId) ?? endUs;
+        nextUs.set(frame.displayId, frame.atMs * 1000);
+        shows[index] = {
+            spans:
+                plan && frame.displayId !== undefined
+                    ? (visible.get(frame.file) ?? [])
+                    : [{ fromUs: frame.atMs * 1000, toUs: untilUs }],
+            untilUs,
+        };
+    }
+
+    return shows;
 }
 
 /**
@@ -183,9 +218,7 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
     const sizes = displaySizes(folder, frames);
     // The proxy's picture holds every display that has frames, whichever the plan shows (makeProxy).
     const canvas = proxyCanvas([...sizes.values()]);
-    const lastMs = frames.at(-1)?.atMs ?? 0;
-    const endUs = (lastMs + 2000) * 1000;
-    const visible = plan ? visibleSpans(frames, plan.ranges, endUs) : undefined;
+    const shows = frameShows({ frames, plan, startedAt: manifest.startedAt, endedAt: manifest.endedAt });
     const hits: ScreenHit[] = [];
 
     for (const [index, frame] of frames.entries()) {
@@ -196,7 +229,6 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
             continue;
         }
 
-        const next = frames.slice(index + 1).find((later) => later.displayId === frame.displayId);
         const size = sizes.get(frame.displayId);
         const boxes =
             size === undefined
@@ -222,10 +254,7 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
                               height: micro(placed.height),
                           };
                       });
-        const spans =
-            visible && frame.displayId !== undefined
-                ? (visible.get(frame.file) ?? [])
-                : [{ fromUs: frame.atMs * 1000, toUs: undefined }];
+        const { spans, untilUs } = shows[index];
         const common = {
             ...(frame.displayId !== undefined ? { displayId: frame.displayId } : {}),
             file: frame.file,
@@ -235,7 +264,7 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
         if (spans.length === 0) {
             hits.push({
                 sec: frame.atMs / 1000,
-                untilSec: (next?.atMs ?? lastMs + 2000) / 1000,
+                untilSec: untilUs / 1_000_000,
                 ...common,
                 shown: false,
                 boxes: [],
@@ -245,7 +274,7 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
         for (const span of spans) {
             hits.push({
                 sec: span.fromUs / 1_000_000,
-                untilSec: (span.toUs ?? (next?.atMs ?? lastMs + 2000) * 1000) / 1_000_000,
+                untilSec: span.toUs / 1_000_000,
                 ...common,
                 shown: true,
                 boxes: boxes.map((box) => ({ ...box })),
