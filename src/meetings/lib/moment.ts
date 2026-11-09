@@ -351,9 +351,14 @@ function itemSpan(record: MeetingRecord, item: MeetingItem, lines: TranscriptLin
 
 /** A point in a line to seconds: the line found by its address, its time spread over its text. */
 function pointSec(lines: TranscriptLines, point: LinePoint, edge: "from" | "to"): { sec: number; index: number } {
-    const found = lines.resolve({ atSec: point.atSec, ...(point.line === undefined ? {} : { line: point.line }) });
+    // Only a spoken line has a span: a hint that names a line with no words falls back to the line at the time.
+    const found = lines.resolve(
+        { atSec: point.atSec, ...(point.line === undefined ? {} : { line: point.line }) },
+        (_entry, index) => lines.span(index) !== undefined
+    );
+    const span = found.kind === "found" ? lines.span(found.index) : undefined;
 
-    if (found.kind !== "found") {
+    if (found.kind !== "found" || !span) {
         throw new MomentError(
             "unknown-line",
             found.kind === "ambiguous"
@@ -362,7 +367,6 @@ function pointSec(lines: TranscriptLines, point: LinePoint, edge: "from" | "to")
         );
     }
 
-    const span = lines.span(found.index)!;
     const fraction = point.fraction ?? (edge === "from" ? 0 : 1);
     return { sec: span.fromSec + fraction * (span.toSec - span.fromSec), index: found.index };
 }

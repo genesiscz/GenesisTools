@@ -175,6 +175,24 @@ describe("a Moment of a time, a range, a selection or a stretch", () => {
         expect(refusal({ kind: "selection", from: { atSec: 21 }, to: { atSec: 30 } })).toBe("unknown-line");
     });
 
+    // A source transcript can hold an empty segment beside a spoken line, and the window's line index comes from the
+    // corrected transcript, so a hint can name a line with no words.
+    test("a selection whose line hint names a line with no words takes the spoken line at that time", () => {
+        const withEmpty: TranscriptEntry[] = [
+            { speaker: "Speaker 1", startSec: 10, text: " " },
+            { speaker: "Speaker 1", startSec: 10.2, text: "Dej to do Ada." },
+            { speaker: "Speaker 2", startSec: 20, text: "Jo." },
+        ];
+        const moment = planMoment({
+            record: meeting,
+            transcript: withEmpty,
+            listen,
+            target: { kind: "selection", from: { atSec: 10, line: 0 }, to: { atSec: 10.2, line: 1 } },
+        });
+
+        expect(moment).toMatchObject({ fromSec: 10.2, toSec: 20 });
+    });
+
     test("a stretch is one speaker's turn: the lines in a row under one label (R20, R21)", () => {
         expect(speakerStretches(transcript).map((one) => [one.speaker, one.fromSec, one.toSec])).toEqual([
             ["Speaker 1", 10, 30],
