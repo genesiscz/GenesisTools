@@ -36,7 +36,7 @@ public struct IssueDraft: Equatable, Sendable {
 
     /// The draft of a failure: its title, and the agent context as the body.
     public static func failure(_ report: FailureReport, repo: String, labels: [String] = ["bug"]) -> IssueDraft {
-        IssueDraft(repo: repo, title: defaultTitle(for: report), body: report.agentContext(), labels: labels)
+        IssueDraft(repo: repo, title: defaultTitle(for: report), body: report.issueBody(), labels: labels)
     }
 }
 

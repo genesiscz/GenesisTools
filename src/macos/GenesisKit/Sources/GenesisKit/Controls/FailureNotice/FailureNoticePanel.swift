@@ -74,7 +74,8 @@ public final class FailureNoticePanel: NSObject, NSWindowDelegate {
     public var window: NSWindow? { panel }
 
     public func show(_ report: FailureReport, options: FailureNoticeOptions = FailureNoticeOptions(),
-                     retry: (@MainActor () -> Void)? = nil, issue: FailureNoticeIssueTarget? = nil) {
+                     retry: (@MainActor () -> Void)? = nil, issue: FailureNoticeIssueTarget? = nil,
+                     environment: (@Sendable () async -> FailureEnvironment?)? = nil) {
         generation += 1
         let shown = generation
         let anchor = anchor()
@@ -95,9 +96,17 @@ public final class FailureNoticePanel: NSObject, NSWindowDelegate {
                                        dismiss: { [weak self] in self?.close(shown) })
         model.userSized = saved != nil
         if let issue {
-            model.draftIssue = { [weak self] in
-                IssueDraftWindow.show(IssueDraft.failure(report, repo: issue.repo, labels: issue.labels), poster: issue.poster,
-                                      near: self?.panel)
+            // The report as it is at the click: the environment may have arrived since the notice appeared.
+            model.draftIssue = { [weak self, weak model] in
+                guard let model else { return }
+                IssueDraftWindow.show(IssueDraft.failure(model.report, repo: issue.repo, labels: issue.labels),
+                                      poster: issue.poster, near: self?.panel)
+            }
+        }
+        if let environment {
+            Task { @MainActor [weak model] in
+                guard let facts = await environment() else { return }
+                model?.report.environment = facts
             }
         }
         self.model = model

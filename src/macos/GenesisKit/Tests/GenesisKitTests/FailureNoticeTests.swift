@@ -120,11 +120,12 @@ final class FailureNoticeTests: XCTestCase {
                       "a step's JSON value is one compact line")
     }
 
-    func testTheAgentContextNamesWhatRanWhereAndTheWholeLog() {
+    private func cameraReport(environment: FailureEnvironment?) -> FailureReport {
         var zone = Calendar(identifier: .gregorian)
         zone.timeZone = TimeZone(identifier: "Europe/Prague")!
         let time = zone.date(from: DateComponents(year: 2026, month: 11, day: 9, hour: 12, minute: 50, second: 46))!
-        let report = FailureReport(
+        return FailureReport(
+            title: "Recording failed",
             headline: "The camera did not start.",
             summary: "Recording a window stopped at once (exit 1).",
             action: "Start a recording",
@@ -132,21 +133,71 @@ final class FailureNoticeTests: XCTestCase {
             exitStatus: 1,
             folder: "/Users/alice/.genesis-tools/recordings/library/video-1",
             logFile: "/Users/alice/.genesis-tools/logs/recorder-start.log",
+            logLine: 812,
             dayLog: "/Users/alice/.genesis-tools/logs/2026-11-09.log",
             log: Self.cameraFailure,
             time: time,
             app: FailureAppFacts(name: "GenesisTools", version: "1.4", branch: "feat/x", commit: "d9695acca14929f8", dirty: true,
-                                 checkout: "/Users/alice/Projects/GenesisTools"))
-        let context = report.agentContext(timeZone: TimeZone(identifier: "Europe/Prague")!)
+                                 checkout: "/Users/alice/Projects/GenesisTools"),
+            expected: "The recording starts.",
+            area: "recorder",
+            environment: environment)
+    }
+
+    /// The bug form's fields as `tools genesis-tools env --json` reads them from .github/ISSUE_TEMPLATE/bug_report.yml.
+    static let environmentJSON = #"""
+    {"markdown":"- **Bun:** 1.3.13","issue":{"path":"/x/bug_report.yml","fields":[
+      {"id":"checks","label":"Before you submit","type":"checkboxes","render":null},
+      {"id":"what-happened","label":"What happened","type":"textarea","render":null},
+      {"id":"steps","label":"Steps to reproduce","type":"textarea","render":null},
+      {"id":"expected","label":"Expected","type":"textarea","render":null},
+      {"id":"actual","label":"Actual (error + log)","type":"textarea","render":"shell"},
+      {"id":"area","label":"Affected tool","type":"dropdown","render":null},
+      {"id":"impact","label":"Impact","type":"dropdown","render":null},
+      {"id":"commit","label":"GenesisTools commit and its age","type":"input","render":null},
+      {"id":"app-build","label":"App build","type":"textarea","render":"shell"},
+      {"id":"bun","label":"Bun version","type":"input","render":null},
+      {"id":"privacy","label":"Privacy","type":"checkboxes","render":null}],
+     "values":{"commit":"d9695acca149+dirty, 3 h old","app-build":"commit d9695acca149\nbuilt 2026-11-09 10:32 CET","bun":"1.3.13"}}}
+    """#
+
+    func testTheIssueBodyFollowsTheBugFormsSectionsInItsOrder() throws {
+        let environment = try XCTUnwrap(FailureEnvironment.parse(json: Self.environmentJSON))
+        let body = cameraReport(environment: environment).issueBody(timeZone: TimeZone(identifier: "Europe/Prague")!)
+        let headings = body.split(separator: "\n").filter { $0.hasPrefix("### ") }.map(String.init)
+        XCTAssertEqual(headings, ["### What happened", "### Steps to reproduce", "### Expected", "### Actual (error + log)",
+                                  "### Affected tool", "### Impact", "### GenesisTools commit and its age", "### App build",
+                                  "### Bun version"], "the form's order and names; its checkboxes are the poster's to tick")
+        XCTAssertTrue(body.contains("### What happened\n\nRecording a window stopped at once (exit 1). The camera did not start.\n"))
+        XCTAssertTrue(body.contains("1. Start a recording: `tools recorder start --window 101344 --camera`"))
+        XCTAssertTrue(body.contains("### Expected\n\nThe recording starts.\n"))
+        XCTAssertTrue(body.contains("### Actual (error + log)\n\n```shell\nerror: The camera did not start.\n"))
+        XCTAssertTrue(body.contains("log: /Users/alice/.genesis-tools/logs/recorder-start.log (from line 812)"))
+        XCTAssertTrue(body.contains("time: 2026-11-09 12:50:46 CET"))
+        XCTAssertTrue(body.contains(Self.cameraFailure + "\n```"), "the whole output, stack included, in the shell block")
+        XCTAssertTrue(body.contains("### Affected tool\n\nrecorder\n"))
+        XCTAssertTrue(body.contains("### GenesisTools commit and its age\n\nd9695acca149+dirty, 3 h old\n"))
+        XCTAssertTrue(body.contains("### App build\n\n```shell\ncommit d9695acca149\nbuilt 2026-11-09 10:32 CET\n```"))
+        XCTAssertTrue(body.contains("### Bun version\n\n1.3.13"))
+    }
+
+    func testWithoutTheFormTheBodyHasTheFiveSectionsAndTheAppsOwnFacts() {
+        let body = cameraReport(environment: nil).issueBody(timeZone: TimeZone(identifier: "Europe/Prague")!)
+        let headings = body.split(separator: "\n").filter { $0.hasPrefix("### ") }.map(String.init)
+        XCTAssertEqual(headings, ["### What happened", "### Steps to reproduce", "### Expected", "### Actual (error + log)",
+                                  "### Environment"])
+        XCTAssertTrue(body.contains("- **App:** GenesisTools 1.4, feat/x @ d9695acca149 (uncommitted changes), checkout `/Users/alice/Projects/GenesisTools`"))
+    }
+
+    func testTheAgentContextIsTheIssueBodyUnderAHeadingWithTheRecordingFolder() throws {
+        let environment = try XCTUnwrap(FailureEnvironment.parse(json: Self.environmentJSON))
+        let report = cameraReport(environment: environment)
+        let zone = TimeZone(identifier: "Europe/Prague")!
+        let context = report.agentContext(timeZone: zone)
         XCTAssertTrue(context.hasPrefix("## GenesisTools failure: The camera did not start.\n"))
-        XCTAssertTrue(context.contains("- **What ran:** Start a recording: `tools recorder start --window 101344 --camera`"))
-        XCTAssertTrue(context.contains("- **Exit status:** 1"))
-        XCTAssertTrue(context.contains("- **When:** 2026-11-09 12:50:46 CET"))
-        XCTAssertTrue(context.contains("- **Recording folder:** `/Users/alice/.genesis-tools/recordings/library/video-1`"))
-        XCTAssertTrue(context.contains("- **App:** GenesisTools 1.4, feat/x @ d9695acca149 (uncommitted changes), checkout `/Users/alice/Projects/GenesisTools`"))
-        XCTAssertTrue(context.contains("- **This run's log:** `/Users/alice/.genesis-tools/logs/recorder-start.log`"))
-        XCTAssertTrue(context.contains("- **Day log:** `/Users/alice/.genesis-tools/logs/2026-11-09.log`"))
-        XCTAssertTrue(context.contains("```text\n" + Self.cameraFailure + "\n```"), "the whole output, unfolded, stack included")
+        XCTAssertTrue(context.contains(report.issueBody(timeZone: zone)))
+        XCTAssertTrue(context.contains("folder: /Users/alice/.genesis-tools/recordings/library/video-1"))
+        XCTAssertTrue(context.contains("- **Bun:** 1.3.13"), "the environment's own bullets too")
     }
 
     func testTheWindowPlacesItselfInsideTheScreenForEveryPlacement() {
@@ -261,7 +312,9 @@ final class IssueDraftTests: XCTestCase {
                                    logFile: "/Users/alice/.genesis-tools/logs/recorder-start.log", logLine: 812,
                                    dayLog: "/Users/alice/.genesis-tools/logs/2026-11-09.log",
                                    log: FailureNoticeTests.cameraFailure,
-                                   app: FailureAppFacts(name: "GenesisTools", version: "1.0", branch: "feat/x", commit: "d9695acca14929f8"))
+                                   app: FailureAppFacts(name: "GenesisTools", version: "1.0", branch: "feat/x", commit: "d9695acca14929f8"),
+                                   expected: "The recording starts, and its controls and the red menu bar item appear.",
+                                   area: "recorder", environment: FailureEnvironment.parse(json: FailureNoticeTests.environmentJSON))
         let opened = IssueDraft.failure(report, repo: "genesiscz/GenesisTools")
         var edited = opened
         edited.title = "Recorder: the camera does not start from the menu bar"

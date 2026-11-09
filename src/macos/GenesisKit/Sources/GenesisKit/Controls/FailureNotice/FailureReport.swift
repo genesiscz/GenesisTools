@@ -80,11 +80,18 @@ public struct FailureReport: Equatable, Sendable {
     public var log: String
     public var time: Date
     public var app: FailureAppFacts?
+    /// What should have happened ("The recording starts.").
+    public var expected: String?
+    /// The bug form's "Affected tool" ("recorder").
+    public var area: String?
+    /// The environment `tools genesis-tools env --json` reported, nil until it answered (or when it could not).
+    public var environment: FailureEnvironment?
 
     public init(title: String = "Failed", headline: String, summary: String? = nil, nextStep: String? = nil,
                 action: String? = nil, command: String? = nil, exitStatus: Int32? = nil, folder: String? = nil,
                 logFile: String? = nil, logLine: Int? = nil, dayLog: String? = nil, log: String = "", time: Date = Date(),
-                app: FailureAppFacts? = nil) {
+                app: FailureAppFacts? = nil, expected: String? = nil, area: String? = nil,
+                environment: FailureEnvironment? = nil) {
         self.title = title
         self.headline = headline
         self.summary = summary
@@ -99,6 +106,9 @@ public struct FailureReport: Equatable, Sendable {
         self.log = log
         self.time = time
         self.app = app
+        self.expected = expected
+        self.area = area
+        self.environment = environment
     }
 
     public var hasLog: Bool { !log.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -114,45 +124,103 @@ public struct FailureReport: Equatable, Sendable {
 
     // MARK: - Markdown
 
-    /// A markdown block an agent can act on without asking: the failure, what ran, when, where, which build, and the
-    /// whole output with its stacks.
+    /// A markdown block an agent can act on without asking: the issue body under a heading, then every environment
+    /// fact `tools genesis-tools env` gave.
     public func agentContext(timeZone: TimeZone = .current) -> String {
+        var text = "## \(app?.name ?? "GenesisTools") failure: \(headline)\n\n" + issueBody(timeZone: timeZone)
+        if let environment, !environment.fields.isEmpty, !environment.markdown.isEmpty {
+            text += "\n### All environment facts\n\n" + environment.markdown + "\n"
+        }
+        return text
+    }
+
+    /// The issue body in the bug form's sections, in its order and with its names (`.github/ISSUE_TEMPLATE/
+    /// bug_report.yml`, read by `tools genesis-tools env`). Without the form: What happened, Steps to reproduce,
+    /// Expected, Actual (error + log) and Environment. The form's checkboxes are left out: they are the poster's.
+    public func issueBody(timeZone: TimeZone = .current) -> String {
+        let fields = environment?.fields.filter { $0.type != "checkboxes" } ?? []
+        guard !fields.isEmpty else {
+            let environmentText = environment?.markdown.isEmpty == false ? environment?.markdown ?? "" : fallbackEnvironment()
+            return [
+                section("What happened", whatHappened()),
+                section("Steps to reproduce", steps()),
+                section("Expected", expected ?? "It works without an error."),
+                section("Actual (error + log)", fenced(actual(timeZone: timeZone), "shell")),
+                section("Environment", environmentText),
+            ].joined(separator: "\n")
+        }
+
+        return fields.map { field in
+            let value: String
+            switch field.id {
+            case "what-happened": value = whatHappened()
+            case "steps": value = steps()
+            case "expected": value = expected ?? "It works without an error."
+            case "actual": value = actual(timeZone: timeZone)
+            case "area": value = area ?? "other"
+            case "impact": value = "Choose one: Blocks my work completely, Frequent failure or major degradation, Occasional failure, Cosmetic"
+            default: value = environment?.values[field.id] ?? "_No response_"
+            }
+            return section(field.label, field.render.map { fenced(value, $0) } ?? value)
+        }.joined(separator: "\n")
+    }
+
+    private func section(_ label: String, _ value: String) -> String {
+        "### \(label)\n\n\(value.trimmingCharacters(in: .newlines))\n"
+    }
+
+    private func fenced(_ value: String, _ language: String) -> String {
+        "```\(language)\n\(value.trimmingCharacters(in: .newlines))\n```"
+    }
+
+    private func whatHappened() -> String {
+        [summary, headline].compactMap { $0 }.joined(separator: " ")
+    }
+
+    private func steps() -> String {
+        var lines: [String] = []
+        if let action, let command {
+            lines.append("1. \(action): `\(command)`")
+        } else if let what = action ?? command.map({ "`\($0)`" }) {
+            lines.append("1. \(what)")
+        } else {
+            lines.append("1. (what you did)")
+        }
+        lines.append("2. It failed" + (exitStatus.map { " (exit \($0))" } ?? "") + ".")
+        return lines.joined(separator: "\n")
+    }
+
+    /// The form renders "Actual" as a shell block: the error, where the log is, when, then the whole output.
+    private func actual(timeZone: TimeZone) -> String {
         let formatter = DateFormatter()
         // en_GB names the zone ("CET", "CEST"); en_US_POSIX prints "GMT+1".
         formatter.locale = Locale(identifier: "en_GB")
         formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss zzz"
-
-        var lines = ["## \(app?.name ?? "GenesisTools") failure: \(headline)", ""]
-        if let summary {
-            lines += [summary, ""]
+        var lines = ["error: \(headline)"]
+        if let logFile {
+            lines.append("log: \(logFile)" + (logLine.map { " (from line \($0))" } ?? ""))
         }
-        if let action, let command {
-            lines.append("- **What ran:** \(action): `\(command)`")
-        } else if let what = action ?? command.map({ "`\($0)`" }) {
-            lines.append("- **What ran:** \(what)")
+        if let dayLog {
+            lines.append("day log: \(dayLog)")
         }
-        if let exitStatus {
-            lines.append("- **Exit status:** \(exitStatus)")
-        }
-        lines.append("- **When:** \(formatter.string(from: time))")
         if let folder {
-            let gone = FileManager.default.fileExists(atPath: folder) ? "" : " (no longer on disk)"
-            lines.append("- **Recording folder:** `\(folder)`\(gone)")
+            lines.append("folder: \(folder)" + (FileManager.default.fileExists(atPath: folder) ? "" : " (no longer on disk)"))
         }
+        lines.append("time: \(formatter.string(from: time))")
+        if hasLog {
+            lines += ["", log.trimmingCharacters(in: .newlines)]
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func fallbackEnvironment() -> String {
+        var lines: [String] = []
         if let app {
             lines.append("- **App:** \(app.line)")
         }
-        if let logFile {
-            lines.append("- **This run's log:** `\(logFile)`" + (logLine.map { " (from line \($0))" } ?? ""))
-        }
-        if let dayLog {
-            lines.append("- **Day log:** `\(dayLog)`")
-        }
-        if hasLog {
-            lines += ["", "### Output", "", "```text", log.trimmingCharacters(in: .newlines), "```"]
-        }
-        return lines.joined(separator: "\n") + "\n"
+        lines.append("- **macOS:** \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        return lines.joined(separator: "\n")
     }
 
     /// The notice's details under its headline (which is the error, so it is not repeated): each warning with its
@@ -257,5 +325,52 @@ public struct FailureReport: Equatable, Sendable {
     public static func unquoted(_ value: String) -> String {
         guard value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") else { return value }
         return String(value.dropFirst().dropLast())
+    }
+}
+
+/// What `tools genesis-tools env --json` answered: the environment bullets, the bug form's fields in order (empty when
+/// the checkout has no `.github/ISSUE_TEMPLATE/bug_report.yml`), and the environment answers by field id.
+public struct FailureEnvironment: Equatable, Sendable {
+    public struct Field: Equatable, Sendable {
+        public var id: String
+        public var label: String
+        public var type: String
+        public var render: String?
+
+        public init(id: String, label: String, type: String, render: String? = nil) {
+            self.id = id
+            self.label = label
+            self.type = type
+            self.render = render
+        }
+    }
+
+    public var markdown: String
+    public var fields: [Field]
+    public var values: [String: String]
+
+    public init(markdown: String, fields: [Field] = [], values: [String: String] = [:]) {
+        self.markdown = markdown
+        self.fields = fields
+        self.values = values
+    }
+
+    public static func parse(json: String) -> FailureEnvironment? {
+        guard let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let issue = object["issue"] as? [String: Any]
+        let fields = (issue?["fields"] as? [[String: Any]] ?? []).compactMap { row -> Field? in
+            guard let id = row["id"] as? String, let label = row["label"] as? String else { return nil }
+            return Field(id: id, label: label, type: row["type"] as? String ?? "textarea", render: row["render"] as? String)
+        }
+        return FailureEnvironment(markdown: object["markdown"] as? String ?? "", fields: fields,
+                                  values: issue?["values"] as? [String: String] ?? [:])
+    }
+
+    /// Runs `tools genesis-tools env --json`; nil when it fails.
+    public static func load(bridge: ToolsBridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())) async -> FailureEnvironment? {
+        guard let run = try? await bridge.run(subcommand: "genesis-tools", args: ["env", "--json"], timeoutSeconds: 20),
+              run.exitCode == 0 else { return nil }
+        return parse(json: run.stdout)
     }
 }
