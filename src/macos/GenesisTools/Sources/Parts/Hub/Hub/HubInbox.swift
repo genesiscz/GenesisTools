@@ -1609,7 +1609,9 @@ struct InboxMain: View {
                             listRow(row, hubSessions: hubSessions)
                         }
                     }
+                    .frame(maxWidth: HubInboxCards.readingWidth, alignment: .leading)
                     .padding(18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .focusable()
                 .focusEffectDisabled()
@@ -2186,6 +2188,8 @@ struct InboxDecisionCard: View, Equatable {
     /// ⌘F: when the current match is in this card's folded context, the context unfolds by itself.
     @Environment(\.panelFindHighlight) private var highlight
     @GenReduceMotion private var reduceMotion
+    /// Settings, Hub, Panes, Inbox: the context in full instead of two lines and Show more.
+    @AppStorage(HubInboxCards.contextOpenKey, store: HubDefaults.store) private var contextOpen = false
 
     private var writing: Bool { state.writing }
     /// The card's options, footer and note field are real controls (buttons with hover styles and tooltips, a text
@@ -2240,7 +2244,8 @@ struct InboxDecisionCard: View, Equatable {
             }
             // The widget's decision card draws these two sections too (GenesisKit DecisionDetailViews.swift).
             if let context = item.context, !context.isEmpty {
-                DecisionContextSection(markdown: context, forcedOpen: findInContext)
+                DecisionContextSection(markdown: context, startsOpen: contextOpen, forcedOpen: findInContext,
+                                       foldHeight: DecisionContextSection.twoLines)
                     .findField("context")
             }
             if !item.excerptRefs.isEmpty {

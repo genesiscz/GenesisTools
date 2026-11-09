@@ -21,7 +21,7 @@ public enum HubSettingsPages {
                 },
                 NativeSettingsPage(
                     id: panesPageID, title: "Panes", symbol: "rectangle.split.3x1", tint: .teal,
-                    subtitle: "Defaults for the diff, the Agents list, the Agent processes pane and the Worktree cleanup pane."
+                    subtitle: "Defaults for the diff, the Inbox, the Agents list, the Agent processes pane and the Worktree cleanup pane."
                 ) {
                     HubPaneSettings(preferences: preferences)
                 },
@@ -95,6 +95,7 @@ private struct HubPaneSettings: View {
     @AppStorage(GitCommitClickMode.defaultsKey) private var commitClick = GitCommitClickMode.chooseThenShow.rawValue
     @AppStorage(HubResizeGrips.key) private var resizeGrips = HubResizeGrips.auto.rawValue
     @AppStorage(HubDiffLayout.key) private var diffLayout = HubDiffLayout.auto.rawValue
+    @AppStorage(HubInboxCards.contextOpenKey) private var inboxContextOpen = false
 
     var body: some View {
         VStack(spacing: 18) {
@@ -106,6 +107,12 @@ private struct HubPaneSettings: View {
                         get: { HubDiffLayout(rawValue: diffLayout) ?? .auto },
                         set: { diffLayout = $0.rawValue }),
                     minSegmentWidth: 90)
+            }
+            NativeSettingsCard("Inbox") {
+                NativeSettingsToggle(
+                    "Show each decision's context in full",
+                    detail: "Off: a card shows two lines of its context and Show more, so the question and its options come first.",
+                    identifier: "hub.inbox.contextOpen", isOn: $inboxContextOpen)
             }
             NativeSettingsCard("Agents list") {
                 NativeSettingsSegmented(

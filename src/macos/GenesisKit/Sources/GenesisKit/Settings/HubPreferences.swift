@@ -103,6 +103,14 @@ public enum HubDiffLayout: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// The hub Inbox's decision cards. Both faces read and write the keys through `@AppStorage`.
+public enum HubInboxCards {
+    /// A card's Context opens in full; off (the default), it shows two lines and Show more.
+    public static let contextOpenKey = "hub.inbox.contextOpen"
+    /// The cards stop growing here, so a line of a decision stays readable in a wide window (hub UX council, 2026-11-09).
+    public static let readingWidth: CGFloat = 860
+}
+
 /// How the Agents list lands a refresh that moves a few rows: at their new places at once, or with a slide there.
 /// The slide moves every row between a moved row's old and new place on each frame of the spring. With about 700 rows
 /// a one-row slide kept the main thread busy for about 300 ms, against about 60 ms for a refresh that moved more than
