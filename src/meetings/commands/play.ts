@@ -1,15 +1,28 @@
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { MEETING_PLAYERS, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { LISTEN_PLAYERS, MEETING_PLAYERS, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { meetingAudio } from "../lib/audio";
-import { choosePlayer, pastTheEnd, playbackPlan } from "../lib/players";
+import { clipMoment, type Moment, MomentError, type MomentTarget, momentTargetSchema, openMoment } from "../lib/moment";
+import { choosePlayer, PLAYERS, pastTheEnd, pickPlayer, playbackPlan } from "../lib/players";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 const { log } = logger.scoped("meetings-play");
+
+interface PlayOptions {
+    at?: string;
+    to?: string;
+    item?: string;
+    target?: string;
+    clip?: boolean;
+    before?: string;
+    player?: string;
+    json?: boolean;
+    start?: boolean;
+}
 
 /** A count of seconds as typed: a non-negative number, else undefined. */
 function seconds(value: string): number | undefined {
@@ -17,14 +30,137 @@ function seconds(value: string): number | undefined {
     return value.trim() !== "" && Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
-async function play(
-    ref: string,
-    opts: { at: string; before?: string; player?: string; json?: boolean; start?: boolean }
-): Promise<void> {
-    const atSec = parseClock(opts.at);
+/**
+ * What the flags ask to play: a Moment target (`--item`, `--target`, `--at` with `--to` or `--clip`), the open-ended
+ * play of `--at` alone (today's `play`), or why the flags do not name one.
+ */
+function wanted(opts: PlayOptions): { target: MomentTarget } | { atSec: number } | { error: string } {
+    const named = [opts.at, opts.item, opts.target].filter((flag) => flag !== undefined).length;
+
+    if (named !== 1) {
+        return {
+            error:
+                named === 0
+                    ? "Name what to play: --at <time>, --item <id> or --target <json>."
+                    : "--at, --item and --target each name what to play; give one of them.",
+        };
+    }
+
+    if (opts.to !== undefined && opts.at === undefined) {
+        return { error: "--to ends the range that --at starts." };
+    }
+
+    if (opts.item !== undefined) {
+        return { target: { kind: "item", id: opts.item } };
+    }
+
+    if (opts.target !== undefined) {
+        let value: unknown;
+
+        try {
+            value = SafeJSON.parse(opts.target, { strict: true });
+        } catch {
+            return { error: `--target is not JSON: ${opts.target}` };
+        }
+
+        const parsed = momentTargetSchema.safeParse(value);
+        return parsed.success
+            ? { target: parsed.data }
+            : {
+                  error: `--target is not a Moment target (${parsed.error.issues[0]?.message}). Try {"kind":"range","fromSec":60,"toSec":75}.`,
+              };
+    }
+
+    const atSec = parseClock(opts.at ?? "");
 
     if (atSec === undefined) {
-        fail(`--at needs a transcript time: 1:23:50, 23:50 or seconds.`);
+        return { error: "--at needs a transcript time: 1:23:50, 23:50 or seconds." };
+    }
+
+    if (opts.to === undefined) {
+        return opts.clip ? { target: { kind: "time", atSec } } : { atSec };
+    }
+
+    const toSec = parseClock(opts.to);
+    return toSec === undefined
+        ? { error: "--to needs a transcript time: 1:23:50, 23:50 or seconds." }
+        : { target: { kind: "range", fromSec: atSec, toSec } };
+}
+
+/** One line for a person: what the Moment hears, the clip around it, where the tone sounds, and the screen. */
+function momentLine(moment: Moment): string {
+    const tone = moment.tone ? `, tone at ${formatClock(moment.tone.atSec)}` : "";
+    const screen = moment.screen?.length ? `; screen: ${moment.screen.map((frame) => frame.file).join(", ")}` : "";
+    const heard = `${formatClock(moment.fromSec)}–${formatClock(moment.toSec)}`;
+    // A range is named by its span already: print it once.
+    const named = moment.label === heard ? heard : `${moment.label} ${heard}`;
+    return `${named} (clip ${formatClock(moment.startSec)}–${formatClock(moment.endSec)}${tone})${screen}`;
+}
+
+/** A Moment target: planned (`--no-start`), cut (`--clip`), or cut and played once in the clip player. */
+async function playMoment(
+    store: MeetingStore,
+    record: MeetingRecord,
+    target: MomentTarget,
+    opts: PlayOptions
+): Promise<void> {
+    if (opts.before !== undefined) {
+        fail("--before sets the lead-in of an open-ended --at play; a Moment pads by playback.listen.padSec.");
+        return;
+    }
+
+    if (!opts.clip && opts.start === false) {
+        const moment = await openMoment({ store, record, target });
+        opts.json ? out.result(SafeJSON.stringify(moment, null, 2)) : out.println(momentLine(moment));
+        return;
+    }
+
+    let player: (typeof LISTEN_PLAYERS)[number] | undefined;
+
+    if (!opts.clip) {
+        const requested = opts.player === undefined ? undefined : LISTEN_PLAYERS.find((id) => id === opts.player);
+
+        if (opts.player !== undefined && !requested) {
+            fail(`--player ${opts.player} does not play a clip: ${LISTEN_PLAYERS.join(", ")}`);
+            return;
+        }
+
+        const listen = (await new MeetingsConfigStore().read()).global.playback.listen;
+        player = requested
+            ? PLAYERS[requested].available()
+                ? requested
+                : undefined
+            : pickPlayer(listen.player, LISTEN_PLAYERS)?.id;
+
+        if (!player) {
+            fail(
+                requested ? `${requested} is not installed on this Mac.` : "No clip player found (afplay, VLC, ffplay)."
+            );
+            return;
+        }
+    }
+
+    const cut = await clipMoment({ store, record, target });
+
+    if (!player) {
+        opts.json ? out.result(SafeJSON.stringify(cut, null, 2)) : ui.ok(`Cut ${momentLine(cut)}: ${cut.path}`);
+        return;
+    }
+
+    const argv = PLAYERS[player].clipArgv(cut.path);
+    const child = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+    child.unref();
+    log.debug({ argv, pid: child.pid }, "clip player started");
+    opts.json
+        ? out.result(SafeJSON.stringify({ ...cut, player, pid: child.pid }, null, 2))
+        : ui.ok(`Playing ${momentLine(cut)} in ${player}.`);
+}
+
+async function play(ref: string, opts: PlayOptions): Promise<void> {
+    const what = wanted(opts);
+
+    if ("error" in what) {
+        fail(what.error);
         return;
     }
 
@@ -36,13 +172,20 @@ async function play(
     }
 
     try {
-        const record = new MeetingStore().resolve(ref);
+        const store = new MeetingStore();
+        const record = store.resolve(ref);
 
         if (!record) {
             fail(`No meeting "${ref}". List them: ${TOOL} list`);
             return;
         }
 
+        if ("target" in what) {
+            await playMoment(store, record, what.target, opts);
+            return;
+        }
+
+        const { atSec } = what;
         const playback = (await new MeetingsConfigStore().read()).global.playback;
         const chosen = choosePlayer({ requested: opts.player, configured: playback.player, all: MEETING_PLAYERS });
 
@@ -84,7 +227,8 @@ async function play(
             ? out.result(SafeJSON.stringify({ ...shown, pid: child.pid }, null, 2))
             : ui.ok(`Playing ${record.id} from ${formatClock(plan.startSec)} in ${plan.player}.`);
     } catch (err) {
-        fail(errorText(err));
+        // A target the meeting does not have leads with its code, as a conflict does: `[unknown-item] …`.
+        fail(err instanceof MomentError ? `[${err.code}] ${err.message}` : errorText(err));
     }
 }
 
@@ -92,11 +236,26 @@ export function registerPlayCommand(program: Command): void {
     program
         .command("play")
         .argument("<meeting>", "meeting id, a unique prefix, last, or wisprflow:<id>")
-        .description("Play the meeting's audio from a transcript time, to hear a voice before confirming it")
-        .requiredOption("--at <time>", "transcript time: 1:23:50, 23:50 or seconds")
-        .option("--before <sec>", "start this many seconds earlier (default: playback.beforeSec, 5)")
-        .option("--player <id>", `this player for one call instead of playback.player: ${MEETING_PLAYERS.join(", ")}`)
-        .option("--json", "print { audioPath, startSec, player, pid } (pid only when a player started)")
-        .option("--no-start", "resolve the file, the start and the player, and start nothing (no sound)")
+        .description(
+            "Play the meeting's audio from a transcript time, or the Moment of an item, a time or a range: a bounded clip with the tone before the asked spot"
+        )
+        .option("--at <time>", "transcript time: 1:23:50, 23:50 or seconds; alone it plays on from there")
+        .option("--to <time>", "with --at: the Moment of the range from --at to this time")
+        .option("--item <id>", "the Moment of an item: its id (i42) or a question's number (Q12, 12)")
+        .option(
+            "--target <json>",
+            'any Moment target as JSON: {"kind":"selection","from":{"atSec":60,"fraction":0.5},"to":{"atSec":70}}, {"kind":"stretch","atSec":60}'
+        )
+        .option("--clip", "cut the Moment to a WAV in the meeting folder and print it; plays nothing")
+        .option("--before <sec>", "start this many seconds earlier (default: playback.beforeSec, 5); --at alone only")
+        .option(
+            "--player <id>",
+            `this player for one call: ${MEETING_PLAYERS.join(", ")} for --at alone, ${LISTEN_PLAYERS.join(", ")} for a Moment`
+        )
+        .option(
+            "--json",
+            "print { audioPath, startSec, player, pid } for --at alone; for a Moment the Moment, with path, player and pid when made"
+        )
+        .option("--no-start", "resolve and start nothing (no sound); a Moment is planned, not cut")
         .action(play);
 }
