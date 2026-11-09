@@ -25,6 +25,8 @@ export type AnswerEvent =
           comment?: string;
           /** Other questions the same answer settled. */
           settled: string[];
+          /** The items (other than the question) whose status the answer changed: what it confirmed or rejected. */
+          decided?: Array<{ item: string; status: string }>;
       }
     | { event: "skipped"; at: string; item: string }
     | { event: "split"; at: string; item: string; into: number }
@@ -94,6 +96,12 @@ export async function subscribeAnswers(options: {
     write: (line: string) => void;
     alive?: (pid: number) => boolean;
     livenessMs?: number;
+    /**
+     * Stay up across rounds: a round's end (or a listener that died) waits for the next round, until a round ends with
+     * no open question left or the deadline. Without it the first round's end ends the subscription, and an agent that
+     * subscribes again after each one misses an answer given in between (the window answers one question per round).
+     */
+    follow?: boolean;
 }): Promise<number> {
     const alive = options.alive ?? listenerAlive;
     const snapshot = existsSync(options.path) ? readFileSync(options.path) : Buffer.alloc(0);
@@ -152,7 +160,13 @@ export async function subscribeAnswers(options: {
 
                     track(entry);
 
-                    if (entry.event === "round-end") {
+                    if (entry.event !== "round-end") {
+                        return;
+                    }
+
+                    roundPid = undefined;
+
+                    if (!options.follow || entry.open === 0) {
                         finish(0);
                     }
                 },
@@ -169,7 +183,11 @@ export async function subscribeAnswers(options: {
 
             if (!done) {
                 track({ event: "round-end", at: new Date().toISOString(), reason: "aborted", asked, open: -1 });
-                finish(0);
+                roundPid = undefined;
+
+                if (!options.follow) {
+                    finish(0);
+                }
             }
         }, options.livenessMs ?? 5000);
         const deadline = setTimeout(() => finish(2), options.timeoutMs);

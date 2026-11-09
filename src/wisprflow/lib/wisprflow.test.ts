@@ -1,5 +1,14 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+    writeSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -667,5 +676,34 @@ describe("a meeting that is not on this Mac", () => {
             missing.mockRestore();
             remote.mockRestore();
         }
+    });
+});
+
+describe("lastLiveMarker", () => {
+    test("finds the last paused or resumed marker after the text lines, and reads the file again when it grows", () => {
+        const dir = mkdtempSync(join(tmpdir(), "wispr-markers-"));
+        const meetingDir = join(dir, "meetings", "m1");
+        mkdirSync(meetingDir, { recursive: true });
+        const path = join(meetingDir, "live.ndjson");
+        const text = (n: number) =>
+            SafeJSON.stringify({ id: `t${n}`, text: "Hello.", startEpochMs: 1000 + n, endEpochMs: 1100 + n });
+        writeFileSync(
+            path,
+            [
+                SafeJSON.stringify({ meta: { v: 3 } }),
+                text(1),
+                SafeJSON.stringify({ id: "r", marker: "resumed", epochMs: 5000 }),
+                text(2),
+                text(3),
+            ].join("\n")
+        );
+        expect(local.lastLiveMarker("m1", dir)).toEqual({ marker: "resumed", epochMs: 5000 });
+
+        writeFileSync(
+            path,
+            `${readFileSync(path, "utf8")}\n${SafeJSON.stringify({ id: "p", marker: "paused", epochMs: 9000 })}\n`
+        );
+        expect(local.lastLiveMarker("m1", dir)).toEqual({ marker: "paused", epochMs: 9000 });
+        expect(local.lastLiveMarker("missing", dir)).toBeNull();
     });
 });

@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import { OCR_READS } from "@genesiscz/utils/macos/ocr";
+import { DEFAULT_OCR_TILE_PX, OCR_READS } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS, type FillerLists } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { AUDIO_SOURCES, OCR_REGIONS } from "@genesiscz/utils/screen-recorder/control";
 import { FRAME_RECORDER_IDS, type FrameRecorderId } from "@genesiscz/utils/screen-recorder/types";
@@ -115,6 +115,8 @@ const captureSchema = z.object({
             region: z.enum(OCR_REGIONS).default("frame"),
             /** Whole-frame reads or overlapping region tiles without language correction. */
             read: z.enum(OCR_READS).default("tiles"),
+            /** The longest side of one tile in frame pixels: smaller tiles read smaller text and cost more CPU. */
+            tilePx: z.number().int().min(256).max(8192).default(DEFAULT_OCR_TILE_PX),
         })
         .prefault({}),
     jpegQuality: z.number().min(0.1).max(1).default(0.75),

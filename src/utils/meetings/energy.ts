@@ -169,10 +169,18 @@ export interface ChannelCalibration {
 const CALIBRATION_MIN_SEC = 1.5;
 /** Fewer counted segments than this per tag, and the layout stays unknown. */
 const CALIBRATION_MIN_SEGMENTS = 20;
-/** The microphone's side holds at least this median share of its own segments, and at most `1 - SIDE` of the call's. */
+/** The microphone's side holds at least this median share of its own segments. */
 const CALIBRATION_SIDE = 0.8;
+/**
+ * The call's side holds at least this median share of the call's segments. Lower than CALIBRATION_SIDE: a microphone
+ * near loudspeakers hears the call too (2026-11-09: mic segments 0.972 on the left, call segments 0.25, so 75 % on the
+ * call's side), and that recording was left unknown while its channels plainly told the voices apart. A mono file
+ * (both near 0.5) still fails the microphone's side.
+ */
+const CALIBRATION_CALL_SIDE = 0.6;
 
-function median(values: number[]): number | undefined {
+/** The middle value (the mean of the two middle ones for an even count); undefined for none. */
+export function median(values: number[]): number | undefined {
     if (values.length === 0) {
         return undefined;
     }
@@ -227,11 +235,11 @@ export function calibrateChannels(
         };
     }
 
-    if (micMedian! >= CALIBRATION_SIDE && systemMedian! <= 1 - CALIBRATION_SIDE) {
+    if (micMedian! >= CALIBRATION_SIDE && systemMedian! <= 1 - CALIBRATION_CALL_SIDE) {
         return { layout: "left-mic", ...medians, segments: counted };
     }
 
-    if (micMedian! <= 1 - CALIBRATION_SIDE && systemMedian! >= CALIBRATION_SIDE) {
+    if (micMedian! <= 1 - CALIBRATION_SIDE && systemMedian! >= CALIBRATION_CALL_SIDE) {
         return { layout: "right-mic", ...medians, segments: counted };
     }
 

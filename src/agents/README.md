@@ -200,7 +200,10 @@ are excluded. A bare option applies only to the first real user response to the 
 reply. `record` checks the matched decision revision under the store lock and stores an unambiguous answer as `acknowledged` with
 `answeredVia: "automatic_heuristic"` and the user's line as a comment, and says so; `remind` stores nothing and sends
 the agent back to record it. An unclear one (two different answers, a letter the decision does not have, `D14` named
-without an option) sends the agent back once per decision, quoting the line. A read that ends before the oldest open
+without an option) sends the agent back once per decision, quoting the line. Letters closed one by one (`D14: a) b)`) are one set.
+An answer that rules a letter out (`D14: a) b) not e)`, `D14 (a, c) - except d)`) is clear, but the hook never stores
+it, in either mode: its words say more than its letters, so it sends the agent back once to record it with its
+reading of them. A read that ends before the oldest open
 ask is logged to the hooks log. A failed answer write or incomplete read retains the previous cursor so the next
 Stop can retry the evidence. It needs only the Stop entry.
 

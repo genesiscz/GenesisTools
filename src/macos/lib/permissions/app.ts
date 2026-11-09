@@ -49,6 +49,7 @@ import {
     unpackClickyLibrary,
 } from "../clicky-library";
 import { type ShareBundleResourcesReport, shareBundleResources } from "./bundle-resources";
+import { changedKeyLabels, codesignTrustClickCommand, keychainDialogOpen } from "./codesign-trust";
 import { SWIFT_FACE_TABLE_PATH, syncSwiftFaceTable } from "./face-table";
 import {
     ALL_PART_IDS,
@@ -977,8 +978,14 @@ async function runCodesign({
     };
 }
 
-/** A codesign that has not returned after this long is waiting on the keychain's password dialog. */
+/**
+ * A codesign still running after this long may be waiting on the keychain's dialog. Only a dialog that is really up
+ * posts the notice: sealing the 187 MB bundle alone took 2.2 to 6.1 s at a load average of 315 (2026-11-09), and the
+ * old rule (any sign past 2.5 s) posted 30 notices in 13 days with no dialog behind them.
+ */
 const SIGN_PROMPT_NOTICE_MS = 2_500;
+/** After that, how often a sign that still runs looks for the dialog again. */
+const SIGN_PROMPT_RECHECK_MS = 1_000;
 
 /** The one-time command that lets codesign use the signing keys without the keychain dialog. */
 export const CODESIGN_TRUST_COMMAND = "tools macos permissions codesign-trust";
@@ -1009,16 +1016,24 @@ function recordCodesignTrust(answer: "trusted" | "declined"): void {
  * cannot pick the app's key by the identity it signs with. Asks for the login password on the terminal and stops
  * `security` after `timeoutMs`.
  */
-export async function trustCodesignKeys(
-    timeoutMs = CODESIGN_TRUST_TIMEOUT_MS
-): Promise<{ ok: boolean; reason?: string }> {
+export interface CodesignTrustResult {
+    ok: boolean;
+    reason?: string;
+    /** The labels of the keys security changed (`changedKeyLabels`). */
+    keys: string[];
+    /** security's own stdout: one attribute dump per key it changed. */
+    output: string;
+}
+
+export async function trustCodesignKeys(timeoutMs = CODESIGN_TRUST_TIMEOUT_MS): Promise<CodesignTrustResult> {
     const keychain = join(homedir(), "Library", "Keychains", "login.keychain-db");
     const proc = Bun.spawn({
         cmd: ["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", keychain],
-        // security prints every key it touched to stdout (attribute dumps, a screen per key); the password
-        // prompt and errors are on stderr, so only those reach the terminal.
-        stdio: ["inherit", "ignore", "inherit"],
+        // security prints every key it touched to stdout (attribute dumps, a screen per key): kept for the summary,
+        // not shown. The password prompt and errors are on stderr, so only those reach the terminal.
+        stdio: ["inherit", "pipe", "inherit"],
     });
+    const stdout = new Response(proc.stdout).text();
     let timedOut = false;
     const timer = setTimeout(() => {
         timedOut = true;
@@ -1026,17 +1041,24 @@ export async function trustCodesignKeys(
     }, timeoutMs);
     const code = await proc.exited;
     clearTimeout(timer);
+    const output = await stdout;
+    const keys = changedKeyLabels(output);
 
     if (timedOut) {
-        return { ok: false, reason: `no password within ${Math.round(timeoutMs / 1000)} s, so security was stopped` };
+        return {
+            ok: false,
+            reason: `no password within ${Math.round(timeoutMs / 1000)} s, so security was stopped`,
+            keys,
+            output,
+        };
     }
 
     if (code !== 0) {
-        return { ok: false, reason: `security exited ${code}` };
+        return { ok: false, reason: `security exited ${code}`, keys, output };
     }
 
     recordCodesignTrust("trusted");
-    return { ok: true };
+    return { ok: true, keys, output };
 }
 
 /**
@@ -1070,15 +1092,27 @@ export async function offerCodesignTrust(step: (message: string) => void): Promi
 /**
  * Why the Mac is asking for a password, said where the user is looking: the keychain dialog names only
  * "codesign", so a build that stalls on it looked like a hang, on every build (2026-10-19). Posted
- * once per build, and only when an attempt has run past the dialog's usual appearance.
+ * once per build, and only while the keychain's dialog is up. A click opens `codesign-trust` in a terminal, which
+ * explains the change and asks before it makes it.
  */
 export function codesignPromptNotice(identityName: string): Promise<boolean> {
+    let execute: string | undefined;
+
+    try {
+        execute = codesignTrustClickCommand();
+    } catch (err) {
+        logger.warn({ err }, "permissions app: could not write the codesign-trust launcher; the notice has no click");
+    }
+
     return dispatchNotification({
         app: "macos",
         title: "GenesisTools build: codesign needs the keychain",
         subtitle: identityName,
-        message: `Click Always Allow in the dialog, or run ${CODESIGN_TRUST_COMMAND} once to stop these prompts.`,
+        message: execute
+            ? "Click Always Allow in the dialog. Or click here: a terminal explains the one-time codesign trust that stops these dialogs, and asks before it runs."
+            : `Click Always Allow in the dialog, or run ${CODESIGN_TRUST_COMMAND} once to stop these prompts.`,
         group: "genesis-app-codesign-prompt",
+        ...(execute ? { execute } : {}),
         // The certificate name stays on this Mac: no webhook or chat channel gets it.
         only: ["system"],
     }).catch(() => false);
@@ -1099,6 +1133,8 @@ export async function signStagedBundle({
     timeoutMs = SIGN_ATTEMPTS_BUDGET_MS,
     runCommand = boundedCommand,
     onPrompt = codesignPromptNotice,
+    dialogOpen = keychainDialogOpen,
+    promptTiming = { afterMs: SIGN_PROMPT_NOTICE_MS, everyMs: SIGN_PROMPT_RECHECK_MS },
 }: {
     stagedBundle: string;
     identity: CodesignIdentity;
@@ -1107,16 +1143,31 @@ export async function signStagedBundle({
     timeoutMs?: number;
     runCommand?: typeof boundedCommand;
     onPrompt?: (identityName: string) => Promise<boolean>;
+    /** Whether the keychain's dialog is up now (`keychainDialogOpen`). */
+    dialogOpen?: () => boolean;
+    /** When the first look for the dialog happens, and how often after it. */
+    promptTiming?: { afterMs: number; everyMs: number };
 }): Promise<string | undefined> {
     const name = identity.kind === "adhoc" ? "ad-hoc" : identity.name;
     let noticed = false;
     const sign = async (arg: string) => {
-        const timer = setTimeout(() => {
-            if (!noticed && identity.kind !== "adhoc") {
+        // From 2.5 s on, once a second while codesign runs: is the keychain's dialog up? A sign that is only slow
+        // (a big bundle on a busy Mac) never posts the notice.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const check = () => {
+            if (noticed || identity.kind === "adhoc") {
+                return;
+            }
+
+            if (dialogOpen()) {
                 noticed = true;
                 void onPrompt(name);
+                return;
             }
-        }, SIGN_PROMPT_NOTICE_MS);
+
+            timer = setTimeout(check, promptTiming.everyMs);
+        };
+        timer = setTimeout(check, promptTiming.afterMs);
 
         try {
             return await runCodesign({

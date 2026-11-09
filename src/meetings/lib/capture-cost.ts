@@ -5,12 +5,12 @@ import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/reco
 import { readOcrRows } from "./screen-boxes";
 
 /**
- * The CPU one kept frame costs: warm Vision OCR in the darwinkit helper (260 ms) plus the JPEG conversion (8.6 ms).
- * Measured by scripts/benchmarks/meetings-ocr/bench.ts on 40 frames of a real meeting (commit c15b15f99e, medians of
- * 3 runs, load average 35 to 50). Re-measure with that bench before changing it.
+ * The CPU one kept frame costs: warm Vision OCR of its tiles in the darwinkit helper (360 ms, `read: "tiles"` at
+ * DEFAULT_OCR_TILE_PX) plus the JPEG conversion (8.6 ms). Measured by scripts/benchmarks/meetings-ocr/bench.ts on 40
+ * frames of a real meeting (2026-11-09, one run). Re-measure with that bench before changing it.
  */
-export const KEPT_FRAME_CPU_MS = 268.6;
-export const KEPT_FRAME_SOURCE = "scripts/benchmarks/meetings-ocr/bench.ts, 40 frames, commit c15b15f99e";
+export const KEPT_FRAME_CPU_MS = 368.6;
+export const KEPT_FRAME_SOURCE = "scripts/benchmarks/meetings-ocr/bench.ts, 40 frames, tiles at 960 px, 2026-11-09";
 
 export const ACTIVE_FPS_CHOICES = [0.5, 1, 2] as const;
 export const IDLE_FPS_CHOICES = [0.05, 0.1, 0.2] as const;

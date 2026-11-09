@@ -39,6 +39,11 @@ the user meets, not code style.
 
 ## What Martin asks for, before he has to (his reviews of 2026-10-23)
 
+The general principles behind these lines, with the questions to ask of any view, are in
+[references/genesiscz.md](references/genesiscz.md): one engine per concept, nothing moves under the eye, every
+reference is live, show the moment, structured questions, answer in place, one component per concept, settings near
+the surface, say what an action also changes. Read it before an audit or a redesign.
+
 Read this before a widget, hub or settings change, and do these without being asked. Each line is a request he had
 to make by screenshot.
 

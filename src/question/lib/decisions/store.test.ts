@@ -2154,6 +2154,45 @@ describe("chatAnswers", () => {
         expect(options("15 bad")).toEqual([]);
     });
 
+    test("reads letters closed one by one as one set, and leaves an answer that rules a letter out to the agent", () => {
+        const six = ["a", "b", "c", "d", "e", "f"];
+        const read = (text: string, several = true) => {
+            const found = chatAnswers(
+                [entry("assistant", "❓ DECISION 46 — Which steps?", 1), entry("user", text, 2)],
+                [{ number: 46, letters: six, several, askedAt: at(1) }]
+            );
+
+            return {
+                unambiguous: found.unambiguous.map((answer) => answer.option ?? null),
+                forAgent: found.forAgent.map((answer) => [answer.option ?? null, answer.excluded, answer.answer]),
+                ambiguous: found.ambiguous.map((item) => item.reason),
+            };
+        };
+
+        // `a) b)` is the set ab: the reader took `a` alone and kept `b)` as words until 2026-11-09.
+        expect(read("D46: a) b)")).toEqual({ unambiguous: ["ab"], forAgent: [], ambiguous: [] });
+        expect(read("D46 a), c) and (f)")).toEqual({ unambiguous: ["acf"], forAgent: [], ambiguous: [] });
+        // Ruling a letter out is clear, but the words say more than the letters: the agent records it, never the hook.
+        expect(read("D46: a) b) not e)")).toEqual({
+            unambiguous: [],
+            forAgent: [["ab", "e", "not e)"]],
+            ambiguous: [],
+        });
+        expect(read("D46: a) b) not e) or f), the rest later").forAgent).toEqual([
+            ["ab", "ef", "not e) or f), the rest later"],
+        ]);
+        expect(read("D46 (a, c) - except d)").forAgent).toEqual([["ac", "d", "except d)"]]);
+        expect(read("D46: ab, not e").forAgent).toEqual([[null, "e", "ab, not e"]]);
+        expect(read("a) b) not e)").forAgent).toEqual([["ab", "e", "not e)"]]);
+        // "not a good idea" rules nothing out; a letter both picked and ruled out, or one past f, is unclear.
+        expect(read("D46: a) - not a good idea")).toEqual({ unambiguous: ["a"], forAgent: [], ambiguous: [] });
+        expect(read("D46: a) b) not a)").ambiguous).toEqual(["several answers"]);
+        expect(read("D46: a) not z)").ambiguous).toEqual(["unknown option"]);
+        // A decision that takes one letter: `a) b)` is two answers, and `b) not e)` is one letter for the agent.
+        expect(read("D46: a) b)", false)).toEqual({ unambiguous: [], forAgent: [], ambiguous: ["several answers"] });
+        expect(read("D46: b) not e)", false).forAgent).toEqual([["b", "e", "not e)"]]);
+    });
+
     test("reads a word as words on a decision that takes one letter, never as a set of its letters", () => {
         const five = ["a", "b", "c", "d", "e"];
         const answerTo = (text: string) =>
@@ -2214,7 +2253,7 @@ describe("chatAnswers", () => {
         );
 
         expect(one.unambiguous).toMatchObject([{ number: 7, option: "b", answer: "no, drop it" }]);
-        expect(several).toEqual({ unambiguous: [], ambiguous: [] });
+        expect(several).toEqual({ unambiguous: [], forAgent: [], ambiguous: [] });
     });
 
     test("reads bare answers against every text block of one assistant message", () => {
@@ -2229,6 +2268,7 @@ describe("chatAnswers", () => {
         ).toMatchObject([{ number: 7, option: "b" }]);
         expect(chatAnswers([block("❓ DECISION 8 — Ship?"), ...one, answer], open)).toEqual({
             unambiguous: [],
+            forAgent: [],
             ambiguous: [],
         });
         expect(
@@ -2238,6 +2278,7 @@ describe("chatAnswers", () => {
             )
         ).toEqual({
             unambiguous: [],
+            forAgent: [],
             ambiguous: [],
         });
     });
@@ -2253,7 +2294,7 @@ describe("chatAnswers", () => {
             [{ number: 7, letters: two, askedAt: at(1) }]
         );
 
-        expect(result).toEqual({ unambiguous: [], ambiguous: [] });
+        expect(result).toEqual({ unambiguous: [], forAgent: [], ambiguous: [] });
     });
 
     test("keeps colon-prefixed own words distinct from an option with a delimited explanation", () => {
@@ -2298,6 +2339,7 @@ describe("chatAnswers", () => {
             const entries = [entry("assistant", "❓ DECISION 14", 1), entry("user", example, 2)];
             expect(chatAnswers(entries, [{ number: 14, letters: two, askedAt: at(1) }])).toEqual({
                 unambiguous: [],
+                forAgent: [],
                 ambiguous: [],
             });
             expect(
@@ -2319,7 +2361,7 @@ describe("chatAnswers", () => {
                     [entry("assistant", "❓ DECISION 7 — Keep?", 1), ...intervening, entry("user", "b)", 3)],
                     [{ number: 7, letters: two, askedAt: at(1) }]
                 )
-            ).toEqual({ unambiguous: [], ambiguous: [] });
+            ).toEqual({ unambiguous: [], forAgent: [], ambiguous: [] });
         }
     });
 
@@ -2330,9 +2372,13 @@ describe("chatAnswers", () => {
             entry("user", "D4 b)"),
             entry("assistant", "❓ DECISION 4 — Ship?"),
         ];
-        expect(chatAnswers(old, open)).toEqual({ unambiguous: [], ambiguous: [] });
+        expect(chatAnswers(old, open)).toEqual({ unambiguous: [], forAgent: [], ambiguous: [] });
         // Even a later answer has no trustworthy revision boundary when the transcript has no timestamps.
-        expect(chatAnswers([...old, entry("user", "D4 a)")], open)).toEqual({ unambiguous: [], ambiguous: [] });
+        expect(chatAnswers([...old, entry("user", "D4 a)")], open)).toEqual({
+            unambiguous: [],
+            forAgent: [],
+            ambiguous: [],
+        });
 
         const timed = chatAnswers(
             [

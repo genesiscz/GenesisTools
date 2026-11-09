@@ -10,6 +10,8 @@ export interface CalendarCandidate {
     overlapSec: number;
     /** That share of the meeting, 0 to 1. */
     share: number;
+    /** How many of the meeting's known people (other than the user) the entry also names; absent when none are known. */
+    sharedPeople?: number;
 }
 
 /** An earlier meeting, for the title words its project used. */
@@ -108,30 +110,62 @@ export function titleWords(title: string): string[] {
     return [...new Set(words)];
 }
 
+/** A person's name for matching: no accents, no case, no "(QT)" style suffix, its words in any order. */
+function personKey(name: string): string {
+    return fold(name)
+        .replace(/\([^)]*\)/g, " ")
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter(Boolean)
+        .sort()
+        .join(" ");
+}
+
 /**
- * The entries that overlap the meeting, or start within `slackMin` of its start, best cover first. A meeting with no
- * end yet is taken as 30 minutes long.
+ * The entries that overlap the meeting, or start within `slackMin` of its start, best first. A meeting with no end yet
+ * is taken as 30 minutes long. With the meeting's people known (`people`, the user left out), an entry that names
+ * other people too but none of them is someone else's meeting in the same hour and is left out (2026-11-09: a Teams
+ * chat call was offered "FW: Vykázání do ADO", which shared nobody); the rest rank by shared people, then by cover.
  */
 export function calendarCandidates(options: {
     entries: CalendarEntry[];
     start: string;
     end?: string;
     slackMin: number;
+    people?: Array<{ name: string; self?: boolean }>;
 }): CalendarCandidate[] {
     const start = Date.parse(options.start);
     const end = options.end ? Date.parse(options.end) : start + 30 * 60_000;
     const length = Math.max(end - start, 60_000);
     const slack = options.slackMin * 60_000;
+    const known = new Set(
+        (options.people ?? []).filter((person) => !person.self).map((person) => personKey(person.name))
+    );
 
     return options.entries
-        .map((entry) => {
+        .map((entry): CalendarCandidate => {
             const from = Math.max(start, Date.parse(entry.start));
             const to = Math.min(end, Date.parse(entry.end));
             const overlap = Math.max(0, to - from);
-            return { entry, overlapSec: Math.round(overlap / 1000), share: Math.min(1, overlap / length) };
+            const candidate = { entry, overlapSec: Math.round(overlap / 1000), share: Math.min(1, overlap / length) };
+
+            if (known.size === 0) {
+                return candidate;
+            }
+
+            const others = entry.people.filter((person) => !person.self).map((person) => personKey(person.name));
+            return { ...candidate, sharedPeople: others.filter((key) => known.has(key)).length };
         })
         .filter((candidate) => candidate.overlapSec > 0 || Math.abs(Date.parse(candidate.entry.start) - start) <= slack)
-        .sort((a, b) => b.share - a.share || Date.parse(a.entry.start) - Date.parse(b.entry.start));
+        .filter((candidate) => {
+            const others = candidate.entry.people.filter((person) => !person.self).length;
+            return candidate.sharedPeople !== 0 || others === 0;
+        })
+        .sort(
+            (a, b) =>
+                (b.sharedPeople ?? 0) - (a.sharedPeople ?? 0) ||
+                b.share - a.share ||
+                Date.parse(a.entry.start) - Date.parse(b.entry.start)
+        );
 }
 
 /**

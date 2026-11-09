@@ -40,9 +40,9 @@ export interface DecisionsHookConfig {
     /**
      * Answers the user typed in the chat to an open `❓ DECISION N` (`D14 b)`), read from the session's transcript
      * after the decision was asked, through its provider's `readBackward`. `record`: an unambiguous answer is stored
-     * as acknowledged with `answeredVia: "automatic_heuristic"`, and the agent is sent back once per unclear one to
-     * record it; `remind`: nothing is stored, the agent is sent back once per decision to record what it finds;
-     * `off`. It needs only the Stop entry.
+     * as acknowledged with `answeredVia: "automatic_heuristic"`, and the agent is sent back once per unclear one, and
+     * per one that rules a letter out (`D14: a) b) not e)`), to record it; `remind`: nothing is stored, the agent is
+     * sent back once per decision to record what it finds; `off`. It needs only the Stop entry.
      */
     chatAnswers: DecisionChatAnswers;
     maxBlocksPerSession: number;

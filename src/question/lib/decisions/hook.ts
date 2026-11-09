@@ -180,7 +180,11 @@ function quoted(evidence: { text: string }): string {
 }
 
 function answerLine(row: DecisionRecord, answer: ChatAnswer): string {
-    return `❓ DECISION ${row.number}: ${answer.option ? `${answer.option}) ` : ""}from ${quoted(answer.evidence)}`;
+    const picked = [answer.option ? `${answer.option})` : "", answer.excluded ? `not ${answer.excluded})` : ""]
+        .filter(Boolean)
+        .join(", ");
+
+    return `❓ DECISION ${row.number}: ${picked ? `${picked} ` : ""}from ${quoted(answer.evidence)}`;
 }
 
 function unclearLine(row: DecisionRecord, item: AmbiguousAnswer): string {
@@ -190,8 +194,9 @@ function unclearLine(row: DecisionRecord, item: AmbiguousAnswer): string {
 /**
  * The chat-answer step (`decisions.chatAnswers`): the open decisions of the session, the transcript since the oldest
  * was asked (or since the last check, whichever is later) read through the session's provider, and the user's chat
- * answers in it. `record` stores each unambiguous one as `automatic_heuristic` and tells the user; an unclear one,
- * and in `remind` every one found, sends the agent back once per decision to record it with question_update.
+ * answers in it. `record` stores each unambiguous one as `automatic_heuristic` and tells the user; an unclear one, one
+ * that rules a letter out (`D14: a) b) not e)`), and in `remind` every one found, sends the agent back once per
+ * decision to record it with question_update.
  */
 async function runChatAnswers(
     payload: DecisionHookPayload,
@@ -258,6 +263,7 @@ async function runChatAnswers(
         )
     );
     const answers = pairAnswers(open, found.unambiguous);
+    const forAgent = pairAnswers(open, found.forAgent);
     const unclear = pairAnswers(open, found.ambiguous);
     let recorded: DecisionRecord[] = [];
 
@@ -271,7 +277,10 @@ async function runChatAnswers(
             : "";
     const toRecord =
         config.chatAnswers === "remind" ? answers.filter(({ row }) => !state.sentBack(session, row.id)) : [];
+    // An answer that rules a letter out is never stored by the hook, in either mode: the agent records its reading.
+    const toRead = forAgent.filter(({ row }) => !state.sentBack(session, row.id));
     const toCheck = unclear.filter(({ row }) => !state.sentBack(session, row.id));
+    const sentBack = [...toRecord, ...toRead, ...toCheck].map(({ row }) => row.id);
     const users = read.entries.filter((entry) => entry.role === "user" && userText(entry) !== undefined);
 
     // Empty reads are runs too: their boundary and issues explain why no answer was recorded.
@@ -292,16 +301,14 @@ async function runChatAnswers(
         },
         users: users.map((entry) => loggedUserMessage(entry)),
         unambiguous: found.unambiguous,
+        forAgent: found.forAgent,
         ambiguous: found.ambiguous,
         recorded: recorded.map((row) => row.id),
-        sentBack: [...toRecord, ...toCheck].map(({ row }) => row.id),
+        sentBack,
     });
 
-    if (toRecord.length > 0 || toCheck.length > 0) {
-        await state.markSentBack(
-            session,
-            [...toRecord, ...toCheck].map(({ row }) => row.id)
-        );
+    if (sentBack.length > 0) {
+        await state.markSentBack(session, sentBack);
     }
 
     // A failed write returns no row. Keep its evidence in the next read rather than passing it permanently.
@@ -323,7 +330,7 @@ async function runChatAnswers(
         }
     }
 
-    if (toRecord.length === 0 && toCheck.length === 0) {
+    if (sentBack.length === 0) {
         return recordedNote ? { systemMessage: recordedNote } : null;
     }
 
@@ -331,6 +338,9 @@ async function runChatAnswers(
         recordedNote,
         toRecord.length > 0
             ? `The user answered in the chat:\n${toRecord.map(({ row, item }) => answerLine(row, item)).join("\n")}\nRecord each with question_update (state acknowledged, option or answer) unless you already did.`
+            : "",
+        toRead.length > 0
+            ? `The user answered in the chat and ruled options out, so the hook did not record it:\n${toRead.map(({ row, item }) => answerLine(row, item)).join("\n")}\nRecord each with question_update unless you already did: state acknowledged, the option, and in answer the user's words with your reading of them (what is picked, what is ruled out, and why you read it so).`
             : "",
         toCheck.length > 0
             ? `The user's messages since these decisions were asked talk about them without a clear answer:\n${toCheck.map(({ row, item }) => unclearLine(row, item)).join("\n")}\nIf one is an answer, record it with question_update (state acknowledged, option or answer); otherwise leave it open.`

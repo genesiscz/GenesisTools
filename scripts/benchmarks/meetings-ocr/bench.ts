@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * The meeting recorder's OCR path, measured as the recorder calls it: `recognizeText(jpg, { languages })` from
+ * The meeting recorder's OCR path, measured as the recorder calls it: `recognizeText(jpg, { languages, read: "tiles" })` from
  * `@genesiscz/utils/macos/ocr`, once per kept frame, one frame at a time (`src/meetings/lib/recorder.ts`, `keepFrames`).
  *
  * What it measures, per run (the recorded value is the per-metric median over runs):
@@ -37,6 +37,8 @@ const DEFAULT_MEETING = genesisToolsDir("meetings", "2026-11-04_16-32-meeting");
 const DEFAULT_SCRATCH = join(tmpdir(), "meetings-ocr-bench", "frames");
 /** The recorder's default OCR languages (`languageSettings(meetingsConfigSchema.parse({})).ocr`), fixed here so the numbers do not move with a config change. */
 const LANGUAGES = ["en-US"];
+/** The recorder's read (`capture.ocr.read` default): a grid of tiles at `DEFAULT_OCR_TILE_PX`. */
+const READ = "tiles" as const;
 /** A line that only shows a time: a menu bar clock, a call timer, a "16:31" next to a chat row. */
 const CLOCK_LINE = /\b\d{1,2}[:.]\d{2}(?::\d{2})?\b/;
 const CLOCK_LINE_MAX_CHARS = 30;
@@ -237,7 +239,7 @@ async function callOnce(frame: FrameRef, helperPid: number | null): Promise<Call
     const helperBefore = cpuMsOf(helperPid);
     const ownBefore = processCpuMs();
     const started = performance.now();
-    const counted = await withSpawnCounter(() => recognizeText(frame.path, { languages: LANGUAGES }));
+    const counted = await withSpawnCounter(() => recognizeText(frame.path, { languages: LANGUAGES, read: READ }));
     const wallMs = performance.now() - started;
     const ownCpuMs = processCpuMs() - ownBefore;
     const helperCpuMs = cpuMsOf(helperPid) - helperBefore;

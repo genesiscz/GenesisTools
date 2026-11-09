@@ -99,6 +99,51 @@ describe("answer log", () => {
         expect(SafeJSON.parse(lines.at(-1)!, { jsonl: true })).toMatchObject({ event: "round-end", reason: "aborted" });
     });
 
+    test("--follow stays up across one-question rounds and ends when a round leaves no open question", async () => {
+        const path = logFile([{ event: "round-start", at, pid: process.pid, open: 1 }]);
+        const events: string[] = [];
+        const next: AnswerEvent[][] = [
+            [answered("i1", "alpha"), { event: "round-end", at, reason: "done", asked: 1, open: 1 }],
+            [{ event: "round-start", at, pid: process.pid, open: 1 }],
+            [answered("i2", "beta"), { event: "round-end", at, reason: "done", asked: 1, open: 0 }],
+        ];
+        const code = await subscribeAnswers({
+            path,
+            fromStart: false,
+            timeoutMs: 5000,
+            follow: true,
+            write: (line) => {
+                const event = SafeJSON.parse(line, { jsonl: true }).event;
+                events.push(event);
+                if (event === "round-start" || (event === "round-end" && next.length > 0)) {
+                    for (const later of next.shift() ?? []) {
+                        appendAnswerEvent(path, later);
+                    }
+                }
+            },
+        });
+
+        expect(code).toBe(0);
+        expect(events).toEqual(["round-start", "answered", "round-end", "round-start", "answered", "round-end"]);
+    });
+
+    test("--follow outlives a listener that died without its round-end, until the deadline", async () => {
+        const path = logFile([{ event: "round-start", at, pid: 424242, open: 2 }]);
+        const lines: string[] = [];
+        const code = await subscribeAnswers({
+            path,
+            fromStart: false,
+            timeoutMs: 200,
+            follow: true,
+            write: (line) => lines.push(line),
+            alive: () => false,
+            livenessMs: 20,
+        });
+
+        expect(code).toBe(2);
+        expect(lines.map((line) => SafeJSON.parse(line, { jsonl: true }).event)).toEqual(["round-start", "round-end"]);
+    });
+
     test("no round ending before the timeout exits 2", async () => {
         const path = logFile([]);
         const code = await subscribeAnswers({ path, fromStart: false, timeoutMs: 60, write: () => undefined });

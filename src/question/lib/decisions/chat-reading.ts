@@ -92,6 +92,8 @@ export interface ChatBackfill {
     open: number[];
     read: { entries: number; found: boolean; issues: string[] };
     unambiguous: ChatAnswer[];
+    /** Clear answers that rule a letter out: `--apply` never records them; the agent does. */
+    forAgent: ChatAnswer[];
     ambiguous: AmbiguousAnswer[];
     /** The decision ids stored; empty for a dry run. */
     recorded: string[];
@@ -125,6 +127,7 @@ export async function backfillChatAnswers({
         open: open.map((row) => row.number),
         read: { entries: 0, found: false, issues: [] },
         unambiguous: [],
+        forAgent: [],
         ambiguous: [],
         recorded: [],
     };
@@ -155,6 +158,7 @@ export async function backfillChatAnswers({
         issues: entries.issues.map((issue) => issue.message),
     };
     result.unambiguous = found.unambiguous;
+    result.forAgent = found.forAgent;
     result.ambiguous = found.ambiguous;
 
     if (apply && found.unambiguous.length > 0) {
@@ -169,6 +173,7 @@ export async function backfillChatAnswers({
             open: result.open,
             entries: result.read.entries,
             unambiguous: found.unambiguous.map((answer) => answer.number),
+            forAgent: found.forAgent.map((answer) => answer.number),
             ambiguous: found.ambiguous.map((answer) => answer.number),
             recorded: result.recorded,
             apply,

@@ -19,13 +19,10 @@ import { truncateDisplay } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import {
     buildApp,
-    CODESIGN_TRUST_COMMAND,
     describeSource,
     type RetiredBundlesSummary,
-    readManifest,
     retiredBundlesSummary,
     testApp,
-    trustCodesignKeys,
 } from "../../lib/permissions/app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "../../lib/permissions/kinds";
 import {
@@ -44,6 +41,7 @@ import {
 } from "../../lib/permissions/parts";
 import { type PermissionsReport, permissionsReport, SETTINGS_PANES, settingsUrl } from "../../lib/permissions/report";
 import { createBuildProgressDisplay } from "../../lib/permissions/swift-progress";
+import { runCodesignTrust } from "./codesign-trust";
 
 const PANES = Object.keys(SETTINGS_PANES);
 
@@ -284,32 +282,12 @@ export function registerPermissionsCommand(program: Command): void {
         .description(
             "One-time: let codesign use the login keychain's signing keys without the password dialog on every build (asks for the login password once)"
         )
-        .action(async () => {
-            // security asks for the login password on the terminal: without one it waits out the deadline for nothing.
-            if (!isInteractive()) {
-                out.log.error("codesign-trust asks for the login keychain password and needs a terminal.");
-                out.log.info(`Run it in a terminal: ${toolCommand("macos permissions codesign-trust")}`);
-                process.exitCode = 1;
-                return;
-            }
-
-            const signedWith = readManifest()?.signedWith;
-            out.log.step(
-                `security set-key-partition-list replaces the partition list of every signing key in the login keychain with Apple's tools (codesign included), not only the app's key, so another app a key listed loses that entry${signedWith ? `; the app signs with ${signedWith}` : ""}. The password it asks for is the login keychain's (your macOS login).`
-            );
-            const result = await trustCodesignKeys();
-
-            if (!result.ok) {
-                out.log.error(
-                    `${result.reason}: some keys may already have changed (security does not roll back), so check them in Keychain Access before you retry. Run ${toolCommand("macos permissions codesign-trust")} again, or click Always Allow in the next codesign dialog.`
-                );
-                process.exitCode = 1;
-                return;
-            }
-
-            out.log.success(
-                `Done: the next ${toolCommand("macos permissions build")} signs without the dialog. (${CODESIGN_TRUST_COMMAND} is idempotent.)`
-            );
+        .option(
+            "--from-notice",
+            "Opened by a click on the build's keychain notice: say so, and wait for Enter before the window is left"
+        )
+        .action(async (options: { fromNotice?: boolean }) => {
+            await runCodesignTrust({ fromNotice: options.fromNotice === true });
         });
 
     permissions

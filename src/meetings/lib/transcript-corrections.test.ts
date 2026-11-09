@@ -37,6 +37,31 @@ const transcript = [
 ];
 
 describe("the corrections pipeline", () => {
+    test("a speaker answered in decomposed form (from the window) is one speaker with the composed one", () => {
+        const composed = "Zoë Example";
+        const decomposed = composed.normalize("NFD");
+        const record = meetingRecordSchema.parse({
+            ...base,
+            participants: [{ name: composed, from: ["wisprflow"] }],
+            items: [
+                item({
+                    id: "i1",
+                    kind: "speaker-range",
+                    label: "Carol Example",
+                    fromSec: 15,
+                    toSec: 25,
+                    speaker: decomposed,
+                }),
+            ],
+        });
+        const named = [line(composed, 0, "Ahoj."), ...transcript.slice(1)];
+        const result = correctTranscript({ record, transcript: named, config, format: "md", dictionary: false });
+
+        expect(decomposed).not.toBe(composed);
+        expect(result.speakers.filter((speaker) => speaker.name === composed)).toEqual([{ name: composed, lines: 2 }]);
+        expect(result.entries.every((entry) => entry.speaker === entry.speaker.normalize("NFC"))).toBe(true);
+    });
+
     test("gives an outcome per item: applied to its lines, not found, or shadowed by another item", () => {
         const record = meetingRecordSchema.parse({
             ...base,

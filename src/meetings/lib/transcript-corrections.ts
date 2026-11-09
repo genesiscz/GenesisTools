@@ -253,15 +253,23 @@ export function correctTranscript(options: {
 }): CorrectedTranscript {
     const { record, transcript, config } = options;
     const corrections = correctionsOf(record, config, options);
-    const applied = applyCorrections(transcript, corrections);
+    const corrected = applyCorrections(transcript, corrections);
+    // A record written before the CLI composed its arguments keeps decomposed names from the window's answers: one
+    // person under two keys (src/meetings/index.ts). Every speaker is counted and rendered composed.
+    const applied = {
+        ...corrected,
+        entries: corrected.entries.map((entry) => ({ ...entry, speaker: entry.speaker.normalize("NFC") })),
+    };
     const outcomes = [...applied.outcomes, ...labelOutcomes(record, transcript, applied.outcomes, corrections)];
     const unclear = `[${languageSettings(config).render.unclearLabel}:`;
-    const sourceLabels = new Set(transcript.map((entry) => entry.speaker));
-    const people = new Set([
-        ...record.participants.map((person) => person.name),
-        ...(record.attendance?.people.map((person) => person.name) ?? []),
-        ...Object.values(record.speakers.labels),
-    ]);
+    const sourceLabels = new Set(transcript.map((entry) => entry.speaker.normalize("NFC")));
+    const people = new Set(
+        [
+            ...record.participants.map((person) => person.name),
+            ...(record.attendance?.people.map((person) => person.name) ?? []),
+            ...Object.values(record.speakers.labels),
+        ].map((name) => name.normalize("NFC"))
+    );
     const counts = new Map<string, number>();
 
     for (const entry of applied.entries) {

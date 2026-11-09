@@ -30,7 +30,24 @@ export function itemWhat(item: MeetingItem): string {
     }
 
     const occurrences = typeof item.evidence?.occurrences === "number" ? ` ×${item.evidence.occurrences}` : "";
-    return `${item.heard} → ${item.proposed ?? "?"}${occurrences}`;
+    return `${item.heard} → ${termAnswer(item)}${occurrences}`;
+}
+
+/** A term's right spelling; else the document line its words read aloud; else what they mean; "?" when none is known. */
+function termAnswer(item: Extract<MeetingItem, { kind: "term" }>): string {
+    if (item.proposed) {
+        return item.proposed;
+    }
+
+    if (item.quote) {
+        return `"${item.quote.text}" (quote from ${item.quote.source})`;
+    }
+
+    if (item.meaning) {
+        return `${item.meaning} (meaning)`;
+    }
+
+    return "?";
 }
 
 type AppliedCounts = Omit<CorrectionsApplied, "entries" | "outcomes">;
