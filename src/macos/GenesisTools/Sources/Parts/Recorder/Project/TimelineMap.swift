@@ -27,6 +27,12 @@ enum TimelineMap {
         }
     }
 
+    /// How long the source range [fromUs, toUs) plays in the edit: its output spans added up, so a sped-up part plays
+    /// shorter and a cut part plays no time. The Swift twin of the recorder service's playedUs, which check() uses.
+    static func playedUs(fromUs: Int64, toUs: Int64, in project: EditProject) -> Int64 {
+        outputSpans(fromUs: fromUs, toUs: toUs, in: project).reduce(0) { $0 + $1.toUs - $1.fromUs }
+    }
+
     static func placed(_ project: EditProject) -> [Placed] {
         var start: Int64 = 0
         return project.clips.enumerated().map { index, clip in

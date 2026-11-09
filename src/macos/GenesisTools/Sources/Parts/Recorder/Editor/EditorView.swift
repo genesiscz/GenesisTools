@@ -1147,7 +1147,8 @@ private struct TextInspector: View {
                 .accessibilityIdentifier("recorder.text.size")
             // R4 6 animated texts
             TextAnimateControls(model: model, note: note)
-            SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(note.endUs - note.startUs) / 1_000_000))
+            // The slider sets the length in the recording, as the ops take it; the row says how long it plays.
+            SectionLabel(text: "Lasts", value: editLength(model.project, fromUs: note.startUs, toUs: note.endUs))
             Slider(value: Binding(get: { Double(note.endUs - note.startUs) / 1_000_000 }, set: { value in
                 model.updateText(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
             }), in: 0.2...max(0.3, Double(model.project.source.durationUs - note.startUs) / 1_000_000))
@@ -1297,7 +1298,7 @@ private struct RedactionEditor: View {
                 }
             }), in: 0.02...1)
                 .accessibilityLabel("Hidden part height")
-            SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(redaction.endUs - redaction.startUs) / 1_000_000))
+            SectionLabel(text: "Lasts", value: editLength(model.project, fromUs: redaction.startUs, toUs: redaction.endUs))
             Slider(value: Binding(get: { Double(redaction.endUs - redaction.startUs) / 1_000_000 }, set: { value in
                 model.updateRedaction(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
             }), in: 0.2...max(0.3, Double(model.project.source.durationUs - redaction.startUs) / 1_000_000))
@@ -2262,7 +2263,7 @@ struct ShapeRow: View {
                 GhostButton("Start at Playhead", symbol: "arrow.right.to.line", tooltip: "Move the start here and keep the length",
                             identifier: "recorder.shape.startHere") { model.moveShapeStart(shape.id) }
                 let longest = max(0.6, min(15, Double(model.project.source.durationUs - shape.startUs) / 1_000_000))
-                SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(shape.endUs - shape.startUs) / 1_000_000))
+                SectionLabel(text: "Lasts", value: editLength(model.project, fromUs: shape.startUs, toUs: shape.endUs))
                 Slider(value: Binding(get: { min(longest, Double(shape.endUs - shape.startUs) / 1_000_000) }, set: { value in
                     model.updateShape(shape.id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
                 }), in: 0.5...longest)
