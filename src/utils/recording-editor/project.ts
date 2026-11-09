@@ -524,12 +524,16 @@ export const shapeSchema = z.object({
 });
 export type EditShape = z.infer<typeof shapeSchema>;
 
-const rectSchema = z
+/**
+ * A rectangle drawn on the preview (redact, spotlight): on a framed preview it may start or end on the background
+ * margin, so it may run past the picture on any side; addRedaction keeps the part inside the picture.
+ */
+const drawnRectSchema = z
     .object({
-        x: z.number().min(0).max(1),
-        y: z.number().min(0).max(1),
-        width: z.number().min(0.005).max(1),
-        height: z.number().min(0.005).max(1),
+        x: z.number().min(-1).max(1),
+        y: z.number().min(-1).max(1),
+        width: z.number().min(0.005).max(2),
+        height: z.number().min(0.005).max(2),
     })
     .strict();
 
@@ -1567,13 +1571,13 @@ export function addZoom(
     return { project: { ...project, zooms }, zoom };
 }
 
-/** Hides a rectangle of the source picture from `fromUs` to `toUs`; the rectangle must lie inside the picture. */
+/** Hides a rectangle of the source picture from `fromUs` to `toUs`; the part outside the picture is cut off. */
 export function addRedaction(
     project: EditProject,
     options: {
         fromUs: number;
         toUs: number;
-        rect: z.infer<typeof rectSchema>;
+        rect: z.infer<typeof drawnRectSchema>;
         style: EditRedaction["style"];
         label?: string;
         follow?: boolean;
@@ -1587,10 +1591,12 @@ export function addRedaction(
     }
 ): EditProject {
     checkRange(project, options.fromUs, options.toUs);
-    // The editor window's rule: the part of the rectangle inside the picture, refused only when under 1 % of it.
-    const { x, y } = options.rect;
-    const width = Math.min(options.rect.width, 1 - x);
-    const height = Math.min(options.rect.height, 1 - y);
+    // The editor window's rule: the part of the rectangle inside the picture, on all four edges, refused only when
+    // under 1 % of it.
+    const x = Math.max(0, options.rect.x);
+    const y = Math.max(0, options.rect.y);
+    const width = Math.min(options.rect.width + Math.min(0, options.rect.x), 1 - x);
+    const height = Math.min(options.rect.height + Math.min(0, options.rect.y), 1 - y);
 
     if (width < 0.01 || height < 0.01) {
         throw new RangeError(
@@ -2034,8 +2040,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             op: z.literal("redact"),
             from: sourceTimeSchema,
             to: sourceTimeSchema,
-            /** 0...1 of the source picture from its top left; x + width and y + height stay inside it. */
-            rect: rectSchema,
+            /** 0...1 of the source picture from its top left; the part outside the picture is cut off. */
+            rect: drawnRectSchema,
             style: z.enum(REDACTION_STYLES).optional(),
             /** What it hides ("API token"), shown in the editor's lists. */
             label: z.string().max(60).optional(),
@@ -2075,8 +2081,11 @@ export const editOpSchema = z.discriminatedUnion("op", [
             op: z.literal("spotlight"),
             from: sourceTimeSchema,
             to: sourceTimeSchema,
-            /** Stays as it is while the rest of the picture dims; with follow, its size around the cursor. */
-            rect: rectSchema,
+            /**
+             * Stays as it is while the rest of the picture dims; with follow, its size around the cursor. The part
+             * outside the picture is cut off.
+             */
+            rect: drawnRectSchema,
             label: z.string().max(60).optional(),
             follow: z.boolean().optional(),
             /** How dark the rest gets, 0.2 to 0.95 black (0.5). */

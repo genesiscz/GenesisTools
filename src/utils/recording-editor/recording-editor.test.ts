@@ -907,6 +907,49 @@ describe("edit project (edit.json)", () => {
         });
     });
 
+    describe("a drawn hidden part keeps the piece inside the picture on every edge", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+
+        test("a rectangle that starts left of or above the picture is clipped, not refused", () => {
+            const left = applyOp(wholeProject(source), {
+                op: "redact",
+                from: 1,
+                to: 2,
+                rect: { x: -0.1, y: 0.2, width: 0.3, height: 0.2 },
+            }).redactions?.[0];
+            expect(left?.x).toBe(0);
+            expect(left?.width).toBeCloseTo(0.2);
+            expect(left?.y).toBeCloseTo(0.2);
+
+            const above = applyOp(wholeProject(source), {
+                op: "spotlight",
+                from: 1,
+                to: 2,
+                rect: { x: 0.5, y: -0.05, width: 0.2, height: 0.25 },
+            }).redactions?.[0];
+            expect(above?.y).toBe(0);
+            expect(above?.height).toBeCloseTo(0.2);
+
+            const past = applyOp(wholeProject(source), {
+                op: "redact",
+                from: 1,
+                to: 2,
+                rect: { x: 0.9, y: 0.9, width: 0.3, height: 0.3 },
+            }).redactions?.[0];
+            expect(past?.width).toBeCloseTo(0.1);
+            expect(past?.height).toBeCloseTo(0.1);
+
+            expect(() =>
+                applyOp(wholeProject(source), {
+                    op: "redact",
+                    from: 1,
+                    to: 2,
+                    rect: { x: -0.3, y: 0.2, width: 0.305, height: 0.2 },
+                })
+            ).toThrow("at least 0.01");
+        });
+    });
+
     test("check names a zoom whose ease out starts before a cut, so its last frames before the cut snap out", () => {
         // The zoom runs into the cut at 5 s, but its 450 ms ease out starts at 4.75 s: the 0.25 s before the cut
         // show the fast start of the ease out, a snap. Ending it at 5.5 s puts the whole ease out in the cut.

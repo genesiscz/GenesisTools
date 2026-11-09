@@ -3307,23 +3307,23 @@
         "properties": {
           "x": {
             "type": "number",
-            "minimum": 0,
+            "minimum": -1,
             "maximum": 1
           },
           "y": {
             "type": "number",
-            "minimum": 0,
+            "minimum": -1,
             "maximum": 1
           },
           "width": {
             "type": "number",
             "minimum": 0.005,
-            "maximum": 1
+            "maximum": 2
           },
           "height": {
             "type": "number",
             "minimum": 0.005,
-            "maximum": 1
+            "maximum": 2
           }
         },
         "required": [
