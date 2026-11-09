@@ -40,7 +40,9 @@ import {
     parseStartFlags,
     readStartArgs,
     refuseTargetOffScreen,
+    START_LIMITS,
     type StartRequest,
+    withStartOptions,
 } from "@app/recorder/lib/start-options";
 import {
     fixOutcome,
@@ -98,7 +100,7 @@ import {
     RecorderClient,
     readLiveRecording,
 } from "@genesiscz/utils/screen-recorder/live";
-import { LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
+import { FRAMES_START_LIMITS, LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
 import {
     type CaptureRequest,
     type CaptureResult,
@@ -109,6 +111,7 @@ import {
 } from "@genesiscz/utils/screen-recorder/types";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { createCanvas } from "@napi-rs/canvas";
+import { Command } from "commander";
 
 /** Writes one PNG every 60 ms of a colour that changes with each frame, until the capture ends. */
 class FakeRecorder extends FrameRecorder {
@@ -2387,6 +2390,27 @@ describe("movies.record() takes the options of tools recorder start", () => {
             })
         ).rejects.toBeInstanceOf(RecordingStartCancelled);
         expect(order).toEqual(["prepare", "countdown 2"]);
+    });
+});
+
+describe("tools recorder start names the limits each kind of recording checks", () => {
+    const help = (flag: string) =>
+        withStartOptions(new Command()).options.find((option) => option.long === flag)?.description ?? "";
+
+    test("--fps and --max-seconds name the movie and the --frames ranges", () => {
+        expect(help("--fps")).toContain(`${START_LIMITS.fps.min}–${START_LIMITS.fps.max} for a movie`);
+        expect(help("--fps")).toContain(`${FRAMES_START_LIMITS.fps.min}–${FRAMES_START_LIMITS.fps.max} with --frames`);
+        expect(help("--max-seconds")).toContain(
+            `1–${FRAMES_START_LIMITS.maxDurationSec.max} with --frames (default ${FRAMES_START_LIMITS.defaultMaxDurationSec})`
+        );
+    });
+
+    test("recorder.start() refuses what the limits refuse", () => {
+        expect(recorderStartSchema.safeParse({ fps: FRAMES_START_LIMITS.fps.max + 1 }).success).toBe(false);
+        expect(recorderStartSchema.safeParse({ fps: FRAMES_START_LIMITS.fps.min }).success).toBe(true);
+        expect(
+            recorderStartSchema.safeParse({ maxDurationSec: FRAMES_START_LIMITS.maxDurationSec.max + 1 }).success
+        ).toBe(false);
     });
 });
 

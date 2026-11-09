@@ -12,7 +12,7 @@ import { runAxAsync } from "@app/control/lib/runner";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
-import { FRAME_FLUSHES } from "@genesiscz/utils/screen-recorder/start";
+import { FRAME_FLUSHES, FRAMES_START_LIMITS } from "@genesiscz/utils/screen-recorder/start";
 import { Command, Option } from "commander";
 import { z } from "zod";
 import type { VideoRecordingOptions } from "./video-recording";
@@ -93,13 +93,14 @@ export const DEFAULT_MOVIE_FPS = 60;
 
 /** Declares the flags of `tools recorder start` on `command`. */
 export function withStartOptions(command: Command): Command {
-    const { countdown, idleFps, threshold } = START_LIMITS;
+    const { countdown, fps, idleFps, maxSeconds, threshold } = START_LIMITS;
+    const frames = FRAMES_START_LIMITS;
     return command
         .option("--audio <sources>", "audio tracks: system, mic, or system,mic")
         .option("--mic-device <uid>", "the microphone (an id from `ax-tool audio-devices`; needs --audio mic)")
         .option(
             "--fps <n>",
-            `frames per second while something moves, 1–120 (default ${DEFAULT_MOVIE_FPS} for a movie)`
+            `frames per second while something moves, ${fps.min}–${fps.max} for a movie (default ${DEFAULT_MOVIE_FPS}), ${frames.fps.min}–${frames.fps.max} with --frames`
         )
         .option(
             "--idle-fps <n>",
@@ -126,7 +127,10 @@ export function withStartOptions(command: Command): Command {
             `count down on screen before it records, ${countdown.min}–${countdown.max} s (bare: ${DEFAULT_COUNTDOWN_SECONDS} s), as the capture picker does`
         )
         .option("--title <text>", "the recording's title in the library and the menu")
-        .option("--max-seconds <n>", `stop after this long, 1–${VIDEO_RECORDING_MAX_SECONDS}`)
+        .option(
+            "--max-seconds <n>",
+            `stop after this long, ${maxSeconds.min}–${maxSeconds.max} for a movie, ${frames.maxDurationSec.min}–${frames.maxDurationSec.max} with --frames (default ${frames.defaultMaxDurationSec})`
+        )
         .option("--no-indicator", "no red border around what is recorded (never in the movie either way)")
         .option(
             "--no-shortcuts",
