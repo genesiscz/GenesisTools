@@ -13,6 +13,7 @@ import {
     hashAsset,
     isMediaKind,
     lineRangeOf,
+    linkedImageResolver,
     readShareAsset,
     renderShareAssetFragment,
     renderTransclusionHtml,
@@ -307,11 +308,14 @@ export function shareRoutes(): RouteDef[] {
                                 status: 200,
                                 contentType: "text/html; charset=utf-8",
                                 headers: ASSET_HEADERS,
-                                body: renderShareAssetFragment(
+                                body: renderShareAssetFragment({
                                     asset,
-                                    body.toString("utf8"),
-                                    parseLinesParam(ctx.query.get("lines"))
-                                ),
+                                    text: body.toString("utf8"),
+                                    lines: parseLinesParam(ctx.query.get("lines")),
+                                    resolveImage: linkedImageResolver(assets, asset.hash, (image) =>
+                                        shareAssetUrl(slug, image.hash)
+                                    ),
+                                }),
                             };
                         }
 
@@ -384,11 +388,16 @@ export function shareRoutes(): RouteDef[] {
                                     ? {}
                                     : {
                                           embed: () =>
-                                              renderTransclusionHtml(
-                                                  noteText,
-                                                  decodeFragment(section),
-                                                  `:transclusion-${++transclusionIndex}-`
-                                              ),
+                                              renderTransclusionHtml({
+                                                  text: noteText,
+                                                  fragment: decodeFragment(section),
+                                                  idPrefix: `:transclusion-${++transclusionIndex}-`,
+                                                  resolveImage: linkedImageResolver(assets, asset.hash, (image) =>
+                                                      embed
+                                                          ? (embed.media.get(image.hash) ?? null)
+                                                          : shareAssetUrl(slug, image.hash)
+                                                  ),
+                                              }),
                                       };
                             const publishedSlug =
                                 asset.kind === "markdown" ? publishedByPath.get(asset.vaultPath) : undefined;
