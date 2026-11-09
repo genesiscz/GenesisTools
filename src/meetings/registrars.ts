@@ -1,7 +1,7 @@
 import type { LazyRegistrar } from "@genesiscz/utils/cli/lazy-registrars";
 
 /**
- * One entry per `tools meetings` command file, in the order `--help` lists them. Registering all 14 eagerly cost every
+ * One entry per `tools meetings` command file, in the order `--help` lists them. Registering all of them eagerly cost every
  * call about 320 ms of CPU, as much as `--help` (2026-11-06): `config show --json` loaded the recorder, the screen
  * boxes and the watcher too. A name missing here only falls back to loading every tree, never to a missing command.
  */
@@ -29,4 +29,5 @@ export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
         load: async () => (await import("./commands/views")).registerViewCommands,
     },
     { names: ["config"], load: async () => (await import("./commands/config")).registerConfigCommand },
+    { names: ["serve"], load: async () => (await import("./commands/serve")).registerServeCommand },
 ];
