@@ -441,6 +441,51 @@ describe("Obsidian syntax", () => {
         expect(html).toContain('href="/share/abc#^block"');
     });
 
+    test("a wikilink to this note's own heading jumps inside the page, also when it leaves out a colon", () => {
+        // Obsidian writes `[[Note#11. A: b]]` without the colon; the share page resolved the note's own file as a
+        // markdown asset, so every such link opened the note again in a panel, at its top (2026-11-09).
+        const md = [
+            "## 11. Nabídka hodnot pole: `FieldSchemaDto.suggestions`",
+            "",
+            "## Typ `Result<T>` a {type}?",
+            "",
+            "[[Notes.proposal#11. Nabídka hodnot pole `FieldSchemaDto.suggestions`|Bod 11]]",
+            "[[Notes.proposal#Typ `Result<T>` a {type}?]]",
+            "[[Notes.proposal|top]]",
+        ].join("\n");
+        const { html } = renderMarkdown(md, {
+            resolveWikilink: () => null,
+            isCurrentNote: (target) => target === "Notes.proposal",
+            resolveAsset: (target) =>
+                target.startsWith("Notes.proposal")
+                    ? { kind: "markdown", url: "/share/x?asset=h1", name: "Notes.proposal.md" }
+                    : null,
+        });
+        const ids = [...html.matchAll(/<h2 id="([^"]+)"/g)].map((match) => match[1]);
+        const jumps = [...html.matchAll(/<a href="#([^"]*)" class="dd-wikilink">/g)].map((match) => match[1]);
+
+        expect(html).not.toContain("data-asset-panel");
+        expect(ids).toEqual(["11-nabídka-hodnot-pole-fieldschemadtosuggestions", "typ-result-a-type"]);
+        expect(jumps).toEqual([...ids, ""]);
+    });
+
+    test("a wikilink to another note's heading opens its panel at that heading; a line link keeps its lines", () => {
+        const { html } = renderMarkdown("[[Other#Some Part]] [[Code.ts#L12]]", {
+            resolveWikilink: () => null,
+            resolveAsset: (target) =>
+                target === "Other"
+                    ? { kind: "markdown", url: "/share/x?asset=h2", name: "Other.md" }
+                    : target === "Code.ts#L12"
+                      ? { kind: "code", url: "/share/x?asset=h3#L12", name: "Code.ts" }
+                      : null,
+        });
+
+        expect(html).toContain(
+            'href="/share/x?asset=h2#some-part" class="dd-md-asset-chip dd-md-asset-markdown" data-asset-panel="/share/x?asset=h2"'
+        );
+        expect(html).toContain('href="/share/x?asset=h3#L12"');
+    });
+
     test("raw HTML and Mermaid labels cannot inject markup before diagram rendering", () => {
         const source = [
             '<iframe srcdoc="<script>window.bad=1</script>"></iframe>',

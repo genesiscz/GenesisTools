@@ -351,8 +351,11 @@ export function shareRoutes(): RouteDef[] {
                     const published = await listPublished();
                     const publishedByPath = new Map(published.map((entry) => [entry.vaultPath, entry.slug]));
                     let transclusionIndex = 0;
+                    const selfName = (note.vaultPath.split("/").pop() ?? note.vaultPath).replace(/\.md$/, "");
                     const rendered = renderMarkdown(markdown, {
                         pageBaseUrl: pageBase,
+                        isCurrentNote: (target) =>
+                            target === selfName || assets.byTarget.get(target)?.vaultPath === note.vaultPath,
                         resolveWikilink: (name) => {
                             const match = published.find((publishedNote) => {
                                 const base = publishedNote.vaultPath.split("/").pop() ?? publishedNote.vaultPath;
