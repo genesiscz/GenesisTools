@@ -165,9 +165,9 @@ final class TextPlates: @unchecked Sendable {
 }
 
 extension Looks {
-    /// A text note in its block (textOrigin, kept inside the canvas), faded by `opacity`. `sinceUs` (source time since
-    /// its start) drives its `animate`: a typewriter shows the letters typed so far from the full text's left edge, a
-    /// slide-up rises into place while it fades in (TextMotion in Overlays.swift).
+    /// A text note in its block (textOrigin, kept inside the canvas), faded by `opacity`. `sinceUs` (how long it has
+    /// played since its first shown frame, ZoomState.texts) drives its `animate`: a typewriter shows the letters typed so
+    /// far from the full text's left edge, a slide-up rises into place while it fades in (TextMotion in Overlays.swift).
     static func drawText(_ note: EditProject.TextNote, opacity: Double, plates: TextPlates, on image: CIImage, size: CGSize,
                          sinceUs: Int64? = nil) -> CIImage {
         // R4 6 animated texts

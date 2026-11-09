@@ -714,9 +714,10 @@ final class EditorModel {
 
     /// A text at the top middle for 3 s from the playhead; the Text tab then writes and places it.
     func addText(_ text: String = "Title", atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
-        // A text fades in from its start (`ZoomState.texts`): it starts that much earlier, so the paused frame at the
-        // playhead shows it whole.
-        let start = max(0, TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project) - ZoomState.textFadeUs(lengthUs: durationUs))
+        // A text fades in from its start (`ZoomState.texts`, in the movie as it plays): it starts that much earlier in
+        // what plays, so the paused frame at the playhead shows it whole in a sped-up part too.
+        let fadeUs = ZoomState.textFadeUs(lengthUs: durationUs)
+        let start = TimelineMap.sourceTime(atOutput: max(0, (outUs ?? clock.outUs) - fadeUs), in: project)
         let op = EditOp.Text(from: EditOpDiff.seconds(start), to: EditOpDiff.seconds(start + durationUs), text: text, lane: lane)
         edit([.text(op)]) { [weak self] before, after in
             guard let self, let id = Self.addedID(before, after, { ($0.texts ?? []).map(\.id) }) else { return }
@@ -812,7 +813,7 @@ final class EditorModel {
     /// hidden-part handles).
     func sourceToCanvas(atOutput outUs: Int64) -> Looks.SourceToCanvas {
         let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
-        let view = ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor)
+        let view = ZoomCurve.view(atSource: sourceUs, project: project, cursor: cursor)
         let sizes = EditRenderer.outputSizes(source: CGSize(width: project.source.width, height: project.source.height),
                                              maxHeight: 0, aspect: project.frame?.aspect)
         let focus = ZoomState.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view)

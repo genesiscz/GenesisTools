@@ -74,7 +74,7 @@ enum TransitionLook {
         let redactions = (drawn ?? project.redactions ?? []).filter { other >= $0.startUs && other < $0.endUs }
             .map { ZoomState.placed($0, atSourceUs: other, track: track) }
         return Mark(kind: join.transition.kind, progress: min(1, max(0, progress)), incoming: incoming, otherSourceUs: other,
-                    otherRedactions: redactions, otherView: ZoomCurve.view(atSource: other, zooms: project.zooms, cursor: track))
+                    otherRedactions: redactions, otherView: ZoomCurve.view(atSource: other, project: project, cursor: track))
     }
 
     static func smooth(_ t: Double) -> Double { t * t * (3 - 2 * t) }
@@ -275,13 +275,15 @@ enum LensLook {
         var opacity: Double
     }
 
-    /// The lenses at a source time, each fading in and out over 0.2 s; a following lens sits on the cursor averaged
-    /// over ±100 ms (a movie without a cursor track holds the lens's own point).
+    /// The lenses at a source time, each fading in and out over 0.2 s of the time it plays (TimelineMap.Shown); a
+    /// following lens sits on the cursor averaged over ±100 ms (a movie without a cursor track holds the lens's own point).
     static func marks(atSourceUs us: Int64, project: EditProject, track: CursorTrack?) -> [Mark] {
-        (project.lens?.items ?? []).compactMap { lens in
-            guard us >= lens.startUs, us < lens.endUs else { return nil }
-            let fade = Double(min(200_000, max(1, (lens.endUs - lens.startUs) / 3)))
-            let opacity = max(0, min(1, Double(us - lens.startUs) / fade, Double(lens.endUs - us) / fade))
+        let placed = TimelineMap.placed(project)
+        guard let outUs = TimelineMap.outputTime(ofSource: us, placed: placed) else { return [] }
+        return (project.lens?.items ?? []).compactMap { lens in
+            guard us >= lens.startUs, us < lens.endUs,
+                  let shown = TimelineMap.shown(fromUs: lens.startUs, toUs: lens.endUs, placed: placed) else { return nil }
+            let opacity = shown.fade(atOutput: outUs, overUs: min(200_000, max(1, shown.playedUs / 3)))
             let point = lens.follow ? track?.averagedPoint(atMs: Double(us) / 1000, halfMs: 100) : nil
             return Mark(x: point?.x ?? lens.x, y: point?.y ?? lens.y, radius: lens.radius, magnification: lens.magnification,
                         ring: lens.ring, opacity: opacity)

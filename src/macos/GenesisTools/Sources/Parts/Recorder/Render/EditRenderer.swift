@@ -131,8 +131,8 @@ final class ZoomState: @unchecked Sendable {
         var key: KeyMark?
         /// The redactions active at the frame's source time.
         var redactions: [EditProject.Redaction] = []
-        /// The texts showing at the frame's source time, each with its fade.
-        var texts: [(note: EditProject.TextNote, opacity: Double)] = []
+        /// The texts showing at the frame's source time, each with its fade and how long it has played (its `animate`).
+        var texts: [(note: EditProject.TextNote, opacity: Double, sinceUs: Int64)] = []
         /// How far the spotlights' dim has faded in (0...1): it comes and goes over 0.2 s, where a hiding style never fades.
         var spotlightFade = 1.0
         /// The shapes showing at the frame's source time: how far each has drawn itself on (0...1) and its fade.
@@ -177,9 +177,9 @@ final class ZoomState: @unchecked Sendable {
         let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
         var marks: [Looks.ClickMark] = []
         if let clicks = project.clicks, clicks.highlight, let cursor {
-            marks = Looks.marks(atSourceMs: Double(sourceUs) / 1000, clicks: cursor.clicks, durationMs: clicks.durationMs)
+            marks = Looks.marks(atSourceMs: Double(sourceUs) / 1000, clicks: cursor.clicks, durationMs: clicks.durationMs, project: project)
         }
-        let view = ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor)
+        let view = ZoomCurve.view(atSource: sourceUs, project: project, cursor: cursor)
         let drawn = redactions(for: project)
         let motionBlur = (project.motion ?? .init()).blur
         var previousView: ZoomCurve.View?
@@ -187,7 +187,7 @@ final class ZoomState: @unchecked Sendable {
             let previousUs = TimelineMap.sourceTime(atOutput: outUs - Self.frameUs, in: project)
             // A cut jumps in source time; the frame after it has no move to smear.
             if sourceUs > previousUs, sourceUs - previousUs <= Self.frameUs * 17 {
-                previousView = ZoomCurve.view(atSource: previousUs, zooms: project.zooms, cursor: cursor)
+                previousView = ZoomCurve.view(atSource: previousUs, project: project, cursor: cursor)
             }
         }
         var look = FrameLook(view: view,
@@ -224,25 +224,28 @@ final class ZoomState: @unchecked Sendable {
         look.shapes = Self.shapes(atSourceUs: sourceUs, project: project)
         look.speedBadge = SpeedBadge.badge(atOutput: outUs, project: project)
         look.spotlightFade = look.redactions.filter { $0.style == .spotlight }.map { spot in
-            Self.spotlightFade(spot, atSourceUs: sourceUs)
+            Self.spotlightFade(spot, atSourceUs: sourceUs, project: project)
         }.max() ?? 1
         // Round 4 fx-render.
         look.transition = TransitionLook.mark(atOutputUs: outUs, project: project, track: cursor, drawn: drawn)
         look.lenses = LensLook.marks(atSourceUs: sourceUs, project: project, track: cursor)
         look.tilt = project.tilt.flatMap { TiltLook.pose(atOutputUs: outUs, lengthUs: project.outputDurationUs, tilt: $0) }
         // R5 4 canvas zoom
-        look.canvasView = ZoomCurve.canvasView(atSource: sourceUs, zooms: project.zooms)
+        look.canvasView = ZoomCurve.canvasView(atSource: sourceUs, project: project)
         return look
     }
 
     /// The shapes showing at a source time: each draws itself on over 0.3 s (or fades in over 0.2 s, or is there at
-    /// once, by its `appear`) and fades out over 0.2 s.
+    /// once, by its `appear`) and fades out over 0.2 s, of the time it plays (TimelineMap.Shown).
     static func shapes(atSourceUs us: Int64, project: EditProject) -> [(shape: EditProject.Shape, drawn: Double, opacity: Double)] {
-        (project.shapes ?? []).compactMap { shape in
-            guard us >= shape.startUs, us < shape.endUs else { return nil }
-            let length = Double(shape.endUs - shape.startUs)
-            let into = Double(us - shape.startUs)
-            let out = min(1, Double(shape.endUs - us) / min(200_000, length / 3))
+        let placed = TimelineMap.placed(project)
+        guard let outUs = TimelineMap.outputTime(ofSource: us, placed: placed) else { return [] }
+        return (project.shapes ?? []).compactMap { shape in
+            guard us >= shape.startUs, us < shape.endUs,
+                  let shown = TimelineMap.shown(fromUs: shape.startUs, toUs: shape.endUs, placed: placed) else { return nil }
+            let length = Double(shown.playedUs)
+            let into = Double(outUs - shown.startOut)
+            let out = min(1, Double(shown.endOut - outUs) / min(200_000, length / 3))
             switch shape.appear ?? .draw {
             case .draw:
                 return (shape, max(0.02, min(1, into / min(300_000, length / 2))), max(0, out))
@@ -255,13 +258,15 @@ final class ZoomState: @unchecked Sendable {
     }
 
     // R5 5 redaction edges
-    /// How far a spotlight's dim has come in (0...1): over its `fadeMs` (200 ms unless set, at most a third of its
-    /// length) after its start and before its end; `fadeMs` 0 dims fully from its first frame to its last.
-    static func spotlightFade(_ spot: EditProject.Redaction, atSourceUs us: Int64) -> Double {
+    /// How far a spotlight's dim has come in (0...1): over its `fadeMs` (200 ms unless set, at most a third of the time
+    /// it plays) after its first shown frame and before its last, in the movie as it plays; `fadeMs` 0 dims fully from
+    /// its first frame to its last.
+    static func spotlightFade(_ spot: EditProject.Redaction, atSourceUs us: Int64, project: EditProject) -> Double {
         let asked = Int64(max(0, spot.fadeMs ?? 200)) * 1000
-        guard asked > 0 else { return 1 }
-        let fade = Double(min(asked, max(1, (spot.endUs - spot.startUs) / 3)))
-        return max(0, min(1, Double(us - spot.startUs) / fade, Double(spot.endUs - us) / fade))
+        let placed = TimelineMap.placed(project)
+        guard asked > 0, let outUs = TimelineMap.outputTime(ofSource: us, placed: placed),
+              let shown = TimelineMap.shown(fromUs: spot.startUs, toUs: spot.endUs, placed: placed) else { return 1 }
+        return shown.fade(atOutput: outUs, overUs: min(asked, max(1, shown.playedUs / 3)))
     }
 
     /// One output frame at 60 fps.
@@ -280,16 +285,19 @@ final class ZoomState: @unchecked Sendable {
         return moved
     }
 
-    /// How long a text of `lengthUs` fades in and out: 0.2 s, less for a short one.
+    /// How long a text that plays for `lengthUs` fades in and out: 0.2 s, less for a short one.
     static func textFadeUs(lengthUs: Int64) -> Int64 { min(200_000, max(1, lengthUs / 3)) }
 
-    /// The texts showing at a source time, each fading in and out over `textFadeUs`.
-    static func texts(atSourceUs us: Int64, project: EditProject) -> [(note: EditProject.TextNote, opacity: Double)] {
-        (project.texts ?? []).compactMap { note in
-            guard us >= note.startUs, us < note.endUs else { return nil }
-            let fade = Double(textFadeUs(lengthUs: note.endUs - note.startUs))
-            let opacity = min(1, Double(us - note.startUs) / fade, Double(note.endUs - us) / fade)
-            return (note, max(0, opacity))
+    /// The texts showing at a source time, each fading in and out over `textFadeUs` of the time it plays, with how long
+    /// it has played since its first shown frame (`sinceUs`, which drives its `animate`). All of it runs in the movie as
+    /// it plays (TimelineMap.Shown): a 600 ms typewriter types for 600 ms in a part sped up 4x too.
+    static func texts(atSourceUs us: Int64, project: EditProject) -> [(note: EditProject.TextNote, opacity: Double, sinceUs: Int64)] {
+        let placed = TimelineMap.placed(project)
+        guard let outUs = TimelineMap.outputTime(ofSource: us, placed: placed) else { return [] }
+        return (project.texts ?? []).compactMap { note in
+            guard us >= note.startUs, us < note.endUs,
+                  let shown = TimelineMap.shown(fromUs: note.startUs, toUs: note.endUs, placed: placed) else { return nil }
+            return (note, shown.fade(atOutput: outUs, overUs: textFadeUs(lengthUs: shown.playedUs)), outUs - shown.startOut)
         }
     }
 
@@ -862,7 +870,7 @@ struct EditRenderer {
             }
             for text in look.texts {
                 result = Looks.drawText(text.note, opacity: text.opacity, plates: zoom.keyPlates, on: result, size: size,
-                                        sinceUs: look.sourceUs - text.note.startUs)
+                                        sinceUs: text.sinceUs)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             // fx B (round 4)

@@ -500,6 +500,11 @@ final class RecorderEditTests: XCTestCase {
         return project
     }
 
+    /// The whole 10 s movie at 1x with these zooms, where source time is output time.
+    private func zoomed(_ zooms: [EditProject.Zoom]) -> EditProject {
+        project([.init(id: "c", fromUs: 0, toUs: 10_000_000)], zooms: zooms)
+    }
+
     /// Only `tools recorder export` cleans the sound, so an MP4 with noise reduction goes there; a plain MP4 stays in
     /// the window's own renderer (progress and Cancel), and a GIF or WebM always goes to the CLI.
     func testAnMP4WithNoiseReductionExportsThroughTheCLIAndAPlainOneInTheWindow() {
@@ -717,12 +722,12 @@ final class RecorderEditTests: XCTestCase {
     func testTheZoomEasesInHoldsAndKeepsItsViewInsideTheFrame() {
         let zoom = EditProject.Zoom(id: "z", startUs: 1_000_000, endUs: 3_000_000, scale: 2, focusX: 0.95, focusY: 0.05,
                                     easeInMs: 500, easeOutMs: 500)
-        XCTAssertEqual(ZoomCurve.view(atSource: 500_000, zooms: [zoom], cursor: nil), .whole)
-        let start = ZoomCurve.view(atSource: 1_000_000, zooms: [zoom], cursor: nil)
+        XCTAssertEqual(ZoomCurve.view(atSource: 500_000, project: zoomed([zoom]), cursor: nil), .whole)
+        let start = ZoomCurve.view(atSource: 1_000_000, project: zoomed([zoom]), cursor: nil)
         XCTAssertEqual(start.scale, 1, accuracy: 0.001)
-        let middle = ZoomCurve.view(atSource: 1_250_000, zooms: [zoom], cursor: nil)
+        let middle = ZoomCurve.view(atSource: 1_250_000, project: zoomed([zoom]), cursor: nil)
         XCTAssertGreaterThan(middle.scale, 1.5, "the ease-out curve passes half its way early")
-        let held = ZoomCurve.view(atSource: 2_000_000, zooms: [zoom], cursor: nil)
+        let held = ZoomCurve.view(atSource: 2_000_000, project: zoomed([zoom]), cursor: nil)
         XCTAssertEqual(held.scale, 2, accuracy: 0.0001)
         XCTAssertEqual(held.rect.maxX, 1, accuracy: 0.0001, "a focus at the edge is held so the view stays in the frame")
         XCTAssertEqual(held.rect.minY, 0, accuracy: 0.0001)
@@ -757,7 +762,8 @@ final class RecorderEditTests: XCTestCase {
             let endUs: Int64 = 3_000_000
             let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: endUs, scale: 2, easeInMs: 500, easeOutMs: easeMs)
             let releaseUs = endUs - Int64(easeMs) * 1000
-            let scale = { (us: Int64) in ZoomCurve.view(atSource: us, zooms: [zoom], cursor: nil).scale }
+            let movie = zoomed([zoom])
+            let scale = { (us: Int64) in ZoomCurve.view(atSource: us, project: movie, cursor: nil).scale }
             // 50 ms before the end the view is nearly whole again, not still zoomed and about to snap.
             XCTAssertLessThan(scale(endUs - 50_000), 1.08, "\(easeMs) ms")
             // Half way through the release it is half way out.
@@ -780,20 +786,20 @@ final class RecorderEditTests: XCTestCase {
         let first = EditProject.Zoom(id: "a", startUs: 3_302_578, endUs: 5_302_578, scale: 1.5, easeInMs: 450, easeOutMs: 450)
         let second = EditProject.Zoom(id: "b", startUs: 5_302_578, endUs: 7_302_578, scale: 1.5, easeInMs: 450, easeOutMs: 450)
         for us in stride(from: 4_000_000, through: 6_500_000, by: 16_667) {
-            let view = ZoomCurve.view(atSource: Int64(us), zooms: [second, first], cursor: nil)
+            let view = ZoomCurve.view(atSource: Int64(us), project: zoomed([second, first]), cursor: nil)
             XCTAssertEqual(view.scale, 1.5, accuracy: 0.0001, "at \(us) µs")
         }
         // A short gap glides too: from one focus to the other, smoothly, without going back to the whole frame.
         let left = EditProject.Zoom(id: "l", startUs: 0, endUs: 2_000_000, scale: 2, focusX: 0.25, focusY: 0.5)
         let right = EditProject.Zoom(id: "r", startUs: 2_300_000, endUs: 4_000_000, scale: 2, focusX: 0.75, focusY: 0.5)
-        var previous = ZoomCurve.view(atSource: 1_400_000, zooms: [left, right], cursor: nil)
+        var previous = ZoomCurve.view(atSource: 1_400_000, project: zoomed([left, right]), cursor: nil)
         for us in stride(from: 1_416_667, through: 2_900_000, by: 16_667) {
-            let view = ZoomCurve.view(atSource: Int64(us), zooms: [left, right], cursor: nil)
+            let view = ZoomCurve.view(atSource: Int64(us), project: zoomed([left, right]), cursor: nil)
             XCTAssertEqual(view.scale, 2, accuracy: 0.0001, "at \(us) µs")
             XCTAssertLessThan(abs(view.centerX - previous.centerX), 0.05, "at \(us) µs")
             previous = view
         }
-        XCTAssertEqual(ZoomCurve.view(atSource: 3_000_000, zooms: [left, right], cursor: nil).centerX, 0.75, accuracy: 0.0001)
+        XCTAssertEqual(ZoomCurve.view(atSource: 3_000_000, project: zoomed([left, right]), cursor: nil).centerX, 0.75, accuracy: 0.0001)
     }
 
     func testLinkedZoomsShorterThanTheirEaseNeverShowTheWholeFrameOrJump() {
@@ -805,9 +811,9 @@ final class RecorderEditTests: XCTestCase {
         let short = EditProject.Zoom(id: "c", startUs: 4_000_000, endUs: 4_300_000, scale: 2)
         let later = EditProject.Zoom(id: "d", startUs: 4_600_000, endUs: 6_000_000, scale: 2)
         for (zooms, from, to) in [([first, second], 4_500_000, 5_400_000), ([short, later], 4_100_000, 5_000_000)] {
-            var previous = ZoomCurve.view(atSource: Int64(from), zooms: zooms, cursor: nil)
+            var previous = ZoomCurve.view(atSource: Int64(from), project: zoomed(zooms), cursor: nil)
             for us in stride(from: from, through: to, by: 5_000) {
-                let view = ZoomCurve.view(atSource: Int64(us), zooms: zooms, cursor: nil)
+                let view = ZoomCurve.view(atSource: Int64(us), project: zoomed(zooms), cursor: nil)
                 XCTAssertGreaterThan(view.scale, 1.2, "\(zooms.map(\.id)) at \(us) µs: never the whole frame between them")
                 XCTAssertLessThan(abs(view.scale - previous.scale), 0.05, "\(zooms.map(\.id)) at \(us) µs: no jump")
                 previous = view
@@ -818,7 +824,7 @@ final class RecorderEditTests: XCTestCase {
     func testAFollowZoomTracksTheSmoothedCursor() {
         let track = CursorTrack(samples: (0...40).map { CursorTrack.Sample(ms: Double($0) * 50, x: 0.3, y: 0.6, click: nil) })
         let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 2_000_000, scale: 2, mode: .follow, easeInMs: 0, easeOutMs: 0)
-        let view = ZoomCurve.view(atSource: 1_000_000, zooms: [zoom], cursor: track)
+        let view = ZoomCurve.view(atSource: 1_000_000, project: zoomed([zoom]), cursor: track)
 
         XCTAssertEqual(view.centerX, 0.3, accuracy: 0.0001)
         XCTAssertEqual(view.centerY, 0.6, accuracy: 0.0001)
@@ -832,8 +838,9 @@ final class RecorderEditTests: XCTestCase {
             CursorTrack.Sample(ms: 4000, x: 0.8, y: 0.5),
         ])
         let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 4_000_000, scale: 1.5, mode: .follow, easeInMs: 0, easeOutMs: 0)
+        let movie = zoomed([zoom])
         let centers = stride(from: 1_600_000, through: 2_400_000, by: 100_000).map {
-            ZoomCurve.view(atSource: Int64($0), zooms: [zoom], cursor: track).centerX
+            ZoomCurve.view(atSource: Int64($0), project: movie, cursor: track).centerX
         }
         // It moves a little every step, never more than a fifth of the way at once.
         for (a, b) in zip(centers, centers.dropFirst()) {
@@ -894,7 +901,8 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(try EditProject.decode(styled.encoded()), styled)
         XCTAssertEqual(Looks.color("#FF8000").red, 1)
         XCTAssertEqual(Looks.color("nonsense"), .white)
-        XCTAssertEqual(Looks.marks(atSourceMs: 1200, clicks: [.init(ms: 1000, x: 0.2, y: 0.3, click: "left")], durationMs: 400),
+        XCTAssertEqual(Looks.marks(atSourceMs: 1200, clicks: [.init(ms: 1000, x: 0.2, y: 0.3, click: "left")], durationMs: 400,
+                                   project: zoomed([])),
                        [.init(x: 0.2, y: 0.3, progress: 0.5)])
     }
 

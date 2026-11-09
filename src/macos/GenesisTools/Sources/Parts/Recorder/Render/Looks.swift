@@ -13,13 +13,22 @@ enum Looks {
         var progress: Double
     }
 
-    /// The clicks whose animation runs at `sourceMs`: pressed at most `durationMs` before it.
-    static func marks(atSourceMs ms: Double, clicks: [CursorTrack.Sample], durationMs: Int) -> [ClickMark] {
-        let duration = Double(max(1, durationMs))
+    /// The clicks whose disc shows at the source moment `ms`: each runs `durationMs` of the movie as it plays from its
+    /// click, so a sped-up part does not shorten it, and ends at a cut, where the picture it sits on is gone.
+    static func marks(atSourceMs ms: Double, clicks: [CursorTrack.Sample], durationMs: Int, project: EditProject) -> [ClickMark] {
+        let placed = TimelineMap.placed(project)
+        guard !clicks.isEmpty, let outUs = TimelineMap.outputTime(ofSource: Int64((ms * 1000).rounded()), placed: placed) else { return [] }
+        let durationUs = Int64(max(1, durationMs)) * 1000
+        // Within one unbroken stretch output time runs with source time, so the clicks of the last `durationMs` are
+        // the ones from the source time that played then.
+        let fromOut = max(TimelineMap.unbrokenStart(atOutput: outUs, placed: placed), outUs - durationUs)
+        let fromMs = Double(TimelineMap.sourceTime(atOutput: fromOut, in: project)) / 1000
         return clicks.compactMap { click in
-            let age = ms - click.ms
-            guard age >= 0, age <= duration else { return nil }
-            return ClickMark(x: click.x, y: click.y, progress: age / duration)
+            guard click.ms >= fromMs, click.ms <= ms,
+                  let clickOut = TimelineMap.outputTime(ofSource: Int64((click.ms * 1000).rounded()), placed: placed) else { return nil }
+            let age = outUs - clickOut
+            guard age >= 0, age <= durationUs else { return nil }
+            return ClickMark(x: click.x, y: click.y, progress: Double(age) / Double(durationUs))
         }
     }
 

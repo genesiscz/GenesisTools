@@ -174,11 +174,13 @@ final class RecorderRedactionEdgeTests: XCTestCase {
     func testASpotlightFadesOverItsFadeMsAndZeroIsHard() {
         var spot = box("s", Self.before, from: 1_000_000, to: 3_000_000)
         spot.style = .spotlight
-        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_100_000), 0.5, accuracy: 0.001, "200 ms by default")
+        let movie = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
+        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_100_000, project: movie), 0.5, accuracy: 0.001, "200 ms by default")
         spot.fadeMs = 0
-        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_000_000), 1, "hard from its first frame")
+        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_000_000, project: movie), 1, "hard from its first frame")
         spot.fadeMs = 1000
-        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_333_333), 0.5, accuracy: 0.01, "capped at a third of its length")
+        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_333_333, project: movie), 0.5, accuracy: 0.01,
+                       "capped at a third of its length")
     }
 
     func testAPixelateCellIsItsOwnSizeOrTheDefault() {
