@@ -834,7 +834,16 @@ struct EditRenderer {
             let look = zoom.look(atOutput: outUs)
             let view = look.view
             var result: CIImage
-            if let mark = look.transition, let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent, maximumSize: stillSize()) {
+            // A crossfade whose sides differ in canvas zoom or cover crop: the still goes through its own canvas below and
+            // the two finished canvases blend; the live side is drawn here as if no transition ran.
+            var ownCanvasStill: (mark: TransitionLook.Mark, still: CIImage)?
+            if let mark = look.transition,
+               mark.needsOwnCanvas(liveCanvasView: look.canvasView, liveCoverFocus: look.coverFocus, cover: look.frame?.fit == .cover),
+               let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent, maximumSize: stillSize()) {
+                ownCanvasStill = (mark, still)
+                result = Looks.redact(look.redactions, on: image, spotlightFades: look.spotlightFades).cropped(to: extent)
+                result = RedactionTrack.leaveVisible(look.redactions, original: image, on: result).cropped(to: extent)
+            } else if let mark = look.transition, let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent, maximumSize: stillSize()) {
                 // Each side is hidden by its own parts before the blend; only the spotlights dim the blended frame.
                 image = TransitionLook.compose(live: image, liveRedactions: look.redactions, still: still, mark: mark, liveView: view)
                 result = Looks.redact(look.redactions.filter { $0.style == .spotlight }, on: image,
@@ -851,13 +860,13 @@ struct EditRenderer {
             }
             // The cursor is its own layer: zoomed and framed like the picture, laid over the captions and plates last.
             var cursor = look.cursor.map { Looks.cursorSprite($0, extent: extent).cropped(to: extent) }
-            // Core Image counts y from the bottom; the project counts it from the top.
-            let rect = view.rect
-            let crop = CGRect(x: extent.minX + rect.minX * extent.width, y: extent.minY + (1 - rect.maxY) * extent.height,
-                              width: rect.width * extent.width, height: rect.height * extent.height)
-            let toPicture = { (layer: CIImage) -> CIImage in
+            let toPictureBy = { (layer: CIImage, view: ZoomCurve.View) -> CIImage in
                 var image = layer
                 if view.scale > 1.0005 {
+                    // Core Image counts y from the bottom; the project counts it from the top.
+                    let rect = view.rect
+                    let crop = CGRect(x: extent.minX + rect.minX * extent.width, y: extent.minY + (1 - rect.maxY) * extent.height,
+                                      width: rect.width * extent.width, height: rect.height * extent.height)
                     image = image.cropped(to: crop)
                         .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
                         .transformed(by: CGAffineTransform(scaleX: extent.width / crop.width, y: extent.height / crop.height))
@@ -867,6 +876,7 @@ struct EditRenderer {
                 }
                 return image.cropped(to: CGRect(origin: .zero, size: picture))
             }
+            let toPicture = { (layer: CIImage) -> CIImage in toPictureBy(layer, view) }
             result = toPicture(result)
             if let previous = look.previousView {
                 result = Looks.motionBlur(from: previous, to: view, amount: look.motionBlur, on: result)
@@ -906,6 +916,29 @@ struct EditRenderer {
                 movieRect = movieRect.map { Looks.zoomCanvasRect($0, view: look.canvasView, size: size) }
                 result = Looks.zoomCanvas(result, view: look.canvasView, size: size)
                 cursor = cursor.map { Looks.zoomCanvas($0, view: look.canvasView, size: size) }
+            }
+            // The still's own canvas: its parts, its picture zoom, its cover crop, the same frame and tilt, its canvas zoom.
+            // Clicks, lenses, the cursor, captions and texts stay the live side's.
+            if let (mark, still) = ownCanvasStill {
+                let bounds = CGRect(origin: .zero, size: size)
+                var other = toPictureBy(TransitionLook.hidden(mark.otherRedactions, on: still, extent: extent), mark.otherView)
+                if let frame = look.frame {
+                    let placement = Looks.framePlacement(frame, picture: picture, canvas: size, focus: mark.otherCoverFocus)
+                    if let pose = look.tilt {
+                        let layers = Looks.frameLayers(frame, to: other, canvas: size, placement: placement)
+                        other = TiltLook.apply(layers.picture, rect: layers.rect, pose: pose, canvas: size)
+                            .composited(over: layers.background).cropped(to: bounds)
+                    } else {
+                        other = Looks.applyFrame(frame, to: other, canvas: size, placement: placement)
+                    }
+                } else if let pose = look.tilt {
+                    other = TiltLook.apply(TiltLook.pin(other, to: bounds), rect: bounds, pose: pose, canvas: size)
+                        .composited(over: CIImage(color: .black).cropped(to: bounds)).cropped(to: bounds)
+                }
+                if mark.otherCanvasView.scale > 1.0005 {
+                    other = Looks.zoomCanvas(other, view: mark.otherCanvasView, size: size)
+                }
+                result = TransitionLook.blend(live: result.cropped(to: bounds), still: other.cropped(to: bounds), mark: mark)
             }
             var captionUsed: CGFloat = 0
             if let caption = look.caption {

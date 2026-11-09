@@ -38,6 +38,17 @@ enum TransitionLook {
         /// a zoom that ran into a crossfade jumped to the whole frame at the join, where the live side turns into the
         /// unzoomed incoming clip (v29 at 13.2 s).
         var otherView: ZoomCurve.View = .whole
+        /// The canvas zoom and the cover crop's focus at the still's own source time. When either differs from the live
+        /// side's, a crossfade blends two finished canvases (`needsOwnCanvas`), so the still does not take the live side's
+        /// canvas zoom or cover crop and jump at the join.
+        var otherCanvasView: ZoomCurve.View = .whole
+        var otherCoverFocus = CGPoint(x: 0.5, y: 0.5)
+
+        /// A crossfade whose sides differ in their canvas zoom or cover crop blends each side's own finished canvas.
+        /// The zoom and blur kinds keep blending the pictures, so they never scale the background.
+        func needsOwnCanvas(liveCanvasView: ZoomCurve.View, liveCoverFocus: CGPoint, cover: Bool) -> Bool {
+            kind == .crossfade && (otherCanvasView != liveCanvasView || (cover && otherCoverFocus != liveCoverFocus))
+        }
     }
 
     /// Every join with a transition: the start of a clip whose source does not continue the clip before it (a split
@@ -73,8 +84,11 @@ enum TransitionLook {
         let other = incoming ? join.outgoingSourceUs : join.incomingSourceUs
         let redactions = (drawn ?? project.redactions ?? []).filter { other >= $0.startUs && other < $0.endUs }
             .map { ZoomState.placed($0, atSourceUs: other, track: track, pointer: CursorTrack.Pointer(project)) }
+        let otherView = ZoomCurve.view(atSource: other, project: project, cursor: track)
         return Mark(kind: join.transition.kind, progress: min(1, max(0, progress)), incoming: incoming, otherSourceUs: other,
-                    otherRedactions: redactions, otherView: ZoomCurve.view(atSource: other, project: project, cursor: track))
+                    otherRedactions: redactions, otherView: otherView,
+                    otherCanvasView: ZoomCurve.canvasView(atSource: other, project: project),
+                    otherCoverFocus: ZoomState.coverFocus(atSourceUs: other, project: project, track: track, view: otherView))
     }
 
     static func smooth(_ t: Double) -> Double { t * t * (3 - 2 * t) }
@@ -87,13 +101,15 @@ enum TransitionLook {
     static func compose(live: CIImage, liveRedactions: [EditProject.Redaction], still: CIImage, mark: Mark,
                         liveView: ZoomCurve.View = .whole) -> CIImage {
         let extent = live.extent
-        let hidden = { (parts: [EditProject.Redaction], picture: CIImage) -> CIImage in
-            let hiding = parts.filter { $0.style != .spotlight }
-            let covered = Looks.redact(hiding, on: picture).cropped(to: extent)
-            return RedactionTrack.leaveVisible(hiding, original: picture, on: covered).cropped(to: extent)
-        }
-        let framed = reframe(hidden(mark.otherRedactions, still), from: mark.otherView, to: liveView, extent: extent)
-        return blend(live: hidden(liveRedactions, live), still: framed, mark: mark)
+        let framed = reframe(hidden(mark.otherRedactions, on: still, extent: extent), from: mark.otherView, to: liveView, extent: extent)
+        return blend(live: hidden(liveRedactions, on: live, extent: extent), still: framed, mark: mark)
+    }
+
+    /// `picture` with the hiding parts of `parts` drawn (spotlights are left to the caller).
+    static func hidden(_ parts: [EditProject.Redaction], on picture: CIImage, extent: CGRect) -> CIImage {
+        let hiding = parts.filter { $0.style != .spotlight }
+        let covered = Looks.redact(hiding, on: picture).cropped(to: extent)
+        return RedactionTrack.leaveVisible(hiding, original: picture, on: covered).cropped(to: extent)
     }
 
     /// The still moved so that the live side's zoom crop shows it as its own zoom `from` would: each side of the
