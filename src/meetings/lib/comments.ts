@@ -1,0 +1,301 @@
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { type DecisionActor, type MeetingStore, savedDecisionActorSchema } from "@genesiscz/utils/meetings/record";
+import { z } from "zod";
+import { listenerAlive } from "./answer-log";
+import {
+    type CommentListener,
+    commentListenerSchema,
+    commentSchema,
+    type MeetingComment,
+    type StagedComment,
+} from "./comment-schema";
+
+export {
+    type CommentListener,
+    commentListenerSchema,
+    commentSchema,
+    type MeetingComment,
+    meetingCommentSchema,
+    type StagedComment,
+} from "./comment-schema";
+
+/**
+ * Comments for the agent that listens to a meeting (R43): a person selects words in the transcript, stages a comment
+ * on them, and sends the staged comments. `comments.ndjson` in the meeting's folder keeps every step, one line each,
+ * oldest first and append-only, so a closed window loses no staged comment and `listen --subscribe-answers
+ * --with-comments` follows the sends. A listening process also writes a line when it starts and one when it ends, so a
+ * sender can tell who receives (G60).
+ */
+
+/** The file in a meeting's folder that keeps its comments and their listeners. */
+export const COMMENTS_FILE = "comments.ndjson";
+
+const commentLineSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("staged"), comment: commentSchema }),
+    z.object({ kind: z.literal("unstaged"), at: z.string(), id: z.string(), actor: savedDecisionActorSchema }),
+    /** The comments it sent, whole, so a follower prints them without reading the lines before. */
+    z.object({
+        kind: z.literal("sent"),
+        at: z.string(),
+        token: z.string(),
+        actor: savedDecisionActorSchema,
+        comments: z.array(commentSchema),
+    }),
+    z.object({ kind: z.literal("listening"), listener: commentListenerSchema }),
+    z.object({ kind: z.literal("left"), at: z.string(), pid: z.number().int() }),
+]);
+export type CommentLine = z.infer<typeof commentLineSchema>;
+
+/** Why a comment step was refused: the code lets the window tell a stale list from a wrong id. */
+export class CommentError extends Error {
+    constructor(
+        readonly code: "unknown-comment" | "already-sent",
+        message: string
+    ) {
+        super(message);
+        this.name = "CommentError";
+    }
+}
+
+/** A line of the file, or nothing for a line that does not read (a torn last line, a future kind). */
+export function parseCommentLine(line: string): CommentLine | undefined {
+    if (!line.trim()) {
+        return undefined;
+    }
+
+    try {
+        return commentLineOf(SafeJSON.parse(line, { jsonl: true }));
+    } catch {
+        return undefined;
+    }
+}
+
+/** A parsed line as a comment line, or nothing for another shape. */
+function commentLineOf(value: unknown): CommentLine | undefined {
+    const parsed = commentLineSchema.safeParse(value);
+    return parsed.success ? parsed.data : undefined;
+}
+
+export interface MeetingCommentsOptions {
+    now?: () => Date;
+    /** Whether a listener's pid still runs `meetings listen`; a recycled pid is no listener. */
+    alive?: (pid: number) => boolean;
+}
+
+/** One meeting's comments file: what is staged, what was sent, and who listens. */
+export class MeetingComments {
+    constructor(
+        readonly path: string,
+        private readonly options: MeetingCommentsOptions = {}
+    ) {}
+
+    static of(store: MeetingStore, meeting: string, options: MeetingCommentsOptions = {}): MeetingComments {
+        return new MeetingComments(join(store.folder(meeting), COMMENTS_FILE), options);
+    }
+
+    /** Every line that reads, oldest first. */
+    lines(): CommentLine[] {
+        if (!existsSync(this.path)) {
+            return [];
+        }
+
+        return Array.from(readLinesSync(this.path)).flatMap((line) => parseCommentLine(line) ?? []);
+    }
+
+    /** The staged and sent comments, in the order they were staged (an unstaged one is gone). */
+    list(): MeetingComment[] {
+        const comments = new Map<string, MeetingComment>();
+
+        for (const line of this.lines()) {
+            if (line.kind === "staged") {
+                comments.set(line.comment.id, { ...line.comment, state: "staged" });
+            } else if (line.kind === "unstaged") {
+                comments.delete(line.id);
+            } else if (line.kind === "sent") {
+                for (const sent of line.comments) {
+                    comments.set(sent.id, { ...sent, state: "sent", sentAt: line.at, token: line.token });
+                }
+            }
+        }
+
+        return [...comments.values()];
+    }
+
+    /** The listening processes that still run, oldest first. */
+    listeners(): CommentListener[] {
+        const listening = new Map<number, CommentListener>();
+
+        for (const line of this.lines()) {
+            if (line.kind === "listening") {
+                listening.set(line.listener.pid, line.listener);
+            } else if (line.kind === "left") {
+                listening.delete(line.pid);
+            }
+        }
+
+        const alive = this.options.alive ?? listenerAlive;
+        return [...listening.values()].filter((listener) => alive(listener.pid));
+    }
+
+    stage(input: {
+        target: StagedComment["target"];
+        text: string;
+        quote?: string;
+        actor: DecisionActor;
+    }): MeetingComment {
+        const staged = this.lines().filter((line) => line.kind === "staged").length;
+        const comment: StagedComment = {
+            id: `c${staged + 1}`,
+            at: this.now(),
+            target: input.target,
+            text: input.text,
+            ...(input.quote ? { quote: input.quote } : {}),
+            actor: input.actor,
+        };
+        this.append({ kind: "staged", comment });
+        return { ...comment, state: "staged" };
+    }
+
+    /** Takes a staged comment back; a sent one stays sent (the listening agent has it). */
+    unstage(id: string, actor: DecisionActor): MeetingComment {
+        const comment = this.staged([id])[0]!;
+        this.append({ kind: "unstaged", at: this.now(), id, actor });
+        return comment;
+    }
+
+    /** The staged comments a send takes: `ids`, or every staged one. Refused for an unknown or a sent id. */
+    staged(ids?: string[]): MeetingComment[] {
+        const comments = this.list();
+
+        if (!ids) {
+            return comments.filter((comment) => comment.state === "staged");
+        }
+
+        return ids.map((id) => {
+            const comment = comments.find((one) => one.id === id);
+
+            if (!comment) {
+                throw new CommentError("unknown-comment", `No staged comment ${id}.`);
+            }
+
+            if (comment.state === "sent") {
+                throw new CommentError(
+                    "already-sent",
+                    `Comment ${id} was sent at ${comment.sentAt}; it cannot change.`
+                );
+            }
+
+            return comment;
+        });
+    }
+
+    /** Marks the comments sent under the journal entry `token`; each listener prints them from this line. */
+    markSent(comments: MeetingComment[], sent: { token: string; at: string; actor: DecisionActor }): MeetingComment[] {
+        this.append({
+            kind: "sent",
+            at: sent.at,
+            token: sent.token,
+            actor: sent.actor,
+            comments: comments.map(({ state: _state, sentAt: _sentAt, token: _token, ...comment }) => comment),
+        });
+        return comments.map((comment) => ({ ...comment, state: "sent", sentAt: sent.at, token: sent.token }));
+    }
+
+    /** A listening process starts: senders count it until it leaves or its pid ends. */
+    join(listener: { pid: number; actor: DecisionActor }): void {
+        this.append({ kind: "listening", listener: { pid: listener.pid, at: this.now(), actor: listener.actor } });
+    }
+
+    leave(pid: number): void {
+        this.append({ kind: "left", at: this.now(), pid });
+    }
+
+    /**
+     * Prints each comment sent from now on as one JSON line (`fromStart`: every comment sent before too), until
+     * `stop`, which reads what was appended last first.
+     */
+    follow(options: { fromStart: boolean; write: (line: string) => void }): { stop(): void } {
+        const print = (line: CommentLine | undefined): void => {
+            for (const entry of line ? commentStreamLines(line) : []) {
+                options.write(SafeJSON.stringify(entry, { jsonl: true }));
+            }
+        };
+        const snapshot = existsSync(this.path) ? readFileSync(this.path) : Buffer.alloc(0);
+        const replayEnd = snapshot.lastIndexOf(10) + 1;
+
+        if (options.fromStart) {
+            for (const line of snapshot.subarray(0, replayEnd).toString("utf8").split("\n")) {
+                print(parseCommentLine(line));
+            }
+        }
+
+        const tailer = new FileTailer<unknown>(
+            this.path,
+            { onLine: (value) => print(commentLineOf(value)) },
+            { create: false, from: replayEnd }
+        );
+        tailer.start();
+        return {
+            stop: () => {
+                tailer.flush();
+                tailer.stop();
+            },
+        };
+    }
+
+    private now(): string {
+        return (this.options.now?.() ?? new Date()).toISOString();
+    }
+
+    /** One line at the end; after a torn last line (a writer that died mid-line) on a line of its own. */
+    private append(line: CommentLine): void {
+        mkdirSync(dirname(this.path), { recursive: true });
+        const text = `${SafeJSON.stringify(line, { jsonl: true })}\n`;
+        appendFileSync(this.path, endsTorn(this.path) ? `\n${text}` : text, { mode: 0o600 });
+    }
+}
+
+/** The file's last byte is not a line end: the next line must start on a line of its own. */
+function endsTorn(path: string): boolean {
+    if (!existsSync(path)) {
+        return false;
+    }
+
+    const size = statSync(path).size;
+
+    if (size === 0) {
+        return false;
+    }
+
+    const fd = openSync(path, "r");
+
+    try {
+        const last = Buffer.alloc(1);
+        readSync(fd, last, 0, 1, size - 1);
+        return last[0] !== 10;
+    } finally {
+        closeSync(fd);
+    }
+}
+
+/** The lines `--with-comments` prints for one send: one per comment, each with `type: "comment"`. */
+export function commentStreamLines(line: CommentLine): Array<Record<string, unknown>> {
+    if (line.kind !== "sent") {
+        return [];
+    }
+
+    return line.comments.map((comment) => ({
+        type: "comment",
+        event: "comment",
+        at: line.at,
+        id: comment.id,
+        text: comment.text,
+        ...(comment.quote ? { quote: comment.quote } : {}),
+        target: comment.target,
+        token: line.token,
+    }));
+}

@@ -82,7 +82,7 @@ export function runningRound(events: AnswerEvent[]): AnswerEvent[] {
 }
 
 /** The pid a round recorded still runs `meetings listen`: a recycled pid is no listener. */
-function listenerAlive(pid: number): boolean {
+export function listenerAlive(pid: number): boolean {
     const { status } = classifyPid(pid, (command) => /\bmeetings\b/.test(command) && /\blisten\b/.test(command));
     return status === "live" || status === "unverified";
 }
@@ -111,6 +111,8 @@ export async function subscribeAnswers(options: {
      * subscribes again after each one misses an answer given in between (the window answers one question per round).
      */
     follow?: boolean;
+    /** `--with-comments`: each answer line starts with `type: "answer"`, so a reader tells it from a comment line. */
+    typed?: boolean;
 }): Promise<number> {
     const alive = options.alive ?? listenerAlive;
     const snapshot = existsSync(options.path) ? readFileSync(options.path) : Buffer.alloc(0);
@@ -127,7 +129,7 @@ export async function subscribeAnswers(options: {
     let asked = 0;
 
     const track = (event: AnswerEvent): void => {
-        options.write(SafeJSON.stringify(event, { jsonl: true }));
+        options.write(SafeJSON.stringify(options.typed ? { type: "answer", ...event } : event, { jsonl: true }));
 
         if (event.event === "round-start") {
             roundPid = event.pid;

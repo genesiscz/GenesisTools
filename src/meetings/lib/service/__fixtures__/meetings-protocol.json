@@ -42,15 +42,20 @@
             "config.read",
             "config.set",
             "config.unset",
+            "comment.stage",
+            "comment.list",
+            "comment.unstage",
+            "comment.send",
             "subscribe",
             "unsubscribe"
           ],
           "events": [
             "meeting.changed",
             "decision.applied",
-            "decision.reverted"
+            "decision.reverted",
+            "comment.sent"
           ],
-          "version": "8db5d5b42db2"
+          "version": "da0fbfe202bc"
         }
       }
     },
@@ -576,22 +581,27 @@
             "config.read",
             "config.set",
             "config.unset",
+            "comment.stage",
+            "comment.list",
+            "comment.unstage",
+            "comment.send",
             "subscribe",
             "unsubscribe"
           ],
           "events": [
             "meeting.changed",
             "decision.applied",
-            "decision.reverted"
+            "decision.reverted",
+            "comment.sent"
           ],
-          "version": "8db5d5b42db2"
+          "version": "da0fbfe202bc"
         }
       }
     },
     {
       "method": "subscribe",
       "direction": "client→service",
-      "note": "The window hears every decision on the open meeting, with its journal entry.",
+      "note": "The window hears every decision on the open meeting, with its journal entry, and each send of its comments.",
       "request": {
         "jsonrpc": "2.0",
         "id": 15,
@@ -600,7 +610,8 @@
           "meeting": "2026-11-03-1000-design-review",
           "events": [
             "decision.applied",
-            "decision.reverted"
+            "decision.reverted",
+            "comment.sent"
           ]
         }
       },
@@ -610,7 +621,8 @@
         "result": {
           "events": [
             "decision.applied",
-            "decision.reverted"
+            "decision.reverted",
+            "comment.sent"
           ]
         }
       }
@@ -638,7 +650,7 @@
         "id": 2,
         "result": {
           "entry": {
-            "token": "3db465e1-cd51-489f-9d56-1c841d150448",
+            "token": "a4f5bd44-2e0c-4a07-9f64-633ef3018329",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -697,7 +709,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "3db465e1-cd51-489f-9d56-1c841d150448",
+                    "token": "a4f5bd44-2e0c-4a07-9f64-633ef3018329",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -749,7 +761,7 @@
         "id": 3,
         "result": {
           "entry": {
-            "token": "0b0a6723-9388-4cfb-a59e-bdded5460672",
+            "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -809,7 +821,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "0b0a6723-9388-4cfb-a59e-bdded5460672",
+                    "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -844,7 +856,7 @@
         "method": "decision.revert",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "0b0a6723-9388-4cfb-a59e-bdded5460672"
+          "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6"
         }
       },
       "reply": {
@@ -852,7 +864,7 @@
         "id": 4,
         "result": {
           "entry": {
-            "token": "b3ef1e9e-0ac5-4c58-bb78-8c3feeb645bb",
+            "token": "d2f4fe81-53e7-4841-a180-f96d4467f045",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -862,7 +874,7 @@
             },
             "action": {
               "kind": "revert",
-              "token": "0b0a6723-9388-4cfb-a59e-bdded5460672"
+              "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6"
             },
             "decided": [],
             "settled": [],
@@ -889,7 +901,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "0b0a6723-9388-4cfb-a59e-bdded5460672",
+                    "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -954,7 +966,7 @@
         "id": 5,
         "result": {
           "entry": {
-            "token": "a7ee86ce-4b19-4e9d-99f4-d49e1441ea30",
+            "token": "a867ccce-e14b-4366-9554-ba4d9c93897b",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -1013,7 +1025,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "a7ee86ce-4b19-4e9d-99f4-d49e1441ea30",
+                    "token": "a867ccce-e14b-4366-9554-ba4d9c93897b",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1067,7 +1079,7 @@
               "i1"
             ],
             "entry": {
-              "token": "a7ee86ce-4b19-4e9d-99f4-d49e1441ea30",
+              "token": "a867ccce-e14b-4366-9554-ba4d9c93897b",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
@@ -1126,7 +1138,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "a7ee86ce-4b19-4e9d-99f4-d49e1441ea30",
+                      "token": "a867ccce-e14b-4366-9554-ba4d9c93897b",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -1171,7 +1183,7 @@
           "meeting": "2026-11-03-1000-design-review",
           "entries": [
             {
-              "token": "a7ee86ce-4b19-4e9d-99f4-d49e1441ea30",
+              "token": "a867ccce-e14b-4366-9554-ba4d9c93897b",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
@@ -1230,7 +1242,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "a7ee86ce-4b19-4e9d-99f4-d49e1441ea30",
+                      "token": "a867ccce-e14b-4366-9554-ba4d9c93897b",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -1251,7 +1263,7 @@
               "corrections": []
             },
             {
-              "token": "b3ef1e9e-0ac5-4c58-bb78-8c3feeb645bb",
+              "token": "d2f4fe81-53e7-4841-a180-f96d4467f045",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
@@ -1261,7 +1273,7 @@
               },
               "action": {
                 "kind": "revert",
-                "token": "0b0a6723-9388-4cfb-a59e-bdded5460672"
+                "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6"
               },
               "decided": [],
               "settled": [],
@@ -1288,7 +1300,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "0b0a6723-9388-4cfb-a59e-bdded5460672",
+                      "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -1447,7 +1459,7 @@
           },
           "delaySec": 2,
           "repeatGapSec": 1,
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-n8VCgh/gt-test-home-OZ6hR4/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-1lskphvfjr4v8.wav"
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-AOoyUJ/gt-test-home-pqSfEZ/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-1sngvgrcbzhmp.wav"
         }
       }
     },
@@ -1467,7 +1479,7 @@
         "jsonrpc": "2.0",
         "id": 21,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-n8VCgh/mtg-audio-ajH2OS/upload.ogg",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-AOoyUJ/mtg-audio-JJlapS/upload.ogg",
           "tracks": 1,
           "channels": 2,
           "durationSec": 45
@@ -1519,7 +1531,7 @@
         "jsonrpc": "2.0",
         "id": 23,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-n8VCgh/gt-test-home-OZ6hR4/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-AOoyUJ/gt-test-home-pqSfEZ/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
           "sound": {
             "hz": 880,
             "sec": 0.15,
@@ -1681,7 +1693,7 @@
         "jsonrpc": "2.0",
         "id": 27,
         "result": {
-          "generatedAt": "2026-11-09T21:56:42.590Z",
+          "generatedAt": "2026-11-09T22:15:12.358Z",
           "days": 3650,
           "applyAbove": 0.5,
           "meetings": [
@@ -1761,7 +1773,7 @@
         "jsonrpc": "2.0",
         "id": 28,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-n8VCgh/gt-test-home-OZ6hR4/.genesis-tools/meetings/config.json",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-AOoyUJ/gt-test-home-pqSfEZ/.genesis-tools/meetings/config.json",
           "value": 30
         }
       }
@@ -1819,6 +1831,376 @@
       }
     },
     {
+      "method": "moment.plan",
+      "direction": "client→service",
+      "note": "Clip 5s: the selection's Moment, 5 s from its start.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "method": "moment.plan",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "selection",
+            "from": {
+              "atSec": 2,
+              "line": 0
+            },
+            "to": {
+              "atSec": 9,
+              "line": 1
+            }
+          },
+          "lengthSec": 5
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "result": {
+          "moment": {
+            "meeting": "2026-11-03-1000-design-review",
+            "target": {
+              "kind": "selection",
+              "from": {
+                "atSec": 2,
+                "line": 0
+              },
+              "to": {
+                "atSec": 9,
+                "line": 1
+              }
+            },
+            "label": "00:02–00:14",
+            "fromSec": 2,
+            "toSec": 7,
+            "padSec": 5,
+            "startSec": 0,
+            "endSec": 12,
+            "spotSec": 2,
+            "tone": {
+              "atSec": 1.6,
+              "sound": {
+                "hz": 880,
+                "sec": 0.15,
+                "volume": 0.6
+              }
+            },
+            "delaySec": 2,
+            "repeatGapSec": 1
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.stage",
+      "direction": "client→service",
+      "note": "A comment on the selected words, for the listening agent.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 32,
+        "method": "comment.stage",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "selection",
+            "from": {
+              "atSec": 2,
+              "line": 0
+            },
+            "to": {
+              "atSec": 9,
+              "line": 1
+            }
+          },
+          "text": "The button is the checkout button",
+          "quote": "The button moved"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 32,
+        "result": {
+          "id": "c1",
+          "at": "2026-11-03T10:00:00.000Z",
+          "target": {
+            "kind": "selection",
+            "from": {
+              "atSec": 2,
+              "line": 0
+            },
+            "to": {
+              "atSec": 9,
+              "line": 1
+            }
+          },
+          "text": "The button is the checkout button",
+          "quote": "The button moved",
+          "actor": {
+            "kind": "window"
+          },
+          "state": "staged"
+        }
+      }
+    },
+    {
+      "method": "comment.stage",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 33,
+        "method": "comment.stage",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "time",
+            "atSec": 4
+          },
+          "text": "Drop it"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 33,
+        "result": {
+          "id": "c2",
+          "at": "2026-11-03T10:00:00.000Z",
+          "target": {
+            "kind": "time",
+            "atSec": 4
+          },
+          "text": "Drop it",
+          "actor": {
+            "kind": "window"
+          },
+          "state": "staged"
+        }
+      }
+    },
+    {
+      "method": "comment.unstage",
+      "direction": "client→service",
+      "note": "Taken back before it was sent.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 34,
+        "method": "comment.unstage",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "id": "c2"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 34,
+        "result": {
+          "id": "c2",
+          "at": "2026-11-03T10:00:00.000Z",
+          "target": {
+            "kind": "time",
+            "atSec": 4
+          },
+          "text": "Drop it",
+          "actor": {
+            "kind": "window"
+          },
+          "state": "staged"
+        }
+      }
+    },
+    {
+      "method": "comment.list",
+      "direction": "client→service",
+      "note": "Who listens now: a send names them, or keeps them.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 35,
+        "method": "comment.list",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 35,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "comments": [
+            {
+              "id": "c1",
+              "at": "2026-11-03T10:00:00.000Z",
+              "target": {
+                "kind": "selection",
+                "from": {
+                  "atSec": 2,
+                  "line": 0
+                },
+                "to": {
+                  "atSec": 9,
+                  "line": 1
+                }
+              },
+              "text": "The button is the checkout button",
+              "quote": "The button moved",
+              "actor": {
+                "kind": "window"
+              },
+              "state": "staged"
+            }
+          ],
+          "listeners": [
+            {
+              "pid": 4343,
+              "at": "2026-11-03T10:00:00.000Z",
+              "actor": {
+                "kind": "listen"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "comment.send",
+      "direction": "client→service",
+      "note": "Every staged comment; the journal keeps the entry.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 36,
+        "method": "comment.send",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 36,
+        "result": {
+          "sent": [
+            {
+              "id": "c1",
+              "at": "2026-11-03T10:00:00.000Z",
+              "target": {
+                "kind": "selection",
+                "from": {
+                  "atSec": 2,
+                  "line": 0
+                },
+                "to": {
+                  "atSec": 9,
+                  "line": 1
+                }
+              },
+              "text": "The button is the checkout button",
+              "quote": "The button moved",
+              "actor": {
+                "kind": "window"
+              },
+              "state": "sent",
+              "sentAt": "2026-11-03T10:00:00.000Z",
+              "token": "4737a006-b938-4302-8e63-2c9963874b05"
+            }
+          ],
+          "listeners": [
+            {
+              "pid": 4343,
+              "at": "2026-11-03T10:00:00.000Z",
+              "actor": {
+                "kind": "listen"
+              }
+            }
+          ],
+          "entry": {
+            "token": "4737a006-b938-4302-8e63-2c9963874b05",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "window"
+            },
+            "action": {
+              "kind": "comment",
+              "comments": [
+                {
+                  "id": "c1",
+                  "target": {
+                    "kind": "selection",
+                    "from": {
+                      "atSec": 2,
+                      "line": 0
+                    },
+                    "to": {
+                      "atSec": 9,
+                      "line": 1
+                    }
+                  },
+                  "text": "The button is the checkout button",
+                  "quote": "The button moved"
+                }
+              ]
+            },
+            "decided": [],
+            "settled": [],
+            "skipped": [],
+            "changes": [],
+            "labels": [],
+            "corrections": []
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.unstage",
+      "direction": "client→service",
+      "note": "A sent comment: already-sent.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 37,
+        "method": "comment.unstage",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "id": "c1"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 37,
+        "error": {
+          "code": 1100,
+          "message": "Comment c1 was sent at 2026-11-03T10:00:00.000Z; it cannot change.",
+          "data": {
+            "code": "already-sent"
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.send",
+      "direction": "client→service",
+      "note": "No such comment: unknown-comment.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 38,
+        "method": "comment.send",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "ids": [
+            "c7"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 38,
+        "error": {
+          "code": 1100,
+          "message": "No staged comment c7.",
+          "data": {
+            "code": "unknown-comment"
+          }
+        }
+      }
+    },
+    {
       "method": "decision.applied",
       "direction": "service→client",
       "notification": {
@@ -1827,7 +2209,7 @@
         "params": {
           "meeting": "2026-11-03-1000-design-review",
           "entry": {
-            "token": "0b0a6723-9388-4cfb-a59e-bdded5460672",
+            "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -1887,7 +2269,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "0b0a6723-9388-4cfb-a59e-bdded5460672",
+                    "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1919,9 +2301,9 @@
         "method": "decision.reverted",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "0b0a6723-9388-4cfb-a59e-bdded5460672",
+          "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6",
           "entry": {
-            "token": "b3ef1e9e-0ac5-4c58-bb78-8c3feeb645bb",
+            "token": "d2f4fe81-53e7-4841-a180-f96d4467f045",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -1931,7 +2313,7 @@
             },
             "action": {
               "kind": "revert",
-              "token": "0b0a6723-9388-4cfb-a59e-bdded5460672"
+              "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6"
             },
             "decided": [],
             "settled": [],
@@ -1958,7 +2340,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "0b0a6723-9388-4cfb-a59e-bdded5460672",
+                    "token": "1c65c599-6992-4ea9-9e6e-7f5b65c0b7d6",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1997,6 +2379,52 @@
             "labels": [],
             "corrections": []
           }
+        }
+      }
+    },
+    {
+      "method": "comment.sent",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "comment.sent",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "token": "4737a006-b938-4302-8e63-2c9963874b05",
+          "comments": [
+            {
+              "id": "c1",
+              "at": "2026-11-03T10:00:00.000Z",
+              "target": {
+                "kind": "selection",
+                "from": {
+                  "atSec": 2,
+                  "line": 0
+                },
+                "to": {
+                  "atSec": 9,
+                  "line": 1
+                }
+              },
+              "text": "The button is the checkout button",
+              "quote": "The button moved",
+              "actor": {
+                "kind": "window"
+              },
+              "state": "sent",
+              "sentAt": "2026-11-03T10:00:00.000Z",
+              "token": "4737a006-b938-4302-8e63-2c9963874b05"
+            }
+          ],
+          "listeners": [
+            {
+              "pid": 4343,
+              "at": "2026-11-03T10:00:00.000Z",
+              "actor": {
+                "kind": "listen"
+              }
+            }
+          ]
         }
       }
     },
@@ -2043,15 +2471,20 @@
             "config.read",
             "config.set",
             "config.unset",
+            "comment.stage",
+            "comment.list",
+            "comment.unstage",
+            "comment.send",
             "subscribe",
             "unsubscribe"
           ],
           "events": [
             "meeting.changed",
             "decision.applied",
-            "decision.reverted"
+            "decision.reverted",
+            "comment.sent"
           ],
-          "version": "8db5d5b42db2"
+          "version": "da0fbfe202bc"
         }
       }
     },

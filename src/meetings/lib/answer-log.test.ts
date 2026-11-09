@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { appendFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -13,6 +13,7 @@ import {
     runningRound,
     subscribeAnswers,
 } from "./answer-log";
+import { MeetingComments } from "./comments";
 import { DecisionJournal } from "./decision-journal";
 import { askedSpotSec, type QuestionItem } from "./questions";
 
@@ -222,6 +223,98 @@ describe("answer log", () => {
             ["event", "at", "item"],
         ]);
         expect(lines[0]).toMatchObject({ item: "i2", answer: "ADO", decided: [{ item: "i1", status: "confirmed" }] });
+    });
+});
+
+describe("comments for the listening agent (comments.ndjson)", () => {
+    const person = { kind: "window" } as const;
+    const selection = {
+        kind: "selection",
+        from: { atSec: 62, line: 14 },
+        to: { atSec: 66, line: 15, fraction: 0.5 },
+    } as const;
+    const commentsFile = (alive: (pid: number) => boolean = () => true) =>
+        new MeetingComments(join(mkdtempSync(join(tmpdir(), "comments-")), "comments.ndjson"), {
+            now: () => new Date(at),
+            alive,
+        });
+
+    test("staged comments stay until sent or unstaged; a sent one cannot change, and a torn line is passed over", () => {
+        const comments = commentsFile();
+        const first = comments.stage({ target: selection, text: "This is EMP, not OMP", quote: "OMP", actor: person });
+        comments.stage({ target: { kind: "time", atSec: 90 }, text: "Ask about the budget", actor: person });
+        comments.stage({ target: { kind: "time", atSec: 95 }, text: "Never mind", actor: person });
+        comments.unstage("c3", person);
+        appendFileSync(comments.path, '{"kind":"staged","comment":{"id":"c9"');
+        const sent = comments.markSent(comments.staged(["c1"]), { token: "t-1", at, actor: person });
+
+        expect(first).toEqual({
+            id: "c1",
+            at,
+            target: selection,
+            text: "This is EMP, not OMP",
+            quote: "OMP",
+            actor: person,
+            state: "staged",
+        });
+        expect(sent.map((comment) => [comment.id, comment.state, comment.token])).toEqual([["c1", "sent", "t-1"]]);
+        expect(comments.list().map((comment) => [comment.id, comment.state])).toEqual([
+            ["c1", "sent"],
+            ["c2", "staged"],
+        ]);
+        expect(comments.staged().map((comment) => comment.id)).toEqual(["c2"]);
+        expect(() => comments.staged(["c1"])).toThrow("Comment c1 was sent at");
+        expect(() => comments.unstage("c3", person)).toThrow("No staged comment c3.");
+    });
+
+    test("a listener counts while it runs: until it leaves, or once its process is gone", () => {
+        const running = new Set([101, 202]);
+        const comments = commentsFile((pid) => running.has(pid));
+        comments.join({ pid: 101, actor: { kind: "agent", harness: "claude-code", session: null } });
+        comments.join({ pid: 202, actor: person });
+        comments.join({ pid: 303, actor: person });
+        comments.leave(202);
+
+        expect(comments.listeners()).toEqual([
+            { pid: 101, at, actor: { kind: "agent", harness: "claude-code", session: null } },
+        ]);
+    });
+
+    test("--with-comments prints each sent comment as a typed line, and the answers with type answer", async () => {
+        const comments = commentsFile();
+        comments.stage({ target: selection, text: "Earlier comment", actor: person });
+        comments.markSent(comments.staged(), { token: "t-0", at, actor: person });
+        const path = logFile([{ event: "round-start", at, pid: process.pid, open: 1 }]);
+        const lines: string[] = [];
+        const following = comments.follow({ fromStart: false, write: (line) => lines.push(line) });
+        const done = subscribeAnswers({
+            path,
+            fromStart: false,
+            timeoutMs: 5000,
+            write: (line) => lines.push(line),
+            typed: true,
+        });
+        comments.stage({ target: selection, text: "This is EMP", quote: "OMP", actor: person });
+        comments.markSent(comments.staged(), { token: "t-1", at, actor: person });
+        await Bun.sleep(50);
+        following.stop();
+        appendAnswerEvent(path, { event: "round-end", at, reason: "done", asked: 0, open: 0 });
+
+        expect(await done).toBe(0);
+        expect(lines.map((line) => SafeJSON.parse(line, { jsonl: true }))).toEqual([
+            { type: "answer", event: "round-start", at, pid: process.pid, open: 1 },
+            {
+                type: "comment",
+                event: "comment",
+                at,
+                id: "c2",
+                text: "This is EMP",
+                quote: "OMP",
+                target: selection,
+                token: "t-1",
+            },
+            { type: "answer", event: "round-end", at, reason: "done", asked: 0, open: 0 },
+        ]);
     });
 });
 

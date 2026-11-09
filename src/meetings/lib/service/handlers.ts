@@ -74,6 +74,8 @@ export interface MeetingsHandlerDeps {
     tone?: typeof cutTone;
     /** The channel energy of a recording (tests pass a table); ffmpeg with the meeting folder's cache by default. */
     energy?: typeof channelEnergy;
+    /** Whether a comment listener's pid still runs `meetings listen` (tests answer); the process table by default. */
+    listenerAlive?: (pid: number) => boolean;
 }
 
 /**
@@ -170,6 +172,7 @@ export function recordOf(store: MeetingStore, ref: string): MeetingRecord {
 const decisions = () => import("./decision-handlers");
 const moments = () => import("./moment-handlers");
 const reads = () => import("./reads-handlers");
+const comments = () => import("./comment-handlers");
 
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
@@ -223,6 +226,11 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "config.read": async (params) => (await reads()).readConfig(params),
         "config.set": async (params) => (await reads()).setConfig(params),
         "config.unset": async (params) => (await reads()).unsetConfig(params),
+        "comment.stage": async (params, context) => (await comments()).stageComment(params, context, storeOf(), deps),
+        "comment.list": async (params) => (await comments()).listComments(params, storeOf(), deps),
+        "comment.unstage": async (params, context) =>
+            (await comments()).unstageComment(params, context, storeOf(), deps),
+        "comment.send": async (params, context) => (await comments()).sendComments(params, context, storeOf(), deps),
     };
 }
 

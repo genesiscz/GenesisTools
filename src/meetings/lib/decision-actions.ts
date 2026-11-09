@@ -1,6 +1,7 @@
 import { correctionSchema } from "@genesiscz/utils/meetings/corrections";
 import { meetingItemSchema, savedDecisionActorSchema } from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
+import { sentCommentSchema } from "./comment-schema";
 import { findingSchema } from "./findings";
 
 /**
@@ -62,7 +63,21 @@ export const revertActionSchema = z.object({
     items: z.array(itemRef).optional(),
 });
 
-export const journalActionSchema = z.discriminatedUnion("kind", [...DECISION_ACTION_OPTIONS, revertActionSchema]);
+/**
+ * Comments sent to the listening agent (`comment.send`, G63): history only, the record does not change, and a sent
+ * comment cannot be taken back.
+ */
+export const commentActionSchema = z.object({
+    kind: z.literal("comment"),
+    comments: z.array(sentCommentSchema).min(1),
+});
+export type CommentAction = z.infer<typeof commentActionSchema>;
+
+export const journalActionSchema = z.discriminatedUnion("kind", [
+    ...DECISION_ACTION_OPTIONS,
+    revertActionSchema,
+    commentActionSchema,
+]);
 export type JournalAction = z.infer<typeof journalActionSchema>;
 
 /** One item a decision changed: its state before (absent: the decision made it) and after (absent: it removed it). */
