@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { eventAnchorSchema, MOVIE_EVENT_KINDS, type Tap, tapSchema } from "@genesiscz/utils/recording-editor/events";
+import { MOVIE_EVENT_KINDS, type Tap, tapSchema } from "@genesiscz/utils/recording-editor/events";
 import type { Command } from "commander";
 import { z } from "zod";
 import { openProject } from "../lib/edit";
@@ -157,14 +157,14 @@ export function registerFxAnalysisCommands(program: Command): void {
     program
         .command("snap")
         .description(
-            "A source time on screen: --at <s> moves to the nearest event, --event <kind> --index <n> [--lead <s>] [--end] names one"
+            "A source time on screen: --at <s> moves to the nearest event, --event <kind> --index <n> names one; --lead <s> and --end work with both"
         )
         .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
         .option("--at <seconds>", "a guessed source second")
         .option("--event <kind>", MOVIE_EVENT_KINDS.join(" | "))
-        .option("--index <n>", "1 is the first, -1 the last", "1")
+        .option("--index <n>", "with --event: 1 (the default) is the first, -1 the last")
         .option("--lead <seconds>", "move the time by this much (-0.2: before it)")
-        .option("--end", "a stretch's end instead of its start")
+        .option("--end", "a stretch's end instead of its start (with --at: the nearest stretch end)")
         .option("--kinds <list>", "with --at: only these kinds")
         .option("--taps <file>", "a JSON file of taps [{ at, x?, y? }]")
         .action(
@@ -182,21 +182,16 @@ export function registerFxAnalysisCommands(program: Command): void {
             ) => {
                 try {
                     const { project } = await openProject(value);
-                    const anchor = flags.event
-                        ? eventAnchorSchema.parse({
-                              event: flags.event,
-                              index: Number(flags.index ?? 1),
-                              ...(flags.lead === undefined ? {} : { lead: Number(flags.lead) }),
-                              ...(flags.end ? { end: true } : {}),
-                          })
-                        : undefined;
                     const kinds = flags.kinds
                         ? z.array(z.enum(MOVIE_EVENT_KINDS)).parse(flags.kinds.split(","))
                         : undefined;
                     out.result(
                         await snapOf(project, {
                             at: flags.at === undefined ? undefined : Number(flags.at),
-                            anchor,
+                            event: flags.event === undefined ? undefined : z.enum(MOVIE_EVENT_KINDS).parse(flags.event),
+                            index: flags.index === undefined ? undefined : Number(flags.index),
+                            lead: flags.lead === undefined ? undefined : Number(flags.lead),
+                            end: flags.end,
                             kinds,
                             taps: readTaps(flags.taps),
                         })

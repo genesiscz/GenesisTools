@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { foldWithIndex } from "@genesiscz/utils/macos/ocr-boxes";
 import { checkProject, issueSummary } from "./check";
-import { anchorTimeUs, movieEvents, nearestEvent } from "./events";
+import { anchorTimeUs, type MovieEvent, movieEvents, nearestEvent, snapTimeUs } from "./events";
 import { blockShifts } from "./motion";
 import {
     edgeFragments,
@@ -1473,5 +1473,28 @@ describe("hide patterns know every script (round 8)", () => {
             '"Orla"',
             "/\\d{6}/",
         ]);
+    });
+});
+
+// Regression test: hunt r2-snap-lead-end. snap({ at, lead }) dropped lead, and the CLI and the REPL parsed a snap
+// apart; snapTimeUs is the one parse.
+describe("snapTimeUs reads a snap request the same way for the REPL and the CLI", () => {
+    const events: MovieEvent[] = [
+        { kind: "still", index: 1, fromUs: 1_000_000, toUs: 2_500_000 },
+        { kind: "click", index: 1, fromUs: 3_000_000 },
+    ];
+
+    test("the at form moves the snapped time by lead, and end snaps to the nearest stretch end", () => {
+        expect(snapTimeUs(events, { at: 2.8, lead: -0.2 }).atUs).toBe(2_800_000);
+        const end = snapTimeUs(events, { at: 2.8, end: true });
+        expect(end.atUs).toBe(2_500_000);
+        expect(end.edge).toBe("end");
+        expect(snapTimeUs(events, { event: "click", lead: -0.5 }).atUs).toBe(2_500_000);
+    });
+
+    test("a request that mixes the two forms is refused", () => {
+        expect(() => snapTimeUs(events, { at: 1, event: "click" })).toThrow();
+        expect(() => snapTimeUs(events, { at: 1, index: 2 })).toThrow();
+        expect(() => snapTimeUs(events, { event: "click", kinds: ["scene"] })).toThrow();
     });
 });

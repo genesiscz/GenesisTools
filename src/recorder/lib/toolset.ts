@@ -17,13 +17,7 @@ import {
     groupIssues,
     issueSummary,
 } from "@genesiscz/utils/recording-editor/check";
-import {
-    eventAnchorSchema,
-    MOVIE_EVENT_KINDS,
-    type MovieEventKind,
-    type Tap,
-    tapSchema,
-} from "@genesiscz/utils/recording-editor/events";
+import { MOVIE_EVENT_KINDS, type MovieEventKind, type Tap, tapSchema } from "@genesiscz/utils/recording-editor/events";
 import { TRANSITION_KINDS } from "@genesiscz/utils/recording-editor/fx";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { arrowTail } from "@genesiscz/utils/recording-editor/item-ops";
@@ -1475,7 +1469,7 @@ const movieMethods = [
             .strict(),
         result: z.unknown(),
         resultName: "{ at, event, edge? }",
-        doc: "A source time on screen: { at } moves a guessed second to the nearest event (of kinds, when given; a stretch counts by its start or its end); { event, index, lead?, end? } names one (index 1 is the first, -1 the last; lead -0.2 starts 0.2 s before it; end: a stretch's end). Use the answer's at in zoom(), spotlight(), text(), shape() or hideText().",
+        doc: "A source time on screen: { at } moves a guessed second to the nearest event (of kinds, when given; a stretch counts by its start or its end); { event, index } names one (index 1 is the first, -1 the last). lead and end work with both: lead -0.2 starts 0.2 s before the event, end takes a stretch's end (with at: the nearest stretch end). at with event, index without event and kinds with event are refused. Use the answer's at in zoom(), spotlight(), text(), shape() or hideText().",
         effect: "read",
     }),
     // R5 5 redaction edges
@@ -3108,15 +3102,7 @@ export class Movie {
         } = {}
     ) {
         const { project } = await openProject(this.recording);
-        const anchor = options.event
-            ? eventAnchorSchema.parse({
-                  event: options.event,
-                  index: options.index ?? 1,
-                  ...(options.lead === undefined ? {} : { lead: options.lead }),
-                  ...(options.end ? { end: true } : {}),
-              })
-            : undefined;
-        return snapOf(project, { at: options.at, anchor, kinds: options.kinds, taps: options.taps });
+        return snapOf(project, options);
     }
 }
 

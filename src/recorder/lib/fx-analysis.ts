@@ -12,12 +12,10 @@ import {
     readAnalysis,
 } from "@genesiscz/utils/recording-editor/analysis-cache";
 import {
-    anchorTimeUs,
-    type EventAnchor,
     type MovieEvent,
-    type MovieEventKind,
     movieEvents,
-    nearestEvent,
+    type SnapRequest,
+    snapTimeUs,
     type Tap,
 } from "@genesiscz/utils/recording-editor/events";
 import { gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
@@ -1545,38 +1543,18 @@ export function eventsOut(project: EditProject, events: readonly MovieEvent[]): 
 
 /**
  * A source time on screen: `at` (seconds) moved to the nearest event of `kinds`, or an anchor's time
- * (`{ event: "scene", index: 3, lead: -0.2 }`). Answers the seconds and the event it used.
+ * (`{ event: "scene", index: 3, lead: -0.2 }`); `lead` and `end` work in both forms (snapTimeUs). Answers the seconds
+ * and the event it used.
  */
 export async function snapOf(
     project: EditProject,
-    options: { at?: number; anchor?: EventAnchor; kinds?: MovieEventKind[]; taps?: readonly Tap[] }
+    options: SnapRequest & { taps?: readonly Tap[] }
 ): Promise<{ at: number; event: MovieEventOut; edge?: "start" | "end" }> {
     const events = await eventsOf(project, { taps: options.taps });
-
-    if (options.anchor) {
-        const anchor = options.anchor;
-        const atUs = anchorTimeUs(events, anchor);
-        const ofKind = events.filter((item) => item.kind === anchor.event);
-        const event = ofKind.at(anchor.index > 0 ? anchor.index - 1 : anchor.index);
-
-        if (!event) {
-            throw new RangeError(`there is no ${anchor.event} event ${anchor.index}`);
-        }
-
-        return { at: seconds(atUs), event: eventsOut(project, [event])[0] };
-    }
-
-    if (options.at === undefined) {
-        throw new Error("snap needs at (seconds) or an event anchor ({ event, index, lead? })");
-    }
-
-    const nearest = nearestEvent(events, Math.round(options.at * 1_000_000), options.kinds);
-
-    if (!nearest) {
-        throw new RangeError(
-            `the movie has no ${options.kinds ? `${options.kinds.join(" or ")} ` : ""}event to snap to`
-        );
-    }
-
-    return { at: seconds(nearest.atUs), event: eventsOut(project, [nearest.event])[0], edge: nearest.edge };
+    const snap = snapTimeUs(events, options);
+    return {
+        at: seconds(snap.atUs),
+        event: eventsOut(project, [snap.event])[0],
+        ...(snap.edge ? { edge: snap.edge } : {}),
+    };
 }
