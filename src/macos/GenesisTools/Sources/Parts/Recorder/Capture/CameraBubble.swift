@@ -358,7 +358,9 @@ final class CameraBubble {
         guard let current = recording else { return }
         recording = nil
         source?.onFrame = nil
-        let placement = panel.flatMap { $0.isVisible ? Self.placement(bubble: $0.frame, target: current.target) : nil }
+        // A hidden preview still carries the picked shape, size and place into the edit.
+        let bubble = panel.flatMap { $0.isVisible ? $0.frame : nil } ?? Self.savedBubble()
+        let placement = Self.placement(bubble: bubble, target: current.target)
         let screenStarted = screenStartedAt
         panel?.orderOut(nil)
         guard let writer else {
@@ -404,8 +406,9 @@ final class CameraBubble {
     }
 
     /// Where the bubble sat in what was recorded, as camera.ts's fractions: the centre from the top left and the side
-    /// over the short side. Nil when the recorded rectangle is not known (an app's windows).
-    static func placement(bubble: CGRect, target: [String: Any]?) -> [String: Any]? {
+    /// over the short side, plus the shape. Only the shape when the recorded rectangle is not known (an app with no
+    /// window on screen); camera.ts takes each key on its own.
+    static func placement(bubble: CGRect, target: [String: Any]?) -> [String: Any] {
         let screens = NSScreen.screens
         let primaryHeight = screens.first?.frame.height ?? 0
         let recorded: CGRect?
@@ -419,17 +422,18 @@ final class CameraBubble {
         case "window":
             recorded = ((target?["windowIds"] as? [NSNumber])?.first).flatMap { windowFrame(CGWindowID($0.uint32Value), primaryHeight: primaryHeight) }
         case "app":
-            recorded = nil
+            let app = (target?["app"] as? String) ?? (target?["app"] as? NSNumber)?.stringValue
+            let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+            recorded = app.flatMap { appCanvas(windows: windows ?? [], app: $0, primaryHeight: primaryHeight) }
         default:
             recorded = screens.first { $0.frame.contains(CGPoint(x: bubble.midX, y: bubble.midY)) }?.frame
         }
-        guard let recorded else { return nil }
         return placement(bubble: bubble, recorded: recorded, shape: shape)
     }
 
-    /// Pure, for tests: both rects in Cocoa points (bottom-left origin).
-    nonisolated static func placement(bubble: CGRect, recorded: CGRect, shape: EditProject.CameraShape) -> [String: Any]? {
-        guard recorded.width > 0, recorded.height > 0 else { return nil }
+    /// Pure, for tests: both rects in Cocoa points (bottom-left origin). Only the shape without a recorded rect.
+    nonisolated static func placement(bubble: CGRect, recorded: CGRect?, shape: EditProject.CameraShape) -> [String: Any] {
+        guard let recorded, recorded.width > 0, recorded.height > 0 else { return ["shape": shape.rawValue] }
         let clamp = { (value: CGFloat, low: CGFloat, high: CGFloat) in Double(min(high, max(low, value))) }
         return [
             "x": clamp((bubble.midX - recorded.minX) / recorded.width, 0, 1),
@@ -444,6 +448,29 @@ final class CameraBubble {
               let bounds = list.first?[kCGWindowBounds as String] as? [String: CGFloat],
               let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"] else { return nil }
         return CGRect(x: x, y: primaryHeight - y - height, width: width, height: height)
+    }
+
+    /// What an app recording records: the union of the app's on-screen windows (layer 0), matched by pid when `app`
+    /// is a number, else by owner name as `--app` takes it, flipped into Cocoa points as `windowFrame` does.
+    nonisolated static func appCanvas(windows: [[String: Any]], app: String, primaryHeight: CGFloat) -> CGRect? {
+        let pid = Int(app)
+        let frames = windows.compactMap { window -> CGRect? in
+            guard (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0 == 0 else { return nil }
+            let owner = pid.map { (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue == $0 }
+                ?? ((window[kCGWindowOwnerName as String] as? String)?.caseInsensitiveCompare(app) == .orderedSame)
+            guard owner, let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"],
+                  width > 0, height > 0 else { return nil }
+            return CGRect(x: x, y: primaryHeight - y - height, width: width, height: height)
+        }
+        return frames.dropFirst().reduce(frames.first) { $0?.union($1) }
+    }
+
+    /// The preview's frame from Settings when it is not on screen: the saved side at the saved or default centre.
+    private static func savedBubble() -> CGRect {
+        let side = CGFloat(bubbleSide)
+        let center = savedCenter() ?? defaultCenter(side: side)
+        return CGRect(x: center.x - side / 2, y: center.y - side / 2, width: side, height: side)
     }
 
     private static func savedCenter() -> CGPoint? {
