@@ -912,6 +912,45 @@ describe("edit project (edit.json)", () => {
         });
     });
 
+    describe("a caption fix is keyed the way its readers look it up", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 20_000_000, width: 1920, height: 1080 };
+        const segments = [
+            { text: "First line.", start: 1, end: 4 },
+            { text: "Old words here.", start: 8.0025, end: 10 },
+        ];
+
+        test("fixLine on a line that starts on a half millisecond shows the fix, and unfixLine removes it", () => {
+            const fixed = applyOp(
+                wholeProject(source),
+                { op: "fixLine", from: 9, text: "New words here." },
+                {
+                    transcript: segments,
+                }
+            );
+            expect(transcriptLines({ segments }, fixed).map((line) => line.text)).toEqual([
+                "First line.",
+                "New words here.",
+            ]);
+            expect(
+                replaceWordsInLines(segments, fixed.transcript?.fixes ?? {}, { find: "New", replace: "Fresh" })
+            ).toEqual([{ from: 8.0025, text: "Fresh words here.", was: "New words here." }]);
+
+            const back = applyOp(fixed, { op: "unfixLine", from: 9 }, { transcript: segments });
+            expect(back.transcript).toBeUndefined();
+        });
+
+        test("a fix saved under the old double-rounded key still shows", () => {
+            const old = { ...wholeProject(source), transcript: { fixes: { "8003": "Saved before." } } };
+            expect(transcriptLines({ segments }, old).map((line) => line.text)).toEqual([
+                "First line.",
+                "Saved before.",
+            ]);
+            expect(
+                applyOp(old, { op: "unfixLine", from: 8.0025 }, { transcript: segments }).transcript
+            ).toBeUndefined();
+        });
+    });
+
     describe("check() lays texts out and counts frames on the export's own canvas and rate", () => {
         const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
         const retina = { video: "/movies/screen.mp4", durationUs: 20_000_000, width: 4112, height: 2570 };

@@ -500,6 +500,38 @@ export const transcriptSettingsSchema = z.object({
  * unless `wholeWord` is false, where a letter or digit of any language next to it makes it part of a longer word. A
  * hidden line (fixed to "") is left out.
  */
+/**
+ * The key a caption fix is saved under in `transcript.fixes`: its line's start in whole milliseconds, as every reader
+ * looks it up (Swift TranscriptSettings.key agrees).
+ */
+export function transcriptFixKey(startSeconds: number): string {
+    return String(Math.round(startSeconds * 1000));
+}
+
+/**
+ * The key fixLine used before 2026-11-09: the start rounded to the microsecond and then to the millisecond, so a line
+ * that starts on a half millisecond was saved one millisecond off. Read only, and only when no line owns that key.
+ */
+function oldTranscriptFixKey(startSeconds: number): string {
+    return String(Math.round(Math.round(startSeconds * 1_000_000) / 1000));
+}
+
+/** The fix of the line that starts at `start`, reading a fix saved under the old key when no line in `owned` has it. */
+function lineFixOf(
+    fixes: Readonly<Record<string, string>>,
+    start: number,
+    owned: ReadonlySet<string>
+): string | undefined {
+    const fix = fixes[transcriptFixKey(start)];
+
+    if (fix !== undefined) {
+        return fix;
+    }
+
+    const old = oldTranscriptFixKey(start);
+    return owned.has(old) ? undefined : fixes[old];
+}
+
 export function replaceWordsInLines(
     segments: ReadonlyArray<{ text: string; start: number }>,
     fixes: Readonly<Record<string, string>>,
@@ -514,8 +546,9 @@ export function replaceWordsInLines(
     const escaped = find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const source = options.wholeWord === false ? escaped : `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`;
     const pattern = new RegExp(source, options.matchCase ? "gu" : "giu");
+    const owned = new Set(segments.map((segment) => transcriptFixKey(segment.start)));
     return segments.flatMap((segment) => {
-        const fixed = fixes[String(Math.round(segment.start * 1000))];
+        const fixed = lineFixOf(fixes, segment.start, owned);
         const was = fixed ?? segment.text.trim();
 
         if (fixed === "" || !pattern.test(was)) {
@@ -3213,8 +3246,8 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
     throw new Error(`no zoom, hidden part, text, shape or camera part ${op.id}; ids: ${ids.join(", ") || "none"}`);
 }
 
-/** The start of the transcript line spoken at `atUs` (source time); a time between lines is refused. */
-function lineStartUs(segments: readonly TranscriptSegment[], atUs: number): number {
+/** The start (seconds) of the transcript line spoken at `atUs` (source time); a time between lines is refused. */
+function lineStart(segments: readonly TranscriptSegment[], atUs: number): number {
     const seconds = atUs / 1_000_000;
     const line = segments.find((segment) => segment.start <= seconds + 0.0005 && seconds < segment.end);
 
@@ -3228,7 +3261,7 @@ function lineStartUs(segments: readonly TranscriptSegment[], atUs: number): numb
         );
     }
 
-    return Math.round(line.start * 1_000_000);
+    return line.start;
 }
 
 /**
@@ -3576,14 +3609,17 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         }
         case "fixLine": {
             // A time copied from find() or the subtitles lies inside a line; a fix is keyed by the line's start.
-            const fromUs = facts.transcript ? lineStartUs(facts.transcript, timeToUs(op.from)) : timeToUs(op.from);
-            const key = String(Math.round(fromUs / 1000));
+            const start = facts.transcript ? lineStart(facts.transcript, timeToUs(op.from)) : timeToUs(op.from) / 1e6;
+            const key = transcriptFixKey(start);
             const fixes = { ...(project.transcript?.fixes ?? {}), [key]: op.text.trim() };
             return { ...project, transcript: { fixes } };
         }
         case "unfixLine": {
-            const key = String(Math.round(timeToUs(op.from) / 1000));
-            const { [key]: removed, ...rest } = project.transcript?.fixes ?? {};
+            // Keyed as fixLine keys it; a fix saved under the old key is found by that key too.
+            const start = facts.transcript ? lineStart(facts.transcript, timeToUs(op.from)) : timeToUs(op.from) / 1e6;
+            const saved = project.transcript?.fixes ?? {};
+            const key = transcriptFixKey(start) in saved ? transcriptFixKey(start) : oldTranscriptFixKey(start);
+            const { [key]: removed, ...rest } = saved;
 
             if (removed === undefined) {
                 const known = Object.keys(project.transcript?.fixes ?? {}).map((ms) => Number(ms) / 1000);
@@ -4493,9 +4529,10 @@ export function transcriptLines(raw: unknown, project: EditProject): TranscriptL
 
     const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
     const fixes = project.transcript?.fixes ?? {};
+    const owned = new Set(parsed.data.segments.map((segment) => transcriptFixKey(segment.start)));
     return parsed.data.segments
         .map((segment) => {
-            const fix = fixes[String(Math.round(segment.start * 1000))];
+            const fix = lineFixOf(fixes, segment.start, owned);
             return fix === undefined ? segment : { ...segment, text: fix };
         })
         .filter((segment) => segment.text.trim())
