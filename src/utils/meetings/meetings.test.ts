@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { DEFAULT_OCR_TILE_PX } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
@@ -60,7 +61,13 @@ describe("meetings config", () => {
     test("capture.ocr: an old file gains the tile default; explicit read choices are kept", () => {
         const old = meetingsConfigSchema.parse({ version: 3, global: { capture: { threshold: 0.05 } } });
         expect(old.global.capture.threshold).toBe(0.05);
-        expect(old.global.capture.ocr).toEqual({ threshold: 0, skipTextless: false, region: "frame", read: "tiles" });
+        expect(old.global.capture.ocr).toEqual({
+            threshold: 0,
+            skipTextless: false,
+            region: "frame",
+            read: "tiles",
+            tilePx: DEFAULT_OCR_TILE_PX,
+        });
 
         const set = meetingsConfigSchema.parse({
             global: { capture: { ocr: { threshold: 0.1, skipTextless: true, region: "changed" } } },
@@ -70,6 +77,7 @@ describe("meetings config", () => {
             skipTextless: true,
             region: "changed",
             read: "tiles",
+            tilePx: DEFAULT_OCR_TILE_PX,
         });
         expect(
             meetingsConfigSchema.parse({ global: { capture: { ocr: { read: "tiles" } } } }).global.capture.ocr.read

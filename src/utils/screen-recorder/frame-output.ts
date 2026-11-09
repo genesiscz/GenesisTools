@@ -75,7 +75,7 @@ export type JpegConverter = (source: string, target: string, quality: number) =>
 export type OcrRecognizer = (
     image: string,
     languages: string[],
-    options?: { level?: OcrLevel; fastFallback?: boolean; read?: OcrRead }
+    options?: { level?: OcrLevel; fastFallback?: boolean; read?: OcrRead; tilePx?: number }
 ) => Promise<OcrResult>;
 /** Writes the `box` of an image (pixels, top-left origin) to `target` as a PNG. */
 export type ImageCropper = (source: string, target: string, box: PixelBox) => Promise<void>;
@@ -424,7 +424,7 @@ export class FrameOutput {
         }
 
         try {
-            const read = await recognize(path, settings.languages, { read: settings.read });
+            const read = await recognize(path, settings.languages, { read: settings.read, tilePx: settings.tilePx });
             this.lastRead.set(displayId, read);
             return { read };
         } catch (error) {

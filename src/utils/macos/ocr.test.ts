@@ -3,12 +3,12 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getDarwinKit } from "./darwinkit";
-import { mergeRegionOcrResults, mergeTiledOcrResults, planOcrTiles, recognizeText } from "./ocr";
+import { DEFAULT_OCR_TILE_PX, mergeRegionOcrResults, mergeTiledOcrResults, planOcrTiles, recognizeText } from "./ocr";
 import { boxesHolding, changedLines, frameBoxes, matchingBoxes, type OcrBox, padBox, pixelBox } from "./ocr-boxes";
 
 describe("region tiles", () => {
     it.skipIf(process.platform !== "darwin")(
-        "reads two regions of the original image with correction off, without an empty fast retry",
+        "reads the planned regions of the original image with correction off, without an empty fast retry",
         async () => {
             const image = join(mkdtempSync(join(tmpdir(), "ocr-region-")), "frame.bmp");
             const bitmap = Buffer.alloc(62);
@@ -23,7 +23,7 @@ describe("region tiles", () => {
             writeFileSync(image, bitmap);
             const native = spyOn(getDarwinKit().vision, "ocr").mockResolvedValue({ text: "", blocks: [] });
             try {
-                expect(await recognizeText(image, { read: "tiles", languages: ["en-US"] })).toEqual({
+                expect(await recognizeText(image, { read: "tiles", tilePx: 1, languages: ["en-US"] })).toEqual({
                     text: "",
                     blocks: [],
                 });
@@ -46,25 +46,52 @@ describe("region tiles", () => {
                 ]);
                 native.mockClear();
                 await recognizeText(image, { read: "frame", fastFallback: false });
-                expect(native).toHaveBeenCalledWith({ path: image, languages: ["en-US"], level: "accurate" });
+                expect(native).toHaveBeenCalledWith(
+                    { path: image, languages: ["en-US"], level: "accurate" },
+                    undefined
+                );
             } finally {
                 native.mockRestore();
             }
         }
     );
 
-    it("uses two overlapping strips for ultrawide frames, one for ordinary and portrait frames", () => {
-        expect(planOcrTiles({ width: 2880, height: 1205 })).toEqual([
-            { x: 0, y: 0, width: 0.53, height: 1 },
-            { x: 0.47, y: 0, width: 0.53, height: 1 },
-        ]);
-        expect(planOcrTiles({ width: 2000, height: 1000 })).toHaveLength(2);
+    it("reads a grid of tiles at most tilePx on a side, top row first, each reaching past its inner edges", () => {
+        const ultrawide = planOcrTiles({ width: 2880, height: 1205 });
+        expect(ultrawide).toHaveLength(6);
+        expect(ultrawide[0]).toEqual({ x: 0, y: 0.47, width: 1 / 3 + 0.03, height: 0.53 });
+        expect(ultrawide[5].x).toBeCloseTo(2 / 3 - 0.03);
+        expect(ultrawide[5].y).toBe(0);
+        expect(planOcrTiles({ width: 2560, height: 1440 })).toHaveLength(6);
+        expect(planOcrTiles({ width: 2880, height: 1205 }, 720)).toHaveLength(8);
+        expect(planOcrTiles({ width: 800, height: 600 })).toEqual([{ x: 0, y: 0, width: 1, height: 1 }]);
         for (const size of [
-            { width: 1920, height: 1080 },
+            { width: 2880, height: 1861 },
             { width: 1440, height: 2560 },
         ]) {
-            expect(planOcrTiles(size)).toEqual([{ x: 0, y: 0, width: 1, height: 1 }]);
+            for (const tile of planOcrTiles(size)) {
+                expect(tile.width * size.width).toBeLessThanOrEqual(DEFAULT_OCR_TILE_PX + 0.06 * size.width);
+                expect(tile.height * size.height).toBeLessThanOrEqual(DEFAULT_OCR_TILE_PX + 0.06 * size.height);
+            }
         }
+    });
+
+    it("keeps the whole line when a seam tile read only a cut piece of it, in either order", () => {
+        const whole = {
+            text: "Monitor event: dialog open",
+            confidence: 0.6,
+            bounds: { x: 0.3, y: 0.5, width: 0.3, height: 0.02 },
+        };
+        const piece = { text: "event: dia", confidence: 1, bounds: { x: 0.45, y: 0.5, width: 0.08, height: 0.02 } };
+        for (const parts of [
+            [[piece], [whole]],
+            [[whole], [piece]],
+        ]) {
+            const merged = mergeRegionOcrResults(parts.map((blocks) => ({ text: "", blocks })));
+            expect(merged.blocks).toEqual([whole]);
+        }
+        const elsewhere = { ...piece, bounds: { ...piece.bounds, y: 0.2 } };
+        expect(mergeRegionOcrResults([{ text: "", blocks: [whole, elsewhere] }]).blocks).toHaveLength(2);
     });
 
     it("preserves full-image bounds and repeated text elsewhere, deduplicating only spatially overlapping lines", () => {
