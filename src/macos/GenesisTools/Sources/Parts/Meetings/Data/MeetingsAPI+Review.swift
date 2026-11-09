@@ -55,8 +55,29 @@ struct DecisionAction: Codable, Equatable, Hashable {
     var unlabel: [String]?
     /// revert: the entry it undoes.
     var token: String?
+    /// assign (b-people): the person a stretch or lines are given to, their address, and what is given.
+    var person: String?
+    var email: String?
+    var stretches: [Stretch]?
+    var lines: [LinePoint]?
+
+    /// A stretch of one label an `assign` gives to a person.
+    struct Stretch: Codable, Equatable, Hashable {
+        var label: String?
+        var fromSec: Double
+        var toSec: Double
+    }
 
     init(kind: String) { self.kind = kind }
+
+    static func assign(_ person: String, email: String? = nil, stretches: [Stretch]? = nil, lines: [LinePoint]? = nil) -> DecisionAction {
+        var action = DecisionAction(kind: "assign")
+        action.person = person
+        action.email = email
+        action.stretches = stretches
+        action.lines = lines
+        return action
+    }
 
     static func confirm(_ items: [String], speaker: String? = nil, proposed: String? = nil) -> DecisionAction {
         var action = DecisionAction(kind: "confirm")

@@ -14,14 +14,6 @@ enum MeetingsPreferences {
         case always, noChoices
         func shows(choices: [String]) -> Bool { self == .always || choices.isEmpty }
     }
-    /// Where a transcript time plays: in this window (ffplay with no window of its own, which the window's player bar
-    /// pauses and stops), or in the player the meetings config names (VLC first, with its own window and controls).
-    enum Player: String, CaseIterable {
-        case window, app
-        /// The `--player` the window passes to `tools meetings play`; nil leaves the config's choice.
-        var cliPlayer: String? { self == .window ? "ffplay" : nil }
-    }
-
     static let openOnKey = "meetings.window.openOn"
     static let daysKey = "meetings.window.days"
     static let timelineKey = "meetings.timeline.lines"
@@ -74,10 +66,6 @@ enum MeetingsPreferences {
         defaults.string(forKey: typedAnswerKey).flatMap(TypedAnswer.init(rawValue:)) ?? .always
     }
 
-    static func player(_ defaults: UserDefaults = .standard) -> Player {
-        defaults.string(forKey: playerKey).flatMap(Player.init(rawValue:)) ?? .window
-    }
-
     static func noticeSeconds(_ defaults: UserDefaults = .standard) -> Int {
         let value = defaults.integer(forKey: noticeSecondsKey)
         return value > 0 ? value : 30
@@ -101,6 +89,7 @@ enum MeetingsPreferences {
     /// starts; no reader uses the old keys.
     static func migrate(_ defaults: UserDefaults = .standard) {
         if defaults.object(forKey: legacyUndoSecondsKey) != nil { defaults.removeObject(forKey: legacyUndoSecondsKey) }
+        if defaults.object(forKey: playerKey) != nil { defaults.removeObject(forKey: playerKey) }
         if let old = defaults.string(forKey: legacyTypedAnswerKey) {
             if defaults.object(forKey: typedAnswerKey) == nil { defaults.set(old, forKey: typedAnswerKey) }
             defaults.removeObject(forKey: legacyTypedAnswerKey)

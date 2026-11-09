@@ -618,6 +618,11 @@ enum MeetingsFormat {
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 
+    /// "1 s", "0.5 s": a short setting's seconds.
+    static func seconds(_ value: Double) -> String {
+        value == value.rounded() ? "\(Int(value)) s" : String(format: "%.1f s", value)
+    }
+
     /// "1 h 05 min", "42 min", "50 s".
     static func length(_ seconds: Double?) -> String? {
         guard let seconds, seconds > 0 else { return nil }

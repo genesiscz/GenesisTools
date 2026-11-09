@@ -16,12 +16,12 @@ struct MeetingsRootView: View {
             .overlay(alignment: .bottom) {
                 ZStack(alignment: .bottom) {
                     Color.clear.frame(height: 0)
-                    MeetingsPlayerBar(playback: model.playback,
-                                      title: model.playback.meeting.flatMap { model.meeting($0)?.displayTitle })
+                    MeetingsPlayerBar(player: model.player,
+                                      title: model.player.meeting.flatMap { model.meeting($0)?.displayTitle })
                 }
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { dockHeight = $0 }
             }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.playback.state == .idle)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.player.isActive)
     }
 
     private var panes: some View {

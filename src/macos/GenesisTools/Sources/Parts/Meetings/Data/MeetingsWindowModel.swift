@@ -81,8 +81,8 @@ final class MeetingsWindowModel {
     /// The settings side panel is open in the meeting's trailing pane slot (it replaces the transcript pane there).
     /// b-swift-settings-contacts adds its toggle and remembers it.
     var sidePanelOpen = false
-    /// The meeting audio that plays from a transcript time, shown and stopped by the bar under the window.
-    var playback = MeetingsPlayback()
+    /// The Moment player: every Moment of the window plays here, one at a time, with its context stack (F1b).
+    var player = MomentPlayer()
     private var overviewGeneration = 0
     private let loadDetail: @MainActor (MeetingDetailModel) -> Void
     private let refreshLive: @MainActor (MeetingDetailModel) -> Void
