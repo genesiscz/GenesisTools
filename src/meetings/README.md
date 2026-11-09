@@ -124,6 +124,9 @@ A meeting argument is a meeting id, a unique prefix of it, `last`, or a source r
   that and the sections derived from it (one per join or leave). Details under [Attendance](#attendance).
 - `play <meeting> --at <time> [--before 5] [--player vlc|ffplay] [--json] [--no-start]`: play the meeting's audio
   from a moment, to hear a voice before you confirm it. Details under [Hearing the audio](#hearing-the-audio).
+- `play <meeting> --item Q12|i42 | --at 1:49:48 [--to 1:50:02] | --target '<json>' [--clip] [--no-start] [--json]`:
+  the Moment of a target: the bounded clip `listen` would play, with its pad and its tone. Details under
+  [Hearing the audio](#hearing-the-audio).
 - `listen <meeting> [--item Q12]`: answer the open questions by ear, one at a time. Details under
   [Answering questions with listen](#answering-questions-with-listen).
 - `listen <meeting> --item Q12 --answer "<text>" [--comment <text>]`: answer one question without audio. `"none of
@@ -309,7 +312,8 @@ whose text repeats another open question, one that decides no item, and one with
 ### Answering questions with listen
 
 `listen` asks the open questions one at a time. Each range is cut with ffmpeg, padded by `playback.listen.padSec`
-(asked on the first run), with a short tone just before the asked words (`beep`, `beepLeadSec` 0.4 s). The clip plays
+(asked on the first run), with a short tone just before the asked words (`playback.listen.tone`: `enabled`, `leadSec`
+0.4 s, and its `sound` as `{ hz, sec, volume }`). The clip plays
 `delaySec` (2 s) after the question shows, then again after each `repeatGapSec` (1 s) pause until the question is
 answered (`repeat`, on by default), also while a "Something else…" answer is typed. Clips play with
 `playback.listen.player` (`afplay` by default, then `vlc`, then `ffplay`).
@@ -351,6 +355,24 @@ earlier (`playback.beforeSec`, 5).
   without sound (with `--json`: the same object without `pid`).
 - A time more than 30 s after the last speech the source keeps is refused with that speech's time.
 - Errors exit 1 with the sentence on stderr.
+
+`play` with `--item`, `--at` and `--to`, `--target` or `--clip` plays the Moment of a target instead: the bounded
+clip `listen` would play, with its pad and the tone before the asked spot (`playback.listen.padSec`,
+`playback.listen.tone`).
+
+- `--item` takes an item id or a question's number, `--at` with `--to` a range, `--at` with `--clip` a time (the rest
+  of its line, 4 to 15 s), and `--target` any target as JSON: `{"kind":"item","id":"Q12"}`,
+  `{"kind":"time","atSec":90}`, `{"kind":"range","fromSec":60,"toSec":75}`,
+  `{"kind":"selection","from":{"atSec":60,"fraction":0.5},"to":{"atSec":70}}` (words picked in the transcript: a
+  line's start and how far into its text) or `{"kind":"stretch","atSec":600}` (one speaker's turn, `speaker` to pick
+  whose).
+- `--clip` cuts it to `<meeting folder>/moments/<label>-<key>.wav` and plays nothing; `--no-start` only plans it;
+  without either the clip plays once in `playback.listen.player`.
+- `--json` prints the Moment: `{ meeting, target, label, fromSec, toSec, padSec, startSec, endSec, spotSec, tone?: {
+  atSec, sound }, delaySec, repeatGapSec?, screen?: [{ file, path, at, meetingSec, displayId? }], path?, player?,
+  pid? }`. `screen` names the frame on each display at the spot when the screen was recorded then.
+- A target the meeting does not have exits 1 with `[unknown-item]`, `[no-time]`, `[bad-range]`, `[unknown-line]`,
+  `[no-speech]` or `[past-the-end]` leading the sentence.
 
 ### Attendance
 
@@ -813,7 +835,7 @@ it was. A key that varies by recorder, source or language sits under that axis:
 
 ```jsonc
 {
-    "version": 3,
+    "version": 4,
     "global": {
         "dictionary": { "abbrExpansion": "every", "entries": [] },
         "language": "cs",
@@ -862,7 +884,8 @@ The main keys and their defaults (`config show` lists every one):
   [OCR settings](#ocr-settings)), `recorders.native.*` and `recorders.native.audio.*` (see [Sound](#sound)).
 - `global.playback`: `player` (`vlc`, then `ffplay`), `beforeSec` (5). `global.playback.listen`: `player` (`afplay`,
   then `vlc`, then `ffplay`), `padSec` (asked on the first run), `roundCap` (12), `minPriority` (0.5), `delaySec` (2),
-  `beep` (on), `beepLeadSec` (0.4), `repeat` (on), `repeatGapSec` (1).
+  `tone` (`enabled` on, `leadSec` 0.4, `sound` `{ hz: 880, sec: 0.15, volume: 0.6 }`), `repeat` (on), `repeatGapSec`
+  (1).
 - `global.suggest`: `listenBelow` (0.6), `applyAbove` (0.5), `questionCap` (12), `restatedIdentifiers` (`skip` or
   `mark`).
 - `global.summary`: `actionHeadings` and `decisionHeadings`, the summary headings that mark action items and
@@ -900,7 +923,9 @@ A version 1 file is rewritten once on the first read: `global.render` moves to `
 `playback.listen.budget` to both `global.suggest.questionCap` and `playback.listen.roundCap`, and
 `projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. A version 2 file moves
 `projects.<p>.match.calendar.titles` to `projects.<p>.match.title.words`, since the words test the meeting title from
-any source. The code reads only the new places. A file of a newer version still reads (the keys this code knows).
+any source. A version 3 file moves `playback.listen.beep` to `playback.listen.tone.enabled` and `beepLeadSec` to
+`tone.leadSec`, since the tone gained its sound and belongs to every Moment. The code reads only the new places. A
+file of a newer version still reads (the keys this code knows).
 
 ### Environment
 
