@@ -714,11 +714,19 @@ export function wholeProject(source: EditProject["source"]): EditProject {
 
 // R6 10 effects sheet
 /**
- * The edit with every effect kept and its clips replaced by the whole recording at speed 1, so an output second is
- * the same source second: a sheet of source times drawn through the edit's zooms, hidden parts, texts and frame.
+ * The edit with its effects and its clips replaced by the whole recording at speed 1, so an output second is the same
+ * source second: a sheet of source times drawn through the edit's zooms, hidden parts, texts and frame. The whole clip
+ * has no cuts, so the export's snap of a hidden part to a cut is baked into the parts first (snappedRedactionSpans).
+ * The tilt and the progress bar run on the export's clock, which a source moment inside a cut does not have, so they
+ * are left out; an output sheet shows them.
  */
 export function effectsOnSourceTime(project: EditProject): EditProject {
-    return { ...project, clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: project.source.durationUs, speed: 1 }] };
+    const { tilt: _tilt, progress: _progress, ...effects } = project;
+    return {
+        ...effects,
+        ...(project.redactions ? { redactions: snappedRedactionSpans(project) } : {}),
+        clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: project.source.durationUs, speed: 1 }],
+    };
 }
 
 /** Reads an edit file; refuses a newer version instead of reading it wrongly. */

@@ -51,6 +51,7 @@ import {
     describeProject,
     editOpSchema,
     editProjectSchema,
+    effectsOnSourceTime,
     findInTranscript,
     opPlacementWarnings,
     outputDurationUs,
@@ -3110,6 +3111,26 @@ describe("a redact op's style options", () => {
         // The options of the right style still apply.
         expect(apply({ style: "pixelate", cell: 24 }).redactions?.[0]).toMatchObject({ cell: 24 });
         expect(apply({ style: "spotlight", dim: 0.6 }).redactions?.[0]).toMatchObject({ dim: 0.6 });
+    });
+});
+
+describe("the effects sheet on source time", () => {
+    test("bakes the export's cut snap into the hidden parts and leaves the export-clock tilt and progress bar out", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+        let project = applyOp(wholeProject(source), { op: "cut", from: 5, to: 6 });
+        project = applyOp(project, {
+            op: "redact",
+            from: 2,
+            to: 4.8,
+            rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+        });
+        project = editProjectSchema.parse({ ...project, tilt: {}, progress: {} });
+        expect(project.tilt).toBeDefined();
+        const sheet = effectsOnSourceTime(project);
+        expect(sheet.redactions?.map((part) => [part.startUs, part.endUs])).toEqual([[2_000_000, 5_000_000]]);
+        expect(sheet.tilt).toBeUndefined();
+        expect(sheet.progress).toBeUndefined();
+        expect(sheet.clips).toEqual([{ id: "c00000000", fromUs: 0, toUs: 10_000_000, speed: 1 }]);
     });
 });
 
