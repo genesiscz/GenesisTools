@@ -349,14 +349,14 @@ final class HubInboxUXTests: XCTestCase {
     }
 
     /// The card's Context and Code sections, which the widget's decision card draws with the same views (GenesisKit
-    /// DecisionDetailViews.swift): the fold with Show all, the cited path and its lines, the confidence chip and the
+    /// DecisionDetailViews.swift): the fold with Show more, the cited path and its lines, the confidence chip and the
     /// Recommended badge. Rendered in a window that is never ordered front, after the code's highlight has landed.
     /// `HUB_INBOX_SHOTS=<folder>` writes the PNGs, the same before and after a change, so a pair can be compared.
     @MainActor
     func testTheCardDrawsItsContextAndCode() throws {
         let open = try Self.decision(Self.contextFixture(status: "waiting"))
         let text = try Self.drawnText(Self.render(card: open, name: "inbox-card-context-open"))
-        for expected in ["Context", "Show all", "Code", "src/agents/lib/hooks/tool-rules.ts:9", "High confidence",
+        for expected in ["Context", "Show more", "Code", "src/agents/lib/hooks/tool-rules.ts:9", "High confidence",
                          "Recommended", "RM_USER_VERB", "allow at 1 GB or more"] {
             XCTAssertTrue(text.contains(expected), "\(expected) in: \(text)")
         }
