@@ -1,9 +1,9 @@
 # What genesiscz wants from a UI
 
 The maintainer of GenesisTools (genesiscz) reviews every surface by using it for real, usually in the middle of a
-task, often with agents working beside him. His requests come as screenshots with a list of what got in the way.
-This file generalizes those requests into principles, so an agent can find the next gap of the same kind before he
-has to point at it. Each principle names where it came from; `SKILL.md` ("What Martin asks for") holds the older,
+task, often with agents working beside them. Their requests come as screenshots with a list of what got in the way.
+This file generalizes those requests into principles, so an agent can find the next gap of the same kind before they
+have to point at it. Each principle names where it came from; `SKILL.md` ("What Martin asks for") holds the older,
 widget-specific lines.
 
 Use it two ways: before you design or change a surface (do these without being asked), and when you audit one (each
@@ -23,28 +23,28 @@ does not?
 
 A confirmation, an error or a new row never pushes content. Notices float over the content (the GenesisKit notice,
 with Undo, for a configurable time, 30 s for a decision). An answered or removed row keeps its place, marks itself
-and folds its controls with a short animation; it does not vanish and pull the list up. Lists never reorder while he
+and folds its controls with a short animation; it does not vanish and pull the list up. Lists never reorder while they
 reads them.
 
-Ask: after each action, is the next thing he wants to look at still where it was?
+Ask: after each action, is the next thing they want to look at still where it was?
 
 ## 3. Every reference is live
 
 A time is a play button for that span. A count opens what it counts. A file, a commit, a frame, a document line, a
-person is a link to it. A reference he has to copy and look up by hand is a defect.
+person is a link to it. A reference they have to copy and look up by hand is a defect.
 
-Ask: which text on screen names something he could want to see or hear, and does a click give it to him?
+Ask: which text on screen names something they could want to see or hear, and does a click give it to them?
 
 ## 4. Show the moment, not the whole stream
 
 Audio or video plays a bounded span around the point in question, with the point marked (a marker on a timeline, a
-tone) and a way to jump straight to it. Never play to the end by default, never make him wait 5 to 10 s for the part
+tone) and a way to jump straight to it. Never play to the end by default, never make them wait 5 to 10 s for the part
 that matters. Zooming out, switching views or opening details never stops what plays.
 
 ## 5. A question says what it asks at a glance
 
 A question or decision is structured: who, what was said, when, what it decides, the choices. Bullet points, the
-quoted text set apart from the explanation, the decisive part first. If he must read a whole paragraph to learn
+quoted text set apart from the explanation, the decisive part first. If they must read a whole paragraph to learn
 what is being asked, it is a defect. The answer controls sit next to the question, with the likely answer first.
 
 ## 6. Answer in place, fast, and reversibly
@@ -63,25 +63,25 @@ defect even when both work. Shared pieces live in GenesisKit.
 
 Every choice a reasonable user could want another way (how much context to play, a tone and its sound, autoplay,
 how long a notice stays, a placement, an order) is a setting with the best pick as its default
-(`.claude/rules/opinionated-settings.md`). For a working surface he wants those settings reachable from the surface
+(`.claude/rules/opinionated-settings.md`). For a working surface they want those settings reachable from the surface
 itself (a side panel or popover), not only in a far Settings window.
 
 ## 9. Say what the system knows, and what an action will also change
 
 If the engine knows that one fix also affects other items, sections or meetings, the action says so before it
-happens and lets him choose: "Just this" or a selection, each part checkable on the spot (playable, viewable). A
+happens and lets them choose: "Just this" or a selection, each part checkable on the spot (playable, viewable). A
 merge or a rename names what it touches. Silent side effects and silent no-ops are defects.
 
 ## 10. Build from what is already known
 
 Inputs complete from the data the system already has (calendar people, contacts, earlier meetings, project names)
-and still accept a new value. A list of people, projects or terms that exists in three places is one list he can
+and still accept a new value. A list of people, projects or terms that exists in three places is one list they can
 manage (add, merge, rename) in one view.
 
-## 11. Windows stay where he put them; agents never take his place
+## 11. Windows stay where they put them; agents never take their place
 
-A floating panel he opened stays open until he closes it; focus moving to another app (often an agent's) does not
-close it (the capture picker, 2026-11-09). Background work never steals focus or moves his pointer.
+A floating panel they opened stays open until they close it; focus moving to another app (often an agent's) does not
+close it (the capture picker, 2026-11-09). Background work never steals focus or moves their pointer.
 
 ## 12. Failures are readable and actionable
 
@@ -90,12 +90,12 @@ for agents" or "Draft an issue" (the recorder failure notice, 2026-11-09). Raw s
 
 ## 13. More data, shown honestly
 
-When the system reads less than is there (OCR missing small text, a transcript missing a stretch), he wants it to
+When the system reads less than is there (OCR missing small text, a transcript missing a stretch), they want it to
 read more, and the view to show both what changed and everything it read ("All text" beside "Changed lines",
 2026-11-09), with the counts.
 
 ## How to use this in an audit
 
 For each view: walk principles 1 to 13 as questions, note each gap with the screenshot or the code line, score it 1
-to 10 by how often he would meet it and how much it slows him, and propose the fix in terms of the shared engine and
-GenesisKit component it should use. Find gaps of the same kind as his examples; do not stop at his examples.
+to 10 by how often they would meet it and how much it slows them, and propose the fix in terms of the shared engine and
+GenesisKit component it should use. Find gaps of the same kind as their examples; do not stop at their examples.
