@@ -3235,14 +3235,16 @@ struct SessionDetailView: View {
     @Environment(\.hubGlass) private var glass
 
     /// A small count on the button: changed files, open decisions. `.pending` keeps the badge's place
-    /// while there is no count yet, so the buttons do not move when the diff has loaded.
+    /// while there is no count yet, so the buttons do not move when the diff has loaded. The changed files show
+    /// once, on Changes: Files lists the same changed files, and two badges with the same number read as two
+    /// different counts (hub UX council, 2026-11-09).
     private func badge(for tab: HubTab) -> PaneBadge {
         switch tab {
-        case .changes, .files:
+        case .changes:
             let count = model.review?.files.count ?? 0
             return count > 0 ? .count(count) : .pending
         case .decisions: return .count(model.decisions.filter(\.isOpen).count)
-        case .transcript: return .none
+        case .files, .transcript: return .none
         }
     }
 
@@ -3445,9 +3447,21 @@ private struct PaneToggle: View {
             .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: targeted)
         }
         .buttonStyle(.genHoverPlain())
-        .instantTooltip(open
+        .instantTooltip((open
             ? "Hide the \(tab.title) pane · option-click: only this one · drag onto another to swap"
             : "Show the \(tab.title) pane · option-click: only this one · drag onto another to swap")
+            + (badgeMeaning.map { "\n\($0)" } ?? ""))
+        .accessibilityValue(Text(badgeMeaning ?? ""))
+    }
+
+    /// What the badge counts, in words: the tooltip and VoiceOver say it, the badge alone is a bare number.
+    private var badgeMeaning: String? {
+        guard case .count(let count) = badge else { return nil }
+        switch tab {
+        case .changes: return Plural.count(count, "changed file")
+        case .decisions: return Plural.count(count, "open decision")
+        case .files, .transcript: return nil
+        }
     }
 
     private func dragAndDrop(_ view: some View) -> some View {

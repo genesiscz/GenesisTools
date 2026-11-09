@@ -232,8 +232,10 @@ struct PRReviewBar: View {
     @ViewBuilder
     private var summary: some View {
         if let payload = store.payload {
-            let openCount = payload.threads.filter { !$0.resolved }.count
-            let variants = Self.summaryVariants(threads: payload.threads.count, open: openCount, drafts: payload.draftCount)
+            let counts = PRThreadCounts(payload.threads)
+            let openCount = counts.open
+            let variants = Self.summaryVariants(threads: counts.total, open: counts.open, outdated: counts.outdated,
+                                                drafts: payload.draftCount)
             ViewThatFits(in: .horizontal) {
                 ForEach(variants.indices, id: \.self) { index in
                     // The shortest one never truncates: a cut word ("0d") read as a code.
@@ -246,9 +248,10 @@ struct PRReviewBar: View {
             }
                 .foregroundColor(openCount > 0 ? ReviewPalette.modified : ReviewPalette.dim)
                 .lineLimit(1)
-                .instantTooltip(model.showsLiveThreadsInline
-                    ? "Threads on the PR; the ones that are not outdated also sit on their lines in the diff"
-                    : "Threads on the PR; they sit on their lines only in the Branch scope or the PR's range")
+                .instantTooltip((model.showsLiveThreadsInline
+                    ? "Threads on the PR; the ones that are not outdated also sit on their lines in the diff."
+                    : "Threads on the PR; they sit on their lines only in the Branch scope or the PR's range.")
+                    + " Open: unresolved and not outdated, the same count as the PR list. Outdated: unresolved, but a later push moved their lines.")
         } else if let error = store.error {
             Text(verbatim: "Threads did not load: \(error)")
                 .foregroundColor(ReviewPalette.removed)
@@ -264,12 +267,18 @@ struct PRReviewBar: View {
     /// The bar's count, widest first. A narrow diff pane drops whole words before numbers, zero
     /// drafts go first of all, and a pending draft count stays to the last variant (Submit review
     /// sends them).
-    static func summaryVariants(threads: Int, open: Int, drafts: Int) -> [String] {
+    /// "Open" and "outdated" are `PRThreadCounts`: the open count is the PR list row's, whatever the bar's width.
+    static func summaryVariants(threads: Int, open: Int, outdated: Int = 0, drafts: Int) -> [String] {
         let draftText = drafts == 1 ? "1 draft" : "\(drafts) drafts"
-        if drafts == 0 {
-            return ["\(threads) threads · \(open) open", "\(open)/\(threads) open", "\(open) open"]
+        var counts = ["\(threads) threads · \(open) open"]
+        if outdated > 0 {
+            counts = ["\(threads) threads · \(open) open · \(outdated) outdated", "\(open) open · \(outdated) outdated"]
         }
-        return ["\(threads) threads · \(open) open · \(draftText)", "\(open)/\(threads) open · \(draftText)", "\(open) open · \(draftText)", draftText]
+        counts += ["\(open)/\(threads) open", "\(open) open"]
+        if drafts == 0 {
+            return counts
+        }
+        return counts.map { "\($0) · \(draftText)" } + [draftText]
     }
 }
 
@@ -677,7 +686,7 @@ struct PRThreadsList: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 PRFilterChip(title: "Open", count: openCount, on: !showClosed,
-                             tooltip: "Open threads, your drafts, and the threads on a newer push") { showClosed = false }
+                             tooltip: "Unresolved threads that are not outdated for this diff, your drafts, and the threads on a newer push") { showClosed = false }
                 PRFilterChip(title: "All", count: all.count, on: showClosed,
                              tooltip: "Also the resolved threads and the outdated ones") { showClosed = true }
                 Rectangle().fill(ReviewPalette.hairline).frame(width: 1, height: 14)
