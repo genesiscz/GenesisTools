@@ -5,6 +5,7 @@ import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/
 import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
 import { decisionActionSchema, journalEntrySchema, skipSchema } from "../decision-actions";
+import { MOMENT_ERROR_CODES, MOMENT_STATE_CODES, momentSchema, momentTargetSchema } from "../moment-schema";
 
 /**
  * The Meetings service's interface: one descriptor for the window, every `tools meetings` command, the REPL and an MCP
@@ -255,13 +256,98 @@ const journalRead = defineMethod({
     effect: "read",
 });
 
+/** A Moment's request: the meeting, what to play, and the pad around it (the setting's when absent). */
+const momentParams = z
+    .object({
+        meeting: meetingRef,
+        target: momentTargetSchema,
+        /** Seconds of audio around an item, a range or a selection; `playback.listen.padSec` when absent. */
+        padSec: z.number().min(0).max(60).optional(),
+        /** False skips the screen frames at the spot. */
+        screen: z.boolean().optional(),
+    })
+    .strict();
+
+/** Why a Moment cannot play: the target's own refusal (then no Moment), or a state of this Mac or meeting. */
+const momentCannotSchema = z.object({
+    code: z.enum([...MOMENT_ERROR_CODES, ...MOMENT_STATE_CODES]),
+    message: z.string(),
+});
+
+const momentPlan = defineMethod({
+    name: "moment.plan",
+    params: momentParams,
+    result: z.object({ moment: momentSchema.optional(), cannot: momentCannotSchema.optional() }),
+    resultName: "{ moment?: Moment, cannot?: { code, message } }",
+    doc: "The Moment of a target (its span, pad, asked spot `spotSec`, tone at `tone.atSec`, and the screen frame with the OCR hit first), and why it cannot play when it cannot: a target refusal (unknown-item, too-long, past-the-end, …: no Moment) or a state (no-audio, recording, no-ffmpeg: the Moment stays). Cuts nothing.",
+    effect: "read",
+});
+
+const momentClip = defineMethod({
+    name: "moment.clip",
+    params: momentParams,
+    result: momentSchema.extend({ path: z.string() }),
+    resultName: "Moment & { path }",
+    doc: "The Moment cut to a WAV in the clip cache (a clip cut before for the same recording is used again). Reports `$/progress` while ffmpeg cuts and stops on `$/cancel`; a newer moment.clip on the same connection cancels the older cut (answered with 1013, cancelled). Refused with `unplayable` and data.reason (a moment.plan code). Writes only the cache.",
+    effect: "read",
+});
+
+const tonePreview = defineMethod({
+    name: "tone.preview",
+    params: z
+        .object({
+            /** The sound to hear; the meetings config's `playback.listen.tone.sound` when absent. */
+            sound: z
+                .object({
+                    hz: z.number().min(50).max(8000),
+                    sec: z.number().min(0.02).max(2),
+                    volume: z.number().min(0).max(1),
+                })
+                .optional(),
+        })
+        .strict(),
+    result: z.object({ path: z.string(), sound: z.object({ hz: z.number(), sec: z.number(), volume: z.number() }) }),
+    resultName: "{ path, sound }",
+    doc: "The tone alone as a WAV in the clip cache, for a sound picker's Play button (a preset writes its hz, sec and volume).",
+    effect: "read",
+});
+
+const meetingAudio = defineMethod({
+    name: "meeting.audio",
+    params: z.object({ meeting: meetingRef }).strict(),
+    result: z.object({
+        path: z.string(),
+        /** Audio streams: one plays as the file; more are mixed into rolling Moments. */
+        tracks: z.number().int().nonnegative(),
+        channels: z.number().int().nonnegative(),
+        durationSec: z.number().nonnegative(),
+    }),
+    resultName: "{ path, tracks, channels, durationSec }",
+    doc: "The meeting's recording on this Mac, from ffprobe: the window plays it directly when it has one track (an instant seek, R3, R4). Refused with `unplayable` (no-audio) when no source keeps it.",
+    effect: "read",
+});
+
 export const meetingsApi = defineApi({
     id: "meetings-service",
     global: "meetings",
     title: "Meetings service",
     summary:
         "The one owner of the meetings store while it runs: typed reads for the Meetings window, the CLI and agents, and events for the open meeting.",
-    methods: [hello, list, show, transcript, revisions, decisionPlan, decisionApply, decisionRevert, journalRead],
+    methods: [
+        hello,
+        list,
+        show,
+        transcript,
+        revisions,
+        decisionPlan,
+        decisionApply,
+        decisionRevert,
+        journalRead,
+        momentPlan,
+        momentClip,
+        tonePreview,
+        meetingAudio,
+    ],
     notes: [
         "`subscribe { meeting?, events? }` (answered by the transport) starts the notifications; no events: all of them, no meeting: every meeting's.",
         "A refusal is JSON-RPC error 1100 with `data.code` naming why (MEETINGS_ERROR_CODES).",
@@ -347,6 +433,8 @@ export const MEETINGS_ERROR_CODES = [
      * the entry that decided the first of them.
      */
     "already-decided",
+    /** A Moment cannot be cut or the recording read: data `{ code, reason }`, reason a `moment.plan` code. */
+    "unplayable",
     /** The first call on the connection was not `hello`. */
     "no-hello",
     /** Anything else: the message says what. */

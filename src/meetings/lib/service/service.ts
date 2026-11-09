@@ -123,6 +123,7 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
                     signal: context.signal,
                     hello: (hello) => greet(connection, hello),
                     emit: (event, notification) => emit(event, notification),
+                    progress: (update) => context.progress(update),
                 });
             } catch (error) {
                 throw asRefusal(error);
@@ -147,6 +148,8 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
         sourceRoot: options.sourceRoot,
         rivalWaitMs: options.rivalWaitMs,
         onStopped: options.onStopped,
+        // The next row's click cuts its Moment; the older cut it replaces stops at once (G-PLAY-10).
+        supersedes: (method) => (method === "moment.clip" ? method : undefined),
     });
 
     if (start.status === "running") {

@@ -9,6 +9,7 @@ import {
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { RpcError } from "@genesiscz/utils/rpc/errors";
+import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { TOOL } from "../shared";
 import type { LinkedSource } from "../sources";
@@ -44,6 +45,8 @@ export interface MeetingsCallContext {
     local?: boolean;
     /** Tells the subscribers (the service's connections, or this process's listeners) what a write did. */
     emit?: <E extends MeetingsEvent>(event: E, params: MeetingsNotification<E>) => void;
+    /** Sends the caller `$/progress` for this call (a cut's fraction). */
+    progress?: (update: { fraction?: number; label?: string }) => void;
 }
 
 export interface MeetingsHandlerDeps {
@@ -59,11 +62,22 @@ export interface MeetingsHandlerDeps {
     config?: () => Promise<MeetingsConfig>;
     /** The clock of a decision's time (tests fix it). */
     now?: () => Date;
+    /** Cuts a clip (tests pass a fake); ffmpeg by default. */
+    cut?: typeof cutClip;
+    /** Reads a recording's tracks and length (tests pass a fake); ffprobe by default. */
+    probe?: typeof probeAudio;
+    /** Whether ffmpeg can cut here (tests answer); `Bun.which("ffmpeg")` by default. */
+    hasFfmpeg?: () => boolean;
+    /** Makes a tone preview (tests pass a fake); ffmpeg by default. */
+    tone?: typeof cutTone;
 }
 
-/** A refusal: JSON-RPC error 1100 with `data.code`, the same through the socket and in-process. */
-export function refusal(code: MeetingsErrorCode, message: string): RpcError {
-    return new RpcError(MEETINGS_REFUSED, message, { code });
+/**
+ * A refusal: JSON-RPC error 1100 with `data.code`, the same through the socket and in-process. `data` adds what the
+ * code names (`already-decided`'s entry, `unplayable`'s reason).
+ */
+export function refusal(code: MeetingsErrorCode, message: string, data: Record<string, unknown> = {}): RpcError {
+    return new RpcError(MEETINGS_REFUSED, message, { ...data, code });
 }
 
 /**
@@ -150,6 +164,7 @@ export function recordOf(store: MeetingStore, ref: string): MeetingRecord {
 }
 
 const decisions = () => import("./decision-handlers");
+const moments = () => import("./moment-handlers");
 
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
@@ -191,6 +206,11 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "decision.revert": async (params, context) =>
             (await decisions()).revertDecision(params, context, storeOf(), deps),
         "journal.read": async (params) => (await decisions()).readJournal(params, storeOf()),
+        // The Moments load the engine and the OCR readers only when a call plays.
+        "moment.plan": async (params) => (await moments()).planMomentCall(params, storeOf(), deps),
+        "moment.clip": async (params, context) => (await moments()).clipMomentCall(params, context, storeOf(), deps),
+        "tone.preview": async (params) => (await moments()).previewTone(params, deps),
+        "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
     };
 }
 

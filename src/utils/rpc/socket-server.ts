@@ -42,6 +42,8 @@ export interface RpcSocketServerOptions<S> {
     logScope: string;
     label: string;
     logFields?: Record<string, unknown>;
+    /** A method whose newer call on a connection cancels its older ones (`RpcPeerOptions.supersedes`). */
+    supersedes?: (method: string) => string | undefined;
 }
 
 class Connection<S> implements RpcConnection<S> {
@@ -56,9 +58,11 @@ class Connection<S> implements RpcConnection<S> {
             label: string;
             logFields?: Record<string, unknown>;
             call: (connection: Connection<S>, call: Omit<RpcCall<S>, "connection">) => Promise<unknown>;
+            supersedes?: (method: string) => string | undefined;
         }
     ) {
         this.peer = new RpcPeer({
+            ...(options.supersedes ? { supersedes: options.supersedes } : {}),
             write: (bytes) => socket.write(bytes),
             // A subscriber that stopped reading is disconnected; the recording or service it watched goes on.
             onBacklogFull: () => socket.end(),
@@ -108,6 +112,7 @@ export class RpcSocketServer<S> {
             label: options.label,
             logFields: options.logFields,
             call: (connection: Connection<S>, call: Omit<RpcCall<S>, "connection">) => this.answer(connection, call),
+            ...(options.supersedes ? { supersedes: options.supersedes } : {}),
         };
         this.listener = Bun.listen<Connection<S>>({
             unix: options.socket,

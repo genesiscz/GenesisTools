@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
@@ -33,7 +33,7 @@ import {
     openMeetingsClient,
     SocketMeetingsClient,
 } from "./client";
-import { MeetingsServiceError } from "./handlers";
+import { type MeetingsHandlerDeps, MeetingsServiceError } from "./handlers";
 import { startMeetingsService } from "./service";
 
 /** The code stamp of the tests' service and callers, so the fixture's hello does not name a checkout's path. */
@@ -98,6 +98,10 @@ const RETRO = {
     history: [{ at: "2026-11-03T13:00:00.000Z", command: "new", change: "created" }],
 };
 
+/** The recording the fake source keeps: a real file, since the clip cache keys a clip by the file's time and size. */
+const RECORDING = join(mkdtempSync(join(tmpdir(), "mtg-audio-")), "upload.ogg");
+writeFileSync(RECORDING, "a recording");
+
 function fakeSource(): TranscriptSource {
     const meeting: SourceMeeting = {
         sourceMeetingId: "wf-2041",
@@ -120,7 +124,7 @@ function fakeSource(): TranscriptSource {
         describe: () => ({ meetingId: "wf-2041" }),
         dictionary: async () => [],
         recordingClock: async () => ({ startedAt: "2026-11-03T09:00:00.000Z" }),
-        evidence: async () => null,
+        evidence: async () => ({ audioPath: RECORDING, segments: [], speaking: [], files: [] }),
         liveRecording: async () => null,
         calendarEntries: async () => ({ ok: true, from: "wisprflow", entries: [] }),
         folders: async () => [],
@@ -157,7 +161,23 @@ const hello: MeetingsHello = { role: "cli", protocol: MEETINGS_PROTOCOL, code: C
 
 /** The time every decision in these tests is made at, so the fixture's entries read the same each run. */
 const NOW = new Date("2026-11-03T10:00:00.000Z");
-const quietDeps = { now: () => NOW, ledger: () => undefined, readLedger: () => [] };
+/** A cut that writes a stand-in WAV, as ffmpeg would; it reports half way once. */
+const fakeCut: NonNullable<MeetingsHandlerDeps["cut"]> = async (options) => {
+    options.onProgress?.(0.5);
+    writeFileSync(options.outPath, "RIFF");
+};
+const quietDeps: MeetingsHandlerDeps = {
+    now: () => NOW,
+    ledger: () => undefined,
+    readLedger: () => [],
+    cut: fakeCut,
+    probe: async () => ({ tracks: 1, channels: 2, durationSec: 45 }),
+    hasFfmpeg: () => true,
+    tone: async (_sound, path) => {
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, "RIFF");
+    },
+};
 
 async function startService(options: { dir?: string } = {}) {
     const { store, linkedSource } = scratchStore();
@@ -395,6 +415,41 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             items: ["i1"],
             entry: { token: first.entry!.token },
         });
+    });
+
+    test("moment.plan answers the Moment, or the target's refusal; moment.clip cuts it into the cache once", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const missing = await client.call("moment.plan", { meeting: REVIEW.id, target: { kind: "item", id: "i9" } });
+        const planned = await client.call("moment.plan", { meeting: REVIEW.id, target: { kind: "item", id: "i1" } });
+        const progress: number[] = [];
+        // A time of each adapter's own: the two adapters share the sandbox home's clip cache.
+        const target = { kind: "time" as const, atSec: kind === "socket" ? 2 : 3 };
+        const cut = await client.call(
+            "moment.clip",
+            { meeting: REVIEW.id, target },
+            { onProgress: (update) => progress.push(update.fraction ?? -1) }
+        );
+        const again = await client.call("moment.clip", { meeting: REVIEW.id, target });
+        const plannedCut = await client.call("moment.plan", { meeting: REVIEW.id, target });
+
+        expect(missing).toEqual({ cannot: { code: "unknown-item", message: `No item i9 in ${REVIEW.id}.` } });
+        expect(planned.cannot).toBeUndefined();
+        expect(planned.moment).toMatchObject({ meeting: REVIEW.id, label: "i1", fromSec: 12, spotSec: 12 });
+        expect(again.path).toBe(cut.path);
+        expect(cut.path).toContain("meetings-cache/moments/");
+        expect({ ...cut, path: "" }).toEqual({ ...plannedCut.moment!, path: "" });
+        expect(progress).toEqual([0.5]);
+        expect(await client.call("meeting.audio", { meeting: REVIEW.id })).toEqual({
+            path: RECORDING,
+            tracks: 1,
+            channels: 2,
+            durationSec: 45,
+        });
+        const tone = await client.call("tone.preview", { sound: { hz: 440, sec: 0.2, volume: 0.5 } });
+        expect(tone.sound).toEqual({ hz: 440, sec: 0.2, volume: 0.5 });
+        expect(tone.path).toContain("meetings-cache/tones/tone-");
+        const none = await failure(client.call("meeting.audio", { meeting: RETRO.id }));
+        expect(none).toMatchObject({ code: "unplayable", data: { code: "unplayable", reason: "no-audio" } });
     });
 
     test("a subscription with an empty meeting is refused as invalid params instead of hearing every meeting", async () => {
@@ -695,6 +750,37 @@ async function captureExamples(): Promise<Example[]> {
         "The window's click on an item decided since: already-decided, with the entry that decided it."
     );
     await ask(window, "journal.read", { meeting: REVIEW.id, limit: 2 }, "Newest first; revertedBy names the Undo.");
+    await ask(
+        window,
+        "moment.plan",
+        { meeting: REVIEW.id, target: { kind: "item", id: "i1" } },
+        "The Moment of a row: its span, pad, asked spot (spotSec) and tone (tone.atSec)."
+    );
+    await ask(
+        window,
+        "moment.plan",
+        { meeting: REVIEW.id, target: { kind: "item", id: "i9" } },
+        "A target the meeting does not have: cannot, and no Moment."
+    );
+    await ask(
+        window,
+        "moment.clip",
+        { meeting: REVIEW.id, target: { kind: "time", atSec: 9 } },
+        "Cut into the clip cache."
+    );
+    await ask(window, "meeting.audio", { meeting: REVIEW.id }, "One track: the window plays the file itself.");
+    await ask(
+        window,
+        "meeting.audio",
+        { meeting: RETRO.id },
+        "No source keeps the recording: unplayable with reason no-audio."
+    );
+    await ask(
+        window,
+        "tone.preview",
+        { sound: { hz: 880, sec: 0.15, volume: 0.6 } },
+        "The tone alone, for a Play button."
+    );
     for (const method of ["decision.applied", "decision.reverted"]) {
         const heard = window.lines.find((line) => line.method === method);
         examples.push({ method, direction: "service→client", ...(heard ? { notification: heard } : {}) });
@@ -733,7 +819,10 @@ function normalized(examples: Example[]): unknown {
     return SafeJSON.parse(
         SafeJSON.stringify(examples, { strict: true })
             .replace(/"(show|transcript|speakers|timeline)":"[0-9a-z]+"/g, '"$1":"<token>"')
-            .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>"),
+            .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>")
+            // Paths under the run's sandbox home and temp folders, and a clip's key (it hashes the recording's path).
+            .replace(/"(path)":"[^"]*?(\/meetings-cache\/[^"]*?)-[0-9a-z]+\.wav"/g, '"$1":"<home>$2-<key>.wav"')
+            .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>"'),
         { strict: true }
     );
 }
@@ -806,6 +895,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
         expect([...new Set(codes)].sort()).toEqual(
             [
                 "already-decided",
+                "unplayable",
                 "code-mismatch",
                 "meeting-not-found",
                 "meeting-ref",
