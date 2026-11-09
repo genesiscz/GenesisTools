@@ -11,19 +11,70 @@ struct MeetingDetailView: View {
     /// the split view drew the column wider than the window and cut Export, the last tab and the ends of lines.
     static let narrowWidth: CGFloat = 600
     @State private var narrow = false
+    /// The column's width, for the trailing pane's rule (`trailingPane`).
+    @State private var width: CGFloat = 0
+    @Environment(\.meetingsDockInset) private var dockInset
+    @AppStorage(MeetingsPreferences.Panes.transcriptPane.key) private var transcriptPaneSetting =
+        MeetingsPreferences.Panes.transcriptPane.defaultValue.rawValue
+
+    /// What the trailing pane shows beside the tab: the transcript beside the review rows (decision 2 of WaveB-Plan.md),
+    /// or the settings side panel, which replaces it while open, as an inspector.
+    enum TrailingPane: Equatable { case transcript, settings }
+
+    /// The pane width, and the column width from which `auto` shows the transcript beside the rows: the rows keep about
+    /// 500 pt. At the window's smallest size (900 pt) the column is about 438 pt, so the Transcript tab answers there.
+    static let paneWidth: CGFloat = 320
+    static let transcriptPaneMinWidth: CGFloat = 820
+
+    static func trailingPane(tab: MeetingDetailModel.Tab, width: CGFloat, setting: MeetingsPreferences.Panes.TranscriptPane,
+                             sidePanelOpen: Bool) -> TrailingPane? {
+        if sidePanelOpen { return .settings }
+        guard tab == .items else { return nil }
+        switch setting {
+        case .always: return .transcript
+        case .never: return nil
+        case .auto: return width >= transcriptPaneMinWidth ? .transcript : nil
+        }
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            tabContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frameProbe("meetings.detail.content")
-                .noticeStack(detail.notices, alignment: window.noticePlace.alignment)
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                header
+                Divider()
+                tabContent
+                    .safeAreaPadding(.bottom, dockInset)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frameProbe("meetings.detail.content")
+                    .noticeStack(detail.notices, alignment: window.noticePlace.alignment)
+            }
+            .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.narrowWidth }) { narrow = $0 }
+            if let pane = trailingPane {
+                Divider()
+                trailing(pane)
+                    .safeAreaPadding(.bottom, dockInset)
+                    .frame(width: Self.paneWidth)
+                    .frame(maxHeight: .infinity)
+                    .frameProbe("meetings.detail.trailing")
+            }
         }
-        .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.narrowWidth }) { narrow = $0 }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
         .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")
+    }
+
+    private var trailingPane: TrailingPane? {
+        Self.trailingPane(tab: detail.tab, width: width,
+                          setting: MeetingsPreferences.Panes.TranscriptPane(rawValue: transcriptPaneSetting) ?? .auto,
+                          sidePanelOpen: window.sidePanelOpen)
+    }
+
+    @ViewBuilder
+    private func trailing(_ pane: TrailingPane) -> some View {
+        switch pane {
+        case .transcript: TranscriptPane(detail: detail)
+        case .settings: MeetingsSidePanel(window: window, detail: detail)
+        }
     }
 
     // MARK: Header
