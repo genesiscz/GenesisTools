@@ -110,7 +110,7 @@ struct PinCard: View {
             default: return lhs.offset < rhs.offset
             }
         }.map(\.element)
-        return FlowChips(items: sorted.map { choice in
+        return PinChoiceChips(items: sorted.map { choice in
             choice.confidence.map { "\(choice.label) \(Int(($0 * 100).rounded())) %" } ?? choice.label
         })
     }
@@ -154,11 +154,11 @@ struct PinCard: View {
 }
 
 /// Small chips that wrap onto more lines.
-private struct FlowChips: View {
+private struct PinChoiceChips: View {
     let items: [String]
 
     var body: some View {
-        ChipFlow(spacing: 6) {
+        PinChipFlow(spacing: 6) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 Text(verbatim: item)
                     .font(.system(size: 11).monospacedDigit())
@@ -171,7 +171,7 @@ private struct FlowChips: View {
 }
 
 /// A left-to-right layout that wraps.
-private struct ChipFlow: Layout {
+private struct PinChipFlow: Layout {
     var spacing: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
