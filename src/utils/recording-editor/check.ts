@@ -165,16 +165,18 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             .find((other) => other.note.startUs < note.endUs && boxesOverlap(box, other.box))?.note;
 
         if (over) {
+            // The later one moves to start where the earlier one ends, its length kept. The end to the millisecond,
+            // rounded up: a tenth rounded down (5.04 to 5) left the two showing together and the issue open.
+            const after = Math.ceil(note.endUs / 1000) / 1000;
             issues.push({
                 severity: "check",
                 kind: "text-overlap",
                 item: `text ${note.id}`,
                 message: `"${note.text}" and "${over.text}" show at the same time in the same place (${span(over.startUs, Math.min(note.endUs, over.endUs))})`,
-                // The later one moves to start where the earlier one ends, its length kept.
-                fix: `movie.retime({ id: "${over.id}", at: ${seconds(note.endUs)} })`,
+                fix: `movie.retime({ id: "${over.id}", at: ${after} })`,
                 at: seconds(over.startUs),
                 target: { list: "texts", id: over.id },
-                action: { label: "Move After", ops: [{ op: "retime", id: over.id, at: seconds(note.endUs) }] },
+                action: { label: "Move After", ops: [{ op: "retime", id: over.id, at: after }] },
             });
         }
     }

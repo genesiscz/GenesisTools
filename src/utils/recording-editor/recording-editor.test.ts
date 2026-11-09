@@ -1088,6 +1088,40 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(wholeProject(source), facts)).toEqual([]);
     });
 
+    // Move After rounded the earlier text's end down to a tenth: 5.04 gave at: 5, the two still showed together and
+    // fixOps stopped with the issue open.
+    describe("Move After starts the later text at the earlier text's exact end", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const overlaps = (project: Parameters<typeof checkProject>[0]) =>
+            checkProject(project, facts).filter((issue) => issue.kind === "text-overlap");
+
+        test("an end 0.04 s past a tenth: Move After and its REPL line say 5.04, and the overlap is gone", () => {
+            let project = applyOp(wholeProject(source), { op: "text", from: 1, to: 5.04, text: "First" });
+            project = applyOp(project, { op: "text", from: 3, to: 6, text: "Second" });
+            const second = project.texts?.find((note) => note.text === "Second");
+            const [issue] = overlaps(project);
+            expect(issue?.action).toEqual({
+                label: "Move After",
+                ops: [{ op: "retime", id: second?.id ?? "", at: 5.04 }],
+            });
+            expect(issue?.fix).toBe(`movie.retime({ id: "${second?.id}", at: 5.04 })`);
+            const moved = (issue?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
+            expect(moved.texts?.find((note) => note.text === "Second")?.startUs).toBe(5_040_000);
+            expect(overlaps(moved)).toEqual([]);
+        });
+
+        test("Lengthen then Move After in one fixOps run leaves check() with nothing to fix", () => {
+            let project = applyOp(wholeProject(source), { op: "text", from: 1.234, to: 1.534, text: "Open the menu" });
+            project = applyOp(project, { op: "text", from: 2, to: 5, text: "Pick Settings" });
+            const fixed = fixOps(project, facts).ops.reduce((next, op) => applyOp(next, op), project);
+            const pick = fixed.texts?.find((note) => note.text === "Pick Settings");
+            const open = fixed.texts?.find((note) => note.text === "Open the menu");
+            expect(pick?.startUs).toBeGreaterThanOrEqual(open?.endUs ?? Number.POSITIVE_INFINITY);
+            expect(overlaps(fixed)).toEqual([]);
+            expect(checkProject(fixed, facts).filter((issue) => issue.action)).toEqual([]);
+        });
+    });
+
     // R5 5 redaction edges: check() said clean for each of these, and the export showed the picture there.
     test("check names the holes around hidden parts: a short part, an early end before a cut, a gap between two", () => {
         const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
