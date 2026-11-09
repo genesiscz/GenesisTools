@@ -80,6 +80,7 @@ import {
     applyDucking,
     applyVoiceover,
     duckingSchema,
+    musicDucking,
     removeVoiceover,
     VOICEOVER_CARDS,
     voiceoverSchema,
@@ -3502,6 +3503,7 @@ function unhide(project: EditProject, op: Extract<EditOp, { op: "unhide" }>): Ed
 /** What an agent reads back after an edit: seconds, not microseconds. */
 export function describeProject(project: EditProject, path: string) {
     const seconds = (us: number) => Math.round(us / 1000) / 1000;
+    const duck = musicDucking(project);
     return {
         path,
         revision: project.revision,
@@ -3531,13 +3533,11 @@ export function describeProject(project: EditProject, path: string) {
                   // Ducking reads the transcript's lines; without a cached transcript the music plays level.
                   music: {
                       ...project.audio.music,
-                      // R4 8 music ducking: the dB object decides the amount and what it ducks under.
+                      // R4 8 music ducking: the dB object decides the amount and what it ducks under (check()'s rule).
                       ducks:
-                          (project.audio.ducking ? project.audio.ducking.db > 0 : project.audio.music.duck > 0) &&
-                          (((project.audio.ducking?.transcript ?? true) &&
-                              existsSync(transcriptCachePath(project.source.video))) ||
-                              ((project.audio.ducking?.voiceovers ?? true) &&
-                                  (project.audio.voiceovers?.length ?? 0) > 0)),
+                          duck.drops &&
+                          ((duck.underTranscript && existsSync(transcriptCachePath(project.source.video))) ||
+                              duck.underVoiceovers),
                   },
               }
             : project.audio,

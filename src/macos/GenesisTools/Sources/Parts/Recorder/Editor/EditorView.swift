@@ -1491,6 +1491,22 @@ private struct NoiseReductionSection: View {
 }
 
 /// Music under the movie: a file, its level and how far it dips under speech.
+// R4 8 music ducking
+/// Why the music under the music settings ducks under nothing, by check()'s rule (voiceovers.ts `musicDucking`): the
+/// renderer's drop (`MusicMix.Duck.of`), under the transcript's lines unless the ducking object turns that off, and
+/// under the voiceovers unless it turns those off. nil when something ducks it or it asks for no drop.
+enum MusicDuckHint {
+    static func text(_ project: EditProject, hasTranscript: Bool) -> String? {
+        let ducking = project.audio.ducking
+        let underVoiceovers = (ducking?.voiceovers ?? true) && !(project.audio.voiceovers ?? []).isEmpty
+        guard project.audio.music != nil, MusicMix.Duck.of(project).drop > 0, !underVoiceovers else { return nil }
+        guard ducking?.transcript ?? true else {
+            return "Nothing ducks: the music drops only under voiceovers here (Under the transcript's lines is off), and the edit has none."
+        }
+        return hasTranscript ? nil : "Nothing ducks yet: the movie has no transcript (Captions tab → Transcribe)."
+    }
+}
+
 private struct MusicSection: View {
     @Bindable var model: EditorModel
     /// The chosen file's length in seconds, read once per file, for the "Starts at" slider.
@@ -1559,8 +1575,8 @@ private struct MusicSection: View {
                     .instantTooltip("While a transcript line or a voiceover plays the music drops by this much, so speech stays clear")
                 }
                 DuckingSection(model: model)
-                if model.zoom.captionLines.isEmpty && (model.project.audio.voiceovers ?? []).isEmpty && music.duck > 0 {
-                    Text("Nothing ducks yet: the movie has no transcript (Captions tab → Transcribe).")
+                if let hint = MusicDuckHint.text(model.project, hasTranscript: !model.zoom.captionLines.isEmpty) {
+                    Text(hint)
                         .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                         .fixedSize(horizontal: false, vertical: true)
                 }

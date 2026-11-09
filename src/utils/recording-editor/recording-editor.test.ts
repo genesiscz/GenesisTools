@@ -1035,6 +1035,93 @@ describe("edit project (edit.json)", () => {
         expect(late[0]?.message).toContain("1 s");
     });
 
+    describe("check() ducks the music by the renderer's rule", () => {
+        const voice = { id: "v1", atUs: 1_000_000, file: "/voice/one.mp3", durationUs: 1_500_000, volume: 1 };
+
+        function withMusic(
+            duck: number,
+            ducking?: Partial<NonNullable<projectOps.EditProject["audio"]["ducking"]>>,
+            voiced = false,
+            video = source.video
+        ): projectOps.EditProject {
+            const project = wholeProject({ ...source, video });
+            return {
+                ...project,
+                audio: {
+                    ...project.audio,
+                    music: { file: "/m.m4a", volume: 0.25, duck, fadeMs: 1500 },
+                    ...(ducking
+                        ? { ducking: { db: 12, fadeMs: 300, transcript: true, voiceovers: true, ...ducking } }
+                        : {}),
+                    ...(voiced ? { voiceovers: [voice] } : {}),
+                },
+            };
+        }
+
+        const facts = (hasTranscript: boolean) => ({ hasTranscript, hasCursorTrack: true, musicFileExists: true });
+        const musicIssues = (project: projectOps.EditProject, hasTranscript: boolean) =>
+            checkProject(project, facts(hasTranscript)).filter((issue) => issue.item === "music");
+        const asksForTranscript = (project: projectOps.EditProject) =>
+            musicIssues(project, false).some((issue) => issue.kind === "no-transcript");
+        const describedDucks = (project: projectOps.EditProject) => {
+            const music = describeProject(project, "/x").audio.music;
+            return music && "ducks" in music ? music.ducks : undefined;
+        };
+
+        test("check's no-transcript music warning follows the ducking object, as describe() and the renderer do", () => {
+            // The older share alone: it ducks under the transcript, so check() asks for one (as before).
+            expect(asksForTranscript(withMusic(0.6))).toBe(true);
+            // The dB object decides the amount: 12 dB ducks although the older share is 0.
+            expect(asksForTranscript(withMusic(0, {}))).toBe(true);
+            // Off under the transcript: a transcript changes nothing.
+            expect(asksForTranscript(withMusic(0.6, { transcript: false }))).toBe(false);
+            // 0 dB never ducks, whatever the older share says.
+            expect(asksForTranscript(withMusic(0.6, { db: 0 }))).toBe(false);
+            // A voiceover ducks the music unless the ducking object turns that off.
+            expect(asksForTranscript(withMusic(0.6, undefined, true))).toBe(false);
+            expect(asksForTranscript(withMusic(0.6, { voiceovers: false }, true))).toBe(true);
+        });
+
+        test("with ducking under the transcript off and no voiceover, check() says nothing ducks without asking for a transcript", () => {
+            const off = withMusic(0.6, { transcript: false });
+            const without = musicIssues(off, false);
+            expect(without).toEqual([
+                expect.objectContaining({ severity: "check", kind: "music-ducks-nothing", item: "music" }),
+            ]);
+            expect(without[0]?.fix).toBeUndefined();
+            expect(without[0]?.message ?? "").not.toContain("transcript()");
+
+            // With a transcript, the switch back on is the call that makes the music duck.
+            expect(musicIssues(off, true)).toEqual([
+                expect.objectContaining({
+                    kind: "music-ducks-nothing",
+                    fix: "await movie.ducking({ transcript: true })",
+                }),
+            ]);
+            // A voiceover gives it something to duck under; 0 dB asks for no duck at all.
+            expect(musicIssues(withMusic(0.6, { transcript: false }, true), false)).toEqual([]);
+            expect(musicIssues(withMusic(0.6, { db: 0, transcript: false }), true)).toEqual([]);
+            // The older share with a transcript ducks under it: nothing to say.
+            expect(musicIssues(withMusic(0.6), true)).toEqual([]);
+        });
+
+        test("describe()'s ducks uses the same rule as check()", () => {
+            const video = join(workspace(), "screen.mp4");
+            writeFileSync(transcriptCachePath(video), "[]");
+
+            // With a cached transcript.
+            expect(describedDucks(withMusic(0.6, undefined, false, video))).toBe(true);
+            expect(describedDucks(withMusic(0, {}, false, video))).toBe(true);
+            expect(describedDucks(withMusic(0.6, { transcript: false }, false, video))).toBe(false);
+            expect(describedDucks(withMusic(0.6, { db: 0 }, false, video))).toBe(false);
+            // Without one, only a voiceover ducks the music.
+            expect(describedDucks(withMusic(0.6))).toBe(false);
+            expect(describedDucks(withMusic(0.6, undefined, true))).toBe(true);
+            expect(describedDucks(withMusic(0.6, { voiceovers: false }, true))).toBe(false);
+            expect(describedDucks(withMusic(0, { transcript: false }, true))).toBe(true);
+        });
+    });
+
     test("check finds what never shows, what is missing and what flashes past, fixes first", () => {
         let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 2, scale: 2 });
         project = applyOp(project, { op: "text", from: 3, to: 5, text: "Step one" });

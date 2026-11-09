@@ -11,6 +11,7 @@ import {
     zoomsLinked,
 } from "./project";
 import { layoutText } from "./text-metrics";
+import { musicDucking } from "./voiceovers";
 
 /**
  * "fix": the export will be wrong or something never shows; "check": it works but may not be what was meant; "note"
@@ -182,6 +183,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
     }
 
     const music = project.audio.music;
+    const duck = musicDucking(project);
 
     if (music && !facts.musicFileExists) {
         issues.push({
@@ -215,9 +217,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             });
         }
 
-        const voiceDucks = (project.audio.voiceovers?.length ?? 0) > 0 && project.audio.ducking?.voiceovers !== false;
-
-        if (music && music.duck > 0 && !voiceDucks) {
+        if (music && duck.drops && duck.underTranscript && !duck.underVoiceovers) {
             issues.push({
                 severity: "check",
                 kind: "no-transcript",
@@ -226,6 +226,18 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                 fix: "await movie.transcript()",
             });
         }
+    }
+
+    // R4 8 music ducking: off under the transcript, the music drops only under voiceovers; a transcript changes nothing.
+    if (music && duck.drops && !duck.underTranscript && !duck.underVoiceovers) {
+        issues.push({
+            severity: "check",
+            kind: "music-ducks-nothing",
+            item: "music",
+            message:
+                "The music should drop under speech, but ducking is off under the transcript and the edit has no voiceover, so nothing ducks",
+            ...(facts.hasTranscript ? { fix: "await movie.ducking({ transcript: true })" } : {}),
+        });
     }
 
     // R4 voiceover clips: a gone file plays nothing; a clip whose start is cut is not mixed at all.

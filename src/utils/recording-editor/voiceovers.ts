@@ -213,3 +213,23 @@ export function duckGain(project: EditProject): number {
 
     return 1 - (project.audio.music?.duck ?? 0);
 }
+
+/** What the music drops under, by the renderer's rule (`MusicMix.Duck.of` and `MusicMix.speech`). */
+export interface MusicDucking {
+    /** The drop is above nothing: the `ducking` dB when set, else the older `music.duck` share. */
+    drops: boolean;
+    /** It drops under the transcript's lines (when the movie has a transcript): on unless `ducking.transcript` is off. */
+    underTranscript: boolean;
+    /** It drops under a voiceover clip: the edit has one and `ducking.voiceovers` is not off. */
+    underVoiceovers: boolean;
+}
+
+/** The one rule check() and describe() use for whether and under what the music ducks. */
+export function musicDucking(project: EditProject): MusicDucking {
+    const ducking = project.audio.ducking;
+    return {
+        drops: duckGain(project) < 1,
+        underTranscript: ducking?.transcript ?? true,
+        underVoiceovers: (ducking?.voiceovers ?? true) && (project.audio.voiceovers?.length ?? 0) > 0,
+    };
+}
