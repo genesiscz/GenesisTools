@@ -11,7 +11,7 @@ import {
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
-import { captureSync } from "@genesiscz/utils/process/ps";
+import { findProcesses } from "@genesiscz/utils/process/processes";
 import { readLiveService } from "@genesiscz/utils/screen-recorder/service-link";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
@@ -387,14 +387,8 @@ export function realSources(): EnvironmentSources {
             }));
         },
         recorder: () => {
-            // Through the shared process layer (lint rule no-process-tool-spawn), registered in call-sites.ts.
-            const ps = captureSync("ps", ["-Ao", "pid=,command="], { timeoutMs: 3_000 }).stdout;
-            const facePids = ps
-                .split("\n")
-                .map((line) => line.trim())
-                .filter((line) => /MacOS\/GenesisTools --recorder(\s|$)/.test(line))
-                .map((line) => Number.parseInt(line, 10))
-                .filter((pid) => Number.isFinite(pid));
+            // The kernel's process table through the shared process layer (lint rule no-process-tool-spawn).
+            const facePids = findProcesses({ command: /MacOS\/GenesisTools --recorder(\s|$)/ }).map((face) => face.pid);
             const entry = readLiveService();
             return { facePids, service: entry ? { pid: entry.pid, startedAt: entry.startedAt } : null };
         },
