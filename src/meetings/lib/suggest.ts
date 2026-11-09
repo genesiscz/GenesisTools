@@ -1,6 +1,6 @@
 import { basename, extname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
+import { median, silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
@@ -14,6 +14,7 @@ import {
 } from "@genesiscz/utils/transcribe/doc-match";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
+import { formatClock } from "@genesiscz/utils/transcribe/render";
 import {
     PRESENCE_TOLERANCE_SEC,
     type Presence,
@@ -924,6 +925,157 @@ interface Span {
     toSec: number;
 }
 
+/** R20: windows, the medians that read normal or swapped, and how much of a stretch must read swapped. */
+const SWAP_WINDOW_SEC = 300;
+const SWAP_LOW = 0.3;
+const SWAP_HIGH = 0.7;
+const SWAP_WINDOW_LINES = 3;
+const SWAP_MIN_WINDOWS = 2;
+const SWAP_MIN_LINES = 10;
+const SWAP_MAX_CONFIDENCE = 0.9;
+
+/** A stretch where the recorder put the user's voice under another label and that person's under the user's (R20). */
+interface SwapStretch extends Span {
+    selfLabel: string;
+    otherLabel: string;
+    selfMedian: number;
+    otherMedian: number;
+    selfLines: number;
+    otherLines: number;
+}
+
+type SwapWindowState = "normal" | "swapped" | "unclear";
+
+interface SwapWindow {
+    state: SwapWindowState;
+    self: LineEvidence[];
+    other: LineEvidence[];
+}
+
+/** One window of R20: the medians of the user's label and the other label, when both talk enough to have one. */
+function swapWindowState(self: LineEvidence[], other: LineEvidence[]): SwapWindowState {
+    if (self.length < SWAP_WINDOW_LINES || other.length < SWAP_WINDOW_LINES) {
+        return "unclear";
+    }
+
+    const selfMedian = median(self.map((line) => line.energyMic!))!;
+    const otherMedian = median(other.map((line) => line.energyMic!))!;
+
+    if (selfMedian >= SWAP_HIGH && otherMedian <= SWAP_LOW) {
+        return "normal";
+    }
+
+    return selfMedian <= SWAP_LOW && otherMedian >= SWAP_HIGH ? "swapped" : "unclear";
+}
+
+/**
+ * R20 over the calibrated energy: the stretches where the user's label and one platform-named label read the other
+ * way round than elsewhere in the call. A run of swapped windows may hold one unclear window; a stretch starts and
+ * ends at the first and last line that already reads swapped.
+ */
+function swappedStretches(lines: LineEvidence[], selfName: string, platformLabels: Set<string>): SwapStretch[] {
+    const measured = lines.filter((line) => line.energyMic !== undefined);
+    const selfLabel = measured.find((line) => sameName(line.label, selfName))?.label;
+
+    if (!selfLabel || measured.length === 0) {
+        return [];
+    }
+
+    const end = Math.max(...measured.map((line) => line.startSec));
+    const others = [...new Set(measured.map((line) => line.label))].filter(
+        (label) => label !== selfLabel && platformLabels.has(label)
+    );
+    const stretches: SwapStretch[] = [];
+
+    for (const otherLabel of others) {
+        const windows: SwapWindow[] = [];
+
+        for (let from = 0; from <= end; from += SWAP_WINDOW_SEC) {
+            const inside = measured.filter((line) => line.startSec >= from && line.startSec < from + SWAP_WINDOW_SEC);
+            const self = inside.filter((line) => line.label === selfLabel);
+            const other = inside.filter((line) => line.label === otherLabel);
+            windows.push({ state: swapWindowState(self, other), self, other });
+        }
+
+        if (!windows.some((window) => window.state === "normal")) {
+            continue;
+        }
+
+        let start = 0;
+
+        while (start < windows.length) {
+            if (windows[start]!.state !== "swapped") {
+                start += 1;
+                continue;
+            }
+
+            let last = start;
+            let swapped = 1;
+
+            while (last + 1 < windows.length) {
+                if (windows[last + 1]!.state === "swapped") {
+                    last += 1;
+                    swapped += 1;
+                } else if (windows[last + 1]!.state === "unclear" && windows[last + 2]?.state === "swapped") {
+                    last += 2;
+                    swapped += 1;
+                } else {
+                    break;
+                }
+            }
+
+            const run = windows.slice(start, last + 1);
+            const self = run.flatMap((window) => window.self);
+            const other = run.flatMap((window) => window.other);
+            start = last + 1;
+
+            if (swapped < SWAP_MIN_WINDOWS || self.length < SWAP_MIN_LINES || other.length < SWAP_MIN_LINES) {
+                continue;
+            }
+
+            const reads = [
+                ...self.filter((line) => line.energyMic! <= SWAP_LOW),
+                ...other.filter((line) => line.energyMic! >= SWAP_HIGH),
+            ];
+            stretches.push({
+                fromSec: Math.min(...reads.map((line) => line.startSec)),
+                toSec: Math.max(...reads.map((line) => line.startSec)),
+                selfLabel,
+                otherLabel,
+                selfMedian: median(self.map((line) => line.energyMic!))!,
+                otherMedian: median(other.map((line) => line.energyMic!))!,
+                selfLines: self.length,
+                otherLines: other.length,
+            });
+        }
+    }
+
+    return stretches;
+}
+
+/** The two items of a swapped stretch: the other label's lines are the user's, the user's label's are the other's. */
+function swapItems(swap: SwapStretch, selfName: string): NewItem[] {
+    const confidence =
+        Math.round(Math.min(SWAP_MAX_CONFIDENCE, 0.5 + (swap.otherMedian - swap.selfMedian) / 2) * 100) / 100;
+    const note = `labels swapped from ${formatClock(swap.fromSec)}: the microphone's voice is under "${swap.otherLabel}" and the call's under "${swap.selfLabel}"`;
+    const item = (label: string, speaker: string, channel: "mic" | "system", lines: number): NewItem => ({
+        kind: "speaker-range",
+        status: "suggested",
+        label,
+        fromSec: swap.fromSec,
+        toSec: swap.toSec,
+        speaker,
+        confidence,
+        rules: [MeetingRule.LabelSwap, MeetingRule.Energy],
+        evidence: { channel, lines, note },
+    });
+
+    return [
+        item(swap.otherLabel, selfName, "mic", swap.otherLines),
+        item(swap.selfLabel, swap.otherLabel, "system", swap.selfLines),
+    ];
+}
+
 interface MicrophoneVoices {
     owner?: string;
     ownerLeads: boolean;
@@ -1166,8 +1318,21 @@ function evidenceItems(options: {
     const platformLabels = new Set(
         options.meeting.speakers.filter((speaker) => speaker.origin === "platform").map((speaker) => speaker.name)
     );
+    const swaps = swappedStretches(lines, selfName, platformLabels);
+    const swapped = (line: LineEvidence) =>
+        swaps.some(
+            (swap) =>
+                (line.label === swap.selfLabel || line.label === swap.otherLabel) &&
+                line.startSec >= swap.fromSec &&
+                line.startSec <= swap.toSec
+        );
+
+    for (const swap of swaps) {
+        items.push(...swapItems(swap, selfName));
+    }
+
     const voices = microphoneVoices(
-        lines.filter((line) => !within(unusable, line.startSec)),
+        lines.filter((line) => !within(unusable, line.startSec) && !swapped(line)),
         selfName,
         platformLabels
     );
@@ -1214,6 +1379,12 @@ function evidenceItems(options: {
         const isSelfLabel = sameName(label, selfName);
 
         for (const line of labelLines) {
+            // R20 already said who the line is.
+            if (swapped(line)) {
+                close();
+                continue;
+            }
+
             const found = findingFor({
                 line,
                 selfName,
@@ -1275,7 +1446,7 @@ function evidenceItems(options: {
         close();
     }
 
-    log.debug({ lines: lines.length, items: items.length }, "evidence items");
+    log.debug({ lines: lines.length, items: items.length, swaps }, "evidence items");
     return items;
 }
 

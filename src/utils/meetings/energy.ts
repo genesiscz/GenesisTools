@@ -179,7 +179,8 @@ const CALIBRATION_SIDE = 0.8;
  */
 const CALIBRATION_CALL_SIDE = 0.6;
 
-function median(values: number[]): number | undefined {
+/** The middle value (the mean of the two middle ones for an even count); undefined for none. */
+export function median(values: number[]): number | undefined {
     if (values.length === 0) {
         return undefined;
     }

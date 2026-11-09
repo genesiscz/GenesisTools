@@ -68,6 +68,15 @@ export enum MeetingRule {
      */
     LabelVoice = "R19",
     /**
+     * R20, swapped labels. In 5 min windows of a calibrated recording, the user's label sits on the call's channel
+     * (median microphone share 0.3 or less) while one platform-named label sits on the microphone (0.7 or more), for
+     * 10 min or more, and the two read the other way elsewhere in the call: the recorder swapped their names for that
+     * stretch (2026-11-09: from 1:45:15 to the end). The other label's lines there are the user's, the user's label's
+     * lines are the other person's (0.5 + half the gap of the medians, at most 0.9), and R18 and the per-line rules
+     * leave those lines alone.
+     */
+    LabelSwap = "R20",
+    /**
      * RM, muted. A person the platform shows muted in every reading over a line did not say it in the call. Muted
      * people are never candidates and never "shown speaking"; with one person left whom E3 shows, the line is theirs
      * (0.9). It never overrules E1: Wispr records the microphone itself, so a muted user can still be on it.

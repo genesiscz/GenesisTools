@@ -250,6 +250,11 @@ as an open question is.
   stays its label's.
 - A stuck speaking indicator: E3 showing the same one remote person for 6 min or more while a third of the lines are on
   the microphone is ignored for that stretch.
+- R20, swapped labels: in 5 min windows of a calibrated recording, the user's label sits on the call's channel (median
+  microphone share 0.3 or less) while one platform-named label sits on the microphone (0.7 or more) for 10 min or
+  more, and the two read the other way elsewhere in the call. The recorder swapped their names there: the other
+  label's lines are the user's and the user's label's lines are the other person's, one item each over the stretch
+  (0.5 plus half the gap of the two medians, at most 0.9). R18 and the per-line rules leave those lines alone.
 - `join`: a word cut between two lines ("dot" + "áhnu"), or one sentence cut between two whole words: a `joined`
   value with a space ("jsem zvědavej") keeps the space.
 - `term` from the word check (rule `unknown-word`, 30 %): a word no dictionary layer knows. It proposes nothing (the
