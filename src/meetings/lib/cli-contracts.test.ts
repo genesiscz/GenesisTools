@@ -473,6 +473,30 @@ describe("rows --json: the review rows (F3)", () => {
         ]);
     });
 
+    test("typed candidate scores win over the saved strings, best first, and a score that does not read is left out", async () => {
+        const { candidateScores } = await import("./review-rows");
+        const typed = structuredClone(record.items[0]!);
+        typed.evidence = {
+            candidates: ["EMP 70 %"],
+            candidateScores: [
+                { term: "AMP", confidence: 0.82 },
+                { term: "EMP", confidence: 0.7, extra: true },
+                { term: 3, confidence: 0.9 },
+                "OMP 40 %",
+            ],
+        };
+
+        expect(candidateScores(typed)).toEqual([
+            { term: "AMP", confidence: 0.82 },
+            { term: "EMP", confidence: 0.7 },
+        ]);
+        expect(candidateScores(record.items[0]!)).toEqual([
+            { term: "AMP", confidence: 0.82 },
+            { term: "EMP", confidence: 0.7 },
+            { term: "OMP", confidence: 0.4 },
+        ]);
+    });
+
     test("an item row: its choices act on it, its reason is pieces and sources, and a decision names who made it", async () => {
         const { reviewRow } = await import("./review-rows");
         const term = reviewRow(record, record.items[0]!);

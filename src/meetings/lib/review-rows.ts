@@ -2,6 +2,7 @@ import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/recor
 import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { z } from "zod";
 import { actorText } from "./decision-journal";
 import { itemWhat } from "./item-text";
 import { momentsInText } from "./moment-schema";
@@ -31,6 +32,9 @@ export function clockTime(sec: number): ClockTime {
 /** Characters of transcript a row quotes before it cuts with "…". */
 const SAID_CHARS = 240;
 
+/** One typed candidate score as suggest writes it (`evidence.candidateScores`); other keys are dropped. */
+const candidateScoreSchema = z.object({ term: z.string(), confidence: z.number() });
+
 /**
  * A term's candidates with their confidence 0 to 1, best first: the typed `evidence.candidateScores` of a newer
  * suggestion, else the "EMP 82 %" strings of `evidence.candidates` a saved record holds (decision 7). A candidate
@@ -42,10 +46,8 @@ export function candidateScores(item: MeetingItem): Array<{ term: string; confid
     if (Array.isArray(typed)) {
         return typed
             .flatMap((one: unknown) => {
-                const candidate = one as { term?: unknown; confidence?: unknown };
-                return typeof candidate.term === "string" && typeof candidate.confidence === "number"
-                    ? [{ term: candidate.term, confidence: candidate.confidence }]
-                    : [];
+                const candidate = candidateScoreSchema.safeParse(one);
+                return candidate.success ? [candidate.data] : [];
             })
             .sort((a, b) => b.confidence - a.confidence);
     }
