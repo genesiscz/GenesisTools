@@ -51,6 +51,21 @@ final class NoticeStackTests: XCTestCase {
         XCTAssertEqual(model.waiting[first.id], "Undoing…")
     }
 
+    /// `maxVisible`: the newest notices show, the older ones fold into "+N more", and a stack within the limit folds none.
+    func testOlderNoticesPastTheVisibleLimitFoldIntoACount() {
+        let clock = ManualNoticeClock()
+        var limit: Int? = 3
+        let model = NoticeStackModel(clock: clock, timing: { .standard }, maxVisible: { limit }, announces: false)
+        for index in 1...5 { model.push(StackedNotice(text: "Notice \(index)")) }
+        XCTAssertEqual(model.visibleLimit, 3)
+        let split = NoticeStackModel.split(model.notices, max: model.visibleLimit)
+        XCTAssertEqual(split.shown.map(\.text), ["Notice 3", "Notice 4", "Notice 5"], "the newest three show")
+        XCTAssertEqual(split.folded.map(\.text), ["Notice 1", "Notice 2"], "the two oldest fold into +2 more")
+        XCTAssertEqual(NoticeStackModel.split(Array(model.notices.prefix(3)), max: 3).folded.count, 0)
+        limit = nil
+        XCTAssertEqual(NoticeStackModel.split(model.notices, max: model.visibleLimit).shown.count, 5, "no limit shows all")
+    }
+
     func testAPushUnderAWaitingNoticesIDEndsTheWait() {
         let clock = ManualNoticeClock()
         let model = stack(clock)

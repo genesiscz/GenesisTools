@@ -205,16 +205,29 @@ public final class NoticeStackModel {
 
     @ObservationIgnored private let clock: NoticeClock
     @ObservationIgnored private let timing: @MainActor () -> NoticeStackTiming
+    @ObservationIgnored private let maxVisible: @MainActor () -> Int?
     @ObservationIgnored private let announces: Bool
     @ObservationIgnored private var runs: [StackedNotice.ID: Run] = [:]
 
     /// `clock` defaults to `SystemNoticeClock.shared`. `timing` is read at each push, so a changed setting applies to
-    /// the next notice. `announces` posts each new notice to VoiceOver.
+    /// the next notice. `maxVisible` is how many notices the stack draws before the older ones fold into "+N more"
+    /// (nil: all; read at each draw). `announces` posts each new notice to VoiceOver.
     public init(clock: NoticeClock? = nil,
-                timing: @escaping @MainActor () -> NoticeStackTiming = { .standard }, announces: Bool = true) {
+                timing: @escaping @MainActor () -> NoticeStackTiming = { .standard },
+                maxVisible: @escaping @MainActor () -> Int? = { nil }, announces: Bool = true) {
         self.clock = clock ?? SystemNoticeClock.shared
         self.timing = timing
+        self.maxVisible = maxVisible
         self.announces = announces
+    }
+
+    /// How many notices the stack draws; the older ones fold into "+N more". Nil draws all of them.
+    public var visibleLimit: Int? { maxVisible() }
+
+    /// The newest `max` notices, and the older ones that fold into "+N more" (oldest first in both).
+    public static func split(_ notices: [StackedNotice], max: Int?) -> (shown: [StackedNotice], folded: [StackedNotice]) {
+        guard let max, max > 0, notices.count > max else { return (notices, []) }
+        return (Array(notices.suffix(max)), Array(notices.prefix(notices.count - max)))
     }
 
     public func notice(_ id: StackedNotice.ID) -> StackedNotice? {
@@ -353,6 +366,8 @@ public struct NoticeStackView: View {
     var edge: VerticalEdge
     @GenReduceMotion private var reduceMotion
     @State private var contentHeight: CGFloat = 0
+    /// "+N more" was pressed: every notice shows until none is folded again.
+    @State private var showsAll = false
 
     /// `pinnedTo` is the edge of its host the stack sits at (`.noticeStack(_:alignment:)` passes it).
     public init(_ model: NoticeStackModel, maxWidth: CGFloat = 520, maxHeight: CGFloat = 360,
@@ -371,14 +386,18 @@ public struct NoticeStackView: View {
     public var body: some View {
         let notices = model.notices
         if !notices.isEmpty {
+            let split = NoticeStackModel.split(notices, max: showsAll ? nil : model.visibleLimit)
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Self.drawOrder(notices, pinnedTo: edge)) { notice in
+                    // The folded notices are the oldest: their chip sits where they would, at the pinned edge.
+                    if edge == .top { moreChip(split.folded.count) }
+                    ForEach(Self.drawOrder(split.shown, pinnedTo: edge)) { notice in
                         pill(notice)
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .offset(y: 6)),
                                 removal: .opacity.animation(.easeOut(duration: GenMotion.removalFadeDuration))))
                     }
+                    if edge == .bottom { moreChip(split.folded.count) }
                 }
                 .padding(8)
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { contentHeight = $0 }
@@ -396,6 +415,26 @@ public struct NoticeStackView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Notices")
             .accessibilityIdentifier("notice-stack")
+            .onChange(of: split.folded.isEmpty) { _, none in if none { showsAll = false } }
+        }
+    }
+
+    /// "+N more": the older notices folded past `maxVisible`; a click shows them all until none is folded again.
+    @ViewBuilder
+    private func moreChip(_ count: Int) -> some View {
+        if count > 0 {
+            Button {
+                showsAll = true
+            } label: {
+                Text(verbatim: "+\(count) more")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(.regularMaterial, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("Show \(count) more \(count == 1 ? "notice" : "notices")")
+            .accessibilityIdentifier("notice-stack-more")
         }
     }
 
