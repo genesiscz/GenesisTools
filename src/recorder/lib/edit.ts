@@ -1429,28 +1429,36 @@ export async function exportAs(
                 part: options.part,
             });
             log.debug({ value, part: options.part, clips: trimmed.clips.length, out }, "exporting a part of the edit");
-            return await exportAs(copy, {
+            const answer = await renderExport(copy, {
                 out,
                 format: asked,
-                subtitles: options.subtitles,
                 overwrite: options.overwrite,
                 size: options.size,
                 onProgress: options.onProgress,
             });
+            // Finished on the whole edit, as the window's `recorder finish --from --to` is, so the chapter current at
+            // the part start names 0:00; the trimmed copy has cut the markers before the part.
+            return await finishExport({ value, answer, subtitles: options.subtitles, part: options.part });
         } finally {
             await rm(scratch, { recursive: true, force: true });
         }
     }
 
+    // finishExport applies the edit's export.subtitles default, which a GIF leaves out.
+    return finishExport({ value, answer: await renderExport(value, options), subtitles: options.subtitles });
+}
+
+/** Renders the whole edit into its export target in the asked format; finishExport adds the subtitles and chapters. */
+async function renderExport(
+    value: string,
+    options: { out?: string; format?: ExportFormat } & ExportRun
+): Promise<ExportAnswer & { replaced?: boolean }> {
     const opened = await openProject(value);
     const asked = askedExportFormat({ format: options.format, out: options.out, project: opened.project });
 
     if (!isExportFormat(asked)) {
         return formatRefusal(asked);
     }
-
-    // finishExport applies the edit's export.subtitles default, which a GIF leaves out.
-    const subtitles = options.subtitles;
 
     const host = { size: options.size, onProgress: options.onProgress };
     const output = exportTargetOf({
@@ -1462,24 +1470,19 @@ export async function exportAs(
 
     if (asked === "mp4") {
         if (opened.project.audio.denoise) {
-            return finishExport({
-                value,
-                answer: await renderInto({
-                    target: output,
-                    overwrite: options.overwrite,
-                    render: (to) => withDenoisedSource(opened, (edit) => hostExport({ path: edit, out: to, ...host })),
-                }),
-                subtitles,
+            return renderInto({
+                target: output,
+                overwrite: options.overwrite,
+                render: (to) => withDenoisedSource(opened, (edit) => hostExport({ path: edit, out: to, ...host })),
             });
         }
 
         const recording = resolveRecording(value);
-        const answer = await renderInto({
+        return renderInto({
             target: output,
             overwrite: options.overwrite,
             render: (to) => hostExport({ path: recording, out: to, ...host }),
         });
-        return finishExport({ value, answer, subtitles });
     }
 
     const format = asked;
@@ -1508,7 +1511,7 @@ export async function exportAs(
             return movie;
         }
 
-        const answer = await renderInto({
+        return await renderInto({
             target: output,
             overwrite: options.overwrite,
             render: async (to) => {
@@ -1522,7 +1525,6 @@ export async function exportAs(
                 return { ok: true, path: to, bytes, seconds: Math.round((performance.now() - started) / 10) / 100 };
             },
         });
-        return finishExport({ value, answer, subtitles });
     } finally {
         await rm(scratch, { recursive: true, force: true });
     }

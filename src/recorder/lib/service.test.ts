@@ -42,6 +42,7 @@ import { editProject, readUndoSteps, redoEdit, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS, shortRecordingId } from "./library";
+import { chaptersOfPart } from "./moments";
 import { applyEdit, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
@@ -960,6 +961,89 @@ describe("finishing a part export of an edit with cards", () => {
         expect(written[0]).toContain("START=0\nEND=6000\ntitle=Demo");
         expect(written[0]).toContain("START=6000\nEND=7500\ntitle=Step one");
         expect(written[0]).not.toContain("title=Intro");
+    });
+});
+
+describe("a part export's chapters on every route", () => {
+    /** A 60 s edit with markers at 10, 20 and 30 s. */
+    function markedEdit(prefix: string): { path: string; root: string } {
+        const root = mkdtempSync(join(tmpdir(), prefix));
+        const path = join(root, "talk.edit.json");
+        writeProject(path, {
+            ...wholeProject({ video: join(root, "talk.mp4"), durationUs: 60_000_000, width: 100, height: 100 }),
+            markers: [
+                { id: "m1", atUs: 10_000_000, label: "Step 1" },
+                { id: "m2", atUs: 20_000_000, label: "Step 2" },
+                { id: "m3", atUs: 30_000_000, label: "Step 3" },
+            ],
+        });
+        return { path, root };
+    }
+
+    /** The renderer writes a movie, ffprobe answers 15 s, and ffmpeg's chapter metadata is kept. */
+    function spyExport(): string[] {
+        const written: string[] = [];
+        const host = spyOn(serviceClient, "hostExport").mockImplementation(async ({ out }) => {
+            const to = out ?? "";
+            writeFileSync(to, "movie");
+            return { ok: true, path: to };
+        });
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async ({ input }) => ({
+            path: input,
+            durationUs: 15_000_000,
+            width: 100,
+            height: 100,
+            displayWidth: 100,
+            displayHeight: 100,
+            rotation: 0,
+            bytes: 5,
+            codec: "h264",
+        }));
+        const ffmpeg = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            written.push(readFileSync(command[command.indexOf("ffmetadata") + 2] ?? "", "utf8"));
+            writeFileSync(command.at(-1) ?? "", "movie");
+            return "";
+        });
+        closing.push(
+            () => host.mockRestore(),
+            () => probe.mockRestore(),
+            () => ffmpeg.mockRestore()
+        );
+        return written;
+    }
+
+    // Round 2 hunt (r2-part-export-chapters): exportAs finished the trimmed copy, whose markers before the part are
+    // cut, so its first chapter was a generic "Intro", while the window's `recorder finish --from --to` named the
+    // marker current at the part start.
+    test("exportAs with a part names the chapter current at the part start at 0:00, as finishExport does", async () => {
+        const { path, root } = markedEdit("rs-part-chapters-");
+        const written = spyExport();
+        const part = { fromUs: 25_000_000, toUs: 40_000_000 };
+
+        const answer = await edits.exportAs(path, { part, out: join(root, "part.mp4") });
+
+        expect(answer).toMatchObject({ ok: true, chapters: 2 });
+        expect(written[0]).toContain("START=0\nEND=5000\ntitle=Step 2");
+        expect(written[0]).toContain("START=5000\nEND=15000\ntitle=Step 3");
+        expect(written[0]).not.toContain("title=Intro");
+
+        const movie = join(root, "window.mp4");
+        writeFileSync(movie, "movie");
+        await edits.finishExport({ value: path, answer: { ok: true, path: movie }, part });
+        expect(written[1]).toBe(written[0] ?? "");
+    });
+
+    test("chaptersOfPart folds a chapter under 1 s after the part start into the 0:00 chapter", () => {
+        const chapters = [
+            { at: 0, label: "Intro" },
+            { at: 10, label: "Step 1" },
+            { at: 20.5, label: "Step 2" },
+        ];
+        expect(chaptersOfPart(chapters, { from: 20, to: 40 })).toEqual([{ at: 0, label: "Step 2" }]);
+        expect(chaptersOfPart(chapters, { from: 19, to: 40 })).toEqual([
+            { at: 0, label: "Step 1" },
+            { at: 1.5, label: "Step 2" },
+        ]);
     });
 });
 

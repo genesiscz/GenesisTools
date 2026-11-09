@@ -241,7 +241,8 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 - `export`: `codec` h264 or hevc, `maxHeight` (0 = source), `output`, `format` (absent = mp4), `subtitles` (`srt`
   or `vtt`: a subtitle file beside every export, from the cached transcript with its fixes, in the movie's time;
   absent is none; `exportSettings {subtitles: "none"}` stops it), `chapters` (absent is on: an MP4 gets the
-  recording's markers as chapters, a part only those inside it; `false` turns it off).
+  recording's markers as chapters; a part gets the chapter current at its start at 0:00 and those inside it, on
+  every route; `false` turns it off).
 - `clicks` (optional): a disc that grows and fades on each recorded click.
 - `frame` (optional): the movie on a background (`none`, `color`, `gradient`, or `image` with `image` a picture file
   and `blur` 0 to 1; the Style tab has Desktop Picture and Choose Image…), with `padding`, `cornerRadius` and a

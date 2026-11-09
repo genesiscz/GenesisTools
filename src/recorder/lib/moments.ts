@@ -209,7 +209,9 @@ export function chaptersOfPart(
     const inside = chapters
         .filter((chapter) => chapter.at > part.from && chapter.at < part.to)
         .map((chapter) => ({ at: chapter.at - part.from, label: chapter.label }));
-    return [...(current ? [{ at: 0, label: current.label }] : []), ...inside];
+    // A chapter under 1 s after the part start names the 0:00 chapter, as chapterPoints does at the movie start.
+    const lead = inside.filter((chapter) => chapter.at < 1).at(-1) ?? current;
+    return [...(lead ? [{ at: 0, label: lead.label }] : []), ...inside.filter((chapter) => chapter.at >= 1)];
 }
 
 /** The ffmpeg metadata file that puts chapters into a movie, each running to the next one or the end. */
