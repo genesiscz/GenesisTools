@@ -285,7 +285,8 @@ struct EditProject: Codable, Equatable {
         var highlight = true
         /// #RRGGBB.
         var color = "#FFD60A"
-        /// The disc's largest radius, as a fraction of the picture's height.
+        /// The disc's largest radius, as a fraction of the recorded picture's height; drawn on the picture before the
+        /// zoom and the frame, so it zooms and frames with it.
         var radius = 0.03
         var durationMs = 450
         /// A soft tick at each click in the sound; nil is off.
@@ -551,9 +552,9 @@ struct EditProject: Codable, Equatable {
         /// How the movie fills a canvas of another shape; nil is `.contain`.
         var fit: CanvasFit?
         var background = Background()
-        /// The margin on every side, as a fraction of the output height.
+        /// The margin on every side, as a fraction of the canvas's short side (Looks.framePlacement).
         var padding = 0.06
-        /// As a fraction of the output height.
+        /// As a fraction of the canvas's short side (Looks.framePlacement).
         var cornerRadius = 0.012
         var shadow = true
         // R5 4 frame layouts

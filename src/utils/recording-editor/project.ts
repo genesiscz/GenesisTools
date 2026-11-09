@@ -170,7 +170,10 @@ export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 export const clicksSchema = z.object({
     highlight: z.boolean().default(true),
     color: hexColor.default("#FFD60A"),
-    /** The disc's largest radius, as a fraction of the output height. */
+    /**
+     * The disc's largest radius, as a fraction of the recorded picture's height. It is drawn on the picture before the
+     * zoom and the frame, so it zooms and frames with it.
+     */
     radius: z.number().min(0.005).max(0.2).default(0.03),
     /** How long a disc grows and fades, in the movie as it plays (a sped-up part does not shorten it); a cut ends it. */
     durationMs: z.number().int().min(100).max(3000).default(450),
@@ -204,9 +207,9 @@ export const frameSchema = z.object({
             blur: z.number().min(0).max(1).optional(),
         })
         .default({ kind: "gradient", colors: ["#4F46E5", "#DB2777"] }),
-    /** The margin on every side, as a fraction of the output height. */
+    /** The margin on every side, as a fraction of the canvas's short side (Looks.framePlacement). */
     padding: z.number().min(0).max(0.3).default(0.06),
-    /** As a fraction of the output height. */
+    /** As a fraction of the canvas's short side (Looks.framePlacement). */
     cornerRadius: z.number().min(0).max(0.1).default(0.012),
     shadow: z.boolean().default(true),
     // R5 4 frame layouts

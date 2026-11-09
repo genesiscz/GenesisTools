@@ -70,7 +70,7 @@ export const CHAPTER_PLACES = ["auto", "topLeft", "topRight", "bottomLeft", "bot
 export type ChapterPlace = (typeof CHAPTER_PLACES)[number];
 
 /**
- * A thin bar along the bottom of the export showing the share played, divided at the markers (the recording's and
+ * A thin bar along the bottom edge of the canvas showing the share played, divided at the markers (the recording's and
  * the edit's), and the name of each chapter for `chapterMs` when it starts. `height` is a share of the canvas's short
  * side.
  */

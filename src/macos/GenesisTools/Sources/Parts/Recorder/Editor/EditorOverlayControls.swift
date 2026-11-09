@@ -67,7 +67,7 @@ struct ProgressBarSection: View {
         let bar = model.project.progress
         VStack(alignment: .leading, spacing: 8) {
             SwitchRow("Progress bar", isOn: Binding(get: { bar?.show == true }, set: { on in set { $0.show = on } }))
-                .instantTooltip("A thin bar along the bottom of the movie showing how much has played, divided at the markers")
+                .instantTooltip("A thin bar along the bottom edge of the canvas showing how much has played, divided at the markers")
                 .accessibilityIdentifier("recorder.style.progress")
             if let bar, bar.show {
                 HStack(spacing: 8) {
@@ -102,7 +102,7 @@ struct ProgressBarSection: View {
                         Text("Bottom right").tag(EditProject.ChapterPlace.bottomRight)
                     }
                     .font(.system(size: 12.5))
-                    .instantTooltip("Free area puts the name beside the movie (the frame's padding or a phone preset's free side), never over it")
+                    .instantTooltip("Free area puts the name beside the movie (the frame's padding or a phone preset's free side), never over it; without a frame it sits at the bottom left above the bar")
                     .accessibilityIdentifier("recorder.style.progressChapterPlace")
                     SectionLabel(text: "Name shows for", value: String(format: "%.1f s", Double(bar.chapterMs) / 1000))
                     Slider(value: Binding(get: { Double(bar.chapterMs) }, set: { value in set { $0.chapterMs = Int((value / 250).rounded() * 250) } }),

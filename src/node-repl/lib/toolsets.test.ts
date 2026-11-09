@@ -1786,6 +1786,19 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(doc("settings")).toContain("fixed");
     });
 
+    // Round 2 hunt (r2-docs-units): movies.record said it records "with an on-screen countdown" while it starts at once
+    // unless countdown is given, and cameraHide said touching hidden parts "are joined" while each stays its own item.
+    test("movies: record says it starts at once unless countdown is given, and cameraHide keeps touching parts apart", async () => {
+        const { moviesApi } = await import("@app/recorder/lib/toolset");
+        const record = moviesApi.methods.find((method) => method.name === "record")?.doc ?? "";
+        const movie = moviesApi.handles?.find((handle) => handle.name === "Movie")?.methods ?? [];
+        const cameraHide = movie.find((method) => method.name === "cameraHide")?.doc ?? "";
+        expect(record).toContain("starts at once unless countdown");
+        expect(record).not.toContain("with an on-screen countdown");
+        expect(cameraHide).toContain("stays hidden across the join");
+        expect(cameraHide).not.toContain("are joined");
+    });
+
     test("movies: a MovieRecording reads and changes the settings of a real library recording's control over its socket", async () => {
         const { MovieRecording } = await import("@app/recorder/lib/toolset");
         const root = mkdtempSync(join(tmpdir(), "gt-movie-settings-"));

@@ -243,12 +243,14 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   absent is none; `exportSettings {subtitles: "none"}` stops it), `chapters` (absent is on: an MP4 gets the
   recording's markers as chapters; a part gets the chapter current at its start at 0:00 and those inside it, on
   every route; `false` turns it off).
-- `clicks` (optional): a disc that grows and fades on each recorded click.
+- `clicks` (optional): a disc that grows and fades on each recorded click. `radius` is a fraction of the recorded
+  picture's height; the disc is drawn on the picture before the zoom and the frame, so it zooms and frames with it.
 - `frame` (optional): the movie on a background (`none`, `color`, `gradient`, or `image` with `image` a picture file
   and `blur` 0 to 1; the Style tab has Desktop Picture and Choose Image…), with `padding`, `cornerRadius` and a
   `shadow`, on a canvas of its own `aspect` (`16:9`, `4:3`, `1:1`, `9:16`; absent is the movie's shape). The canvas's
-  short side is the movie's height; sizes are fractions of it. `fit: "cover"` crops the movie to fill the canvas, the
-  crop following the cursor (averaged over ±0.7 s); `contain` (absent) shows all of it.
+  short side is the movie's height; `padding`, `cornerRadius` and the other sizes are fractions of the canvas's short
+  side. `fit: "cover"` crops the movie to fill the canvas, the crop following the cursor (averaged over ±0.7 s);
+  `contain` (absent) shows all of it.
 - `keys` (optional): the kept shortcuts on a plate as they were pressed, `show`, `size` 0.05, `position`, `durationMs`
   1200; above a caption on the same edge.
 - `captions` (optional): the spoken lines from `<movie>.transcript.json` (made by `movie.transcript()` or the Style

@@ -631,7 +631,7 @@ const movieMethods = [
                 sound: z.boolean().optional(),
             })
             .strict(),
-        'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the height, 0.03), durationMs (450); sound: true adds a soft tick at each click to the sound (off by default). It draws the clicks; clickGroups() reads them.'
+        'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the recorded picture\'s height, 0.03; drawn on the picture before the zoom and the frame, so it zooms and frames with it), durationMs (450); sound: true adds a soft tick at each click to the sound (off by default). It draws the clicks; clickGroups() reads them.'
     ),
     edit(
         "keys",
@@ -676,12 +676,12 @@ const movieMethods = [
     edit(
         "camera",
         cameraOpSchema.omit({ op: true }),
-        'The camera bubble (a recording made with the camera on has one from its camera.json; info() shows camera): corner "bottomRight" | "bottomLeft" | "topRight" | "topLeft", or x and y (the centre, 0–1, makes it "custom"; one of them alone keeps the other where the bubble is drawn now); size (its side over the short side, 0.08–0.6, 0.24); shape "circle" | "rounded" | "square"; mirror; show; offsetMs (camera time = source time - offsetMs); file for an edit without one; enabled: false removes it.'
+        'The camera bubble (a recording made with the camera on has one from its camera.json; info() shows camera): corner "bottomRight" | "bottomLeft" | "topRight" | "topLeft", or x and y (the centre, 0–1, makes it "custom"; one of them alone keeps the other where the bubble is drawn now); size (its side over the canvas\'s short side, 0.08–0.6, 0.24); shape "circle" | "rounded" | "square"; mirror; show; offsetMs (camera time = source time - offsetMs); file for an edit without one; enabled: false removes it.'
     ),
     edit(
         "cameraHide",
         z.object(range).strict(),
-        "Hides the camera bubble from `from` to `to` (SOURCE seconds, so it moves with a cut); hidden parts that touch are joined.",
+        "Hides the camera bubble from `from` to `to` (SOURCE seconds, so it moves with a cut). Each call adds a hidden part of its own: parts that touch stay separate items, and the bubble stays hidden across the join.",
         ["from", "to"]
     ),
     edit(
@@ -725,7 +725,7 @@ const movieMethods = [
                 preset: z.enum(FRAME_PRESETS).optional(),
             })
             .strict(),
-        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill the room inside the padding, following the cursor; padding 0 for edge to edge), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "image" | "none", colors, image (a picture file; kind image), blur (0–1) }; enabled: false removes it. layout { align: "center" | "left" | "right" | "top" | "bottom", scale: 0.5–3 } places the picture against one edge (inside the padding) and sizes it. Above 1 the picture grows inside the padding and is cropped to it, and layout.focus { x, y } (0..1 of the picture from its top left, the centre by default) picks the part that stays in view: a whole phone is at most about 0.27 of a 16:9 width, so layout { scale: 1.5, focus: { x: 0.5, y: 1 } } makes it about 0.36 wide and keeps its bottom (a tab bar) in view while a third of its top is out. preset sets aspect, fit (contain, the whole phone), padding, corner radius and layout for a phone recording, and the call\'s own fields win: "phone-left" / "phone-right" (16:9, the whole phone against one side, about 0.24 to 0.27 of the width, the rest free for texts at x 0.62 or 0.38), "phone-portrait" (9:16, the phone from the top with the bottom eighth free for captions, for Shorts). Example: frame({ preset: "phone-left", layout: { scale: 1.1 } }), then text({ from, to, text: "Line one\\nLine two", x: 0.64 }).'
+        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill the room inside the padding, following the cursor; padding 0 for edge to edge), padding (0.06 of the canvas\'s short side), cornerRadius (0.012 of the canvas\'s short side), shadow, background { kind: "gradient" | "color" | "image" | "none", colors, image (a picture file; kind image), blur (0–1) }; enabled: false removes it. layout { align: "center" | "left" | "right" | "top" | "bottom", scale: 0.5–3 } places the picture against one edge (inside the padding) and sizes it. Above 1 the picture grows inside the padding and is cropped to it, and layout.focus { x, y } (0..1 of the picture from its top left, the centre by default) picks the part that stays in view: a whole phone is at most about 0.27 of a 16:9 width, so layout { scale: 1.5, focus: { x: 0.5, y: 1 } } makes it about 0.36 wide and keeps its bottom (a tab bar) in view while a third of its top is out. preset sets aspect, fit (contain, the whole phone), padding, corner radius and layout for a phone recording, and the call\'s own fields win: "phone-left" / "phone-right" (16:9, the whole phone against one side, about 0.24 to 0.27 of the width, the rest free for texts at x 0.62 or 0.38), "phone-portrait" (9:16, the phone from the top with the bottom eighth free for captions, for Shorts). Example: frame({ preset: "phone-left", layout: { scale: 1.1 } }), then text({ from, to, text: "Line one\\nLine two", x: 0.64 }).'
     ),
     edit(
         "removeIdle",
@@ -1210,7 +1210,7 @@ const movieMethods = [
                 enabled: z.boolean().optional(),
             })
             .strict(),
-        'A thin bar along the bottom of the movie (preview and export) showing how much has played, in color ("#FFFFFF"), height a share of the short side (0.008), divided at the markers (the recording\'s and the edit\'s, markers()) as the MP4\'s chapters are: a marker under 1 s after the one kept before it adds no divider and the earlier name stays, and a first marker under 1 s starts the first chapter at 0 with no divider; with chapters (true) each chapter\'s label shows for chapterMs (2000) when it starts, at chapterPlace: "auto" (default) puts it in the frame\'s free area (the padding, or the free side of a phone preset: below the phone with phone-portrait, on the free side with phone-left/right), never over the movie, and at the bottom left above the bar without a frame; "topLeft" | "topRight" | "bottomLeft" | "bottomRight" pin it to that corner of the canvas. show: false hides it and keeps the settings; enabled: false removes it.'
+        'A thin bar along the bottom edge of the canvas (preview and export) showing how much has played, in color ("#FFFFFF"), height a share of the short side (0.008), divided at the markers (the recording\'s and the edit\'s, markers()) as the MP4\'s chapters are: a marker under 1 s after the one kept before it adds no divider and the earlier name stays, and a first marker under 1 s starts the first chapter at 0 with no divider; with chapters (true) each chapter\'s label shows for chapterMs (2000) when it starts, at chapterPlace: "auto" (default) puts it in the frame\'s free area (the padding, or the free side of a phone preset: below the phone with phone-portrait, on the free side with phone-left/right), never over the movie, and at the bottom left above the bar without a frame; "topLeft" | "topRight" | "bottomLeft" | "bottomRight" pin it to that corner of the canvas. show: false hides it and keeps the settings; enabled: false removes it.'
     ),
     // R4 9 intro and end cards
     edit(
@@ -1610,7 +1610,7 @@ export const moviesApi = defineApi({
             params: recordOptionsSchema,
             result: z.unknown(),
             resultName: "MovieRecording",
-            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title. It records what the user's screen shows, with an on-screen countdown and indicator unless they are off. It resolves once the movie has its first frame, so what you do after await movies.record() is in the movie.`,
+            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title. It records what the user's screen shows. It starts at once unless countdown is given (true is 3 s), and a red border marks what it records unless indicator is false. It resolves once the movie has its first frame, so what you do after await movies.record() is in the movie.`,
             effect: "reversible",
             reaches: ["user"],
         }),
