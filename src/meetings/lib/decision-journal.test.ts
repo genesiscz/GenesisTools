@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
-import { type MeetingItem, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type MeetingItem, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import type { SpeakerHint } from "@genesiscz/utils/transcribe/speakers";
+import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
 import { actorOf, actorText, callerActor, DecisionJournal, decisionReach, JOURNAL_FILE } from "./decision-journal";
+import { assignmentReach } from "./speaker-assign";
+import { correctTranscript } from "./transcript-corrections";
 
 const now = "2026-11-09T18:00:00.000Z";
 let stores = 0;
@@ -415,5 +420,148 @@ describe("decision journal", () => {
             { heard: "Ada", fixed: "ADO", seenBefore: 1, teaches: true },
         ]);
         expect(fx.events()).toEqual([]);
+    });
+});
+
+describe("speaker assignments (assign)", () => {
+    /** Three voices: S1 twice, S2 once, S3 in the second section. */
+    const transcript: TranscriptEntry[] = [
+        { startSec: 10, speaker: "S1", text: "We start with the harbor." },
+        { startSec: 20, speaker: "S2", text: "The crane is late." },
+        { startSec: 30, speaker: "S1", text: "Then we wait." },
+        { startSec: 70, speaker: "S1", text: "Back again." },
+        { startSec: 80, speaker: "S3", text: "I joined late." },
+    ];
+
+    async function assignFixture() {
+        const fx = await fixture([], { S2: "Alex Example" });
+        const journal = new DecisionJournal({
+            store: fx.store,
+            ledger: () => undefined,
+            split: { transcript: async () => transcript },
+            now: () => new Date(now),
+        });
+        const record = () => fx.store.read(fx.meeting.id)!;
+        return { ...fx, journal, record };
+    }
+
+    test("a stretch of one label is one assignment, the transcript shows the person, and the token removes it", async () => {
+        const fx = await assignFixture();
+        const { entry } = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "assign", person: "Dana Example", stretches: [{ label: "S1", fromSec: 5, toSec: 35 }] },
+            actor: person,
+        });
+
+        expect(fx.record().speakers.assignments).toEqual([
+            { id: "a1", label: "S1", fromSec: 5, toSec: 35, person: "Dana Example", at: now },
+        ]);
+        expect(entry?.assignments).toEqual([{ id: "a1", after: fx.record().speakers.assignments![0]! }]);
+        const corrected = correctTranscript({
+            record: fx.record(),
+            transcript,
+            config: meetingsConfigSchema.parse({}),
+            format: "txt",
+        });
+        expect(corrected.entries.map((line) => line.speaker)).toEqual([
+            "Dana Example",
+            "Alex Example",
+            "Dana Example",
+            "S1",
+            "S3",
+        ]);
+        expect(fx.record().history.at(-1)).toMatchObject({
+            command: "speakers assign",
+            change: "S1 00:05–00:35 → Dana Example",
+        });
+
+        await fx.journal.revert({ meeting: fx.meeting.id, token: entry!.token, actor: person });
+
+        expect(fx.record().speakers).not.toHaveProperty("assignments");
+    });
+
+    test("a stretch of every voice and a line by its start find their labels; a line that is not there is skipped", async () => {
+        const fx = await assignFixture();
+        const { entry, skipped } = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: {
+                kind: "assign",
+                person: "Kim Example",
+                email: "kim@example.com",
+                stretches: [{ fromSec: 15, toSec: 32 }],
+                lines: [{ atSec: 80, line: 4 }, { atSec: 99 }],
+            },
+            actor: person,
+        });
+
+        expect(fx.record().speakers.assignments?.map((one) => [one.id, one.label, one.fromSec, one.toSec])).toEqual([
+            ["a1", "S2", 15, 32],
+            ["a2", "S1", 15, 32],
+            ["a3", "S3", 80, 80],
+        ]);
+        expect(fx.record().speakers.assignments?.[0]?.email).toBe("kim@example.com");
+        expect(skipped).toEqual([{ id: "line 01:39", reason: "no line starts at 01:39", needs: "nothing" }]);
+        expect(entry?.skipped).toEqual(skipped);
+    });
+
+    test("the same stretch given to someone else replaces it, and an Undo of the first is refused", async () => {
+        const fx = await assignFixture();
+        const stretch = { label: "S1", fromSec: 5, toSec: 35 };
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "assign", person: "Dana Example", stretches: [stretch] },
+            actor: person,
+        });
+        const again = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "assign", person: "Dana Example", stretches: [stretch] },
+            actor: person,
+        });
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "assign", person: "Lee Example", stretches: [stretch] },
+            actor: person,
+        });
+
+        expect(again.entry).toBeUndefined();
+        expect(fx.record().speakers.assignments?.map((one) => [one.id, one.person])).toEqual([["a1", "Lee Example"]]);
+        await expect(
+            fx.journal.revert({ meeting: fx.meeting.id, token: first.entry!.token, actor: person })
+        ).rejects.toMatchObject({ code: "item-changed" });
+    });
+
+    test("a rename to a name another label holds says both labels become one person (G-PPL-4)", async () => {
+        const fx = await assignFixture();
+        const planned = await fx.journal.plan({
+            meeting: fx.meeting.id,
+            action: { kind: "rename", label: "S3", name: "Alex Example" },
+            actor: person,
+        });
+
+        expect(planned.warnings).toEqual(["S2 is named Alex Example already: S3 and S2 become one person"]);
+    });
+
+    test("the reach is the same label in the hint range around it and in the sections with the same people", () => {
+        const record = meetingRecordSchema.parse({
+            id: "m1",
+            title: "Harbor sync",
+            start: now,
+            createdAt: now,
+            createdBy: "new",
+            sections: [
+                { fromSec: 0, toSec: 40, present: ["Dana Example", "Alex Example"] },
+                { fromSec: 40, toSec: 60, present: ["Dana Example"] },
+                { fromSec: 60, toSec: 90, present: ["Alex Example", "Dana Example"] },
+            ],
+        });
+        const assigned = [{ id: "a1", label: "S1", fromSec: 9, toSec: 11, person: "Dana Example", at: now }];
+        const hints: SpeakerHint[] = [
+            { kind: "absent-speaker", label: "S1", strength: "normal", ranges: [{ fromSec: 0, toSec: 35, lines: 2 }] },
+        ];
+
+        expect(assignmentReach({ record, transcript, hints, assigned })).toEqual([
+            { label: "S1", fromSec: 0, toSec: 35, lines: 1, why: "hint-range" },
+            { label: "S1", fromSec: 60, toSec: 90, lines: 1, why: "present-set" },
+        ]);
     });
 });

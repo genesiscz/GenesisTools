@@ -5,6 +5,7 @@ import { truncateDisplay } from "@genesiscz/utils/table";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { recordingSummary } from "./screen";
 import { TOOL } from "./shared";
+import { assignmentText } from "./speaker-assign";
 
 /** A source block as a person reads it: the source meeting and its folders, not the raw JSON (MC24). */
 function sourceLine(block: Record<string, unknown>): string {
@@ -65,6 +66,15 @@ export function showText(record: MeetingRecord): string {
 
     if (renames.length > 0) {
         blocks.push({ h2: "Speaker renames" }, { ul: renames.map(([label, name]) => `${label} → ${name}`) });
+    }
+
+    const assignments = record.speakers.assignments ?? [];
+
+    if (assignments.length > 0) {
+        blocks.push(
+            { h2: "Speaker assignments" },
+            { ul: assignments.map((assignment) => `${assignmentText(assignment)} → ${assignment.person}`) }
+        );
     }
 
     if (record.items.length > 0) {

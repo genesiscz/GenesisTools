@@ -2,7 +2,8 @@ import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { readCorrections } from "@genesiscz/utils/meetings/corrections";
 import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import type { Decided, DecisionAction } from "../decision-actions";
+import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import type { Decided, DecisionAction, JournalEntry } from "../decision-actions";
 import {
     actorText,
     callerActor,
@@ -14,6 +15,7 @@ import {
 } from "../decision-journal";
 import { CORRECTION_REPEATS } from "../dictionary-suggest";
 import { setMeetingFields } from "../meeting-fields";
+import { type AssignReachStretch, assignmentReach } from "../speaker-assign";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
 import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
 
@@ -189,6 +191,10 @@ async function reachOf(
         return empty;
     }
 
+    if (action.kind === "assign") {
+        return { ...empty, stretches: await assignReachOf(store, record, planned.entry, deps) };
+    }
+
     const teaches = planned.entry.corrections.some((line) => line.kind === "term" && line.scope === "everywhere");
     const transcript = teaches
         ? await splitInputsOf(store, deps)
@@ -207,6 +213,38 @@ async function reachOf(
     });
 }
 
+/**
+ * The other stretches an assignment may reach (G-SPK-5): the same label in the hint range around it or in the sections
+ * with the same people present. A meeting whose transcript or attendance does not read offers none.
+ */
+async function assignReachOf(
+    store: MeetingStore,
+    record: MeetingRecord,
+    entry: JournalEntry,
+    deps: MeetingsHandlerDeps
+): Promise<AssignReachStretch[]> {
+    const assigned = (entry.assignments ?? []).flatMap((change) => (change.after ? [change.after] : []));
+
+    if (assigned.length === 0) {
+        return [];
+    }
+
+    try {
+        const { OpenedMeeting } = await import("../opened-meeting");
+        const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
+        const meeting = await opened.meeting();
+        const { hints } = speakerStats(meeting.transcript, {
+            gapSec: DEFAULT_SPAN_GAP_SEC,
+            participants: meeting.speakers,
+            presence: await opened.presence(),
+        });
+        return assignmentReach({ record, transcript: meeting.transcript, hints, assigned });
+    } catch (error) {
+        log.debug({ error, meeting: record.id }, "an assignment's reach reads no transcript or attendance");
+        return [];
+    }
+}
+
 /** The item ids an action names itself (a question by `Q12` too). */
 function namedItems(record: MeetingRecord, action: DecisionAction): string[] {
     switch (action.kind) {
@@ -221,6 +259,7 @@ function namedItems(record: MeetingRecord, action: DecisionAction): string[] {
         case "split":
             return [itemIdOf(record, action.question)];
         case "rename":
+        case "assign":
         case "add":
         case "set":
             return [];

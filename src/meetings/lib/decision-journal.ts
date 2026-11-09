@@ -49,6 +49,16 @@ import {
     splitQuestion,
 } from "./questions";
 import { TOOL } from "./shared";
+import {
+    type AssignReachStretch,
+    assignmentChanges,
+    assignmentsOf,
+    assignmentText,
+    assignNeedsTranscript,
+    putAssignments,
+    renameJoinsWarning,
+    revertAssignments,
+} from "./speaker-assign";
 import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 
 const { log } = logger.scoped("meetings-journal");
@@ -672,13 +682,41 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 throw new Error(`a rename of ${action.label} needs a name`);
             }
 
+            const joins = renameJoinsWarning(record, action.label, name);
+
             if (name === action.label) {
                 delete record.speakers.labels[action.label];
             } else {
                 record.speakers.labels[action.label] = name;
             }
 
-            return { history: { command: "speakers rename", change: `${action.label} → ${name}` }, stamps: false };
+            return {
+                history: { command: "speakers rename", change: `${action.label} → ${name}` },
+                ...(joins ? { warnings: [joins] } : {}),
+                stamps: false,
+            };
+        },
+    },
+    assign: {
+        prepare: async (record, action, inputs) => {
+            // A stretch with its label needs no transcript; a stretch of every voice, or a line by its start, does.
+            if (!assignNeedsTranscript(action)) {
+                return {};
+            }
+
+            if (!inputs) {
+                throw new Error(
+                    "An assignment of lines needs the meeting's transcript; this journal was made without it"
+                );
+            }
+
+            return { transcript: await inputs.transcript(record) };
+        },
+        mutate: (record, action, { now, prepared }) => {
+            const { assigned, skipped } = assignmentsOf(action, prepared.transcript);
+            putAssignments(record, assigned, now);
+            const change = assigned.map((one) => `${assignmentText(one)} → ${one.person}`).join(", ");
+            return { history: { command: "speakers assign", change }, skipped, stamps: false };
         },
     },
     reopen: {
@@ -830,6 +868,10 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 putField(record, field.field, field.before);
             }
 
+            if (!action.items) {
+                revertAssignments(record, target.assignments ?? []);
+            }
+
             const corrections: Correction[] = [];
             const before = new Map(record.items.map((item) => [item.id, ledgerEntryFor(record, item, now)]));
             record.items = revertChanges(record.items, pending);
@@ -849,8 +891,12 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 }
             }
 
+            const unassigned = action.items ? [] : (target.assignments ?? []).map((change) => change.id);
             return {
-                history: { command: "reopen", change: pending.map((change) => change.id).join(" ") },
+                history: {
+                    command: "reopen",
+                    change: [...pending.map((change) => change.id), ...unassigned].join(" "),
+                },
                 skipped,
                 corrections,
                 ...(target.question && pending.some((change) => change.id === target.question)
@@ -973,6 +1019,11 @@ export interface DecisionReach {
      * this decision makes it a suggestion.
      */
     dictionary: Array<{ project?: string; heard: string; fixed: string; seenBefore: number; teaches: boolean }>;
+    /**
+     * An assignment's other stretches (`assign`): the same label inside the hint range that holds the assigned
+     * stretch, or in the sections with the same people present; absent for other actions.
+     */
+    stretches?: AssignReachStretch[];
 }
 
 /** The reach of a planned entry, from the record it was planned on, its transcript (when read) and the ledger. */
@@ -1231,14 +1282,16 @@ export class DecisionJournal {
             const items = structuredClone(record.items);
             const labels = { ...record.speakers.labels };
             const fieldsBefore = fieldValues(record);
+            const assignmentsBefore = structuredClone(record.speakers.assignments ?? []);
             const outcome = handler.mutate(record, action, context);
             Object.assign(history, outcome.history);
             let changes = itemChanges(items, record.items);
             const labelled = labelChanges(labels, record.speakers.labels);
             const fielded = fieldChanges(fieldsBefore, fieldValues(record));
+            const assigned = assignmentChanges(assignmentsBefore, record.speakers.assignments ?? []);
             const warnings = outcome.warnings?.length ? { warnings: outcome.warnings } : {};
 
-            if (changes.length === 0 && labelled.length === 0 && fielded.length === 0) {
+            if (changes.length === 0 && labelled.length === 0 && fielded.length === 0 && assigned.length === 0) {
                 result = { skipped: outcome.skipped ?? [], ...warnings };
                 return false;
             }
@@ -1275,6 +1328,7 @@ export class DecisionJournal {
                     changes,
                     labels: labelled,
                     ...(fielded.length > 0 ? { fields: fielded } : {}),
+                    ...(assigned.length > 0 ? { assignments: assigned } : {}),
                     corrections: outcome.corrections ?? [],
                 },
                 skipped: outcome.skipped ?? [],

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
-import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import { meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
 import type { SpeakerHint, SpeakerLeave } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 import { commentListenerSchema, meetingCommentSchema } from "../comment-schema";
@@ -200,6 +200,21 @@ export const decisionReachSchema = z.object({
             teaches: z.boolean(),
         })
     ),
+    /**
+     * An `assign`'s other stretches (`AssignReachStretch`, speaker-assign.ts): the same label inside the hint range
+     * around it (`hint-range`) or in the sections with the same people present (`present-set`), never "sounds the same".
+     */
+    stretches: z
+        .array(
+            z.object({
+                label: z.string(),
+                fromSec: z.number(),
+                toSec: z.number(),
+                lines: z.number().int().nonnegative(),
+                why: z.enum(["hint-range", "present-set"]),
+            })
+        )
+        .optional(),
 });
 
 const decisionPlan = defineMethod({
@@ -375,8 +390,10 @@ const meetingSpeakers = defineMethod({
          * attendance hints carry ranges with fromSec, toSec and present.
          */
         hints: z.array(z.custom<SpeakerHint>((value) => typeof value === "object" && value !== null)),
+        /** The stretches given to a person (`assign`), each a label's lines; absent when the meeting has none. */
+        assignments: z.array(speakerAssignmentSchema).optional(),
     }),
-    resultName: "{ meeting, gapSec, timed, speakers: SpeakerStat[], hints: SpeakerHint[] }",
+    resultName: "{ meeting, gapSec, timed, speakers: SpeakerStat[], hints: SpeakerHint[], assignments? }",
     doc: "Per label its turns, spoken time and spans, and the hints against labels with their ranges (fromSec, toSec, present), as `speakers stats --json` prints them: the Speakers tab's talk-time lanes and range chips.",
     effect: "read",
 });

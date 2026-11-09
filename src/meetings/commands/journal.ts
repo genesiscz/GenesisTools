@@ -9,6 +9,7 @@ import { actorText, itemIdOf, type JournalReadEntry } from "../lib/decision-jour
 import { questionLabel } from "../lib/questions";
 import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { assignmentText } from "../lib/speaker-assign";
 
 /** At most this many items are named on an entry's line; the rest are counted. */
 const NAMED_ITEMS = 8;
@@ -61,6 +62,10 @@ function whatText(record: MeetingRecord, entry: JournalReadEntry): string {
         }
         case "rename":
             return `rename ${action.label} → ${action.name.trim()}`;
+        case "assign": {
+            const stretches = (entry.assignments ?? []).flatMap((change) => (change.after ? [change.after] : []));
+            return `assign ${stretches.map(assignmentText).join(", ") || "nothing"} → ${action.person.trim()}`;
+        }
         case "reopen":
             return `reopen ${named(record, changed)}`;
         case "revert":
