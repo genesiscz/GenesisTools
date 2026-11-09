@@ -366,6 +366,28 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertTrue(closed.contains("Your answer"), closed)
     }
 
+    /// The card's Context folds to two lines with Show more by default; a decision quoted inside it (hub UX council,
+    /// 2026-11-09: Decision 12's context repeated Decision 11 with its own a) b) c)) is drawn as a blockquote whose
+    /// title says Quoted, opened in full here through the Inbox setting.
+    @MainActor
+    func testTheContextFoldsToTwoLinesAndAQuotedDecisionReadsAsAQuote() throws {
+        HubDefaults.isolate()
+        defer { HubDefaults.store.removeObject(forKey: HubInboxCards.contextOpenKey) }
+        let folded = try Self.drawnText(Self.render(card: try Self.decision(Self.contextFixture(status: "waiting")),
+                                                    name: "extra-4-context-folded"))
+        XCTAssertTrue(folded.contains("Show more"), folded)
+        XCTAssertFalse(folded.contains("types the command in a terminal"), "folded: the last line is hidden: \(folded)")
+        let quoting = #"""
+        {"number": 12, "title": "Comment on the issue with the new evidence?", "prompt": "Post a short comment?",
+         "context": "I posted both questions to your widget inbox.\n\n❓ **DECISION 11**: How should T3 show the plan and email?\nClaude Code reports them only for a stored login.\n\n- **a)** A T3 change only you would use.\n- **b)** A GenesisTools change.\n- **c)** Leave it as Authenticated.\n\nPlease answer these, not the earlier ones.",
+         "choices": [{"id": "a", "label": "Yes, post it."}, {"id": "b", "label": "No, the existing reports are enough."}]}
+        """#
+        HubDefaults.store.set(true, forKey: HubInboxCards.contextOpenKey)
+        let quoted = try Self.drawnText(Self.render(card: try Self.decision(quoting), name: "extra-4-quoted-decision"))
+        XCTAssertTrue(quoted.contains("Quoted"), quoted)
+        XCTAssertTrue(quoted.contains("Please answer these"), "the prose after the quote is outside it: \(quoted)")
+    }
+
     /// Decision 31 of 2026-11-01 as the loader sends it now (`fromRecord`): the options carry the words the agent wrote
     /// only in the prompt, the prompt keeps the rest, and the reasoning is the agent's pick line. The card draws the
     /// question under its title, the words on the option rows and the reasoning behind the lightbulb, never as
