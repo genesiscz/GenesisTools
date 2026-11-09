@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import type { LISTEN_PLAYERS } from "@genesiscz/utils/meetings/config";
+import { DEFAULT_TONE_SOUND, type LISTEN_PLAYERS, type ToneSound } from "@genesiscz/utils/meetings/config";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { PLAYERS, pickPlayer } from "./players";
@@ -42,21 +42,22 @@ export async function meetingAudio(record: MeetingRecord): Promise<MeetingAudio>
     return { audioPath: evidence.audioPath, ...(lastSpeechSec === undefined ? {} : { lastSpeechSec }) };
 }
 
-/** The tone `cutClip` mixes in before the asked spot, so the listener knows which words the question is about. */
-const TONE = { hz: 880, sec: 0.15, volume: 0.6 };
-
-/**
- * Cuts `fromSec - padSec` to `toSec + padSec` of the recording into a WAV clip. Needs ffmpeg. With `toneAtSec` (a
- * time in the recording) a short tone sounds at that moment of the clip.
- */
-export async function cutClip(options: {
-    audioPath: string;
+/** What one clip holds: the heard stretch, the audio around it, and where its tone sounds (a time in the recording). */
+export interface ClipPlan {
     fromSec: number;
     toSec: number;
     padSec: number;
-    outPath: string;
     toneAtSec?: number;
-}): Promise<void> {
+    /** The tone's sound (`playback.listen.tone.sound`); the shipped sound when absent. */
+    toneSound?: ToneSound;
+}
+
+/**
+ * Cuts `fromSec - padSec` to `toSec + padSec` of the recording into a WAV clip. Needs ffmpeg. With `toneAtSec` (a
+ * time in the recording) a short tone sounds at that moment of the clip, so the listener knows which words the
+ * question is about.
+ */
+export async function cutClip(options: ClipPlan & { audioPath: string; outPath: string }): Promise<void> {
     if (!Bun.which("ffmpeg")) {
         throw new Error("ffmpeg is not installed (brew install ffmpeg); it cuts the clip to listen to.");
     }
@@ -66,6 +67,7 @@ export async function cutClip(options: {
     mkdirSync(dirname(options.outPath), { recursive: true });
     const toneMs =
         options.toneAtSec === undefined ? undefined : Math.round(Math.max(0, options.toneAtSec - startSec) * 1000);
+    const sound = options.toneSound ?? DEFAULT_TONE_SOUND;
     const tone =
         toneMs === undefined
             ? []
@@ -73,11 +75,11 @@ export async function cutClip(options: {
                   "-f",
                   "lavfi",
                   "-t",
-                  String(TONE.sec),
+                  String(sound.sec),
                   "-i",
-                  `sine=frequency=${TONE.hz}`,
+                  `sine=frequency=${sound.hz}`,
                   "-filter_complex",
-                  `[1:a]volume=${TONE.volume},adelay=delays=${toneMs}:all=1[tone];[0:a][tone]amix=inputs=2:duration=first:normalize=0[out]`,
+                  `[1:a]volume=${sound.volume},adelay=delays=${toneMs}:all=1[tone];[0:a][tone]amix=inputs=2:duration=first:normalize=0[out]`,
                   "-map",
                   "[out]",
               ];
