@@ -59,7 +59,7 @@ import {
 } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { audioFileDurationUs, voiceoverFile } from "@genesiscz/utils/recording-editor/voiceovers";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
-import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { readRecordingManifest, readRecordingManifestSafe } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
@@ -998,27 +998,18 @@ function formatRefusal(asked: string): { ok: false; error: string } {
 }
 
 /**
- * The default export name, the same rule as the editor's: the recording's title made safe for a file name ("cursor
- * test 1"), else `<movie>-edited` for a plain movie.
+ * The default export name, the same rule as the window's EditExporter.defaultName: the title of the recording.json
+ * beside the movie (one the schema refuses too), with / and : made -, spaces and dots trimmed from both ends, cut to
+ * 80 characters as the eye counts them ("cursor test 1"); else `<movie>-edited` for a plain movie.
  */
 export function defaultExportName(video: string): string {
-    const title = (() => {
-        try {
-            return readRecordingManifest(dirname(video))?.title;
-        } catch (error) {
-            log.debug(
-                { error, video },
-                "the manifest beside the movie does not read; the export keeps the movie's name"
-            );
-            return undefined;
-        }
-    })();
-    const safe = (title ?? "")
-        .replace(/[/:]/g, "-")
-        .trim()
-        .replace(/^\.+|\.+$/g, "")
-        .slice(0, 80);
-    return safe || `${basename(video, extname(video))}-edited`;
+    const title = readRecordingManifestSafe(dirname(video))?.raw.title;
+    const safe = (typeof title === "string" ? title : "").replace(/[/:]/g, "-").replace(/^[\s.]+|[\s.]+$/gu, "");
+    const kept = [...new Intl.Segmenter().segment(safe)]
+        .slice(0, 80)
+        .map((part) => part.segment)
+        .join("");
+    return kept || `${basename(video, extname(video))}-edited`;
 }
 
 // R5 3 export overwrite, progress, size

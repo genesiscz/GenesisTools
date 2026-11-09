@@ -995,6 +995,20 @@ describe("movie chapters", () => {
         expect(defaultExportName(join(root, "talk.mov"))).toBe("talk-edited");
     });
 
+    // Round 2 hunt (r2-default-export-name): the window's EditExporter.defaultName is the reference. It trims spaces and
+    // dots from both ends together, keeps 80 characters as the eye counts them, and reads any recording.json's title.
+    test("the default export name follows the window's rule", () => {
+        const nameFor = (manifest: Record<string, unknown>) => {
+            const folder = mkdtempSync(join(tmpdir(), "gt-export-name-"));
+            writeFileSync(join(folder, "recording.json"), SafeJSON.stringify(manifest));
+            return defaultExportName(join(folder, "screen.mp4"));
+        };
+
+        expect(nameFor({ title: ". Demo: part 1 ." })).toBe("Demo- part 1");
+        expect(nameFor({ title: `${"a".repeat(79)}😀b` })).toBe(`${"a".repeat(79)}😀`);
+        expect(nameFor({ title: "..." })).toBe("screen-edited");
+    });
+
     test("a copied recording's edit belongs to the copy, even when its movie is still the original's", () => {
         const root = mkdtempSync(join(tmpdir(), "gt-rec-folder-"));
         const original = join(root, "original");
