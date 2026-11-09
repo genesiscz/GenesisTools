@@ -116,7 +116,7 @@ export function applyProgress(
 export const introCardSchema = z.object({
     title: z.string().trim().min(1).max(120),
     subtitle: z.string().max(200).optional(),
-    /** A picture file (png, jpg, heic), absolute. */
+    /** A picture file of a type in PICTURE_EXTENSIONS, absolute. */
     logo: z.string().optional(),
     /** Any text ("7 November 2026"). */
     date: z.string().max(60).optional(),
@@ -141,7 +141,26 @@ export const cardsSchema = z.object({
 });
 export type EditCards = z.infer<typeof cardsSchema>;
 
-const PICTURE_EXTENSIONS = ["png", "jpg", "jpeg", "heic", "tiff", "gif", "webp"];
+/**
+ * The logo types the renderer draws: the file extensions of the types CoreImage decodes and the editor's logo picker
+ * offers (CardsSection.logoTypes in EditorOverlayControls.swift; __fixtures__/logo-picture-types.json keeps the two
+ * lists together). This check stays for the REPL and the CLI, which have no decoder.
+ */
+export const PICTURE_EXTENSIONS = [
+    "png",
+    "jpg",
+    "jpeg",
+    "jpe",
+    "heic",
+    "heif",
+    "hif",
+    "tif",
+    "tiff",
+    "gif",
+    "webp",
+    "bmp",
+    "dib",
+];
 
 /** `introCard` and `endCard` ops: a change merges into the card; `enabled: false` removes that card. */
 export function applyCard(

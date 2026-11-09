@@ -79,10 +79,12 @@ import cameraOps from "./__fixtures__/camera-ops.json";
 import cardVoiceovers from "./__fixtures__/card-voiceovers.json";
 import editMarkers from "./__fixtures__/edit-markers.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
+import logoPictureTypes from "./__fixtures__/logo-picture-types.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema, syncDenoisedTranscript } from "./denoise";
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, sampleFpsFilter, speedArgv, trimArgv } from "./ffmpeg";
+import { PICTURE_EXTENSIONS } from "./overlays";
 import { parseEditPlan, timeToUs } from "./plan";
 import { redactionBoxAt } from "./private-data";
 import * as projectOps from "./project";
@@ -2173,6 +2175,30 @@ describe("edit project (edit.json)", () => {
         expect(applyOp(framed, { op: "frame", background: { kind: "gradient" } }).frame?.background.kind).toBe(
             "gradient"
         );
+    });
+
+    describe("the intro card's logo types", () => {
+        // The editor's logo picker (CardsSection.logoTypes) offers exactly these; the Swift side checks the same
+        // fixture (RecorderHuntLogoPictureTypesTests).
+        test("a logo takes every type the editor's picker offers, and a song, an SVG or a PSD is refused", () => {
+            expect(PICTURE_EXTENSIONS).toEqual(logoPictureTypes.extensions);
+            const dir = workspace();
+            const project = wholeProject(source);
+
+            for (const extension of [...logoPictureTypes.extensions, "TIF"]) {
+                const logo = join(dir, `logo.${extension}`);
+                writeFileSync(logo, "not decoded here");
+                expect(applyOp(project, { op: "introCard", title: "T", logo }).cards?.intro?.logo).toBe(logo);
+            }
+
+            for (const extension of logoPictureTypes.refused) {
+                const file = join(dir, `file.${extension}`);
+                writeFileSync(file, "");
+                expect(() => applyOp(project, { op: "introCard", title: "T", logo: file })).toThrow(
+                    "a logo is a picture"
+                );
+            }
+        });
     });
 
     test("a redaction hides a rectangle inside the picture for a time and is removed by its id", () => {

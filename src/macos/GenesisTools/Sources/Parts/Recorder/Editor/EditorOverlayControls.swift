@@ -125,6 +125,17 @@ struct ProgressBarSection: View {
 struct CardsSection: View {
     @Bindable var model: EditorModel
 
+    /// The logo types the picker offers: the ones CoreImage decodes, whose file extensions are the ones the edit
+    /// accepts (PICTURE_EXTENSIONS in src/utils/recording-editor/overlays.ts). `.image` also offered SVG, PSD and
+    /// JPEG 2000 files, which the edit refused or the export could not draw.
+    static let logoTypes: [UTType] = [.png, .jpeg, .heic, .heif, .tiff, .gif, .webP, .bmp]
+
+    /// Why the export cannot draw the file at `url` as a logo, or nil when CoreImage decodes it (the frame
+    /// background's picker has the same rule).
+    static func logoRefusal(_ url: URL) -> String? {
+        CIImage(contentsOf: url) == nil ? "\(url.lastPathComponent) is not a picture this Mac can read." : nil
+    }
+
     private func setIntro(_ change: @escaping (inout EditProject.IntroCard?) -> Void) {
         model.setLooks { project in
             var cards = project.cards ?? EditProject.Cards()
@@ -158,9 +169,13 @@ struct CardsSection: View {
                 HStack(spacing: 8) {
                     WideButton(title: intro.logo == nil ? "Add a Logo…" : "Other Logo…", systemImage: "photo") {
                         let panel = NSOpenPanel()
-                        panel.allowedContentTypes = [.image]
+                        panel.allowedContentTypes = Self.logoTypes
                         panel.message = "A logo for the intro card"
                         guard panel.runModal() == .OK, let url = panel.url else { return }
+                        if let refusal = Self.logoRefusal(url) {
+                            model.show(refusal, error: true)
+                            return
+                        }
                         setIntro { $0?.logo = url.path }
                     }
                     if intro.logo != nil {
