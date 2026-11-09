@@ -15,6 +15,11 @@ import { MEETING_PLATFORM_IDS } from "./platform";
 const { log } = logger.scoped("meetings-record");
 
 export const MEETING_FILE = "meeting.json";
+/**
+ * The folder in a meeting's folder that holds its cut Moment clips (src/meetings/lib/moment.ts): a cache of WAVs cut
+ * from the recording, never screen data, so the window's revision tokens do not count it.
+ */
+export const MOMENTS_FOLDER = "moments";
 /** A meeting folder name: no separator and no leading dot, so it names a folder of the store and nothing else. */
 const FOLDER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
