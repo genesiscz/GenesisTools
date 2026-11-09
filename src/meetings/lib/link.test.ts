@@ -128,6 +128,17 @@ describe("link: the call's start (MC2)", () => {
         expect(record.end).toBe("2026-11-05T13:55:21.373Z");
     });
 
+    test("a link keeps a later end and takes the source's end when the record ended earlier (a resumed call)", () => {
+        const record = recordAt("2026-11-05T13:29:23.162Z");
+        record.end = "2026-11-05T13:49:00.000Z";
+        applySource({ record, sourceId: "wisprflow", block: { meetingId: "7e900336-aaaa" }, meeting });
+        expect(record.end).toBe("2026-11-05T13:55:21.373Z");
+
+        record.end = "2026-11-05T14:10:00.000Z";
+        applySource({ record, sourceId: "wisprflow", block: { meetingId: "7e900336-aaaa" }, meeting });
+        expect(record.end).toBe("2026-11-05T14:10:00.000Z");
+    });
+
     test("a record that started before the call keeps its own start", () => {
         const record = recordAt("2026-11-05T12:58:00.000Z");
         applySource({ record, sourceId: "wisprflow", block: { meetingId: "7e900336-aaaa" }, meeting });
