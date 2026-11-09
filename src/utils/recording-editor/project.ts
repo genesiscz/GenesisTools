@@ -230,7 +230,7 @@ export const frameSchema = z.object({
  * Ready frames for a phone recording: "phone-left" and "phone-right" put the phone against one side of a 16:9 canvas
  * with the other side (about three quarters of it) free for texts, and layout.scale above 1 makes the phone bigger;
  * "phone-portrait" fills a 9:16 canvas (Shorts, Reels) from the top and leaves its bottom eighth for captions. Each
- * sets the aspect, padding, corner radius and layout; the op's own fields still win.
+ * sets the aspect, the fit (contain: the whole phone), padding, corner radius and layout; the op's own fields still win.
  */
 export const FRAME_PRESETS = ["phone-left", "phone-right", "phone-portrait"] as const;
 export type FramePreset = (typeof FRAME_PRESETS)[number];
@@ -239,14 +239,33 @@ export const FRAME_PRESET_VALUES: Record<
     FramePreset,
     {
         aspect: (typeof CANVAS_ASPECTS)[number];
+        fit: "contain";
         padding: number;
         cornerRadius: number;
         layout: { align: (typeof FRAME_ALIGNS)[number]; scale: number };
     }
 > = {
-    "phone-left": { aspect: "16:9", padding: 0.04, cornerRadius: 0.035, layout: { align: "left", scale: 1 } },
-    "phone-right": { aspect: "16:9", padding: 0.04, cornerRadius: 0.035, layout: { align: "right", scale: 1 } },
-    "phone-portrait": { aspect: "9:16", padding: 0.04, cornerRadius: 0.03, layout: { align: "top", scale: 0.88 } },
+    "phone-left": {
+        aspect: "16:9",
+        fit: "contain",
+        padding: 0.04,
+        cornerRadius: 0.035,
+        layout: { align: "left", scale: 1 },
+    },
+    "phone-right": {
+        aspect: "16:9",
+        fit: "contain",
+        padding: 0.04,
+        cornerRadius: 0.035,
+        layout: { align: "right", scale: 1 },
+    },
+    "phone-portrait": {
+        aspect: "9:16",
+        fit: "contain",
+        padding: 0.04,
+        cornerRadius: 0.03,
+        layout: { align: "top", scale: 0.88 },
+    },
 };
 
 /**
@@ -3663,7 +3682,12 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             const { aspect, fit, ...frame } = frameSchema.parse({
                 ...current,
                 ...(preset
-                    ? { aspect: preset.aspect, padding: preset.padding, cornerRadius: preset.cornerRadius }
+                    ? {
+                          aspect: preset.aspect,
+                          fit: preset.fit,
+                          padding: preset.padding,
+                          cornerRadius: preset.cornerRadius,
+                      }
                     : {}),
                 ...(layout ? { layout } : {}),
                 ...(op.aspect === undefined ? {} : { aspect: op.aspect }),

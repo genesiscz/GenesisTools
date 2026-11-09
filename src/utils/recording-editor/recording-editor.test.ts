@@ -1793,6 +1793,17 @@ describe("edit project (edit.json)", () => {
         });
     });
 
+    // Regression test: hunt r2-phone-preset-fit. A phone preset over a cover frame kept cover, so the phone was cropped
+    // to the canvas instead of shown whole against one side.
+    test("a phone preset over a cover frame shows the whole phone, and the op's own fit still wins", () => {
+        const cover = applyOp(wholeProject(source), { op: "frame", aspect: "16:9", fit: "cover" });
+        const phone = applyOp(cover, { op: "frame", preset: "phone-left" });
+        expect(phone.frame?.fit).toBeUndefined();
+        expect(phone.frame?.layout?.align).toBe("left");
+        const kept = applyOp(cover, { op: "frame", preset: "phone-left", fit: "cover" });
+        expect(kept.frame?.fit).toBe("cover");
+    });
+
     // R5 4: a phone in 16:9 filled a quarter of the width, with no way to move it aside or zoom the whole canvas.
     test("a frame preset places a phone against one side, its own fields win, and a canvas zoom may overlap", () => {
         const phone = applyOp(wholeProject(source), { op: "frame", preset: "phone-left", layout: { scale: 1.1 } });
