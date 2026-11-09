@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -408,6 +408,8 @@ describe("a Moment of a saved meeting", () => {
             opened,
             cut: async (options) => {
                 cuts.push(options);
+                mkdirSync(dirname(options.outPath), { recursive: true });
+                writeFileSync(options.outPath, "RIFF");
             },
         });
         const planned = planMoment({ record: saved, transcript, listen, target });
@@ -415,7 +417,78 @@ describe("a Moment of a saved meeting", () => {
         expect(await openMoment({ store, record: saved, target, opened })).toEqual({ ...planned, meeting: saved.id });
         expect(cut).toEqual({ ...planned, meeting: saved.id, path: momentClipPath(store.folder(saved.id), planned) });
         expect(cut.path).toStartWith(join(store.folder(saved.id), "moments", "Q1-"));
-        expect(cuts).toEqual([{ audioPath: "/clips/call.ogg", outPath: cut.path, ...clipPlan(planned) }]);
+        // The cut writes beside the clip, and the clip takes its place once it is whole.
+        expect(cuts).toEqual([{ audioPath: "/clips/call.ogg", outPath: expect.any(String), ...clipPlan(planned) }]);
+        expect(dirname(cuts[0]!.outPath)).toBe(dirname(cut.path));
+        expect(cuts[0]!.outPath).not.toBe(cut.path);
+        expect(readFileSync(cut.path, "utf8")).toBe("RIFF");
+    });
+
+    // The window plays the clip at its path while a second play, or an agent's `play --clip`, cuts the same Moment.
+    test("a second cut of the same Moment never leaves a half-written clip where a player reads it", async () => {
+        const store = new MeetingStore(new Storage("meetings-moment-recut"));
+        const saved = await store.create(
+            {
+                title: "Planning",
+                start: now,
+                createdBy: "new",
+                sources: { wisprflow: { meetingId: "abc" } },
+                items: meeting.items,
+            },
+            { command: "new", change: "test" }
+        );
+        const opened = OpenedMeeting.of(store, saved, {
+            source: fakeSource("/clips/call.ogg"),
+            sourceMeetingId: "abc",
+        });
+        const target: MomentTarget = { kind: "item", id: "Q1" };
+        let halfWritten = (): void => {};
+        const half = new Promise<void>((resolve) => {
+            halfWritten = resolve;
+        });
+        let release = (): void => {};
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        // Writes the clip as ffmpeg does: the header first, the samples later.
+        const writer =
+            (samples: string, wait?: Promise<void>) =>
+            async (options: { outPath: string }): Promise<void> => {
+                mkdirSync(dirname(options.outPath), { recursive: true });
+                writeFileSync(options.outPath, "RIFF");
+
+                if (wait) {
+                    halfWritten();
+                    await wait;
+                }
+
+                appendFileSync(options.outPath, samples);
+            };
+
+        const first = await clipMoment({ store, record: saved, target, opened, cut: writer("-first") });
+        expect(readFileSync(first.path, "utf8")).toBe("RIFF-first");
+
+        const second = clipMoment({ store, record: saved, target, opened, cut: writer("-second", gate) });
+        await half;
+        // A player that opens the clip now gets the whole first clip, never a header alone.
+        expect(readFileSync(first.path, "utf8")).toBe("RIFF-first");
+        release();
+        expect(readFileSync((await second).path, "utf8")).toBe("RIFF-second");
+
+        // A cut that fails leaves the last whole clip and no partial file beside it.
+        const failing = clipMoment({
+            store,
+            record: saved,
+            target,
+            opened,
+            cut: async (options) => {
+                writeFileSync(options.outPath, "RIFF");
+                throw new Error("ffmpeg failed");
+            },
+        });
+        await expect(failing).rejects.toThrow("ffmpeg failed");
+        expect(readFileSync(first.path, "utf8")).toBe("RIFF-second");
+        expect(readdirSync(dirname(first.path))).toEqual([basename(first.path)]);
     });
 });
 

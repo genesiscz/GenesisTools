@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { existsSync, renameSync, unlinkSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig, ToneSound } from "@genesiscz/utils/meetings/config";
@@ -596,10 +597,34 @@ export async function clipMoment(
     const opened = options.opened ?? OpenedMeeting.of(store, record);
     const moment = await momentIn(opened, options);
     const path = momentClipPath(store.folder(record.id), moment);
-    await cutMoment(moment, {
-        audioPath: await opened.audioPath(),
-        outPath: path,
-        ...(options.cut ? { cut: options.cut } : {}),
-    });
+    // Cut beside the clip and rename it over the clip: a player that reads the clip (the window, a second play) never
+    // gets it half written, and two cuts of one Moment at once each publish a whole file.
+    const partial = join(dirname(path), `.${basename(path, ".wav")}-${randomUUID()}.wav`);
+
+    try {
+        await cutMoment(moment, {
+            audioPath: await opened.audioPath(),
+            outPath: partial,
+            ...(options.cut ? { cut: options.cut } : {}),
+        });
+        renameSync(partial, path);
+    } catch (error) {
+        removePartialClip(partial);
+        throw error;
+    }
+
     return { ...moment, path };
+}
+
+/** Best-effort removal of a failed cut's partial file; never masks the failure that caused it. */
+function removePartialClip(partial: string): void {
+    if (!existsSync(partial)) {
+        return;
+    }
+
+    try {
+        unlinkSync(partial);
+    } catch (error) {
+        log.debug({ error, partial }, "a failed Moment cut left its partial clip");
+    }
 }
