@@ -49,12 +49,14 @@ tools recorder import <movie> [--title T] [--marker TIME=LABEL ...] [--json]  # 
 tools recorder undo <recording>                  # back one step of apply, the REPL or the window (30 steps in <edit>.undo.json)
 tools recorder redo <recording>                  # make the step undo took back again, while nothing changed since
 tools recorder search <text> [--json]            # titles, marker labels and cached transcript lines across the library
+                                                 # and the meetings' screen recordings
 tools recorder sheet <recording> [--count N | --every S | --at T,T] [--from T] [--to T] [--source] [--columns N] [--out PNG]
                                                  # up to 48 frames on one grid PNG; --source: the recording as
                                                  # recorded at SOURCE seconds (the seconds ops take)
 tools recorder still <recording> [at] [--source] [--full] [--out PNG]  # one frame; --full at the export's size
 tools recorder list [--live] [--limit N] [--json]  # local start times, length, outcome and a short id that every
-                                                 # command takes (--json has the full ids, folders and reasons)
+                                                 # command takes (--json has the full ids, folders and reasons);
+                                                 # the meetings' screen recordings too, newest started first
 tools recorder show|info <recording>             # one recording's row of list --json (every command takes --json;
                                                  # an unknown command is only told of a read like this one)
 tools recorder copy <recording> [--gif]          # the movie (the newest export, else its own) to the clipboard as a

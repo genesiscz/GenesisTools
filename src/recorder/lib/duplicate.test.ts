@@ -90,7 +90,7 @@ describe("duplicateRecording", () => {
         const answer = await duplicateRecording(folder, { title: "After", now: new Date(2026, 10, 7, 15, 30, 0) });
 
         const id = answer.id ?? "";
-        expect(id).toMatch(/^video-2026-11-07_15-30-00-[0-9a-f]{8}$/);
+        expect(id).toMatch(/^video-2026-11-07_15-30-00-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
         expect(answer.folder).toBe(recordingsLibraryDir(id));
         expect(read(join(answer.folder, "recording.json"))).toMatchObject({ id, title: "After" });
         expect(read(answer.path)).toMatchObject({ source: { recording: id } });

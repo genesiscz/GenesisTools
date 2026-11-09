@@ -1,10 +1,10 @@
-import { randomBytes } from "node:crypto";
 import { constants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { editProjectSchema } from "@genesiscz/utils/recording-editor/project";
 import {
+    newVideoRecordingId,
     RECORDING_MANIFEST,
     readRecordingManifest,
     recordingsLibraryDir,
@@ -104,13 +104,6 @@ function rewriteJson(path: string, from: string, to: string, change?: (value: Re
     atomicWriteFileSync(path, `${SafeJSON.stringify(moved, null, 2)}\n`);
 }
 
-/** A library id in the recorder's own shape, so the library sorts the copy by when it was made. */
-export function newLibraryId(now = new Date()): string {
-    const pad = (value: number) => String(value).padStart(2, "0");
-    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-    return `video-${stamp}-${randomBytes(4).toString("hex")}`;
-}
-
 function checkTarget(target: string): void {
     if (existsSync(target) && (!statSync(target).isDirectory() || readdirSync(target).length > 0)) {
         throw new Error(`${target} already exists and is not an empty folder; name another --to`);
@@ -136,7 +129,9 @@ export async function duplicateRecording(
         throw new RangeError("a title is 1 to 120 characters");
     }
 
-    const id = options.to ? undefined : newLibraryId(options.now);
+    // A copied recording folder keeps the original's startedAt (the capture clock proxy.ts and the meetings read), so
+    // the library lists it beside its original; only the folder's id says when it was made.
+    const id = options.to ? undefined : newVideoRecordingId(options.now);
     const target = resolve(options.to ?? recordingsLibraryDir(id ?? ""));
     checkTarget(target);
 

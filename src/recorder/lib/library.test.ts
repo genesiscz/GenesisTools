@@ -10,6 +10,7 @@ import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-
 import { applyOp, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { computeEdit, exportProgressPrinter, parseExportSize, renderInto, withEditCancel } from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
@@ -27,6 +28,7 @@ import {
     shortRecordingId,
     snapshotArgv,
 } from "./library";
+import { searchLibrary } from "./moments";
 import {
     boxInProxy,
     chosenPlan,
@@ -697,7 +699,7 @@ it("retains a released dirty session until its busy save can finish", async () =
     expect(SafeJSON.parse(readFileSync(path, "utf8")).audio.volume).toBe(0.4);
 });
 
-it("a library limit leaves older manifests unparsed", () => {
+it("a library recording.json that is not JSON gives no row and leaves the others listed", () => {
     const root = mkdtempSync(join(tmpdir(), "library-bound-"));
     const newest = join(root, "video-2026-11-05_10-00-00-new");
     const oldest = join(root, "video-2026-01-01_10-00-00-old");
@@ -716,6 +718,66 @@ it("a library limit leaves older manifests unparsed", () => {
         })
     );
     expect(listLibrary({ root, limit: 1 }).map((row) => row.id)).toEqual(["new"]);
+});
+
+describe("the library list reads every recording as the Recordings window does", () => {
+    const write = (folder: string, manifest: Record<string, unknown>) => {
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(join(folder, "recording.json"), SafeJSON.stringify(manifest));
+    };
+    const manifest = (id: string, startedAt: string, title = id) => ({
+        version: 1,
+        id,
+        title,
+        startedAt,
+        displays: [],
+        frames: [],
+    });
+
+    it("sorts by startedAt before the limit, so a duplicate does not push the newest out", () => {
+        const root = mkdtempSync(join(tmpdir(), "library-one-reader-"));
+        write(join(root, "video-2026-11-01_10-00-00-a"), manifest("a", "2026-11-01T10:00:00Z"));
+        write(join(root, "video-2026-11-05_10-00-00-b"), manifest("b", "2026-11-05T10:00:00Z"));
+        write(join(root, "video-2026-11-08_10-00-00-c"), manifest("c", "2026-11-08T10:00:00Z"));
+        // A copy of A made on 11-09 keeps A's startedAt.
+        write(join(root, "video-2026-11-09_10-00-00-copy"), manifest("copy", "2026-11-01T10:00:00Z", "a (copy)"));
+        const all = listLibrary({ root }).map((row) => row.id);
+        expect(all).toEqual(["c", "b", "copy", "a"]);
+        expect(listLibrary({ root, limit: 2 }).map((row) => row.id)).toEqual(all.slice(0, 2));
+        expect(listLibrary({ root, limit: 1 })[0]?.id).toBe("c");
+    });
+
+    it("lists and finds a meeting's screen recording beside the library's", () => {
+        write(recordingsLibraryDir("video-2026-11-04_09-00-00-lib"), manifest("lib-one", "2026-11-04T09:00:00Z"));
+        const meeting = toolDataDir("meetings", "2026-11-05_14-29-meeting");
+        write(meeting, manifest("2026-11-05_14-29-meeting", "2026-11-05T14:29:00Z", "Weekly sync zebra"));
+        writeFileSync(join(meeting, "proxy.mp4"), "");
+        const ids = listLibrary().map((row) => row.id);
+        expect(ids).toContain("lib-one");
+        expect(ids).toContain("2026-11-05_14-29-meeting");
+        expect(ids.indexOf("2026-11-05_14-29-meeting")).toBeLessThan(ids.indexOf("lib-one"));
+        expect(searchLibrary("zebra").map((hit) => hit.recording)).toContain("2026-11-05_14-29-meeting");
+    });
+
+    it("keeps a recording whose recording.json the schema refuses, and skips one that is not JSON", () => {
+        const root = mkdtempSync(join(tmpdir(), "library-loose-"));
+        write(join(root, "video-2026-11-02_10-00-00-ok"), manifest("ok", "2026-11-02T10:00:00Z"));
+        // The Swift RecorderEdit shape: no displays.
+        write(join(root, "video-2026-11-03_10-00-00-swift"), {
+            version: 1,
+            id: "swift",
+            title: "From the app",
+            startedAt: "2026-11-03T10:00:00Z",
+            frames: [{ file: "f.png", atMs: 0 }],
+        });
+        mkdirSync(join(root, "video-2026-11-04_10-00-00-bad"));
+        writeFileSync(join(root, "video-2026-11-04_10-00-00-bad", "recording.json"), "{broken");
+        const rows = listLibrary({ root });
+        expect(rows.map((row) => [row.id, row.title, row.frames])).toEqual([
+            ["swift", "From the app", 1],
+            ["ok", "ok", 0],
+        ]);
+    });
 });
 
 it("a library row says how the recording ended, how long its movie is, and why a failed one made none", () => {

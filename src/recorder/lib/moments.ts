@@ -15,7 +15,7 @@ import {
     transcriptCachePath,
     transcriptLines,
 } from "@genesiscz/utils/recording-editor/project";
-import { RECORDING_MANIFEST, readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { RECORDING_MANIFEST, readRecordingManifestSafe } from "@genesiscz/utils/screen-recorder/library";
 import { z } from "zod";
 import { listLibrary } from "./library";
 
@@ -38,7 +38,7 @@ export function recordedMarkersOf(opened: {
     project: EditProject;
 }): Array<{ atMs: number; label: string }> {
     const folder = recordingFolderOf(opened);
-    const manifest = folder ? readRecordingManifest(folder) : undefined;
+    const manifest = folder ? readRecordingManifestSafe(folder)?.manifest : undefined;
     const parsed = z
         .array(z.object({ atMs: z.number(), label: z.string() }))
         .safeParse(manifest?.settings.markers ?? []);
@@ -270,7 +270,7 @@ export function searchLibrary(text: string) {
 
         const markers = z
             .array(z.object({ atMs: z.number(), label: z.string() }))
-            .safeParse(readRecordingManifest(row.folder)?.settings.markers ?? []);
+            .safeParse(readRecordingManifestSafe(row.folder)?.manifest?.settings.markers ?? []);
 
         for (const marker of markers.success ? markers.data : []) {
             if (folded(marker.label).includes(query)) {

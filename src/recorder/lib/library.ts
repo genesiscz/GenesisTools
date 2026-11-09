@@ -7,7 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { classifyPid } from "@genesiscz/utils/process-identity";
-import { readRecordingManifest, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
+import { readRecordingManifestSafe, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { recordingStores } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { z } from "zod";
 
@@ -154,47 +154,65 @@ export function framesCell(row: LibraryRow): string {
     return row.durationMs === undefined ? String(row.frames) : "—";
 }
 
-/** Every library recording, newest first. */
+/**
+ * Every recording of every store (the library and the meetings' screen recordings), newest first by `startedAt`, the
+ * folder name breaking a tie, and only then cut to `limit`: the same reader as the Recordings window (RecorderMenu
+ * `readRecents`), so `last` is the first row of `list` and the window's first card. A `root` lists that one folder.
+ */
 export function listLibrary(options: string | { root?: string; limit?: number } = {}): LibraryRow[] {
-    const { root = recordingsLibraryDir(), limit = Infinity } =
-        typeof options === "string" ? { root: options } : options;
-    if (!existsSync(root)) {
-        return [];
-    }
-
+    const { root, limit = Infinity } = typeof options === "string" ? { root: options } : options;
+    const roots = root === undefined ? recordingStores().map((store) => store.root()) : [root];
     const rows: LibraryRow[] = [];
 
-    const folders = readdirSync(root, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => {
-            const match = /^(?:library|video)-(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/.exec(entry.name);
-            const time = match
-                ? new Date(`${match[1]}T${match[2]}:${match[3]}:${match[4]}`).getTime()
-                : statSync(join(root, entry.name)).birthtimeMs;
-            return { name: entry.name, time };
-        })
-        .sort((a, b) => b.time - a.time || b.name.localeCompare(a.name));
-
-    for (const { name } of folders) {
-        if (rows.length >= Math.max(0, limit)) {
-            break;
+    for (const dir of roots) {
+        if (!existsSync(dir)) {
+            continue;
         }
-        const row = libraryRow(join(root, name));
 
-        if (row) {
-            rows.push(row);
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            const row = entry.isDirectory() ? libraryRow(join(dir, entry.name)) : undefined;
+
+            if (row) {
+                rows.push(row);
+            }
         }
     }
 
-    return rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    return rows
+        .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || basename(b.folder).localeCompare(basename(a.folder)))
+        .slice(0, Math.max(0, limit));
 }
 
-/** One recording folder as `list --json` gives it (`tools recorder show`); undefined without a readable manifest. */
+/**
+ * One recording folder as `list --json` gives it (`tools recorder show`); undefined when it holds no recording.json or
+ * the file is not JSON. A manifest the schema refuses still gives a row from its own keys, as the window lists it.
+ */
 export function libraryRow(folder: string): LibraryRow | undefined {
-    const manifest = readRecordingManifest(folder);
+    const read = readRecordingManifestSafe(folder);
+
+    if (!read) {
+        return undefined;
+    }
+
+    const manifest = read.manifest;
 
     if (!manifest) {
-        return undefined;
+        // The window lists such a folder too (readRecents takes any JSON object): each field on its own.
+        log.warn({ folder, problem: read.problem }, "recording.json does not match the schema; listed from its keys");
+        const text = (key: string) => {
+            const value = read.raw[key];
+            return typeof value === "string" && value ? value : undefined;
+        };
+        return {
+            id: text("id") ?? basename(folder),
+            title: text("title") ?? basename(folder),
+            folder,
+            startedAt: text("startedAt") ?? statSync(join(folder, "recording.json")).mtime.toISOString(),
+            ...(text("endedAt") ? { endedAt: text("endedAt") } : {}),
+            movie: movieOf(folder),
+            frames: Array.isArray(read.raw.frames) ? read.raw.frames.length : 0,
+            edited: existsSync(join(folder, "edit.json")),
+        };
     }
 
     const end = recordingEndSchema.safeParse(manifest.settings).data ?? {};

@@ -78,6 +78,44 @@ export function readRecordingManifest(folder: string): RecordingManifest | undef
 }
 
 /**
+ * The manifest of a recording folder without throwing, for readers of many folders (the library list, its search):
+ * undefined when the folder holds none or the file is not a JSON object; `manifest` is missing when the schema
+ * refuses the object (the app's own shape, an older or newer version), and `raw` then still carries its keys.
+ */
+export function readRecordingManifestSafe(
+    folder: string
+): { manifest?: RecordingManifest; raw: Record<string, unknown>; problem?: string } | undefined {
+    const path = join(folder, RECORDING_MANIFEST);
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    let raw: unknown;
+
+    try {
+        raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+    } catch {
+        return undefined;
+    }
+
+    const object = z.record(z.string(), z.unknown()).safeParse(raw);
+
+    if (!object.success) {
+        return undefined;
+    }
+
+    const record = object.data;
+    const parsed = recordingManifestSchema.safeParse(record);
+    return parsed.success
+        ? { manifest: parsed.data, raw: record }
+        : {
+              raw: record,
+              problem: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
+          };
+}
+
+/**
  * Gives a recording a new title (what the library, the editor's window and `movies.list()` show). Only the title
  * changes: every other key of the manifest is written back as it was read.
  */
