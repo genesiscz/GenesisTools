@@ -84,7 +84,10 @@ export function obsidianRoutes(): RouteDef[] {
                             return match?.slug ?? null;
                         },
                         resolveVaultNotePath: (name) => resolveWikilinkToVaultPath(vaultEntries, name, path),
-                        isCurrentNote: (name) => resolveWikilinkToVaultPath(vaultEntries, name, path) === path,
+                        // In NFC: a vault path from the disk may keep its accents decomposed, the request's is composed.
+                        isCurrentNote: (name) =>
+                            resolveWikilinkToVaultPath(vaultEntries, name, path)?.normalize("NFC") ===
+                            path.normalize("NFC"),
                     });
 
                     return { kind: "json", status: 200, body: { source, html: rendered.html, publishedSlug } };
