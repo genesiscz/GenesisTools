@@ -520,8 +520,10 @@ const OPERATION_MARKERS: ReadonlyArray<{ file: string; what: string }> = [
 ];
 
 /**
- * The merge base with the first candidate that has one: the branch's upstream, `origin/HEAD`, then the branch the
- * main checkout has out (unless it is this worktree's own branch).
+ * The merge base with the branch's upstream when it has one. Otherwise the closest of `origin/HEAD` and the branch the
+ * main checkout has out (unless it is this worktree's own branch): the one that leaves the fewest commits in
+ * `<base>..HEAD`. A worktree cut from a feature branch would otherwise patch and replay that whole branch (725 commits
+ * for one GenesisTools worktree on 2026-11-09).
  */
 async function detectBackupBase({
     path,
@@ -539,7 +541,11 @@ async function detectBackupBase({
         const upstream = await readGit(path, ["rev-parse", "--symbolic-full-name", `${short}@{upstream}`]);
 
         if (upstream.success && upstream.stdout !== "") {
-            candidates.push(upstream.stdout);
+            const mergeBase = await readGit(path, ["merge-base", head, upstream.stdout]);
+
+            if (mergeBase.success && mergeBase.stdout !== "") {
+                return { sha: mergeBase.stdout, ref: upstream.stdout };
+            }
         }
     }
 
@@ -553,17 +559,25 @@ async function detectBackupBase({
         candidates.push(identity.mainBranch);
     }
 
+    let best: { sha: string; ref: string; count: number } | null = null;
+
     for (const ref of [...new Set(candidates)]) {
         const mergeBase = await readGit(path, ["merge-base", head, ref]);
 
-        if (mergeBase.success && mergeBase.stdout !== "") {
-            return { sha: mergeBase.stdout, ref };
+        if (!mergeBase.success || mergeBase.stdout === "") {
+            log.debug({ path, ref, stderr: mergeBase.stderr }, "no merge base with this candidate");
+            continue;
         }
 
-        log.debug({ path, ref, stderr: mergeBase.stderr }, "no merge base with this candidate");
+        const count = await readGit(path, ["rev-list", "--count", `${mergeBase.stdout}..${head}`]);
+        const n = count.success ? Number(count.stdout) : Number.POSITIVE_INFINITY;
+
+        if (best === null || n < best.count) {
+            best = { sha: mergeBase.stdout, ref, count: n };
+        }
     }
 
-    return null;
+    return best === null ? null : { sha: best.sha, ref: best.ref };
 }
 
 function readLock(gitdir: string): string | null {
