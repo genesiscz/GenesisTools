@@ -24,7 +24,7 @@ does not?
 A confirmation, an error or a new row never pushes content. Notices float over the content (the GenesisKit notice,
 with Undo, for a configurable time, 30 s for a decision). An answered or removed row keeps its place, marks itself
 and folds its controls with a short animation; it does not vanish and pull the list up. Lists never reorder while they
-reads them.
+read them.
 
 Ask: after each action, is the next thing they want to look at still where it was?
 
