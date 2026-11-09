@@ -24,6 +24,7 @@ import {
     readEditorOpenState,
     resolveRecording,
     shortRecordingId,
+    snapshotArgv,
 } from "./library";
 import {
     boxInProxy,
@@ -852,6 +853,17 @@ it("cancelled queued undo and redo preserve history and the project", async () =
     expect(session.current.project.audio.volume).toBe(0.4);
     sessions.release(path);
     expect(SafeJSON.parse(readFileSync(path, "utf8")).audio.volume).toBe(0.4);
+});
+
+describe("a snapshot's recorder face argv", () => {
+    it("selects the marker the request names", () => {
+        const argv = snapshotArgv({ out: "/tmp/x.png", path: "/tmp/e", selectMarker: 2 });
+
+        expect(argv.slice(argv.indexOf("--select-marker"), argv.indexOf("--select-marker") + 2)).toEqual([
+            "--select-marker",
+            "2",
+        ]);
+    });
 });
 
 // R5 3: an export retry needed a move-aside, which left an unredacted plain export in the project.

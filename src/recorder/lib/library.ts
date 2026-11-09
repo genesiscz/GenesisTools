@@ -706,6 +706,8 @@ export interface SnapshotRequest {
     tab?: EditorTab;
     selectZoom?: number;
     selectClip?: number;
+    /** The edit's marker at that index, selected as a click on its flag does. */
+    selectMarker?: number;
     part?: { from: number; to: number };
     range?: { from: number; to: number };
     comment?: number;
@@ -733,6 +735,7 @@ export function snapshotArgv(request: SnapshotRequest): string[] {
         ...pair("--tab", request.tab),
         ...pair("--select-zoom", request.selectZoom),
         ...pair("--select-clip", request.selectClip),
+        ...pair("--select-marker", request.selectMarker),
         ...span("--part", request.part),
         ...span("--range", request.range),
         ...pair("--comment", request.comment),

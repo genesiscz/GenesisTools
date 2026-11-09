@@ -521,14 +521,17 @@
           "selectClip": {
             "$ref": "#/$defs/__schema40"
           },
-          "part": {
+          "selectMarker": {
             "$ref": "#/$defs/__schema41"
           },
+          "part": {
+            "$ref": "#/$defs/__schema42"
+          },
           "range": {
-            "$ref": "#/$defs/__schema43"
+            "$ref": "#/$defs/__schema44"
           },
           "comment": {
-            "$ref": "#/$defs/__schema44"
+            "$ref": "#/$defs/__schema45"
           }
         },
         "required": [
@@ -3594,9 +3597,14 @@
         "maximum": 9007199254740991
       },
       "__schema41": {
-        "$ref": "#/$defs/__schema42"
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
       },
       "__schema42": {
+        "$ref": "#/$defs/__schema43"
+      },
+      "__schema43": {
         "anyOf": [
           {
             "type": "object",
@@ -3633,10 +3641,10 @@
           }
         ]
       },
-      "__schema43": {
-        "$ref": "#/$defs/__schema42"
-      },
       "__schema44": {
+        "$ref": "#/$defs/__schema43"
+      },
+      "__schema45": {
         "type": "integer",
         "minimum": 0,
         "maximum": 9007199254740991

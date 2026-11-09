@@ -314,6 +314,7 @@ export const hostApi = defineApi({
                     tab: z.enum(EDITOR_TABS).optional(),
                     selectZoom: z.number().int().nonnegative().optional(),
                     selectClip: z.number().int().nonnegative().optional(),
+                    selectMarker: z.number().int().nonnegative().optional(),
                     part: spanSchema.optional(),
                     range: spanSchema.optional(),
                     comment: z.number().int().nonnegative().optional(),

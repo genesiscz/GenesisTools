@@ -31,7 +31,7 @@ import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as videoProcess from "@genesiscz/utils/video/process";
-import type { z } from "zod";
+import { z } from "zod";
 import goldenFixture from "./__fixtures__/editor-golden.json";
 import screenOpsFixture from "./__fixtures__/screen-hit-ops.json";
 import fixture from "./__fixtures__/service-protocol.json";
@@ -48,6 +48,7 @@ import * as serviceClient from "./service-client";
 import { hostCloseEditor, hostStill, ServiceConnectionLost, ServiceHost, withServiceClient } from "./service-client";
 import {
     HOST_METHODS,
+    HOST_SCHEMAS,
     hostApi,
     readLiveService,
     recordingEventSchema,
@@ -1672,6 +1673,39 @@ describe("the inspector tabs", () => {
         const cases = swift.match(/enum InspectorTab: String[^{]*\{\s*case ([a-z, ]+)\n/)?.[1];
         expect(cases).toBeDefined();
         expect(cases?.split(",").map((name) => name.trim())).toEqual([...EDITOR_TABS]);
+    });
+});
+
+describe("render.snapshot params", () => {
+    test("are the keys the Swift host's snapshotRequest() reads, out aside", () => {
+        // The Swift host learnt selectMarker after the service schema was written, so the schema stripped it and no
+        // client could ask for a snapshot with a marker selected (2026-11-09). This test keeps both sides equal.
+        const swift = readFileSync(
+            join(
+                moduleDir(import.meta),
+                "../../macos/GenesisTools/Sources/Parts/Recorder/Service/RecorderHostMethods.swift"
+            ),
+            "utf8"
+        );
+        const body = swift.match(/func snapshotRequest\(\)[^{]*\{([\s\S]*?)\n {8}\}\n/)?.[1];
+        expect(body).toBeDefined();
+        const read = [...(body ?? "").matchAll(/(?:int|bool|number|optionalPath|span)\("(\w+)"\)|object\["(\w+)"\]/g)]
+            .map((match) => match[1] ?? match[2] ?? "")
+            .concat(body?.includes("try tab()") ? ["tab"] : []);
+        const params = HOST_SCHEMAS["render.snapshot"].params;
+
+        if (!(params instanceof z.ZodObject)) {
+            throw new Error("render.snapshot params are no z.object");
+        }
+
+        const keys = Object.keys(params.shape).filter((key) => key !== "out");
+        expect([...new Set(read)].sort()).toEqual(keys.sort());
+    });
+
+    test("keep selectMarker", () => {
+        expect(
+            HOST_SCHEMAS["render.snapshot"].params.parse({ out: "/tmp/x.png", path: "/tmp/e", selectMarker: 0 })
+        ).toMatchObject({ selectMarker: 0 });
     });
 });
 
