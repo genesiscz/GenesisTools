@@ -1,6 +1,7 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import Foundation
+import GenesisKit
 
 /// The looks an edit adds on top of the picture: click highlights (drawn on the source, so they zoom with it) and the
 /// frame (the movie on a background with padding, rounded corners and a shadow, after the zoom). Pure functions of
@@ -483,18 +484,28 @@ enum Looks {
         }
     }
 
-    /// Every background picture, decoded once per path: each frame draws it.
+    /// Every background picture and intro logo, decoded once while its file stays the same: each frame draws it. The
+    /// recorder host runs for hours, so a file written over in place or replaced by a rename (a new modification time,
+    /// size or inode) is decoded again, and only the pictures used last are kept.
     final class BackgroundPictures: @unchecked Sendable {
+        static let kept = 8
         static let shared = BackgroundPictures()
         private let lock = NSLock()
-        private var images: [String: CIImage] = [:]
+        private var images: RecentCache<String, (identity: MediaFileIdentity, image: CIImage)>
 
+        init(limit: Int = BackgroundPictures.kept) {
+            images = RecentCache(limit: limit)
+        }
+
+        /// The picture as its file is now; nil when the file is gone or holds no picture, so the colour draws.
         func image(_ path: String) -> CIImage? {
+            // The stat comes before the read: a file that changes between them is read again on the next frame.
+            guard let identity = MediaFileIdentity.current(path) else { return nil }
             lock.lock()
             defer { lock.unlock() }
-            if let cached = images[path] { return cached }
+            if let cached = images.value(for: path), cached.identity == identity { return cached.image }
             guard let image = CIImage(contentsOf: URL(fileURLWithPath: path), options: [.applyOrientationProperty: true]) else { return nil }
-            images[path] = image
+            images.set((identity, image), for: path)
             return image
         }
     }
