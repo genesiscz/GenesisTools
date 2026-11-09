@@ -588,6 +588,18 @@ section.footnotes li:target { background: var(--dd-accent-soft); border-radius: 
 .footnote-backref { text-decoration: none; }
 .dd-block-id { display: inline; }
 :target { scroll-margin-top: 72px; }
+/* A heading a link jumped to, in the page or in the panel, is marked for a moment. */
+@keyframes dd-heading-flash { from { background: var(--dd-accent-soft); } to { background: transparent; } }
+h1:target, h2:target, h3:target, h4:target, h5:target, h6:target, .dd-heading-hit {
+    animation: dd-heading-flash 1.8s ease-out;
+    border-radius: 4px;
+}
+@media (prefers-reduced-motion: reduce) {
+    h1:target, h2:target, h3:target, h4:target, h5:target, h6:target, .dd-heading-hit {
+        animation: none;
+        background: var(--dd-accent-soft);
+    }
+}
 
 .markdown-alert-icon {
     flex: none;
@@ -1210,6 +1222,30 @@ function buildAssetPanelScript(): string {
         }
     }
 
+    // A link to a heading of another note opens the panel at that heading, and marks it for a moment.
+    function markHeading(hash) {
+        if (!hash || hash.length < 2 || parseLines(hash)) {
+            return;
+        }
+
+        var id = hash.slice(1);
+        try {
+            id = decodeURIComponent(id);
+        } catch (err) {
+            // A literal % stays as it is.
+        }
+        var selector = '[id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]';
+        var heading = content.querySelector(selector);
+        if (!heading) {
+            return;
+        }
+
+        heading.scrollIntoView({ block: "start" });
+        heading.classList.remove("dd-heading-hit");
+        void heading.offsetWidth;
+        heading.classList.add("dd-heading-hit");
+    }
+
     function openPanel(url, push) {
         var hashAt = url.indexOf("#");
         var base = hashAt === -1 ? url : url.slice(0, hashAt);
@@ -1233,6 +1269,7 @@ function buildAssetPanelScript(): string {
                 content.innerHTML = entry.html;
                 content.scrollTop = 0;
                 markLines(lines);
+                markHeading(hash);
             } else {
                 rawLink.removeAttribute("href");
                 content.textContent = name + " is not part of this saved page.";
@@ -1261,6 +1298,7 @@ function buildAssetPanelScript(): string {
                 content.innerHTML = html;
                 content.scrollTop = 0;
                 markLines(lines);
+                markHeading(hash);
             })
             .catch(function (err) {
                 if (request !== panelRequest) {

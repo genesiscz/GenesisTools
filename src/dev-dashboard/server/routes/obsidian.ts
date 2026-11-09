@@ -84,6 +84,7 @@ export function obsidianRoutes(): RouteDef[] {
                             return match?.slug ?? null;
                         },
                         resolveVaultNotePath: (name) => resolveWikilinkToVaultPath(vaultEntries, name, path),
+                        isCurrentNote: (name) => resolveWikilinkToVaultPath(vaultEntries, name, path) === path,
                     });
 
                     return { kind: "json", status: 200, body: { source, html: rendered.html, publishedSlug } };
