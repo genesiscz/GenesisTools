@@ -27,6 +27,7 @@ const PIC = Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBPVP8 fake-webp-bytes");
 const SHOT = Buffer.from("\u0089PNG fake-png-found-by-name");
 const SPACED = Buffer.from("\u0089PNG fake-png-in-a-spaced-folder");
 const SECRET = Buffer.from("\u0089PNG an-unreferenced-vault-file");
+const PANEL = Buffer.from("\u0089PNG a-picture-the-linked-note-shows");
 const OUTSIDE = Buffer.from("\u0089PNG a-file-outside-the-vault");
 const LOGO = Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg"><!-- key sk-test-${"0".repeat(40)} --><script>alert(1)</script></svg>`
@@ -42,9 +43,9 @@ const WRAP = [
     "",
     "Target paragraph on line eight.",
     "",
-    "[s](secret.md) and [[secret]] and ![[secret.png]] and [x](file:///etc/hosts)",
+    "[s](secret.md) and [[secret]] and ![[panel.png]] and ![panel](panel.png) and [x](file:///etc/hosts)",
 ].join("\n");
-const SECRET_MD = "# not referenced by the shared note";
+const SECRET_MD = "# not referenced by the shared note\n\n![[secret.png]]";
 const OTHER_NOTE = "# an unpublished note";
 const PUB = "# a published note";
 const OUTSIDE_MD = "# outside the vault";
@@ -136,6 +137,7 @@ describe("GET /share/:slug assets", () => {
         writeFileSync(join(vault, "Notes/sub/logo.svg"), LOGO);
         writeFileSync(join(vault, "Other/shot.png"), SHOT);
         writeFileSync(join(vault, "secret.png"), SECRET);
+        writeFileSync(join(vault, "Notes/panel.png"), PANEL);
         writeFileSync(join(dir, "outside/escape.png"), OUTSIDE);
         writeFileSync(join(vault, "Notes/talk.mp3"), SOUND);
         writeFileSync(join(vault, "Notes/clip.mp4"), CLIP);
@@ -257,6 +259,7 @@ describe("GET /share/:slug assets", () => {
         ["an unknown hash", "0".repeat(64)],
         ["a note path", "../../secret.md"],
         ["the hash of a note the shared note names only inside a referenced note", sha(SECRET_MD)],
+        ["the hash of an image only a note two links down shows", sha(SECRET)],
         ["the hash of a note outside the vault behind a file: link", sha(OUTSIDE_MD)],
     ])("%s is a 404", async (_label, asset) => {
         const res = await get({ asset });
@@ -282,7 +285,7 @@ describe("GET /share/:slug assets", () => {
         expect(fragmentHtml).toContain("&quot;status&quot;");
     });
 
-    test("a referenced note renders in the panel with line anchors and inert nested references", async () => {
+    test("a referenced note renders in the panel with line anchors, its own images and inert nested references", async () => {
         const res = await get({ asset: sha(WRAP), view: "fragment" });
         const html = res.kind === "raw" ? res.body : "";
 
@@ -291,8 +294,16 @@ describe("GET /share/:slug assets", () => {
         expect(html).toContain('<span class="dd-md-inert-link">s</span>');
         expect(html).toContain('<span class="dd-md-inert-link">x</span>');
         expect(html).toContain("dd-wikilink-unresolved");
-        expect(html).not.toContain("?asset=");
         expect(html).not.toContain('href="secret.md"');
+        // Decision 50 a: the linked note's own image shows, served by hash; nothing else it names is reachable.
+        // Once as `![[panel.png]]` (the embed path) and once as `![panel](panel.png)` (the image renderer).
+        expect(html.split(`<img src="${assetUrl(PANEL)}"`).length - 1).toBe(2);
+        expect(new Set([...html.matchAll(/\?asset=([0-9a-f]+)/g)].map((match) => match[1]))).toEqual(
+            new Set([sha(PANEL)])
+        );
+
+        const image = await get({ asset: sha(PANEL) });
+        expect(image.kind === "binary" && Buffer.from(image.body).equals(PANEL)).toBe(true);
     });
 
     test("a code file renders a numbered window with the requested lines marked", async () => {
@@ -398,6 +409,7 @@ describe("GET /share/:slug assets", () => {
         expect(Buffer.from(files.get("Run/Notes/assets/dir x/b.png") ?? []).equals(SPACED)).toBe(true);
         expect(Buffer.from(files.get("Run/Other/shot.png") ?? []).equals(SHOT)).toBe(true);
         expect(text("Run/Notes/assets/data.json")).toBe(DATA);
+        expect(Buffer.from(files.get("Run/Notes/panel.png") ?? []).equals(PANEL)).toBe(true);
         expect(text("Run/Notes/sub/logo.svg")).not.toContain("sk-test-");
         expect(text("Run/Notes/creds.json")).not.toContain(FAKE_TOKEN);
         expect([...files.keys()].some((name) => name.includes("secret") || name.includes("escape"))).toBe(false);
@@ -687,7 +699,7 @@ describe("GET /share/:slug assets", () => {
     });
 
     test("both downloads count source bytes without attachments", async () => {
-        const index = { byTarget: new Map(), byHash: new Map() };
+        const index = { byTarget: new Map(), byHash: new Map(), linkedImages: new Map() };
         const sourceBytes = SHARE_BUNDLE_MAX_BYTES + 1;
 
         expect(await buildShareEmbed({ vaultRoot: dir, index, panelBase: () => "", sourceBytes })).toBeNull();
@@ -733,6 +745,8 @@ describe("GET /share/:slug assets", () => {
         expect(panels[`?asset=${sha(TOOL)}|5-6`].raw).toBe(sha(TOOL));
         expect(panels[`?asset=${sha(TOOL)}|500-500`].raw).toBe(sha(TOOL));
         expect(res.body.split(Buffer.from(TOOL).toString("base64").slice(0, 64)).length - 1).toBe(1);
+        const wrapPanel = Object.values(panels).find((panel) => panel.raw === sha(WRAP));
+        expect(wrapPanel?.html).toContain(`<img src="data:image/png;base64,${PANEL.toString("base64")}"`);
     });
 
     test("repeated transclusions have independent heading, block and footnote IDs", async () => {
@@ -835,6 +849,7 @@ describe("GET /share/:slug assets", () => {
             `href="data:application/pdf;base64,${PDF.toString("base64")}" class="dd-md-asset-link" download="doc.pdf"`
         );
         expect(html).not.toContain(`/share/${mediaSlug}?asset=`);
+        expect(html).toContain(`<img src="data:image/png;base64,${PANEL.toString("base64")}"`);
     });
 
     test("![[note]] and ![[note#Heading]] show the note's text in place, its links inert, without frontmatter", async () => {
@@ -852,6 +867,8 @@ describe("GET /share/:slug assets", () => {
         expect(blocks[2]).toContain("This section is not in the note.");
         expect(blocks[3]).toContain(`<a href="/share/${pubSlug}" class="dd-wikilink">Pub</a>`);
         expect(blocks[3]).toContain("a published note");
+        expect(blocks[0]).toContain(`<img src="/share/${mediaSlug}?asset=${sha(PANEL)}"`);
         expect(html).not.toContain(sha(SECRET_MD));
+        expect(html).not.toContain(sha(SECRET));
     });
 });
