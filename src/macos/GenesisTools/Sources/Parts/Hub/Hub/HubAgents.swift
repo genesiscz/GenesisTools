@@ -369,6 +369,31 @@ final class HubAgentsModel: ObservableObject {
         selected?.parent ?? selectedMain
     }
 
+    /// The mode came on screen with nothing open and "Open the newest live agent" on (Settings, Hub, Panes): the
+    /// first fresh list opens one. A cached list is not enough: the agent it names may have finished meanwhile.
+    private var openNewestDue = false
+
+    /// The newest running sub-agent across every session, else the newest live session's Main row. Nothing when the
+    /// reader opened something first, a link asked for an agent, or nothing is live.
+    private func openNewestIfDue() {
+        guard openNewestDue else { return }
+        openNewestDue = false
+        guard selectedID == nil, pendingRequest == nil else { return }
+        let running = parents.flatMap { parent in
+            AgentTree.flatten(parent.children).filter(\.isRunning).map { (parent: parent, node: $0) }
+        }
+        if let newest = running.max(by: { ($0.node.last ?? .distantPast) < ($1.node.last ?? .distantPast) }) {
+            HubPerf.log("agents.openNewest \(newest.node.id) of \(newest.parent.sessionId.prefix(8))")
+            foldOverride[newest.parent.sessionId] = true
+            selectedID = AgentTree.key(parent: newest.parent.sessionId, child: newest.node.id)
+            revealRequest += 1
+        } else if let parent = parents.filter(isPresent).max(by: { ($0.last ?? .distantPast) < ($1.last ?? .distantPast) }) {
+            HubPerf.log("agents.openNewest main of \(parent.sessionId.prefix(8))")
+            openMain(parent)
+            revealRequest += 1
+        }
+    }
+
     /// A parent row's title, the Main row, a child's breadcrumb, Return: the lead session in the detail.
     func openMain(_ parent: AgentParent) {
         HubMainBusy.measure("agents.openMain")
@@ -526,6 +551,8 @@ final class HubAgentsModel: ObservableObject {
         active = true
         // Opening the mode is an explicit action: the first list sorts fresh.
         resortNext = true
+        openNewestDue = selectedID == nil && pendingRequest == nil
+            && (HubDefaults.store.object(forKey: HubAgentsEntry.openNewestKey) as? Bool ?? true)
         HubPerf.log("agents.activate")
         if !loaded {
             Task {
@@ -655,6 +682,7 @@ final class HubAgentsModel: ObservableObject {
                     }
                 }
                 apply(envelope, scope: scope)
+                if scope == nil { openNewestIfDue() }
             case .failure(let failure):
                 span.end("failed")
                 error = "\(failure)"
@@ -1082,12 +1110,15 @@ private enum AgentListItem: Identifiable {
     case main(AgentParent)
     case child(AgentNode, parent: String?, depth: Int)
     case more(parent: String, hidden: Int)
+    /// A session's finished sub-agents in one row: open, they follow it.
+    case finished(parent: String, count: Int, open: Bool)
 
     var id: String {
         switch self {
         case .parent(let parent, _, _, _): return "p|" + parent.sessionId
         case .child(let node, let parent, _): return "c|" + AgentTree.key(parent: parent, child: node.id)
         case .more(let parent, _): return "m|" + parent
+        case .finished(let parent, _, _): return "f|" + parent
         case .main(let parent): return "c|" + AgentTree.mainKey(parent.sessionId)
         }
     }
@@ -1124,6 +1155,10 @@ struct AgentsListView: View {
     @AppStorage("hub.agents.statusFilter") private var statusRaw = AgentStatusFilter.active.rawValue
     /// Parents whose finished children show beyond the first `shownPerParent`.
     @State private var expandedAll = Set<String>()
+    /// Parents whose folded finished sub-agents the reader opened.
+    @State private var expandedFinished = Set<String>()
+    /// Settings, Hub, Panes: a session's finished sub-agents fold into one row.
+    @AppStorage(HubAgentsEntry.foldFinishedKey, store: HubDefaults.store) private var foldFinished = true
     /// A row click puts the keyboard on the list, for Left, Right and Return.
     @FocusState private var listFocused: Bool
     @GenReduceMotion private var reduceMotion
@@ -1176,19 +1211,42 @@ struct AgentsListView: View {
             guard open else { continue }
             rows.append(.main(parent))
             let limit = expandedAll.contains(parent.sessionId) ? Int.max : Self.shownPerParent
+            // Finished sub-agents fold into one row under the running ones; the open agent always stays in sight.
+            // Under the Off filter every row is a finished one, so nothing folds there.
+            let folds = foldFinished && status != .off
+            let live = folds ? children.filter { stays($0, parent: parent.sessionId) } : children
+            let finished = folds ? children.filter { !stays($0, parent: parent.sessionId) } : []
+            let finishedOpen = expandedFinished.contains(parent.sessionId)
             var shown = 0
-            for child in children {
+            for child in live {
                 if shown >= limit, !child.anyRunning {
                     continue
                 }
                 shown += 1
                 append(child, parent: parent.sessionId, depth: 0, into: &rows)
             }
-            if children.count > shown {
-                rows.append(.more(parent: parent.sessionId, hidden: children.count - shown))
+            if !finished.isEmpty {
+                rows.append(.finished(parent: parent.sessionId, count: finished.count, open: finishedOpen))
+            }
+            var visible = live.count
+            if finishedOpen {
+                visible += finished.count
+                for child in finished where shown < limit {
+                    shown += 1
+                    append(child, parent: parent.sessionId, depth: 0, into: &rows)
+                }
+            }
+            if visible > shown {
+                rows.append(.more(parent: parent.sessionId, hidden: visible - shown))
             }
         }
         return rows
+    }
+
+    /// Stays out of the finished fold: running, active in the last two minutes, or holding the open agent.
+    private func stays(_ node: AgentNode, parent: String) -> Bool {
+        node.anyRunning || agents.isActive(parent: parent, child: node.id)
+            || AgentTree.flatten([node]).contains { AgentTree.key(parent: parent, child: $0.id) == agents.selectedID }
     }
 
     private func append(_ node: AgentNode, parent: String?, depth: Int, into rows: inout [AgentListItem]) {
@@ -1380,6 +1438,32 @@ struct AgentsListView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverPlain())
+        case .finished(let parent, let count, let open):
+            Button {
+                GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
+                    if open {
+                        expandedFinished.remove(parent)
+                    } else {
+                        expandedFinished.insert(parent)
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                    Text(verbatim: Plural.count(count, "finished agent"))
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(ReviewPalette.dim)
+                .padding(.leading, 40)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.genHoverPlain())
+            .instantTooltip(open ? "Fold this session's finished sub-agents" : "Show this session's finished sub-agents")
+            .accessibilityValue(Text(open ? "Expanded" : "Collapsed"))
         }
     }
 }

@@ -96,6 +96,8 @@ private struct HubPaneSettings: View {
     @AppStorage(HubResizeGrips.key) private var resizeGrips = HubResizeGrips.auto.rawValue
     @AppStorage(HubDiffLayout.key) private var diffLayout = HubDiffLayout.auto.rawValue
     @AppStorage(HubInboxCards.contextOpenKey) private var inboxContextOpen = false
+    @AppStorage(HubAgentsEntry.openNewestKey) private var agentsOpenNewest = true
+    @AppStorage(HubAgentsEntry.foldFinishedKey) private var agentsFoldFinished = true
 
     var body: some View {
         VStack(spacing: 18) {
@@ -115,6 +117,16 @@ private struct HubPaneSettings: View {
                     identifier: "hub.inbox.contextOpen", isOn: $inboxContextOpen)
             }
             NativeSettingsCard("Agents list") {
+                NativeSettingsToggle(
+                    "Open the newest live agent",
+                    detail: "Entering Agents with nothing open shows the newest running sub-agent, or the newest live session.",
+                    identifier: "hub.agents.openNewest", isOn: $agentsOpenNewest)
+                Divider()
+                NativeSettingsToggle(
+                    "Fold finished sub-agents",
+                    detail: "A session's finished sub-agents sit in one row under its running ones until you open it.",
+                    identifier: "hub.agents.foldFinished", isOn: $agentsFoldFinished)
+                Divider()
                 NativeSettingsSegmented(
                     "When a refresh moves a row", identifier: "hub.agents.motion",
                     options: HubListMotion.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
