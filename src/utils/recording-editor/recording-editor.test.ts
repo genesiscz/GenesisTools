@@ -1073,6 +1073,39 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(gone, facts).map((issue) => issue.kind)).toContain("voiceover-card-missing");
     });
 
+    // Regression test: hunt r2-card-voiceovers. A card line whose card went away refused every change (even its
+    // volume), and check() never said a line past a shortened card plays nowhere.
+    test("a card voiceover whose card is gone or shorter stays editable and check() names it", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const folder = mkdtempSync(join(tmpdir(), "card-voice-"));
+        const voice = join(folder, "voice.mp3");
+        writeFileSync(voice, "");
+
+        const carded = applyOp(wholeProject(source), { op: "introCard", title: "Demo", seconds: 3 });
+        const voiced = applyOp(
+            carded,
+            { op: "voiceover", card: "intro", at: 0.4, file: voice },
+            { voiceoverDurationUs: 1_000_000 }
+        );
+        const id = voiced.audio.voiceovers?.[0]?.id ?? "";
+        const gone = applyOp(voiced, { op: "introCard", enabled: false });
+        const quieter = applyOp(gone, { op: "voiceover", id, volume: 0.5 });
+        expect(quieter.audio.voiceovers?.[0]?.volume).toBe(0.5);
+        expect(() => applyOp(gone, { op: "voiceover", id, at: 0.2 })).toThrow("no intro card");
+
+        // An end card shortened under its clip's start: the clip plays nowhere.
+        const ended = applyOp(wholeProject(source), { op: "endCard", text: "Bye", seconds: 4 });
+        const endVoiced = applyOp(
+            ended,
+            { op: "voiceover", card: "end", at: 3, file: voice },
+            { voiceoverDurationUs: 1_000_000 }
+        );
+        const shorter = applyOp(endVoiced, { op: "endCard", seconds: 2 });
+        const past = checkProject(shorter, facts).find((issue) => issue.kind === "voiceover-past-card");
+        expect(past?.severity).toBe("fix");
+        expect(past?.message).toContain("does not play");
+    });
+
     test("check names a voiceover that runs past the movie's end, where the export cuts it off", () => {
         // The renderer mixes a voice clip into the movie only: an end card does not carry it, so the words after the
         // movie's last frame are lost. A clip that ends inside the movie is no issue.

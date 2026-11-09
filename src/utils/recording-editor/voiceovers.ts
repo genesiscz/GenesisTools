@@ -121,7 +121,9 @@ export function applyVoiceover(project: EditProject, op: VoiceoverChange, facts:
     const card = op.card ?? list[index]?.card;
     const atUs = op.atUs ?? list[index]?.atUs;
 
-    if (card !== undefined) {
+    // A card clip's card and time are checked when the op sets them, as a movie clip's time is: a clip whose card went
+    // away or got shorter still takes a volume, label or file change, and check() says it does not play.
+    if (card !== undefined && (op.card !== undefined || op.atUs !== undefined || op.id === undefined)) {
         const seconds = project.cards?.[card]?.seconds;
 
         if (seconds === undefined) {
@@ -131,7 +133,7 @@ export function applyVoiceover(project: EditProject, op: VoiceoverChange, facts:
         if (atUs !== undefined && atUs >= Math.round(seconds * 1_000_000)) {
             throw new Error(`a voiceover at ${atUs / 1_000_000} s is past the ${card} card's ${seconds} s`);
         }
-    } else if (op.atUs !== undefined && op.atUs >= project.source.durationUs) {
+    } else if (card === undefined && op.atUs !== undefined && op.atUs >= project.source.durationUs) {
         throw new Error(
             `a voiceover at ${op.atUs / 1_000_000} s starts after the movie's end (${project.source.durationUs / 1_000_000} s)`
         );

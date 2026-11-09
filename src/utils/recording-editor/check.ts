@@ -11,6 +11,7 @@ import {
     playedUs,
     sourceAfterPlayed,
     type TEXT_ALIGNS,
+    voiceoverExportSpans,
     zoomsLinked,
 } from "./project";
 import { layoutText } from "./text-metrics";
@@ -259,13 +260,27 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             });
         } else if (clip.card !== undefined) {
             // A card's line plays over its card and may run on into what follows; it needs only the card.
-            if (!project.cards?.[clip.card]) {
+            const card = project.cards?.[clip.card];
+
+            if (!card) {
                 issues.push({
                     severity: "fix",
                     kind: "voiceover-card-missing",
                     item: name,
                     message: `The voiceover on the ${clip.card} card does not play: the edit has no ${clip.card} card`,
                     fix: `movie.${clip.card}Card({ ... }) or movie.unvoiceover("${clip.id}")`,
+                    action: { label: "Remove", ops: [{ op: "unvoiceover", id: clip.id }] },
+                });
+            } else if (clip.atUs >= Math.round(card.seconds * 1_000_000)) {
+                // A card got shorter under its clip: the export lays it as voiceoverExportSpans says.
+                const plays = voiceoverExportSpans(project).some((span) => span.id === clip.id);
+                const starts = `The voiceover on the ${clip.card} card starts at ${tenths(clip.atUs)} s, the ${clip.card} card lasts ${card.seconds} s`;
+                issues.push({
+                    severity: plays ? "check" : "fix",
+                    kind: "voiceover-past-card",
+                    item: name,
+                    message: plays ? `${starts}, so it plays over the movie` : `${starts}, so it does not play`,
+                    fix: `movie.voiceover({ id: "${clip.id}", at: <a second under ${card.seconds}> }) or movie.unvoiceover("${clip.id}")`,
                     action: { label: "Remove", ops: [{ op: "unvoiceover", id: clip.id }] },
                 });
             }

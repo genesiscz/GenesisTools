@@ -105,6 +105,11 @@ private struct VoiceoverRow: View {
     var body: some View {
         let missing = !FileManager.default.fileExists(atPath: clip.file)
         let plays = TimelineMap.outputTime(ofSource: clip.atUs, in: model.project)
+        // A card's line plays where the export lays it: a card that went away or got shorter under it plays nothing.
+        let cards = CardSpans(project: model.project, enabled: true)
+        let hasCard = clip.card.map { $0 == .intro ? cards.intro != nil : cards.end != nil } ?? false
+        let cardPlays = clip.card != nil && VoiceoverMix.exportPlacements(model.project, cards: cards)
+            .contains { $0.clip.id == clip.id }
         let name = clip.label ?? URL(fileURLWithPath: clip.file).deletingPathExtension().lastPathComponent
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -116,9 +121,16 @@ private struct VoiceoverRow: View {
                 Spacer()
                 if let card = clip.card {
                     // Round 3 (2026-11-08): a card's line plays only in the export, over its card.
-                    Text(verbatim: "\(card.rawValue) card +\(formatClock(clip.atUs, tenths: true))")
-                        .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
-                        .instantTooltip("Plays over the \(card.rawValue) card in the export; the preview has no cards")
+                    Text(verbatim: hasCard
+                        ? "\(card.rawValue) card +\(formatClock(clip.atUs, tenths: true))"
+                        : "no \(card.rawValue) card")
+                        .font(.system(size: 11.5).monospacedDigit())
+                        .foregroundStyle(cardPlays ? RecorderPalette.dim : Color.orange)
+                        .instantTooltip(!hasCard
+                            ? "The edit has no \(card.rawValue) card, so it does not play"
+                            : cardPlays
+                                ? "Plays over the \(card.rawValue) card in the export; the preview has no cards"
+                                : "It starts after the \(card.rawValue) card ends, so it does not play")
                 } else {
                     Text(verbatim: plays.map { formatClock($0, tenths: true) } ?? "cut")
                         .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(plays == nil ? Color.orange : RecorderPalette.dim)
