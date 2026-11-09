@@ -66,6 +66,35 @@ export type QuestionTopic = (typeof QUESTION_TOPICS)[number];
 
 const itemIdSchema = z.string().regex(/^i\d+$/);
 
+/**
+ * Who made a decision, one variant per kind of decider: a person in the Meetings window, in a `listen` round or at a
+ * `tools meetings` command; an agent with its harness and session; a rule of the suggest pipeline. `unknown` is a
+ * decision made before decisions kept their actor.
+ */
+export const decisionActorSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("window") }),
+    z.object({ kind: z.literal("listen") }),
+    z.object({ kind: z.literal("cli") }),
+    z.object({ kind: z.literal("agent"), harness: z.string().min(1), session: z.string().nullable() }),
+    z.object({ kind: z.literal("rule"), rule: z.string().min(1) }),
+    z.object({ kind: z.literal("unknown") }),
+]);
+export type DecisionActor = z.infer<typeof decisionActorSchema>;
+
+/** What a decision did, as the decision journal names its actions (src/meetings/lib/decision-journal.ts). */
+export const DECISION_ACTIONS = [
+    "confirm",
+    "reject",
+    "respell",
+    "answer",
+    "skip",
+    "split",
+    "rename",
+    "reopen",
+    "revert",
+] as const;
+export type DecisionActionKind = (typeof DECISION_ACTIONS)[number];
+
 const itemBase = {
     id: itemIdSchema,
     status: z.enum(ITEM_STATUSES),
@@ -77,8 +106,10 @@ const itemBase = {
     suggestedAt: isoTime,
     decidedAt: isoTime.optional(),
     /**
-     * The confirm or reject that decided the item: its token, which an Undo names (`reopen --token`), and the fields
-     * it changed as they were before, which the Undo puts back.
+     * The decision that decided the item last: its token, which names its decision journal entry and which an Undo
+     * names (`reopen --token`), and the fields it changed as they were before (`previous`, also what a decision made
+     * before the journal puts back). `actor` and `entry` say who decided and how, so a row can say "Confirmed by an
+     * agent" without reading the journal; a decision older than them reads as by `unknown`.
      */
     decision: z
         .object({
@@ -89,6 +120,15 @@ const itemBase = {
                 speaker: z.string().optional(),
                 proposed: z.string().optional(),
             }),
+            actor: decisionActorSchema.optional(),
+            entry: z
+                .object({
+                    action: z.enum(DECISION_ACTIONS),
+                    reason: z.string().optional(),
+                    /** The question whose answer, skip or split decided this item. */
+                    question: itemIdSchema.optional(),
+                })
+                .optional(),
         })
         .optional(),
 };
@@ -604,11 +644,24 @@ export class MeetingStore {
         return record;
     }
 
-    /** Changes one record under its lock. The result must validate, or nothing is written. */
-    async update(id: string, change: MeetingChange, mutate: (record: MeetingRecord) => void): Promise<MeetingRecord> {
+    /**
+     * Changes one record under its lock. The result must validate, or nothing is written. `mutate` returns false when
+     * it found nothing to change: the record stays as it was, with no history line. `change` is read after `mutate`, so
+     * `mutate` may fill in its words. `afterWrite` runs under the same lock once the record is written, so a file kept
+     * beside it (the decision journal, the answer log) follows the order of the record's writes.
+     */
+    async update(
+        id: string,
+        change: MeetingChange,
+        mutate: (record: MeetingRecord) => unknown,
+        afterWrite?: (record: MeetingRecord) => void
+    ): Promise<MeetingRecord> {
         return this.locked(id, (current) => {
-            mutate(current);
-            return this.commit(current, change);
+            if (mutate(current) === false) {
+                return current;
+            }
+
+            return this.commit(current, change, afterWrite);
         });
     }
 
@@ -641,12 +694,20 @@ export class MeetingStore {
         });
     }
 
-    /** Writes a changed record with its history line. The result must validate, or nothing is written. */
-    private commit(current: MeetingRecord, change: MeetingChange): MeetingRecord {
+    /**
+     * Writes a changed record with its history line. The result must validate, or nothing is written. `afterWrite`
+     * runs once the record is written, still under the record's lock.
+     */
+    private commit(
+        current: MeetingRecord,
+        change: MeetingChange,
+        afterWrite?: (record: MeetingRecord) => void
+    ): MeetingRecord {
         current.history.push({ at: new Date().toISOString(), command: change.command, change: change.change });
         const record = meetingRecordSchema.parse(current);
         this.write(record);
         log.debug({ id: record.id, command: change.command }, "meeting updated");
+        afterWrite?.(record);
         return record;
     }
 
