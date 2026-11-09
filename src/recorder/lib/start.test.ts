@@ -490,7 +490,11 @@ describe("a window or app movie", () => {
         expect(() => refuseTargetOffScreen(region(1, 1300), screens)).toThrow(
             /meets no display.*0 "Built-in" 1512x982 at 0,0/
         );
-        expect(() => refuseTargetOffScreen(region(1400, 900), screens)).not.toThrow();
+        expect(() => refuseTargetOffScreen(region(1000, 700), screens)).not.toThrow();
+        // Across the display's edge: one display records, so the part on it is the fix.
+        expect(() => refuseTargetOffScreen(region(1400, 900), screens)).toThrow(
+            /not inside one display.*0 "Built-in".*--region 1400,900,112,82/
+        );
         expect(() => refuseTargetOffScreen({ kind: "display", screenIndex: 2 }, screens)).toThrow(
             /--display 2.*0 "Built-in"/
         );
@@ -565,5 +569,49 @@ describe("a window or app movie", () => {
         expect(startAudioOf({ audio: "mic,system" })).toEqual(["system", "mic"]);
         expect(startAudioOf({ audio: "mic,mic" })).toEqual(["mic"]);
         expect(startAudioOf({ audio: "system" })).toEqual(["system"]);
+    });
+});
+
+describe("an area lies inside one display", () => {
+    const screens: ScreenInfo[] = [
+        {
+            index: 0,
+            name: "Built-in",
+            isPrimary: true,
+            points: { width: 1440, height: 900 },
+            scaleFactor: 2,
+            framePixels: { width: 2880, height: 1800 },
+            originCG: { x: 0, y: 0 },
+        },
+        {
+            index: 1,
+            name: "Studio",
+            isPrimary: false,
+            points: { width: 1920, height: 1080 },
+            scaleFactor: 1,
+            framePixels: { width: 1920, height: 1080 },
+            originCG: { x: 1440, y: 0 },
+        },
+    ];
+
+    it("refuses an area across two displays, naming the one with the larger share and the area cut to it", () => {
+        expect(() =>
+            refuseTargetOffScreen({ kind: "region", x: 1300, y: 100, width: 400, height: 300 }, screens)
+        ).toThrow(/--region 1300,100,400,300 is not inside one display.*1 "Studio".*--region 1440,100,260,300/);
+    });
+
+    it("takes an area inside one display, with a point of slack for rounding", () => {
+        expect(() =>
+            refuseTargetOffScreen({ kind: "region", x: 100, y: 100, width: 400, height: 300 }, screens)
+        ).not.toThrow();
+        expect(() =>
+            refuseTargetOffScreen({ kind: "region", x: 1440.5, y: 0, width: 1920, height: 1080 }, screens)
+        ).not.toThrow();
+    });
+
+    it("keeps the message of an area that meets no display", () => {
+        expect(() =>
+            refuseTargetOffScreen({ kind: "region", x: 100, y: 2000, width: 400, height: 300 }, screens)
+        ).toThrow(/meets no display/);
     });
 });

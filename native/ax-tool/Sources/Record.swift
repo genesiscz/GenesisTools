@@ -1014,8 +1014,12 @@ func cmdCaptureScreen() {
         display = displayContaining(CGPoint(x: target.bounds.midX, y: target.bounds.midY))
     case "region":
         guard let region = options.region else { errorExit("region mode needs --region x,y,w,h", code: "invalid-argument") }
-        guard let found = displayContaining(CGPoint(x: region.midX, y: region.midY)) else {
-            errorExit("no display contains the region", code: "display-missing")
+        // One display holds all of it: a midpoint lookup recorded past the display's edge or failed after the folder.
+        let displays = activeDisplays()
+        guard let id = regionDisplay(region, displays: displays.map { DisplayFrame(id: $0.id, bounds: $0.bounds) }),
+              let found = displays.first(where: { $0.id == id }) else {
+            let area = [region.minX, region.minY, region.width, region.height].map { String(Int($0.rounded())) }
+            errorExit("the area \(area.joined(separator: ",")) is not inside one display; run `ax-tool screens`", code: "display-missing")
         }
         display = found
         sourceRect = CGRect(x: region.minX - found.bounds.minX, y: region.minY - found.bounds.minY,

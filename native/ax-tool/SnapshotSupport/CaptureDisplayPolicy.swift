@@ -338,3 +338,9 @@ public func updateCaptureConfiguration<Value>(from previous: Value, to next: Val
         throw error
     }
 }
+
+/// The display that holds a recorded area: the one whose bounds contain all of it, with `slack` points for the capture
+/// picker's rounding. Nil when the area crosses a display edge or meets none, since a recording records one display.
+public func regionDisplay(_ region: CGRect, displays: [DisplayFrame], slack: CGFloat = 1) -> CGDirectDisplayID? {
+    displays.first { $0.bounds.insetBy(dx: -slack, dy: -slack).contains(region) }?.id
+}
