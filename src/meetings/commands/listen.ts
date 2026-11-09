@@ -265,6 +265,7 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
         fromStart: opts.fromStart === true,
         timeoutMs: minutes * 60_000,
         write: (line) => out.print(`${line}\n`),
+        follow: opts.follow === true,
     });
 }
 
@@ -273,6 +274,7 @@ interface ListenOptions {
     answer?: string;
     comment?: string;
     subscribeAnswers?: boolean;
+    follow?: boolean;
     fromStart?: boolean;
     timeout?: string;
     clipOut?: string;
@@ -594,6 +596,10 @@ export function registerListenCommand(program: Command): void {
             "for an agent: print each answer as one JSON line while the person answers; exit when the round ends"
         )
         .option("--from-start", "with --subscribe-answers: print every earlier round first")
+        .option(
+            "--follow",
+            "with --subscribe-answers: stay up across rounds (the window answers one question per round) until a round ends with no open question, or --timeout"
+        )
         .option(
             "--timeout <minutes>",
             `with --subscribe-answers: give up after this long (default ${DEFAULT_SUBSCRIBE_MINUTES})`

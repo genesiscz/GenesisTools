@@ -463,6 +463,11 @@ export class ListenSession {
                       answer: outcome.answer,
                       ...(outcome.comment ? { comment: outcome.comment } : {}),
                       settled,
+                      decided: changes
+                          .filter(
+                              (change) => change.id !== question.id && change.before?.status !== change.after.status
+                          )
+                          .map((change) => ({ item: change.id, status: change.after.status })),
                   }
         );
         log.debug({ meeting: this.options.meeting.id, question: question.id, outcome, settled }, "question decided");

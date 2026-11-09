@@ -183,7 +183,17 @@ describe("listen session", () => {
         ]);
         expect(readAnswerEvents(logPath)).toEqual([
             expect.objectContaining({ event: "round-start", open: 2 }),
-            expect.objectContaining({ event: "answered", item: "i3", answer: "ADO", settled: ["i4"] }),
+            expect.objectContaining({
+                event: "answered",
+                item: "i3",
+                answer: "ADO",
+                settled: ["i4"],
+                decided: [
+                    { item: "i1", status: "confirmed" },
+                    { item: "i2", status: "confirmed" },
+                    { item: "i4", status: "confirmed" },
+                ],
+            }),
             expect.objectContaining({ event: "round-end", reason: "done", asked: 1, open: 0 }),
         ]);
         expect(adapter.notes[0]).toEqual({
