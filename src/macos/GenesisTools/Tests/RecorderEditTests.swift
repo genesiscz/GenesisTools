@@ -332,11 +332,11 @@ final class RecorderScreenFindViewTests: XCTestCase {
         let model = model()
         model.screenQuery = "token"
         model.screenSearchFailure = EditorModel.screenSearchProblem(stderr: "/x has no recording.json; make the proxy first\n", status: 1)
-        XCTAssertTrue(model.screenSearchFailure?.hasPrefix("This movie has no screen text.") == true)
+        XCTAssertEqual(model.screenSearchFailure, EditorModel.noScreenText)
         XCTAssertEqual(EditorModel.screenSearchProblem(stderr: "boom\nthe last line\n", status: 2), "The search did not run: the last line")
         // Regression test: deep test 2026-11-07 R2-RE6 — a movie recording's refusal reads as the plain sentence too.
         XCTAssertEqual(EditorModel.screenSearchProblem(stderr: "/x has no screen text: only a frames recording …\n", status: 1),
-                       "This movie has no screen text. Only a frames recording or a meeting keeps the text it read off its screens.")
+                       EditorModel.noScreenText)
         let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen-no-text", width: 300)
         XCTAssertTrue(try EditorShots.text(image).lowercased().contains("no screen text"))
     }
@@ -346,13 +346,14 @@ final class RecorderScreenFindViewTests: XCTestCase {
     // at once, with no box.
     func testAMovieRecordingSaysItHasNoScreenTextBeforeAnySearch() throws {
         let manifest = folder.appendingPathComponent("recording.json")
-        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), false, "no recording.json: find-screen refuses it")
+        let movie = folder.appendingPathComponent("missing-screen.mp4")
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder, movie: movie), false, "no recording.json: find-screen refuses it")
         try Data(#"{"settings":{"kind":"video"},"frames":[]}"#.utf8).write(to: manifest)
-        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), false, "a movie recording lists no frames")
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder, movie: movie), false, "no frames and no movie to read")
         try Data(#"{"frames":[{"file":"frames/0001.jpg","t":0}]}"#.utf8).write(to: manifest)
-        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), true)
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder, movie: movie), true)
         try Data("not json".utf8).write(to: manifest)
-        XCTAssertNil(EditorModel.hasScreenText(recordingFolder: folder), "unreadable: keep the box and let the door answer")
+        XCTAssertNil(EditorModel.hasScreenText(recordingFolder: folder, movie: movie), "unreadable: keep the box and let the door answer")
 
         let model = model()
         model.screenTextKnown = false
