@@ -33,6 +33,7 @@ Only github.com is supported: the URL parser matches `github.com` and nothing el
 ## Commands
 
 - Read: `issue`, `pr`, `comments`, `get`.
+- Write: `media upload`.
 - Review threads: `review`, with the subcommands `expand`, `respond`, `respond-batch`, `resolve`, `comment`,
   `sessions` and `summary`.
 - Search: `search`, `code`.
@@ -88,6 +89,34 @@ data object, to stdout, or to the `-o` or `--save` file (then stdout gets only a
 A comment counts as a bot's (`isBot` in `-f json`) when its author is a GitHub `Bot` account, a login ending in
 `[bot]`, or a login that contains a known bot name (dependabot, renovate, github-actions, codecov, stale, mergify
 and a few more).
+
+### `media upload`: images and videos for a PR or an issue
+
+```bash
+tools github media upload shot.png demo.mp4 --repo owner/repo            # prints one markdown line per file
+tools github media upload "shot.png#Login page" --repo owner/repo        # alt text after the first #
+tools github media upload shot.png --repo owner/repo --dry-run           # repo id, write access, a verdict per file
+tools github media upload shot.png --repo owner/repo --pr 42 --append    # also add the lines to the PR body
+tools github media upload shot.png --json                                # [{ file, url, kind, bytes, contentType, markdown }]
+```
+
+Never commit screenshots or recordings to a repository for a PR or an issue. This command uploads them to GitHub's
+`user-attachments` storage with your normal `gh` token (the same endpoint as `gh pr edit --attach`) and prints the
+markdown. An image is `![alt](url)`, with the file name as alt text unless you add `#alt text`. A video is the bare URL,
+because GitHub plays it inline only when the URL stands alone in its paragraph.
+
+- `--repo` defaults to the `origin` remote of the current folder. You need WRITE, MAINTAIN or ADMIN access: without it
+  GitHub answers 404, and the command refuses before it sends anything.
+- Limits, checked before any request: 10 MB for an image or GIF, 100 MB for a video (a video over 10 MB needs a paid
+  plan; GitHub answers 422). A type the command does not know is sent anyway, and GitHub decides.
+- **An upload cannot be undone.** The asset stays on GitHub even when nothing uses it. `--dry-run` uploads nothing: it
+  prints the repo id, whether you can push, and the type, size and verdict of each file.
+- `--pr <n>` or `--issue <n>` labels the output. With `--append` the command also writes the lines into that body
+  (a blank line, then each line separated by a blank line). Without `--append` the body stays as it is.
+- Errors: 404 means no write access, 422 means GitHub refused the file (its message is printed), 429 means rate
+  limited (the `Retry-After` seconds are printed). GitHub Enterprise Server is not supported.
+- Observed 2026-11-09: a fresh asset answers 404 to a request without a token and 302 (to a signed S3 URL) with one,
+  until something references it. Check the rendered PR or comment, not a logged-out `curl`.
 
 ### `pr`: a pull request
 

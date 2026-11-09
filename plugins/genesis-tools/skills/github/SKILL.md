@@ -52,6 +52,19 @@ The tool automatically parses these URL formats:
 
 When user provides a URL with `#issuecomment-XXX`, use `--since XXX` to fetch from that point.
 
+## Media for PRs and issues
+
+Never commit screenshots or recordings to a repo for a PR or issue; upload them with `tools github media upload`.
+
+```bash
+tools github media upload shot.png "demo.mp4" --repo owner/repo            # prints markdown: ![shot](url) and a bare video URL
+tools github media upload "shot.png#Alt text" --repo owner/repo --dry-run   # check type, size, write access; uploads nothing
+tools github media upload shot.png --repo owner/repo --pr 42 --append       # also append the lines to the PR body
+```
+
+An upload cannot be undone, so run `--dry-run` first when unsure. Limits: 10 MB per image or GIF, 100 MB per video (10 MB on
+Free plans). Write access to the repo is required. A video renders as a player only as a bare URL in its own paragraph.
+
 ## Get File Content
 
 Fetch raw file content from any GitHub file URL.
