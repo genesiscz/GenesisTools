@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
 import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
@@ -254,9 +255,10 @@ export function meetingsProtocolVersion(): string {
     return createHash("sha1").update(text).digest("hex").slice(0, 12);
 }
 
-/** The checkout this code runs from (src/meetings/lib/service/ is four levels below it). */
+/** The checkout this code runs from (src/meetings/lib/service/ is four levels below it), as a decoded path. */
 export function meetingsSourceRoot(): string {
-    return new URL("../../../../", import.meta.url).pathname;
+    // fileURLToPath, not `.pathname`: a checkout path with a space would stay `%20` and match no loaded module.
+    return fileURLToPath(new URL("../../../../", import.meta.url));
 }
 
 /**
