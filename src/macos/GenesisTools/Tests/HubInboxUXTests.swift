@@ -373,17 +373,19 @@ final class HubInboxUXTests: XCTestCase {
     func testTheContextFoldsToTwoLinesAndAQuotedDecisionReadsAsAQuote() throws {
         HubDefaults.isolate()
         defer { HubDefaults.store.removeObject(forKey: HubInboxCards.contextOpenKey) }
-        let folded = try Self.drawnText(Self.render(card: try Self.decision(Self.contextFixture(status: "waiting")),
-                                                    name: "extra-4-context-folded"))
-        XCTAssertTrue(folded.contains("Show more"), folded)
-        XCTAssertFalse(folded.contains("types the command in a terminal"), "folded: the last line is hidden: \(folded)")
+        // Both cards are drawn before any text is read, so both PNGs exist even when text recognition fails.
+        let foldedRep = try Self.render(card: try Self.decision(Self.contextFixture(status: "waiting")), name: "extra-4-context-folded")
         let quoting = #"""
         {"number": 12, "title": "Comment on the issue with the new evidence?", "prompt": "Post a short comment?",
          "context": "I posted both questions to your widget inbox.\n\n❓ **DECISION 11**: How should T3 show the plan and email?\nClaude Code reports them only for a stored login.\n\n- **a)** A T3 change only you would use.\n- **b)** A GenesisTools change.\n- **c)** Leave it as Authenticated.\n\nPlease answer these, not the earlier ones.",
          "choices": [{"id": "a", "label": "Yes, post it."}, {"id": "b", "label": "No, the existing reports are enough."}]}
         """#
         HubDefaults.store.set(true, forKey: HubInboxCards.contextOpenKey)
-        let quoted = try Self.drawnText(Self.render(card: try Self.decision(quoting), name: "extra-4-quoted-decision"))
+        let quotedRep = try Self.render(card: try Self.decision(quoting), name: "extra-4-quoted-decision")
+        let folded = try Self.drawnText(foldedRep)
+        XCTAssertTrue(folded.contains("Show more"), folded)
+        XCTAssertFalse(folded.contains("types the command in a terminal"), "folded: the last line is hidden: \(folded)")
+        let quoted = try Self.drawnText(quotedRep)
         XCTAssertTrue(quoted.contains("Quoted"), quoted)
         XCTAssertTrue(quoted.contains("Please answer these"), "the prose after the quote is outside it: \(quoted)")
     }
