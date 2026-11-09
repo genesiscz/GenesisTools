@@ -34,7 +34,7 @@ final class RecorderHuntTrackedPartMoveTests: XCTestCase {
         assertBox((keys[0].x, keys[0].y, keys[0].width, keys[0].height), (0.2, 0.15, 0.3, 0.1), "the first key")
         assertBox((keys[1].x, keys[1].y, keys[1].width, keys[1].height), (0.2, 0.55, 0.3, 0.1), "the last key")
         assertBox((moved.x, moved.y, moved.width, moved.height), (0.2, 0.15, 0.3, 0.1), "the stored rect moves with the keys")
-        let drawn = ZoomState.placed(moved, atSourceUs: 2_000_000, track: nil)
+        let drawn = ZoomState.placed(moved, atSourceUs: 2_000_000, track: nil, pointer: CursorTrack.Pointer())
         assertBox((drawn.x, drawn.y, drawn.width, drawn.height), (0.2, 0.35, 0.3, 0.1), "the renderer draws it where it was dropped")
     }
 

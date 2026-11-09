@@ -163,6 +163,34 @@ final class CursorTrack: @unchecked Sendable {
         return averagedPoint(atMs: ms, halfMs: half)
     }
 
+    /// What sets where the viewer sees the pointer, read from an edit: the drawn cursor's smoothing, the smooth cursor,
+    /// and the picture's shape (height over width) the smooth cursor's jitter is measured in.
+    struct Pointer {
+        var cursor = EditProject.Cursor()
+        var smooth: EditProject.CursorSmooth?
+        var aspect = 9.0 / 16
+
+        /// A new edit's settings.
+        init() {}
+
+        init(_ project: EditProject) {
+            cursor = project.cursor ?? .init()
+            smooth = project.cursorSmooth
+            aspect = Double(project.source.height) / Double(max(1, project.source.width))
+        }
+    }
+
+    /// Where the viewer sees the pointer: the smooth cursor when it is on, else the drawn cursor when the track draws
+    /// one (shown or hidden, so a part keeps following an arrow the edit hides), else the system cursor the movie has in
+    /// its pixels (the raw track). A part or a lens that follows the cursor sits here, so it never lags at a click.
+    func pointerPoint(atMs ms: Double, pointer: Pointer) -> (x: Double, y: Double)? {
+        if let smooth = pointer.smooth {
+            return smoothMark(atMs: ms, settings: smooth, aspect: pointer.aspect).map { (x: $0.x, y: $0.y) }
+        }
+        if drawsCursor { return drawnPoint(atMs: ms, smoothing: pointer.cursor.smoothing) }
+        return point(atMs: ms)
+    }
+
     /// The path averaged with Gaussian weights over ±`halfMs`: what a crop that follows the cursor centres on, wide
     /// enough that it glides instead of chasing every move.
     func averagedPoint(atMs ms: Double, halfMs half: Double) -> (x: Double, y: Double)? {

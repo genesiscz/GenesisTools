@@ -578,12 +578,13 @@ final class RecorderEditTests: XCTestCase {
             CursorTrack.Sample(ms: 3000, x: 0.98, y: 0.02),
         ])
         var part = EditProject.Redaction(id: "s", startUs: 0, endUs: 3_000_000, x: 0, y: 0, width: 0.2, height: 0.2, style: .spotlight)
-        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 500_000, track: track).x, 0, "not following: it stays")
+        let pointer = CursorTrack.Pointer()
+        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 500_000, track: track, pointer: pointer).x, 0, "not following: it stays")
         part.follow = true
-        let centred = ZoomState.placed(part, atSourceUs: 500_000, track: track)
+        let centred = ZoomState.placed(part, atSourceUs: 500_000, track: track, pointer: pointer)
         XCTAssertEqual(centred.x, 0.4, accuracy: 0.001)
         XCTAssertEqual(centred.y, 0.4, accuracy: 0.001)
-        let corner = ZoomState.placed(part, atSourceUs: 2_800_000, track: track)
+        let corner = ZoomState.placed(part, atSourceUs: 2_800_000, track: track, pointer: pointer)
         XCTAssertEqual(corner.x, 0.8, accuracy: 0.001, "kept inside the picture")
         XCTAssertEqual(corner.y, 0, accuracy: 0.001)
     }

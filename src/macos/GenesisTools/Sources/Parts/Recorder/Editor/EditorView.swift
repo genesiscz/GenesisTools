@@ -2076,7 +2076,7 @@ private struct HiddenPartHandles: View {
             let sourceUs = TimelineMap.sourceTime(atOutput: clock.outUs, in: model.project)
             // A part that follows the cursor is outlined where the picture draws it now.
             let showing = (model.project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
-                .map { ZoomState.placed($0, atSourceUs: sourceUs, track: model.cursor) }
+                .map { ZoomState.placed($0, atSourceUs: sourceUs, track: model.cursor, pointer: CursorTrack.Pointer(model.project)) }
             ZStack(alignment: .topLeading) {
                 // The surface that draws a new part; a tap on it still plays and pauses.
                 Color.clear.contentShape(Rectangle())

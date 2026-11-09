@@ -30,7 +30,7 @@ export const transitionsSchema = z.object({
 });
 export type EditTransitions = z.infer<typeof transitionsSchema>;
 
-/** One loupe over a SOURCE range: it follows the cursor, or stays at `x`/`y` (0...1 of the source picture). */
+/** One loupe over a SOURCE range: it follows the pointer the viewer sees (the smooth or drawn cursor, else the recorded one), or stays at `x`/`y` (0...1 of the source picture). The drawn pointer keeps its size inside it. */
 export const lensItemSchema = z.object({
     id: z.string(),
     startUs: z.number().int().nonnegative(),

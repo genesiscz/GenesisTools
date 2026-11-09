@@ -191,6 +191,7 @@ final class ZoomState: @unchecked Sendable {
         }
         let view = ZoomCurve.view(atSource: sourceUs, project: project, cursor: cursor)
         let drawn = redactions(for: project)
+        let pointer = CursorTrack.Pointer(project)
         let motionBlur = (project.motion ?? .init()).blur
         var previousView: ZoomCurve.View?
         if motionBlur > 0, outUs >= frameUs, !project.zooms.isEmpty {
@@ -223,7 +224,7 @@ final class ZoomState: @unchecked Sendable {
                              return KeyMark(label: shown.label, opacity: shown.opacity, settings: settings)
                          },
                          redactions: drawn.filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
-                             .map { Self.placed($0, atSourceUs: sourceUs, track: cursor) },
+                             .map { Self.placed($0, atSourceUs: sourceUs, track: cursor, pointer: pointer) },
                          texts: Self.texts(atSourceUs: sourceUs, project: project))
         look.previousView = previousView
         look.motionBlur = motionBlur
@@ -279,13 +280,14 @@ final class ZoomState: @unchecked Sendable {
         return shown.fade(atOutput: outUs, overUs: min(asked, max(1, shown.playedUs / 3)))
     }
 
-    /// A redaction that follows the cursor, centred on it (averaged over ±150 ms, so it glides) and kept inside the
-    /// picture; any other one as it is.
-    static func placed(_ redaction: EditProject.Redaction, atSourceUs us: Int64, track: CursorTrack?) -> EditProject.Redaction {
+    /// A redaction that follows the cursor, centred on the pointer the viewer sees (`CursorTrack.pointerPoint`) and kept
+    /// inside the picture; any other one as it is.
+    static func placed(_ redaction: EditProject.Redaction, atSourceUs us: Int64, track: CursorTrack?,
+                       pointer: CursorTrack.Pointer) -> EditProject.Redaction {
         // fx B (round 4): a part with keyframes follows its text.
         if redaction.track?.isEmpty == false { return RedactionTrack.placed(redaction, atSourceUs: us) }
         guard redaction.follow == true, let track,
-              let point = track.averagedPoint(atMs: Double(us) / 1000, halfMs: 150) else { return redaction }
+              let point = track.pointerPoint(atMs: Double(us) / 1000, pointer: pointer) else { return redaction }
         var moved = redaction
         moved.x = min(max(0, point.x - redaction.width / 2), 1 - redaction.width)
         moved.y = min(max(0, point.y - redaction.height / 2), 1 - redaction.height)
