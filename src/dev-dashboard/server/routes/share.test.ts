@@ -403,6 +403,26 @@ describe("GET /share/:slug assets", () => {
         expect([...files.keys()].some((name) => name.includes("secret") || name.includes("escape"))).toBe(false);
     });
 
+    test("a link to the page's own heading jumps inside the page, also when the file name is decomposed Unicode", async () => {
+        // macOS keeps `í` of a file name as `i` + U+0301 (NFD); a link typed in the note is NFC. The page then did not
+        // know the link named itself and opened the note again in a panel, at its top (2026-11-09).
+        const file = "Notes/Návrh.proposal.md".normalize("NFD");
+        writeFileSync(
+            join(dir, "vault", file),
+            ["## Bod 1: první", "", "[[Návrh.proposal#Bod 1 první|bod 1]]", "", "[[Other Note#Some Part|jinde]]"]
+                .join("\n")
+                .normalize("NFC")
+        );
+        const selfSlug = (await publishNote(file)).slug;
+        const page = await get({}, "text/html", selfSlug);
+        const html = page.kind === "raw" ? page.body : "";
+
+        expect(html).toContain('<a href="#bod-1-první" class="dd-wikilink">bod 1</a>');
+        expect(html).not.toContain('data-asset-name="Návrh.proposal.md"');
+        // Another note's heading rides on its chip, and the panel scrolls to it.
+        expect(html).toMatch(/href="\/share\/[^"?]+\?asset=[0-9a-f]+#some-part" class="dd-md-asset-chip/);
+    });
+
     test("a note named by dots alone downloads under a safe folder, never `..`", async () => {
         writeFileSync(join(dir, "vault/Notes/...md"), "# dots\n\n![[shot.png]]");
         const dotSlug = (await publishNote("Notes/...md")).slug;

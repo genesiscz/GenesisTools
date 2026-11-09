@@ -8,6 +8,7 @@ import {
     readFileSync,
     realpathSync,
     rmSync,
+    statSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,6 +37,12 @@ import {
     stampInfoPlist,
     timedSteps,
 } from "./app";
+import {
+    changedKeyLabels,
+    codesignTrustClickCommand,
+    probeCodesignKey,
+    writeCodesignTrustLauncher,
+} from "./codesign-trust";
 import { renderSwiftFaceTable, SWIFT_FACE_TABLE_PATH, swiftFaceTableIsCurrent, syncSwiftFaceTable } from "./face-table";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
 import {
@@ -223,6 +230,101 @@ describe("signStagedBundle", () => {
             })
         ).rejects.toThrow("codesign failed with every certificate named");
         expect(hashes).toEqual(["AAA", "BBB"]);
+    });
+});
+
+describe("the codesign keychain notice", () => {
+    const signed = { status: 0, signal: null, stdout: "", stderr: "" };
+    const slowSign = async () => {
+        await Bun.sleep(80);
+        return signed;
+    };
+
+    it("is posted only while the keychain's dialog is up, never for a sign that is only slow", async () => {
+        const posted: string[] = [];
+        const base = {
+            stagedBundle: "/fixture/App.app",
+            identity: { kind: "custom" as const, name: "Dev" },
+            step: () => {},
+            runCommand: slowSign,
+            onPrompt: async (name: string) => {
+                posted.push(name);
+                return true;
+            },
+            promptTiming: { afterMs: 10, everyMs: 10 },
+        };
+
+        // A busy Mac seals the bundle for seconds with no dialog: until 2026-11-09 that posted the notice.
+        await signStagedBundle({ ...base, dialogOpen: () => false });
+        expect(posted).toEqual([]);
+
+        // The dialog comes up after the first look: a later look sees it, and the notice is posted once.
+        let looks = 0;
+        await signStagedBundle({ ...base, dialogOpen: () => ++looks >= 2 });
+        expect(posted).toEqual(["Dev"]);
+        expect(looks).toBe(2);
+
+        // An ad-hoc signature uses no key, so no dialog is looked for.
+        let adhocLooks = 0;
+        await signStagedBundle({
+            ...base,
+            identity: { kind: "adhoc" },
+            dialogOpen: () => {
+                adhocLooks += 1;
+                return true;
+            },
+        });
+        expect([posted.length, adhocLooks]).toEqual([1, 0]);
+    });
+
+    it("names each key security changed, and a key without a label", () => {
+        const block = (label: string) =>
+            [
+                'keychain: "/Users/alice/Library/Keychains/login.keychain-db"',
+                "version: 512",
+                "class: 0x00000010 ",
+                "attributes:",
+                "    0x00000000 <uint32>=0x00000010 ",
+                `    0x00000001 <blob>=${label}`,
+                "    0x00000002 <blob>=<NULL>",
+            ].join("\n");
+
+        expect(changedKeyLabels([block('"Alice Example"'), block('"privateKey"'), block("<NULL>")].join("\n"))).toEqual(
+            ["Alice Example", "privateKey", "(no label)"]
+        );
+        expect(changedKeyLabels("")).toEqual([]);
+    });
+
+    it("opens codesign-trust in a terminal on a click: a .command launcher that runs this checkout's tools", () => {
+        const path = writeCodesignTrustLauncher("/opt/gt checkout/tools");
+        const body = readFileSync(path, "utf8");
+
+        expect(path.endsWith("/app/codesign-trust.command")).toBe(true);
+        expect(body.split("\n")[0]).toBe("#!/bin/zsh -l");
+        expect(body).toContain(
+            "exec '/opt/gt checkout/tools' 'macos' 'permissions' 'codesign-trust' '--from-notice'\n"
+        );
+        expect(statSync(path).mode & 0o777).toBe(0o755);
+        expect(codesignTrustClickCommand()).toBe(`'/usr/bin/open' '${path}'`);
+    });
+
+    it("tests the trust with one sign of a plain file, and says when the dialog was up", async () => {
+        const commands: string[][] = [];
+        const probe = await probeCodesignKey({
+            sign: "ABCDEF0123",
+            dialogOpen: () => false,
+            runCommand: async (options) => {
+                commands.push(options.command);
+                return signed;
+            },
+        });
+
+        expect(probe).toMatchObject({ ok: true, dialog: false });
+        expect(commands[0]?.slice(0, 5)).toEqual(["codesign", "--force", "--sign", "ABCDEF0123", "--timestamp=none"]);
+        expect(commands[0]?.at(-1)?.endsWith("/app/codesign-trust-probe.txt")).toBe(true);
+        expect(
+            await probeCodesignKey({ sign: "ABCDEF0123", dialogOpen: () => true, runCommand: async () => signed })
+        ).toMatchObject({ ok: true, dialog: true });
     });
 });
 

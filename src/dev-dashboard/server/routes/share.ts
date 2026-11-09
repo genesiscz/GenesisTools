@@ -351,8 +351,14 @@ export function shareRoutes(): RouteDef[] {
                     const published = await listPublished();
                     const publishedByPath = new Map(published.map((entry) => [entry.vaultPath, entry.slug]));
                     let transclusionIndex = 0;
+                    // In NFC: macOS keeps a file name's accents decomposed (NFD), a link typed in the note is NFC.
+                    const selfPath = note.vaultPath.normalize("NFC");
+                    const selfName = (selfPath.split("/").pop() ?? selfPath).replace(/\.md$/, "");
                     const rendered = renderMarkdown(markdown, {
                         pageBaseUrl: pageBase,
+                        isCurrentNote: (target) =>
+                            target.normalize("NFC") === selfName ||
+                            assets.byTarget.get(target)?.vaultPath.normalize("NFC") === selfPath,
                         resolveWikilink: (name) => {
                             const match = published.find((publishedNote) => {
                                 const base = publishedNote.vaultPath.split("/").pop() ?? publishedNote.vaultPath;

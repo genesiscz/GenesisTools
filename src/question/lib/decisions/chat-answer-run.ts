@@ -28,6 +28,8 @@ export interface ChatAnswerRun {
     read: { from?: string; fromOffset?: number; endOffset?: number; found: boolean; entries: number; issues: number };
     users: LoggedUserMessage[];
     unambiguous: ChatAnswer[];
+    /** Clear answers that rule a letter out, sent to the agent and never recorded; absent in runs before 2026-11-09. */
+    forAgent?: ChatAnswer[];
     ambiguous: AmbiguousAnswer[];
     /** Decision ids stored as `automatic_heuristic` in this run. */
     recorded: string[];
@@ -63,6 +65,7 @@ export function loggedUserMessage(entry: { line: number; timestamp?: string; tex
 export function userMessageOutcome(run: ChatAnswerRun, message: LoggedUserMessage): string {
     const same = (evidence: { line: number }) => evidence.line === message.line;
     const answers = run.unambiguous.filter((answer) => same(answer.evidence));
+    const toAgent = (run.forAgent ?? []).filter((answer) => same(answer.evidence));
     const unclear = run.ambiguous.filter((item) => same(item.evidence));
     const parts = [
         ...answers.map((answer) => {
@@ -71,6 +74,10 @@ export function userMessageOutcome(run: ChatAnswerRun, message: LoggedUserMessag
 
             return `${stored} D${answer.number}${answer.option ? ` ${answer.option})` : ""}`;
         }),
+        ...toAgent.map(
+            (answer) =>
+                `for the agent D${answer.number}${answer.option ? ` ${answer.option})` : ""} not ${answer.excluded ?? ""})`
+        ),
         ...unclear.map((item) => `unclear D${item.number} (${item.reason})`),
     ];
 

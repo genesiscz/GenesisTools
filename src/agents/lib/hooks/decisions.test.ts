@@ -304,6 +304,61 @@ describe("decision hub hooks", () => {
         expect(readDecisions(log.file)[1]?.state).toBe("open");
     });
 
+    it("leaves a chat answer that rules a letter out to the agent: nothing recorded, one reminder that asks for its reading", async () => {
+        const { log, counts } = harness();
+        const [steps] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Which step?", options: ["lint", "test", "build"] }],
+        });
+        const after = (minutes: number) => new Date(Date.parse(steps.createdTs ?? "") + minutes * 60_000).toISOString();
+        const sent = new Set<string>();
+        const entry = (role: NativeHistoryEntry["role"], text: string, minutes: number): NativeHistoryEntry => ({
+            line: -minutes,
+            role,
+            text,
+            paths: [],
+            commits: [],
+            timestamp: after(minutes),
+        });
+        const deps = {
+            log,
+            counts,
+            now: () => Date.parse(after(10)),
+            chat: {
+                checkedAt: () => undefined,
+                offset: () => undefined,
+                setOffset: () => undefined,
+                setCheckedAt: () => undefined,
+                sentBack: (_session: string, id: string) => sent.has(id),
+                markSentBack: (_session: string, ids: string[]) => {
+                    for (const id of ids) {
+                        sent.add(id);
+                    }
+                },
+            },
+            readSession: async () => ({
+                found: true,
+                issues: [],
+                entries: [
+                    entry("assistant", "❓ DECISION 1 — Which step?", 1),
+                    entry("user", "D1: b) not c), it is slow", 2),
+                ],
+            }),
+        };
+        const payload = stopPayload("Done.", { transcript_path: "/tmp/sess-1.jsonl" });
+        const first = await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps);
+        const reason = first && "decision" in first ? first.reason : "";
+
+        expect(reason).toContain("ruled options out, so the hook did not record it");
+        expect(reason).toContain('❓ DECISION 1: b), not c) from "D1: b) not c), it is slow"');
+        expect(reason).toContain("your reading of them");
+        expect(reason).not.toContain("Recorded the chat answer");
+        expect(readDecisions(log.file)[0]).toMatchObject({ id: steps.id, state: "open" });
+        // Said once per decision.
+        expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toBeNull();
+        expect(readDecisions(log.file)[0]?.state).toBe("open");
+    });
+
     it("reads each transcript row once: from the agent's last reply on, a bare answer still found", async () => {
         const { log, counts } = harness();
         const [row] = await postDecisions(log.file, log.events, {

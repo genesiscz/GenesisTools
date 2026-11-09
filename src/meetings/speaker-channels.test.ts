@@ -137,6 +137,56 @@ describe("a second person in the room on the user's microphone (R18)", () => {
     });
 });
 
+describe("the recorder swapped the user's label and another person's for a stretch (R20)", () => {
+    const normal: Slot[] = Array.from({ length: 60 }, (_, index) =>
+        index % 2 === 0 ? { label: USER, mic: 0.95 } : { label: "Bob Example", mic: 0.05 }
+    );
+    const swapped: Slot[] = Array.from({ length: 60 }, (_, index) =>
+        index % 2 === 0 ? { label: USER, mic: 0.05 } : { label: "Bob Example", mic: 0.95 }
+    );
+
+    test("both labels of the stretch get one item each, and no per-line rule speaks there", () => {
+        const { meeting, evidence, share } = scene([...normal, ...swapped]);
+        const found = ranges(suggestItems({ ...base, meeting, evidence, energyMicShare: share }));
+
+        expect(found.filter((item) => item.rules.includes("R20"))).toMatchObject([
+            {
+                label: "Bob Example",
+                speaker: USER,
+                fromSec: 600,
+                toSec: 1190,
+                confidence: 0.9,
+                rules: ["R20", "energy"],
+            },
+            {
+                label: USER,
+                speaker: "Bob Example",
+                fromSec: 600,
+                toSec: 1190,
+                confidence: 0.9,
+                rules: ["R20", "energy"],
+            },
+        ]);
+        expect(found.filter((item) => item.fromSec >= 600 && !item.rules.includes("R20"))).toEqual([]);
+    });
+
+    test("labels that read swapped through the whole call, or for under 10 min, are left to the per-line rules", () => {
+        const whole = scene(swapped);
+        expect(
+            ranges(suggestItems({ ...base, ...whole, energyMicShare: whole.share })).some((item) =>
+                item.rules.includes("R20")
+            )
+        ).toBe(false);
+
+        const short = scene([...normal, ...swapped.slice(0, 20), ...normal]);
+        expect(
+            ranges(suggestItems({ ...base, ...short, energyMicShare: short.share })).some((item) =>
+                item.rules.includes("R20")
+            )
+        ).toBe(false);
+    });
+});
+
 describe("Teams attendance without join or leave times", () => {
     test("everyone the call-ended message lists is present for the whole call, and the note says so", () => {
         const raw = SafeJSON.stringify([

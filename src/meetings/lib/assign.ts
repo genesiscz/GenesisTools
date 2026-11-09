@@ -112,6 +112,7 @@ export async function viewProposals(store: MeetingStore, record: MeetingRecord, 
             start: record.start,
             end: record.end,
             slackMin: config.global.assign.calendarSlackMin,
+            people: [...record.participants, ...(record.attendance?.people ?? [])],
         }),
         participants: record.participants.map((person) => ({ name: person.name, self: person.self })),
         // Assignment ranking uses a bounded recent sample; never hydrate the whole archive for one detail view.

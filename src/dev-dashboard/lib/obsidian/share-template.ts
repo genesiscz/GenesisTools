@@ -588,6 +588,88 @@ section.footnotes li:target { background: var(--dd-accent-soft); border-radius: 
 .footnote-backref { text-decoration: none; }
 .dd-block-id { display: inline; }
 :target { scroll-margin-top: 72px; }
+/* A heading a link jumped to, in the page or in the panel, is marked for a moment. */
+@keyframes dd-heading-flash { from { background: var(--dd-accent-soft); } to { background: transparent; } }
+h1:target, h2:target, h3:target, h4:target, h5:target, h6:target, .dd-heading-hit {
+    animation: dd-heading-flash 1.8s ease-out;
+    border-radius: 4px;
+}
+/* The image viewer: a click on an image or a link to one opens it over the page. */
+article img, .dd-share-panel-body img, a[data-asset-image] { cursor: zoom-in; }
+body.dd-lightbox-open { overflow: hidden; }
+.dd-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    background: rgba(5, 7, 9, 0.9);
+}
+.dd-lightbox[hidden] { display: none; }
+.dd-lightbox-stage {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    touch-action: none;
+}
+.dd-lightbox-stage.dd-lightbox-pannable { cursor: grab; }
+.dd-lightbox-stage.dd-lightbox-panning { cursor: grabbing; }
+.dd-lightbox-img {
+    position: absolute;
+    left: 0;
+    top: 0;
+    max-width: none;
+    max-height: none;
+    transform-origin: 0 0;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+.dd-lightbox-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--dd-bg-panel);
+    border-top: 1px solid var(--dd-border-strong);
+    color: var(--dd-text);
+    font-family: var(--dd-sans);
+    font-size: 13px;
+}
+.dd-lightbox-caption {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--dd-text-dim);
+}
+.dd-lightbox-count, .dd-lightbox-zoom {
+    font-family: var(--dd-mono);
+    font-size: 12px;
+    color: var(--dd-text-dim);
+    font-variant-numeric: tabular-nums;
+}
+.dd-lightbox-zoom { min-width: 4.5em; text-align: center; }
+.dd-lightbox-bar a, .dd-lightbox-bar button {
+    color: var(--dd-text-dim);
+    background: none;
+    border: 1px solid var(--dd-border-strong);
+    border-radius: 6px;
+    padding: 2px 10px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: none;
+}
+.dd-lightbox-bar a:hover, .dd-lightbox-bar button:hover { color: var(--dd-accent); border-color: var(--dd-accent); }
+.dd-lightbox-bar button[hidden] { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+    h1:target, h2:target, h3:target, h4:target, h5:target, h6:target, .dd-heading-hit {
+        animation: none;
+        background: var(--dd-accent-soft);
+    }
+}
 
 .markdown-alert-icon {
     flex: none;
@@ -995,6 +1077,408 @@ function buildViewToggleScript({
 </script>`;
 }
 
+/**
+ * The image viewer: a click on an image of the page or of the side panel, or on a link to an image, opens it over
+ * the page instead of leaving it. Wheel and pinch zoom around the pointer, a drag moves a zoomed image, a double
+ * click goes between fit and 100 %, the arrow keys go through the images of the same page or panel. A click with
+ * Cmd, Ctrl, Shift or Alt, or with the middle button, keeps the browser's own behaviour.
+ */
+function buildLightboxScript(): string {
+    return `<script>
+(function () {
+    var box = document.getElementById("dd-lightbox");
+    var stage = document.getElementById("dd-lightbox-stage");
+    var view = document.getElementById("dd-lightbox-img");
+    var caption = document.getElementById("dd-lightbox-caption");
+    var counter = document.getElementById("dd-lightbox-count");
+    var zoomLabel = document.getElementById("dd-lightbox-zoom");
+    var original = document.getElementById("dd-lightbox-original");
+    var prevBtn = document.getElementById("dd-lightbox-prev");
+    var nextBtn = document.getElementById("dd-lightbox-next");
+    var closeBtn = document.getElementById("dd-lightbox-close");
+    if (!box || !stage || !view) {
+        return;
+    }
+
+    var IMAGE_FILE = new RegExp("[.](png|jpe?g|gif|webp|avif|svg|bmp|tiff?)([?#]|$)", "i");
+    var MAX_SCALE = 8;
+    var list = [];
+    var index = 0;
+    var scale = 1;
+    var fit = 1;
+    var x = 0;
+    var y = 0;
+    var natural = { w: 0, h: 0 };
+    var lastFocus = null;
+    var saved = [];
+    var pointers = {};
+    var drag = null;
+    var pinch = null;
+    var gestureScale = 1;
+
+    function scopeOf(el) {
+        return el.closest("#dd-share-panel-body") || el.closest("article");
+    }
+
+    function isImageLink(link) {
+        var raw = link.getAttribute("href") || "";
+        if (!raw || raw.charAt(0) === "#") {
+            return false;
+        }
+        return link.hasAttribute("data-asset-image") || link.href.indexOf("data:image/") === 0 || IMAGE_FILE.test(link.href);
+    }
+
+    // What a clicked element shows: a link to an image shows that image, an image alone shows itself, and an image
+    // inside a link to a page is no image to show (the click follows the link).
+    function itemOf(el) {
+        if (el.tagName === "A") {
+            if (!isImageLink(el)) {
+                return null;
+            }
+            var inner = el.querySelector("img");
+            var label = inner ? inner.getAttribute("alt") || "" : (el.textContent || "").trim();
+            return { el: el, show: el.href, open: el.href, caption: label };
+        }
+        var link = el.closest("a[href]");
+        if (link) {
+            return isImageLink(link) ? itemOf(link) : null;
+        }
+        var src = el.currentSrc || el.src;
+        return src ? { el: el, show: src, open: src, caption: el.getAttribute("alt") || "" } : null;
+    }
+
+    function itemsIn(scope) {
+        var items = [];
+        var nodes = scope.querySelectorAll("a[href], img");
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            // An image inside an image link is that link's item already.
+            if (node.tagName === "IMG" && node.closest("a[href]")) {
+                continue;
+            }
+            var item = itemOf(node);
+            if (item) {
+                items.push(item);
+            }
+        }
+        return items;
+    }
+
+    function setBehind(on) {
+        if (!on) {
+            for (var j = 0; j < saved.length; j++) {
+                if (!saved[j][1]) {
+                    saved[j][0].removeAttribute("inert");
+                }
+            }
+            saved = [];
+            return;
+        }
+        var els = [
+            document.querySelector(".dd-share-toolbar"),
+            document.querySelector("main"),
+            document.getElementById("dd-share-panel"),
+            document.getElementById("dd-share-panel-backdrop"),
+        ];
+        saved = [];
+        for (var i = 0; i < els.length; i++) {
+            if (els[i]) {
+                saved.push([els[i], els[i].hasAttribute("inert")]);
+                els[i].setAttribute("inert", "");
+            }
+        }
+    }
+
+    function stageSize() {
+        return { w: stage.clientWidth, h: stage.clientHeight };
+    }
+
+    // By the pointer's position: with the pointer captured on the stage, a click or double click targets the stage.
+    function overImage(event) {
+        var b = view.getBoundingClientRect();
+        return event.clientX >= b.left && event.clientX <= b.right && event.clientY >= b.top && event.clientY <= b.bottom;
+    }
+
+    function apply() {
+        var s = stageSize();
+        var w = natural.w * scale;
+        var h = natural.h * scale;
+        x = w <= s.w ? (s.w - w) / 2 : Math.min(0, Math.max(s.w - w, x));
+        y = h <= s.h ? (s.h - h) / 2 : Math.min(0, Math.max(s.h - h, y));
+        view.style.width = natural.w + "px";
+        view.style.height = natural.h + "px";
+        view.style.transform = "translate(" + x + "px, " + y + "px) scale(" + scale + ")";
+        stage.classList.toggle("dd-lightbox-pannable", w > s.w + 0.5 || h > s.h + 0.5);
+        zoomLabel.textContent = Math.round(scale * 100) + " %";
+    }
+
+    function toFit() {
+        var s = stageSize();
+        fit = Math.min(1, s.w / natural.w, s.h / natural.h);
+        scale = fit;
+        apply();
+    }
+
+    // Keeps the point under (px, py) where it is: wheel and pinch zoom around the pointer.
+    function zoomTo(next, px, py) {
+        if (!natural.w) {
+            return;
+        }
+        var s = stageSize();
+        var cx = px === undefined ? s.w / 2 : px;
+        var cy = py === undefined ? s.h / 2 : py;
+        var target = Math.max(fit, Math.min(MAX_SCALE, next));
+        x = cx - (cx - x) * (target / scale);
+        y = cy - (cy - y) * (target / scale);
+        scale = target;
+        apply();
+    }
+
+    function show(i) {
+        index = (i + list.length) % list.length;
+        var item = list[index];
+        caption.textContent = item.caption;
+        counter.textContent = list.length > 1 ? index + 1 + " / " + list.length : "";
+        prevBtn.hidden = list.length < 2;
+        nextBtn.hidden = list.length < 2;
+        original.href = item.open;
+        if (item.open.indexOf("data:") === 0) {
+            original.setAttribute("download", item.caption || "image");
+        } else {
+            original.removeAttribute("download");
+        }
+        natural = { w: 0, h: 0 };
+        view.style.visibility = "hidden";
+        view.alt = item.caption;
+        view.onload = function () {
+            var thumb = item.el.tagName === "IMG" ? item.el : item.el.querySelector("img");
+            natural = {
+                w: view.naturalWidth || (thumb && thumb.naturalWidth) || 800,
+                h: view.naturalHeight || (thumb && thumb.naturalHeight) || 600,
+            };
+            toFit();
+            view.style.visibility = "";
+        };
+        view.onerror = function () {
+            caption.textContent = "Could not load " + (item.caption || "the image") + ".";
+        };
+        if (view.src === item.show && view.complete && view.naturalWidth) {
+            view.onload();
+        } else {
+            view.src = item.show;
+        }
+    }
+
+    function open(el) {
+        var scope = scopeOf(el);
+        list = scope ? itemsIn(scope) : [];
+        index = -1;
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].el === el) {
+                index = i;
+            }
+        }
+        if (index === -1) {
+            var item = itemOf(el);
+            if (!item) {
+                return;
+            }
+            list = [item];
+            index = 0;
+        }
+        lastFocus = document.activeElement;
+        box.hidden = false;
+        document.body.classList.add("dd-lightbox-open");
+        setBehind(true);
+        show(index);
+        closeBtn.focus();
+    }
+
+    function close() {
+        if (box.hidden) {
+            return;
+        }
+        box.hidden = true;
+        document.body.classList.remove("dd-lightbox-open");
+        setBehind(false);
+        view.onload = null;
+        view.onerror = null;
+        view.removeAttribute("src");
+        pointers = {};
+        drag = null;
+        pinch = null;
+        if (lastFocus && lastFocus.focus) {
+            lastFocus.focus();
+        }
+    }
+
+    document.addEventListener("click", function (event) {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+            return;
+        }
+        var target = event.target;
+        if (!target || !target.closest || target.closest("#dd-lightbox")) {
+            return;
+        }
+        var el = target.closest("a[href]") || target.closest("img");
+        if (!el || !scopeOf(el) || !itemOf(el)) {
+            return;
+        }
+        event.preventDefault();
+        open(el);
+    });
+
+    stage.addEventListener("wheel", function (event) {
+        if (box.hidden || !natural.w) {
+            return;
+        }
+        event.preventDefault();
+        var r = stage.getBoundingClientRect();
+        var delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+        // A trackpad pinch arrives as a wheel with ctrlKey and small steps; a mouse wheel moves in big ones.
+        zoomTo(scale * Math.exp(-delta * (event.ctrlKey ? 0.01 : 0.002)), event.clientX - r.left, event.clientY - r.top);
+    }, { passive: false });
+
+    // Safari sends a trackpad pinch as gesture events.
+    stage.addEventListener("gesturestart", function (event) {
+        event.preventDefault();
+        gestureScale = scale;
+    });
+    stage.addEventListener("gesturechange", function (event) {
+        event.preventDefault();
+        var r = stage.getBoundingClientRect();
+        zoomTo(gestureScale * event.scale, event.clientX - r.left, event.clientY - r.top);
+    });
+
+    stage.addEventListener("pointerdown", function (event) {
+        if (event.pointerType === "mouse" && event.button !== 0) {
+            return;
+        }
+        pointers[event.pointerId] = { x: event.clientX, y: event.clientY };
+        try {
+            stage.setPointerCapture(event.pointerId);
+        } catch (err) {
+            // A pointer the browser no longer tracks: the drag still works while it stays over the stage.
+        }
+        var ids = Object.keys(pointers);
+        if (ids.length === 2) {
+            var a = pointers[ids[0]];
+            var b = pointers[ids[1]];
+            pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, scale: scale };
+            drag = null;
+        } else if (ids.length === 1) {
+            drag = { startX: event.clientX, startY: event.clientY, x0: x, y0: y, moved: false, onImage: overImage(event) };
+        }
+    });
+
+    stage.addEventListener("pointermove", function (event) {
+        if (!pointers[event.pointerId]) {
+            return;
+        }
+        pointers[event.pointerId] = { x: event.clientX, y: event.clientY };
+        var ids = Object.keys(pointers);
+        if (pinch && ids.length === 2) {
+            var a = pointers[ids[0]];
+            var b = pointers[ids[1]];
+            var r = stage.getBoundingClientRect();
+            zoomTo(pinch.scale * (Math.hypot(a.x - b.x, a.y - b.y) / pinch.dist), (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+            return;
+        }
+        if (!drag) {
+            return;
+        }
+        var dx = event.clientX - drag.startX;
+        var dy = event.clientY - drag.startY;
+        if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 4) {
+            return;
+        }
+        drag.moved = true;
+        stage.classList.add("dd-lightbox-panning");
+        x = drag.x0 + dx;
+        y = drag.y0 + dy;
+        apply();
+    });
+
+    function endPointer(event) {
+        if (!pointers[event.pointerId]) {
+            return;
+        }
+        delete pointers[event.pointerId];
+        var left = Object.keys(pointers).length;
+        if (left < 2) {
+            pinch = null;
+        }
+        if (left === 0) {
+            var ended = drag;
+            drag = null;
+            stage.classList.remove("dd-lightbox-panning");
+            // A click on the dimmed background closes the viewer; the end of a drag does not.
+            if (ended && !ended.moved && !ended.onImage && event.type === "pointerup") {
+                close();
+            }
+        }
+    }
+    stage.addEventListener("pointerup", endPointer);
+    stage.addEventListener("pointercancel", endPointer);
+
+    stage.addEventListener("dblclick", function (event) {
+        if (!overImage(event)) {
+            return;
+        }
+        var r = stage.getBoundingClientRect();
+        var atFit = Math.abs(scale - fit) < 0.001;
+        zoomTo(atFit ? (fit < 1 ? 1 : 2) : fit, event.clientX - r.left, event.clientY - r.top);
+    });
+
+    // In the capture phase: an Escape closes the viewer only, not the side panel under it.
+    document.addEventListener("keydown", function (event) {
+        if (box.hidden || event.metaKey || event.ctrlKey || event.altKey) {
+            return;
+        }
+        var key = event.key;
+        if (key === "Escape") {
+            close();
+        } else if (key === "ArrowLeft" && list.length > 1) {
+            show(index - 1);
+        } else if (key === "ArrowRight" && list.length > 1) {
+            show(index + 1);
+        } else if (key === "+" || key === "=") {
+            zoomTo(scale * 1.25);
+        } else if (key === "-" || key === "_") {
+            zoomTo(scale / 1.25);
+        } else if (key === "0") {
+            toFit();
+        } else if (key === "1") {
+            zoomTo(1);
+        } else {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
+
+    window.addEventListener("resize", function () {
+        if (box.hidden || !natural.w) {
+            return;
+        }
+        var atFit = Math.abs(scale - fit) < 0.001;
+        var s = stageSize();
+        fit = Math.min(1, s.w / natural.w, s.h / natural.h);
+        scale = atFit ? fit : Math.max(fit, scale);
+        apply();
+    });
+
+    prevBtn.addEventListener("click", function () { show(index - 1); });
+    nextBtn.addEventListener("click", function () { show(index + 1); });
+    document.getElementById("dd-lightbox-in").addEventListener("click", function () { zoomTo(scale * 1.25); });
+    document.getElementById("dd-lightbox-out").addEventListener("click", function () { zoomTo(scale / 1.25); });
+    document.getElementById("dd-lightbox-fit").addEventListener("click", function () { toFit(); });
+    document.getElementById("dd-lightbox-actual").addEventListener("click", function () { zoomTo(1); });
+    closeBtn.addEventListener("click", close);
+})();
+</script>`;
+}
+
 function buildWidthScript(): string {
     return `<script>
 (function () {
@@ -1210,6 +1694,30 @@ function buildAssetPanelScript(): string {
         }
     }
 
+    // A link to a heading of another note opens the panel at that heading, and marks it for a moment.
+    function markHeading(hash) {
+        if (!hash || hash.length < 2 || parseLines(hash)) {
+            return;
+        }
+
+        var id = hash.slice(1);
+        try {
+            id = decodeURIComponent(id);
+        } catch (err) {
+            // A literal % stays as it is.
+        }
+        var selector = '[id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]';
+        var heading = content.querySelector(selector);
+        if (!heading) {
+            return;
+        }
+
+        heading.scrollIntoView({ block: "start" });
+        heading.classList.remove("dd-heading-hit");
+        void heading.offsetWidth;
+        heading.classList.add("dd-heading-hit");
+    }
+
     function openPanel(url, push) {
         var hashAt = url.indexOf("#");
         var base = hashAt === -1 ? url : url.slice(0, hashAt);
@@ -1233,6 +1741,7 @@ function buildAssetPanelScript(): string {
                 content.innerHTML = entry.html;
                 content.scrollTop = 0;
                 markLines(lines);
+                markHeading(hash);
             } else {
                 rawLink.removeAttribute("href");
                 content.textContent = name + " is not part of this saved page.";
@@ -1261,6 +1770,7 @@ function buildAssetPanelScript(): string {
                 content.innerHTML = html;
                 content.scrollTop = 0;
                 markLines(lines);
+                markHeading(hash);
             })
             .catch(function (err) {
                 if (request !== panelRequest) {
@@ -1369,6 +1879,7 @@ export function renderSharePage(options: ShareTemplateOptions): string {
 
     bodyExtras.push(buildViewToggleScript({ downloadName, contentType, labels }));
     bodyExtras.push(buildAssetPanelScript());
+    bodyExtras.push(buildLightboxScript());
     bodyExtras.push(buildWidthScript());
 
     const attachmentsLabel = `${attachmentCount} ${attachmentCount === 1 ? "attachment" : "attachments"}`;
@@ -1418,6 +1929,22 @@ ${downloadControl}
 </div>
 <div class="dd-share-panel-body" id="dd-share-panel-body"></div>
 </aside>
+<div class="dd-lightbox" id="dd-lightbox" role="dialog" aria-modal="true" aria-label="Image" hidden>
+<div class="dd-lightbox-stage" id="dd-lightbox-stage"><img class="dd-lightbox-img" id="dd-lightbox-img" alt="" draggable="false"></div>
+<div class="dd-lightbox-bar">
+<button type="button" id="dd-lightbox-prev" aria-label="Previous image" title="Previous image (Left arrow)">&lsaquo;</button>
+<span class="dd-lightbox-count" id="dd-lightbox-count"></span>
+<button type="button" id="dd-lightbox-next" aria-label="Next image" title="Next image (Right arrow)">&rsaquo;</button>
+<span class="dd-lightbox-caption" id="dd-lightbox-caption"></span>
+<button type="button" id="dd-lightbox-out" aria-label="Zoom out" title="Zoom out (-)">&minus;</button>
+<span class="dd-lightbox-zoom" id="dd-lightbox-zoom">100 %</span>
+<button type="button" id="dd-lightbox-in" aria-label="Zoom in" title="Zoom in (+)">+</button>
+<button type="button" id="dd-lightbox-fit" title="Fit to the window (0)">Fit</button>
+<button type="button" id="dd-lightbox-actual" title="Actual size (1)">100 %</button>
+<a id="dd-lightbox-original" href="#" target="_blank" rel="noopener">Open original</a>
+<button type="button" id="dd-lightbox-close" aria-label="Close image" title="Close (Esc)">Close</button>
+</div>
+</div>
 <script type="application/json" id="dd-share-source-data">${embedJson(source)}</script>
 ${embeddedPanels ? `<script type="application/json" id="dd-share-embedded-panels">${embedJson(embeddedPanels)}</script>` : ""}
 ${bodyExtras.join("\n")}

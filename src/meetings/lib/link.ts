@@ -94,7 +94,7 @@ export function applySource(options: {
     record.sources[options.sourceId] = options.block;
     record.title =
         options.refresh && meeting.title.trim() && !titledByHand ? meeting.title : record.title || meeting.title;
-    record.end = options.refresh ? (meeting.end ?? record.end) : (record.end ?? meeting.end);
+    record.end = options.refresh ? (meeting.end ?? record.end) : laterEnd(record.end, meeting.end);
 
     // A record made when a screen recording started began after the call did: the call's start is the meeting's.
     if (meeting.start && Date.parse(meeting.start) < Date.parse(record.start)) {
@@ -103,6 +103,18 @@ export function applySource(options: {
 
     record.participants = mergeParticipants(record.participants, meeting.participants);
     record.calendar ??= meeting.calendar;
+}
+
+/**
+ * A link keeps the record's end unless the source's is later: a call the source paused and resumed was refreshed with
+ * the pause as its end, and the later link of the whole call left it there (2026-11-09: 14:49 for a call to 16:58).
+ */
+function laterEnd(recordEnd: string | undefined, sourceEnd: string | undefined): string | undefined {
+    if (!recordEnd || !sourceEnd) {
+        return recordEnd ?? sourceEnd;
+    }
+
+    return Date.parse(sourceEnd) > Date.parse(recordEnd) ? sourceEnd : recordEnd;
 }
 
 export interface LinkResult {

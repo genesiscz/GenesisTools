@@ -63,6 +63,11 @@ export interface ResolvedAsset {
 interface RenderOptions {
     resolveWikilink: (name: string) => string | null;
     resolveVaultNotePath?: (name: string) => string | null;
+    /**
+     * True for a wikilink target that names the note being rendered: `[[This note#Heading]]` jumps inside the page,
+     * as `[[#Heading]]` does, instead of opening the note again (in the share page, as a panel at its top).
+     */
+    isCurrentNote?: (target: string) => boolean;
     /** Called with the raw target of `![[x]]`, `[[x]]`, `![](x)` and `[t](x)` (relative and file: hrefs only). */
     resolveAsset?: (target: string) => ResolvedAsset | null;
     /** Relative and file: links and images render as plain text, so a rendered attachment cannot reach further files. */
@@ -234,7 +239,8 @@ function renderAsset(asset: ResolvedAsset, labelHtml: string, inline: boolean, s
             return `<img src="${url}" alt="${labelHtml}" class="dd-md-asset-img"${sizeAttrs(size)} loading="lazy" />`;
         }
 
-        return `<a href="${url}" class="dd-md-asset-link">${labelHtml}</a>`;
+        // Marked as an image, so the share page opens it in its viewer: the served address has no file extension.
+        return `<a href="${url}" class="dd-md-asset-link" data-asset-image>${labelHtml}</a>`;
     }
 
     if (asset.kind === "page") {
@@ -363,8 +369,15 @@ function wikilinkExtension(opts: RenderOptions): MarkedExtension {
                     const display =
                         t.display !== t.target || !fragment ? t.display : note ? `${note} > ${fragment}` : fragment;
 
-                    if (!note && fragment) {
+                    const self = note !== "" && opts.isCurrentNote?.(note) === true;
+
+                    if ((!note || self) && fragment) {
                         return `<a href="#${escapeHtml(opts.idPrefix ?? "")}${escapeHtml(anchorFor(fragment))}" class="dd-wikilink">${escapeHtml(display)}</a>`;
+                    }
+
+                    // `[[This note]]` is the top of this page.
+                    if (self) {
+                        return `<a href="#" class="dd-wikilink">${escapeHtml(display)}</a>`;
                     }
 
                     // The whole target first, so a `#L12` line link still reaches its asset; then the note alone.
@@ -755,11 +768,10 @@ function resolveWikilinkHtml(opts: RenderOptions, target: string, display: strin
     const asset = opts.resolveAsset?.(target) ?? null;
 
     if (asset) {
-        return renderAsset(
-            asset.kind === "page" ? { ...asset, url: `${asset.url}${hash}` } : asset,
-            escapeHtml(display),
-            false
-        );
+        // A page link and a note's panel both carry the heading; a line link (`#L12`) already has its fragment.
+        const keepsHeading = asset.kind === "page" || (asset.kind === "markdown" && !asset.url.includes("#"));
+
+        return renderAsset(keepsHeading ? { ...asset, url: `${asset.url}${hash}` } : asset, escapeHtml(display), false);
     }
 
     const vaultPath = opts.resolveVaultNotePath?.(target) ?? null;

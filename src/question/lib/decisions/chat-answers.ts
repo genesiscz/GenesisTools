@@ -8,8 +8,10 @@ import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
  *
  * An answer is unambiguous only in a form nobody types by accident, at the start of a line or after a `,` or `;`:
  * `D14 b)`, `14 b)`, `14 b`, `DECISION 14: b`, `D14 b - because…`, `D14: my own words`; or a bare `b)` opening a
- * message right after a reply that asked exactly one decision. Two different answers, a letter the decision does not
- * have, or `D14` named without an option is ambiguous: the hook names those for the agent to record or leave.
+ * message right after a reply that asked exactly one decision. Letters closed one by one (`D14: a) b)`) are one set.
+ * Two different answers, a letter the decision does not have, or `D14` named without an option is ambiguous: the hook
+ * names those for the agent to record or leave. An answer that rules a letter out (`D14: a) b) not e)`) is clear, but
+ * its words say more than its letters, so it goes to `forAgent`: no reader records it, the agent does.
  */
 
 /** An open decision as the finder needs it. */
@@ -48,6 +50,8 @@ export interface ChatAnswer {
     number: number;
     /** The letters picked, in order (`"b"`, `"ac"`); absent for an answer in own words only. */
     option?: string;
+    /** The letters the user ruled out (`not e)`), in the order typed. Such an answer is in `forAgent`. */
+    excluded?: string;
     /** The user's words after the letters, or the whole own-words answer. */
     answer: string;
     evidence: Evidence;
@@ -61,13 +65,20 @@ export interface AmbiguousAnswer {
 
 export interface ChatAnswers {
     unambiguous: ChatAnswer[];
+    /**
+     * Clear answers that rule a letter out (`D14: a) b) not e)`). The words carry more than the letters, so no reader
+     * records them: the agent records each with question_update and its reading, and the Stop hook only reminds it.
+     */
+    forAgent: ChatAnswer[];
     ambiguous: AmbiguousAnswer[];
 }
 
 interface Found {
     option?: string;
+    excluded?: string;
     answer: string;
-    invalid: boolean;
+    /** Why this answer cannot be recorded as it is: a letter the decision does not have, or two answers in one. */
+    problem?: AmbiguousAnswer["reason"];
 }
 
 /** The text of a `❓ DECISION N` ask, as the reply format and the harvest write it. */
@@ -85,6 +96,14 @@ const LEAD = /^\s*[-–—:,]\s*/;
  * that does not rise and a letter named twice, so a word ("bad", "add") is never read as letters.
  */
 const LETTER_SET = String.raw`[a-z]{1,26}(?:(?:\s*[,+&/]\s*|\s+and\s+|\s+)[a-z](?![a-z]))*`;
+/** One more letter closed with `)` after a closed pick: the `b)` of `a) b)`, `a), b)`, `a) and (b)`. */
+const PICK = /^\s*(?:[,+&/]|and\b)?\s*\(?([a-z])\)/i;
+/**
+ * Letters the user rules out: `not e)`, `not (e)`, `except d) or e)`, or `not e` that ends a clause. A letter must be
+ * closed with `)` or end the clause, so "not a good idea" rules nothing out.
+ */
+const RULED_OUT =
+    /\b(?:not|no|except|without)\s+(\(?[a-z]\)(?:\s*(?:[,/]|\b(?:or|nor|and)\b)\s*\(?[a-z]\))*|\(?[a-z](?=\s*(?:[,;.]|$)))/gi;
 
 /**
  * The letters a `LETTER_SET` match names, or undefined when it is a word rather than letters. The rule of
@@ -112,6 +131,38 @@ function asksIn(text: string): number[] {
 
 type Choice = Pick<OpenDecisionRef, "letters" | "several">;
 
+/** The letters `text` rules out, each once, in the order typed. A decision with no letters has none to rule out. */
+function ruledOut(text: string, decision: Choice): string {
+    if (decision.letters.length === 0) {
+        return "";
+    }
+
+    const letters = [...text.matchAll(RULED_OUT)].flatMap((match) => [
+        ...(match[1] ?? "")
+            .toLowerCase()
+            .replace(/\b(?:or|nor|and)\b/g, " ")
+            .replace(/[^a-z]/g, ""),
+    ]);
+
+    return [...new Set(letters)].join("");
+}
+
+/** A letter the decision does not offer, or a letter both picked and ruled out. */
+function problemOf(option: string, excluded: string, decision: Choice): Pick<Found, "problem"> {
+    if ([...option, ...excluded].some((letter) => !decision.letters.includes(letter))) {
+        return { problem: "unknown option" };
+    }
+
+    return [...excluded].some((letter) => option.includes(letter)) ? { problem: "several answers" } : {};
+}
+
+/** An answer in own words, with the letters it rules out. */
+function words(answer: string, decision: Choice): Found {
+    const excluded = ruledOut(answer, decision);
+
+    return { ...(excluded ? { excluded } : {}), answer, ...problemOf("", excluded, decision) };
+}
+
 function found(letters: string, rest: string, decision: Choice): Found | undefined {
     const option = lettersOf(letters, decision.several === true);
 
@@ -119,11 +170,30 @@ function found(letters: string, rest: string, decision: Choice): Found | undefin
         return undefined;
     }
 
-    return {
-        option,
-        answer: rest.replace(LEAD, "").trim(),
-        invalid: [...option].some((letter) => !decision.letters.includes(letter)),
-    };
+    const answer = rest.replace(LEAD, "").trim();
+    const excluded = ruledOut(answer, decision);
+
+    return { option, ...(excluded ? { excluded } : {}), answer, ...problemOf(option, excluded, decision) };
+}
+
+/** Letters closed with `)`, and the closed letters after them (`a) b) not e)`): one set, then the words. */
+function closedFound(letters: string, rest: string, decision: Choice): Found | undefined {
+    const more: string[] = [];
+    let left = rest;
+
+    for (let pick = PICK.exec(left); pick; pick = PICK.exec(left)) {
+        more.push(pick[1] ?? "");
+        left = left.slice(pick[0].length);
+    }
+
+    if (more.length > 0 && decision.several !== true) {
+        // `a) b)` on a decision that takes one letter names two answers; a word before them ("bad)") names none.
+        return lettersOf(letters, false) === undefined
+            ? undefined
+            : { answer: left.replace(LEAD, "").trim(), problem: "several answers" };
+    }
+
+    return found([letters, ...more].join(" "), left, decision);
 }
 
 /** What one segment of a user line says about decision `n` (digits only, so it goes into the patterns as it is). */
@@ -136,7 +206,7 @@ function answerIn(segment: string, n: number, decision: Choice): Found | undefin
     ).exec(segment);
 
     if (closed) {
-        return found(closed[1] ?? "", closed[2] ?? "", decision);
+        return closedFound(closed[1] ?? "", closed[2] ?? "", decision);
     }
 
     // A colon introduces own words, except an option alone or followed by an explicit explanation separator.
@@ -147,12 +217,13 @@ function answerIn(segment: string, n: number, decision: Choice): Found | undefin
         const choice = new RegExp(`^(${LETTER_SET})(?:\\s*[-–—:]\\s*(.*))?$`, "i").exec(answer);
         const letters =
             choice && decision.letters.length > 0 ? found(choice[1] ?? "", choice[2] ?? "", decision) : undefined;
+        const option = letters?.option ?? "";
 
         // Own words that only look like letters ("D14: ok") stay words: a set must name the decision's letters. One
         // letter past the options ("D14: z") is still a letter, so it reads as an unknown option.
-        return letters && (!letters.invalid || (letters.option ?? "").length === 1)
+        return letters && ([...option].every((letter) => decision.letters.includes(letter)) || option.length === 1)
             ? letters
-            : { answer, invalid: false };
+            : words(answer, decision);
     }
 
     // `D14 b`, `D14 b - because`, `D14 a, c`: prose after the letters requires `)`, `-`, `–`, `—` or `:`.
@@ -258,6 +329,7 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
     }
 
     const unambiguous: ChatAnswer[] = [];
+    const forAgent: ChatAnswer[] = [];
     const ambiguous: AmbiguousAnswer[] = [];
 
     for (const decision of open) {
@@ -319,7 +391,9 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
             // `b)`, `ac)`, `(a, c)` alone answer the one decision the last reply asked.
             const bare = new RegExp(`^\\s*\\(?(${LETTER_SET})\\)(.*)$`, "i").exec(first);
             const bareHit =
-                bare && alone && !/DECISION/.test(text) ? found(bare[1] ?? "", bare[2] ?? "", decision) : undefined;
+                bare && alone && !/DECISION/.test(text)
+                    ? closedFound(bare[1] ?? "", bare[2] ?? "", decision)
+                    : undefined;
 
             if (!answered && bareHit) {
                 hits.push({ found: bareHit, evidence: evidence(first) });
@@ -341,8 +415,10 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
             continue;
         }
 
-        if (hits.some((hit) => hit.found.invalid)) {
-            ambiguous.push({ number: decision.number, reason: "unknown option", evidence: last.evidence });
+        const problem = hits.find((hit) => hit.found.problem);
+
+        if (problem?.found.problem) {
+            ambiguous.push({ number: decision.number, reason: problem.found.problem, evidence: problem.evidence });
             continue;
         }
 
@@ -351,13 +427,15 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
             continue;
         }
 
-        unambiguous.push({
+        // Ruling a letter out says more than the letters: the agent records it with its reading of the words.
+        (last.found.excluded ? forAgent : unambiguous).push({
             number: decision.number,
             ...(last.found.option ? { option: last.found.option } : {}),
+            ...(last.found.excluded ? { excluded: last.found.excluded } : {}),
             answer: last.found.answer,
             evidence: last.evidence,
         });
     }
 
-    return { unambiguous, ambiguous };
+    return { unambiguous, forAgent, ambiguous };
 }

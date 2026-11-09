@@ -2,6 +2,28 @@ import { describe, expect, test } from "bun:test";
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
 
 describe("renderSharePage", () => {
+    test("carries the image viewer with its controls, closed, and every inline script of the page parses", () => {
+        const page = renderSharePage({
+            title: "Pictures",
+            rendered: { html: '<p><img src="a.png" alt="A"></p>', hasMath: false, hasMermaid: false, tags: [] },
+            source: "![A](a.png)",
+            sourcePath: "notes/pictures.md",
+        });
+
+        expect(page).toContain('<div class="dd-lightbox" id="dd-lightbox" role="dialog" aria-modal="true"');
+        expect(page).toMatch(/id="dd-lightbox"[^>]* hidden>/);
+        for (const id of ["prev", "next", "in", "out", "fit", "actual", "original", "close"]) {
+            expect(page).toContain(`id="dd-lightbox-${id}"`);
+        }
+
+        // The scripts live in a template string: a stray backtick or backslash breaks them without a type error.
+        const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1] ?? "");
+        expect(scripts.some((body) => body.includes('getElementById("dd-lightbox")'))).toBe(true);
+        for (const body of scripts) {
+            expect(() => new Function(body)).not.toThrow();
+        }
+    });
+
     test("includes raw source toggle and embedded markdown", () => {
         const page = renderSharePage({
             title: "Test Note",

@@ -1,4 +1,5 @@
 import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { canvasFont } from "./canvas-fonts";
 
 /** The widest sheet a grid makes. A reader shrinks a wider image anyway, and a 4096 px sheet keeps a two-column
  * tile at half of a 4K display, which is the logical resolution of a Retina capture. */
@@ -77,7 +78,7 @@ export async function composeImageGrid({
             height
         );
         context.fillStyle = "#ffc95e";
-        context.font = `${fontSize}px monospace`;
+        context.font = canvasFont({ sizePx: fontSize, mono: true });
         context.fillText(item.label.slice(0, 80), x + inset, y + fontSize + 4, cellWidth - 2 * inset);
     }
 

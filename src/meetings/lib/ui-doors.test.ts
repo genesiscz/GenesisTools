@@ -470,8 +470,8 @@ describe("capture cost", () => {
         const cost = captureCost({ store: meetings, records, config });
 
         expect(cost.observed).toMatchObject({ meeting: "rec", displays: 2, minutes: 10, framesPerMin: 3 });
-        expect(cost.displays.map((choice) => choice.maxCpuSecPerMin)).toEqual([32.2, 16.1, 16.1]);
-        expect(cost.activeFps.map((choice) => choice.maxCpuSecPerMin)).toEqual([16.1, 32.2, 64.5]);
+        expect(cost.displays.map((choice) => choice.maxCpuSecPerMin)).toEqual([44.2, 22.1, 22.1]);
+        expect(cost.activeFps.map((choice) => choice.maxCpuSecPerMin)).toEqual([22.1, 44.2, 88.5]);
         expect(cost.thresholdNote).toContain("not measured");
     });
 });

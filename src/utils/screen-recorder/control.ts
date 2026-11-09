@@ -136,6 +136,8 @@ export const recorderSettingsSchema = z.object({
         region: z.enum(OCR_REGIONS),
         /** How a full-frame read is recognized; omitted legacy settings keep whole-frame reads. */
         read: z.enum(OCR_READS).optional(),
+        /** With `read: "tiles"`: the longest side of one tile in frame pixels; omitted is the OCR's own default. */
+        tilePx: z.number().int().min(256).max(8192).optional(),
     }),
 });
 

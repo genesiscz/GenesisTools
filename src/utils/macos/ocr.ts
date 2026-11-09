@@ -9,8 +9,10 @@ export const OCR_READS = ["frame", "tiles"] as const;
 export type OcrRead = (typeof OCR_READS)[number];
 
 export interface OcrOptions {
-    /** Side-by-side region reads without language correction. Default: frame. */
+    /** A grid of region reads without language correction (`tiles`), or one read of the whole image. Default: frame. */
     read?: OcrRead;
+    /** With `read: "tiles"`: the longest side of one tile in image pixels. Default: DEFAULT_OCR_TILE_PX. */
+    tilePx?: number;
     /** BCP-47 language codes to use for recognition. Default: ["en-US"] */
     languages?: string[];
     /** "fast" for speed, "accurate" for quality. Default: "accurate" */
@@ -163,39 +165,74 @@ export function mergeTiledOcrResults(parts: TilePart[], fullHeight: number): Ocr
     };
 }
 
-/** Ultrawide frames need two reads; ordinary landscape and portrait frames need one. */
-export function planOcrTiles({ width, height }: ImageDimensions) {
-    const count = width / height >= 2 ? 2 : 1;
-    return Array.from({ length: count }, (_, index) => {
-        const x = Math.max(0, index / count - (index > 0 ? 0.03 : 0));
-        const right = Math.min(1, (index + 1) / count + (index < count - 1 ? 0.03 : 0));
-        return { x, y: 0, width: right - x, height: 1 };
-    });
+/**
+ * The longest side of one tile of a `tiles` read, in image pixels. Vision reads each region at its own working size, so
+ * a smaller tile reads smaller text, and each tile is one more request. Measured 2026-11-09 on 12 kept meeting frames
+ * (2880×1205, 2880×1861 and 2560×1440), as the share of every dictionary word any grid read: one read 42 %, two
+ * vertical strips 80 % (the rule before, and only for frames twice as wide as tall), a 3×2 grid 86 % at about 770 ms,
+ * 4×2 88 % at 810 ms, 8×4 92 % at 1.8 s.
+ */
+export const DEFAULT_OCR_TILE_PX = 960;
+/** Each tile reaches this share of the image past its inner edges, so a line on a seam is whole in one tile. */
+const TILE_OVERLAP = 0.03;
+
+/** The regions of a `tiles` read: a grid whose tiles are at most `tilePx` on their longest side, with overlap. */
+export function planOcrTiles({ width, height }: ImageDimensions, tilePx = DEFAULT_OCR_TILE_PX) {
+    const cols = Math.max(1, Math.ceil(width / tilePx));
+    const rows = Math.max(1, Math.ceil(height / tilePx));
+    const span = (index: number, count: number) => {
+        const start = Math.max(0, index / count - (index > 0 ? TILE_OVERLAP : 0));
+        const end = Math.min(1, (index + 1) / count + (index < count - 1 ? TILE_OVERLAP : 0));
+        return { start, size: end - start };
+    };
+    const regions: Array<{ x: number; y: number; width: number; height: number }> = [];
+
+    // Vision's y grows upwards: the top row goes first, so the merged text keeps the screen's order.
+    for (let row = rows - 1; row >= 0; row--) {
+        const y = span(row, rows);
+
+        for (let col = 0; col < cols; col++) {
+            const x = span(col, cols);
+            regions.push({ x: x.start, y: y.start, width: x.size, height: y.size });
+        }
+    }
+
+    return regions;
 }
 
 /** Region OCR already answers in full-image, bottom-left coordinates. Never scale those bounds again. */
 export function mergeRegionOcrResults(parts: OcrResult[]): OcrResult {
     const blocks: OcrBlock[] = [];
     const fold = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+    const overlapShare = (a: OcrBlock["bounds"], b: OcrBlock["bounds"]) => {
+        const overlapWidth = Math.max(0, Math.min(+a.x + +a.width, +b.x + +b.width) - Math.max(+a.x, +b.x));
+        const overlapHeight = Math.max(0, Math.min(+a.y + +a.height, +b.y + +b.height) - Math.max(+a.y, +b.y));
+        const area = Math.min(+a.width * +a.height, +b.width * +b.height);
+        return area > 0 ? (overlapWidth * overlapHeight) / area : 0;
+    };
 
     for (const part of parts) {
         for (const block of part.blocks) {
+            const text = fold(block.text);
+            // The same line read twice, or a seam tile's cut piece of a line another tile read whole.
             const duplicate = blocks.findIndex((other) => {
-                if (fold(other.text) !== fold(block.text)) {
-                    return false;
-                }
-
-                const a = other.bounds;
-                const b = block.bounds;
-                const overlapWidth = Math.max(0, Math.min(+a.x + +a.width, +b.x + +b.width) - Math.max(+a.x, +b.x));
-                const overlapHeight = Math.max(0, Math.min(+a.y + +a.height, +b.y + +b.height) - Math.max(+a.y, +b.y));
-                const area = Math.min(+a.width * +a.height, +b.width * +b.height);
-                return area > 0 && (overlapWidth * overlapHeight) / area > 0.5;
+                const otherText = fold(other.text);
+                return (
+                    (otherText.includes(text) || text.includes(otherText)) &&
+                    overlapShare(other.bounds, block.bounds) > 0.5
+                );
             });
 
             if (duplicate < 0) {
                 blocks.push(block);
-            } else if (block.confidence > blocks[duplicate].confidence) {
+                continue;
+            }
+
+            const kept = fold(blocks[duplicate].text);
+            const longer = text.length > kept.length;
+            const sameText = text === kept;
+
+            if (longer || (sameText && block.confidence > blocks[duplicate].confidence)) {
                 blocks[duplicate] = block;
             }
         }
@@ -293,7 +330,7 @@ export async function recognizeText(imagePath: string, options: OcrOptions = {})
         if (dims && !needsAccurateTiling(dims)) {
             const parts: OcrResult[] = [];
 
-            for (const region of planOcrTiles(dims)) {
+            for (const region of planOcrTiles(dims, options.tilePx)) {
                 parts.push(
                     await getDarwinKit().vision.ocr({
                         path: imagePath,

@@ -10,6 +10,10 @@ A route turns a matched URL into an action: open it with a rewritten target, for
 named browser, run a program, start a local server and open it, or record a tool.
 `tools browser-router explain <url>` prints what a click on a URL would do, without doing it.
 `tools browser-router open <url>` does it for real.
+`tools browser-router browser <url> --json` names the default browser and the browser a click on that URL really
+reaches (through the routes when the router is the default): `{ defaultBrowser, defaultBrowserEffective, viaRouter }`,
+each browser as `{ name, bundleId, appPath }`. Code calls `resolveDefaultBrowsers(url)`
+(`src/utils/browser-router/default-browser.ts`).
 
 ## Two ways a link reaches you: clicked elsewhere, or typed in a browser
 

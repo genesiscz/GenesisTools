@@ -87,6 +87,7 @@ export class MeetingRun {
                 skipTextless: capture.ocr.skipTextless,
                 region: capture.ocr.region,
                 read: capture.ocr.read,
+                tilePx: capture.ocr.tilePx,
             },
         };
         this.audio = {
