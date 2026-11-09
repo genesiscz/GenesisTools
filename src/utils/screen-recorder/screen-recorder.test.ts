@@ -335,6 +335,25 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
     });
 });
 
+describe("a native capture's start time (a fake ax-tool)", () => {
+    const fake = join(moduleDir(import.meta), "__fixtures__", "fake-ax-tool.ts");
+    const capturedAt = 1_794_000_000_000;
+    const captureWith = (fixture: string) =>
+        new NativeFrameRecorder({
+            axTool: async () => [process.execPath, fake, `${fixture}=${capturedAt}`],
+            launch: (argv) => argv,
+        }).capture(request({ outDir: mkdtempSync(join(tmpdir(), "first-frame-time-")), durationSec: 1 }));
+
+    test("startedAtMs is the first frame's capture time from ax-tool, not its PNG's file time", async () => {
+        // The PNG lands 800 ms later; the markers use the wall clock, so that file time would put them early.
+        expect((await captureWith("--fixture-late-png")).startedAtMs).toBe(capturedAt);
+    });
+
+    test("an older ax-tool without that time still counts from the first PNG's file time", async () => {
+        expect(Math.round((await captureWith("--fixture-late-png-old")).startedAtMs)).toBe(capturedAt + 800);
+    });
+});
+
 describe("a failed peekaboo capture", () => {
     test("malformed output preserves the diagnostic fallback", () => {
         expect(peekabooCaptureError(1, '{"broken":', "capture crashed").message).toContain("capture crashed");

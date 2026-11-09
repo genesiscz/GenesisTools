@@ -405,6 +405,10 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     var rateChanged: ((Double) -> Void)?
     private let configuration: SCStreamConfiguration
     private var firstTimestamp: CMTime?
+    /// `firstTimestamp` on the wall clock, taken when that frame arrives, before its PNG is written (up to a second
+    /// later). Every capture reports it as `firstFrameEpochMs`: the session's markers use the wall clock, so frames
+    /// anchored to the PNG's file time would sit late against them (src/utils/screen-recorder/native.ts).
+    private var firstFrameEpoch: Double?
     /// `firstTimestamp` for readers off the frame queue, which can be busy for about a second writing the first PNG.
     private let movieStartLock = NSLock()
     private var movieStartTime: CMTime?
@@ -675,7 +679,10 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             movieStartLock.unlock()
             writer?.startSession(atSourceTime: timestamp)
             audio?.movieStarted(at: timestamp)
-            noteMovieStart(timestamp)
+            let hostNow = CMClockGetTime(CMClockGetHostTimeClock())
+            let at = epochMs(ofHostTime: timestamp, hostNow: hostNow, epochNowMs: Date().timeIntervalSince1970 * 1000)
+            firstFrameEpoch = at
+            noteMovieStart(at)
         }
         lastTimestamp = timestamp
         captured += 1
@@ -806,6 +813,9 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     /// The first frame's host time: the origin of every timestamp in the result, audio included.
     var origin: CMTime? { queue.sync { firstTimestamp } }
 
+    /// `origin` on the wall clock, in epoch milliseconds; nil before the first frame.
+    var firstFrameEpochMs: Double? { queue.sync { firstFrameEpoch } }
+
     /// The same moment without waiting for the frame queue, for the cursor track's 60 Hz samples; nil before it.
     var movieStart: CMTime? {
         movieStartLock.lock()
@@ -852,10 +862,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     /// The movie starts at this frame. Its wall-clock time goes into `movie-start.json` now, before the frame's PNG
     /// (up to a second for a first retina frame), because the session hears of the start only from that PNG and
     /// counts marks in movie time from this moment (src/control/lib/recording-native.ts MOVIE_START_FILE).
-    private func noteMovieStart(_ timestamp: CMTime) {
+    private func noteMovieStart(_ at: Double) {
         guard options.videoOut != nil else { return }
-        let hostNow = CMClockGetTime(CMClockGetHostTimeClock())
-        let at = epochMs(ofHostTime: timestamp, hostNow: hostNow, epochNowMs: Date().timeIntervalSince1970 * 1000)
         let url = URL(fileURLWithPath: options.outDir).appendingPathComponent("movie-start.json")
         do {
             try JSONSerialization.data(withJSONObject: ["firstFrameEpochMs": at]).write(to: url, options: .atomic)
@@ -1235,6 +1243,9 @@ func cmdCaptureScreen() {
     ]
     if let audio {
         data["tracks"] = audio.summaries(origin: recorder.origin)
+    }
+    if let firstFrameEpochMs = recorder.firstFrameEpochMs {
+        data["firstFrameEpochMs"] = firstFrameEpochMs
     }
     if let endedEarly {
         data["endedEarly"] = endedEarly.rawValue
