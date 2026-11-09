@@ -5,10 +5,11 @@ import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { readProject } from "@genesiscz/utils/recording-editor/project";
 import { liveRecordingFolders } from "@genesiscz/utils/screen-recorder/live";
 import { type RecordingStoreId, recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { z } from "zod";
-import { exportAs } from "./edit";
+import { exportAs, exportTargetOf } from "./edit";
 import { movieOf, RECORDING_SOURCE_MOVIES } from "./library";
 
 const { log } = logger.scoped("recorder-quick-actions");
@@ -39,23 +40,34 @@ export function shareableMovie(folder: string): string | undefined {
 }
 
 /**
- * A GIF export that still shows the edit: the newest `.gif` beside the recording, unless the edit or the movie
- * changed after it was written.
+ * A GIF export that still shows the edit: the file the GIF export writes (`exportTargetOf`, so a GIF exported to a file
+ * chosen in the editor counts too), unless the edit or the movie changed after it was written.
  */
 export function currentGif(folder: string): string | undefined {
-    const gif = exportsIn(folder)
-        .filter((file) => file.path.toLowerCase().endsWith(".gif"))
-        .sort((a, b) => b.modified - a.modified)[0];
+    const edit = join(folder, "edit.json");
+    const movie = movieOf(folder);
+    let project: { source: { video: string }; export: { output: string } } | undefined;
 
-    if (!gif) {
+    try {
+        project = readProject(edit);
+    } catch {
+        project = movie ? { source: { video: movie }, export: { output: "" } } : undefined;
+    }
+
+    if (!project) {
         return undefined;
     }
 
-    const sources = [join(folder, "edit.json"), movieOf(folder)].filter(
-        (path): path is string => path !== undefined && existsSync(path)
-    );
-    const changed = sources.some((path) => statSync(path).mtimeMs > gif.modified);
-    return changed ? undefined : gif.path;
+    const gif = exportTargetOf({ project, format: "gif", overwrite: true });
+
+    if (!existsSync(gif)) {
+        return undefined;
+    }
+
+    const modified = statSync(gif).mtimeMs;
+    const sources = [edit, movie].filter((path): path is string => path !== undefined && existsSync(path));
+    const changed = sources.some((path) => statSync(path).mtimeMs > modified);
+    return changed ? undefined : gif;
 }
 
 async function run(argv: string[]): Promise<void> {
@@ -84,7 +96,8 @@ export async function copyRecording(folder: string, { gif = false }: { gif?: boo
 
     if (gif && !path) {
         log.debug({ folder }, "no current GIF; exporting one");
-        const answer = await exportAs(folder, { format: "gif" });
+        // A stale GIF is replaced where it is, so the next copy finds the new one.
+        const answer = await exportAs(folder, { format: "gif", overwrite: true });
 
         if (!answer.ok || !answer.path) {
             throw new Error(`the GIF export failed: ${answer.error ?? "no file"}`);

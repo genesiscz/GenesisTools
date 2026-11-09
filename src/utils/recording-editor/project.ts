@@ -3551,7 +3551,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 export: {
                     codec: op.codec ?? project.export.codec,
                     maxHeight: op.maxHeight ?? project.export.maxHeight,
-                    output: op.output ?? project.export.output,
+                    // Stored absolute: "~/" is the home folder, a relative path is against this process's cwd (the CLI
+                    // resolves it against the caller's first, movie-client PATH_PARAMS); "" goes back to the default.
+                    output: op.output
+                        ? resolve(op.output.replace(/^~(?=[/\\]|$)/, homedir()))
+                        : (op.output ?? project.export.output),
                     ...((op.format ?? project.export.format) ? { format: op.format ?? project.export.format } : {}),
                     ...((op.chapters ?? project.export.chapters) === undefined
                         ? {}

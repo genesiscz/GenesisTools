@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdtemp, rename, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -1055,11 +1055,6 @@ export function exportProgressPrinter(print: (line: string) => void): (fraction:
     };
 }
 
-/** `<default name>.<ext>` beside the source movie: the name an overwriting export replaces. */
-function defaultOutput(video: string, extension: string): string {
-    return `${join(dirname(video), defaultExportName(video))}.${extension}`;
-}
-
 /**
  * Renders into `target`. Without `overwrite` an existing target is refused before any work. With it the movie is
  * rendered into a hidden file beside the target and moved over it in one step, so a failed render leaves the old file.
@@ -1101,10 +1096,8 @@ export async function renderInto({
     return { ...answer, path: target, ...(exists ? { replaced: true } : {}) };
 }
 
-/** `<default name>.<ext>` beside the source movie, or `-2`, `-3`…: an export never overwrites a file. */
-function freeOutput(video: string, extension: string): string {
-    const stem = join(dirname(video), defaultExportName(video));
-
+/** `<stem>.<ext>`, or `-2`, `-3`…: an export never overwrites a file. */
+function freeOutput(stem: string, extension: string): string {
     for (let index = 1; ; index++) {
         const candidate = `${stem}${index === 1 ? "" : `-${index}`}.${extension}`;
 
@@ -1112,6 +1105,51 @@ function freeOutput(video: string, extension: string): string {
             return candidate;
         }
     }
+}
+
+/** `path` with `~/` as the home folder and a relative path resolved against `base`. */
+function absoluteFrom(path: string, base: string): string {
+    return resolve(base, path.replace(/^~(?=[/\\]|$)/, homedir()));
+}
+
+/**
+ * The file an export writes: one rule for the CLI, the REPL, the service, Copy as GIF and the window
+ * (EditExporter.outputURL). `out` wins (`~/` is the home folder, a relative path is against the caller's `cwd`); else
+ * the file chosen in the editor (`export.output`, stored absolute; an older relative one is against the movie's folder);
+ * else the default name beside the movie, with "-2", "-3" unless `overwrite`. The extension always follows the format,
+ * so `--out x.mov` of an MP4 writes `x.mp4`. A part without `out` is `<whole name>-part-<from>-<to>` (output seconds,
+ * one decimal) in the whole target's folder, so it never takes the whole edit's file.
+ */
+export function exportTargetOf({
+    project,
+    format,
+    out,
+    overwrite,
+    part,
+    cwd = process.cwd(),
+}: {
+    /** Only the movie and the chosen file are read, so a caller without the whole edit can ask too. */
+    project: { source: { video: string }; export: { output: string } };
+    format: ExportFormat;
+    out?: string;
+    overwrite?: boolean;
+    part?: { fromUs: number; toUs: number };
+    cwd?: string;
+}): string {
+    const withFormat = (stem: string) => `${stem}.${format}`;
+    const stemOf = (path: string) => join(dirname(path), basename(path, extname(path)));
+
+    if (out) {
+        return withFormat(stemOf(absoluteFrom(out, cwd)));
+    }
+
+    const video = project.source.video;
+    const chosen = project.export.output ? stemOf(absoluteFrom(project.export.output, dirname(video))) : "";
+    const whole = chosen || join(dirname(video), defaultExportName(video));
+    const stem = part
+        ? `${whole}-part-${(part.fromUs / 1_000_000).toFixed(1)}-${(part.toUs / 1_000_000).toFixed(1)}`
+        : whole;
+    return chosen || overwrite ? withFormat(stem) : freeOutput(stem, format);
 }
 
 /**
@@ -1380,10 +1418,17 @@ export async function exportAs(
             const copy = join(scratch, "part.edit.json");
             // R4 9 intro and end cards: a part is a clip of the movie, without the cards around it.
             const { cards: _cards, ...trimmed } = partOf(whole.project, options.part.fromUs, options.part.toUs);
-            writeProject(copy, { ...trimmed, export: { ...trimmed.export, output: "" } });
-            log.debug({ value, part: options.part, clips: trimmed.clips.length }, "exporting a part of the edit");
-            return await exportAs(copy, {
+            writeProject(copy, trimmed);
+            const out = exportTargetOf({
+                project: whole.project,
+                format: asked,
                 out: options.out,
+                overwrite: options.overwrite,
+                part: options.part,
+            });
+            log.debug({ value, part: options.part, clips: trimmed.clips.length, out }, "exporting a part of the edit");
+            return await exportAs(copy, {
+                out,
                 format: asked,
                 subtitles: options.subtitles ?? whole.project.export.subtitles,
                 overwrite: options.overwrite,
@@ -1405,24 +1450,19 @@ export async function exportAs(
     const subtitles = options.subtitles ?? opened.project.export.subtitles;
 
     const host = { size: options.size, onProgress: options.onProgress };
+    const output = exportTargetOf({
+        project: opened.project,
+        format: asked,
+        out: options.out,
+        overwrite: options.overwrite,
+    });
 
     if (asked === "mp4") {
-        const chosenMp4 = opened.project.export.output;
-        const chosenTarget = chosenMp4
-            ? join(dirname(chosenMp4), `${basename(chosenMp4, extname(chosenMp4))}.mp4`)
-            : "";
-        // Without out or overwrite the renderer picks a free name ("-2", "-3"); overwrite replaces the usual one.
-        const target = options.out
-            ? resolve(options.out)
-            : options.overwrite
-              ? chosenTarget || defaultOutput(opened.project.source.video, "mp4")
-              : undefined;
-
         if (opened.project.audio.denoise) {
             return finishExport({
                 value,
                 answer: await renderInto({
-                    target: target ?? (chosenTarget || freeOutput(opened.project.source.video, "mp4")),
+                    target: output,
                     overwrite: options.overwrite,
                     render: (to) => withDenoisedSource(opened, (edit) => hostExport({ path: edit, out: to, ...host })),
                 }),
@@ -1431,13 +1471,11 @@ export async function exportAs(
         }
 
         const recording = resolveRecording(value);
-        const answer = target
-            ? await renderInto({
-                  target,
-                  overwrite: options.overwrite,
-                  render: (to) => hostExport({ path: recording, out: to, ...host }),
-              })
-            : await hostExport({ path: recording, ...host });
+        const answer = await renderInto({
+            target: output,
+            overwrite: options.overwrite,
+            render: (to) => hostExport({ path: recording, out: to, ...host }),
+        });
         return finishExport({ value, answer, subtitles });
     }
 
@@ -1446,14 +1484,6 @@ export async function exportAs(
     if (opened.fresh) {
         writeProject(opened.path, opened.project);
     }
-
-    // A file chosen in the editor (export.output) keeps its name with this format's extension.
-    const chosen = opened.project.export.output;
-    const output = options.out
-        ? resolve(options.out)
-        : chosen
-          ? join(dirname(chosen), `${basename(chosen, extname(chosen))}.${format}`)
-          : freeOutput(opened.project.source.video, format);
 
     if (existsSync(output) && !options.overwrite) {
         return {

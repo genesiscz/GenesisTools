@@ -1045,21 +1045,32 @@ final class EditExporter {
         return Int64(bitsPerSecond / 8 * Double(lengthUs) / 1_000_000)
     }
 
-    /// Where an export goes: the file chosen with Change… (its extension set to the format), else beside the movie,
-    /// named after the recording's title ("cursor test 1.mp4") or `<movie>-edited` for a plain movie, with "-2", "-3"
-    /// so an export never overwrites a file. `tools recorder export` names a GIF or WebM by the same rule.
-    nonisolated static func outputURL(for project: EditProject, format: EditProject.ExportFormat = .mp4) -> URL {
-        if !project.export.output.isEmpty {
-            return URL(fileURLWithPath: (project.export.output as NSString).expandingTildeInPath)
-                .deletingPathExtension().appendingPathExtension(format.rawValue)
+    /// Where an export goes, the rule of `exportTargetOf` in edit.ts: the file chosen with Change… (its extension set
+    /// to the format; `~/` is the home folder, an older relative one is beside the movie), else beside the movie, named
+    /// after the recording's title ("cursor test 1.mp4") or `<movie>-edited` for a plain movie, with "-2", "-3" so an
+    /// export never overwrites a file. A part (OUTPUT µs) is `<whole name>-part-<from>-<to>` (seconds, one decimal) in
+    /// the whole target's folder, so it never takes the whole edit's file.
+    nonisolated static func outputURL(for project: EditProject, format: EditProject.ExportFormat = .mp4,
+                                      part: (fromUs: Int64, toUs: Int64)? = nil) -> URL {
+        let folder = URL(fileURLWithPath: project.source.video).deletingLastPathComponent()
+        let chosen = !project.export.output.isEmpty
+        var place = folder
+        var name = defaultName(for: project)
+        if chosen {
+            let path = (project.export.output as NSString).expandingTildeInPath
+            let url = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : folder.appendingPathComponent(path)).standardizedFileURL
+            place = url.deletingLastPathComponent()
+            name = url.deletingPathExtension().lastPathComponent
         }
-        let source = URL(fileURLWithPath: project.source.video)
-        let base = defaultName(for: project)
-        let folder = source.deletingLastPathComponent()
-        var candidate = folder.appendingPathComponent("\(base).\(format.rawValue)")
+        if let part {
+            let seconds = { (us: Int64) in String(format: "%.1f", Double(us) / 1_000_000) }
+            name += "-part-\(seconds(part.fromUs))-\(seconds(part.toUs))"
+        }
+        var candidate = place.appendingPathComponent("\(name).\(format.rawValue)")
+        guard !chosen else { return candidate }
         var counter = 2
         while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = folder.appendingPathComponent("\(base)-\(counter).\(format.rawValue)")
+            candidate = place.appendingPathComponent("\(name)-\(counter).\(format.rawValue)")
             counter += 1
         }
         return candidate

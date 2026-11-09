@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import * as cli from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -13,7 +13,14 @@ import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer } from "@genesiscz/utils/screen-recorder/live";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { computeEdit, exportProgressPrinter, parseExportSize, renderInto, withEditCancel } from "./edit";
+import {
+    computeEdit,
+    exportProgressPrinter,
+    exportTargetOf,
+    parseExportSize,
+    renderInto,
+    withEditCancel,
+} from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
 import { privateData } from "./fx-analysis";
@@ -632,6 +639,70 @@ describe("a frames recording's last frame shows until the recording ends", () =>
             const edit = await computeEdit({ project, ops: [op], fresh: true });
             expect(edit.project.redactions?.map((part) => part.endUs)).toEqual([10_000_000]);
         }
+    });
+});
+
+describe("exportTargetOf: the one file name rule of an export", () => {
+    const folder = mkdtempSync(join(tmpdir(), "export-target-"));
+    const video = join(folder, "screen.mp4");
+    const base = wholeProject({ video, durationUs: 20_000_000, width: 1920, height: 1080 });
+    const cwd = join(folder, "cwd");
+
+    it("--out keeps its name and takes the format's extension, with or without overwrite", () => {
+        for (const overwrite of [false, true]) {
+            expect(exportTargetOf({ project: base, format: "mp4", out: "clip.mov", overwrite, cwd })).toBe(
+                join(cwd, "clip.mp4")
+            );
+        }
+        expect(exportTargetOf({ project: base, format: "gif", out: "~/Movies/x.mp4", cwd })).toBe(
+            join(homedir(), "Movies/x.gif")
+        );
+    });
+
+    it("a chosen file with ~ is the home folder and a relative one is beside the movie", () => {
+        const tilde = { ...base, export: { ...base.export, output: "~/Movies/demo.mp4" } };
+        expect(exportTargetOf({ project: tilde, format: "gif", cwd })).toBe(join(homedir(), "Movies/demo.gif"));
+        const relative = { ...base, export: { ...base.export, output: "out/demo.mp4" } };
+        expect(exportTargetOf({ project: relative, format: "mp4", cwd })).toBe(join(folder, "out/demo.mp4"));
+    });
+
+    it("a part is named after the whole target in its folder (RecorderHuntExportTargetOneRuleTests has the same case)", () => {
+        const chosen = { ...base, export: { ...base.export, output: "/exports/demo.mp4" } };
+        const part = { fromUs: 5_000_000, toUs: 12_000_000 };
+        expect(exportTargetOf({ project: chosen, format: "gif", part, cwd })).toBe("/exports/demo-part-5.0-12.0.gif");
+    });
+
+    it("the default name takes -2 when the first is taken, unless overwrite", () => {
+        const first = exportTargetOf({ project: base, format: "webm", cwd });
+        writeFileSync(first, "");
+        expect(exportTargetOf({ project: base, format: "webm", cwd })).toBe(first.replace(/\.webm$/, "-2.webm"));
+        expect(exportTargetOf({ project: base, format: "webm", overwrite: true, cwd })).toBe(first);
+    });
+
+    it("applyOp exportSettings stores a chosen file absolute", () => {
+        expect(applyOp(base, { op: "exportSettings", output: "~/x.mp4" }).export.output).toBe(join(homedir(), "x.mp4"));
+        expect(applyOp(base, { op: "exportSettings", output: "" }).export.output).toBe("");
+    });
+
+    it("Copy as GIF finds a GIF exported to a file chosen outside the folder while the edit is older", () => {
+        const recording = mkdtempSync(join(tmpdir(), "gif-current-"));
+        const elsewhere = mkdtempSync(join(tmpdir(), "gif-chosen-"));
+        const movie = join(recording, "screen.mp4");
+        writeFileSync(movie, "x");
+        const project = wholeProject({ video: movie, durationUs: 4_000_000, width: 320, height: 180 });
+        writeProject(join(recording, "edit.json"), {
+            ...project,
+            export: { ...project.export, output: join(elsewhere, "demo.mp4") },
+        });
+        const gif = join(elsewhere, "demo.gif");
+        writeFileSync(gif, "x");
+        const old = new Date(Date.UTC(2026, 10, 4, 10, 0, 0));
+        utimesSync(movie, old, old);
+        utimesSync(join(recording, "edit.json"), old, old);
+        expect(currentGif(recording)).toBe(gif);
+        const later = new Date(Date.now() + 60_000);
+        utimesSync(join(recording, "edit.json"), later, later);
+        expect(currentGif(recording)).toBeUndefined();
     });
 });
 

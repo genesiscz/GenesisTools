@@ -40,6 +40,8 @@ const PATH_PARAMS: ReadonlyMap<string, readonly string[]> = new Map([
     // The camera's file is not a cwd path: cameraBubbleSchema says "a bare name is beside the source movie", and the
     // in-process camera op stores it as written, so it goes to the service as written.
     ["camera", []],
+    // The export's chosen file; "" (back to the default name) stays "".
+    ["exportSettings", ["output"]],
 ]);
 const DEFAULT_PATH_PARAMS: readonly string[] = ["file"];
 
