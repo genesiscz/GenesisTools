@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
@@ -34,7 +35,7 @@ import {
     SocketMeetingsClient,
 } from "./client";
 import { type MeetingsHandlerDeps, MeetingsServiceError } from "./handlers";
-import { startMeetingsService } from "./service";
+import { type MeetingsServiceOptions, startMeetingsService } from "./service";
 
 /** The code stamp of the tests' service and callers, so the fixture's hello does not name a checkout's path. */
 const CODE = "0123456789ab";
@@ -152,6 +153,58 @@ function scratchStore(): { store: MeetingStore; linkedSource: (record: { id: str
     };
 }
 
+/** A stand-in for @parcel/watcher: `raise` hands the folder watch the events a write of these paths would raise. */
+function fakeFolderEvents(): {
+    subscribe: NonNullable<WatcherOptions["subscribe"]>;
+    raise: (...paths: string[]) => void;
+} {
+    let deliver: ((paths: string[]) => void) | undefined;
+    return {
+        subscribe: async (_dir, callback) => {
+            deliver = (paths) =>
+                callback(
+                    null,
+                    paths.map((path) => ({ type: "update", path }))
+                );
+            return { unsubscribe: async () => {} };
+        },
+        raise: (...paths) => deliver?.(paths),
+    };
+}
+
+/** The events a subscription hears, in order: `next` waits for the next one (2 s at most), `left` lists the unread. */
+function eventQueue() {
+    const unread: MeetingsEventMessage[] = [];
+    const waiting: Array<(event: MeetingsEventMessage) => void> = [];
+    return {
+        push: (event: MeetingsEventMessage) => {
+            const resolve = waiting.shift();
+
+            if (resolve) {
+                resolve(event);
+            } else {
+                unread.push(event);
+            }
+        },
+        next: (): Promise<MeetingsEventMessage> => {
+            const first = unread.shift();
+
+            if (first) {
+                return Promise.resolve(first);
+            }
+
+            return new Promise((resolve, reject) => {
+                const timer = setTimeout(() => reject(new Error("no meetings event within 2 s")), 2000);
+                waiting.push((event) => {
+                    clearTimeout(timer);
+                    resolve(event);
+                });
+            });
+        },
+        left: () => [...unread],
+    };
+}
+
 /** A service dir short enough for a Unix socket path. */
 function serviceDir(): string {
     return mkdtempSync(join(tmpdir(), "mtg-"));
@@ -184,7 +237,7 @@ const quietDeps: MeetingsHandlerDeps = {
     }),
 };
 
-async function startService(options: { dir?: string } = {}) {
+async function startService(options: { dir?: string; watch?: MeetingsServiceOptions["watch"] } = {}) {
     const { store, linkedSource } = scratchStore();
     const dir = options.dir ?? serviceDir();
     const start = await startMeetingsService({
@@ -193,6 +246,7 @@ async function startService(options: { dir?: string } = {}) {
         linkedSource,
         idleMs: 0,
         code: CODE,
+        watch: options.watch ?? false,
         ...quietDeps,
     });
 
@@ -535,9 +589,54 @@ describe("the Meetings service's connections", () => {
 
     test("a second start in the folder answers the running service", async () => {
         const { dir, service } = await startService();
-        const second = await startMeetingsService({ dir, idleMs: 0, code: CODE, rivalWaitMs: 500 });
+        const second = await startMeetingsService({ dir, idleMs: 0, code: CODE, rivalWaitMs: 500, watch: false });
 
         expect(second).toMatchObject({ status: "running", entry: { pid: service.entry.pid, code: CODE } });
+    });
+
+    test("the folder watch tells meeting.changed for a write outside the service, once per meeting and burst, and never for its own decisions, clips or journal lines", async () => {
+        const folder = fakeFolderEvents();
+        const { service, store } = await startService({ watch: { subscribe: folder.subscribe, coalesceMs: 0 } });
+        const client = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => client.close());
+        const heard = eventQueue();
+        await client.subscribe({ events: ["meeting.changed", "decision.applied"] }, heard.push);
+        const file = (meeting: string, ...path: string[]) => join(store.folder(meeting), ...path);
+        const handEdit = (meeting: string) =>
+            writeFileSync(file(meeting, MEETING_FILE), `${SafeJSON.stringify(store.read(meeting), null, 4)}\n`);
+        const every = ["show", "transcript", "speakers", "timeline"];
+
+        // A hand edit of the record and the recorder's OCR line in one burst: one event, every part.
+        handEdit(REVIEW.id);
+        folder.raise(file(REVIEW.id, MEETING_FILE), file(REVIEW.id, "ocr.jsonl"));
+        expect(await heard.next()).toEqual({ method: "meeting.changed", params: { meeting: REVIEW.id, parts: every } });
+        // A frame changes the timeline; a clip in an old moments folder, the journal and the energy change nothing.
+        folder.raise(
+            file(RETRO.id, "moments", "clip.wav"),
+            file(RETRO.id, "decisions.ndjson"),
+            file(RETRO.id, "evidence", "energy.bin"),
+            file(REVIEW.id, "frames", "0001.png")
+        );
+        expect(await heard.next()).toEqual({
+            method: "meeting.changed",
+            params: { meeting: REVIEW.id, parts: ["timeline"] },
+        });
+        // The service's own decision tells decision.applied, and its record write no meeting.changed.
+        await client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "confirm", items: ["i1"] } });
+        expect(await heard.next()).toMatchObject({ method: "decision.applied", params: { meeting: REVIEW.id } });
+        // Its record write raised with another meeting's frame: only the frame tells.
+        folder.raise(file(REVIEW.id, MEETING_FILE), file(RETRO.id, "frames", "0001.png"));
+        expect(await heard.next()).toEqual({
+            method: "meeting.changed",
+            params: { meeting: RETRO.id, parts: ["timeline"] },
+        });
+        // A hand edit after it is outside again.
+        handEdit(REVIEW.id);
+        folder.raise(file(REVIEW.id, MEETING_FILE));
+        expect(await heard.next()).toEqual({ method: "meeting.changed", params: { meeting: REVIEW.id, parts: every } });
+        await client.call("meetings.list", { limit: 1 });
+
+        expect(heard.left()).toEqual([]);
     });
 
     test("openMeetingsClient answers in-process with no service, and for a service of another checkout", async () => {
@@ -555,7 +654,7 @@ describe("the Meetings service's connections", () => {
     test("openMeetingsClient connects to a service of this checkout's code", async () => {
         const { store, linkedSource } = scratchStore();
         const dir = serviceDir();
-        const start = await startMeetingsService({ dir, store: () => store, linkedSource, idleMs: 0 });
+        const start = await startMeetingsService({ dir, store: () => store, linkedSource, idleMs: 0, watch: false });
 
         if (start.status !== "started") {
             throw new Error("the meetings service did not start");
@@ -585,6 +684,7 @@ describe("the Meetings service's connections", () => {
             linkedSource,
             idleMs: 0,
             sourceRoot: root,
+            watch: false,
         });
 
         if (start.status !== "started") {
@@ -612,7 +712,7 @@ describe("the Meetings service's connections", () => {
     test("a read whose service went during the call answers in-process", async () => {
         const { store, linkedSource } = scratchStore();
         const dir = serviceDir();
-        const start = await startMeetingsService({ dir, store: () => store, linkedSource, idleMs: 0 });
+        const start = await startMeetingsService({ dir, store: () => store, linkedSource, idleMs: 0, watch: false });
 
         if (start.status !== "started") {
             throw new Error("the meetings service did not start");

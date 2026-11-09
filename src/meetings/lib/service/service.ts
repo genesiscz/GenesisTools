@@ -1,4 +1,6 @@
+import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { type ServiceEntry, type ServiceHost, startServiceHost } from "@genesiscz/utils/rpc/service-host";
 import type { RpcConnection } from "@genesiscz/utils/rpc/socket-server";
@@ -12,6 +14,7 @@ import {
     subscribeParamsSchema,
 } from "./api";
 import { helloAnswer, meetingsServiceDir } from "./client";
+import { MeetingsFolderWatch } from "./folder-watch";
 import { asRefusal, type MeetingsHandlerDeps, meetingsTable, refusal } from "./handlers";
 
 const { log } = logger.scoped("meetings-service");
@@ -39,6 +42,11 @@ export interface MeetingsServiceOptions extends MeetingsHandlerDeps {
     code?: string;
     rivalWaitMs?: number;
     onStopped?: (reason: string) => void;
+    /**
+     * The watch on the meetings folder that tells `meeting.changed` for writes outside the service; on by default,
+     * `false` for none (a test that writes its own files), or a fake event source and coalescing time.
+     */
+    watch?: false | { subscribe?: WatcherOptions["subscribe"]; coalesceMs?: number };
 }
 
 /** One connected caller, as the service knows it. */
@@ -73,9 +81,15 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
     let lastId = 0;
     // `host` is set once it listens; no call reaches `hello` before.
     let host: ServiceHost<ConnectionState> | undefined;
+    let watch: MeetingsFolderWatch | undefined;
 
     /** A notification to every connection subscribed to the event and to its meeting (or to every meeting). */
     const emit = <E extends MeetingsEvent>(event: E, params: MeetingsNotification<E>): void => {
+        // A decision wrote the record: the watch leaves that write out, since `decision.applied` tells it already.
+        if (event === "decision.applied" || event === "decision.reverted") {
+            watch?.ownWrite(params.meeting);
+        }
+
         host?.emit(
             event,
             { ...params },
@@ -158,6 +172,24 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
 
     host = start.host;
     const listening = start.host;
+
+    if (options.watch !== false) {
+        const folderWatch = new MeetingsFolderWatch({
+            root: (options.store?.() ?? new MeetingStore()).root,
+            emit: (meeting, parts) => emit("meeting.changed", { meeting, parts }),
+            ...(options.watch?.subscribe ? { subscribe: options.watch.subscribe } : {}),
+            ...(options.watch?.coalesceMs !== undefined ? { coalesceMs: options.watch.coalesceMs } : {}),
+        });
+
+        // A folder that cannot be watched leaves the service without `meeting.changed`, never without the service.
+        try {
+            await folderWatch.start();
+            watch = folderWatch;
+            void listening.stopped.then(() => folderWatch.stop());
+        } catch (error) {
+            log.warn({ error }, "the meetings folder is not watched; outside writes tell no meeting.changed");
+        }
+    }
 
     return {
         status: "started",
