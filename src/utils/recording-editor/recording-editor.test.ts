@@ -2615,6 +2615,67 @@ describe("edit project (edit.json)", () => {
     });
 });
 
+describe("a redact op's style options", () => {
+    const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+    const rect = { x: 0.1, y: 0.1, width: 0.3, height: 0.3 };
+
+    test("a redact op of style spotlight keeps its dim and cutout, as the spotlight op does", () => {
+        const project = wholeProject(source);
+        const [redact] = parseEditOps({
+            op: "redact",
+            from: 1,
+            to: 3,
+            rect,
+            style: "spotlight",
+            dim: 0.85,
+            cutout: "circle",
+        });
+        const [spotlight] = parseEditOps({ op: "spotlight", from: 1, to: 3, rect, dim: 0.85, cutout: "circle" });
+        const viaRedact = applyOp(project, redact);
+        const viaSpotlight = applyOp(project, spotlight);
+
+        expect(viaRedact.redactions?.[0]).toMatchObject({ style: "spotlight", dim: 0.85, cutout: "circle" });
+        expect(describeProject(viaRedact, "/p/edit.json").redactions[0]).toMatchObject({ dim: 0.85, cutout: "circle" });
+        const { id: _redactId, ...redactPart } = viaRedact.redactions?.[0] ?? { id: "" };
+        const { id: _spotId, ...spotPart } = viaSpotlight.redactions?.[0] ?? { id: "" };
+        expect(redactPart).toEqual(spotPart);
+        // A part with keys keeps them too.
+        const [tracked] = parseEditOps({
+            op: "redact",
+            from: 1,
+            to: 3,
+            rect,
+            style: "spotlight",
+            dim: 0.3,
+            cutout: "rect",
+            track: [
+                { at: 1, ...rect },
+                { at: 3, ...rect, x: 0.5 },
+            ],
+        });
+        expect(applyOp(project, tracked).redactions?.[0]).toMatchObject({ dim: 0.3, cutout: "rect" });
+        // The default lit shape is not written, as the spotlight op leaves it out.
+        const [rounded] = parseEditOps({ op: "redact", from: 1, to: 3, rect, style: "spotlight", cutout: "rounded" });
+        expect(applyOp(project, rounded).redactions?.[0]).not.toHaveProperty("cutout");
+    });
+
+    test("a redact op refuses dim or cutout without style spotlight, and cell without style pixelate", () => {
+        const project = wholeProject(source);
+        const apply = (raw: Record<string, unknown>) => {
+            const [op] = parseEditOps({ op: "redact", from: 1, to: 3, rect, ...raw });
+            return applyOp(project, op);
+        };
+
+        expect(() => apply({ style: "blur", dim: 0.85 })).toThrow('dim is for style "spotlight" only');
+        // An absent style is blur.
+        expect(() => apply({ cutout: "circle" })).toThrow('cutout is for style "spotlight" only');
+        expect(() => apply({ style: "spotlight", cell: 24 })).toThrow('cell is for style "pixelate" only');
+        // The options of the right style still apply.
+        expect(apply({ style: "pixelate", cell: 24 }).redactions?.[0]).toMatchObject({ cell: 24 });
+        expect(apply({ style: "spotlight", dim: 0.6 }).redactions?.[0]).toMatchObject({ dim: 0.6 });
+    });
+});
+
 describe("the editor window's item ops", () => {
     const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
     const rect = { x: 0.1, y: 0.1, width: 0.2, height: 0.2 };

@@ -1664,6 +1664,13 @@ const RANGE_RECTS = {
     spotlight: { x: 0.4, y: 0.4, width: 0.2, height: 0.2 },
 } as const;
 
+/** The redact op's options that one style alone draws; addRedaction keeps each only on its style. */
+const REDACT_STYLE_OPTIONS = [
+    ["dim", "spotlight"],
+    ["cutout", "spotlight"],
+    ["cell", "pixelate"],
+] as const satisfies ReadonlyArray<readonly [string, EditRedaction["style"]]>;
+
 export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("split"), at: sourceTimeSchema }).strict(),
     z.object({ op: z.literal("cut"), ...rangeFields }).strict(),
@@ -2864,13 +2871,33 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
+            // An option of another style was dropped without a word; it is refused, naming the style it needs. The
+            // check lives here and not in a schema refinement, which would change the protocol's JSON Schema.
+            const style = op.style ?? "blur";
+            const misplaced = REDACT_STYLE_OPTIONS.filter(
+                ([field, needs]) => op[field] !== undefined && style !== needs
+            );
+
+            if (misplaced.length > 0) {
+                throw new Error(
+                    misplaced
+                        .map(
+                            ([field, needs]) =>
+                                `${field} is for style "${needs}" only, and this part's style is "${style}": give style "${needs}" or leave ${field} out`
+                        )
+                        .join("; ")
+                );
+            }
+
             const added = addRedaction(project, {
                 fromUs: timeToUs(op.from),
                 toUs: timeToUs(op.to),
                 rect: op.rect,
-                style: op.style ?? "blur",
+                style,
                 label: op.label,
                 follow: op.follow,
+                dim: op.dim,
+                cutout: op.cutout,
                 cell: op.cell,
             });
             const part = added.redactions?.at(-1);
