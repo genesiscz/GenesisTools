@@ -41,7 +41,7 @@ run against another one (`worktree` takes the long `--cwd <path>` only).
 | Report on history | `commits`, `configure-authors` (`authors`), `configure-workitem-patterns` (`patterns`), `changes` |
 | Read branch state | `merged`, `base` |
 | Move and reshape branches | `rebase-cascade`, `rebranch` (`interactive`, `plan`, `apply`, `verify`), `rename-commits` |
-| Set up a repository | `config` (`show`, `init`, `check`), `worktree` (`config`, `init`, `sync-plans`), `fsmonitor` |
+| Set up a repository | `config` (`show`, `init`, `check`), `worktree` (`config`, `init`, `sync-plans`, `backup`), `fsmonitor` |
 | Score code health | `health`, `monster` |
 
 Options of the tool itself:
@@ -578,6 +578,51 @@ The `install` command and the plan copy run from git hooks, not from `init` itse
 
 GenesisTools carries both hooks in `.githooks/`. Another repository needs its own `post-checkout` and `post-commit`
 hooks that run these two commands; without them `init` creates the worktree but runs no install.
+
+##### `worktree backup`
+
+Saves everything a linked worktree holds that its repository does not, proves that the copy restores it, and with
+`--remove` removes the worktree. It works on a worktree of any repository, not only this one.
+
+```bash
+tools git worktree backup /tmp/cc/shop/<session>/worktrees/fix-x --dry-run     # the plan and the blockers; writes nothing
+tools git worktree backup /tmp/cc/shop/<session>/worktrees/fix-x                # back up and prove; the worktree stays
+tools git worktree backup /tmp/cc/shop/<session>/worktrees/fix-x --remove --note "checkout fix spike"
+```
+
+| Option | Description |
+|---|---|
+| `--dry-run` | Print the plan and the blockers; write nothing (every git read runs with `--no-optional-locks`) |
+| `--remove` | Remove the worktree once the proof passed and nothing changed during the backup |
+| `--note <text>` | What the work was, written into the README |
+| `--max-copy-mb <n>` | Refuse when the untracked and ignored files to copy exceed this many MiB (default 512) |
+| `--json` | The plan (with `--dry-run`) or the result as JSON on stdout |
+
+The backup goes to `~/.genesis-tools/backups/worktrees/<YYYY-MM-DD>-<repo>-<worktree>/` (`-2`, `-3`, ... when the name
+is taken):
+
+- `commits/`: one `git format-patch` file per commit in `<base>..HEAD`. The base is the merge base with the branch's
+  upstream, else `origin/HEAD`, else the main checkout's branch. Merge commits are skipped and counted.
+- `uncommitted-on-<short HEAD>.patch`: `git diff HEAD --binary`, staged and unstaged changes together.
+- `untracked/` and `ignored/`: the files with their paths, mode and mtime (an APFS clone, so no extra space on the
+  same volume). Ignored entries that a tool rebuilds (`node_modules`, `dist`, `.next`, `target`, `*.log`, ...) are
+  skipped; sockets and fifos are listed, not copied.
+- `README.md` with the restore commands, and `backup.json` with the full result.
+- When HEAD holds commits that no branch, remote branch or tag holds, the ref
+  `refs/backups/worktrees/<folder name>` keeps them alive in the repository.
+
+The proof runs in a scratch repository that borrows the source's objects: `git apply --cached --check` of the
+uncommitted patch on HEAD's tree, and `git am` of the commit patches on the base, whose tree must equal HEAD's tree
+when the range has no merge commits. `--remove` then reads the worktree's fingerprint again (HEAD, the diff, the
+untracked and ignored files with size and mtime) and refuses when anything changed. It runs
+`git worktree remove --force` once, so a locked worktree stays refused. The branch stays in the repository.
+
+It refuses before writing anything when a merge, rebase, cherry-pick, revert or bisect is in progress, when the
+worktree has initialized submodules, when the index has unmerged entries, when the copy exceeds the limit, or when
+another worktree lives inside the folder. With `--remove` it also refuses a locked worktree and one where a process
+has its working directory. Exit 1 on any refusal.
+
+Code that needs the same backup calls `planWorktreeBackup` and `backupWorktree` from `@genesiscz/utils/git`.
 
 `sync-plans` exists because `.claude/plans/` is usually gitignored and `git worktree remove` deletes it without a
 warning, and git has no hook for worktree removal. It never overwrites: a plan already in the main checkout wins, and
