@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -16,6 +16,7 @@ import {
     MEETINGS_PROTOCOL,
     type MeetingsHello,
     meetingsApi,
+    meetingsCodeStamp,
     meetingsMethod,
     NOTIFICATION_SCHEMAS,
     SUBSCRIBE,
@@ -355,6 +356,45 @@ describe("the Meetings service's connections", () => {
         expect(client.kind).toBe("socket");
         expect((await client.call("meetings.list", { limit: 1 })).map((row) => row.id)).toEqual([RETRO.id]);
         expect(start.service.callers().map((caller) => caller.role)).toEqual(["cli"]);
+    });
+
+    // The mid-use invariant: a service that runs old code (a module it loaded changed since it started) refuses every
+    // new caller, and a command answers in its own process with its own code.
+    test("a service whose code changed since its start refuses a hello, and a command answers in-process", async () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), "mtg-code-")));
+        const loaded = join(root, "loaded.ts");
+        writeFileSync(loaded, "export const loaded = 1;\n");
+        await import(loaded);
+        const { store, linkedSource } = scratchStore();
+        const dir = serviceDir();
+        const start = await startMeetingsService({
+            dir,
+            store: () => store,
+            linkedSource,
+            idleMs: 0,
+            sourceRoot: root,
+        });
+
+        if (start.status !== "started") {
+            throw new Error("the meetings service did not start");
+        }
+
+        closing.push(() => start.service.stop("test end"));
+        const before = await openMeetingsClient({ dir });
+        closing.push(() => before.close());
+        expect(before.kind).toBe("socket");
+
+        const later = new Date(Date.now() + 60_000);
+        utimesSync(loaded, later, later);
+        const refused = await failure(
+            SocketMeetingsClient.connect(start.service.entry, { ...hello, code: meetingsCodeStamp() })
+        );
+        expect(refused.message).toBe("the meetings service's code changed since it started; it exits soon");
+        const after = await openMeetingsClient({ dir });
+        closing.push(() => after.close());
+        expect(after.kind).toBe("in-process");
+        // The caller connected before the change keeps its connection until the service exits.
+        expect((await before.call("meetings.list", { limit: 1 })).map((row) => row.id)).toEqual([RETRO.id]);
     });
 
     test("a read whose service went during the call answers in-process", async () => {
