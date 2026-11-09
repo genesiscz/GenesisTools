@@ -487,15 +487,15 @@ enum MusicMix {
         }
     }
 
-    /// The spoken parts in output time: the cached transcript's lines and the voiceover clips (each as the edit's
-    /// `ducking` allows); parts closer than two ramps merge.
+    /// The spoken parts in output time: the kept part of each cached transcript line (the part whose caption shows,
+    /// also when the line's start or end was cut) and the voiceover clips (each as the edit's `ducking` allows);
+    /// parts closer than two ramps merge, so a line with a cut inside stays one part.
     static func speech(lines: [CaptionTrack.Line], project: EditProject) -> [(fromUs: Int64, toUs: Int64)] {
         let ducking = project.audio.ducking
         let rampUs = Duck.of(project).rampUs
-        var spans = ((ducking?.transcript ?? true) ? lines : []).compactMap { line -> (fromUs: Int64, toUs: Int64)? in
-            guard let from = TimelineMap.outputTime(ofSource: line.fromUs, in: project),
-                  let to = TimelineMap.outputTime(ofSource: line.toUs, in: project), to > from else { return nil }
-            return (from, to)
+        let placed = TimelineMap.placed(project)
+        var spans = ((ducking?.transcript ?? true) ? lines : []).flatMap { line in
+            TimelineMap.outputSpans(fromUs: line.fromUs, toUs: line.toUs, placed: placed)
         }
         if ducking?.voiceovers ?? true {
             spans += VoiceoverMix.placements(project).map { ($0.outUs, $0.outUs + $0.playUs) }
