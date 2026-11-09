@@ -530,7 +530,7 @@ const movieMethods = [
                 enabled: z.boolean().optional(),
             })
             .strict(),
-        "Music under the movie: file (an mp3, m4a, wav… path; needed the first time), from startMs into the file (0), looped to the movie's length (loop: false plays it once), volume 0 to 1 (0.25), fading in and out over fadeMs (1500). While a transcript line plays it drops by duck (0.6 = to 40 %), so speech stays clear; without transcript() nothing ducks (audio.music.ducks in the result says which). enabled: false removes it."
+        "Music under the movie: file (an mp3, m4a, wav… path; needed the first time), from startMs into the file (0), looped to the movie's length (loop: false plays it once), volume 0 to 1 (0.25), fading in and out over fadeMs (1500). While a transcript line plays it drops by duck (0.6 = to 40 %), so speech stays clear; without transcript() nothing ducks (audio.music.ducks in the result says which). While ducking() is set its dB alone decides the drop: a new duck is saved for ducking({ enabled: false }) and a warning says it does nothing until then. enabled: false removes it."
     ),
     edit(
         "spotlight",

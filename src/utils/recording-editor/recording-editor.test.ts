@@ -3494,6 +3494,33 @@ describe("the editor window's item ops", () => {
 });
 
 // Regression test: hunt 2026-11-09 circle-shape-aspect, the circles were ovals on every picture shape but one.
+describe("a music duck while ducking() is set", () => {
+    const base = wholeProject({ video: "/movie/screen.mp4", durationUs: 10_000_000, width: 100, height: 100 });
+    const withAudio = (ducking: boolean, duck: number) =>
+        editProjectSchema.parse({
+            ...base,
+            audio: {
+                ...base.audio,
+                music: { file: "/movie/song.mp3", duck },
+                ...(ducking ? { ducking: { db: 12 } } : {}),
+            },
+        });
+
+    test("warns that the duck share does nothing while ducking's dB decides the drop", () => {
+        const before = withAudio(true, 0.6);
+        expect(opPlacementWarnings({ op: "music", duck: 0.3 }, before, withAudio(true, 0.3))).toEqual([
+            "music: duck 0.3 does nothing while ducking() is set; the music drops 12 dB under speech. Change it with ducking({ db }), or ducking({ enabled: false }) to go back to the duck share",
+        ]);
+    });
+
+    test("says nothing for the saved duck sent again, or without ducking", () => {
+        expect(opPlacementWarnings({ op: "music", duck: 0.6 }, withAudio(true, 0.6), withAudio(true, 0.6))).toEqual([]);
+        expect(opPlacementWarnings({ op: "music", duck: 0.3 }, withAudio(false, 0.6), withAudio(false, 0.3))).toEqual(
+            []
+        );
+    });
+});
+
 describe("a circle placed at a point or a click", () => {
     const pictures = [
         { width: 1920, height: 1080 },

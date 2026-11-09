@@ -2819,6 +2819,20 @@ export function opPlacementWarnings(op: EditOp, before: EditProject, after: Edit
         );
     }
 
+    // The renderer's rule (MusicMix.Duck.of): while ducking() is set its dB alone decides the drop. The editor sends the
+    // saved duck again on every music change, so only a new value is named; it stays saved for ducking({ enabled: false }).
+    if (op.op === "music") {
+        const ducking = after.audio.ducking;
+
+        if (!ducking || op.duck === undefined || op.duck === before.audio.music?.duck) {
+            return [];
+        }
+
+        return [
+            `music: duck ${op.duck} does nothing while ducking() is set; the music drops ${ducking.db} dB under speech. Change it with ducking({ db }), or ducking({ enabled: false }) to go back to the duck share`,
+        ];
+    }
+
     // R7 6
     if (op.op === "unhide" && op.all && !(before.redactions ?? []).some((part) => part.hide)) {
         return ["unhide: nothing hidden (no part was made by hideText or hidePrivate)"];
