@@ -74,7 +74,13 @@ import {
 import { shortRmPath } from "./display";
 import { renderLedger } from "./log-view";
 import { type NotifyDeps, notifyDrainFailure, notifyNewRequest, type RequestNotice } from "./notify";
-import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
+import {
+    buildRequestViews,
+    renderPickerLegend,
+    renderPickerRow,
+    renderRequestDetail,
+    renderRequestList,
+} from "./requests-view";
 import { type ExecuteDeps, executePlan, type PersonAnswer, printRequestHint, type RunContext } from "./run";
 import { renderConfig, renderPresets, renderRoots } from "./settings-view";
 import { batchSuffix, renderTrash, resolveBatchSuffix } from "./trash-view";
@@ -1405,6 +1411,36 @@ describe("the requests listing", () => {
         expect(text).toContain(`The user approves: ! ${toolCommand("rm")} approve <id>`);
         expect(text).toContain(`Open their window: ${toolCommand("rm")} ask <id> (background)`);
         expect(text).toContain(`Cancel your own: ${toolCommand("rm")} deny <id>`);
+    });
+
+    test("the picker row shows the whole path on a wide terminal and says how long ago it was asked", () => {
+        const deep = "/work/shop/apps/storefront/packages/checkout/screens/summary/banner.webp";
+        const long = req("long01", ASKER, "2026-11-01T13:11:00.000Z", [
+            { path: deep, kind: "file", rule: "git-untracked", reason: "1 untracked file" },
+        ]);
+        const [view] = buildRequestViews([long], { present: () => true, sizeOf: () => 2048 });
+        const wide = view ? stripAnsi(renderPickerRow(view, NOW, 200)) : "";
+        const narrow = view ? stripAnsi(renderPickerRow(view, NOW, 90)) : "";
+        const listed = view ? renderRequestList([view], { now: NOW, caller: PERSON }).map(stripAnsi).join("\n") : "";
+
+        expect(wide).toContain("49m ago");
+        expect(wide).toContain(deep);
+        expect(wide).toContain("git-untracked");
+        // The list keeps its 40 columns for a path; the picker uses the room the terminal has.
+        expect(listed).not.toContain(deep);
+        // Narrow: the path keeps its room, whole leading folders go first so the tail stays, and the note goes.
+        expect(narrow).toContain("/…/checkout/screens/summary/banner.webp");
+        expect(narrow).not.toContain("git-untracked");
+        expect(narrow.length).toBeLessThanOrEqual(90);
+    });
+
+    test("the picker legend names the columns and only the states its rows show", () => {
+        const legend = renderPickerLegend(views).join("\n");
+
+        expect(legend).toContain("asked how long ago");
+        expect(legend).toContain("aside: moved out of the way");
+        expect(legend).toContain("in place: still where it was");
+        expect(legend).not.toContain("came back:");
     });
 
     test("the detail view shows the decision even when nothing was denied", () => {

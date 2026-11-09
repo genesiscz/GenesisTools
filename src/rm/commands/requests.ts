@@ -22,6 +22,7 @@ import {
     pruneReason,
     pruneRmRequests,
     RM_APPROVED_TRASH_MINUTES,
+    type RmCaller,
     type RmRequest,
     type RmRequestTarget,
     type RmSweepResult,
@@ -50,7 +51,13 @@ import {
     reportLostCopies,
     savedSizes,
 } from "../lib/approve";
-import { buildRequestViews, renderRequestDetail, renderRequestList, renderRequestRow } from "../lib/requests-view";
+import {
+    buildRequestViews,
+    renderPickerLegend,
+    renderPickerRow,
+    renderRequestDetail,
+    renderRequestList,
+} from "../lib/requests-view";
 import {
     minutesOption,
     type PersonAnswer,
@@ -659,6 +666,16 @@ function isPickerAction(value: unknown): value is PickerAction {
     return typeof value === "string" && value in PICKER_ACTIONS;
 }
 
+/** Who asked, for the focused row of the picker: the session's title and id, or a person at a terminal. */
+function askerHint(caller: RmCaller | null): string {
+    if (!caller?.sessionId) {
+        return "asked by a person at a terminal";
+    }
+
+    const title = caller.sessionTitle ? `"${caller.sessionTitle}"` : "an untitled session";
+    return `asked by ${title} (session ${caller.sessionId.slice(0, 8)}${caller.project ? `, ${caller.project}` : ""})`;
+}
+
 /** `tools rm approve` with no id, for a person at a terminal: tick requests, then pick what happens to them. */
 async function pickAndDecide(ctx: RunContext): Promise<void> {
     const requests = listRmRequests();
@@ -676,6 +693,11 @@ async function pickAndDecide(ctx: RunContext): Promise<void> {
     );
     let ticked: string[];
     let action: unknown;
+    const columns = process.stdout.columns || 100;
+
+    for (const line of renderPickerLegend(views)) {
+        out.println(pc.dim(line));
+    }
 
     try {
         ticked = (
@@ -683,8 +705,8 @@ async function pickAndDecide(ctx: RunContext): Promise<void> {
                 message: "Which requests?",
                 options: views.map((view) => ({
                     value: view.request.id,
-                    label: renderRequestRow(view, now),
-                    hint: `${(view.request.caller?.sessionId ?? "person").slice(0, 8)} ${view.request.caller?.sessionTitle ?? ""}`.trim(),
+                    label: renderPickerRow(view, now, columns),
+                    hint: askerHint(view.request.caller),
                 })),
                 required: false,
             })
