@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { type EnvironmentSources, environmentMarkdown, gatherEnvironment } from "./environment";
+import {
+    type EnvironmentSources,
+    environmentMarkdown,
+    gatherEnvironment,
+    issueEnvironmentValues,
+    parseIssueTemplate,
+} from "./environment";
 
 const NOW = new Date("2026-11-09T12:00:00Z");
 
@@ -83,5 +89,63 @@ describe("gatherEnvironment", () => {
         expect(report.tools.differsFromApp).toBe(false);
         expect(markdown).toContain("- **GenesisTools build:** unknown (no ~/.genesis-tools/app/manifest.json)");
         expect(markdown).toContain("- **Recorder:** face not running, service not running");
+    });
+});
+
+describe("issue template fields", () => {
+    const TEMPLATE = `name: Bug report
+body:
+  - type: markdown
+    attributes:
+      value: Thanks
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual (error + log)
+      render: shell
+  - type: input
+    id: commit
+    attributes:
+      label: GenesisTools commit and its age
+  - type: textarea
+    id: permissions
+    attributes:
+      label: Privacy grants
+      render: shell
+`;
+
+    test("reads the form's fields in order with their labels, leaving out markdown blocks", () => {
+        expect(parseIssueTemplate(TEMPLATE)).toEqual([
+            { id: "checks", label: "Before you submit", type: "checkboxes", render: null },
+            { id: "what-happened", label: "What happened", type: "textarea", render: null },
+            { id: "actual", label: "Actual (error + log)", type: "textarea", render: "shell" },
+            { id: "commit", label: "GenesisTools commit and its age", type: "input", render: null },
+            { id: "permissions", label: "Privacy grants", type: "textarea", render: "shell" },
+        ]);
+        expect(parseIssueTemplate("not: [yaml")).toEqual([]);
+    });
+
+    test("fills the environment fields the bug form asks for", () => {
+        const values = issueEnvironmentValues(gatherEnvironment(sources()));
+
+        expect(values.commit).toBe("d9695acca149+dirty, 3 h old");
+        expect(values.branch).toBe("feat/x");
+        expect(values.macos).toBe("27.2 (26B118)");
+        expect(values.chip).toBe("Apple M4 Pro");
+        expect(values.bun).toBe("1.3.13");
+        expect(values.permissions).toBe(
+            "Screen Recording: granted\nMicrophone: granted\nCamera: not asked yet\nAccessibility: unknown (database not readable)"
+        );
+        expect(values["app-build"]).toContain("built 2026-11-09 10:32 UTC (1 h 27 min ago)");
+        expect(values["app-build"]).toContain("tools checkout aaaabbbbcccc on feat/x differs from the app's build");
+        expect(values["app-build"]).toContain("recorder: face pid 61240, service pid 5120");
     });
 });

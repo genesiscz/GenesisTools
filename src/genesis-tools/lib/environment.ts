@@ -162,6 +162,108 @@ export function environmentMarkdown(report: EnvironmentReport): string {
     return lines.join("\n");
 }
 
+/** One field of a GitHub issue form, as `.github/ISSUE_TEMPLATE/bug_report.yml` declares it. */
+export interface IssueTemplateField {
+    id: string;
+    label: string;
+    type: string;
+    /** `shell` and the like: GitHub wraps the answer in a code block of that language. */
+    render: string | null;
+}
+
+/** The form's fields in order, without its markdown blocks. Empty when the text is no issue form. */
+export function parseIssueTemplate(text: string): IssueTemplateField[] {
+    let form: unknown;
+    try {
+        form = Bun.YAML.parse(text);
+    } catch (error) {
+        logger.debug({ error }, "environment: the issue template does not parse");
+        return [];
+    }
+
+    const body = typeof form === "object" && form !== null ? Reflect.get(form, "body") : undefined;
+    if (!Array.isArray(body)) {
+        return [];
+    }
+
+    const fields: IssueTemplateField[] = [];
+    for (const item of body) {
+        if (typeof item !== "object" || item === null) {
+            continue;
+        }
+
+        const type = Reflect.get(item, "type");
+        const id = Reflect.get(item, "id");
+        const attributes = Reflect.get(item, "attributes");
+        const label =
+            typeof attributes === "object" && attributes !== null ? Reflect.get(attributes, "label") : undefined;
+        if (type === "markdown" || typeof type !== "string" || typeof id !== "string" || typeof label !== "string") {
+            continue;
+        }
+
+        const render = Reflect.get(attributes, "render");
+        fields.push({ id, label, type, render: typeof render === "string" ? render : null });
+    }
+
+    return fields;
+}
+
+/** The checkout's bug form (`.github/ISSUE_TEMPLATE/bug_report.yml`), empty when it has none. */
+export function readBugTemplate(checkout: string = toolsCheckout()): {
+    path: string | null;
+    fields: IssueTemplateField[];
+} {
+    const path = join(checkout, ".github/ISSUE_TEMPLATE/bug_report.yml");
+    if (!existsSync(path)) {
+        return { path: null, fields: [] };
+    }
+
+    return { path, fields: parseIssueTemplate(readFileSync(path, "utf8")) };
+}
+
+/** The bug form's environment answers, by field id: commit, branch, app-build, macos, chip, bun, permissions. */
+export function issueEnvironmentValues(report: EnvironmentReport): Record<string, string> {
+    const time = (iso: string) => shownTime(iso, report.timeZone);
+    const app = report.app;
+    const build: string[] = [];
+
+    if (app) {
+        build.push(
+            `commit ${app.shortCommit}${app.dirty ? " with uncommitted Swift changes (+dirty)" : ""} on ${app.branch ?? "?"}`
+        );
+        if (app.builtAt) {
+            build.push(`built ${time(app.builtAt)} (${app.builtAge})`);
+        }
+    } else {
+        build.push("no build manifest (~/.genesis-tools/app/manifest.json)");
+    }
+
+    if (report.tools.differsFromApp && report.tools.shortHead) {
+        build.push(
+            `tools checkout ${report.tools.shortHead} on ${report.tools.branch ?? "?"} differs from the app's build`
+        );
+    }
+
+    const face =
+        report.recorder.facePids.length > 0 ? `face pid ${report.recorder.facePids.join(", ")}` : "face not running";
+    const service = report.recorder.service ? `service pid ${report.recorder.service.pid}` : "service not running";
+    build.push(`recorder: ${face}, ${service}`);
+
+    return {
+        commit: app
+            ? `${app.shortCommit}${app.dirty ? "+dirty" : ""}${app.commitAge ? `, ${app.commitAge}` : ""}`
+            : "unknown",
+        branch: app?.branch ?? report.tools.branch ?? "unknown",
+        "app-build": build.join("\n"),
+        macos: [report.macos.version ?? "unknown", report.macos.build ? `(${report.macos.build})` : null]
+            .filter(Boolean)
+            .join(" "),
+        chip: report.machine.chip ?? report.machine.arch,
+        bun: report.bun,
+        permissions: report.grants.map((grant) => `${grant.name}: ${grant.state}`).join("\n"),
+    };
+}
+
 /** "3 h", "2 d", "12 min"; with `minutes`, "1 h 27 min". */
 function age(now: Date, iso: string, minutes: boolean): string {
     const ms = Math.max(0, now.getTime() - new Date(iso).getTime());

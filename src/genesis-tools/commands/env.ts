@@ -1,6 +1,6 @@
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { environmentMarkdown, gatherEnvironment } from "../lib/environment";
+import { environmentMarkdown, gatherEnvironment, issueEnvironmentValues, readBugTemplate } from "../lib/environment";
 
 /**
  * `tools genesis-tools env`: the environment an issue or an agent needs (build commit and age, branch, dirty, build
@@ -17,7 +17,10 @@ export function registerEnvCommand(program: Command): void {
             const markdown = environmentMarkdown(report);
 
             if (options.json) {
-                out.result({ ...report, markdown });
+                // `issue`: the bug form's fields in order and the environment answers by field id, so a drafted issue
+                // has the form's sections with its exact names.
+                const template = readBugTemplate();
+                out.result({ ...report, markdown, issue: { ...template, values: issueEnvironmentValues(report) } });
                 return;
             }
 
