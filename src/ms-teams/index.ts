@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { registerAuthCommand } from "@app/ms-teams/commands/auth";
 import { registerCallsCommand } from "@app/ms-teams/commands/calls";
 import { registerConversationsCommand } from "@app/ms-teams/commands/conversations";
 import { registerDoctorCommand } from "@app/ms-teams/commands/doctor";
@@ -30,6 +31,7 @@ program
 
 registerSyncCommand(program);
 registerDoctorCommand(program);
+registerAuthCommand(program);
 registerRepairCommand(program);
 registerConversationsCommand(program);
 registerShowCommand(program);
