@@ -155,15 +155,15 @@ final class RecorderFxAnalysisTests: XCTestCase {
     func testATrackedPartMovesBetweenItsKeyframesAndKeepsItsSpeedOutsideThem() {
         let part = trackedRedaction()
         // 0.3 of the picture a second upwards: before the first key it was lower, after the last higher.
-        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 500_000, track: nil).y, 0.95, accuracy: 1e-9)
-        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 2_000_000, track: nil).y, 0.5, accuracy: 1e-9)
-        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 3_500_000, track: nil).y, 0.05, accuracy: 1e-9)
+        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 500_000, track: nil, pointer: CursorTrack.Pointer()).y, 0.95, accuracy: 1e-9)
+        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 2_000_000, track: nil, pointer: CursorTrack.Pointer()).y, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 3_500_000, track: nil, pointer: CursorTrack.Pointer()).y, 0.05, accuracy: 1e-9)
         var single = part
         single.track = [EditProject.TrackKey(atUs: 1_000_000, x: 0.1, y: 0.6, width: 0.4, height: 0.1)]
-        XCTAssertEqual(ZoomState.placed(single, atSourceUs: 3_000_000, track: nil).y, 0.6, accuracy: 1e-9)
+        XCTAssertEqual(ZoomState.placed(single, atSourceUs: 3_000_000, track: nil, pointer: CursorTrack.Pointer()).y, 0.6, accuracy: 1e-9)
         var still = part
         still.track = nil
-        XCTAssertEqual(ZoomState.placed(still, atSourceUs: 2_000_000, track: nil).y, 0.8)
+        XCTAssertEqual(ZoomState.placed(still, atSourceUs: 2_000_000, track: nil, pointer: CursorTrack.Pointer()).y, 0.8)
     }
 
     func testAnExcludedAreaShowsThePictureInsideTheHiddenPart() throws {

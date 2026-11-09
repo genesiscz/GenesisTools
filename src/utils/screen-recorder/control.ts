@@ -74,6 +74,8 @@ export interface RecorderStatus {
     folder?: string;
     /** A movie recording: the recorded time so far (pauses left out), its limit and the segments written. */
     elapsedMs?: number;
+    /** A movie recording: true while `elapsedMs` grows (a segment records), false while one arms, pauses or stops. */
+    elapsedRunning?: boolean;
     limitMs?: number;
     segments?: number;
 }

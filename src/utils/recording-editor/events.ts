@@ -257,11 +257,15 @@ export function anchorTimeUs(events: readonly MovieEvent[], anchor: EventAnchor)
     return Math.max(0, Math.round(base + (anchor.lead ?? 0) * 1_000_000));
 }
 
-/** The event nearest a source time (its start, or a stretch's end when that is nearer), of `kinds` when given. */
+/**
+ * The event nearest a source time (its start, or a stretch's end when that is nearer), of `kinds` when given; with
+ * `endsOnly` only the stretch ends count.
+ */
 export function nearestEvent(
     events: readonly MovieEvent[],
     atUs: number,
-    kinds?: readonly MovieEventKind[]
+    kinds?: readonly MovieEventKind[],
+    endsOnly = false
 ): { event: MovieEvent; atUs: number; edge: "start" | "end" } | undefined {
     let best: { event: MovieEvent; atUs: number; edge: "start" | "end" } | undefined;
 
@@ -271,7 +275,7 @@ export function nearestEvent(
         }
 
         for (const [edge, time] of [
-            ["start", event.fromUs],
+            ["start", endsOnly ? undefined : event.fromUs],
             ["end", event.toUs],
         ] as const) {
             if (time !== undefined && (!best || Math.abs(time - atUs) < Math.abs(best.atUs - atUs))) {
@@ -281,4 +285,75 @@ export function nearestEvent(
     }
 
     return best;
+}
+
+/** A snap request: `at` (seconds) moved to the nearest event of `kinds`, or the `index`th event of `event`. */
+export interface SnapRequest {
+    at?: number;
+    event?: MovieEventKind;
+    /** With `event`: 1 is the first, -1 the last. */
+    index?: number;
+    /** Seconds added to the snapped time, in both forms. */
+    lead?: number;
+    /** A stretch's end instead of its start, in both forms. */
+    end?: boolean;
+    /** With `at`: the kinds it may snap to. */
+    kinds?: readonly MovieEventKind[];
+}
+
+/**
+ * The source time a snap request names, in microseconds, with the event it used: the one parse of a snap for the REPL
+ * and the CLI, so `lead` and `end` work in both forms. A request that mixes the forms is refused.
+ */
+export function snapTimeUs(
+    events: readonly MovieEvent[],
+    request: SnapRequest
+): { atUs: number; event: MovieEvent; edge?: "start" | "end" } {
+    if (request.event !== undefined) {
+        if (request.at !== undefined) {
+            throw new Error("snap takes at (seconds) or an event anchor ({ event, index, lead? }), not both");
+        }
+
+        if (request.kinds !== undefined) {
+            throw new Error("kinds picks what at snaps to; an event anchor names its kind with event");
+        }
+
+        const anchor = eventAnchorSchema.parse({
+            event: request.event,
+            index: request.index ?? 1,
+            ...(request.lead === undefined ? {} : { lead: request.lead }),
+            ...(request.end ? { end: true } : {}),
+        });
+        const atUs = anchorTimeUs(events, anchor);
+        const ofKind = events.filter((item) => item.kind === anchor.event);
+        const event = ofKind.at(anchor.index > 0 ? anchor.index - 1 : anchor.index);
+
+        if (!event) {
+            throw new RangeError(`there is no ${anchor.event} event ${anchor.index}`);
+        }
+
+        return { atUs, event };
+    }
+
+    if (request.index !== undefined) {
+        throw new Error("index counts the events of one kind; give event with it");
+    }
+
+    if (request.at === undefined) {
+        throw new Error("snap needs at (seconds) or an event anchor ({ event, index, lead? })");
+    }
+
+    const lead = eventAnchorSchema.shape.lead.parse(request.lead) ?? 0;
+    const nearest = nearestEvent(events, Math.round(request.at * 1_000_000), request.kinds, request.end === true);
+
+    if (!nearest) {
+        const kinds = request.kinds ? `${request.kinds.join(" or ")} ` : "";
+        throw new RangeError(`the movie has no ${kinds}${request.end ? "stretch end" : "event"} to snap to`);
+    }
+
+    return {
+        atUs: Math.max(0, Math.round(nearest.atUs + lead * 1_000_000)),
+        event: nearest.event,
+        edge: nearest.edge,
+    };
 }

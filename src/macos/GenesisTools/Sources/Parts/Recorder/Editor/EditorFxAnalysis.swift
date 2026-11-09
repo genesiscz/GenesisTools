@@ -58,9 +58,16 @@ extension EditorModel {
         }
     }
 
-    /// Moves the playhead to a source second; a cut moment says so.
-    func fxGo(toSource seconds: Double) {
-        guard let out = TimelineMap.outputTime(ofSource: Int64((seconds * 1_000_000).rounded()), in: project) else {
+    /// Moves the playhead to a source second, or to the first kept moment of `seconds`..`until`; a cut moment, or a
+    /// range cut whole, says so.
+    func fxGo(toSource seconds: Double, until: Double? = nil) {
+        let fromUs = Int64((seconds * 1_000_000).rounded())
+        let firstShown: Int64? = if let until {
+            TimelineMap.shown(fromUs: fromUs, toUs: Int64((until * 1_000_000).rounded()), in: project)?.startOut
+        } else {
+            TimelineMap.outputTime(ofSource: fromUs, in: project)
+        }
+        guard let out = firstShown else {
             show("That moment was cut from the edit.", error: false)
             return
         }
@@ -152,7 +159,7 @@ struct PrivateDataSection: View {
                 .toggleStyle(.checkbox)
                 .disabled(hit.hidden)
                 .accessibilityLabel("Hide \(hit.label) \(hit.masked)")
-            Button { model.fxGo(toSource: hit.from) } label: {
+            Button { model.fxGo(toSource: hit.from, until: hit.to) } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: "\(hit.label)  \(hit.masked)").font(.system(size: 12, weight: .medium)).lineLimit(1)
                     Text(verbatim: "\(clock(hit.from))–\(clock(hit.to))\(hit.hidden ? " · hidden" : "")\(hit.plays == nil ? " · cut" : "")")
@@ -233,12 +240,12 @@ struct SmoothCursorSection: View {
                 SectionLabel(text: "Ignore moves under", value: String(format: "%.0f pt", smooth.jitterPx))
                 Slider(value: Binding(get: { smooth.jitterPx }, set: { value in
                     model.setLooks { $0.cursorSmooth?.jitterPx = value.rounded() }
-                }), in: 0...12)
+                }), in: EditLimits.smoothJitterPx)
                     .accessibilityLabel("Ignore cursor moves under, in points")
                 SectionLabel(text: "Fade when still after", value: smooth.idleFadeSeconds == 0 ? "never" : String(format: "%.1f s", smooth.idleFadeSeconds))
                 Slider(value: Binding(get: { smooth.idleFadeSeconds }, set: { value in
                     model.setLooks { $0.cursorSmooth?.idleFadeSeconds = (value * 2).rounded() / 2 }
-                }), in: 0...10)
+                }), in: EditLimits.smoothIdleFadeSeconds)
                     .accessibilityLabel("Fade the cursor when still after, in seconds")
             }
         }
@@ -318,7 +325,7 @@ struct WaitsSection: View {
             })) { EmptyView() }
                 .toggleStyle(.checkbox)
                 .accessibilityLabel("Speed up the stretch at \(clock(wait.from))")
-            Button { model.fxGo(toSource: wait.from) } label: {
+            Button { model.fxGo(toSource: wait.from, until: wait.to) } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: "\(wait.kind == "still" ? "Waiting" : "Typing")  \(Self.speed(wait.speed))")
                         .font(.system(size: 12, weight: .medium))

@@ -6,9 +6,12 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chosenPlan } from "@app/recorder/lib/proxy";
+import { withTimeout } from "@genesiscz/utils/async";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
+import * as mediaFacts from "@genesiscz/utils/video/media-facts";
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as videoProcess from "@genesiscz/utils/video/process";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
@@ -16,18 +19,23 @@ import * as captureRunner from "./capture-runner";
 import {
     audioTitlesArgv,
     audioTrackTitles,
+    cursorTrackOffsets,
+    movieLengthMs,
     type NativeRecorderOptions,
     nativeSegmentRecorder,
     segmentCaptureSpec,
+    segmentJoiner,
     titleAudioTracks,
 } from "./recording-native";
 import {
     concatCopyArgv,
     concatListLine,
+    cursorTrackPath,
     FIRST_FRAME_MESSAGE,
     type FinishedSegment,
     joinCursorTracks,
     joinSegmentsArgv,
+    letterboxPlacement,
     type MovieRates,
     PREPARING_MESSAGE,
     parseRecordingCommand,
@@ -195,6 +203,8 @@ describe("RecordingSession", () => {
             segmentSeconds?: number;
             slowStartMs?: number;
             join?: ConstructorParameters<typeof RecordingSession>[0]["join"];
+            /** Measures the one-segment movie; by default it answers the fake recorder's 1000 ms. */
+            measure?: ConstructorParameters<typeof RecordingSession>[0]["measure"];
             /** Sees every event after the test's own list does. */
             emit?: (event: RecordingSessionEvent) => void;
         } = {}
@@ -210,6 +220,7 @@ describe("RecordingSession", () => {
                 await writeFile(output, segments.map((segment) => segment.path).join("\n"));
                 return { durationMs: segments.reduce((sum, segment) => sum + segment.durationMs, 0) };
             },
+            measure: async () => 1000,
             emit: (event) => {
                 events.push(event);
                 emit?.(event);
@@ -265,6 +276,7 @@ describe("RecordingSession", () => {
                 await writeFile(output, "joined");
                 return { durationMs: 1000 };
             },
+            measure: async () => 1000,
             emit: (event) => {
                 events.push(event);
                 control?.observe(event);
@@ -392,6 +404,36 @@ describe("RecordingSession", () => {
         expect((await control.addMarker("no first frame named")).atMs).toBe(5400);
     });
 
+    // 2026-11-09: the camera bubble lagged the voice by 0.5 to 2 s and more after each pause or rollover. The camera
+    // runs on the wall clock, so it is cut to these spans after the recording (camera.ts alignCameraMovie).
+    it("each kept segment is a span from its own first frame, after a resume and from 0 again after a restart", async () => {
+        const { recorder, runs } = fakeRecorder({ armLater: true, movieMs: 2500 });
+        const recording = session(recorder);
+        await recording.start();
+        clock = 1_001_400;
+        runs[0].arm({ firstFrameAt: 1_000_800 });
+        clock = 1_003_300;
+        await recording.command({ cmd: "pause" });
+        clock = 1_060_000;
+        await recording.command({ cmd: "resume" });
+        clock = 1_060_900;
+        runs[1].arm({ firstFrameAt: 1_060_550 });
+        clock = 1_063_000;
+        await recording.command({ cmd: "pause" });
+        expect(recording.movieSpans()).toEqual([
+            { sourceStartMs: 0, firstFrameEpochMs: 1_000_800, lengthMs: 2500 },
+            { sourceStartMs: 2500, firstFrameEpochMs: 1_060_550, lengthMs: 2500 },
+        ]);
+
+        await recording.command({ cmd: "restart" });
+        clock = 1_070_700;
+        runs[2].arm({ firstFrameAt: 1_070_200 });
+        clock = 1_072_000;
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("done");
+        expect(recording.movieSpans()).toEqual([{ sourceStartMs: 0, firstFrameEpochMs: 1_070_200, lengthMs: 2500 }]);
+    });
+
     it("one segment is moved into place without a join", async () => {
         const { recorder } = fakeRecorder();
         const recording = session(recorder);
@@ -491,6 +533,7 @@ describe("RecordingSession", () => {
                 output: join(root, "private.mp4"),
                 recorder,
                 join: async () => ({ durationMs: 0 }),
+                measure: async () => 1000,
                 emit: () => {},
                 now: () => clock,
                 tickMs: 0,
@@ -534,6 +577,7 @@ describe("RecordingSession", () => {
             output: join(root, "out.mp4"),
             recorder,
             join: async () => ({ durationMs: 0 }),
+            measure: async () => 1000,
             emit: (event) => events.push(event),
             tickMs: 0,
             slowStartMs: 0,
@@ -622,6 +666,7 @@ describe("RecordingSession", () => {
             output: join(root, "out.mp4"),
             recorder,
             join: async () => ({ durationMs: 0 }),
+            measure: async () => 1000,
             emit: (event) => control?.observe(event),
             now: () => clock,
             tickMs: 0,
@@ -660,6 +705,7 @@ describe("RecordingSession", () => {
                 await writeFile(output, "joined");
                 return { durationMs: 1000 };
             },
+            measure: async () => 1000,
             emit: (event) => control?.observe(event),
             now: () => clock,
             tickMs: 0,
@@ -783,6 +829,63 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("done");
         // Two runs of 1000 ms with 50 frames each: 100 frames over 2 s.
         expect(events.find((event) => event.event === "done")).toMatchObject({ frames: 100, averageFps: 50 });
+    });
+
+    describe("a saved movie's length is measured the same way for one segment and several", () => {
+        // The defect: one segment kept ax-tool's wall time, which also counts the wait for the first frame and the
+        // stop, while a join probed the file, so recording.json's durationMs and averageFps disagreed with the movie.
+        it("a one-segment movie's durationMs is the saved movie's measured length, like a joined one's", async () => {
+            const measured: string[] = [];
+            const { recorder } = fakeRecorder({ frames: { frames: 30 }, movieMs: 990 });
+            const recording = session(recorder, {
+                measure: async (path) => {
+                    measured.push(path);
+                    return 970;
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(measured).toEqual([join(root, "out.mp4")]);
+            // 30 frames over the measured 0.97 s, not over the 1 s of wall time the recorder reported.
+            expect(events.find((event) => event.event === "done")).toMatchObject({
+                durationMs: 970,
+                frames: 30,
+                averageFps: 30.9,
+            });
+        });
+
+        it("a joined movie keeps the joiner's length and is not measured again", async () => {
+            const measured: string[] = [];
+            const { recorder } = fakeRecorder();
+            const recording = session(recorder, {
+                measure: async (path) => {
+                    measured.push(path);
+                    return 1;
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "pause" });
+            await recording.command({ cmd: "resume" });
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(joined).toHaveLength(1);
+            expect(measured).toEqual([]);
+            expect(events.find((event) => event.event === "done")).toMatchObject({ durationMs: 2000, segments: 2 });
+        });
+
+        it("a one-segment movie the probe cannot read still saves, with the recorder's movie length", async () => {
+            const { recorder } = fakeRecorder({ movieMs: 990 });
+            const recording = session(recorder, {
+                measure: async () => {
+                    throw new Error("not a movie ffprobe can read");
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(events.find((event) => event.event === "done")).toMatchObject({ durationMs: 990, segments: 1 });
+        });
     });
 
     it("a first run that fails without a movie ends the session with the refusal code", async () => {
@@ -1022,7 +1125,10 @@ describe("joining segments with their audio and cursor tracks", () => {
 
     it("keeps the audio when it re-encodes segments of different sizes", () => {
         const argv = joinSegmentsArgv({
-            inputs: ["/a.mp4", "/b.mp4"],
+            inputs: [
+                { path: "/a.mp4", width: 1280, height: 720 },
+                { path: "/b.mp4", width: 1920, height: 1080 },
+            ],
             width: 1280,
             height: 720,
             output: "/o.mp4",
@@ -1049,7 +1155,10 @@ describe("joining segments with their audio and cursor tracks", () => {
         expect(copied).toContain("title=System audio");
         expect(copied.at(-1)).toBe("/o.mp4");
         const joined = joinSegmentsArgv({
-            inputs: ["/a.mp4", "/b.mp4"],
+            inputs: [
+                { path: "/a.mp4", width: 1280, height: 720 },
+                { path: "/b.mp4", width: 1920, height: 1080 },
+            ],
             width: 1280,
             height: 720,
             output: "/o.mp4",
@@ -1108,16 +1217,221 @@ describe("joining segments with their audio and cursor tracks", () => {
     });
 });
 
+describe("a joined cursor track on the joined movie's clock", () => {
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `cursor-join-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        mock.restore();
+        await rm(root, { recursive: true, force: true });
+    });
+
+    it("measures a saved movie by its probed length in whole milliseconds, as the joiner measures a join", async () => {
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async () => ({
+            ...({} as Awaited<ReturnType<typeof videoProbe.probeVideo>>),
+            durationUs: 2_530_400,
+        }));
+        expect(await movieLengthMs(join(root, "out.mp4"))).toBe(2530);
+        expect(probe).toHaveBeenCalledWith({ input: join(root, "out.mp4") });
+    });
+
+    it("starts each segment's cursor rows where the lengths of the segments before it end", () => {
+        expect(cursorTrackOffsets([2530, 2513, 2530])).toEqual([0, 2530, 5043]);
+        expect(cursorTrackOffsets([])).toEqual([]);
+    });
+
+    it("moves a segment's cursor rows by the probed lengths of the segments before it, not by their wall time", async () => {
+        // A live run: ax-tool's wall durationMs was 2543 and 2545 ms, but concat stacked the files by their own
+        // lengths, 2530 and 2513 ms, so segment 2's frames start at 2530 ms of the joined movie.
+        const lengthsSec: Record<string, number | null> = { "a.mp4": 2.53, "b.mp4": 2.513 };
+        spyOn(mediaFacts, "readMediaFacts").mockImplementation(async ({ input }) => ({
+            path: input,
+            bytes: 1,
+            durationSec: lengthsSec[input.split("/").at(-1) ?? ""] ?? null,
+            streams: [{ type: "video", codec: "h264", attachedPicture: false, width: 160, height: 100 }],
+        }));
+        spyOn(videoProcess, "runVideoCommand").mockImplementation(async () => "");
+        spyOn(videoProbe, "probeVideo").mockImplementation(async () => ({
+            ...({} as Awaited<ReturnType<typeof videoProbe.probeVideo>>),
+            durationUs: 5_043_000,
+        }));
+        const segments: FinishedSegment[] = [
+            { index: 0, path: join(root, "a.mp4"), durationMs: 2543, movieMs: 2543, target: display },
+            { index: 1, path: join(root, "b.mp4"), durationMs: 2545, movieMs: 2561, target: display },
+        ];
+        await writeFile(cursorTrackPath(segments[0].path), '{"t":0.0,"x":0.1,"y":0.2}\n');
+        await writeFile(cursorTrackPath(segments[1].path), '{"t":100.0,"x":0.5,"y":0.6,"click":"left"}\n');
+        const output = join(root, "joined.mp4");
+
+        await segmentJoiner()({ segments, output });
+
+        expect((await readFile(cursorTrackPath(output), "utf8")).trim().split("\n")).toEqual([
+            '{"t":0.0,"x":0.1,"y":0.2}',
+            '{"t":2630.0,"x":0.5,"y":0.6,"click":"left"}',
+        ]);
+    });
+});
+
+function cursorRows(text: string): Array<Record<string, unknown>> {
+    return text
+        .trim()
+        .split("\n")
+        .map((line): Record<string, unknown> => SafeJSON.parse(line, { strict: true }));
+}
+
+describe("segments of another shape: the picture and the cursor rows share one placement", () => {
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `cursor-letterbox-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        mock.restore();
+        await rm(root, { recursive: true, force: true });
+    });
+
+    it("places a 16:9 segment inside a 16:10 frame as ffmpeg's letterbox does, with even offsets", () => {
+        expect(letterboxPlacement({ width: 1920, height: 1080, into: { w: 2880, h: 1800 } })).toEqual({
+            x: 0,
+            y: 90,
+            w: 2880,
+            h: 1620,
+            into: { w: 2880, h: 1800 },
+        });
+        // The live join of 1920x1080 into 1440x900 put the picture's first row at 44 (yuv420p rounds 45 down).
+        expect(letterboxPlacement({ width: 1920, height: 1080, into: { w: 1440, h: 900 } })).toMatchObject({
+            x: 0,
+            y: 44,
+            w: 1440,
+            h: 810,
+        });
+        expect(letterboxPlacement({ width: 1440, height: 900, into: { w: 1440, h: 900 } })).toMatchObject({
+            x: 0,
+            y: 0,
+            w: 1440,
+            h: 900,
+        });
+    });
+
+    it("writes the same placement into the join filter", () => {
+        const argv = joinSegmentsArgv({
+            inputs: [
+                { path: "/a.mp4", width: 2880, height: 1800 },
+                { path: "/b.mp4", width: 1920, height: 1080 },
+            ],
+            width: 2880,
+            height: 1800,
+            output: "/o.mp4",
+        });
+        const graph = argv[argv.indexOf("-filter_complex") + 1];
+        expect(graph).toContain("[0:v]scale=2880:1800,pad=2880:1800:0:0:color=black,");
+        expect(graph).toContain("[1:v]scale=2880:1620,pad=2880:1800:0:90:color=black,");
+    });
+
+    it("moves a letterboxed segment's cursor rows into its picture and scales its point width", () => {
+        const joined = joinCursorTracks([
+            { text: '{"t":0.0,"x":0.50000,"y":0.50000,"pw":1920.0}\n', offsetMs: 0 },
+            {
+                text: '{"t":0.0,"x":0.00000,"y":0.00000,"pw":1440.0,"shape":"abc"}\n{"t":10.0,"x":1.00000,"y":0.50000,"click":"left"}\n',
+                offsetMs: 2000,
+                placement: { x: 160, y: 0, w: 1600, h: 1080, into: { w: 1920, h: 1080 } },
+            },
+        ]);
+        const [first, corner, click] = cursorRows(joined);
+        expect(first).toEqual({ t: 0, x: 0.5, y: 0.5, pw: 1920 });
+        expect(corner.t).toBe(2000);
+        expect(corner.x).toBeCloseTo(160 / 1920, 4);
+        expect(corner.y).toBe(0);
+        // 1600 joined pixels show 1440 points: videoWidth / pw must be 1600 / 1440.
+        expect(corner.pw).toBeCloseTo((1440 * 1920) / 1600, 1);
+        expect(corner.shape).toBe("abc");
+        expect(click.x).toBeCloseTo(1760 / 1920, 4);
+        expect(click.y).toBeCloseTo(0.5, 4);
+        expect(click.click).toBe("left");
+    });
+
+    it("joins segments of different shapes with their rows inside the padded picture", async () => {
+        const sizes: Record<string, [number, number]> = { "a.mp4": [1440, 900], "b.mp4": [1920, 1080] };
+        const nameOf = (input: string) => input.split("/").at(-1) ?? "";
+        spyOn(mediaFacts, "readMediaFacts").mockImplementation(async ({ input }) => ({
+            path: input,
+            bytes: 1,
+            durationSec: 1,
+            streams: [
+                {
+                    type: "video",
+                    codec: "h264",
+                    attachedPicture: false,
+                    width: sizes[nameOf(input)]?.[0],
+                    height: sizes[nameOf(input)]?.[1],
+                },
+            ],
+        }));
+        const commands: string[][] = [];
+        spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            commands.push(command);
+            return "";
+        });
+        spyOn(videoProbe, "probeVideo").mockImplementation(async ({ input }) => {
+            const [width, height] = sizes[nameOf(input)] ?? [1440, 900];
+            return {
+                ...({} as Awaited<ReturnType<typeof videoProbe.probeVideo>>),
+                width,
+                height,
+                displayWidth: width,
+                displayHeight: height,
+                durationUs: 2_000_000,
+            };
+        });
+        const segments: FinishedSegment[] = [
+            { index: 0, path: join(root, "a.mp4"), durationMs: 1000, target: display },
+            { index: 1, path: join(root, "b.mp4"), durationMs: 1000, target: display },
+        ];
+        await writeFile(cursorTrackPath(segments[0].path), '{"t":0.0,"x":0.50000,"y":0.50000,"pw":1440.0}\n');
+        await writeFile(
+            cursorTrackPath(segments[1].path),
+            '{"t":0.0,"x":0.01000,"y":0.01000,"pw":1920.0}\n{"t":100.0,"x":0.01000,"y":1.00000,"click":"left"}\n'
+        );
+        const output = join(root, "joined.mp4");
+
+        await segmentJoiner()({ segments, output });
+
+        const graph = commands[0][commands[0].indexOf("-filter_complex") + 1];
+        expect(graph).toContain("[1:v]scale=1440:810,pad=1440:900:0:44:color=black,");
+        const [first, top, bottom] = cursorRows(await readFile(cursorTrackPath(output), "utf8"));
+        expect(first).toEqual({ t: 0, x: 0.5, y: 0.5, pw: 1440 });
+        expect(top.t).toBe(1000);
+        expect(top.x).toBeCloseTo(0.01, 4);
+        expect(top.y).toBeCloseTo((44 + 0.01 * 810) / 900, 4);
+        expect(top.pw).toBeCloseTo((1920 * 1440) / 1440, 1);
+        expect(bottom.y).toBeCloseTo((44 + 810) / 900, 4);
+    });
+});
+
 describe("joinSegmentsArgv", () => {
     it("scales and pads every input to the first segment's even size and concatenates them", () => {
-        const argv = joinSegmentsArgv({ inputs: ["/a.mp4", "/b.mp4"], width: 1281, height: 721, output: "/o.mp4" });
+        const argv = joinSegmentsArgv({
+            inputs: [
+                { path: "/a.mp4", width: 1281, height: 721 },
+                { path: "/b.mp4", width: 1440, height: 900 },
+            ],
+            width: 1281,
+            height: 721,
+            output: "/o.mp4",
+        });
         expect(argv.slice(0, 6)).toEqual(["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y"]);
         expect(argv).toContain("-nostdin");
         expect(argv.filter((value) => value === "-i")).toHaveLength(2);
         const graph = argv[argv.indexOf("-filter_complex") + 1];
         expect(graph).toBe(
-            "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v0];" +
-                "[1:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v1];" +
+            "[0:v]scale=1280:720,pad=1280:720:0:0:color=black,setsar=1,format=yuv420p,settb=AVTB[v0];" +
+                "[1:v]scale=1152:720,pad=1280:720:64:0:color=black,setsar=1,format=yuv420p,settb=AVTB[v1];" +
                 "[v0][v1]concat=n=2:v=1:a=0[out]"
         );
         expect(argv.slice(-9)).toEqual([
@@ -1271,6 +1585,136 @@ describe("start flags for a target", () => {
     });
 });
 
+describe("a movie recording's clock on the live socket", () => {
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `movie-clock-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        await rm(root, { recursive: true, force: true });
+    });
+
+    it("every session state notifies the recorded time and whether it grows, so arming, a pause and a restart re-anchor the floating controls' clock", async () => {
+        const { recorder, runs } = fakeRecorder({ armLater: true });
+        let clock = 1_000_000;
+        let control: SessionRecorderControl | undefined;
+        let server: LiveRecordingServer | undefined;
+        const recording = new RecordingSession({
+            target: display,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async ({ output }) => {
+                await writeFile(output, "joined");
+                return { durationMs: 1000 };
+            },
+            measure: async () => 1000,
+            // The live wiring of video-recording.ts and capture-session.ts.
+            emit: (event) => {
+                control?.observe(event);
+
+                if (event.event === "state") {
+                    void control?.status().then((status) => server?.notifyStatus(status));
+                }
+            },
+            now: () => clock,
+            tickMs: 0,
+            slowStartMs: 0,
+            maxSeconds: 600,
+        });
+        control = new SessionRecorderControl(recording, { target: display });
+        const dir = join(root, "live");
+        server = new LiveRecordingServer({ id: "movie-clock", kind: control.kind, title: "Movie", control, dir });
+        const client = await RecorderClient.connect("movie-clock", { dir });
+        const notes: unknown[] = [];
+        const all = Promise.withResolvers<void>();
+        await client.subscribe(
+            (notification) => {
+                notes.push(notification.params);
+
+                if (notes.length === 7) {
+                    all.resolve();
+                }
+            },
+            ["state"]
+        );
+
+        expect(await client.status()).toMatchObject({ state: "recording", elapsedMs: 0, elapsedRunning: false });
+        await recording.start();
+        clock += 1500;
+        runs[0].arm();
+        clock += 2000;
+        await client.pause();
+        clock += 4000;
+        await client.resume();
+        runs[1].arm();
+        clock += 1000;
+        await client.restart();
+        runs[2].arm();
+        await withTimeout(
+            all.promise,
+            2_000,
+            new Error(`7 state notifications timed out: ${SafeJSON.stringify(notes)}`)
+        );
+        client.close();
+        server.close();
+        await recording.command({ cmd: "discard" });
+
+        const limitMs = 600_000;
+        expect(notes).toEqual([
+            { state: "recording", elapsedMs: 0, elapsedRunning: false, limitMs },
+            { state: "recording", elapsedMs: 0, elapsedRunning: true, limitMs },
+            { state: "paused", elapsedMs: 2000, elapsedRunning: false, limitMs },
+            { state: "recording", elapsedMs: 2000, elapsedRunning: false, limitMs },
+            { state: "recording", elapsedMs: 2000, elapsedRunning: true, limitMs },
+            { state: "recording", elapsedMs: 0, elapsedRunning: false, limitMs },
+            { state: "recording", elapsedMs: 0, elapsedRunning: true, limitMs },
+        ]);
+    });
+
+    it("update() still notifies a state only when it changes, for a recorder that keeps no movie time", async () => {
+        const { recorder } = fakeRecorder({ armLater: true });
+        const recording = new RecordingSession({
+            target: display,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async () => ({ durationMs: 0 }),
+            measure: async () => 0,
+            emit: () => {},
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        const control = new SessionRecorderControl(recording, { target: display });
+        const dir = join(root, "live");
+        const server = new LiveRecordingServer({ id: "plain", kind: "meeting", title: "Plain", control, dir });
+        const client = await RecorderClient.connect("plain", { dir });
+        const notes: unknown[] = [];
+        const ended = Promise.withResolvers<void>();
+        await client.subscribe(
+            (notification) => {
+                notes.push(notification.params);
+
+                if (notification.event === "ended") {
+                    ended.resolve();
+                }
+            },
+            ["state", "ended"]
+        );
+        server.update({ state: "recording" });
+        server.update({ state: "paused" });
+        server.update({ state: "paused", frames: 2 });
+        server.close();
+        await withTimeout(ended.promise, 2_000, new Error("ended timed out"));
+        client.close();
+
+        expect(notes).toEqual([{ state: "paused" }, {}]);
+    });
+});
+
 describe("a movie recording's live settings", () => {
     let root: string;
 
@@ -1297,6 +1741,7 @@ describe("a movie recording's live settings", () => {
                 await writeFile(output, "joined");
                 return { durationMs: 1000 };
             },
+            measure: async () => 1000,
             emit: (event) => control?.observe(event),
             tickMs: 0,
             slowStartMs: 0,
@@ -1394,7 +1839,10 @@ describe("a movie recording's live settings", () => {
 
 it("segment re-encoding maps every audio source", () => {
     const argv = joinSegmentsArgv({
-        inputs: ["/a.mp4", "/b.mp4"],
+        inputs: [
+            { path: "/a.mp4", width: 1280, height: 720 },
+            { path: "/b.mp4", width: 1920, height: 1080 },
+        ],
         width: 1280,
         height: 720,
         output: "/out.mp4",
@@ -1416,4 +1864,60 @@ it("a proxy retains its final still until stop and validates supplied plan windo
     for (const windowSec of [0, -1, Number.NaN, 0.0000001]) {
         expect(() => chosenPlan([], { plan: { policy: "most-change", windowSec, ranges: [] } })).toThrow("window");
     }
+});
+
+const followTestScreens = async () => ({
+    ok: true,
+    screens: [
+        {
+            displayID: 7,
+            index: 0,
+            isPrimary: true,
+            name: "Built-in",
+            position: { x: 0, y: 0 },
+            resolution: { width: 1512, height: 982 },
+            scaleFactor: 2,
+        },
+        {
+            displayID: 9,
+            index: 1,
+            isPrimary: false,
+            name: "Side",
+            position: { x: 1512, y: 0 },
+            resolution: { width: 1920, height: 1080 },
+            scaleFactor: 1,
+        },
+    ],
+});
+
+function followTestControl(target: RecordingTarget): SessionRecorderControl {
+    const directory = join(tmpdir(), `hunt-follow-${process.pid}`);
+    const recording = new RecordingSession({
+        target,
+        directory,
+        output: join(directory, "out.mp4"),
+        recorder: { record: async () => ({ ok: true, endedBy: "stop" }) },
+        join: async () => ({ durationMs: 0 }),
+        measure: async () => 0,
+        emit: () => {},
+        tickMs: 0,
+        slowStartMs: 0,
+    });
+    return new SessionRecorderControl(recording, { target, screens: followTestScreens });
+}
+
+describe("displays.list on a movie recording", () => {
+    it("marks no display for a recording that follows the pointer, whose display the capture picks itself", async () => {
+        const control = followTestControl({ kind: "display", screenIndex: 0, follow: true });
+        const recorded = (await control.listDisplays()).filter((display) => display.recorded).map((one) => one.id);
+
+        expect(recorded).toEqual([]);
+    });
+
+    it("marks the chosen display for a recording that stays on one display", async () => {
+        const control = followTestControl({ kind: "display", screenIndex: 1 });
+        const recorded = (await control.listDisplays()).filter((display) => display.recorded).map((one) => one.id);
+
+        expect(recorded).toEqual([9]);
+    });
 });

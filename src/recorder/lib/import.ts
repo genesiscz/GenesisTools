@@ -362,7 +362,7 @@ export async function importMovie(input: string, options: ImportMovieOptions = {
             id,
             title,
             startedAt: now.toISOString(),
-            // movies.list() gives a recording's length as endedAt minus startedAt.
+            // The wall span equals the movie here; movies.list() reads durationMs first and this span only without it.
             endedAt: new Date(now.getTime() + durationMs).toISOString(),
             displays: [],
             settings: {

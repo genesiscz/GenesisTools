@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "@genesiscz/utils/logger";
+import { foldWithIndex } from "@genesiscz/utils/macos/ocr-boxes";
 import { z } from "zod";
 
 /**
@@ -175,7 +176,10 @@ export function maskPrivate(value: string): string {
     return `${compact.slice(0, 2)}${"•".repeat(Math.min(8, compact.length - 4))}${compact.slice(-2)}`;
 }
 
-/** A rectangle as fractions of the movie's picture, from its top left. */
+/**
+ * A rectangle as fractions of the movie's picture, from its top left: x and width are shares of the picture's width,
+ * y and height shares of its height, so the same pixels are the same share each way only on a square picture.
+ */
 export interface FractionBox {
     x: number;
     y: number;
@@ -198,12 +202,39 @@ export interface ScreenTextFrame {
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 
 /**
- * Where a match sits in its OCR line: the line's box narrowed by the share of characters before and after it (a
- * proportional font makes this approximate), padded so the hidden part covers the whole value.
+ * The picture shape (width over height in pixels) the pads around a hit were tuned on: 16:9 recordings, and the
+ * generated moving-text movie that checks every frame with Vision OCR. There a pad's x share is the share of the height
+ * it is written as; on any other shape the x share changes so the pad keeps the same pixels.
  */
-export function matchBox(line: ScreenLine, match: { start: number; end: number }): FractionBox {
+const PAD_TUNED_ASPECT = 16 / 9;
+
+/** A pad's share of the width on a picture of `aspect`: the pixels that `share` of the width is on a 16:9 picture. */
+const widthShare = (share: number, aspect: number): number => (share * PAD_TUNED_ASPECT) / aspect;
+
+/**
+ * A margin of `lines` line heights around a box `height` high: that share of the height for y, and for x the pixels
+ * the same share of the width is on a 16:9 picture (widthShare). Neither is under `floor`.
+ */
+function linePad(options: { height: number; lines: number; aspect: number; floor?: number }): { x: number; y: number } {
+    const pad = options.height * options.lines;
+    const floor = options.floor ?? 0;
+    return { x: Math.max(floor, widthShare(pad, options.aspect)), y: Math.max(floor, pad) };
+}
+
+/**
+ * Where a match sits in its OCR line: the line's box narrowed by the share of characters before and after it (a
+ * proportional font makes this approximate), padded so the hidden part covers the whole value. The side pad is about
+ * one line height in pixels (0.6 of the line's height as a share of a 16:9 width), and the same pixels on a picture of
+ * any other `aspect` (its width over its height in pixels): one share on every shape gave a portrait phone a quarter.
+ */
+export function matchBox(options: {
+    line: ScreenLine;
+    match: { start: number; end: number };
+    aspect: number;
+}): FractionBox {
+    const { line, match } = options;
     const length = Math.max(1, line.text.length);
-    const padX = Math.max(line.width * 0.03, line.height * 0.6, 0.004);
+    const padX = Math.max(line.width * 0.03, widthShare(line.height * 0.6, options.aspect), 0.004);
     const padY = Math.max(line.height * 0.25, 0.003);
     const left = clamp01(line.x + (line.width * match.start) / length - padX);
     const right = clamp01(line.x + (line.width * match.end) / length + padX);
@@ -386,16 +417,36 @@ export function compacting(matcher: LineMatcher): LineMatcher {
     };
 }
 
-/** The private patterns, plus `names` (people, companies) the caller wants hidden too, matched without case. */
+/**
+ * A literal text as a pattern source: without diacritics (run it on `foldWithIndex(line).folded`), and with the spaces
+ * OCR leaves out or reads in between its letters, so "alice@example.com" finds "alice@example. com" and "Jiri" finds
+ * "Jiří", as the Find tab matches.
+ */
+function literalSource(text: string): string {
+    return [...foldWithIndex(text.replace(/\s+/g, "")).folded].map(escapeRegExp).join("\\s*");
+}
+
+/** The matches of `regexes` on `text` without diacritics, each as its [start, end) in `text`. */
+function foldedMatches(text: string, regexes: readonly RegExp[]): Array<[number, number]> {
+    const { folded, index } = foldWithIndex(text);
+    return regexes
+        .flatMap((regex) => [...folded.matchAll(regex)])
+        .filter((match) => match[0].length > 0)
+        .map((match): [number, number] => {
+            const start = match.index ?? 0;
+            return [index[start], index[start + match[0].length]];
+        });
+}
+
+/** The private patterns, plus `names` (people, companies) to hide too, matched without case or accents. */
 export function privateMatcher(names: readonly string[] = []): LineMatcher {
     const wanted = names.map((name) => name.trim()).filter(Boolean);
     // A name matches with the spaces OCR leaves out or reads in, as textMatcher does, so a name that the "no screen text
     // matches" warning counts as read is also hidden.
-    // Each name is its own pattern (escaped, so a name never adds regex syntax): one alternation returned the first
-    // name that matched, so "Ann A" took "Anna" of "Annabelle Johnson" and the longer name stayed visible.
-    const namePatterns = wanted.map(
-        (name) => new RegExp([...name.replace(/\s+/g, "")].map(escapeRegExp).join("\\s*"), "gi")
-    );
+    // Each name is its own pattern (literalSource: escaped, so a name never adds regex syntax, and without accents): one
+    // alternation returned the first name that matched, so "Ann A" took "Anna" of "Annabelle Johnson" and the longer
+    // name stayed visible.
+    const namePatterns = wanted.map((name) => new RegExp(literalSource(name), "giu"));
     return compacting((text) => {
         const privates: TextMatch[] = findPrivateText(text).map((match) => ({ ...match, label: labelOf(match.kind) }));
         const found = [...privates];
@@ -452,13 +503,12 @@ function uncoveredParts(
         .filter(([from, to]) => to > from);
 }
 
-/** Where any of `patterns` matches in `text`, each found on its own and overlapping spans joined into one. */
+/**
+ * Where any of `patterns` matches in `text` without diacritics (foldedMatches), each found on its own and overlapping
+ * spans joined into one.
+ */
 function nameSpans(text: string, patterns: readonly RegExp[]): Array<[number, number]> {
-    const spans = patterns
-        .flatMap((pattern) => [...text.matchAll(pattern)])
-        .filter((match) => match[0].length > 0)
-        .map((match): [number, number] => [match.index ?? 0, (match.index ?? 0) + match[0].length])
-        .sort((a, b) => a[0] - b[0]);
+    const spans = foldedMatches(text, patterns).sort((a, b) => a[0] - b[0]);
     const joined: Array<[number, number]> = [];
 
     for (const span of spans) {
@@ -481,37 +531,40 @@ export type HideUnit = (typeof HIDE_UNITS)[number];
 /**
  * A literal text (without case) or a regular expression's source, as hideText asks for it. Each OCR line is matched on
  * its own (Vision reads a run of text on one baseline as a line): `^` and `$` are the line's start and end, the match
- * is without case, and a space OCR reads next to . @ _ - is left out first. A literal text also matches with spaces
- * OCR reads in or leaves out between its letters. `unit: "line"` makes each match cover its whole OCR line. `texts` and
+ * is without case, and a space OCR reads next to . @ _ - is left out first. A literal text also matches without
+ * accents, as the Find tab does, and with spaces OCR reads in or leaves out between its letters; a pattern runs on the
+ * line as read. `unit: "line"` makes each match cover its whole OCR line. `texts` and
  * `patterns` look for several at once.
  */
 export function textMatcher(options: TextMatcherOptions): LineMatcher {
-    const sources = [
-        ...[options.text, ...(options.texts ?? [])]
-            .map((text) => text?.trim())
-            .filter((text): text is string => Boolean(text))
-            // A literal text matches with the spaces OCR leaves out or reads in: "alice@example.com" finds
-            // "alice@example. com".
-            .map((text) => [...text.replace(/\s+/g, "")].map(escapeRegExp).join("\\s*")),
-        ...[options.pattern, ...(options.patterns ?? [])].filter((pattern): pattern is string => Boolean(pattern)),
-    ];
+    const literals = [options.text, ...(options.texts ?? [])]
+        .map((text) => text?.trim())
+        .filter((text): text is string => Boolean(text))
+        .map((text) => unicodePattern(literalSource(text)));
+    // A pattern runs on the line as read: a regular expression may name accented letters on purpose.
+    const patterns = [options.pattern, ...(options.patterns ?? [])]
+        .filter((pattern): pattern is string => Boolean(pattern))
+        .map(unicodePattern);
 
-    if (sources.length === 0) {
+    if (literals.length + patterns.length === 0) {
         throw new Error("give text (the words to hide) or pattern (a regular expression), or texts and patterns");
     }
 
-    const regexes = sources.map(unicodePattern);
     // R6 3: every text and pattern in one pass over the screen text; each value is its own hit.
     const matches = compacting((text) =>
-        regexes
-            .flatMap((regex) => [...text.matchAll(regex)])
-            .filter((match) => match[0].length > 0)
-            .map((match) => ({
+        [
+            ...foldedMatches(text, literals),
+            ...patterns
+                .flatMap((regex) => [...text.matchAll(regex)])
+                .filter((match) => match[0].length > 0)
+                .map((match): [number, number] => [match.index ?? 0, (match.index ?? 0) + match[0].length]),
+        ]
+            .map(([start, end]) => ({
                 kind: "text" as const,
                 label: "Text",
-                value: match[0].replace(/\s+/g, "").toLowerCase(),
-                start: match.index ?? 0,
-                end: (match.index ?? 0) + match[0].length,
+                value: text.slice(start, end).replace(/\s+/g, "").toLowerCase(),
+                start,
+                end,
             }))
             .sort((a, b) => a.start - b.start)
     );
@@ -539,10 +592,13 @@ const FRAGMENT_INNER_LETTERS = 6;
  * memory; a hit shows them masked.
  */
 export function edgeFragments(matcher: LineMatcher, values: readonly string[]): LineMatcher {
+    // Letters compare without accents, as the matchers do: "Novak" on screen is a part of "jiřínovák".
+    const bare = (text: string) => foldWithIndex(text).folded.toLowerCase();
     const known = [...new Set(values.map((value) => value.replace(/\s+/g, "").toLowerCase()))].map((value) => ({
         value,
+        folded: bare(value),
         digits: value.replace(/\D/g, ""),
-        letters: value.replace(/[^\p{L}]/gu, ""),
+        letters: bare(value).replace(/[^\p{L}]/gu, ""),
     }));
     const partOf = (found: TextMatch, value: string): TextMatch => ({
         ...found,
@@ -552,12 +608,12 @@ export function edgeFragments(matcher: LineMatcher, values: readonly string[]): 
     });
     return (text) => {
         const own = matcher(text);
-        const line = text.replace(/\s+/g, "").toLowerCase();
+        const line = bare(text.replace(/\s+/g, ""));
         const enough = line.length >= 5 || (line.length >= 3 && /\d/.test(line));
 
         if (own.length === 0 && enough) {
             const whole = known.find(
-                ({ value }) => value.length > line.length && (value.startsWith(line) || value.endsWith(line))
+                ({ folded }) => folded.length > line.length && (folded.startsWith(line) || folded.endsWith(line))
             );
 
             if (whole) {
@@ -598,7 +654,7 @@ export function edgeFragments(matcher: LineMatcher, values: readonly string[]): 
         }
 
         for (const run of text.matchAll(/\p{L}+/gu)) {
-            const word = run[0].toLowerCase();
+            const word = bare(run[0]);
             const owner =
                 word.length >= FRAGMENT_LETTERS
                     ? known.find(
@@ -699,6 +755,42 @@ const sameBox = (a: FractionBox, b: FractionBox): boolean =>
     Math.abs(a.width - b.width) < 0.001 &&
     Math.abs(a.height - b.height) < 0.001;
 
+/**
+ * The keys of a hit read on still frames (each shown until the next): every read's place holds until 1 µs before the
+ * next read of another place, the first from `fromUs` and the last until `toUs`, so the renderer, which moves a part
+ * straight between keys and runs on past the last, places the part where the frame on screen shows the text. A hit
+ * whose reads all stand in one place keeps its keys (it is a still part).
+ */
+function steppedKeys(keys: readonly TrackKey[], span: { fromUs: number; toUs: number }): TrackKey[] {
+    if (keys.every((key) => sameBox(key, keys[0]))) {
+        return [...keys];
+    }
+
+    const out: TrackKey[] = [{ ...keys[0], atUs: Math.min(span.fromUs, keys[0].atUs) }];
+
+    for (const key of keys.slice(1)) {
+        const held = out[out.length - 1];
+
+        if (sameBox(held, key)) {
+            continue;
+        }
+
+        if (key.atUs - 1 > held.atUs) {
+            out.push({ ...held, atUs: key.atUs - 1 });
+        }
+
+        out.push(key);
+    }
+
+    const last = out[out.length - 1];
+
+    if (span.toUs > last.atUs) {
+        out.push({ ...last, atUs: span.toUs });
+    }
+
+    return out;
+}
+
 function hitId(kind: string, value: string, fromUs: number, box: FractionBox): string {
     const key = `${kind}|${value}|${Math.round(fromUs / 100_000)}|${box.x.toFixed(2)},${box.y.toFixed(2)}`;
     return `p${createHash("sha1").update(key).digest("hex").slice(0, 8)}`;
@@ -732,18 +824,19 @@ function samePlace(a: FractionBox, b: FractionBox): boolean {
 
 /**
  * R8 2: a carried place with half a line of margin on each side: the motion that carries it is measured on blocks
- * coarser than a line, and a read box (matchBox) is a line and a half high, so a third of it is half a line.
+ * coarser than a line, and a read box (matchBox) is a line and a half high, so a third of it is half a line. Its x
+ * share keeps the pixels it has on a 16:9 picture on a picture of any other `aspect` (linePad).
  */
-function withMargin<T extends FractionBox>(box: T): T {
-    const pad = box.height / 3;
-    const x = clamp01(box.x - pad);
-    const y = clamp01(box.y - pad);
+function withMargin<T extends FractionBox>(box: T, aspect: number): T {
+    const pad = linePad({ height: box.height, lines: 1 / 3, aspect });
+    const x = clamp01(box.x - pad.x);
+    const y = clamp01(box.y - pad.y);
     return {
         ...box,
         x,
         y,
-        width: Math.min(1, box.x + box.width + pad) - x,
-        height: Math.min(1, box.y + box.height + pad) - y,
+        width: Math.min(1, box.x + box.width + pad.x) - x,
+        height: Math.min(1, box.y + box.height + pad.y) - y,
     };
 }
 
@@ -880,9 +973,11 @@ export function sweptBand(options: {
     velocity: { x: number; y: number };
     travelUs: number;
     area: FractionBox | undefined;
+    /** The picture's width over its height in pixels: the pads keep the pixels they have on 16:9 (linePad). */
+    aspect: number;
 }): FractionBox {
     const { box, velocity } = options;
-    const pad = Math.max(0.005, box.height * 0.5);
+    const pad = linePad({ height: box.height, lines: 0.5, aspect: options.aspect, floor: 0.005 });
     const area = options.area ?? { x: 0, y: 0, width: 1, height: 1 };
     // The moving part, but never smaller than the text itself.
     const lo = { x: Math.min(area.x, box.x), y: Math.min(area.y, box.y) };
@@ -901,31 +996,32 @@ export function sweptBand(options: {
 
     // No measured travel: only its own place (the picture under it changed, nothing says it went anywhere).
     if (velocity.x === 0 && velocity.y === 0) {
-        return clampBox(box.x - pad, box.y - pad, box.x + box.width + pad, box.y + box.height + pad);
+        return clampBox(box.x - pad.x, box.y - pad.y, box.x + box.width + pad.x, box.y + box.height + pad.y);
     }
 
     // On along its direction to where the picture stopped changing (a follow that failed under-measured its speed), and
     // past that as far as its speed carries it: the quarter-second change steps miss a text that only crossed a cell
     // between two of them (a banner that slid in from the edge). R8 3: only along a direction it really travels (half a
-    // line or more in that time); a drift of a few pixels across a scroll swept the band over the whole picture.
-    const travels = (distance: number) => distance >= Math.max(0.005, box.height * 0.5);
+    // line or more in that time, the pad, so along x the same pixels on any shape); a drift of a few pixels across a
+    // scroll swept the band over the whole picture.
+    const travels = { x: reach.x >= pad.x, y: reach.y >= pad.y };
     // Along its main direction to the moving area's edge; across it (a slide that also drifts) only as far as it went.
     const main = Math.abs(velocity.x) >= Math.abs(velocity.y) ? "x" : "y";
-    const left = velocity.x < 0 && travels(reach.x) ? Math.min(box.x - reach.x, main === "x" ? lo.x : 1) : box.x;
+    const left = velocity.x < 0 && travels.x ? Math.min(box.x - reach.x, main === "x" ? lo.x : 1) : box.x;
     const right =
-        velocity.x > 0 && travels(reach.x)
+        velocity.x > 0 && travels.x
             ? Math.max(box.x + box.width + reach.x, main === "x" ? hi.x : 0)
             : box.x + box.width;
-    const top = velocity.y < 0 && travels(reach.y) ? Math.min(box.y - reach.y, main === "y" ? lo.y : 1) : box.y;
+    const top = velocity.y < 0 && travels.y ? Math.min(box.y - reach.y, main === "y" ? lo.y : 1) : box.y;
     const bottom =
-        velocity.y > 0 && travels(reach.y)
+        velocity.y > 0 && travels.y
             ? Math.max(box.y + box.height + reach.y, main === "y" ? hi.y : 0)
             : box.y + box.height;
-    const band = clampBox(left - pad, top - pad, right + pad, bottom + pad);
-    const x = velocity.x < 0 && travels(reach.x) ? clamp01(left - pad) : band.x;
-    const y = velocity.y < 0 && travels(reach.y) ? clamp01(top - pad) : band.y;
-    const r = velocity.x > 0 && travels(reach.x) ? clamp01(right + pad) : band.x + band.width;
-    const b = velocity.y > 0 && travels(reach.y) ? clamp01(bottom + pad) : band.y + band.height;
+    const band = clampBox(left - pad.x, top - pad.y, right + pad.x, bottom + pad.y);
+    const x = velocity.x < 0 && travels.x ? clamp01(left - pad.x) : band.x;
+    const y = velocity.y < 0 && travels.y ? clamp01(top - pad.y) : band.y;
+    const r = velocity.x > 0 && travels.x ? clamp01(right + pad.x) : band.x + band.width;
+    const b = velocity.y > 0 && travels.y ? clamp01(bottom + pad.y) : band.y + band.height;
     return { x, y, width: Math.max(0.012, r - x), height: Math.max(0.012, b - y) };
 }
 
@@ -944,16 +1040,32 @@ export function sweptBand(options: {
  * straight up or down by at most `maxShift` of the picture between samples. A gap up to `gapUs` is bridged (a sample
  * can miss a line OCR read on its neighbours). A hit starts half way between the last sample without it and the first
  * with it (at most 0.5 s early), and lasts until the sample after its last.
+ *
+ * With `stills` (a frames recording: its proxy shows each frame unchanged until the next one), a hit holds each read's
+ * place until the next read and jumps there, and holds its first and last place to its start and end, so its part
+ * stands where the picture shows the text. The renderer moves a part straight from one key to the next and runs on past
+ * the last at the speed of the last two, which slid the part off a text that moved or jittered between two frames.
+ *
+ * `aspect` is the picture's width over its height in pixels: every pad around a hit keeps the pixels it has on 16:9.
  */
 export function textHits(
     frames: readonly ScreenTextFrame[],
     matcher: LineMatcher,
     {
+        aspect,
         gapUs = 1_500_000,
         maxShift = 0.35,
         exclude = [],
         motion,
-    }: { gapUs?: number; maxShift?: number; exclude?: readonly FractionBox[]; motion?: MotionModel } = {}
+        stills = false,
+    }: {
+        aspect: number;
+        gapUs?: number;
+        maxShift?: number;
+        exclude?: readonly FractionBox[];
+        motion?: MotionModel;
+        stills?: boolean;
+    }
 ): PrivateHit[] {
     interface Open {
         kind: HitKind;
@@ -1051,7 +1163,7 @@ export function textHits(
         for (const line of frame.lines) {
             for (const match of matcher(line.text)) {
                 matchedLines.add(line);
-                const box = matchBox(line, match);
+                const box = matchBox({ line, match, aspect });
 
                 if (exclude.some((area) => inside(box, area))) {
                     continue;
@@ -1118,7 +1230,9 @@ export function textHits(
                     continue;
                 }
 
-                const read = found.map((part) => matchBox(line, part)).reduce((all, box) => union(all, box));
+                const read = found
+                    .map((part) => matchBox({ line, match: part, aspect }))
+                    .reduce((all, box) => union(all, box));
                 const carried = carryTo(track, frame.atUs);
                 const centre = (box: FractionBox) => box.y + box.height / 2;
 
@@ -1159,7 +1273,7 @@ export function textHits(
                     return key;
                 }
 
-                return read && sameBox(read, key) ? key : withMargin(key);
+                return read && sameBox(read, key) ? key : withMargin(key, aspect);
             });
         }
     }
@@ -1175,10 +1289,14 @@ export function textHits(
                     index === all.length - 1 ||
                     !(sameBox(all[index - 1], key) && sameBox(all[index + 1], key))
             );
-            const keys = (motion ? simplifyKeys(deduped) : deduped).map((key) => ({
+            const placed = (motion ? simplifyKeys(deduped) : deduped).map((key) => ({
                 atUs: key.atUs,
                 ...rounded(clipped(key)),
             }));
+            const keys =
+                stills && !motion
+                    ? steppedKeys(placed, { fromUs: Math.round(track.fromUs), toUs: Math.round(track.toUs) })
+                    : placed;
 
             // R8 2: the renderer runs a part on past its first and last key at their speed; a followed hit already has
             // keys for its whole motion, and running on from a sliver read at the edge to a whole line made a box of
@@ -1317,6 +1435,7 @@ export function textHits(
                     velocity,
                     travelUs: Math.abs(stopUs - start.atUs) + BAND_MARGIN_US,
                     area: model.movingArea(fromUs, toUs),
+                    aspect,
                 }),
             });
             track.fromUs = Math.min(track.fromUs, fromUs);
@@ -1367,12 +1486,12 @@ export function textHits(
                 continue;
             }
 
-            const pad = Math.max(0.005, Math.max(from.height, to.height) * 0.5);
+            const pad = linePad({ height: Math.max(from.height, to.height), lines: 0.5, aspect, floor: 0.005 });
             const area = model.movingArea(from.atUs, to.atUs);
             const band = union(from, to);
             const inside = area ? union(area, band) : band;
-            const x = Math.max(inside.x, clamp01(band.x - pad));
-            const y = Math.max(inside.y, clamp01(band.y - pad));
+            const x = Math.max(inside.x, clamp01(band.x - pad.x));
+            const y = Math.max(inside.y, clamp01(band.y - pad.y));
             track.uncertain.push({
                 fromUs: Math.max(0, from.atUs - BAND_MARGIN_US),
                 toUs: to.atUs + BAND_MARGIN_US,
@@ -1380,8 +1499,8 @@ export function textHits(
                 box: {
                     x,
                     y,
-                    width: Math.min(inside.x + inside.width, band.x + band.width + pad) - x,
-                    height: Math.min(inside.y + inside.height, band.y + band.height + pad) - y,
+                    width: Math.min(inside.x + inside.width, band.x + band.width + pad.x) - x,
+                    height: Math.min(inside.y + inside.height, band.y + band.height + pad.y) - y,
                 },
             });
         }
@@ -1422,7 +1541,7 @@ export function textHits(
                 fromUs: last.atUs,
                 toUs: again.key.atUs,
                 why: "rest",
-                box: withMargin(union(last, again.key)),
+                box: withMargin(union(last, again.key), aspect),
             });
         }
     }
@@ -1443,12 +1562,16 @@ export function textHits(
     }
 }
 
-/** The private hits of a movie's screen text (and of `names`), tracked over time (textHits). */
+/** The private hits of a movie's screen text (and of `names`), tracked over time (textHits, with its `aspect`). */
 export function privateHits(
     frames: readonly ScreenTextFrame[],
-    options: { gapUs?: number; names?: readonly string[]; exclude?: readonly FractionBox[] } = {}
+    options: { aspect: number; gapUs?: number; names?: readonly string[]; exclude?: readonly FractionBox[] }
 ): PrivateHit[] {
-    return textHits(frames, privateMatcher(options.names), { gapUs: options.gapUs, exclude: options.exclude });
+    return textHits(frames, privateMatcher(options.names), {
+        aspect: options.aspect,
+        gapUs: options.gapUs,
+        exclude: options.exclude,
+    });
 }
 
 /**

@@ -42,6 +42,7 @@ import {
     stepDisplaySwitch,
 } from "./lib/frames-movie";
 import { framesDoneLine, framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "./lib/frames-recording";
+import { findOnScreenOf } from "./lib/fx-analysis";
 import { importMovie, parseImportMarker } from "./lib/import";
 import {
     alreadyInState,
@@ -63,13 +64,12 @@ import {
     shortRecordingId,
     waitForEditorOpen,
 } from "./lib/library";
-import { chaptersOf, clickGroupsOf, markersOf, searchLibrary } from "./lib/moments";
+import { chapterLines, clickGroupsOf, exportChapterPoints, markersOf, searchLibrary } from "./lib/moments";
 import { applyEdit, redoLastEdit, undoLastEdit } from "./lib/movie-client";
 import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay, parseDisplayPlan } from "./lib/proxy";
 import { copyRecording, revealRecording, trashRecordings } from "./lib/quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
 import { screenHitsWithOps } from "./lib/screen-ops";
-import { findOnScreen } from "./lib/screen-search";
 import { hostCloseEditor, hostOpenEditor } from "./lib/service-client";
 import {
     checkTargetOnScreen,
@@ -80,7 +80,7 @@ import {
     type StartFlags,
     withStartOptions,
 } from "./lib/start-options";
-import { Movie, movieDemoDriver } from "./lib/toolset";
+import { Movie, movieDemoDriver, recordingMovie } from "./lib/toolset";
 import { announcedCountdown, recordVideo, tracksPointer, videoDoneLine } from "./lib/video-recording";
 
 const { log } = logger.scoped("recorder");
@@ -574,7 +574,7 @@ program
 program
     .command("trash")
     .description(
-        `Move library recordings through the removal policy, all in one call (${toolCommand("rm trash")} lists the restore command). Run by an agent, or for a recording the policy does not allow, it asks the user: every such recording goes into ONE request they confirm with ${toolCommand("rm approve")} <id>. A meeting's screen recording is refused, and then nothing is moved`
+        `Move library recordings through the removal policy into the GenesisTools trash, all in one call; the answer names the batch, when it drains and the ${toolCommand("rm restore")} command that puts it back (${toolCommand("rm trash")} lists it too; the window's Move to Trash uses Finder's Trash). Run by an agent, or for a recording the policy does not allow, it asks the user: every such recording goes into ONE request they confirm with ${toolCommand("rm approve")} <id>. A meeting's screen recording is refused, and then nothing is moved`
     )
     .argument("<recording...>", "library ids, `last` or recording folders")
     .option("--no-aside", "keep the folders in the library while a request waits, instead of moving them aside")
@@ -610,6 +610,10 @@ const commentCommand = program
     )
     .option("--annotation <number>", "the annotation's number on the board --link names: the comment opens it")
     .option("--source", "at and --to are times of the recording itself, not of the edit")
+    .option(
+        "--export",
+        "at and --to are times of the exported file, as its player shows them (the intro card first); a time on a card goes onto the movie"
+    )
     // `comment add …` is taken here, not as a subcommand: commander would give an `add` subcommand's options to
     // `comment` itself, which has the same ones.
     .allowExcessArguments()
@@ -618,7 +622,14 @@ const commentCommand = program
             _recording: string,
             _at: string,
             _text: string,
-            flags: { to?: string; author?: string; link?: string; annotation?: string; source?: boolean },
+            flags: {
+                to?: string;
+                author?: string;
+                link?: string;
+                annotation?: string;
+                source?: boolean;
+                export?: boolean;
+            },
             command: Command
         ) => {
             try {
@@ -635,6 +646,10 @@ const commentCommand = program
                     throw new Error(`--annotation takes the annotation's number, not "${flags.annotation}"`);
                 }
 
+                if (flags.source && flags.export) {
+                    throw new Error("--source and --export name two clocks; give one");
+                }
+
                 const [value, at, text] = named;
                 out.result(
                     await commentOn(value, {
@@ -644,6 +659,7 @@ const commentCommand = program
                         author: flags.author,
                         link: flags.link,
                         annotation: flags.annotation === undefined ? undefined : Number(flags.annotation),
+                        clock: flags.export ? "export" : undefined,
                         source: flags.source,
                     })
                 );
@@ -656,7 +672,7 @@ const commentCommand = program
 commentCommand
     .command("import")
     .description(
-        "Import a vitrinka board's annotations as review comments: each annotation on a shot, movie or step card (or on one --card) at the OUTPUT time its text starts with (0:42, 1:02:03, 42s), else at 0:00 with a note; a second import adds nothing"
+        "Import a vitrinka board's annotations as review comments: each annotation on a shot, movie or step card (or on one --card) at the time its text starts with (0:42, 1:02:03, 42s), read on the exported file the board shows (the intro card's length comes off; a time on a card goes onto the movie with a note), else at 0:00 with a note; a second import adds nothing"
     )
     .argument("<recording>", "a library id, `last`, `open` or a recording folder")
     .argument("<board>", "the board's link (a ?card= link picks that card), <workspace>/<slug> or its slug")
@@ -771,13 +787,18 @@ program
     .command("markers")
     .description("The moments marked while a recording ran, with where each plays in its edit (null when cut)")
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
-    .option("--chapters", 'as "0:00 Intro" chapter lines for a video description (cut markers left out)')
-    .action(async (value: string, flags: { chapters?: boolean }) => {
+    .option(
+        "--chapters",
+        "as \"0:00 Intro\" chapter lines for the exported file's description (cut markers left out; with an intro card the first line is its title and every marker sits the card's length later)"
+    )
+    .option("--output-time", "with --chapters: the movie's own times, without the intro card")
+    .action(async (value: string, flags: { chapters?: boolean; outputTime?: boolean }) => {
         try {
             const opened = await openProject(value);
 
             if (flags.chapters) {
-                out.print(`${chaptersOf(markersOf(opened)).join("\n")}\n`);
+                const chapters = exportChapterPoints(opened, { clock: flags.outputTime ? "output" : "export" });
+                out.print(`${chapterLines(chapters).join("\n")}\n`);
                 return;
             }
 
@@ -836,7 +857,7 @@ program
     .action(
         async (value: string, flags: { find: string; replace: string; matchCase?: boolean; partOfWord?: boolean }) => {
             try {
-                const answer = await new Movie(value).replaceWords({
+                const answer = await recordingMovie(value).replaceWords({
                     find: flags.find,
                     replace: flags.replace,
                     matchCase: flags.matchCase,
@@ -880,7 +901,7 @@ program
 program
     .command("items-at")
     .description(
-        "What plays at an OUTPUT time of the edit, in words: the source time, the zoom, hidden parts, texts, shapes and the caption line"
+        "What plays at an OUTPUT time of the edit, in words: the source time, the picture and canvas zooms, hidden parts, texts, shapes, lenses, the caption line and what is said"
     )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .argument("<at>", 'output seconds or "m:ss"')
@@ -892,14 +913,26 @@ program
                 out.printlnErr(warning);
             }
 
+            const zoomWords = (label: string, view: typeof answer.zoom) => {
+                if (!view) {
+                    return undefined;
+                }
+
+                return "glide" in view
+                    ? `${label} glide ${view.glide.from.id} to ${view.glide.to.id}`
+                    : `${label} ${view.scale}× (${view.id})`;
+            };
             const seen = [
-                answer.zoom ? `zoom ${answer.zoom.scale}× (${answer.zoom.id})` : undefined,
+                zoomWords("zoom", answer.zoom),
+                zoomWords("canvas zoom", answer.canvasZoom),
                 ...answer.redactions.map(
                     (part) => `${part.style === "spotlight" ? "spotlight" : "hidden part"} ${part.id}`
                 ),
                 ...answer.texts.map((note) => `text "${note.text}" (${note.id})`),
                 ...answer.shapes.map((shape) => `${shape.kind} ${shape.id}`),
+                ...answer.lenses.map((lens) => `lens ${lens.id}`),
                 answer.caption ? `caption "${answer.caption}"` : undefined,
+                answer.spoken && !answer.caption ? `said "${answer.spoken}" (captions off)` : undefined,
             ].filter(Boolean);
             out.printlnErr(
                 `at ${answer.output} s (source ${answer.source} s): ${seen.length ? seen.join(", ") : "nothing over the picture"}`
@@ -920,7 +953,7 @@ program
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .action(async (value: string) => {
         try {
-            const answer = await new Movie(value).fix();
+            const answer = await recordingMovie(value).fix();
 
             for (const message of answer.fixed) {
                 out.printlnErr(`fixed  ${message}`);
@@ -1307,7 +1340,7 @@ program
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .option(
         "--out <file>",
-        "the file to write (default <name>-edited.<format> beside the source; never an existing file)"
+        "the file to write; the extension follows the format (default: the file chosen in the editor, else <name>-edited.<format> beside the source; a part adds -part-<from>-<to>; never an existing file without --overwrite)"
     )
     .option(
         "--format <format>",
@@ -1388,7 +1421,10 @@ program
     )
     .argument("<recording>", "the edit the movie was exported from")
     .argument("<movie>", "the exported movie")
-    .option("--from <time>", "the movie holds only the part from this OUTPUT time (seconds or m:ss)")
+    .option(
+        "--from <time>",
+        "the movie holds only the part from this OUTPUT time (seconds or m:ss), with no intro or end card"
+    )
     .option("--to <time>", "the movie holds only the part up to this OUTPUT time")
     .action(async (value: string, movie: string, flags: { from?: string; to?: string }) => {
         try {
@@ -1436,7 +1472,7 @@ program
             flags: { at: string; words: string; occurrence?: string; padMs?: string; dryRun?: boolean }
         ) => {
             try {
-                const movie = new Movie(value);
+                const movie = recordingMovie(value);
                 out.result(
                     await movie.cutWords({
                         at: parseTime(flags.at, "--at"),
@@ -1470,6 +1506,30 @@ program
     });
 
 program
+    .command("transcribe")
+    .description(
+        "Transcribe what the export plays (every unmuted audio track, on the movie's clock) into the transcript the captions read; a paid run, cached beside the movie"
+    )
+    .argument("<recording>", "a library id, `last`, a meeting id, a recording folder, a movie or an edit.json")
+    .option("--provider <provider>", "the transcription provider (default: the configured one)")
+    .option("--lang <code>", "the spoken language, e.g. en or cs")
+    .option("--refresh", "transcribe again even when a transcript is cached")
+    .action(async (value: string, flags: { provider?: string; lang?: string; refresh?: boolean }) => {
+        try {
+            out.result(
+                await recordingMovie(value).transcript({
+                    provider: flags.provider,
+                    lang: flags.lang,
+                    refresh: flags.refresh,
+                })
+            );
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
     .command("cut-fillers")
     .description(
         `Cut every filler word of the transcript in one step (${Object.keys(FILLER_WORDS).join(", ")} lists, or --words); one undo`
@@ -1491,7 +1551,7 @@ program
             flags: { lang?: string; all?: boolean; words?: string; padMs?: string; dryRun?: boolean }
         ) => {
             try {
-                const answer = await new Movie(value).cutFillers({
+                const answer = await recordingMovie(value).cutFillers({
                     ...(flags.lang ? { language: flags.lang } : {}),
                     level: flags.all ? "all" : "sounds",
                     ...(flags.words ? { words: flags.words.split(",").map((word) => word.trim()) } : {}),
@@ -1506,17 +1566,26 @@ program
         }
     );
 
+interface SubtitlesFlags {
+    format?: string;
+    out?: string;
+    from?: string;
+    to?: string;
+    outputTime?: boolean;
+}
+
 program
     .command("subtitles")
     .description(
-        "Write a recording's transcript as a subtitle file in the edit's time (cut lines left out, fixes kept)"
+        "Write a recording's transcript as a subtitle file for its export (cut lines left out, fixes kept): the export's clock, so with an intro card every cue starts the card's length later"
     )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .option("--format <format>", "srt (default) or vtt")
     .option("--out <file>", "the file to write (default beside the movie, named like its export)")
     .option("--from <time>", "only the part from this OUTPUT time, moved to start at 0 (an exported part)")
     .option("--to <time>", "only the part up to this OUTPUT time")
-    .action(async (value: string, flags: { format?: string; out?: string; from?: string; to?: string }) => {
+    .option("--output-time", "the movie's own times, without the intro card (a part never has one)")
+    .action(async (value: string, flags: SubtitlesFlags) => {
         try {
             const part =
                 flags.from === undefined && flags.to === undefined
@@ -1532,6 +1601,7 @@ program
                     format: flags.format === undefined ? "srt" : parseSubtitleFormat(flags.format),
                     out: flags.out,
                     part,
+                    clock: flags.outputTime ? "output" : undefined,
                 })
             );
         } catch (error) {
@@ -1637,7 +1707,9 @@ async function movieSeconds(folder: string): Promise<number | undefined> {
 
 program
     .command("find-screen")
-    .description("Where a text was on the screen of a frames recording or a meeting (OCR), at source seconds")
+    .description(
+        "Where a text was on the screen, at source seconds: a frames recording or a meeting from its OCR, a movie from its screen text (the first search reads it once, which can take minutes)"
+    )
     .argument("<recording>", "a library id, `last`, a meeting id or a recording folder")
     .argument("<text>", "the text to look for (case and accents ignored)")
     .option("--limit <n>", "at most this many frames", "50")
@@ -1645,7 +1717,9 @@ program
     .action(async (value: string, text: string, flags: { limit?: string; json?: boolean }) => {
         try {
             const folder = resolveRecording(value);
-            const hits = findOnScreen(folder, text, { limit: Number(flags.limit ?? 50) });
+            const hits = await findOnScreenOf(folder, async () => (await openProject(folder)).project, text, {
+                limit: Number(flags.limit ?? 50),
+            });
 
             if (flags.json) {
                 out.result(screenHitsWithOps(hits, await movieSeconds(folder)));

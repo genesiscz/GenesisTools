@@ -37,6 +37,18 @@ export const recordingManifestSchema = z.object({
 export type RecordingManifest = z.infer<typeof recordingManifestSchema>;
 
 /**
+ * One kept segment of a movie recording on the wall clock (`settings.video.spans` in recording.json): the movie's
+ * `sourceStartMs` to `sourceStartMs + lengthMs` was captured from `firstFrameEpochMs` (epoch ms) on. What lies between
+ * two spans (a pause, a rollover's re-arm, a retune, a switch) is in no movie, so a clock that kept running, the
+ * camera's, lines up with the screen only through them. A manifest written before 2026-11-09 has none.
+ */
+export interface RecordingSpan {
+    sourceStartMs: number;
+    firstFrameEpochMs: number;
+    lengthMs: number;
+}
+
+/**
  * A new movie recording's library id, `video-<local date>_<time>-<uuid>`: the library sorts its folders by the time in
  * the name, and `shortRecordingId` shortens it to the part before the uuid's second group.
  */
@@ -63,6 +75,44 @@ export function readRecordingManifest(folder: string): RecordingManifest | undef
     }
 
     return recordingManifestSchema.parse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
+}
+
+/**
+ * The manifest of a recording folder without throwing, for readers of many folders (the library list, its search):
+ * undefined when the folder holds none or the file is not a JSON object; `manifest` is missing when the schema
+ * refuses the object (the app's own shape, an older or newer version), and `raw` then still carries its keys.
+ */
+export function readRecordingManifestSafe(
+    folder: string
+): { manifest?: RecordingManifest; raw: Record<string, unknown>; problem?: string } | undefined {
+    const path = join(folder, RECORDING_MANIFEST);
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    let raw: unknown;
+
+    try {
+        raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+    } catch {
+        return undefined;
+    }
+
+    const object = z.record(z.string(), z.unknown()).safeParse(raw);
+
+    if (!object.success) {
+        return undefined;
+    }
+
+    const record = object.data;
+    const parsed = recordingManifestSchema.safeParse(record);
+    return parsed.success
+        ? { manifest: parsed.data, raw: record }
+        : {
+              raw: record,
+              problem: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
+          };
 }
 
 /**

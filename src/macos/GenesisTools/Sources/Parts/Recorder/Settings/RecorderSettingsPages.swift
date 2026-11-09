@@ -85,6 +85,16 @@ private struct RecorderRecordingSettings: View {
                 options: CaptureOptions.thresholds.map { NativeSettingsOption($0, "\(Self.number($0)) %") },
                 selection: model.capture(\.threshold), minSegmentWidth: 52)
                 .disabled(stillRateIsSame)
+            Divider()
+            NativeSettingsSegmented(
+                "When another app takes the focus", detail: "What the open capture picker does when you click another app or window.",
+                identifier: "recorder.settings.pickerFocusLoss",
+                options: [
+                    NativeSettingsOption(CapturePickerFocusLoss.stayOpen, "Stay open",
+                                         detail: "It stays until its close button, Escape, a choice or a start from the menu bar."),
+                    NativeSettingsOption(CapturePickerFocusLoss.close, "Close", detail: "It closes as a cancel."),
+                ],
+                selection: model.choice(CapturePickerFocusLoss.key, CapturePickerFocusLoss.stayOpen), minSegmentWidth: 80)
         }
     }
 
@@ -133,10 +143,10 @@ private struct RecorderRecordingSettings: View {
                 identifier: "recorder.settings.cameraPreview",
                 options: [
                     NativeSettingsOption(CameraPreviewPolicy.everyCameraRecording, "Every recording with the camera",
-                                         detail: "Also a recording the CLI or an agent started. Such a recording did not leave the preview out, so its screen movie shows the preview too, under the bubble the editor draws.",
+                                         detail: "Also a recording the CLI or an agent started. Every such recording leaves the preview out of its screen movie, so only the bubble the editor draws shows.",
                                          symbol: "video"),
                     NativeSettingsOption(CameraPreviewPolicy.pickerRecordings, "Picker recordings",
-                                         detail: "Only a recording the capture picker started; its movie leaves the preview out. Others record the camera with no preview.",
+                                         detail: "Only a recording the capture picker or the Start shortcut started; its movie leaves the preview out. Others record the camera with no preview.",
                                          symbol: "rectangle.dashed.badge.record"),
                     NativeSettingsOption(CameraPreviewPolicy.never, "Never",
                                          detail: "No preview, not even in the picker. The camera still records, and the editor places the bubble.",

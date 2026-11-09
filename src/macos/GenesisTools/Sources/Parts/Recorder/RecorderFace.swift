@@ -24,7 +24,8 @@ struct RecorderRequest {
     var export: String?
     var out: String?
     var json = false
-    /// `--no-focus`: the editor opens behind the front window and the app is not activated (tests, agents).
+    /// `--no-focus`: the editor opens behind the front window and the app is not activated (tests, agents); the
+    /// library goes behind too, and the picker comes to the front without the keyboard.
     var focus = true
     var snapshot: String?
     var width: CGFloat = 1440
@@ -146,9 +147,12 @@ package func runRecorder(_ args: [String]) -> Never {
         recorderInstance.serve { forwarded in
             let next = RecorderRequest.parse(forwarded)
             MainActor.assumeIsolated {
+                // The recorder service launches the face when a camera or window call finds no host: attach at once
+                // rather than after the retry's back-off (up to a minute).
+                RecorderServiceHost.shared?.attachNow()
                 if let edit = next.edit { EditorWindows.shared.open(path: edit, focus: next.focus, atSeconds: next.atSeconds, tab: next.tab) }
                 if next.library { LibraryWindow.shared.show(focus: next.focus) }
-                if next.picker { CapturePicker.shared.show() }
+                if next.picker { CapturePicker.shared.show(focus: next.focus) }
             }
         }
         RecorderMenu.shared.install()
@@ -158,7 +162,7 @@ package func runRecorder(_ args: [String]) -> Never {
         RecorderServiceHost.startForFace()
         if let edit = request.edit { EditorWindows.shared.open(path: edit, focus: request.focus, atSeconds: request.atSeconds, tab: request.tab) }
         if request.library { LibraryWindow.shared.show(focus: request.focus) }
-        if request.picker { CapturePicker.shared.show() }
+        if request.picker { CapturePicker.shared.show(focus: request.focus) }
         app.run()
     }
     exit(0)
@@ -236,6 +240,11 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         window.delegate = self
         let monitor = EditorKeys.install(model: model, window: window)
         open[ObjectIdentifier(window)] = (window, model, monitor)
+        model.onTitleChange = { [weak self, weak window] title in
+            guard let self, let window else { return }
+            window.title = title
+            self.writeOpenState(front: window.isKeyWindow ? window : nil)
+        }
         if wanted {
             NSApp.setActivationPolicy(.regular)
             focus(window)
@@ -276,19 +285,31 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         return nil
     }
 
-    /// Whether `path` names the editor of `model`: its recording folder, its edit file or its movie.
+    /// Whether `path` names the editor of `model`: its edit file, its movie, or for a recording (edit file `edit.json`)
+    /// its folder. A folder of loose movies names none of them, so two plain movies there stay two windows.
     static func names(_ model: EditorModel, _ path: String) -> Bool {
         let given = URL(fileURLWithPath: path).standardizedFileURL.path
         let edit = model.store.url.standardizedFileURL
-        return given == edit.deletingLastPathComponent().path || given == edit.path
+        return (edit.lastPathComponent == "edit.json" && given == edit.deletingLastPathComponent().path)
+            || given == edit.path
             || given == URL(fileURLWithPath: model.project.source.video).standardizedFileURL.path
+    }
+
+    /// The path editor-open.json names a window by, the rule TypeScript editorWindowKeyOf (library.ts) keeps: a
+    /// recording folder (edit file `edit.json`) by the folder, any other edit by its movie.
+    nonisolated static func openPath(store: URL, video: String) -> String {
+        let edit = store.standardizedFileURL
+        return edit.lastPathComponent == "edit.json"
+            ? edit.deletingLastPathComponent().path
+            : URL(fileURLWithPath: video).standardizedFileURL.path
     }
 
     /// `{ front?, open: [{ path, title, window }] }`: the editor's windows, `window` being each one's window number
     /// (what `window.open` answers). The recorder host's `window.list` and `window.changed` carry it as is.
     func openState() -> [String: Any] {
         func row(_ entry: (NSWindow, EditorModel, Any?)) -> [String: Any] {
-            ["path": entry.1.store.url.deletingLastPathComponent().path, "title": entry.1.title, "window": entry.0.windowNumber]
+            ["path": EditorWindows.openPath(store: entry.1.store.url, video: entry.1.project.source.video), "title": entry.1.title,
+             "window": entry.0.windowNumber]
         }
         var state: [String: Any] = ["open": open.values.map(row)]
         if let id = frontWindow, let entry = open[id] { state["front"] = row(entry) }
@@ -415,15 +436,15 @@ private struct ExportSummary: View {
         let settings = model.project.export
         let format = settings.format ?? .mp4
         let source = CGSize(width: model.project.source.width, height: model.project.source.height)
-        let size = EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: model.project.frame?.aspect,
-                                            h264Fps: settings.codec == .h264 ? 60 : nil).canvas
+        let size = EditRenderer.plannedOutput(export: settings, source: source, aspect: model.project.frame?.aspect,
+                                              nominalFps: model.sourceNominalFps).canvas
         let part = model.exportPart
         VStack(alignment: .leading, spacing: 8) {
             Text("Export").font(.system(size: 14, weight: .semibold))
             row("Format", format == .mp4 ? "MP4 · \(settings.codec == .h264 ? "H.264" : "HEVC")" : format.title)
             if format != .gif { row("Size", "\(Int(size.width)) × \(Int(size.height))") }
             row("Part", part.map { formatClockRange($0.fromUs, $0.toUs) }
-                ?? "Everything (\(formatClock(model.durationUs, tenths: true)))")
+                ?? "Everything (\(formatClock(model.durationUs, tenths: true))\(CardSpans.cardsNote(model.project) == nil ? "" : " + cards"))")
             row("File", EditExporter.outputURL(for: model.project, format: format).lastPathComponent)
             HStack {
                 Button("Settings…") { model.tab = .export; close() }
@@ -685,10 +706,12 @@ func stillFrames(project: EditProject, atOutput times: [Int64], zoom: ZoomState)
     return images
 }
 
-/// One frame of the edit as the export draws it, for the snapshot's preview. Nonisolated, as `stillFrames`.
-func stillFrame(project: EditProject, atOutput outUs: Int64, zoom: ZoomState, maxHeight: Int = 1080) async throws -> CGImage {
+/// One frame of the edit as the export draws it, for the snapshot's preview. Nonisolated, as `stillFrames`. A poster
+/// passes the export's `maxHeight` and `size`, so it has the export's size; a size the export refuses fails it too.
+func stillFrame(project: EditProject, atOutput outUs: Int64, zoom: ZoomState, maxHeight: Int = 1080,
+                size: EditProject.OutputSize? = nil) async throws -> CGImage {
     let asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
-    let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: maxHeight)
+    let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: maxHeight, size: size)
     let generator = AVAssetImageGenerator(asset: rendered.composition)
     generator.videoComposition = rendered.videoComposition
     generator.requestedTimeToleranceBefore = .zero

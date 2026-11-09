@@ -4,7 +4,11 @@ import SwiftUI
 /// The quick actions of one recording, the same list in the menu bar's Recent rows and on a library card: open it,
 /// copy its movie or a GIF to the clipboard, show it in Finder, rename it, open its meeting, move it to the Trash.
 /// The CLI (`tools recorder copy|reveal|rename|trash`) and the REPL (`movie.copy()`, `reveal()`, `rename()`,
-/// `trash()`) do the same through src/recorder/lib/quick-actions.ts; a GIF is made there.
+/// `trash()`) do the same through src/recorder/lib/quick-actions.ts; a GIF is made there. The trash lands in two places
+/// on purpose: this click uses Finder's Trash with Put Back, the CLI and the REPL the GenesisTools trash through
+/// `tools rm` (`tools rm restore <batch>` puts it back until it drains). For a recording that still
+/// records they differ from the menu here: they refuse the trash and `last` skips it, but a rename is kept, because
+/// both recorders take the title from recording.json when they write it at the stop.
 enum RecordingAction: String, CaseIterable, Identifiable {
     case open, firstComment, copyMovie, copyGIF, reveal, rename, openMeeting, trash
     var id: String { rawValue }

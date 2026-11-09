@@ -1,14 +1,26 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { bubbleRect } from "./camera";
+import { isPictureFile } from "./overlays";
 import {
     applyOp,
+    canvasShape,
+    clipEdgesOf,
+    cutEdgesOf,
     type EditOp,
     type EditProject,
     type EditTextNote,
+    exportPlanOf,
     outputDurationUs,
+    outputSpansOf,
     outputTimeOf,
+    playedUs,
+    sourceAfterPlayed,
     type TEXT_ALIGNS,
+    voiceoverExportSpans,
+    zoomsLinked,
 } from "./project";
 import { layoutText } from "./text-metrics";
+import { musicDucking } from "./voiceovers";
 
 /**
  * "fix": the export will be wrong or something never shows; "check": it works but may not be what was meant; "note"
@@ -51,6 +63,11 @@ export interface EditFacts {
         untilUs: number;
         lines: ReadonlyArray<{ text: string; x: number; y: number; width: number; height: number }>;
     }>;
+    /**
+     * The movie track's frame rate (recording.json settings.video.averageFps); absent: not known, so the export canvas
+     * is planned at 60 fps and no frame count is named.
+     */
+    nominalFps?: number;
 }
 
 /** A text that loses less than this to a cut is not worth a word. */
@@ -108,6 +125,33 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             });
         }
     }
+
+    // A text's way in runs in played time (the renderer's TextMotion): one still coming in when less than the shortest
+    // readable time is left is never read whole. A text too short to read at all is the issue above.
+    for (const note of project.texts ?? []) {
+        const played = playedUs(project, note.startUs, note.endUs);
+        const wayInUs = (note.animate?.ms ?? 0) * 1000;
+
+        if (!note.animate || played < SHORTEST_READABLE_US || wayInUs <= played - SHORTEST_READABLE_US) {
+            continue;
+        }
+
+        const fitsMs = Math.floor((played - SHORTEST_READABLE_US) / 100_000) * 100;
+        const animate = { kind: note.animate.kind, ms: fitsMs };
+        issues.push({
+            severity: "check",
+            kind: "text-animation-too-long",
+            item: `text ${note.id}`,
+            message: `The text "${note.text}" takes ${seconds(wayInUs)} s to come in (${note.animate.kind}) but plays for ${seconds(played)} s, so the viewer has under ${seconds(SHORTEST_READABLE_US)} s to read it whole`,
+            at: seconds(note.startUs),
+            target: { list: "texts", id: note.id },
+            ...(fitsMs >= 100 && {
+                fix: `movie.apply([{ op: "setText", id: "${note.id}", animate: { kind: "${animate.kind}", ms: ${fitsMs} } }])`,
+                action: { label: "Come In Faster", ops: [{ op: "setText", id: note.id, animate }] },
+            }),
+        });
+    }
+
     for (const part of project.redactions ?? []) {
         if (part.follow && !facts.hasCursorTrack) {
             issues.push({
@@ -120,11 +164,40 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
         }
     }
 
+    // A background picture saved before the frame op checked its type: the renderer draws a flat colour instead.
+    const backdrop = project.frame?.background;
+
+    if (backdrop?.kind === "image" && backdrop.image && !isPictureFile(backdrop.image)) {
+        issues.push({
+            severity: "fix",
+            kind: "background-not-picture",
+            item: "frame",
+            message: `The frame's background image ${backdrop.image} is not a picture the export reads, so it draws a flat colour`,
+            fix: "movie.frame({ background: { image: <a png, jpg, heic, tiff, gif, webp or bmp file> } })",
+        });
+    }
+
+    // An edit saved before the clicks op checked the track, or whose cursor.jsonl went missing: the renderer draws no
+    // ring and plays no tick without a track.
+    if ((project.clicks?.highlight || project.clicks?.sound) && !facts.hasCursorTrack) {
+        issues.push({
+            severity: "fix",
+            kind: "clicks-missing-cursor",
+            item: "clicks",
+            message:
+                "Click rings or the click sound are on, but the movie has no cursor track, so no click shows or ticks",
+            fix: "movie.clicks({ highlight: false, sound: false }), or record with --display or --region for clicks",
+            action: { label: "Turn off", ops: [{ op: "clicks", highlight: false, sound: false }] },
+        });
+    }
+
     const texts = [...(project.texts ?? [])].sort((a, b) => a.startUs - b.startUs);
     // R6 9: two texts overlap when what they show does (the renderer's font, wrap and clamp to the canvas; a plate
     // text's plate, a plain text's letters), not when their anchors are near: "same place" for texts side by side was
     // most of check()'s noise.
-    const canvas = canvasShape(project);
+    // The export's real canvas: a text wraps and clamps at its pixel size (exportPlanOf, EditRenderer.plannedOutput).
+    const plan = exportPlanOf(project, { nominalFps: facts.nominalFps });
+    const canvas = { ...canvasShape(project), shortSidePx: Math.min(plan.canvas.width, plan.canvas.height) };
     const shown = texts.flatMap((note) => {
         const box = shownBox(note, canvas);
         return box ? [{ note, box }] : [];
@@ -136,21 +209,30 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             .find((other) => other.note.startUs < note.endUs && boxesOverlap(box, other.box))?.note;
 
         if (over) {
+            // The later one moves to start where the earlier one ends, its length kept. The end to the millisecond,
+            // rounded up: a tenth rounded down (5.04 to 5) left the two showing together and the issue open.
+            const after = Math.ceil(note.endUs / 1000) / 1000;
             issues.push({
                 severity: "check",
                 kind: "text-overlap",
                 item: `text ${note.id}`,
                 message: `"${note.text}" and "${over.text}" show at the same time in the same place (${span(over.startUs, Math.min(note.endUs, over.endUs))})`,
-                // The later one moves to start where the earlier one ends, its length kept.
-                fix: `movie.retime({ id: "${over.id}", at: ${seconds(note.endUs)} })`,
+                fix: `movie.retime({ id: "${over.id}", at: ${after} })`,
                 at: seconds(over.startUs),
                 target: { list: "texts", id: over.id },
-                action: { label: "Move After", ops: [{ op: "retime", id: over.id, at: seconds(note.endUs) }] },
+                action: { label: "Move After", ops: [{ op: "retime", id: over.id, at: after }] },
             });
         }
     }
 
+    const lift = captionLiftIssue(project, canvas, facts);
+
+    if (lift) {
+        issues.push(lift);
+    }
+
     const music = project.audio.music;
+    const duck = musicDucking(project);
 
     if (music && !facts.musicFileExists) {
         issues.push({
@@ -184,9 +266,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             });
         }
 
-        const voiceDucks = (project.audio.voiceovers?.length ?? 0) > 0 && project.audio.ducking?.voiceovers !== false;
-
-        if (music && music.duck > 0 && !voiceDucks) {
+        if (music && duck.drops && duck.underTranscript && !duck.underVoiceovers) {
             issues.push({
                 severity: "check",
                 kind: "no-transcript",
@@ -195,6 +275,18 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                 fix: "await movie.transcript()",
             });
         }
+    }
+
+    // R4 8 music ducking: off under the transcript, the music drops only under voiceovers; a transcript changes nothing.
+    if (music && duck.drops && !duck.underTranscript && !duck.underVoiceovers) {
+        issues.push({
+            severity: "check",
+            kind: "music-ducks-nothing",
+            item: "music",
+            message:
+                "The music should drop under speech, but ducking is off under the transcript and the edit has no voiceover, so nothing ducks",
+            ...(facts.hasTranscript ? { fix: "await movie.ducking({ transcript: true })" } : {}),
+        });
     }
 
     // R4 voiceover clips: a gone file plays nothing; a clip whose start is cut is not mixed at all.
@@ -213,13 +305,27 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             });
         } else if (clip.card !== undefined) {
             // A card's line plays over its card and may run on into what follows; it needs only the card.
-            if (!project.cards?.[clip.card]) {
+            const card = project.cards?.[clip.card];
+
+            if (!card) {
                 issues.push({
                     severity: "fix",
                     kind: "voiceover-card-missing",
                     item: name,
                     message: `The voiceover on the ${clip.card} card does not play: the edit has no ${clip.card} card`,
                     fix: `movie.${clip.card}Card({ ... }) or movie.unvoiceover("${clip.id}")`,
+                    action: { label: "Remove", ops: [{ op: "unvoiceover", id: clip.id }] },
+                });
+            } else if (clip.atUs >= Math.round(card.seconds * 1_000_000)) {
+                // A card got shorter under its clip: the export lays it as voiceoverExportSpans says.
+                const plays = voiceoverExportSpans(project).some((span) => span.id === clip.id);
+                const starts = `The voiceover on the ${clip.card} card starts at ${tenths(clip.atUs)} s, the ${clip.card} card lasts ${card.seconds} s`;
+                issues.push({
+                    severity: plays ? "check" : "fix",
+                    kind: "voiceover-past-card",
+                    item: name,
+                    message: plays ? `${starts}, so it plays over the movie` : `${starts}, so it does not play`,
+                    fix: `movie.voiceover({ id: "${clip.id}", at: <a second under ${card.seconds}> }) or movie.unvoiceover("${clip.id}")`,
                     action: { label: "Remove", ops: [{ op: "unvoiceover", id: clip.id }] },
                 });
             }
@@ -252,10 +358,10 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
     }
 
     // R5 5 redaction edges
-    issues.push(...redactionEdgeIssues(project));
+    issues.push(...redactionEdgeIssues(project, facts.nominalFps === undefined ? undefined : plan.fps));
     issues.push(...zoomEaseAtCutIssues(project));
     // R7 10 zoom edge text
-    issues.push(...zoomEdgeIssues(project, facts.screenText ?? []));
+    issues.push(...zoomEdgeIssues(project, facts));
     // R6 1 moving text
     issues.push(...uncertainHideIssues(project));
     // R5 11 clamps: an op time past the end was clamped to it; the edit call said so once, check() keeps saying it.
@@ -274,6 +380,16 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
 }
 /** Source seconds to a tenth, as the messages say them. */
 const tenths = (us: number) => Math.round(us / 100_000) / 10;
+
+/** " (about N frames at F fps)" for `playedUs` of the export at `fps`; nothing when the rate is not known. */
+function framesAt(playedUs: number, fps: number | undefined): string {
+    if (fps === undefined) {
+        return "";
+    }
+
+    const frames = Math.max(1, Math.round((playedUs * fps) / 1_000_000));
+    return ` (about ${frames} frame${frames === 1 ? "" : "s"} at ${fps} fps)`;
+}
 
 /** The kinds the check looks at, each with how to remove it and how to name it for a person. */
 /** How long a lengthened item lasts: long enough to read. */
@@ -411,22 +527,67 @@ export function issueSummary(issues: readonly EditIssue[]): {
 }
 
 // R6 9 rendered text boxes
-/** The canvas's width and height with the short side 1: the frame's aspect, else the movie's. */
-export function canvasShape(project: EditProject): { width: number; height: number } {
-    const aspect = project.frame?.aspect;
-    const [w, h] =
-        aspect && aspect !== "source"
-            ? aspect.split(":").map(Number)
-            : [project.source.width || 16, project.source.height || 9];
-    const ratio = (w ?? 16) / (h ?? 9);
-    return ratio >= 1 ? { width: ratio, height: 1 } : { width: 1, height: 1 / ratio };
+// canvasShape lives in project.ts, where the camera op reads it too; check.ts callers keep importing it from here.
+export { canvasShape };
+
+/**
+ * The camera bubble where a caption has to lift above it (Captions.swift `Looks.drawCaption` with `avoid`). A caption
+ * that would run under the bubble wraps short of it, one gap (0.015 of the short side) before its near edge, and nothing
+ * is covered; when that leaves under 0.45 of the width (a phone-portrait canvas, a custom bubble near the middle) the
+ * caption lifts above the bubble instead, which is the case named here. Units of the canvas's short side.
+ */
+function captionLiftIssue(project: EditProject, canvas: TextCanvas, facts: EditFacts): EditIssue | undefined {
+    const camera = project.camera;
+    const captions = project.captions;
+
+    if (!camera?.show || !captions?.show || !facts.hasTranscript) {
+        return undefined;
+    }
+
+    const unit = canvas.shortSidePx ?? DEFAULT_SHORT_SIDE_PX;
+    const font = Math.max(8, Math.round(captions.size * unit));
+    // One line of the caption's plate: the line and the plate's inset above and below (0.38 of the font each).
+    const plateHeight =
+        (layoutText({ text: "Ag", px: font, wrapPx: unit * 10, align: "center" }).height + 2 * 0.38 * font) / unit;
+    const margin = 0.05;
+    const gap = 0.015;
+    const band =
+        captions.position === "top"
+            ? { top: margin, bottom: margin + plateHeight }
+            : { top: canvas.height - margin - plateHeight, bottom: canvas.height - margin };
+    const bubble = bubbleRect(camera, canvas);
+    const half = bubble.side / 2;
+
+    if (bubble.y + half <= band.top || bubble.y - half >= band.bottom) {
+        return undefined;
+    }
+
+    const centre = canvas.width / 2;
+    const room = bubble.x >= centre ? 2 * (bubble.x - half - gap - centre) : 2 * (centre - (bubble.x + half) - gap);
+
+    if (room >= canvas.width * 0.45) {
+        return undefined;
+    }
+
+    return {
+        severity: "check",
+        kind: "camera-lifts-captions",
+        item: "camera",
+        message:
+            "The camera bubble sits in the captions' band with too little room beside it, so a caption that reaches it lifts above the bubble",
+        fix: 'movie.camera({ corner: "topRight" })',
+        action: { label: "Move to Top Right", ops: [{ op: "camera", corner: "topRight" }] },
+    };
 }
 
 /**
- * The canvas's short side in pixels that check() lays texts out at, since it does not know the export's size. The size
- * matters little: the font sets a line about 1.5 % wider in em at 31 px than at 54 px, and the same from 78 px up.
+ * The canvas's short side in pixels a text is laid out at when the caller names none; check() passes the export's own
+ * (exportPlanOf), because a line that fits at 1080 px can wrap at 720 (the font sets a line wider in em when small).
  */
-const CHECK_SHORT_SIDE_PX = 1080;
+const DEFAULT_SHORT_SIDE_PX = 1080;
+
+/** A canvas in units of its short side (canvasShape), with that side's pixels when the export's size is known. */
+type TextCanvas = { width: number; height: number; shortSidePx?: number };
 /**
  * A plate's left edge before the canvas clamp, from the block's centre and width, the plate's width and `edge`: how far
  * inside the plate the edge that lines up lies. A plate text lines up its plate (`edge` 0), a plain text its letters
@@ -454,7 +615,7 @@ type CanvasBox = { left: number; top: number; right: number; bottom: number };
 
 /**
  * A text's plate on the canvas (units of the canvas's short side, y from the top), as the renderer draws it
- * (Captions.swift drawText, TextPlates.render and textOrigin) on a canvas whose short side is CHECK_SHORT_SIDE_PX:
+ * (Captions.swift drawText, TextPlates.render and textOrigin) on a canvas whose short side is `canvas.shortSidePx`:
  * the font is `size` of the short side in whole pixels, the lines are set with the renderer's font (text-metrics.ts)
  * and wrap at the block's width (0.8 of the canvas) less the plate's inset (0.7 × size each side, 0.38 × size above
  * and below). x, y is the block's centre: a centred text is centred on it, and a left- or right-aligned text lines up
@@ -462,7 +623,7 @@ type CanvasBox = { left: number; top: number; right: number; bottom: number };
  * lines up its plate and keeps it inside the canvas; a plain text draws no plate, so it lines up its letters and keeps
  * them inside the canvas, and its plate (the inset around them) may reach past the block's and the canvas's edge.
  */
-export function textBox(note: TextBoxNote, canvas: { width: number; height: number }): CanvasBox {
+export function textBox(note: TextBoxNote, canvas: TextCanvas): CanvasBox {
     return textBoxes(note, canvas).plate;
 }
 
@@ -471,11 +632,8 @@ export function textBox(note: TextBoxNote, canvas: { width: number; height: numb
  * lines that hold a letter. A blank line can make a plate much wider than its letters (text-metrics.ts layoutText).
  * No letters when the text has none.
  */
-export function textBoxes(
-    note: TextBoxNote,
-    canvas: { width: number; height: number }
-): { plate: CanvasBox; letters?: CanvasBox } {
-    const unit = CHECK_SHORT_SIDE_PX;
+export function textBoxes(note: TextBoxNote, canvas: TextCanvas): { plate: CanvasBox; letters?: CanvasBox } {
+    const unit = canvas.shortSidePx ?? DEFAULT_SHORT_SIDE_PX;
     const font = Math.max(8, Math.round(note.size * unit));
     const insetX = font * 0.7;
     const insetY = font * 0.38;
@@ -522,7 +680,7 @@ export function textBoxes(
  * and its blank lines are empty space, and a subtitle may sit inside a title's inset without touching its letters.
  * Nothing for a plain text with no letters.
  */
-function shownBox(note: EditTextNote, canvas: { width: number; height: number }): CanvasBox | undefined {
+function shownBox(note: EditTextNote, canvas: TextCanvas): CanvasBox | undefined {
     const boxes = textBoxes(note, canvas);
     return note.style === "plain" ? boxes.letters : boxes.plate;
 }
@@ -537,55 +695,10 @@ const SHORT_HIDING_US = 150_000;
 /** Holes around hiding parts up to this long are worth a look; longer ones are taken as meant. */
 const HIDING_HOLE_US = 1_000_000;
 
-/** The output length of `startUs`..`endUs` (source): each kept piece at its clip's speed. */
-function playedUs(project: EditProject, startUs: number, endUs: number): number {
-    return project.clips.reduce(
-        (sum, clip) =>
-            sum + Math.max(0, Math.min(clip.toUs, endUs) - Math.max(clip.fromUs, startUs)) / (clip.speed || 1),
-        0
-    );
-}
-
 /**
- * The source times where a clip starts or ends, in order: between two of them playedUs grows at one rate, so the
- * lengthening below solves it one stretch at a time.
+ * The source time from which that time..`endUs` plays `playUs` of output, by playedUs's own measure, as
+ * sourceAfterPlayed (project.ts) walks it.
  */
-function clipEdgesOf(project: EditProject): number[] {
-    return [...new Set(project.clips.flatMap((clip) => [clip.fromUs, clip.toUs]))].sort((a, b) => a - b);
-}
-
-/**
- * The source time where `startUs`..that time has played `playUs` of output, by playedUs's own measure: every clip that
- * plays a piece of it counts, so clips that repeat or reorder the source give what the check then measures. Walking the
- * clips one after the other ended a text over two 1x clips of the same second at 0.5 s, and it then played 1 s.
- */
-function sourceAfterPlayed({
-    project,
-    startUs,
-    playUs,
-}: {
-    project: EditProject;
-    startUs: number;
-    playUs: number;
-}): number {
-    let leftUs = playUs;
-    let atUs = startUs;
-
-    for (const edgeUs of clipEdgesOf(project).filter((us) => us > startUs)) {
-        const stretchUs = playedUs(project, atUs, edgeUs);
-
-        if (stretchUs > 0 && stretchUs >= leftUs) {
-            return Math.min(project.source.durationUs, Math.round(atUs + (leftUs * (edgeUs - atUs)) / stretchUs));
-        }
-
-        leftUs -= stretchUs;
-        atUs = edgeUs;
-    }
-
-    return project.source.durationUs;
-}
-
-/** The source time from which that time..`endUs` plays `playUs` of output, by playedUs's own measure, as above. */
 function sourceBeforePlayed({
     project,
     endUs,
@@ -614,31 +727,26 @@ function sourceBeforePlayed({
     return 0;
 }
 
-/** The source times where a kept clip ends before a cut (or the movie's end), and where one starts after a cut. */
-function cutEdgesOf(project: EditProject): { ends: number[]; starts: number[] } {
-    const clips = project.clips.filter((clip) => clip.toUs > clip.fromUs);
-    const ends = clips.filter((clip, index) => clips[index + 1]?.fromUs !== clip.toUs).map((clip) => clip.toUs);
-    const starts = clips
-        .filter((clip, index) => clip.fromUs > 0 && clips[index - 1]?.toUs !== clip.fromUs)
-        .map((clip) => clip.fromUs);
-    return { ends, starts };
-}
-
 /**
  * A zoom that runs into a cut but starts its ease out before it: the frames between the start of the ease out and the
  * cut show the view starting to leave, and the cut then jumps from that half-way view. Ending the zoom one ease out
- * after the cut puts the whole ease out inside the cut.
+ * after the cut puts the whole ease out inside the cut. The ease runs on the renderer's zoom clock (ZoomCurve.clockUs
+ * in TimelineMap.swift): a kept part as long as it plays, a cut part as long as it was recorded. A zoom linked to the
+ * zoom after it has no ease out: the view holds, or glides on across the cut, so nothing jumps there.
  */
 function zoomEaseAtCutIssues(project: EditProject): EditIssue[] {
     const issues: EditIssue[] = [];
     const ends = cutEdgesOf(project).ends;
     const seconds = (us: number) => Math.round(us / 1000) / 1000;
+    const clockUs = (fromUs: number, toUs: number) =>
+        playedUs(project, fromUs, toUs) + (toUs - fromUs) - keptUs(project, fromUs, toUs);
+    const linked = zoomsLinkedToNext(project);
 
     for (const zoom of project.zooms) {
         const easeUs = zoom.easeOutMs * 1000;
-        const cut = ends.find((end) => end > zoom.endUs - easeUs && end < zoom.endUs);
+        const cut = ends.find((end) => end > zoom.startUs && end < zoom.endUs && clockUs(end, zoom.endUs) < easeUs);
 
-        if (cut === undefined || easeUs <= 0) {
+        if (cut === undefined || easeUs <= 0 || linked.has(zoom.id)) {
             continue;
         }
 
@@ -647,7 +755,7 @@ function zoomEaseAtCutIssues(project: EditProject): EditIssue[] {
             severity: "check",
             kind: "zoom-eases-out-at-cut",
             item: `zoom ${zoom.id}`,
-            message: `The zoom at ${tenths(zoom.startUs)} s starts its ease out ${seconds(cut - (zoom.endUs - easeUs))} s before the cut at ${seconds(cut)} s, so its last frames before the cut start to zoom out and the cut jumps from there`,
+            message: `The zoom at ${tenths(zoom.startUs)} s starts its ease out ${seconds(easeUs - clockUs(cut, zoom.endUs))} s before the cut at ${seconds(cut)} s, so its last frames before the cut start to zoom out and the cut jumps from there`,
             fix: `movie.retime({ id: "${zoom.id}", to: ${to} })`,
             at: tenths(cut),
             target: { list: "zooms", id: zoom.id },
@@ -658,13 +766,39 @@ function zoomEaseAtCutIssues(project: EditProject): EditIssue[] {
     return issues;
 }
 
+/** The ids of the zooms linked to the zoom that plays after them, paired per target in play order as ZoomCurve does. */
+function zoomsLinkedToNext(project: EditProject): Set<string> {
+    const linked = new Set<string>();
+
+    for (const canvas of [false, true]) {
+        const ordered = project.zooms
+            .filter((zoom) => (zoom.target === "canvas") === canvas)
+            .flatMap((zoom) => {
+                const startOut = outputSpansOf(project, zoom.startUs, zoom.endUs)[0]?.fromUs;
+                return startOut === undefined ? [] : [{ zoom, startOut }];
+            })
+            .sort((a, b) => a.startOut - b.startOut || a.zoom.startUs - b.zoom.startUs);
+
+        for (const [index, { zoom }] of ordered.entries()) {
+            const next = ordered[index + 1];
+
+            if (next && zoomsLinked(project, zoom, next.zoom)) {
+                linked.add(zoom.id);
+            }
+        }
+    }
+
+    return linked;
+}
+
 /**
  * The holes a hiding part (blur, pixelate, black) can leave, which the export cannot see in the picture: a part that
  * covers under 0.15 s of the export, one that ends or starts a little short of a cut, and a short gap between two parts
  * near each other (text that scrolled from one box into the next). Holes up to `redactionJoins.snapMs` (250 ms) the
  * export closes by itself; the message says so, and the action writes the same times into the edit.
  */
-function redactionEdgeIssues(project: EditProject): EditIssue[] {
+/** `fps` is the export's frame rate when the movie's rate is known; without it no frame count is named. */
+function redactionEdgeIssues(project: EditProject, fps: number | undefined): EditIssue[] {
     const issues: EditIssue[] = [];
     const snapUs = (project.redactionJoins?.snapMs ?? 250) * 1000;
     const seconds = (us: number) => Math.round(us / 1000) / 1000;
@@ -691,7 +825,7 @@ function redactionEdgeIssues(project: EditProject): EditIssue[] {
                 severity: "check",
                 kind: "hiding-too-short",
                 item,
-                message: `The ${said(part)} covers only ${Math.round(played / 1000)} ms of the export (about ${Math.max(1, Math.round(played / 33_333))} frame${played < 50_000 ? "" : "s"} at 30 fps); check that it spans every frame the hidden thing shows`,
+                message: `The ${said(part)} covers only ${Math.round(played / 1000)} ms of the export${framesAt(played, fps)}; check that it spans every frame the hidden thing shows`,
                 fix: `movie.retime({ id: "${part.id}", from: ${seconds(Math.max(0, part.startUs - 100_000))}, to: ${seconds(Math.min(project.source.durationUs, part.endUs + 100_000))} })`,
                 at: tenths(part.startUs),
                 target,
@@ -842,14 +976,27 @@ export function cutIssues(
                 target,
                 action: { label: "Remove", ops: [{ op: entry.remove, id: entry.id }] },
             });
-        } else if (entry.kind === "text" && entry.endUs - entry.startUs - kept >= SHORTENED_US) {
+        } else if (
+            entry.kind === "text" &&
+            entry.endUs - entry.startUs - kept >= SHORTENED_US &&
+            playedUs(project, entry.startUs, entry.endUs) < LENGTHENED_US
+        ) {
+            // A text that runs on past a cut (a step title from titleMarkers) still plays long enough to read; only
+            // one the cut leaves under the lengthened time is worth a word, and the lengthen retime repairs it.
+            const longer = lengthened({ project, item: entry, shortest: SHORTEST_READABLE_US });
             issues.push({
                 severity: "check",
                 kind: "cut-shortens-text",
                 item: `text ${entry.id}`,
-                message: `The ${entry.said} (${span(entry.startUs, entry.endUs)}) loses ${tenths(entry.endUs - entry.startUs - kept)} s of its ${tenths(entry.endUs - entry.startUs)} s to a cut`,
+                message: `The ${entry.said} (${span(entry.startUs, entry.endUs)}) loses ${tenths(entry.endUs - entry.startUs - kept)} s of its ${tenths(entry.endUs - entry.startUs)} s to a cut and plays for ${tenths(playedUs(project, entry.startUs, entry.endUs))} s`,
                 at: tenths(entry.startUs),
                 target,
+                ...(longer && {
+                    fix: `movie.retime({ id: "${entry.id}", ${Object.entries(longer)
+                        .map(([key, value]) => `${key}: ${value}`)
+                        .join(", ")} })`,
+                    action: { label: "Lengthen", ops: [{ op: "retime", id: entry.id, ...longer }] },
+                }),
             });
         }
     }
@@ -980,26 +1127,159 @@ export function zoomView(zoom: { scale: number; focusX: number; focusY: number }
     return { x: centerX - half, y: centerY - half, width: side, height: side };
 }
 
+/** A part of the picture: fractions of its width and height, y from the top. */
+interface PictureRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+/** The part of the (zoomed) picture the frame keeps in view, and what cropped it ("cover", "layout"); empty: none. */
+export interface FrameCrop extends PictureRect {
+    by: Array<"cover" | "layout">;
+}
+
+type ScreenLine = NonNullable<EditFacts["screenText"]>[number]["lines"][number];
+
+/**
+ * What the frame leaves in view of the picture it is given (after the zoom: the zoomed view, scaled back to the whole
+ * picture), as Looks.swift `framePlacement` crops it: under `fit: "cover"` the room's shape around `focus` (0..1 of
+ * the picture from its top left; the renderer passes the cursor there, else the centre), then, when `layout.scale`
+ * grows the picture past the room, the room's part of that around `layout.focus`. No frame: the whole picture.
+ * RecorderHuntZoomEdgeFrameCropTests.swift pins the Swift side with the same cases as the TS test.
+ */
+export function frameCrop(project: EditProject, focus: { x: number; y: number } = { x: 0.5, y: 0.5 }): FrameCrop {
+    const frame = project.frame;
+    if (!frame) {
+        return { x: 0, y: 0, width: 1, height: 1, by: [] };
+    }
+
+    // Canvas units with its short side 1; the picture's height is the canvas's short side, as in the export.
+    const canvas = canvasShape(project);
+    const picture = { width: (project.source.width || 16) / (project.source.height || 9), height: 1 };
+    const planned = exportPlanOf(project).canvas;
+    const pixel = 1 / Math.min(planned.width, planned.height);
+    const room = {
+        width: Math.max(2 * pixel, canvas.width - 2 * frame.padding),
+        height: Math.max(2 * pixel, canvas.height - 2 * frame.padding),
+    };
+    const by: FrameCrop["by"] = [];
+    let crop = { x: 0, y: 0, width: picture.width, height: picture.height };
+
+    if (frame.fit === "cover") {
+        const aspect = room.width / room.height;
+        const width = picture.width / picture.height > aspect ? picture.height * aspect : picture.width;
+        const height = picture.width / picture.height > aspect ? picture.height : picture.width / aspect;
+        const centerX = Math.min(Math.max(focus.x * picture.width, width / 2), picture.width - width / 2);
+        const centerY = Math.min(Math.max(focus.y * picture.height, height / 2), picture.height - height / 2);
+        crop = { x: centerX - width / 2, y: centerY - height / 2, width, height };
+        by.push("cover");
+    }
+
+    const grow = Math.min(3, Math.max(0.5, frame.layout?.scale ?? 1));
+    const scale = Math.max(0.05, Math.min(room.width / crop.width, room.height / crop.height)) * grow;
+
+    if (crop.width * scale > room.width + pixel / 2 || crop.height * scale > room.height + pixel / 2) {
+        const visible = {
+            width: Math.min(crop.width * scale, room.width) / scale,
+            height: Math.min(crop.height * scale, room.height) / scale,
+        };
+        const keep = frame.layout?.focus ?? { x: 0.5, y: 0.5 };
+        const centerX = Math.min(
+            Math.max(crop.x + keep.x * crop.width, crop.x + visible.width / 2),
+            crop.x + crop.width - visible.width / 2
+        );
+        const centerY = Math.min(
+            Math.max(crop.y + keep.y * crop.height, crop.y + visible.height / 2),
+            crop.y + crop.height - visible.height / 2
+        );
+        crop = { x: centerX - visible.width / 2, y: centerY - visible.height / 2, ...visible };
+        by.push("layout");
+    }
+
+    return {
+        x: crop.x / picture.width,
+        y: crop.y / picture.height,
+        width: crop.width / picture.width,
+        height: crop.height / picture.height,
+        by,
+    };
+}
+
+/**
+ * What a picture zoom shows once the frame has cropped it (`shown`: the zoom's view, then the frame's crop of it), the
+ * frame's crop of the zoomed picture, and what the frame alone shows at the same moment (`alone`). The renderer
+ * centres a cover crop on the cursor (EditRenderer.coverFocus), which check() cannot place: with a cursor track it
+ * puts the cursor at the zoom's focus; without one the renderer centres it, and so does this.
+ */
+function shownByZoom(
+    project: EditProject,
+    zoom: { scale: number; focusX: number; focusY: number },
+    followsCursor: boolean
+): { shown: PictureRect; crop: FrameCrop; alone: FrameCrop } {
+    const view = zoomView(zoom);
+    const crop = frameCrop(
+        project,
+        followsCursor
+            ? { x: (zoom.focusX - view.x) / view.width, y: (zoom.focusY - view.y) / view.height }
+            : { x: 0.5, y: 0.5 }
+    );
+    const shown = {
+        x: view.x + crop.x * view.width,
+        y: view.y + crop.y * view.height,
+        width: crop.width * view.width,
+        height: crop.height * view.height,
+    };
+    const alone = frameCrop(project, followsCursor ? { x: zoom.focusX, y: zoom.focusY } : { x: 0.5, y: 0.5 });
+    return { shown, crop, alone };
+}
+
+/** How much of a line's width and height is outside `rect`, and whether any of it is inside. */
+function lineOutside(line: ScreenLine, rect: PictureRect): { outX: number; outY: number; seen: boolean } {
+    const insideX = Math.max(0, Math.min(line.x + line.width, rect.x + rect.width) - Math.max(line.x, rect.x));
+    const insideY = Math.max(0, Math.min(line.y + line.height, rect.y + rect.height) - Math.max(line.y, rect.y));
+    return {
+        outX: 1 - insideX / Math.max(1e-6, line.width),
+        outY: 1 - insideY / Math.max(1e-6, line.height),
+        seen: insideX > 0 && insideY > 0,
+    };
+}
+
+/** A line partly in view with at least CUT_SHARE of its width or height outside `rect`. */
+function cutBy(line: ScreenLine, rect: PictureRect): boolean {
+    const { outX, outY, seen } = lineOutside(line, rect);
+    return seen && (outX >= CUT_SHARE || outY >= CUT_SHARE);
+}
+
+/** The lines the zoom cuts: cut in what it shows with the frame, and not already cut by the frame alone. */
+function zoomCutLines(lines: readonly ScreenLine[], at: { shown: PictureRect; alone: PictureRect }): ScreenLine[] {
+    return lines.filter((line) => cutBy(line, at.shown) && !cutBy(line, at.alone));
+}
+
 /**
  * Picture zooms whose view cuts screen text at its edge (round 7: 1.2x on a phone cut the side labels in half), from
- * the screen text already read (never an OCR here). One issue per zoom, with a setZoom that fits the cut lines when a
- * smaller zoom (1.05x or more) can. A follow zoom moves with the cursor and a canvas zoom has no picture view: neither
- * is checked.
+ * the screen text already read (never an OCR here). The view is what the viewer sees: the zoom's view, then the
+ * frame's cover or grown-layout crop of it (`shownByZoom`); a line the frame alone cuts is not the zoom's. One issue
+ * per zoom, with a setZoom that keeps the cut lines whole when a smaller zoom (1.05x or more) does, checked again
+ * through the same view; otherwise the message says so and names the frame's crop. A follow zoom moves with the
+ * cursor and a canvas zoom has no picture view: neither is checked.
  */
-function zoomEdgeIssues(project: EditProject, screenText: NonNullable<EditFacts["screenText"]>): EditIssue[] {
+function zoomEdgeIssues(project: EditProject, facts: EditFacts): EditIssue[] {
+    const screenText = facts.screenText ?? [];
     if (screenText.length === 0) {
         return [];
     }
 
     const issues: EditIssue[] = [];
+    const followsCursor = project.frame?.fit === "cover" && facts.hasCursorTrack;
 
     for (const zoom of project.zooms) {
         if (zoom.mode === "follow" || zoom.target === "canvas" || keptUs(project, zoom.startUs, zoom.endUs) === 0) {
             continue;
         }
 
-        const view = zoomView(zoom);
-        const cut = new Map<string, { text: string; x: number; y: number; width: number; height: number }>();
+        const during = new Map<string, ScreenLine>();
 
         for (const frame of screenText) {
             if (frame.untilUs <= zoom.startUs || frame.atUs >= zoom.endUs) {
@@ -1007,49 +1287,64 @@ function zoomEdgeIssues(project: EditProject, screenText: NonNullable<EditFacts[
             }
 
             for (const line of frame.lines) {
-                const insideX = Math.max(
-                    0,
-                    Math.min(line.x + line.width, view.x + view.width) - Math.max(line.x, view.x)
-                );
-                const insideY = Math.max(
-                    0,
-                    Math.min(line.y + line.height, view.y + view.height) - Math.max(line.y, view.y)
-                );
-                const outX = 1 - insideX / Math.max(1e-6, line.width);
-                const outY = 1 - insideY / Math.max(1e-6, line.height);
-
-                if (insideX > 0 && insideY > 0 && (outX >= CUT_SHARE || outY >= CUT_SHARE)) {
-                    cut.set(`${line.text}@${Math.round(line.x * 100)},${Math.round(line.y * 100)}`, line);
-                }
+                during.set(`${line.text}@${Math.round(line.x * 100)},${Math.round(line.y * 100)}`, line);
             }
         }
 
-        if (cut.size === 0) {
+        const all = [...during.values()];
+        const now = shownByZoom(project, zoom, followsCursor);
+        const lines = zoomCutLines(all, now);
+
+        if (lines.length === 0) {
             continue;
         }
 
-        const lines = [...cut.values()];
-        const left = Math.min(view.x, ...lines.map((line) => line.x));
-        const right = Math.max(view.x + view.width, ...lines.map((line) => line.x + line.width));
-        const top = Math.min(view.y, ...lines.map((line) => line.y));
-        const bottom = Math.max(view.y + view.height, ...lines.map((line) => line.y + line.height));
-        const fitted = Math.floor((1 / Math.max(right - left + 0.02, bottom - top + 0.02)) * 100) / 100;
+        const { shown, crop } = now;
+        const left = Math.min(shown.x, ...lines.map((line) => line.x));
+        const right = Math.max(shown.x + shown.width, ...lines.map((line) => line.x + line.width));
+        const top = Math.min(shown.y, ...lines.map((line) => line.y));
+        const bottom = Math.max(shown.y + shown.height, ...lines.map((line) => line.y + line.height));
+        // The shown part of a zoom at scale s is the crop's size over s: the largest s that holds the lines and what
+        // shows now, with the view's centre placed so the crop's part lands on their centre.
+        const fitted =
+            Math.floor(Math.min(crop.width / (right - left + 0.02), crop.height / (bottom - top + 0.02)) * 100) / 100;
         const focus = {
-            x: Math.round(((left + right) / 2) * 1000) / 1000,
-            y: Math.round(((top + bottom) / 2) * 1000) / 1000,
+            x: Math.round(((left + right) / 2 + (0.5 - crop.x - crop.width / 2) / Math.max(1, fitted)) * 1000) / 1000,
+            y: Math.round(((top + bottom) / 2 + (0.5 - crop.y - crop.height / 2) / Math.max(1, fitted)) * 1000) / 1000,
         };
+        const after =
+            fitted >= 1.05 && fitted < zoom.scale
+                ? shownByZoom(project, { scale: fitted, focusX: focus.x, focusY: focus.y }, followsCursor)
+                : undefined;
+        const fits =
+            after !== undefined &&
+            lines.every((line) => {
+                const { outX, outY } = lineOutside(line, after.shown);
+                return outX < CUT_SHARE && outY < CUT_SHARE;
+            }) &&
+            zoomCutLines(all, after).length === 0;
+        const cropName = crop.by.length > 0 ? `the frame's ${crop.by.join(" and ")} crop` : undefined;
         const named = lines
             .slice(0, 2)
             .map((line) => `"${line.text.length > 24 ? `${line.text.slice(0, 23)}…` : line.text}"`)
             .join(", ");
+        const where = cropName ? `the edge of what ${cropName} leaves in view` : "its edge";
+        const remedy = fits
+            ? `${fitted}x around them keeps them whole`
+            : cropName
+              ? `no zoom of 1.05x or more keeps them whole inside ${cropName}, so move its focus, remove it or change the frame`
+              : "a smaller zoom or another focus keeps them whole";
+        const cursorNote = followsCursor
+            ? " (the export moves the cover crop with the cursor; this judges it with the cursor at the zoom's focus)"
+            : "";
         issues.push({
             severity: "check",
             kind: "zoom-cuts-text",
             item: `zoom ${zoom.id}`,
-            message: `The zoom at ${tenths(zoom.startUs)} s (${zoom.scale}x) cuts ${lines.length} line${lines.length === 1 ? "" : "s"} of screen text at its edge (${named}${lines.length > 2 ? ", …" : ""}); ${fitted >= 1.05 && fitted < zoom.scale ? `${fitted}x around them keeps them whole` : "a smaller zoom or another focus keeps them whole"}`,
+            message: `The zoom at ${tenths(zoom.startUs)} s (${zoom.scale}x) cuts ${lines.length} line${lines.length === 1 ? "" : "s"} of screen text at ${where} (${named}${lines.length > 2 ? ", …" : ""}); ${remedy}${cursorNote}`,
             at: tenths(zoom.startUs),
             target: { list: "zooms", id: zoom.id },
-            ...(fitted >= 1.05 && fitted < zoom.scale
+            ...(fits
                 ? {
                       fix: `movie.apply([{ op: "setZoom", id: "${zoom.id}", scale: ${fitted}, focus: { x: ${focus.x}, y: ${focus.y} } }])`,
                       action: {

@@ -1,4 +1,4 @@
-import { type EditProject, outputDurationUs, outputTimeOf, type TranscriptLine } from "./project";
+import { type EditProject, outputDurationUs, type TranscriptLine, transcriptLineSpans } from "./project";
 
 export const SUBTITLE_FORMATS = ["srt", "vtt"] as const;
 export type SubtitleFormat = (typeof SUBTITLE_FORMATS)[number];
@@ -11,9 +11,10 @@ export interface SubtitleCue {
 }
 
 /**
- * The transcript lines that play in the edit as cues in output time: a line cut away is left out, a line sped up
- * shows for its shorter time, and none runs into the next. `part` keeps the cues inside an exported part (output
- * microseconds) and moves them to start at 0.
+ * The transcript lines that play in the edit as cues in output time, where the burned-in captions show them: a line
+ * cut away is left out, a line whose start, middle or end is cut shows on what is kept of it, a line sped up shows for
+ * its shorter time, and none runs into the next. `part` keeps the cues inside an exported part (output microseconds)
+ * and moves them to start at 0.
  */
 export function subtitleCues(
     lines: readonly TranscriptLine[],
@@ -22,15 +23,13 @@ export function subtitleCues(
 ): SubtitleCue[] {
     const lengthUs = outputDurationUs(project);
     const placed = lines
-        .filter((line) => line.plays !== null)
-        .map((line) => {
-            const fromUs = Math.round((line.plays ?? 0) * 1_000_000);
-            const endUs = outputTimeOf(project, Math.round(line.to * 1_000_000));
-            // An end that was cut: the line keeps its spoken length, at most to the next line.
-            const toUs =
-                endUs !== undefined && endUs > fromUs ? endUs : fromUs + Math.round((line.to - line.from) * 1_000_000);
-            return { fromUs, toUs: Math.min(toUs, lengthUs), text: line.text };
-        })
+        .flatMap((line) =>
+            transcriptLineSpans(project, line).map((span) => ({
+                fromUs: span.fromUs,
+                toUs: Math.min(span.toUs, lengthUs),
+                text: line.text,
+            }))
+        )
         .sort((a, b) => a.fromUs - b.fromUs);
     const cues = placed.map((cue, index) => {
         const next = placed[index + 1];

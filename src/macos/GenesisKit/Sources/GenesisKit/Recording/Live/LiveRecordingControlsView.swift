@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The floating controls of one live recording: the grip, the state dot, the time since it started and its frames,
-/// its title, Pause or Resume, Stop, and a button that hides the controls. The look of `RecordingControlsView`.
+/// The floating controls of one live recording: the grip, the state dot, the recorded time (a movie's, which leaves out
+/// arming and pauses; else the time since it started) and its frames, its title, Pause or Resume, Stop, and a button
+/// that hides the controls. The look of `RecordingControlsView`.
 struct LiveRecordingControlsView: View {
     let recording: LiveRecording
     let send: (LiveRecordingCommand) -> Void

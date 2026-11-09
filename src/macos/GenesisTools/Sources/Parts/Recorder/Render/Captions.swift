@@ -80,10 +80,15 @@ final class TextPlates: @unchecked Sendable {
     }
 
     /// `plain`: no plate, the text with a soft shadow, for a title over a busy picture. `highlight` colours the first
-    /// `characters` characters (the karaoke caption's words said so far).
+    /// `characters` characters (the karaoke caption's words said so far). `visible` shows only the first that many
+    /// characters (a typewriter's typed letters), each where the whole text sets it, on the part of the plate round
+    /// them; that image's extent is the part's place on the whole plate, so it draws where the whole plate would.
     func plate(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight = .semibold, plain: Bool = false,
-               highlight: (characters: Int, color: NSColor)? = nil, alignment: NSTextAlignment = .center) -> CIImage? {
-        let key = "\(text)|\(Int(fontSize))|\(Int(maxWidth))|\(weight.rawValue)|\(plain)|\(highlight.map { "\($0.characters)\($0.color)" } ?? "")|\(alignment.rawValue)"
+               highlight: (characters: Int, color: NSColor)? = nil, visible: Int? = nil,
+               alignment: NSTextAlignment = .center) -> CIImage? {
+        // A count that shows every character is the whole plate.
+        let visible = visible.flatMap { $0 < text.count ? max(0, $0) : nil }
+        let key = "\(text)|\(Int(fontSize))|\(Int(maxWidth))|\(weight.rawValue)|\(plain)|\(highlight.map { "\($0.characters)\($0.color)" } ?? "")|\(visible.map(String.init) ?? "")|\(alignment.rawValue)"
         lock.lock()
         if let cached = images.value(for: key) {
             lock.unlock()
@@ -91,7 +96,7 @@ final class TextPlates: @unchecked Sendable {
         }
         lock.unlock()
         guard let image = Self.render(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, plain: plain,
-                                      highlight: highlight, alignment: alignment) else { return nil }
+                                      highlight: highlight, visible: visible, alignment: alignment) else { return nil }
         lock.lock()
         images.set(image, for: key)
         lock.unlock()
@@ -102,7 +107,7 @@ final class TextPlates: @unchecked Sendable {
     /// knows where the plate lands (Looks.textPlateRect). The colours (`plain`, `highlight`) never change the size.
     static func measure(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight = .semibold,
                         alignment: NSTextAlignment = .center) -> CGSize? {
-        layout(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, highlight: nil, alignment: alignment)?.size
+        layout(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, highlight: nil, visible: nil, alignment: alignment)?.size
     }
 
     /// The margin between a plate's edge and its letters: 0.7 of the font size at each side, 0.38 above and below. A plain
@@ -122,7 +127,7 @@ final class TextPlates: @unchecked Sendable {
 
     /// Nil for a plate too small to draw.
     private static func layout(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight,
-                               highlight: (characters: Int, color: NSColor)?, alignment: NSTextAlignment) -> Layout? {
+                               highlight: (characters: Int, color: NSColor)?, visible: Int?, alignment: NSTextAlignment) -> Layout? {
         let paragraph = NSMutableParagraphStyle()
         // R5 10 multi-line texts: "\n" starts a line, a long line wraps at maxWidth, and the lines align as asked.
         paragraph.alignment = alignment
@@ -136,6 +141,11 @@ final class TextPlates: @unchecked Sendable {
             let end = text.index(text.startIndex, offsetBy: min(highlight.characters, text.count))
             attributed.addAttribute(.foregroundColor, value: highlight.color, range: NSRange(text.startIndex..<end, in: text))
         }
+        // A typewriter's letters not typed yet keep their room, so the typed ones sit where the whole text sets them.
+        if let visible, visible < text.count {
+            let start = text.index(text.startIndex, offsetBy: max(0, visible))
+            attributed.addAttribute(.foregroundColor, value: NSColor.clear, range: NSRange(start..<text.endIndex, in: text))
+        }
         let inset = Self.inset(fontSize: fontSize)
         let bounds = attributed.boundingRect(with: CGSize(width: max(fontSize * 4, maxWidth - 2 * inset.width), height: .greatestFiniteMagnitude),
                                              options: [.usesLineFragmentOrigin, .usesFontLeading])
@@ -145,12 +155,21 @@ final class TextPlates: @unchecked Sendable {
     }
 
     private static func render(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight, plain: Bool,
-                               highlight: (characters: Int, color: NSColor)?, alignment: NSTextAlignment) -> CIImage? {
-        guard let layout = layout(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, highlight: highlight, alignment: alignment),
-              let context = CGContext(data: nil, width: Int(layout.size.width), height: Int(layout.size.height), bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                               highlight: (characters: Int, color: NSColor)?, visible: Int?, alignment: NSTextAlignment) -> CIImage? {
+        guard let layout = layout(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, highlight: highlight, visible: visible,
+                                  alignment: alignment) else { return nil }
         let size = layout.size
-        let plate = CGPath(roundedRect: CGRect(origin: .zero, size: size), cornerWidth: fontSize * 0.45, cornerHeight: fontSize * 0.45, transform: nil)
+        // The part of the plate drawn: all of it, or the part round a typewriter's typed letters.
+        var box = CGRect(origin: .zero, size: size)
+        if let visible {
+            guard let typed = typedBox(layout, visible: visible) else { return nil }
+            box = typed
+        }
+        guard let context = CGContext(data: nil, width: Int(box.width), height: Int(box.height), bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        // Drawn in the whole plate's space, so each letter lands on the pixels it has on the whole plate.
+        context.translateBy(x: -box.minX, y: -box.minY)
+        let plate = CGPath(roundedRect: box, cornerWidth: fontSize * 0.45, cornerHeight: fontSize * 0.45, transform: nil)
         if plain {
             context.setShadow(offset: CGSize(width: 0, height: -fontSize * 0.04), blur: fontSize * 0.25, color: CGColor(gray: 0, alpha: 0.85))
         } else {
@@ -164,14 +183,50 @@ final class TextPlates: @unchecked Sendable {
                                             height: layout.textHeight),
                                options: [.usesLineFragmentOrigin, .usesFontLeading])
         NSGraphicsContext.restoreGraphicsState()
-        return context.makeImage().map { CIImage(cgImage: $0) }
+        guard let image = context.makeImage().map({ CIImage(cgImage: $0) }) else { return nil }
+        return box.origin == .zero ? image : image.transformed(by: CGAffineTransform(translationX: box.minX, y: box.minY))
+    }
+
+    /// The part of a plate round its first `visible` characters, in the plate's pixels (lower-left origin): the typed
+    /// letters of each line where the whole text sets them, with the plate's margin round them, out to whole pixels.
+    /// Nil when nothing is typed.
+    private static func typedBox(_ layout: Layout, visible: Int) -> CGRect? {
+        let text = layout.attributed.string
+        guard visible > 0 else { return nil }
+        let typed = NSRange(text.startIndex..<text.index(text.startIndex, offsetBy: min(visible, text.count)), in: text)
+        // The box render draws the text in, laid out as attributed.draw lays it out there.
+        let container = NSTextContainer(size: CGSize(width: layout.size.width - 2 * layout.inset.width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        let manager = NSLayoutManager()
+        manager.usesFontLeading = true
+        manager.addTextContainer(container)
+        let storage = NSTextStorage(attributedString: layout.attributed)
+        storage.addLayoutManager(manager)
+        let glyphs = manager.glyphRange(forCharacterRange: typed, actualCharacterRange: nil)
+        var letters = CGRect.null
+        manager.enumerateLineFragments(forGlyphRange: glyphs) { line, used, _, lineGlyphs, _ in
+            // Typing runs from the start, so a line's typed glyphs are its first ones; they end where the next one starts.
+            let start = line.minX + manager.location(forGlyphAt: lineGlyphs.location).x
+            let end = NSMaxRange(glyphs) < NSMaxRange(lineGlyphs) ? line.minX + manager.location(forGlyphAt: NSMaxRange(glyphs)).x : used.maxX
+            letters = letters.union(CGRect(x: start, y: used.minY, width: max(0, end - start), height: used.height))
+        }
+        guard !letters.isNull else { return nil }
+        // The container runs down from the text's top, which render draws at inset.height + textHeight.
+        let top = layout.inset.height + layout.textHeight
+        let minX = max(0, letters.minX.rounded(.down))
+        let maxX = min(layout.size.width, (letters.maxX + 2 * layout.inset.width).rounded(.up))
+        let minY = max(0, (top - letters.maxY - layout.inset.height).rounded(.down))
+        let maxY = min(layout.size.height, (top - letters.minY + layout.inset.height).rounded(.up))
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 }
 
 extension Looks {
-    /// A text note in its block (textOrigin, kept inside the canvas), faded by `opacity`. `sinceUs` (source time since
-    /// its start) drives its `animate`: a typewriter shows the letters typed so far from the full text's left edge, a
-    /// slide-up rises into place while it fades in (TextMotion in Overlays.swift).
+    /// A text note in its block (textOrigin, kept inside the canvas), faded by `opacity`. `sinceUs` (how long it has
+    /// played since its first shown frame, ZoomState.texts) drives its `animate`: a typewriter shows the letters typed so
+    /// far, each where it rests in the whole text, on a plate that grows round them; a slide-up rises into place while it
+    /// fades in (TextMotion in Overlays.swift). Before 2026-11-09 the typed letters were set as a text of their own, so a
+    /// centred or right-aligned line slid sideways while a later line typed and then jumped into place.
     static func drawText(_ note: EditProject.TextNote, opacity: Double, plates: TextPlates, on image: CIImage, size: CGSize,
                          sinceUs: Int64? = nil) -> CIImage {
         // R4 6 animated texts
@@ -182,18 +237,19 @@ extension Looks {
         var plate = full
         if motion.characters < note.text.count {
             guard motion.characters > 0 else { return image }
-            guard let typed = plates.plate(String(note.text.prefix(motion.characters)), fontSize: style.fontSize, maxWidth: style.wrap,
-                                           weight: .semibold, plain: note.style == .plain, alignment: style.alignment) else { return image }
+            guard let typed = plates.plate(note.text, fontSize: style.fontSize, maxWidth: style.wrap, weight: .semibold,
+                                           plain: note.style == .plain, visible: motion.characters, alignment: style.alignment)
+            else { return image }
             plate = typed
         }
         let shown = opacity * motion.opacity
         if shown < 0.999 {
             plate = plate.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(shown))])
         }
-        // Placed by the full text's plate at rest (textPlateRect, where the editor's grip sits), so a typed line grows
-        // to the right and a risen one lands where it rests.
+        // Placed by the full text's plate at rest (textPlateRect, where the editor's grip sits). A typed plate is a part
+        // of the full one and its extent keeps that part's place, and a risen one lands where it rests.
         let rest = textPlateRect(note, plate: full.extent.size, size: size)
-        let top = rest.maxY - plate.extent.height - motion.drop * rest.height
+        let top = rest.maxY - full.extent.height - motion.drop * rest.height
         return plate.transformed(by: CGAffineTransform(translationX: rest.minX, y: top.rounded())).composited(over: image)
     }
 
@@ -267,17 +323,44 @@ extension Looks {
     }
 
     /// The caption plate centred near the bottom (or the top) of the output, sized from its short side. Returns the
-    /// picture and the height the plate takes from its edge, so the keys overlay can sit beside it.
+    /// picture, the height the plate takes from its edge (so the keys overlay can sit beside it) and the plate's rect.
+    /// `avoid` is the camera bubble's square while it shows (Core Image space). A plate that would run under it wraps
+    /// short of it, one gap (0.015 of the short side) before its near edge; when that leaves less than 0.45 of the width
+    /// (a phone-portrait canvas, a custom bubble near the middle) the plate lifts above the bubble instead. check.ts
+    /// `captionLiftIssue` names the lift case.
     static func drawCaption(_ line: CaptionTrack.Line, track: CaptionTrack, settings: EditProject.Captions, on image: CIImage,
-                            size: CGSize, highlight: (characters: Int, color: NSColor)? = nil) -> (image: CIImage, used: CGFloat) {
+                            size: CGSize, highlight: (characters: Int, color: NSColor)? = nil,
+                            avoid: CGRect? = nil) -> (image: CIImage, used: CGFloat, plate: CGRect?) {
         let unit = min(size.width, size.height)
         let fontSize = max(8, (settings.size * unit).rounded())
-        guard let plate = track.image(for: line, fontSize: fontSize, maxWidth: size.width * 0.86, highlight: highlight) else { return (image, 0) }
+        guard var plate = track.image(for: line, fontSize: fontSize, maxWidth: size.width * 0.86, highlight: highlight) else { return (image, 0, nil) }
         let margin = unit * 0.05
-        let x = ((size.width - plate.extent.width) / 2).rounded()
-        let y = settings.position == .top ? size.height - margin - plate.extent.height : margin
-        let drawn = plate.transformed(by: CGAffineTransform(translationX: x, y: y.rounded())).composited(over: image)
-        return (drawn, margin + plate.extent.height)
+        let top = settings.position == .top
+        func placed(_ plate: CIImage) -> CGRect {
+            let y = top ? size.height - margin - plate.extent.height : margin
+            return CGRect(x: ((size.width - plate.extent.width) / 2).rounded(), y: y.rounded(),
+                          width: plate.extent.width, height: plate.extent.height)
+        }
+        var rect = placed(plate)
+        var lifted = false
+        if let avoid, rect.intersects(avoid) {
+            let gap = unit * 0.015
+            let half = avoid.midX >= size.width / 2 ? avoid.minX - gap - size.width / 2 : size.width / 2 - avoid.maxX - gap
+            let room = (2 * half).rounded(.down)
+            if room >= size.width * 0.45,
+               let narrow = track.image(for: line, fontSize: fontSize, maxWidth: room, highlight: highlight),
+               !placed(narrow).intersects(avoid) {
+                plate = narrow
+                rect = placed(narrow)
+            } else {
+                let y = top ? avoid.minY - gap - plate.extent.height : avoid.maxY + gap
+                rect.origin.y = min(max(0, y), size.height - plate.extent.height).rounded()
+                lifted = true
+            }
+        }
+        let drawn = plate.transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY)).composited(over: image)
+        let used = lifted ? (top ? size.height - rect.minY : rect.maxY) : margin + plate.extent.height
+        return (drawn, used, rect)
     }
 
     /// The shortcut pressed last, centred near its edge (above a caption on the same edge), fading out at its end.

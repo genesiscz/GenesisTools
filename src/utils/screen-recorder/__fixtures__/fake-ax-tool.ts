@@ -2,8 +2,10 @@
  * A stand-in for `ax-tool` in tests: `--help` names the capture flags, `screens` lists two displays, and `capture
  * --control-stdin` keeps one frame, then takes switch, pause, resume and stop as JSON lines on stdin and answers with
  * events on stderr, as the real recorder does. The end of stdin or SIGINT stops it with the normal result on stdout.
+ * `--fixture-late-png=<epoch ms>` writes the first PNG 800 ms after that capture time and reports the time as
+ * `firstFrameEpochMs`, as ax-tool does; `--fixture-late-png-old=<epoch ms>` leaves it out, as an older ax-tool did.
  */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
@@ -80,6 +82,8 @@ const outDir = value("--out") ?? ".";
 let displayId = Number(value("--display-id"));
 const frames: Array<Record<string, unknown>> = [];
 let finished = false;
+const latePng = fixtureMode?.match(/^--fixture-late-png(-old)?=(\d+)$/);
+const capturedAt = latePng ? Number(latePng[2]) : undefined;
 mkdirSync(outDir, { recursive: true });
 
 const keep = (reason: string) => {
@@ -97,6 +101,7 @@ const keep = (reason: string) => {
     };
     frames.push(frame);
     print({ event: "frame", ...frame }, "stderr");
+    return path;
 };
 
 const finish = (cancelled: boolean) => {
@@ -125,13 +130,25 @@ const finish = (cancelled: boolean) => {
     print({
         ok: true,
         success: true,
-        data: { frames, cancelled, stats: { keptFrames: frames.length }, ...(tracks ? { tracks } : {}) },
+        data: {
+            frames,
+            cancelled,
+            stats: { keptFrames: frames.length },
+            ...(tracks ? { tracks } : {}),
+            ...(capturedAt !== undefined && !latePng?.[1] ? { firstFrameEpochMs: capturedAt } : {}),
+        },
     });
     process.exit(0);
 };
 
 process.on("SIGINT", () => finish(true));
-keep("first");
+const firstPng = keep("first");
+
+if (capturedAt !== undefined) {
+    const landed = new Date(capturedAt + 800);
+    utimesSync(firstPng, landed, landed);
+}
+
 print({ event: "state", state: "recording", displayId }, "stderr");
 
 let pending = "";

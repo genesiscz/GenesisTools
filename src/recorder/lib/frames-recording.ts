@@ -1,3 +1,4 @@
+import { COUNTDOWN_HOLD_MS } from "@app/control/lib/peekaboo";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { parseFlags } from "@genesiscz/utils/cli/flag-issues";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
@@ -14,7 +15,7 @@ import {
 import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 import type { z } from "zod";
 import { type StartFlags, startAudioOf } from "./start-options";
-import { showRecorderCountdown } from "./video-recording";
+import { type RecorderCountdown, showRecorderCountdown } from "./video-recording";
 
 /** The line `tools recorder start --frames` prints at the end: the folder, its frames and how many OCR could not read. */
 export function framesDoneLine(result: {
@@ -180,7 +181,7 @@ export function framesStartOf(flags: StartFlags): FramesStart {
 export interface FramesRecordingOptions {
     start: FramesStart;
     countdownSeconds?: number;
-    countdown?: (seconds: number) => Promise<void>;
+    countdown?: RecorderCountdown;
     /** The frame recorder; default the native one (ax-tool), as the REPL's recorder toolset builds it. */
     recorder?: () => FrameRecorder;
     /** The JPEG converter and the OCR; default the real ones. */
@@ -191,22 +192,58 @@ export interface FramesRecordingOptions {
 
 const nativeRecorder = () => FRAME_RECORDERS.native({ axTool: async (options) => [await ensureBinaryAsync(options)] });
 
+/** How often a held countdown looks for a frames recording's first frame. */
+const FIRST_FRAME_POLL_MS = 200;
+
+/** Resolves once the recording has its first frame, stopped recording, or `COUNTDOWN_HOLD_MS` passed. */
+async function firstFrameOf(recording: LibraryRecording): Promise<void> {
+    const deadline = Date.now() + COUNTDOWN_HOLD_MS;
+
+    while (Date.now() < deadline) {
+        const entry = recording.entry;
+
+        if (!entry || entry.frames > 0 || entry.state !== "recording") {
+            return;
+        }
+
+        await Bun.sleep(Math.min(FIRST_FRAME_POLL_MS, deadline - Date.now()));
+    }
+}
+
 /** Records frames until the stop command, the menu bar item, Ctrl-C or the length limit; resolves after the finish. */
 export async function recordFrames(
     options: FramesRecordingOptions
 ): Promise<StopAnswer & { id: string; folder: string }> {
     const countdownSeconds = options.countdownSeconds ?? 0;
+    let starting: Promise<LibraryRecording> | undefined;
+    const start = (): Promise<LibraryRecording> => {
+        starting ??= startRecording({
+            recorder: (options.recorder ?? nativeRecorder)(),
+            ...libraryStartOptions(options.start),
+            ...(options.deps ? { deps: options.deps } : {}),
+        });
+        return starting;
+    };
 
     if (countdownSeconds > 0) {
         await ensureBinaryAsync();
-        await (options.countdown ?? showRecorderCountdown)(countdownSeconds);
+        // As a movie's countdown does (`recordVideo`): the recording starts as the last second begins and zero waits
+        // for its first frame. A frames recording cannot name windows to leave out; the overlay's sharing type does.
+        const firstFrame = Promise.withResolvers<void>();
+        await (options.countdown ?? showRecorderCountdown)(countdownSeconds, {
+            lastSecond: () => {
+                // A failed start ends the hold; its error comes from the await below.
+                start()
+                    .then(firstFrameOf, (error: unknown) => {
+                        log.debug({ error }, "the frames recording did not start during the countdown");
+                    })
+                    .finally(() => firstFrame.resolve());
+            },
+            until: firstFrame.promise,
+        });
     }
 
-    const recording = await startRecording({
-        recorder: (options.recorder ?? nativeRecorder)(),
-        ...libraryStartOptions(options.start),
-        ...(options.deps ? { deps: options.deps } : {}),
-    });
+    const recording = await start();
     log.info({ id: recording.id, folder: recording.folder, start: options.start }, "frames recording started");
     options.onStart?.(recording);
     const answer = await withInterrupt(

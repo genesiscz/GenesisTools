@@ -741,6 +741,8 @@ extension EditOp {
         var cell: Double?
         // R8 11: 0 makes the edge sharp again.
         var dimAround: Double?
+        /// New keyframes in place of the part's own (a move of a part that follows its text); [] makes it fixed.
+        var track: [Redact.Key]?
         var op: EditOp { .setRedaction(self) }
     }
 

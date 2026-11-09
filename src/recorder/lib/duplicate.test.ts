@@ -93,7 +93,9 @@ describe("duplicateRecording", () => {
         // order never depend on which tests ran before.
         try {
             const id = answer.id ?? "";
-            expect(id).toMatch(/^video-2026-11-07_15-30-00-[0-9a-f]{8}$/);
+            expect(id).toMatch(
+                /^video-2026-11-07_15-30-00-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+            );
             expect(answer.folder).toBe(recordingsLibraryDir(id));
             expect(read(join(answer.folder, "recording.json"))).toMatchObject({ id, title: "After" });
             expect(read(answer.path)).toMatchObject({ source: { recording: id } });
@@ -128,5 +130,35 @@ describe("duplicateRecording", () => {
         expect(edit.source).toMatchObject({ video: join(target, "talk.mp4") });
         expect(edit.audio).toMatchObject({ music: { file: join(target, "bed.mp3") } });
         expect(existsSync(join(target, "bed.mp3"))).toBe(true);
+    });
+
+    test("a plain movie copies the cursor pictures beside its cursor track", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-duplicate-"));
+        const movie = join(root, "talk.mp4");
+        writeFileSync(movie, "not really a movie");
+        writeFileSync(join(root, "cursor.jsonl"), '{"t":0.1,"x":0.5,"y":0.5,"shape":"abc","pw":100}\n');
+        mkdirSync(join(root, "cursor-shapes"));
+        writeFileSync(join(root, "cursor-shapes", "abc.png"), "png");
+        writeFileSync(join(root, "cursor-shapes", "abc.json"), '{"hotX":0,"hotY":0,"width":16,"height":16}');
+        writeFileSync(
+            join(root, "talk.edit.json"),
+            SafeJSON.stringify({
+                version: 1,
+                source: {
+                    video: movie,
+                    cursor: join(root, "cursor.jsonl"),
+                    durationUs: 5_000_000,
+                    width: 640,
+                    height: 360,
+                },
+                clips: [{ id: "c1", fromUs: 0, toUs: 5_000_000 }],
+            })
+        );
+        const target = join(root, "copy");
+        await duplicateRecording(join(root, "talk.edit.json"), { to: target });
+
+        expect(existsSync(join(target, "cursor.jsonl"))).toBe(true);
+        expect(existsSync(join(target, "cursor-shapes", "abc.png"))).toBe(true);
+        expect(existsSync(join(target, "cursor-shapes", "abc.json"))).toBe(true);
     });
 });

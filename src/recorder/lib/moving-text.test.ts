@@ -6,7 +6,7 @@ import { withSpawnCounter } from "@app/benchmark/lib/spawn-counter";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { movieContentKey } from "@genesiscz/utils/recording-editor/analysis-cache";
 import { framePresentationUs, gridRead, readGridPictures } from "@genesiscz/utils/recording-editor/frame-grid";
-import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
+import { type FractionBox, type PrivateHit, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
 import {
     applyOp,
     editOpSchema,
@@ -14,6 +14,7 @@ import {
     wholeProject,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
+import type { ChangeStep } from "@genesiscz/utils/recording-editor/waits";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { computeEdit } from "./edit";
@@ -22,11 +23,13 @@ import {
     exportFrameCache,
     exportRangeOf,
     findText,
+    leaveFixedVisible,
     ocrVideo,
     scanOf,
     sourceScanOf,
     textHitsOf,
     verifyHidden,
+    verifyMatcherOf,
 } from "./fx-analysis";
 
 /**
@@ -542,6 +545,49 @@ describe("frame reads refuse a rate that never advances", () => {
                 "every 0.1 to 5 seconds"
             );
         }
+    });
+});
+
+describe("verifyHidden checks the names it is given", () => {
+    test("names beside a text turn the private check on", () => {
+        const matcher = verifyMatcherOf({ text: "Bob", names: ["Alice Example"] });
+        expect(matcher("Alice Example").map((match) => match.kind)).toEqual(["name"]);
+        expect(matcher("Bob").map((match) => match.kind)).toEqual(["text"]);
+    });
+
+    test("names with private: false are refused before anything is exported", async () => {
+        expect(() => verifyMatcherOf({ names: ["Alice Example"], private: false })).toThrow(/names are private data/);
+        await expect(
+            verifyHidden("/nonexistent/verify.edit.json", { names: ["Alice Example"], private: false })
+        ).rejects.toThrow(/names are private data/);
+    });
+});
+
+describe("excludeFixed leaves a still toast visible on every source", () => {
+    test("a hit that moves past a toast that stays still gets the toast as an excluded area", () => {
+        const grid = { columns: 4, rows: 3 };
+        // Every cell changes while it scrolls but cell 5 (row 1, column 1): the toast.
+        const scrolling: ChangeStep = { changed: 11, cells: 12, mask: "fdf", dy: -3 };
+        const still: ChangeStep = { changed: 0, cells: 12 };
+        const steps = [still, still, still, still, still, scrolling, scrolling, scrolling, still];
+        const box = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
+        const hit: PrivateHit = {
+            id: "h1",
+            kind: "text",
+            label: "Text",
+            masked: "a…e",
+            fromUs: 1_250_000,
+            toUs: 2_000_000,
+            box,
+            keys: [
+                { atUs: 1_250_000, x: 0.1, y: 0.8, width: 0.8, height: 0.1 },
+                { atUs: 2_000_000, x: 0.1, y: 0.1, width: 0.8, height: 0.1 },
+            ],
+        };
+        const [left] = leaveFixedVisible([hit], { steps, fps: 4, grid });
+        expect(left.exclude?.length).toBe(1);
+        const [resting] = leaveFixedVisible([{ ...hit, keys: hit.keys.slice(0, 1) }], { steps, fps: 4, grid });
+        expect(resting.exclude).toBeUndefined();
     });
 });
 

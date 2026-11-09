@@ -43,6 +43,13 @@ public struct LiveRecording: Equatable, Identifiable, Sendable {
     public var lastError: String?
     /// False while there is no socket to send a command to.
     public var canControl = true
+    /// A movie recording's recorded time (arming, pauses and a rollover's gap left out, 0 again after a restart), as
+    /// its socket last said it; nil for a recorder that sends none, such as the meeting recorder.
+    public var recordedMs: Double?
+    /// When `recordedMs` came in.
+    public var recordedAt: Date?
+    /// False while the recorded time stands still although the state says recording: a segment arms.
+    public var recordedRunning = true
 
     public struct ConnectedDisplay: Equatable, Sendable {
         public var id: Int64
@@ -93,8 +100,12 @@ public struct LiveRecording: Equatable, Identifiable, Sendable {
         canControl && !isStopping && controls.contains(command.rawValue)
     }
 
+    /// What the clock shows: a movie's recorded time, which grows only while a segment records; without one, the time
+    /// since the entry appeared.
     public func elapsedMs(now: Date) -> Double {
-        max(0, now.timeIntervalSince(startedAt) * 1000)
+        guard let recordedMs, let recordedAt else { return max(0, now.timeIntervalSince(startedAt) * 1000) }
+        guard isRecording && recordedRunning else { return recordedMs }
+        return recordedMs + max(0, now.timeIntervalSince(recordedAt) * 1000)
     }
 
     public var displayNames: String {
@@ -111,9 +122,9 @@ public enum LiveRecordingCommand: String, CaseIterable, Sendable {
 /// No state of its own, so a test points it at a scratch folder with its own liveness check and clock.
 public struct LiveRecordingStore: Sendable {
     public let folder: URL
-    private let isAlive: @Sendable (Int32) -> Bool
+    private let isAlive: @Sendable (LiveRecording) -> Bool
 
-    public init(folder: URL, isAlive: @escaping @Sendable (Int32) -> Bool = { LiveRecordingStore.processIsAlive($0) }) {
+    public init(folder: URL, isAlive: @escaping @Sendable (LiveRecording) -> Bool = { LiveRecordingStore.entryIsAlive($0) }) {
         self.folder = folder
         self.isAlive = isAlive
     }
@@ -134,6 +145,28 @@ public struct LiveRecordingStore: Sendable {
         return kill(pid, 0) == 0 || errno == EPERM
     }
 
+    /// How much later than the entry's `startedAt` its process may have started (the TypeScript `START_MS_TOLERANCE`).
+    public static let startTolerance: TimeInterval = 2
+
+    /// When `pid` started, from the kernel: any user may read it and nothing is spawned. Nil when there is no such process.
+    public static func processStartTime(_ pid: Int32) -> Date? {
+        guard pid > 0 else { return nil }
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        let start = info.kp_proc.p_starttime
+        return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+    }
+
+    /// The entry's recorder still runs: its pid is alive and that process started no later than the entry (the recorder
+    /// writes `startedAt` after its own start), so a pid a crash left for another program to take reads as gone.
+    public static func entryIsAlive(_ entry: LiveRecording) -> Bool {
+        guard processIsAlive(entry.pid) else { return false }
+        guard let started = processStartTime(entry.pid) else { return true }
+        return started <= entry.startedAt.addingTimeInterval(startTolerance)
+    }
+
     /// Every readable entry whose recorder still runs, oldest first. A missing folder is no recording.
     public func load() -> [LiveRecording] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
@@ -147,8 +180,8 @@ public struct LiveRecordingStore: Sendable {
         return Self.alive(entries, isAlive: isAlive)
     }
 
-    public static func alive(_ entries: [LiveRecording], isAlive: (Int32) -> Bool) -> [LiveRecording] {
-        entries.filter { isAlive($0.pid) }.sorted { ($0.startedAt, $0.id) < ($1.startedAt, $1.id) }
+    public static func alive(_ entries: [LiveRecording], isAlive: (LiveRecording) -> Bool) -> [LiveRecording] {
+        entries.filter { isAlive($0) }.sorted { ($0.startedAt, $0.id) < ($1.startedAt, $1.id) }
     }
 
     /// Lenient on purpose: a recorder written in another language may send a number where a string was expected.

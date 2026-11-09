@@ -123,14 +123,15 @@ final class RecorderSettingsTests: XCTestCase {
         XCTAssertEqual(IdleShortcutFeedback.key, "recorder.shortcuts.idleFeedback")
     }
 
+    /// With the preview left out of the movie; one that was not left out never shows (RecorderHuntCameraPreviewLeftOutTests).
     func testTheCameraPreviewShowsByPolicyAndWhoStartedTheRecording() {
-        XCTAssertTrue(CameraPreviewPolicy.everyCameraRecording.showsPreview(startedByPicker: true))
-        XCTAssertTrue(CameraPreviewPolicy.everyCameraRecording.showsPreview(startedByPicker: false),
+        XCTAssertTrue(CameraPreviewPolicy.everyCameraRecording.showsPreview(startedByPicker: true, previewLeftOut: true))
+        XCTAssertTrue(CameraPreviewPolicy.everyCameraRecording.showsPreview(startedByPicker: false, previewLeftOut: true),
                       "a CLI or agent recording with the camera shows the preview by default")
-        XCTAssertTrue(CameraPreviewPolicy.pickerRecordings.showsPreview(startedByPicker: true))
-        XCTAssertFalse(CameraPreviewPolicy.pickerRecordings.showsPreview(startedByPicker: false))
-        XCTAssertFalse(CameraPreviewPolicy.never.showsPreview(startedByPicker: true))
-        XCTAssertFalse(CameraPreviewPolicy.never.showsPreview(startedByPicker: false))
+        XCTAssertTrue(CameraPreviewPolicy.pickerRecordings.showsPreview(startedByPicker: true, previewLeftOut: true))
+        XCTAssertFalse(CameraPreviewPolicy.pickerRecordings.showsPreview(startedByPicker: false, previewLeftOut: true))
+        XCTAssertFalse(CameraPreviewPolicy.never.showsPreview(startedByPicker: true, previewLeftOut: true))
+        XCTAssertFalse(CameraPreviewPolicy.never.showsPreview(startedByPicker: false, previewLeftOut: true))
         XCTAssertEqual(CameraPreviewPolicy.allCases.filter(\.showsWhilePicking), [.everyCameraRecording, .pickerRecordings])
     }
 

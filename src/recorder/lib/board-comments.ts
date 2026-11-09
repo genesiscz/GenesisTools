@@ -16,8 +16,9 @@ const { log } = logger.scoped("recorder-board-comments");
  *
  * A board keeps no time on an annotation (its record holds a region on the card, an intent and a prompt), so the
  * time is the one the reviewer wrote at the start of the prompt (`0:42`, `1:02:03`, `42s`, `@0:42`, `[0:42]`, a range
- * `0:42-0:45`), in OUTPUT time: what plays in the export the board shows. An annotation without one goes to 0:00 and
- * its comment says so.
+ * `0:42-0:45`), in EXPORT time: the clock of the exported movie the board shows, which plays the intro card first. The
+ * plan keeps that time; importBoardComments (review.ts) moves it onto the edit. An annotation without one goes to 0:00
+ * and its comment says so.
  */
 export const SCREEN_CARD_KINDS = ["shot", "media", "step"] as const;
 
@@ -58,10 +59,11 @@ export type BoardDigest = z.infer<typeof digestSchema>;
 /** Reads a board's digest; the import's tests hand in a fixture. */
 export type BoardDigestReader = (ref: BoardRef) => Promise<unknown>;
 
-/** One comment the import adds, in OUTPUT seconds. */
+/** One comment the import adds, at the reviewer's time. */
 export interface PlannedComment {
     annotation: number;
     card: number;
+    /** EXPORT seconds: the exported file's clock, the intro card included. */
     atSec: number;
     toSec?: number;
     text: string;

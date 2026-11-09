@@ -254,6 +254,12 @@ public func movieLengthMs(first: CMTime, end: CMTime) -> Int {
     max(0, Int((CMTimeGetSeconds(CMTimeSubtract(end, first)) * 1000).rounded()))
 }
 
+/// Where a host-clock moment falls in the movie, in ms from its first frame (`movieStart`, that frame's timestamp).
+/// The cursor track counts its rows this way, so a row's `t` is the movie time of the frames that show it.
+public func movieTimeMs(of host: CMTime, movieStart: CMTime) -> Double {
+    CMTimeGetSeconds(CMTimeSubtract(host, movieStart)) * 1000
+}
+
 /// One window surface to paint into the fixed output.
 public struct IsolatedPaint {
     public let image: CIImage

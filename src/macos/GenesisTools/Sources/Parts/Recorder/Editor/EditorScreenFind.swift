@@ -21,7 +21,8 @@ struct ScreenHit: Decodable, Equatable, Identifiable {
     /// Until when that frame shows: its display's next frame.
     let untilSec: Double
     let displayId: Int?
-    let file: String
+    /// The frame file; nil for a movie recording, whose text find-screen reads off the movie itself.
+    let file: String?
     /// The frame's OCR lines that hold the text.
     let lines: [String]
     /// The movie shows this display then; a hit on another display is listed but not what plays.
@@ -32,9 +33,20 @@ struct ScreenHit: Decodable, Equatable, Identifiable {
     /// these ops as they are and builds none itself.
     let ops: ScreenHitOps
 
-    var id: String { file }
+    /// A moment, not a frame: the plan can show one frame twice, and find-screen answers a hit per showing. The
+    /// showings of one file never overlap, so its file and time are unique and keep a row's identity across searches.
+    /// A movie's hit has no file and one hit per read frame, so its time alone is unique.
+    var id: String { "\(file ?? "movie")@\(sourceUs)" }
     var sourceUs: Int64 { Int64((sec * 1_000_000).rounded()) }
     var untilUs: Int64 { Int64((untilSec * 1_000_000).rounded()) }
+
+    /// Where the hit first plays in the edit: the first kept moment of the time its frame shows, so a hit whose start
+    /// is cut still plays from where the rest of it shows; nil only when all of it is cut.
+    func playsOut(in project: EditProject) -> Int64? {
+        untilUs > sourceUs
+            ? TimelineMap.shown(fromUs: sourceUs, toUs: untilUs, in: project)?.startOut
+            : TimelineMap.outputTime(ofSource: sourceUs, in: project)
+    }
 }
 
 /// The edit ops of a screen hit: `hide[i]` blurs `boxes[i]` and `mark[i]` draws a box round it while the frame shows,
@@ -45,7 +57,8 @@ struct ScreenHitOps: Decodable, Equatable {
     let cut: [EditOp]
 }
 
-/// The Find tab: the text a frames recording or a meeting read off its screens (OCR), searched by
+/// The Find tab: the text a frames recording or a meeting read off its screens (OCR), or a movie recording's screen
+/// text read with Vision as findText and the Hide tab read it, searched by
 /// `tools recorder find-screen`, the same door as the CLI and the REPL's `findOnScreen`. A click on a moment moves the
 /// playhead there.
 extension EditorModel {
@@ -53,22 +66,25 @@ extension EditorModel {
     var recordingFolder: URL { URL(fileURLWithPath: project.source.video).deletingLastPathComponent() }
 
     /// The sentence for a recording that kept no screen text; the tab shows it at once, and a refused search says it too.
-    nonisolated static let noScreenText = "This movie has no screen text. Only a frames recording or a meeting keeps the text it read off its screens."
+    nonisolated static let noScreenText = "This movie has no screen text to search: Find reads a recording's movie or its frames, and neither is here."
 
-    /// Whether the recording kept text off its screens: a frames recording or a meeting lists its frames in
-    /// recording.json; a movie recording lists none, and a movie with no recording.json has none either (find-screen
-    /// refuses both). Nil when recording.json cannot be read as JSON, so the search box stays and the door answers.
-    nonisolated static func hasScreenText(recordingFolder: URL) -> Bool? {
+    /// Whether the recording has screen text to search: a frames recording or a meeting lists its frames in
+    /// recording.json, and a movie recording (no frames) has its `movie`, which find-screen reads with Vision. A movie
+    /// with no recording.json has none (find-screen refuses it). Nil when recording.json cannot be read as JSON, so the
+    /// search box stays and the door answers.
+    nonisolated static func hasScreenText(recordingFolder: URL, movie: URL) -> Bool? {
         guard let data = try? Data(contentsOf: recordingFolder.appendingPathComponent("recording.json")) else { return false }
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return (root["frames"] as? [Any]).map { !$0.isEmpty } ?? false
+        if let frames = root["frames"] as? [Any], !frames.isEmpty { return true }
+        return FileManager.default.fileExists(atPath: movie.path)
     }
 
     /// Reads `hasScreenText` once, off the main thread (a meeting's recording.json lists every frame).
     func learnScreenText() async {
         guard screenTextKnown == nil else { return }
         let folder = recordingFolder
-        let known = await Task.detached(priority: .userInitiated) { Self.hasScreenText(recordingFolder: folder) }.value
+        let movie = URL(fileURLWithPath: project.source.video)
+        let known = await Task.detached(priority: .userInitiated) { Self.hasScreenText(recordingFolder: folder, movie: movie) }.value
         screenTextKnown = known ?? true
     }
 
@@ -85,8 +101,9 @@ extension EditorModel {
             return
         }
         isSearchingScreen = true
+        // A movie's first search reads its screen once with Vision, which can take minutes; later ones read the cache.
         ask("findOnScreen", ["text": text], recording: recordingFolder.path,
-            argv: ["recorder", "find-screen", recordingFolder.path, text, "--json"]) { [weak self] result in
+            argv: ["recorder", "find-screen", recordingFolder.path, text, "--json"], timeout: 1800) { [weak self] result in
             guard let self, revision == self.screenSearchRevision else { return }
             self.isSearchingScreen = false
             self.selectedScreenHit = nil
@@ -128,7 +145,7 @@ extension EditorModel {
     /// Cuts the time the hit's frame shows.
     func cutScreenMoment(_ hit: ScreenHit) {
         guard !hit.ops.cut.isEmpty else { return }
-        let from = TimelineMap.outputTime(ofSource: hit.sourceUs, in: project).map { formatClock($0, tenths: true) } ?? "a cut part"
+        let from = hit.playsOut(in: project).map { formatClock($0, tenths: true) } ?? "a cut part"
         let span = String(format: "%.1f s", hit.untilSec - hit.sec)
         applyOps(Self.json(hit.ops.cut)) { [weak self] result in
             switch result {
@@ -153,7 +170,7 @@ extension EditorModel {
             guard let self else { return }
             switch result {
             case .success:
-                let from = TimelineMap.outputTime(ofSource: hit.sourceUs, in: self.project).map { formatClock($0, tenths: true) } ?? "a cut part"
+                let from = hit.playsOut(in: self.project).map { formatClock($0, tenths: true) } ?? "a cut part"
                 self.show("\(done) \(name) from \(from) while that frame shows. ⌘Z \(undo).", error: false)
             case let .failure(failure):
                 self.show("\(name) \(failed): \(failure.reason)", error: true)
@@ -169,7 +186,7 @@ extension EditorModel {
     func goToScreenHit(_ index: Int) {
         guard let hits = screenHits, hits.indices.contains(index) else { return }
         selectedScreenHit = index
-        guard let out = TimelineMap.outputTime(ofSource: hits[index].sourceUs, in: project) else {
+        guard let out = hits[index].playsOut(in: project) else {
             show("That moment was cut from the edit.", error: false)
             return
         }
@@ -192,7 +209,7 @@ struct ScreenFindInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if model.screenTextKnown == false {
-                // A movie recording kept no screen text: no search box that can only ever answer "nothing".
+                // No movie and no frames: no search box that can only ever answer "nothing".
                 Label {
                     Text(verbatim: EditorModel.noScreenText).fixedSize(horizontal: false, vertical: true)
                 } icon: {
@@ -238,7 +255,9 @@ struct ScreenFindInspector: View {
         if model.isSearchingScreen {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Searching the screen text…").font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                Text("Searching the screen text… A movie's first search reads its screen once, which can take minutes.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         } else if let failure = model.screenSearchFailure {
             Text(failure).font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
@@ -296,7 +315,7 @@ private struct ScreenHitRow: View {
     let selected: Bool
 
     var body: some View {
-        let out = TimelineMap.outputTime(ofSource: hit.sourceUs, in: model.project)
+        let out = hit.playsOut(in: model.project)
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Text(verbatim: out.map { formatClock($0, tenths: true) } ?? "cut")

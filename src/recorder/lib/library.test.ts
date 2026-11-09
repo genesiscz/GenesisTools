@@ -1,18 +1,42 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    symlinkSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import * as cli from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
-import { applyOp, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import { analysisCachePath } from "@genesiscz/utils/recording-editor/analysis-cache";
+import type { MovieEvent } from "@genesiscz/utils/recording-editor/events";
+import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import { RecorderControl, type RecorderMethod, type StopAnswer } from "@genesiscz/utils/screen-recorder/control";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
+import { LiveRecordingServer } from "@genesiscz/utils/screen-recorder/live";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
-import { exportProgressPrinter, parseExportSize, renderInto, withEditCancel } from "./edit";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
+import {
+    computeEdit,
+    exportAs,
+    exportProgressPrinter,
+    exportTargetOf,
+    parseExportSize,
+    renderInto,
+    withEditCancel,
+} from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
+import { eventsOut, findOnScreenOf, privateData, screenTextEverySeconds } from "./fx-analysis";
 import {
     describeLiveEntries,
     editorOpenStatePath,
@@ -24,7 +48,9 @@ import {
     readEditorOpenState,
     resolveRecording,
     shortRecordingId,
+    snapshotArgv,
 } from "./library";
+import { searchLibrary } from "./moments";
 import {
     boxInProxy,
     chosenPlan,
@@ -38,6 +64,7 @@ import {
 import { currentGif, shareableMovie, trashRecording, trashRecordings } from "./quick-actions";
 import { screenHitsWithOps } from "./screen-ops";
 import { findOnScreen } from "./screen-search";
+import * as serviceClient from "./service-client";
 
 function writeState(state: Record<string, unknown>): void {
     mkdirSync(dirname(editorOpenStatePath()), { recursive: true });
@@ -337,6 +364,69 @@ function screenFolder(ranges?: Array<{ fromUs: number; toUs: number; displayId: 
 }
 
 // The editor's Find tab decodes these hits (RecorderEditTests.swift), so it reads what find-screen prints.
+describe("find-screen on a movie recording", () => {
+    // A movie recording keeps no frames, so the Find tab and find-screen read the movie's screen text the way the Hide
+    // tab and findText do: screenTextOf's Vision read, cached once per movie. The cache is seeded, so no Vision runs.
+    function movieRecording() {
+        const folder = mkdtempSync(join(tmpdir(), "gt-screen-movie-"));
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({ ...screenSearch.recording.manifest, frames: [] })
+        );
+        const video = join(folder, "screen.mp4");
+        const bytes = Buffer.alloc(64 * 1024);
+        bytes.write("gt-screen-movie-find", 0);
+        writeFileSync(video, bytes);
+        const durationUs = 6_000_000;
+        const line = { text: "Notification sound", x: 0, y: 0.19, width: 0.06, height: 0.02 };
+        const cache = analysisCachePath(video, "screen-text");
+        mkdirSync(dirname(cache), { recursive: true });
+        writeFileSync(
+            cache,
+            SafeJSON.stringify({
+                key: `every=${screenTextEverySeconds(durationUs)},editor-time,pts`,
+                data: [
+                    {
+                        atUs: 0,
+                        untilUs: 1_000_000,
+                        lines: [line, { text: "Inbox", x: 0.5, y: 0.5, width: 0.1, height: 0.02 }],
+                    },
+                    { atUs: 1_000_000, untilUs: 2_000_000, lines: [line] },
+                    {
+                        atUs: 2_000_000,
+                        untilUs: 3_000_000,
+                        lines: [{ text: "Settings", x: 0.2, y: 0.3, width: 0.1, height: 0.02 }],
+                    },
+                ],
+            })
+        );
+        return { folder, project: wholeProject({ video, durationUs, width: 1920, height: 1080 }) };
+    }
+
+    it("answers from the movie's screen text, with the boxes, ops and a run over the frames that keep the line", async () => {
+        const { folder, project } = movieRecording();
+        const hits = await findOnScreenOf(folder, async () => project, "notification");
+
+        expect(hits.map((hit) => [hit.sec, hit.untilSec, hit.shown, hit.file, hit.lines])).toEqual([
+            [0, 1, true, undefined, ["Notification sound"]],
+            [1, 2, true, undefined, ["Notification sound"]],
+        ]);
+        expect(hits[0].boxes).toEqual([
+            { text: "Notification sound", x: 0, y: 0.19, width: 0.06, height: 0.02, untilSec: 2 },
+        ]);
+        const [first] = screenHitsWithOps(hits, 6);
+        expect(first.ops.hide[0]).toMatchObject({ op: "redact", from: 0, to: 2 });
+        expect(first.ops.cut).toHaveLength(1);
+        expect(await findOnScreenOf(folder, async () => project, "notification", { limit: 1 })).toHaveLength(1);
+        expect(await findOnScreenOf(folder, async () => project, "   ")).toEqual([]);
+    });
+
+    it("reads a plain movie, which has no recording folder", async () => {
+        const { project } = movieRecording();
+        expect((await findOnScreenOf(undefined, async () => project, "inbox")).map((hit) => hit.sec)).toEqual([0]);
+    });
+});
+
 describe("text on the screen", () => {
     for (const ending of ["run", "moved", "display", "gap"] as const) {
         it(`extends a line's hide and mark through consecutive frames: ${ending}`, () => {
@@ -453,10 +543,25 @@ describe("text on the screen", () => {
         expect(findOnScreen(back, "sprint board").map((hit) => [hit.file, hit.sec, hit.untilSec])).toEqual([
             ["frames/0001.jpg", 0, 5],
             ["frames/0001.jpg", 7, 9],
-            ["frames/0003.jpg", 9, 14.5],
+            ["frames/0003.jpg", 9, 13.5],
         ]);
         expect(findOnScreen(back, "token rotation").map((hit) => [hit.sec, hit.untilSec, hit.shown])).toEqual([
             [5, 7, true],
+        ]);
+    });
+
+    it("lists the moments oldest first, so --limit keeps the earliest, when the plan shows a frame twice", () => {
+        const back = screenFolder([
+            { fromUs: 0, toUs: 5_000_000, displayId: 1 },
+            { fromUs: 5_000_000, toUs: 7_000_000, displayId: 4 },
+            { fromUs: 7_000_000, toUs: 12_500_001, displayId: 1 },
+        ]);
+        const all = findOnScreen(back, "token");
+
+        expect(all.map((hit) => hit.sec)).toEqual([...all.map((hit) => hit.sec)].sort((a, b) => a - b));
+        expect(findOnScreen(back, "token", { limit: 2 }).map((hit) => [hit.file, hit.sec])).toEqual([
+            ["frames/0001.jpg", 0],
+            ["frames/0002.jpg", 5],
         ]);
     });
 
@@ -518,6 +623,213 @@ describe("text on the screen", () => {
         const single = proxyCanvas([sizes[0], sizes[0]]);
         expect(single.letterboxed).toBe(false);
         expect(boxInProxy(box, sizes[0], single)).toEqual(box);
+    });
+});
+
+/**
+ * A frames recording that ends 10 s after it starts, its last frame at 1 s: proxy.mp4 holds that frame until 10 s
+ * (makeProxy). `frames` are its frames with their OCR text; `plan` is its proxy.json ranges, if any.
+ */
+function tailFolder(
+    frames: Array<{ file: string; atMs: number; displayId: number; text: string }>,
+    plan?: Array<{ fromUs: number; toUs: number; displayId: number }>
+): string {
+    const folder = mkdtempSync(join(tmpdir(), "gt-screen-tail-"));
+    mkdirSync(join(folder, "frames"));
+    // The first 33 bytes of a 1600x1000 PNG: enough for imageSize, which reads only the header.
+    const header = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+    header.writeUInt32BE(13, 8);
+    header.write("IHDR", 12, "ascii");
+    header.writeUInt32BE(1600, 16);
+    header.writeUInt32BE(1000, 20);
+    header.writeUInt8(8, 24);
+    header.writeUInt8(6, 25);
+
+    for (const frame of frames) {
+        writeFileSync(join(folder, frame.file), header);
+        const blocks = frame.text ? [{ text: frame.text, bounds: { x: 0.2, y: 0.47, width: 0.4, height: 0.03 } }] : [];
+        writeFileSync(join(folder, `${frame.file}.ocr.json`), SafeJSON.stringify({ text: frame.text, blocks }));
+    }
+
+    writeFileSync(
+        join(folder, "recording.json"),
+        SafeJSON.stringify({
+            version: 1,
+            id: "tail",
+            title: "Tail",
+            startedAt: "2026-11-09T10:00:00.000Z",
+            endedAt: "2026-11-09T10:00:10.000Z",
+            displays: [
+                { id: 1, name: "Main" },
+                { id: 2, name: "Side" },
+            ],
+            frames: frames.map(({ file, atMs, displayId }) => ({ file, atMs, displayId })),
+        })
+    );
+
+    if (plan) {
+        writeFileSync(
+            join(folder, "proxy.json"),
+            SafeJSON.stringify({ version: 1, policy: "most-change", windowSec: 10, ranges: plan })
+        );
+    }
+
+    return folder;
+}
+
+const still = [
+    { file: "frames/f0.png", atMs: 0, displayId: 1, text: "Inbox" },
+    { file: "frames/f1.png", atMs: 1000, displayId: 1, text: "Mail alice@example.com now" },
+];
+
+describe("a frames recording's last frame shows until the recording ends", () => {
+    it("find-screen ends the last frame's hit at the recording's end, with or without a display plan", () => {
+        const plan = chosenPlan(
+            still.map((frame) => ({ path: frame.file, atUs: frame.atMs * 1000, displayId: frame.displayId })),
+            { display: 1 }
+        ).ranges;
+
+        for (const folder of [tailFolder(still), tailFolder(still, plan)]) {
+            const hits = findOnScreen(folder, "alice");
+            expect(hits.map((hit) => [hit.sec, hit.untilSec, hit.shown])).toEqual([[1, 10, true]]);
+            expect(screenHitsWithOps(hits, 10)[0].ops.hide[0]).toMatchObject({ from: 1, to: 10 });
+            // A frame followed by another frame of its display still ends at that frame.
+            expect(findOnScreen(folder, "inbox").map((hit) => [hit.sec, hit.untilSec, hit.shown])).toEqual([
+                [0, 1, true],
+            ]);
+        }
+    });
+
+    it("lists a frame the plan shows after the last frame as shown until the recording ends", () => {
+        const folder = tailFolder(
+            [
+                { file: "frames/a.png", atMs: 0, displayId: 1, text: "Inbox" },
+                { file: "frames/b.png", atMs: 500, displayId: 2, text: "Invoice 2026" },
+                { file: "frames/c.png", atMs: 1000, displayId: 1, text: "Inbox" },
+            ],
+            [
+                { fromUs: 0, toUs: 5_000_000, displayId: 1 },
+                { fromUs: 5_000_000, toUs: 10_000_000, displayId: 2 },
+            ]
+        );
+
+        expect(findOnScreen(folder, "invoice").map((hit) => [hit.sec, hit.untilSec, hit.shown])).toEqual([
+            [5, 10, true],
+        ]);
+        expect(findOnScreen(folder, "inbox").map((hit) => [hit.file, hit.sec, hit.untilSec])).toEqual([
+            ["frames/a.png", 0, 1],
+            ["frames/c.png", 1, 5],
+        ]);
+    });
+
+    it("hidePrivate and hideText blur the last frame's text until the recording ends", async () => {
+        const folder = tailFolder(still);
+        const project = wholeProject({
+            video: join(folder, "proxy.mp4"),
+            durationUs: 10_000_000,
+            width: 1600,
+            height: 1000,
+        });
+
+        expect((await privateData(project)).map((hit) => hit.to)).toEqual([10]);
+
+        for (const op of [{ op: "hidePrivate" as const }, { op: "hideText" as const, text: "alice" }]) {
+            const edit = await computeEdit({ project, ops: [op], fresh: true });
+            expect(edit.project.redactions?.map((part) => part.endUs)).toEqual([10_000_000]);
+        }
+    });
+});
+
+describe("exportTargetOf: the one file name rule of an export", () => {
+    const folder = mkdtempSync(join(tmpdir(), "export-target-"));
+    const video = join(folder, "screen.mp4");
+    const base = wholeProject({ video, durationUs: 20_000_000, width: 1920, height: 1080 });
+    const cwd = join(folder, "cwd");
+
+    it("--out keeps its name and takes the format's extension, with or without overwrite", () => {
+        for (const overwrite of [false, true]) {
+            expect(exportTargetOf({ project: base, format: "mp4", out: "clip.mov", overwrite, cwd })).toBe(
+                join(cwd, "clip.mp4")
+            );
+        }
+        expect(exportTargetOf({ project: base, format: "gif", out: "~/Movies/x.mp4", cwd })).toBe(
+            join(homedir(), "Movies/x.gif")
+        );
+    });
+
+    it("a chosen file with ~ is the home folder and a relative one is beside the movie", () => {
+        const tilde = { ...base, export: { ...base.export, output: "~/Movies/demo.mp4" } };
+        expect(exportTargetOf({ project: tilde, format: "gif", cwd })).toBe(join(homedir(), "Movies/demo.gif"));
+        const relative = { ...base, export: { ...base.export, output: "out/demo.mp4" } };
+        expect(exportTargetOf({ project: relative, format: "mp4", cwd })).toBe(join(folder, "out/demo.mp4"));
+    });
+
+    it("a part is named after the whole target in its folder (RecorderHuntExportTargetOneRuleTests has the same case)", () => {
+        const chosen = { ...base, export: { ...base.export, output: "/exports/demo.mp4" } };
+        const part = { fromUs: 5_000_000, toUs: 12_000_000 };
+        expect(exportTargetOf({ project: chosen, format: "gif", part, cwd })).toBe("/exports/demo-part-5.0-12.0.gif");
+    });
+
+    it("the default name takes -2 when the first is taken, unless overwrite", () => {
+        const first = exportTargetOf({ project: base, format: "webm", cwd });
+        writeFileSync(first, "");
+        expect(exportTargetOf({ project: base, format: "webm", cwd })).toBe(first.replace(/\.webm$/, "-2.webm"));
+        expect(exportTargetOf({ project: base, format: "webm", overwrite: true, cwd })).toBe(first);
+    });
+
+    it("applyOp exportSettings stores a chosen file absolute", () => {
+        expect(applyOp(base, { op: "exportSettings", output: "~/x.mp4" }).export.output).toBe(join(homedir(), "x.mp4"));
+        expect(applyOp(base, { op: "exportSettings", output: "" }).export.output).toBe("");
+    });
+
+    it("Copy as GIF finds a GIF exported to a file chosen outside the folder while the edit is older", () => {
+        const recording = mkdtempSync(join(tmpdir(), "gif-current-"));
+        const elsewhere = mkdtempSync(join(tmpdir(), "gif-chosen-"));
+        const movie = join(recording, "screen.mp4");
+        writeFileSync(movie, "x");
+        const project = wholeProject({ video: movie, durationUs: 4_000_000, width: 320, height: 180 });
+        writeProject(join(recording, "edit.json"), {
+            ...project,
+            export: { ...project.export, output: join(elsewhere, "demo.mp4") },
+        });
+        const gif = join(elsewhere, "demo.gif");
+        writeFileSync(gif, "x");
+        const old = new Date(Date.UTC(2026, 10, 4, 10, 0, 0));
+        utimesSync(movie, old, old);
+        utimesSync(join(recording, "edit.json"), old, old);
+        expect(currentGif(recording)).toBe(gif);
+        const later = new Date(Date.now() + 60_000);
+        utimesSync(join(recording, "edit.json"), later, later);
+        expect(currentGif(recording)).toBeUndefined();
+    });
+});
+
+describe("a hit, wait or event whose first moment is cut plays from its first kept moment", () => {
+    it("privateData's plays is the hit's first kept moment, null only when all of it is cut", async () => {
+        const whole = wholeProject({
+            video: join(tailFolder(still), "proxy.mp4"),
+            durationUs: 10_000_000,
+            width: 1600,
+            height: 1000,
+        });
+        // The hit shows from 0.5 s to 10 s; with 0.2..3 s cut, the rest of it plays from output 0.2 s.
+        const startCut = applyOp(whole, editOpSchema.parse({ op: "cut", from: 0.2, to: 3 }));
+        expect((await privateData(startCut)).map((hit) => [hit.from, hit.to, hit.plays])).toEqual([[0.5, 10, 0.2]]);
+        const allCut = applyOp(whole, editOpSchema.parse({ op: "cut", from: 0.2, to: 10 }));
+        expect((await privateData(allCut)).map((hit) => hit.plays)).toEqual([null]);
+    });
+
+    it("an event range plays from its first kept moment; a moment inside a cut plays nowhere", () => {
+        const project = applyOp(
+            wholeProject({ video: "/movie/proxy.mp4", durationUs: 10_000_000, width: 100, height: 100 }),
+            editOpSchema.parse({ op: "cut", from: 3, to: 5 })
+        );
+        const events: MovieEvent[] = [
+            { kind: "still", index: 1, fromUs: 4_000_000, toUs: 8_000_000 },
+            { kind: "click", index: 1, fromUs: 4_000_000 },
+        ];
+        expect(eventsOut(project, events).map((event) => event.plays)).toEqual([3, null]);
     });
 });
 
@@ -587,7 +899,7 @@ it("retains a released dirty session until its busy save can finish", async () =
     expect(SafeJSON.parse(readFileSync(path, "utf8")).audio.volume).toBe(0.4);
 });
 
-it("a library limit leaves older manifests unparsed", () => {
+it("a library recording.json that is not JSON gives no row and leaves the others listed", () => {
     const root = mkdtempSync(join(tmpdir(), "library-bound-"));
     const newest = join(root, "video-2026-11-05_10-00-00-new");
     const oldest = join(root, "video-2026-01-01_10-00-00-old");
@@ -606,6 +918,66 @@ it("a library limit leaves older manifests unparsed", () => {
         })
     );
     expect(listLibrary({ root, limit: 1 }).map((row) => row.id)).toEqual(["new"]);
+});
+
+describe("the library list reads every recording as the Recordings window does", () => {
+    const write = (folder: string, manifest: Record<string, unknown>) => {
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(join(folder, "recording.json"), SafeJSON.stringify(manifest));
+    };
+    const manifest = (id: string, startedAt: string, title = id) => ({
+        version: 1,
+        id,
+        title,
+        startedAt,
+        displays: [],
+        frames: [],
+    });
+
+    it("sorts by startedAt before the limit, so a duplicate does not push the newest out", () => {
+        const root = mkdtempSync(join(tmpdir(), "library-one-reader-"));
+        write(join(root, "video-2026-11-01_10-00-00-a"), manifest("a", "2026-11-01T10:00:00Z"));
+        write(join(root, "video-2026-11-05_10-00-00-b"), manifest("b", "2026-11-05T10:00:00Z"));
+        write(join(root, "video-2026-11-08_10-00-00-c"), manifest("c", "2026-11-08T10:00:00Z"));
+        // A copy of A made on 11-09 keeps A's startedAt.
+        write(join(root, "video-2026-11-09_10-00-00-copy"), manifest("copy", "2026-11-01T10:00:00Z", "a (copy)"));
+        const all = listLibrary({ root }).map((row) => row.id);
+        expect(all).toEqual(["c", "b", "copy", "a"]);
+        expect(listLibrary({ root, limit: 2 }).map((row) => row.id)).toEqual(all.slice(0, 2));
+        expect(listLibrary({ root, limit: 1 })[0]?.id).toBe("c");
+    });
+
+    it("lists and finds a meeting's screen recording beside the library's", () => {
+        write(recordingsLibraryDir("video-2026-11-04_09-00-00-lib"), manifest("lib-one", "2026-11-04T09:00:00Z"));
+        const meeting = toolDataDir("meetings", "2026-11-05_14-29-meeting");
+        write(meeting, manifest("2026-11-05_14-29-meeting", "2026-11-05T14:29:00Z", "Weekly sync zebra"));
+        writeFileSync(join(meeting, "proxy.mp4"), "");
+        const ids = listLibrary().map((row) => row.id);
+        expect(ids).toContain("lib-one");
+        expect(ids).toContain("2026-11-05_14-29-meeting");
+        expect(ids.indexOf("2026-11-05_14-29-meeting")).toBeLessThan(ids.indexOf("lib-one"));
+        expect(searchLibrary("zebra").map((hit) => hit.recording)).toContain("2026-11-05_14-29-meeting");
+    });
+
+    it("keeps a recording whose recording.json the schema refuses, and skips one that is not JSON", () => {
+        const root = mkdtempSync(join(tmpdir(), "library-loose-"));
+        write(join(root, "video-2026-11-02_10-00-00-ok"), manifest("ok", "2026-11-02T10:00:00Z"));
+        // The Swift RecorderEdit shape: no displays.
+        write(join(root, "video-2026-11-03_10-00-00-swift"), {
+            version: 1,
+            id: "swift",
+            title: "From the app",
+            startedAt: "2026-11-03T10:00:00Z",
+            frames: [{ file: "f.png", atMs: 0 }],
+        });
+        mkdirSync(join(root, "video-2026-11-04_10-00-00-bad"));
+        writeFileSync(join(root, "video-2026-11-04_10-00-00-bad", "recording.json"), "{broken");
+        const rows = listLibrary({ root });
+        expect(rows.map((row) => [row.id, row.title, row.frames])).toEqual([
+            ["swift", "From the app", 1],
+            ["ok", "ok", 0],
+        ]);
+    });
 });
 
 it("a library row says how the recording ended, how long its movie is, and why a failed one made none", () => {
@@ -752,8 +1124,38 @@ it("recording trash from the CLI forwards policy refusal without touching the re
     });
     try {
         await expect(trashRecording(folder, { askUser: true })).rejects.toThrow("policy refused");
-        expect(run).toHaveBeenCalledWith(["rm", folder], { timeout: 30_000 });
+        expect(run).toHaveBeenCalledWith(["rm", "--json", folder], { timeout: 30_000 });
         expect(existsSync(folder)).toBe(true);
+    } finally {
+        run.mockRestore();
+    }
+});
+
+it("a trashed recording says which batch holds it, when it drains and how to put it back", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "recording-trash-batch-"));
+    const calls: string[][] = [];
+    const run = spyOn(cli, "execTool").mockImplementation(async (args: readonly string[]) => {
+        calls.push([...args]);
+
+        if (args.includes("--dry-run")) {
+            const plan = [{ path: folder, verdict: "allow", bytes: 1, willAside: false }];
+            return { success: true, exitCode: 0, stdout: SafeJSON.stringify(plan), stderr: "" };
+        }
+
+        const answer = {
+            items: [],
+            batches: [{ id: "20261109-000000-1-abcd", drainAfter: "2026-11-09T01:00:00.000Z", items: 1 }],
+        };
+        return { success: true, exitCode: 0, stdout: SafeJSON.stringify(answer), stderr: "" };
+    });
+    try {
+        expect(await trashRecording(folder)).toEqual({
+            trashed: folder,
+            batch: "20261109-000000-1-abcd",
+            drainAfter: "2026-11-09T01:00:00.000Z",
+            restore: "tools rm restore 20261109-000000-1-abcd",
+        });
+        expect(calls[1]).toEqual(["rm", "--json", folder]);
     } finally {
         run.mockRestore();
     }
@@ -785,10 +1187,70 @@ it("recording trash from an agent call asks no one: a policy that would ask refu
         expect(await trashRecording(folder)).toEqual({ trashed: folder });
         expect(calls.slice(1)).toEqual([
             ["rm", "--dry-run", "--json", folder],
-            ["rm", folder],
+            ["rm", "--json", folder],
         ]);
     } finally {
         run.mockRestore();
+    }
+});
+
+/** A movie recording that still records, for the live-folder checks. */
+class StillRecording extends RecorderControl {
+    readonly kind = "movie";
+    readonly methods: readonly RecorderMethod[] = ["status", "stop"];
+
+    async status() {
+        return { kind: this.kind, title: "Login demo", state: "recording" as const, displays: [], frames: 0 };
+    }
+
+    async pause() {
+        return { state: "paused" as const };
+    }
+
+    async resume() {
+        return { state: "recording" as const };
+    }
+
+    async stop(): Promise<StopAnswer> {
+        return { state: "stopped" };
+    }
+}
+
+it("a recording that still records is not trashed, and its library row says it records", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "recording-live-"));
+    const other = mkdtempSync(join(tmpdir(), "recording-done-"));
+
+    for (const dir of [folder, other]) {
+        writeFileSync(
+            join(dir, "recording.json"),
+            SafeJSON.stringify({ id: "x", title: "Login demo", startedAt: "2026-11-09T10:00:00.000Z" })
+        );
+    }
+
+    const server = new LiveRecordingServer({
+        id: `live-actions-${process.pid}`,
+        kind: "movie",
+        title: "Login demo",
+        folder,
+        control: new StillRecording(),
+    });
+    const run = spyOn(cli, "execTool").mockImplementation(async () => ({
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+    }));
+
+    try {
+        await expect(trashRecordings([other, folder], { askUser: true })).rejects.toThrow(
+            `${folder} is still recording; stop it first with tools recorder stop. Nothing was moved.`
+        );
+        expect(run).not.toHaveBeenCalled();
+        expect(libraryRow(folder)?.recording).toBe(true);
+        expect(libraryRow(other)?.recording).toBeUndefined();
+    } finally {
+        run.mockRestore();
+        server.close();
     }
 });
 
@@ -821,7 +1283,7 @@ it("several recordings go through the removal policy in one call: one request, a
         expect(await trashRecordings([first, second, first], { askUser: true, aside: false })).toEqual({
             trashed: [first, second],
         });
-        expect(calls).toEqual([["rm", "--no-aside", first, second]]);
+        expect(calls).toEqual([["rm", "--json", "--no-aside", first, second]]);
 
         // An agent's call: one dry run for both, and when one would ask, none is moved and no one is asked.
         calls.length = 0;
@@ -835,7 +1297,7 @@ it("several recordings go through the removal policy in one call: one request, a
         expect(await trashRecordings([first, second])).toEqual({ trashed: [first, second] });
         expect(calls).toEqual([
             ["rm", "--dry-run", "--json", first, second],
-            ["rm", first, second],
+            ["rm", "--json", first, second],
         ]);
     } finally {
         run.mockRestore();
@@ -891,6 +1353,17 @@ it("cancelled queued undo and redo preserve history and the project", async () =
     expect(SafeJSON.parse(readFileSync(path, "utf8")).audio.volume).toBe(0.4);
 });
 
+describe("a snapshot's recorder face argv", () => {
+    it("selects the marker the request names", () => {
+        const argv = snapshotArgv({ out: "/tmp/x.png", path: "/tmp/e", selectMarker: 2 });
+
+        expect(argv.slice(argv.indexOf("--select-marker"), argv.indexOf("--select-marker") + 2)).toEqual([
+            "--select-marker",
+            "2",
+        ]);
+    });
+});
+
 // R5 3: an export retry needed a move-aside, which left an unredacted plain export in the project.
 describe("an export into a file that exists", () => {
     const fakeRender = (bytes: string) => async (out: string) => {
@@ -905,6 +1378,7 @@ describe("an export into a file that exists", () => {
         let rendered = 0;
         const refused = await renderInto({
             target,
+            inputs: [],
             render: async (out) => {
                 rendered++;
                 return fakeRender("new")(out);
@@ -913,7 +1387,7 @@ describe("an export into a file that exists", () => {
         expect(refused.ok).toBe(false);
         expect(refused.error).toContain("overwrite: true, --overwrite");
         expect(rendered).toBe(0);
-        const replaced = await renderInto({ target, overwrite: true, render: fakeRender("new") });
+        const replaced = await renderInto({ target, overwrite: true, inputs: [], render: fakeRender("new") });
         expect(replaced).toMatchObject({ ok: true, path: target, replaced: true });
         expect(readFileSync(target, "utf8")).toBe("new");
         expect(existsSync(join(folder, ".demo.rendering.mp4"))).toBe(false);
@@ -921,6 +1395,7 @@ describe("an export into a file that exists", () => {
         const failed = await renderInto({
             target,
             overwrite: true,
+            inputs: [],
             render: async () => ({ ok: false, error: "boom" }),
         });
         expect(failed.ok).toBe(false);
@@ -940,5 +1415,67 @@ describe("an export into a file that exists", () => {
             progress(fraction);
         }
         expect(lines).toEqual(["export 0%", "export 10%", "export 50%", "export 90%", "export 100%"]);
+    });
+});
+
+describe("an export never writes over its own input", () => {
+    /** A recording folder whose movie is screen.mp4 and an edit of it, with chapters off so no ffmpeg runs. */
+    function screenEdit(): { path: string; root: string; movie: string; restore: () => void } {
+        const root = mkdtempSync(join(tmpdir(), "rs-overwrite-source-"));
+        const movie = join(root, "screen.mp4");
+        writeFileSync(movie, "original");
+        const path = join(root, "screen.edit.json");
+        const project = wholeProject({ video: movie, durationUs: 4_000_000, width: 100, height: 100 });
+        writeProject(path, { ...project, export: { ...project.export, chapters: false } });
+        const host = spyOn(serviceClient, "hostExport").mockImplementation(async ({ out }) => {
+            const to = out ?? "";
+            writeFileSync(to, "exported");
+            return { ok: true, path: to };
+        });
+        return { path, root, movie, restore: () => host.mockRestore() };
+    }
+
+    // Round 2 hunt (r2-export-overwrite-source): with --overwrite the export rendered into a staging file, which
+    // passed the renderer's own check, and then moved it over the recording's movie, so the recording was lost.
+    it("refuses an overwrite of the source movie, by its path, through /private and through a symlink", async () => {
+        const { path, root, movie, restore } = screenEdit();
+
+        try {
+            const direct = await exportAs(path, { out: movie, overwrite: true });
+            expect(direct.ok).toBe(false);
+            expect(direct.error).toContain("would overwrite its input");
+            expect(readFileSync(movie, "utf8")).toBe("original");
+
+            const real = await exportAs(path, { out: realpathSync(movie).toUpperCase(), overwrite: true });
+            expect(real.error).toContain("would overwrite its input");
+
+            const link = join(root, "link.mp4");
+            symlinkSync(movie, link);
+            const linked = await renderInto({
+                target: link,
+                overwrite: true,
+                inputs: [movie],
+                render: async (to) => ({ ok: true, path: to }),
+            });
+            expect(linked.error).toContain("would overwrite its input");
+            expect(readFileSync(movie, "utf8")).toBe("original");
+        } finally {
+            restore();
+        }
+    });
+
+    it("still replaces another existing file when asked", async () => {
+        const { path, root, movie, restore } = screenEdit();
+        const other = join(root, "other.mp4");
+        writeFileSync(other, "old");
+
+        try {
+            const answer = await exportAs(path, { out: other, overwrite: true });
+            expect(answer).toMatchObject({ ok: true, path: other, replaced: true });
+            expect(readFileSync(other, "utf8")).toBe("exported");
+            expect(readFileSync(movie, "utf8")).toBe("original");
+        } finally {
+            restore();
+        }
     });
 });

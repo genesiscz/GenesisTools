@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { convertFileToMonoMp3, convertToWhisperWav, toFloat32Audio } from "./converter";
+import { convertFileToMonoMp3, convertToWhisperWav, monoMp3Args, toFloat32Audio } from "./converter";
+import { splitAudioFile } from "./split";
 
 describe("audio converter", () => {
     test("parses a generated WAV buffer correctly", async () => {
@@ -145,5 +146,85 @@ describe("audio converter", () => {
         }
 
         expect(threw).toBe(true);
+    });
+});
+
+/** The first time (seconds) a 16 kHz mono signal rises above 5 % of full scale. */
+function onsetSeconds(samples: Float32Array): number {
+    const index = samples.findIndex((value) => Math.abs(value) > 0.05);
+    return index / 16_000;
+}
+
+function decodeMono16k(path: string): Float32Array {
+    const proc = Bun.spawnSync(["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", "16000", "-f", "f32le", "-"]);
+    const bytes = proc.stdout;
+    return new Float32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 4));
+}
+
+describe("the transcription input keeps the movie clock and hears the asked tracks", () => {
+    test("monoMp3Args maps one track, or mixes several as the export does", () => {
+        const mixed = monoMp3Args({ input: "in.mp4", output: "out.mp3", tracks: [0, 1] }).join(" ");
+        expect(mixed).toContain("[0:a:0][0:a:1]amix=inputs=2:normalize=0");
+
+        const second = monoMp3Args({ input: "in.mp4", output: "out.mp3", tracks: [1] }).join(" ");
+        expect(second).toContain("0:a:1");
+        expect(second).not.toContain("0:a:0");
+    });
+
+    describe.skipIf(!Bun.which("ffmpeg"))("an audio track that starts 0.5 s after the first frame", () => {
+        let dir = "";
+        let movie = "";
+
+        beforeAll(() => {
+            dir = mkdtempSync(join(tmpdir(), "gt-late-audio-"));
+            movie = join(dir, "late-audio.mp4");
+            const made = Bun.spawnSync([
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=64x64:d=2",
+                "-itsoffset",
+                "0.5",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=f=440:r=48000:d=1",
+                "-map",
+                "0:v",
+                "-map",
+                "1:a",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                movie,
+            ]);
+            expect(made.exitCode).toBe(0);
+        });
+
+        afterAll(() => {
+            rmSync(dir, { recursive: true, force: true });
+        });
+
+        test("convertFileToMonoMp3 keeps the 0.5 s of silence before the sound", async () => {
+            const out = join(dir, "mono.mp3");
+            await convertFileToMonoMp3(movie, out);
+            expect(Math.abs(onsetSeconds(decodeMono16k(out)) - 0.5)).toBeLessThan(0.03);
+        });
+
+        test("convertToWhisperWav keeps it", async () => {
+            const samples = await toFloat32Audio(await convertToWhisperWav(movie));
+            expect(Math.abs(onsetSeconds(samples) - 0.5)).toBeLessThan(0.03);
+        });
+
+        test("splitAudioFile keeps it in the first chunk", async () => {
+            const chunks = await splitAudioFile(movie, join(dir, "chunks"), 300);
+            expect(Math.abs(onsetSeconds(decodeMono16k(chunks[0])) - 0.5)).toBeLessThan(0.03);
+        });
     });
 });

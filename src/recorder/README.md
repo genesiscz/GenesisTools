@@ -82,8 +82,15 @@ Movie flags of `start`:
 | `--json` | off | events and the result as JSON lines on stdout |
 
 Without `--title`, a window, app or area recording is titled after what it records. `--idle-fps` and `--threshold`
-reach the capture; without them a movie keeps one rate. The countdown runs after ax-tool is ready, so its last
-second is the start.
+reach the capture; without them a movie keeps one rate. The countdown runs after ax-tool is built. ax-tool needs
+about a second from its start to the first frame, so the recorder starts as the last second begins, and the last
+second stays on screen ("Starting the recording…" past it) until the movie has its first frame, at most 10 s longer.
+Zero never shows before the movie records, so the first thing done after it is in the movie. The overlay is kept out
+of the movie (its sharing type, and its window id in the excluded windows); a frames recording, which cannot exclude
+windows, relies on the sharing type alone. The picker's countdown does the same: it starts `tools recorder start` as
+its last second begins and holds that number until the live entry has its first frame (`lastFrameAt`, which a movie
+sets at each segment's first frame and every second after it). Escape cancels the picker's countdown until the
+recorder starts.
 
 With `--json`, `start` prints these events: `preparing` (the one-time ax-tool build), `countdown` (its seconds,
 before it runs), `started` (id, folder, liveId), `warning` (another recording runs), `state`, `error` and `result`.
@@ -128,15 +135,15 @@ tools recorder reveal <recording> [--meeting]    # its folder in Finder; --meeti
 tools recorder trash <recording...> [--no-aside] # move recordings through the removal policy, in one call
 ```
 
-`list --json` has the full ids, folders and why a failed recording failed. `search` ignores case and accents and
-never transcribes. The new title of `rename` shows in the library, the editor window and `movies.list()`.
+`list --json` has the full ids, folders and why a failed recording failed. `list` and `search` read the meetings'
+screen recordings too (`list` newest started first). `search` ignores case and accents and never transcribes. The new title of `rename` shows in the library, the editor window and `movies.list()`.
 `duplicate` titles the copy "`<title> (copy)`" in the library (or writes it to a new or empty `--to` folder) and
 prints the copy's edit path. `copy --gif` copies a GIF of the edit and exports one when none is current.
 
 `trash` runs `tools rm`, and `tools rm trash` lists the restore command. Run by an agent, or for a recording the
 policy does not allow, it asks the user: every such recording goes into ONE request they confirm with
 `tools rm approve <id>`. `--no-aside` keeps the folders in the library while that request waits. A meeting's screen
-recording is refused, and then nothing is moved.
+recording is refused, and then nothing is moved. The library window's Move to Trash uses Finder's Trash and Put Back.
 
 #### Import a movie
 
@@ -178,7 +185,7 @@ frames, averageFps, audioTracks, markers }`. `tools recorder trash <id>` removes
 
 ```bash
 tools recorder project <recording>               # the edit as JSON (source seconds)
-tools recorder markers <recording> [--chapters]  # markers with where each plays (null when cut), or "0:00 Intro" lines
+tools recorder markers <recording> [--chapters [--output-time]]  # markers with where each plays (null when cut), or "0:00 Intro" lines
 tools recorder click-groups <recording> [--gap 3]  # the clicks in groups as autoZoom groups them: count, source seconds, where each plays (movie.clickGroups())
 tools recorder items-at <recording> <at>         # what plays at an OUTPUT time, in words
 tools recorder check <recording>                 # what to fix before an export and what to look at; changes nothing
@@ -254,24 +261,26 @@ OCRs its frames every `--every` seconds and lists every output moment where a te
 boxes over the proxy movie. The editor's Find tab (⌘F) lists them, a click goes there, and Hide This Text (or a box's
 eye on the preview) blurs them, Mark It draws a box round them, Cut This Moment cuts the frame's time. `--json` (and
 the REPL's `findOnScreen`) names those ops per hit for `apply`: `ops.hide[i]` and `ops.mark[i]` for `boxes[i]`,
-and `ops.cut`.
+and `ops.cut`. A movie recording reads its screen text as `findText` does (the first search reads it once with
+Vision, which can take minutes).
 
 ### Review comments
 
 ```bash
-tools recorder comment <recording> <at> <text> [--to T] [--author N] [--link URL] [--annotation N] [--source]
+tools recorder comment <recording> <at> <text> [--to T] [--author N] [--link URL] [--annotation N] [--source|--export]
 tools recorder comment import <recording> <board> [--card ID] [--dry-run]  # a vitrinka board's annotations
-tools recorder comments <recording>              # the comments in time order, with where each plays
+tools recorder comments <recording>              # the comments in time order, where each plays and plays in the export
 tools recorder resolve <recording> <id> [--reopen]  # a comment done (or open again)
 tools recorder uncomment <recording> <id>        # remove a comment
 ```
 
-A comment sits at an OUTPUT time (`--source` takes recording times) and shows on the editor's timeline;
-`comment add <recording> <at> <text>` is the same command. `--link` is the page it came from (a vitrinka
-annotation, a board with `--annotation <number>`, a PR). `comment import` puts each annotation on a shot, movie or
-step card (or on one `--card`) at the OUTPUT time its text starts with (0:42, 1:02:03, 42s), else at 0:00 with a
-note. A second import adds nothing. `<board>` is the board's link (a `?card=` link picks that card),
-`<workspace>/<slug>` or its slug.
+A comment sits at an OUTPUT time (`--source` takes recording times, `--export` times of the exported file, the intro
+card first) and shows on the editor's timeline; `comments` gives each one's `plays` and `exportPlays` (where it plays
+in the exported file). `comment add <recording> <at> <text>` is the same command. `--link` is the page it came from
+(a vitrinka annotation, a board with `--annotation <number>`, a PR). `comment import` puts each annotation on a shot,
+movie or step card (or on one `--card`) at the time its text starts with (0:42, 1:02:03, 42s), read on the exported
+file the board shows, else at 0:00 with a note. A second import adds nothing. `<board>` is the board's link (a
+`?card=` link picks that card), `<workspace>/<slug>` or its slug.
 
 ### Export and finish
 
@@ -284,7 +293,7 @@ tools recorder export <recording> \
     [--subtitles srt|vtt] \
     [--overwrite] \
     [--size WxH]
-tools recorder subtitles <recording> [--format srt|vtt] [--out FILE] [--from T --to T]  # the transcript as subtitles
+tools recorder subtitles <recording> [--format srt|vtt] [--out FILE] [--from T --to T] [--output-time]  # the transcript as subtitles
 tools recorder finish <recording> <movie> [--from T --to T]  # subtitles and chapters for a movie exported elsewhere
 tools recorder proxy <recording> [--display most-change|ID] [--window 10] [--switch FROM-TO=ID]... [--keep-plan]
 tools recorder proxy <recording> --plan <file>   # the proxy with exactly that display plan (a copy of a proxy.json)
@@ -293,14 +302,19 @@ tools recorder proxy <recording> --undo-switch   # take the last display switch 
 
 `export --size` takes `1920x1080`, `1920x` (width) or `x1080` (height). Progress prints on stderr every 10 %; stdout
 stays the result. See [Export](#export) for the renderer, the names and the limits. `subtitles` writes the cached
-transcript in the edit's time (cut lines left out, fixes kept), beside the movie and named like its export.
+transcript in the edit's time (cut lines left out, fixes kept), beside the movie and named like its export. With an
+intro card every cue starts the card's length later, as the export plays; `--output-time` keeps the movie's own times.
+`markers --chapters` prints the chapter lines on the exported file's clock the same way (the intro card's title
+first, every marker after the card); `--output-time` gives the movie's own times.
 
 `proxy` makes `proxy.mp4` for a frames-only recording or a meeting (frames at their times, audio pieces mixed in), so
 the editor opens it. Per 10 s window it shows the display that changed most (the default; `proxy.json` is the plan),
 or one display. `--switch 10:00-12:30=4` shows a display in a range whatever the policy picks (repeatable);
 `--keep-plan` lays the switches over the last plan, as the editor does. `proxy.undo.json` keeps each switch, and the
 editor's ⌘Z and the REPL's `undoDisplaySwitch()` take back the same one. A meeting also gets its transcript as
-captions with the speakers' names. `edit` makes the proxy by itself for a frames-only recording.
+captions with the speakers' names. The picture holds every display that has frames (bars round a smaller one), so a
+switch never moves an edit's hidden parts; an edit made on an older proxy is moved onto the new picture once (one
+undo step, `fitToProxy`). `edit` makes the proxy by itself for a frames-only recording.
 
 ### Windows and the service
 
@@ -363,8 +377,10 @@ the edit cuts the still, silent stretches while a step's code ran (`idle.ts`; th
 are never cut), the time before the first and after the last step, adds a caption per step while it plays, and
 exports. A step that throws is listed in `failed` and the next one runs; the recording always stops. `edit` takes
 `cutIdle`, `idleMinSeconds` (1), `cutWaits`, `minWaitSeconds` (0.8), `keepSeconds` (0.3), `leadSeconds` (0.5),
-`tailSeconds` (1), `captions`, `captionPosition` (`bottom` | `top`), `captionMinSeconds` (1.8) and `markers`. The
-planner is pure (`demoEditOps` in `lib/demo.ts`), so the result stays an ordinary edit: undo, retime or export it
+`tailSeconds` (1), `captions`, `captionPosition` (`bottom` | `top`), `captionMinSeconds` (1.8) and `markers`.
+`captionMinSeconds` is the least time a caption stays on screen in the finished demo, so a quick step's caption can
+still be read: a cut wait after a step starts no earlier than the end of its caption, and a caption never runs into
+the next step (a cut of the idle time inside a long step can still shorten it). The planner is pure (`demoEditOps` in `lib/demo.ts`), so the result stays an ordinary edit: undo, retime or export it
 again. Save a demo that worked as a preset and run it again with other values: `presets.save(…)` in the REPL,
 `tools node-repl preset run <name> --param key=value` from a shell ([node-repl](../node-repl/README.md), "Presets").
 
@@ -389,9 +405,14 @@ While a recording runs, the menu bar item and the floating controls (hidden from
 With "Camera bubble" on, a live preview of the camera floats where the bubble will be (Small, Medium or Large;
 circle, rounded or square); drag it before or while recording. The movie leaves the preview out
 (`--exclude-window-ids`), and the recorder face records the camera through GenesisKit's camera (`CameraFrameSource`)
-into `camera.mov` beside `screen.mp4`, paused when the recording pauses. At the end it writes `camera.json`
-(`version`, `file`, `startedAt`, `screenStartedAt`, `placement: { x, y, size, shape }`), and a new edit takes it as
-`camera` in `edit.json`:
+into `camera.mov` beside `screen.mp4`. The camera movie runs on the wall clock, pauses included. At the end the face
+writes `camera.json` (`version`, `file`, `startedAt`, `screenStartedAt`, `clock: "wall"`,
+`placement: { x, y, size, shape }`), and the recording lines the camera up with the screen: it writes each kept
+segment's first frame and length into `recording.json` (`settings.video.spans`), cuts `camera.mov` to those spans
+when there are two or more (a pause, a 180 s rollover, a rate change or a switch leaves a gap the screen movie does
+not have), and sets `camera.json` to count from the screen's first frame (`clock: "screen"`, offset 0 after a cut).
+A cut that fails keeps the movie, still counts from the first frame, and adds a warning (`camera-unaligned`). A new
+edit takes it as `camera` in `edit.json`:
 
 ```json
 "camera": { "file": "camera.mov", "offsetMs": 0, "show": true, "corner": "custom", "x": 0.88, "y": 0.82,
@@ -506,8 +527,9 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   cursor), `easeInMs`/`easeOutMs` (450) on a (0.16, 1, 0.3, 1) curve, `target` `picture` or `canvas` (the whole
   framed export).
 - `motion` (optional): `blur` 0 to 1 (0.5 when absent) smears the picture along a zoom's pan or change of scale, as a
-  camera shutter would (at most 24 px a frame, so text stays readable through a fast ease); 0 keeps every frame
-  sharp. Op `motion {blur}`; the Zoom tab's slider.
+  camera shutter would over one frame of the exported movie (24, 25, 30 or 60 fps; a GIF made from the MP4 keeps the
+  MP4 rate's smear), at most about 1 % of the picture's width a frame, so text stays readable through a fast ease; 0
+  keeps every frame sharp. Op `motion {blur}`; the Zoom tab's slider.
 - `redactions` (optional): rectangles of the source picture (`x`, `y`, `width`, `height` 0 to 1 from the top left)
   hidden from `startUs` to `endUs` by `blur`, `pixelate` (`cell`, the block in source pixels) or `black`, or shown by
   a `spotlight` (the rest dims by `dim`, 0.5; `dimAround` softens the edge; `cutout` rounded, rect or circle). They
@@ -531,7 +553,9 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   recording's own markers in `recording.json`. Op `marker` (`at`, `label`, default "Marker <n>"), op `unmarker`
   (`id`), and the `range` op's action `marker` (at the range's start), which the editor's range popover sends as Add
   Marker. `markers()` and `tools recorder markers` list both kinds (an edit marker with its `id`); the chapters and
-  the marks lane show both.
+  the marks lane show both. An exported MP4's chapters and the burned-in progress bar's dividers fold the same way: a
+  marker under 1 s after the chapter kept before it starts none (the earlier name stays), and a first marker under
+  1 s starts the first chapter at 0 with no divider (`EMBEDDED_CHAPTER_MIN_SECONDS` in moments.ts).
   - A recording's own markers (`settings.markers` in recording.json, `{ atMs, label }`) are in movie time: seconds of
     screen.mp4 from its first frame, with the paused time left out. A mark made before the first frame is at 0 (at
     a piece's start after a resume). A movie recording since 2026-11-08 says so with `settings.markerClock: "movie"`.
@@ -565,13 +589,15 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 - `export`: `codec` h264 or hevc, `maxHeight` (0 = source), `output`, `format` (absent = mp4), `subtitles` (`srt`
   or `vtt`: a subtitle file beside every export, from the cached transcript with its fixes, in the movie's time;
   absent is none; `exportSettings {subtitles: "none"}` stops it), `chapters` (absent is on: an MP4 gets the
-  recording's markers as chapters, a part only those inside it; `false` turns it off) and `size` (what `export --size`
-  writes).
-- `clicks` (optional): a disc that grows and fades on each recorded click.
+  recording's markers as chapters; a part gets the chapter current at its start at 0:00 and those inside it, on every
+  route; `false` turns it off) and `size` (what `export --size` writes).
+- `clicks` (optional): a disc that grows and fades on each recorded click. `radius` is a fraction of the recorded
+  picture's height; the disc is drawn on the picture before the zoom and the frame, so it zooms and frames with it.
 - `frame` (optional): the movie on a background (`none`, `color`, `gradient`, or `image` with `image` a picture file
   and `blur` 0 to 1; the Style tab has Desktop Picture and Choose Image…), with `padding`, `cornerRadius` and a
   `shadow`, on a canvas of its own `aspect` (`16:9`, `4:3`, `1:1`, `9:16`; absent is the movie's shape). The
-  canvas's short side is the movie's height; sizes are fractions of it. `fit: "cover"` crops the movie to fill the
+  canvas's short side is the movie's height; `padding`, `cornerRadius` and the other sizes are fractions of the
+  canvas's short side. `fit: "cover"` crops the movie to fill the
   canvas, the crop following the cursor (averaged over ±0.7 s); `contain` (absent) shows all of it. Presets
   `phone-left`, `phone-right` and `phone-portrait` lay out a phone recording.
 - `keys` (optional): the kept shortcuts on a plate as they were pressed, `show`, `size` 0.05, `position`,
@@ -602,7 +628,8 @@ takes OUTPUT times). `help("movies")` in the REPL documents each op's fields. Th
   freezedetect, frame gaps and silencedetect), `speedUpWaits {ids?, minSeconds?, maxArea?, speed?}`,
   `reset`.
 - Zoom and motion: `zoom {from,to,scale?,focus?,follow?}`, `unzoom {id}`, `setZoom`, `autoZoom {scale?}` (one zoom
-  per group of clicks under 3 s apart; manual zooms stay), `motion {blur?}`, `lens`, `setLens`, `unlens`, `tilt`,
+  per group of clicks under 3 s apart; a later run replaces only its own zooms, origin "auto", and a canvas zoom does
+  not block one), `motion {blur?}`, `lens`, `setLens`, `unlens`, `tilt`,
   `transition`.
 - Hide and point: `redact {from,to,rect:{x,y,width,height},style?,label?,follow?}`, `spotlight {from,to,rect,
   label?,follow?}`, `unredact {id}`, `setRedaction`, `redactionJoins`, `hidePrivate`, `hideText`, `unhide`.
@@ -622,8 +649,11 @@ takes OUTPUT times). `help("movies")` in the REPL documents each op's fields. Th
   `normalize {targetLufs? -16}` (measures the unmuted tracks' EBU R128 loudness and sets the volume, at most 200 %).
 - Export: `exportSettings {codec?,maxHeight?,output?,format?,subtitles?,chapters?,size?}`.
 
-`movie.itemsAt(at)` (and `tools recorder items-at <recording> <at>`) says in words what plays at an output time: the
-source time, the zoom, the hidden parts, texts and shapes on screen with their ids, and the caption line.
+`movie.itemsAt(at)` (and `tools recorder items-at <recording> <at>`) says in words what plays at an output time, as the
+export draws that frame: the source time, the picture zoom and the canvas zoom (or the glide between two linked zooms),
+the hidden parts, texts, shapes and lenses on screen with their ids, the caption line (null while captions are off) and
+`spoken`, the transcript line said there. A hidden part that `redactionJoins` runs on to a cut or to the next part
+counts while it is drawn and carries `drawn: { from, to }`.
 
 `movie.check()` (and `tools recorder check`) lists what to look at before an export: items and markers whose time is
 cut, texts a cut shortens, missing music, captions or subtitles without a transcript. An issue with a fix carries it
@@ -656,7 +686,8 @@ chapters). The Export tab can also put the file on the clipboard when done (off 
 
 `GenesisTools --recorder [--edit P] [--library] [--no-focus]` runs the menu bar item (record, open, the library,
 recent recordings, the drawn cursor and shortcut toggles) and the editor and library windows. `--picker` opens the
-capture picker. Headless: `--export P [--out F] [--size WxH] --json`, `--still P --at S --out PNG [--full]`
+capture picker; with `--no-focus` (or the service's `window.show { which: "picker", focus: false }`) it comes to the
+front without taking the keyboard from the app in front, and its first click takes it. Headless: `--export P [--out F] [--size WxH] --json`, `--still P --at S --out PNG [--full]`
 (`--full`: the export's size), `--sheet P --times S,S,… --out PNG [--columns N]` (frames on a grid, each labelled),
 and `--snapshot PNG` with `--edit P [--tab T] [--at S]`, `--library [--filter TEXT]` or `--picker [--shortcuts]`
 (the panel over made-up targets).

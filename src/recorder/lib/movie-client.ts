@@ -29,16 +29,21 @@ const EDIT_CALL_TIMEOUT_MS = 10 * 60_000;
 const callerPath = (value: string): string => resolveRecording(value);
 
 /**
- * The params that name a file, per Movie method and per edit op of the same name, beyond `file` (a file in every
- * one): the service resolves a relative path against its own folder, so each is resolved here first (CLI-F3).
- * A new path param goes into this table.
+ * The params that name a file against the caller's cwd, per Movie method and per edit op of the same name; a name
+ * missing here has `file` only. The service resolves a relative path against its own folder, so each is resolved
+ * here first (CLI-F3). A new path param goes into this table.
  */
-const PATH_PARAMS: Readonly<Record<string, readonly string[]>> = {
-    duplicate: ["to"],
-    exportSettings: ["output"],
-    introCard: ["logo"],
-    frame: ["background.image"],
-};
+const PATH_PARAMS: ReadonlyMap<string, readonly string[]> = new Map([
+    ["duplicate", ["file", "to"]],
+    ["introCard", ["file", "logo"]],
+    ["frame", ["file", "background.image"]],
+    // The camera's file is not a cwd path: cameraBubbleSchema says "a bare name is beside the source movie", and the
+    // in-process camera op stores it as written, so it goes to the service as written.
+    ["camera", []],
+    // The export's chosen file; "" (back to the default name) stays "".
+    ["exportSettings", ["output"]],
+]);
+const DEFAULT_PATH_PARAMS: readonly string[] = ["file"];
 
 /** A file path as the caller means it: `~` and `~/` are the home folder, a relative path is against this cwd; "" stays "". */
 function callerFile(value: string): string {
@@ -52,7 +57,7 @@ function callerFile(value: string): string {
 export function callerParams(name: string, params: Record<string, unknown>): Record<string, unknown> {
     const next: Record<string, unknown> = { ...params };
 
-    for (const key of ["file", ...(PATH_PARAMS[name] ?? [])]) {
+    for (const key of PATH_PARAMS.get(name) ?? DEFAULT_PATH_PARAMS) {
         const [head, field] = key.split(".");
         const value = next[head];
 

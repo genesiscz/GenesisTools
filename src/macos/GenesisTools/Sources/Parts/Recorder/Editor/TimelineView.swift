@@ -177,9 +177,16 @@ struct DragTimeTag: View {
     let startUs: Int64
     let endUs: Int64
 
+    /// The tag's text, from the spans the segment draws: it starts where the segment starts on the ruler (the first
+    /// kept moment when the item's start was cut) and lasts as long as the segment plays.
+    static func label(project: EditProject, startUs: Int64, endUs: Int64) -> String {
+        let start = TimelineMap.outputSpans(fromUs: startUs, toUs: endUs, in: project).first?.fromUs
+            ?? TimelineMap.outputTime(ofSource: startUs, in: project) ?? startUs
+        return "\(formatClock(start, tenths: true)) · \(editLength(project, fromUs: startUs, toUs: endUs))"
+    }
+
     var body: some View {
-        let start = TimelineMap.outputTime(ofSource: startUs, in: project) ?? startUs
-        Text(verbatim: "\(formatClock(start, tenths: true)) · \(String(format: "%.1f", Double(endUs - startUs) / 1_000_000)) s")
+        Text(verbatim: Self.label(project: project, startUs: startUs, endUs: endUs))
             .font(.system(size: 10, weight: .semibold).monospacedDigit())
             .foregroundStyle(.white)
             .padding(.horizontal, 5)
@@ -215,6 +222,16 @@ func editRange(_ project: EditProject, fromUs: Int64, toUs: Int64) -> (edit: Str
     guard let first = spans.first, let last = spans.last else { return ("Cut from the edit", "\(source) in the recording") }
     let edit = formatClockRange(first.fromUs, last.toUs)
     return (edit, edit == source ? nil : "\(source) in the recording")
+}
+
+/// How long a source range plays in the edit ("1.5 s"), and its length in the recording beside it when a clip speed or
+/// a cut makes the two differ by 0.05 s or more, as check() says it ("1.5 s, 3.0 s of the recording").
+func editLength(_ project: EditProject, fromUs: Int64, toUs: Int64) -> String {
+    let played = TimelineMap.playedUs(fromUs: fromUs, toUs: toUs, in: project)
+    // Tenths rounded half up, as check() rounds them (printf made 0.25 s "0.2 s" where check() says 0.3 s).
+    let tenths = { (us: Int64) in String(format: "%.1f s", (Double(us) / 100_000).rounded() / 10) }
+    let edit = tenths(played), recording = tenths(toUs - fromUs)
+    return abs(played - (toUs - fromUs)) < 50_000 || edit == recording ? edit : "\(edit), \(recording) of the recording"
 }
 
 // MARK: - Clip lane
@@ -528,7 +545,10 @@ private struct AudioLaneView: View {
 
     var body: some View {
         let waveform = model.waveform
-        let muted = !model.project.audio.include
+        // The tracks the preview and the export mix; with none playing the lane keeps every track's shape, dimmed.
+        let audible = model.project.audio.audibleTracks(count: waveform.trackCount)
+        let muted = audible.isEmpty
+        let tracks = muted ? IndexSet(integersIn: 0..<waveform.trackCount) : audible
         Canvas { context, size in
             guard waveform.hasAudio else { return }
             for placed in TimelineMap.placed(model.project) {
@@ -541,7 +561,8 @@ private struct AudioLaneView: View {
                     let a = Double(bar) / Double(bars), b = Double(bar + 1) / Double(bars)
                     let from = placed.clip.fromUs + Int64(Double(placed.clip.sourceDurationUs) * a)
                     let to = placed.clip.fromUs + Int64(Double(placed.clip.sourceDurationUs) * b)
-                    let peak = CGFloat(waveform.peak(fromUs: from, toUs: to, durationUs: model.project.source.durationUs))
+                    let peak = CGFloat(waveform.peak(fromUs: from, toUs: to, durationUs: model.project.source.durationUs,
+                                                     tracks: tracks))
                     let level = min(1, peak * CGFloat(model.project.audio.volume))
                     let height = max(1, level * (size.height - 6))
                     let rect = CGRect(x: x0 + CGFloat(bar) * 3, y: (size.height - height) / 2, width: 2, height: height)
@@ -550,7 +571,7 @@ private struct AudioLaneView: View {
             }
         }
         .frame(height: TimelineView.audioLaneHeight)
-        .instantTooltip("Sound (the waveform of the kept clips)")
+        .instantTooltip("Sound (the waveform of the tracks that play, over the kept clips)")
         .accessibilityLabel(waveform.hasAudio ? "Audio waveform" : "No audio")
     }
 }

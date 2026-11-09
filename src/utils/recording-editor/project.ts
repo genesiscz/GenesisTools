@@ -5,12 +5,23 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
-import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
+import { bubbleRect, CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { cursorSmoothSchema } from "./cursor-smooth";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
-import { applyFxOp, describeFx, fxOpSchemas, lensSchema, tiltSchema, transitionsSchema } from "./fx";
+import {
+    applyFxOp,
+    describeFx,
+    fxOpSchemas,
+    lensSchema,
+    lensShowsAt,
+    tiltSchema,
+    transitionJoins,
+    transitionPlayingAt,
+    transitionsSchema,
+} from "./fx";
 import { recordingItemId, withItemIds } from "./item-ids";
 import {
+    circleAround,
     clipSpeed,
     cursorPointAt,
     deleteClip,
@@ -48,6 +59,8 @@ import {
     captionsStyleSchema,
     cardsLeadUs,
     cardsSchema,
+    isPictureFile,
+    PICTURE_EXTENSIONS,
     progressSchema,
     TEXT_ANIMATIONS,
     textAnimateOf,
@@ -56,7 +69,10 @@ import {
 import { outputTimeSchema, sourceTimeSchema, timeSchema, timeToUs } from "./plan";
 import {
     describeTextQuery,
+    type FractionBox,
     HIDE_UNITS,
+    type LineMatcher,
+    maskPrivate,
     PRIVATE_KINDS,
     PRIVATE_STYLES,
     type PrivateHit,
@@ -76,6 +92,7 @@ import {
     applyDucking,
     applyVoiceover,
     duckingSchema,
+    musicDucking,
     removeVoiceover,
     VOICEOVER_CARDS,
     voiceoverSchema,
@@ -105,6 +122,13 @@ function wholeUs<T extends z.ZodType<number>>(schema: T) {
 export const MINIMUM_CLIP_US = 16_667;
 const MINIMUM_ZOOM_US = 200_000;
 
+/**
+ * Why a canvas zoom refuses follow: the renderer holds its focus (ZoomCurve.canvasView), because the cursor moves
+ * inside the picture and not on the canvas. An edit saved with such a zoom still loads and renders at its focus.
+ */
+export const CANVAS_ZOOM_HOLDS_FOCUS =
+    "a canvas zoom holds its focus (0...1 of the canvas) and does not follow the cursor; give focus {x, y}, or drop target for a picture zoom that follows";
+
 const clipSchema = z.object({
     id: z.string(),
     fromUs: wholeUs(z.number().int().nonnegative()),
@@ -131,6 +155,11 @@ const zoomSchema = z.object({
      * Its focus is then 0...1 of the canvas. A canvas zoom may overlap a picture zoom; two of one kind may not.
      */
     target: z.enum(["picture", "canvas"]).optional(),
+    /**
+     * Who made it: "auto" is autoZoom, which replaces only its own zooms on a later run; absent is the user's. setZoom
+     * and duplicate drop it, so an auto zoom the user tuned stays theirs.
+     */
+    origin: z.enum(["auto"]).optional(),
 });
 
 export const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
@@ -143,8 +172,12 @@ export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 export const clicksSchema = z.object({
     highlight: z.boolean().default(true),
     color: hexColor.default("#FFD60A"),
-    /** The disc's largest radius, as a fraction of the output height. */
+    /**
+     * The disc's largest radius, as a fraction of the recorded picture's height. It is drawn on the picture before the
+     * zoom and the frame, so it zooms and frames with it.
+     */
     radius: z.number().min(0.005).max(0.2).default(0.03),
+    /** How long a disc grows and fades, in the movie as it plays (a sped-up part does not shorten it); a cut ends it. */
     durationMs: z.number().int().min(100).max(3000).default(450),
     /** A soft tick at each recorded click in the sound; absent is off. */
     sound: z.boolean().optional(),
@@ -176,9 +209,9 @@ export const frameSchema = z.object({
             blur: z.number().min(0).max(1).optional(),
         })
         .default({ kind: "gradient", colors: ["#4F46E5", "#DB2777"] }),
-    /** The margin on every side, as a fraction of the output height. */
+    /** The margin on every side, as a fraction of the canvas's short side (Looks.framePlacement). */
     padding: z.number().min(0).max(0.3).default(0.06),
-    /** As a fraction of the output height. */
+    /** As a fraction of the canvas's short side (Looks.framePlacement). */
     cornerRadius: z.number().min(0).max(0.1).default(0.012),
     shadow: z.boolean().default(true),
     // R5 4 frame layouts
@@ -206,8 +239,9 @@ export const frameSchema = z.object({
 /**
  * Ready frames for a phone recording: "phone-left" and "phone-right" put the phone against one side of a 16:9 canvas
  * with the other side (about three quarters of it) free for texts, and layout.scale above 1 makes the phone bigger;
- * "phone-portrait" fills a 9:16 canvas (Shorts, Reels) from the top and leaves its bottom eighth for captions. Each
- * sets the aspect, padding, corner radius and layout; the op's own fields still win.
+ * "phone-portrait" fills a 9:16 canvas (Shorts, Reels) from the top and leaves its bottom eighth for captions; a camera
+ * bubble in a bottom corner shares that band, and a caption that reaches it lifts above it (check() names this). Each
+ * sets the aspect, the fit (contain: the whole phone), padding, corner radius and layout; the op's own fields still win.
  */
 export const FRAME_PRESETS = ["phone-left", "phone-right", "phone-portrait"] as const;
 export type FramePreset = (typeof FRAME_PRESETS)[number];
@@ -216,14 +250,33 @@ export const FRAME_PRESET_VALUES: Record<
     FramePreset,
     {
         aspect: (typeof CANVAS_ASPECTS)[number];
+        fit: "contain";
         padding: number;
         cornerRadius: number;
         layout: { align: (typeof FRAME_ALIGNS)[number]; scale: number };
     }
 > = {
-    "phone-left": { aspect: "16:9", padding: 0.04, cornerRadius: 0.035, layout: { align: "left", scale: 1 } },
-    "phone-right": { aspect: "16:9", padding: 0.04, cornerRadius: 0.035, layout: { align: "right", scale: 1 } },
-    "phone-portrait": { aspect: "9:16", padding: 0.04, cornerRadius: 0.03, layout: { align: "top", scale: 0.88 } },
+    "phone-left": {
+        aspect: "16:9",
+        fit: "contain",
+        padding: 0.04,
+        cornerRadius: 0.035,
+        layout: { align: "left", scale: 1 },
+    },
+    "phone-right": {
+        aspect: "16:9",
+        fit: "contain",
+        padding: 0.04,
+        cornerRadius: 0.035,
+        layout: { align: "right", scale: 1 },
+    },
+    "phone-portrait": {
+        aspect: "9:16",
+        fit: "contain",
+        padding: 0.04,
+        cornerRadius: 0.03,
+        layout: { align: "top", scale: 0.88 },
+    },
 };
 
 /**
@@ -292,8 +345,9 @@ export const redactionSchema = z.object({
     exclude: z.array(boxSchema).optional(),
     // R5 5 redaction edges
     /**
-     * A spotlight's dim fades in and out over this many ms (at most a third of its length); 0 is a hard cut, absent is
-     * 200. The hiding styles never fade: they cover fully from their first frame to their last.
+     * A spotlight's dim fades in and out over this many ms of the movie as it plays (at most a third of the time it
+     * plays); 0 is a hard cut, absent is 200. The hiding styles never fade: they cover fully from their first frame to
+     * their last.
      */
     fadeMs: z.number().int().min(0).max(2000).optional(),
     /** A pixelate block's side in source pixels (2 to 256); absent is 1.8 % of the picture's height, at least 8. */
@@ -352,6 +406,88 @@ function exportSizeOf(size: z.infer<typeof exportSizeSchema> | undefined) {
     return size && (size.width !== undefined || size.height !== undefined) ? { size } : {};
 }
 
+/** The pixels a second the H.264 export keeps at its full rate (EditRenderer.h264PixelRate): 2560×1600 at 60 fps. */
+const H264_PIXEL_RATE = 2560 * 1600 * 60;
+/** A GIF export is 10 fps and at most 960 wide (ffmpeg.ts GIF_FILTER). */
+const GIF_FPS = 10;
+const GIF_MAX_WIDTH = 960;
+
+/**
+ * The output's constant frame rate from the movie track's (nominal) rate, as EditRenderer.exportFps: above film rates
+ * a screen recording exports at 60, a film rate is kept, and anything slower exports at 30.
+ */
+export function exportFps(nominal: number): number {
+    if (nominal > 31) {
+        return 60;
+    }
+
+    if (nominal >= 23.5) {
+        return Math.round(nominal);
+    }
+
+    return 30;
+}
+
+/**
+ * The exported file's canvas in pixels and its frame rate, by the export's one size rule. It mirrors Swift
+ * EditRenderer.plannedOutput (keep the two in step; export-size.cases.json pins both): `export.size` exactly (to even
+ * pixels, the other side from the canvas's shape), else the source height scaled down to `maxHeight`, the frame's
+ * aspect, and for H.264 the pixel budget at the export rate; even pixels. A GIF is made from that movie at 10 fps and
+ * at most 960 wide. `nominalFps` is the movie track's rate; absent guesses 60, a screen recording's usual export rate.
+ */
+export function exportPlanOf(
+    project: EditProject,
+    options: { nominalFps?: number } = {}
+): { fps: number; canvas: { width: number; height: number } } {
+    const source = { width: project.source.width || 1920, height: project.source.height || 1080 };
+    const settings = project.export;
+    const movieFps = exportFps(options.nominalFps ?? 60);
+    const aspect = project.frame?.aspect;
+    const [aspectWidth, aspectHeight] = aspect && aspect !== "source" ? aspect.split(":").map(Number) : [];
+    const ratio = aspectWidth && aspectHeight ? aspectWidth / aspectHeight : undefined;
+    const canvasAt = (height: number) => {
+        if (ratio === undefined) {
+            return { width: (source.width / source.height) * height, height };
+        }
+
+        return ratio >= 1 ? { width: height * ratio, height } : { width: height, height: height / ratio };
+    };
+    const nearestEven = (value: number) => Math.max(2, Math.round(value / 2) * 2);
+    const evenDown = (value: number) => Math.max(2, Math.floor(value / 2) * 2);
+    let canvas: { width: number; height: number };
+    const fixed = settings.size;
+
+    if (fixed && (fixed.width !== undefined || fixed.height !== undefined)) {
+        const shape = canvasAt(source.height);
+        const factor = fixed.height !== undefined ? fixed.height / shape.height : (fixed.width ?? 0) / shape.width;
+        const made = canvasAt(source.height * factor);
+        canvas = { width: nearestEven(fixed.width ?? made.width), height: nearestEven(fixed.height ?? made.height) };
+    } else {
+        let scale =
+            settings.maxHeight > 0 && source.height > settings.maxHeight ? settings.maxHeight / source.height : 1;
+
+        if (settings.codec === "h264") {
+            const full = canvasAt(source.height * scale);
+            const limit = H264_PIXEL_RATE / movieFps;
+
+            if (full.width * full.height > limit) {
+                scale *= Math.sqrt(limit / (full.width * full.height));
+            }
+        }
+
+        const shape = canvasAt(source.height * scale);
+        canvas = { width: evenDown(shape.width), height: evenDown(shape.height) };
+    }
+
+    if (settings.format === "gif") {
+        // scale='min(960,iw)':-2 keeps the shape and rounds the height to an even pixel.
+        const width = Math.min(GIF_MAX_WIDTH, canvas.width);
+        return { fps: GIF_FPS, canvas: { width, height: nearestEven((canvas.height * width) / canvas.width) } };
+    }
+
+    return { fps: movieFps, canvas };
+}
+
 /**
  * Corrections to the cached transcript, kept in the edit so a new transcription does not lose them: the fixed text
  * of a line by its start in source milliseconds; an empty text hides the line. Captions, `transcript()`, `find()`
@@ -367,6 +503,38 @@ export const transcriptSettingsSchema = z.object({
  * unless `wholeWord` is false, where a letter or digit of any language next to it makes it part of a longer word. A
  * hidden line (fixed to "") is left out.
  */
+/**
+ * The key a caption fix is saved under in `transcript.fixes`: its line's start in whole milliseconds, as every reader
+ * looks it up (Swift TranscriptSettings.key agrees).
+ */
+export function transcriptFixKey(startSeconds: number): string {
+    return String(Math.round(startSeconds * 1000));
+}
+
+/**
+ * The key fixLine used before 2026-11-09: the start rounded to the microsecond and then to the millisecond, so a line
+ * that starts on a half millisecond was saved one millisecond off. Read only, and only when no line owns that key.
+ */
+function oldTranscriptFixKey(startSeconds: number): string {
+    return String(Math.round(Math.round(startSeconds * 1_000_000) / 1000));
+}
+
+/** The fix of the line that starts at `start`, reading a fix saved under the old key when no line in `owned` has it. */
+function lineFixOf(
+    fixes: Readonly<Record<string, string>>,
+    start: number,
+    owned: ReadonlySet<string>
+): string | undefined {
+    const fix = fixes[transcriptFixKey(start)];
+
+    if (fix !== undefined) {
+        return fix;
+    }
+
+    const old = oldTranscriptFixKey(start);
+    return owned.has(old) ? undefined : fixes[old];
+}
+
 export function replaceWordsInLines(
     segments: ReadonlyArray<{ text: string; start: number }>,
     fixes: Readonly<Record<string, string>>,
@@ -381,8 +549,9 @@ export function replaceWordsInLines(
     const escaped = find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const source = options.wholeWord === false ? escaped : `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`;
     const pattern = new RegExp(source, options.matchCase ? "gu" : "giu");
+    const owned = new Set(segments.map((segment) => transcriptFixKey(segment.start)));
     return segments.flatMap((segment) => {
-        const fixed = fixes[String(Math.round(segment.start * 1000))];
+        const fixed = lineFixOf(fixes, segment.start, owned);
         const was = fixed ?? segment.text.trim();
 
         if (fixed === "" || !pattern.test(was)) {
@@ -453,7 +622,8 @@ export const SHAPE_APPEARS = ["draw", "fade", "none"] as const;
  * An arrow, a box or a circle over the SOURCE picture (so it moves with a zoom, like a hidden part) from `startUs` to
  * `endUs`. An arrow runs from (x1, y1) to its head at (x2, y2); a box or circle fills the rectangle between the two
  * points. `width` is the line's thickness as a fraction of the picture's short side. It draws itself on over 0.3 s
- * and fades out over 0.2 s.
+ * and fades out over 0.2 s, in the movie as it plays: a sped-up part does not shorten them, and a shape whose start
+ * was cut draws itself on from its first shown frame.
  */
 export const shapeSchema = z.object({
     id: z.string(),
@@ -475,12 +645,16 @@ export const shapeSchema = z.object({
 });
 export type EditShape = z.infer<typeof shapeSchema>;
 
-const rectSchema = z
+/**
+ * A rectangle drawn on the preview (redact, spotlight): on a framed preview it may start or end on the background
+ * margin, so it may run past the picture on any side; addRedaction keeps the part inside the picture.
+ */
+const drawnRectSchema = z
     .object({
-        x: z.number().min(0).max(1),
-        y: z.number().min(0).max(1),
-        width: z.number().min(0.005).max(1),
-        height: z.number().min(0.005).max(1),
+        x: z.number().min(-1).max(1),
+        y: z.number().min(-1).max(1),
+        width: z.number().min(0.005).max(2),
+        height: z.number().min(0.005).max(2),
     })
     .strict();
 
@@ -517,6 +691,12 @@ export const musicSchema = z.object({
     startMs: z.number().int().min(0).optional(),
     /** false plays the file once (from startMs) and then stops; absent loops it to the movie's length. */
     loop: z.boolean().optional(),
+    /**
+     * Set by a part export (partOf): where the part's first frame plays in the whole export (microseconds, after its
+     * intro card) and how long the whole export is. The music goes on from that place in its file and fades only at
+     * the whole's ends, so the part sounds like the same stretch of the whole.
+     */
+    inWhole: z.object({ atUs: z.number().int().nonnegative(), lengthUs: z.number().int().positive() }).optional(),
 });
 
 /** The look of the zoom's moves: `blur` 0 (sharp) to 1 smears the picture along a pan or a zoom, 0.5 by default. */
@@ -659,13 +839,52 @@ export function wholeProject(source: EditProject["source"]): EditProject {
     return editProjectSchema.parse({ source, clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: source.durationUs }] });
 }
 
+// R6 9 rendered text boxes
+/** The canvas's width and height with the short side 1: the frame's aspect, else the movie's. */
+export function canvasShape(project: EditProject): { width: number; height: number } {
+    const aspect = project.frame?.aspect;
+    const [w, h] =
+        aspect && aspect !== "source"
+            ? aspect.split(":").map(Number)
+            : [project.source.width || 16, project.source.height || 9];
+    const ratio = (w ?? 16) / (h ?? 9);
+    return ratio >= 1 ? { width: ratio, height: 1 } : { width: 1, height: 1 / ratio };
+}
+
 // R6 10 effects sheet
 /**
- * The edit with every effect kept and its clips replaced by the whole recording at speed 1, so an output second is
- * the same source second: a sheet of source times drawn through the edit's zooms, hidden parts, texts and frame.
+ * The edit with its effects and its clips replaced by the whole recording at speed 1, so an output second is the same
+ * source second: a sheet of source times drawn through the edit's zooms, hidden parts, texts and frame. The whole clip
+ * has no cuts, so the export's snap of a hidden part to a cut is baked into the parts first (snappedRedactionSpans).
+ * The tilt and the progress bar run on the export's clock, which a source moment inside a cut does not have, so they
+ * are left out; an output sheet shows them.
  */
 export function effectsOnSourceTime(project: EditProject): EditProject {
-    return { ...project, clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: project.source.durationUs, speed: 1 }] };
+    const { tilt: _tilt, progress: _progress, ...effects } = project;
+    return {
+        ...effects,
+        ...(project.redactions ? { redactions: snappedRedactionSpans(project) } : {}),
+        clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: project.source.durationUs, speed: 1 }],
+    };
+}
+
+/**
+ * A camera op that gives x or y makes the bubble custom. A corner bubble (or none yet) takes the axis the op leaves out
+ * from where it is drawn now (bubbleRect, the renderer's Camera.rect), not from the stored custom default; a custom
+ * bubble keeps its stored axis.
+ */
+function cameraPlacedAt(
+    project: EditProject,
+    change: { x?: number; y?: number },
+    file: string
+): { corner: "custom"; x?: number; y?: number } {
+    if (project.camera?.corner === "custom") {
+        return { corner: "custom" };
+    }
+
+    const canvas = canvasShape(project);
+    const drawn = bubbleRect(cameraBubbleSchema.parse({ ...project.camera, file }), canvas);
+    return { corner: "custom", x: change.x ?? drawn.x / canvas.width, y: change.y ?? drawn.y / canvas.height };
 }
 
 /** Reads an edit file; refuses a newer version instead of reading it wrongly. */
@@ -714,6 +933,35 @@ export function outputDurationUs(project: EditProject): number {
     return project.clips.reduce((sum, clip) => sum + clipOutputUs(clip), 0);
 }
 
+/**
+ * The output stretches that play the source range `fromUs`..`toUs`: one per kept clip it overlaps, at the clip's speed.
+ * A range that was cut plays nowhere. The Swift twin is TimelineMap.outputSpans.
+ */
+export function outputSpansOf(
+    project: EditProject,
+    fromUs: number,
+    toUs: number
+): Array<{ fromUs: number; toUs: number }> {
+    const spans: Array<{ fromUs: number; toUs: number }> = [];
+    let start = 0;
+
+    for (const clip of project.clips) {
+        const from = Math.max(fromUs, clip.fromUs);
+        const to = Math.min(toUs, clip.toUs);
+
+        if (to > from) {
+            spans.push({
+                fromUs: start + Math.round((from - clip.fromUs) / clip.speed),
+                toUs: start + Math.round((to - clip.fromUs) / clip.speed),
+            });
+        }
+
+        start += clipOutputUs(clip);
+    }
+
+    return spans;
+}
+
 /** The output time of a source time, or undefined when that moment was cut. */
 export function outputTimeOf(project: EditProject, sourceUs: number): number | undefined {
     let start = 0;
@@ -727,6 +975,152 @@ export function outputTimeOf(project: EditProject, sourceUs: number): number | u
     }
 
     return undefined;
+}
+
+/** The output length of `startUs`..`endUs` (source): each kept piece at its clip's speed. */
+export function playedUs(project: EditProject, startUs: number, endUs: number): number {
+    return project.clips.reduce(
+        (sum, clip) =>
+            sum + Math.max(0, Math.min(clip.toUs, endUs) - Math.max(clip.fromUs, startUs)) / (clip.speed || 1),
+        0
+    );
+}
+
+/**
+ * The source times where a clip starts or ends, in order: between two of them playedUs grows at one rate, so
+ * sourceAfterPlayed below and check.ts's sourceBeforePlayed solve it one stretch at a time.
+ */
+export function clipEdgesOf(project: EditProject): number[] {
+    return [...new Set(project.clips.flatMap((clip) => [clip.fromUs, clip.toUs]))].sort((a, b) => a - b);
+}
+
+/**
+ * The source time where `startUs`..that time has played `playUs` of output, by playedUs's own measure: every clip that
+ * plays a piece of it counts, so clips that repeat or reorder the source give what the check then measures. Walking the
+ * clips one after the other ended a text over two 1x clips of the same second at 0.5 s, and it then played 1 s.
+ */
+export function sourceAfterPlayed({
+    project,
+    startUs,
+    playUs,
+}: {
+    project: EditProject;
+    startUs: number;
+    playUs: number;
+}): number {
+    let leftUs = playUs;
+    let atUs = startUs;
+
+    for (const edgeUs of clipEdgesOf(project).filter((us) => us > startUs)) {
+        const stretchUs = playedUs(project, atUs, edgeUs);
+
+        if (stretchUs > 0 && stretchUs >= leftUs) {
+            return Math.min(project.source.durationUs, Math.round(atUs + (leftUs * (edgeUs - atUs)) / stretchUs));
+        }
+
+        leftUs -= stretchUs;
+        atUs = edgeUs;
+    }
+
+    return project.source.durationUs;
+}
+
+/**
+ * The text ops of a step title at each marker that plays (`at` in source seconds, in order), as titleMarkers adds
+ * them: "N. label" (or the label alone with numbered false), playing for `seconds` (2.5) of the finished movie, so a
+ * cut or a sped-up stretch after the marker moves its end later in source time. A title ends at the source's end and
+ * no later than the next marker's start, so it never covers the next step's title. A marker that already has a text
+ * starting within 0.1 s keeps it, so a second run adds nothing.
+ */
+export function markerTitleOps(
+    project: EditProject,
+    marks: ReadonlyArray<{ at: number; label: string }>,
+    options: {
+        seconds?: number;
+        numbered?: boolean;
+        y?: number;
+        animate?: { kind: (typeof TEXT_ANIMATIONS)[number]; ms?: number };
+    } = {}
+): EditOp[] {
+    const lengthUs = Math.round((options.seconds ?? 2.5) * 1_000_000);
+    const taken = (project.texts ?? []).map((note) => note.startUs);
+    const starts = marks.map((mark) => Math.round(mark.at * 1_000_000));
+    return marks.flatMap((mark, index): EditOp[] => {
+        const startUs = starts[index];
+
+        if (taken.some((us) => Math.abs(us - startUs) <= 100_000)) {
+            return [];
+        }
+
+        const nextUs = starts.find((us) => us > startUs) ?? project.source.durationUs;
+        const endUs = Math.min(
+            sourceAfterPlayed({ project, startUs, playUs: lengthUs }),
+            nextUs,
+            project.source.durationUs
+        );
+        const text = options.numbered === false ? mark.label : `${index + 1}. ${mark.label}`;
+        return [
+            {
+                op: "text",
+                from: mark.at,
+                to: Math.floor(endUs / 1000) / 1000,
+                text: text.slice(0, 200),
+                ...(options.y === undefined ? {} : { y: options.y }),
+                ...(options.animate ? { animate: options.animate } : {}),
+            },
+        ];
+    });
+}
+
+/**
+ * The source times where a kept clip ends before a cut (or the movie's end), and where one starts after a cut. The
+ * Swift twin is RedactionEdges.cutEdges.
+ */
+export function cutEdgesOf(project: EditProject): { ends: number[]; starts: number[] } {
+    const clips = project.clips.filter((clip) => clip.toUs > clip.fromUs);
+    const ends = clips.filter((clip, index) => clips[index + 1]?.fromUs !== clip.toUs).map((clip) => clip.toUs);
+    const starts = clips
+        .filter((clip, index) => clip.fromUs > 0 && clips[index - 1]?.toUs !== clip.fromUs)
+        .map((clip) => clip.fromUs);
+    return { ends: ends.sort((a, b) => a - b), starts: starts.sort((a, b) => a - b) };
+}
+
+/**
+ * The hidden parts with the source times the export draws them, the rule of the window's renderer
+ * (RedactionEdges.effective): with `redactionJoins.snapMs` (250 unless set), a hiding part (blur, pixelate, black) that
+ * ends that close before a cut is drawn to the cut, one that starts that close after a cut is drawn from it, and one
+ * that ends that close before the next hiding part starts stays on until it does. Spotlights keep their own times, and
+ * nothing is ever shortened. The renderer also keeps a part on while a frame from its time stays on screen (a screen
+ * recording writes no frame while nothing moves); that needs the movie's frame times, which this does not read.
+ */
+export function snappedRedactionSpans(project: EditProject): EditRedaction[] {
+    const parts = (project.redactions ?? []).map((part) => ({ ...part }));
+    const snapUs = Math.max(0, project.redactionJoins?.snapMs ?? REDACTION_SNAP_MS) * 1000;
+
+    if (snapUs <= 0) {
+        return parts;
+    }
+
+    const cuts = cutEdgesOf(project);
+    const hiding = parts.filter((part) => part.style !== "spotlight");
+
+    for (const part of hiding) {
+        const end = cuts.ends.find((edge) => edge > part.endUs && edge - part.endUs <= snapUs);
+        const start = cuts.starts.findLast((edge) => edge < part.startUs && part.startUs - edge <= snapUs);
+        part.endUs = end ?? part.endUs;
+        part.startUs = start ?? part.startUs;
+    }
+
+    for (const part of hiding) {
+        const end = part.endUs;
+        const following = hiding.map((other) => other.startUs).filter((start) => start > end && start - end <= snapUs);
+
+        if (following.length > 0) {
+            part.endUs = Math.min(...following);
+        }
+    }
+
+    return parts;
 }
 
 /**
@@ -846,12 +1240,70 @@ export function exportToOutputUs(project: EditProject, exportUs: number): number
     return outUs >= 0 && outUs <= outputDurationUs(project) ? outUs : undefined;
 }
 
+/**
+ * The clocks a time of an edit can be on: SOURCE (the recording as recorded, what ops take), OUTPUT (the edited movie,
+ * what the editor's timeline shows, without its cards) and EXPORT (the exported file, which plays the intro card first).
+ */
+export const EDIT_CLOCKS = ["source", "output", "export"] as const;
+export type EditClock = (typeof EDIT_CLOCKS)[number];
+
+/**
+ * A moment of the export file as output microseconds, held on the movie: a moment on the intro card is output 0 and
+ * one on the end card (or past the movie's end) is the output's end; `inCard` names the card it was on.
+ */
+export function exportToOutputClampedUs(
+    project: EditProject,
+    exportUs: number
+): { outUs: number; inCard?: "intro" | "end" } {
+    const outUs = exportUs - cardsLeadUs(project);
+    const endUs = outputDurationUs(project);
+
+    if (outUs < 0) {
+        return { outUs: 0, inCard: "intro" };
+    }
+
+    if (outUs > endUs) {
+        return { outUs: endUs, ...(project.cards?.end ? { inCard: "end" as const } : {}) };
+    }
+
+    return { outUs };
+}
+
 // R7 3 verifyHidden fixes
+/**
+ * True when the export shows the source picture as it is over the SOURCE range `fromUs`..`toUs` (a point when they are
+ * equal), so a box read on the export is the same box in the source: no frame, no zoom of either target then, no tilt
+ * (TiltLook tilts the whole picture over black whenever it is set), no lens then, and no transition playing at the
+ * output moments that show it (`outUs` when the caller knows the one output moment). Any of those moves the picture.
+ */
+export function exportShowsSourceAsIs(
+    project: EditProject,
+    range: { fromUs: number; toUs: number; outUs?: number }
+): boolean {
+    if (project.frame || project.tilt) {
+        return false;
+    }
+
+    if (project.zooms.some((zoom) => zoom.startUs <= range.toUs && zoom.endUs > range.fromUs)) {
+        return false;
+    }
+
+    if (lensShowsAt(project, range.fromUs, range.toUs)) {
+        return false;
+    }
+
+    const outputs =
+        range.outUs !== undefined
+            ? [{ fromUs: range.outUs, toUs: range.outUs }]
+            : outputSpansOf(project, range.fromUs, range.toUs);
+    return !outputs.some((span) => transitionPlayingAt(project, span.fromUs, span.toUs));
+}
+
 /**
  * Where a text verifyHidden read on the export sits in the SOURCE picture (fractions of the source movie's picture) from
  * `fromUs` to `toUs` (SOURCE microseconds): the source's own tracked hits of the same kind that show then (the same
  * masked value first), as one rectangle over their places in that time. With none, the export's box itself when the
- * export shows the source picture as it is (no frame, no zoom then); else null.
+ * export shows the source picture as it is then (exportShowsSourceAsIs); else null.
  */
 export function leakSourceBox(
     project: EditProject,
@@ -887,13 +1339,12 @@ export function leakSourceBox(
         return { x, y, width: right - x, height: bottom - y };
     }
 
-    const zoomed = project.zooms.some((zoom) => zoom.startUs < options.toUs && zoom.endUs > options.fromUs);
-    return !project.frame && !zoomed ? { ...options.canvasBox } : null;
+    return exportShowsSourceAsIs(project, options) ? { ...options.canvasBox } : null;
 }
 
 /**
  * R8 4: a leak's place in the SOURCE picture at each export frame it was read (`keys`: EXPORT microseconds and boxes on
- * the export frame): the export's own box where the export shows the source picture as it is (no frame, no zoom then),
+ * the export frame): the export's own box where the export shows the source picture as it is (exportShowsSourceAsIs),
  * else the place then of the source's own hit of the same value (the same masked value first, else the same label)
  * nearest to it. A frame inside a card, or with no such hit, has no key. Source seconds and fractions, in time order.
  */
@@ -921,9 +1372,7 @@ export function leakSourceKeys(
         const sourceUs = sourceTimeOf(project, outUs);
         const at = Math.round(sourceUs / 1000) / 1000;
         const { atUs: _atUs, ...canvas } = key;
-        const zoomed = project.zooms.some((zoom) => zoom.startUs <= sourceUs && zoom.endUs > sourceUs);
-
-        if (!project.frame && !zoomed) {
+        if (exportShowsSourceAsIs(project, { fromUs: sourceUs, toUs: sourceUs, outUs })) {
             return [{ at, ...canvas }];
         }
 
@@ -942,6 +1391,77 @@ export function leakSourceKeys(
             )[0];
         return nearest ? [{ at, ...nearest }] : [];
     });
+}
+
+/** The edit's own overlay that draws a leak: a text (by its id) or the caption line (by its start, source seconds). */
+export type LeakOverlay = { kind: "text"; id: string } | { kind: "caption"; at: number };
+
+/**
+ * The edit's own overlay that draws a text verifyHidden read on the export from `fromUs` to `toUs` (SOURCE
+ * microseconds), so no redact op can hide it: the export draws texts and captions over the redacted picture. A text
+ * whose time meets the leak's and whose words hold its value (the same masked value, by `matcher`, the one the export
+ * was read with), else, with captions on, a caption line then that holds it (`captionLines`: the transcript's lines
+ * with their fixes, as transcriptLines gives them). Undefined when no overlay draws it, and when the source picture
+ * shows the same value then (a source hit of the same masked value), which a redact op does hide: where the export shows
+ * the source as it is (exportShowsSourceAsIs), only a hit at the place it was read (`canvasBox`) counts.
+ */
+export function leakOverlay(
+    project: EditProject,
+    options: {
+        fromUs: number;
+        toUs: number;
+        masked: string;
+        matcher: LineMatcher;
+        captionLines?: ReadonlyArray<Pick<TranscriptLine, "from" | "to" | "text">>;
+        /** The leak's box on the export frame (fractions of the export's picture). */
+        canvasBox?: FractionBox;
+        sourceHits?: readonly PrivateHit[];
+    }
+): LeakOverlay | undefined {
+    const meets = (startUs: number, endUs: number, slackUs = 100_000) =>
+        startUs <= options.toUs + slackUs && endUs >= options.fromUs - slackUs;
+    // OCR reads each line on its own; a name broken over two lines reads as one in the whole text.
+    const draws = (text: string) =>
+        [text.replace(/\s*\n\s*/g, " "), ...text.split("\n")].some((line) =>
+            options.matcher(line).some((match) => maskPrivate(match.value) === options.masked)
+        );
+    const note = (project.texts ?? []).find((item) => meets(item.startUs, item.endUs) && draws(item.text));
+    const line = project.captions?.show
+        ? options.captionLines?.find(
+              (item) => meets(Math.round(item.from * 1_000_000), Math.round(item.to * 1_000_000)) && draws(item.text)
+          )
+        : undefined;
+    const overlay: LeakOverlay | undefined = note
+        ? { kind: "text", id: note.id }
+        : line
+          ? { kind: "caption", at: line.from }
+          : undefined;
+
+    if (!overlay) {
+        return undefined;
+    }
+
+    // The source's reads sit up to 300 ms off the export's, as leakSourceBox takes them.
+    const hitSlackUs = 300_000;
+    const asIs = exportShowsSourceAsIs(project, options);
+    const at = options.canvasBox;
+    const meetsBox = (box: FractionBox) =>
+        !at ||
+        (box.x < at.x + at.width && at.x < box.x + box.width && box.y < at.y + at.height && at.y < box.y + box.height);
+    const pictureShows = (options.sourceHits ?? []).some((hit) => {
+        if (hit.masked !== options.masked || !meets(hit.fromUs, hit.toUs, hitSlackUs)) {
+            return false;
+        }
+
+        if (!asIs) {
+            return true;
+        }
+
+        const keys = hit.keys.filter((key) => meets(key.atUs, key.atUs, hitSlackUs));
+        return (keys.length > 0 ? keys : [hit.box]).some(meetsBox);
+    });
+
+    return pictureShows ? undefined : overlay;
 }
 
 /**
@@ -1021,8 +1541,9 @@ export function leakFixOps(
 // R7 4 verifyHidden sampling
 /**
  * The stretches of the export (EXPORT microseconds, the intro card included) where verifyHidden reads every frame:
- * `aroundUs` (0.2 s) on each side of every cut, of every transition (its whole span), of the start and end of every
- * zoom and hidden part that plays, and of every scene change in `sceneUs` (SOURCE microseconds). Sorted and merged.
+ * `aroundUs` (0.2 s) on each side of every cut, of every transition (the span that plays, `transitionJoins`' halfUs),
+ * of the start and end of every zoom and hidden part that plays, and of every scene change in `sceneUs` (SOURCE
+ * microseconds). Sorted and merged.
  */
 export function boundaryWindows(
     project: EditProject,
@@ -1040,25 +1561,8 @@ export function boundaryWindows(
             windows.push([from, to]);
         }
     };
-    const transitions = transitionsSchema.parse(project.transitions ?? {});
-    let at = 0;
-    let previous: EditProject["clips"][number] | undefined;
-
-    for (const clip of project.clips) {
-        const length = clipOutputUs(clip);
-
-        if (length <= 0) {
-            continue;
-        }
-
-        if (previous && previous.toUs !== clip.fromUs) {
-            const chosen = transitions.joins?.[clip.id] ?? transitions.default;
-            const halfUs = chosen.kind === "none" ? 0 : chosen.ms * 500;
-            add(at - halfUs, at + halfUs);
-        }
-
-        at += length;
-        previous = clip;
+    for (const join of transitionJoins(project)) {
+        add(join.atUs - join.halfUs, join.atUs + join.halfUs);
     }
 
     const sourcePoints = [
@@ -1111,9 +1615,16 @@ export function sourceTimeOf(project: EditProject, outUs: number): number {
 /**
  * The edit cut down to what plays from `fromOutUs` to `toOutUs` (OUTPUT microseconds), for exporting a part: each
  * clip's own overlap with that output range, at its speed, with its id kept. Cuts and speeds inside the part stay; the
- * edit on disk is not changed. The Swift preview cuts a part the same way (TimelineMap.part).
+ * edit on disk is not changed. Its audio sounds like that stretch of the whole export (partAudioOf). The Swift preview
+ * cuts a part the same way (TimelineMap.part).
  */
 export function partOf(project: EditProject, fromOutUs: number, toOutUs: number): EditProject {
+    const kept = keptRangeOf(project, fromOutUs, toOutUs);
+    return { ...kept, audio: partAudioOf(project, kept.clips[0].fromUs, fromOutUs) };
+}
+
+/** The edit's clips cut down to what plays from `fromOutUs` to `toOutUs` (OUTPUT); the rest of the edit as it is. */
+function keptRangeOf(project: EditProject, fromOutUs: number, toOutUs: number): EditProject {
     const length = outputDurationUs(project);
     const seconds = (us: number) => Math.round(us / 1000) / 1000;
 
@@ -1153,6 +1664,50 @@ export function partOf(project: EditProject, fromOutUs: number, toOutUs: number)
     return { ...project, clips };
 }
 
+/**
+ * The audio of a part that starts at `fromOutUs` (OUTPUT) and whose first frame is `firstSourceUs`: a movie voiceover
+ * that starts before the part and plays into it starts at the first frame with the cut-off length skipped, one that
+ * ends before the part is left out, and the music learns where the part plays in the whole export
+ * (voiceoverExportSpans and the Swift MusicMix read them). TimelineMap.part does the same in Swift.
+ */
+function partAudioOf(project: EditProject, firstSourceUs: number, fromOutUs: number): EditProject["audio"] {
+    const music = project.audio.music;
+    const voiceovers = project.audio.voiceovers?.flatMap((clip) => {
+        const startUs = clip.card === undefined ? outputTimeOf(project, clip.atUs) : undefined;
+
+        if (startUs === undefined || startUs >= fromOutUs) {
+            return [clip];
+        }
+
+        const cutUs = fromOutUs - startUs;
+
+        if (clip.durationUs <= cutUs) {
+            return [];
+        }
+
+        return [
+            { ...clip, atUs: firstSourceUs, skipUs: (clip.skipUs ?? 0) + cutUs, durationUs: clip.durationUs - cutUs },
+        ];
+    });
+    const leadUs = cardsLeadUs(project);
+    const wholeUs = leadUs + outputDurationUs(project) + Math.round((project.cards?.end?.seconds ?? 0) * 1_000_000);
+    return {
+        ...project.audio,
+        ...(voiceovers ? { voiceovers } : {}),
+        ...(music
+            ? {
+                  music: {
+                      ...music,
+                      inWhole: {
+                          atUs: (music.inWhole?.atUs ?? 0) + leadUs + fromOutUs,
+                          lengthUs: music.inWhole?.lengthUs ?? wholeUs,
+                      },
+                  },
+              }
+            : {}),
+    };
+}
+
 /** Plays a source range at `speed` (0.25 to 16); the clips are split at its edges. */
 export function speedRange(project: EditProject, fromUs: number, toUs: number, speed: number): EditProject {
     checkRange(project, fromUs, toUs);
@@ -1177,8 +1732,33 @@ export interface ZoomOptions {
     easeInMs?: number;
     easeOutMs?: number;
     // R5 4 canvas zoom
-    /** "canvas" zooms the whole framed export; absent zooms inside the picture. */
+    /** "canvas" zooms the whole framed export; absent zooms inside the picture. A canvas zoom refuses `follow`. */
     target?: "picture" | "canvas";
+}
+
+/**
+ * The zooms of one target (absent is "picture") but the one with `exceptId`: the only zooms a zoom of that target may
+ * not meet, because a canvas zoom may overlap a picture zoom.
+ */
+function zoomsOfTarget(project: EditProject, target: "picture" | "canvas", exceptId?: string): EditZoom[] {
+    return project.zooms.filter((zoom) => zoom.id !== exceptId && (zoom.target ?? "picture") === target);
+}
+
+/** `span` moved later with its length kept, past each of `zooms` it would meet (in start order). */
+function pastZooms(
+    zooms: readonly EditZoom[],
+    span: { startUs: number; endUs: number }
+): { startUs: number; endUs: number } {
+    const length = span.endUs - span.startUs;
+    let startUs = span.startUs;
+
+    for (const zoom of [...zooms].sort((a, b) => a.startUs - b.startUs)) {
+        if (startUs < zoom.endUs && startUs + length > zoom.startUs) {
+            startUs = zoom.endUs;
+        }
+    }
+
+    return { startUs, endUs: startUs + length };
 }
 
 /** Adds a zoom over a source range; one that overlaps another zoom is refused with the zoom it meets. */
@@ -1194,15 +1774,8 @@ export function placeZoom(
     target: "picture" | "canvas" = "picture"
 ): { startUs: number; endUs: number } | undefined {
     const length = Math.max(toUs - fromUs, 500_000);
-    let startUs = Math.max(0, fromUs);
-    const same = project.zooms.filter((zoom) => (zoom.target ?? "picture") === target);
-
-    for (const zoom of [...same].sort((a, b) => a.startUs - b.startUs)) {
-        if (startUs < zoom.endUs && startUs + length > zoom.startUs) {
-            startUs = zoom.endUs;
-        }
-    }
-
+    const same = zoomsOfTarget(project, target);
+    const { startUs } = pastZooms(same, { startUs: Math.max(0, fromUs), endUs: Math.max(0, fromUs) + length });
     const endUs = Math.min(project.source.durationUs, startUs + length);
     const meets = same.some((zoom) => startUs < zoom.endUs && endUs > zoom.startUs);
     return endUs - startUs >= MINIMUM_ZOOM_US && !meets ? { startUs, endUs } : undefined;
@@ -1215,6 +1788,11 @@ export function addZoom(
     options: ZoomOptions = {}
 ): { project: EditProject; zoom: EditZoom } {
     checkRange(project, fromUs, toUs);
+
+    if (options.target === "canvas" && options.follow) {
+        throw new RangeError(CANVAS_ZOOM_HOLDS_FOCUS);
+    }
+
     const span = placeZoom(project, fromUs, toUs, options.target);
 
     if (!span) {
@@ -1238,13 +1816,13 @@ export function addZoom(
     return { project: { ...project, zooms }, zoom };
 }
 
-/** Hides a rectangle of the source picture from `fromUs` to `toUs`; the rectangle must lie inside the picture. */
+/** Hides a rectangle of the source picture from `fromUs` to `toUs`; the part outside the picture is cut off. */
 export function addRedaction(
     project: EditProject,
     options: {
         fromUs: number;
         toUs: number;
-        rect: z.infer<typeof rectSchema>;
+        rect: z.infer<typeof drawnRectSchema>;
         style: EditRedaction["style"];
         label?: string;
         follow?: boolean;
@@ -1258,10 +1836,12 @@ export function addRedaction(
     }
 ): EditProject {
     checkRange(project, options.fromUs, options.toUs);
-    // The editor window's rule: the part of the rectangle inside the picture, refused only when under 1 % of it.
-    const { x, y } = options.rect;
-    const width = Math.min(options.rect.width, 1 - x);
-    const height = Math.min(options.rect.height, 1 - y);
+    // The editor window's rule: the part of the rectangle inside the picture, on all four edges, refused only when
+    // under 1 % of it.
+    const x = Math.max(0, options.rect.x);
+    const y = Math.max(0, options.rect.y);
+    const width = Math.min(options.rect.width + Math.min(0, options.rect.x), 1 - x);
+    const height = Math.min(options.rect.height + Math.min(0, options.rect.y), 1 - y);
 
     if (width < 0.01 || height < 0.01) {
         throw new RangeError(
@@ -1331,13 +1911,18 @@ const cursorRowSchema = z.object({
     key: z.string().optional(),
 });
 
+/** The folder beside a cursor track that holds its cursor pictures (`<shape>.png` and `<shape>.json`), as the window reads it. */
+export function cursorShapesFolderOf(trackPath: string): string {
+    return join(dirname(trackPath), "cursor-shapes");
+}
+
 /**
- * Whether the movie was recorded without the system cursor, so the editor draws it: the track's first row then names
- * the cursor's image (`"shape"`). Reads only the start of the file.
+ * The cursor picture the track's first row names (`"shape"`), which the recorder writes only for a movie recorded
+ * without the system cursor; undefined for a movie with the system cursor in its picture. Reads only the file's start.
  */
-export function trackDrawsCursor(path: string | undefined): boolean {
+function firstCursorShape(path: string | undefined): string | undefined {
     if (!path || !existsSync(path)) {
-        return false;
+        return undefined;
     }
 
     const fd = openSync(path, "r");
@@ -1345,10 +1930,39 @@ export function trackDrawsCursor(path: string | undefined): boolean {
         const buffer = Buffer.alloc(512);
         const read = readSync(fd, buffer, 0, buffer.length, 0);
         const first = buffer.subarray(0, read).toString("utf8").split("\n")[0] ?? "";
-        return first.includes('"shape":');
+        return /"shape"\s*:\s*"([^"]+)"/.exec(first)?.[1];
     } finally {
         closeSync(fd);
     }
+}
+
+/**
+ * Whether the editor draws the cursor: the track names a cursor picture and that picture is beside it in
+ * cursor-shapes/. The same test as the window's CursorTrack.drawsCursor, so a track whose pictures were left behind
+ * (a copy) is not offered cursor settings the export cannot draw.
+ */
+export function trackDrawsCursor(path: string | undefined): boolean {
+    const shape = firstCursorShape(path);
+
+    if (!path || !shape) {
+        return false;
+    }
+
+    const folder = cursorShapesFolderOf(path);
+    return existsSync(join(folder, `${shape}.png`)) && existsSync(join(folder, `${shape}.json`));
+}
+
+/** Why the editor cannot `action` the cursor: the system cursor is in the picture, or the drawn cursor's pictures are gone. */
+function undrawnCursorError(path: string | undefined, action: string): Error {
+    if (path && firstCursorShape(path)) {
+        return new Error(
+            `this movie's cursor pictures are missing (${cursorShapesFolderOf(path)}), so the editor cannot ${action} its drawn cursor; copy the recording's cursor-shapes folder beside its cursor track`
+        );
+    }
+
+    return new Error(
+        `this movie has the system cursor in its picture, so the editor cannot ${action} it; record without --system-cursor to get a drawn cursor`
+    );
 }
 
 /** The recorder's `cursor.jsonl`: one `{t, x, y, click?}` row per change; an unreadable row is skipped. */
@@ -1361,7 +1975,17 @@ export function readCursorTrack(path: string | undefined): CursorSample[] {
         .split("\n")
         .filter(Boolean)
         .flatMap((line) => {
-            const row = cursorRowSchema.safeParse(SafeJSON.parse(line, { strict: true }));
+            let raw: unknown;
+
+            try {
+                raw = SafeJSON.parse(line, { strict: true });
+            } catch {
+                // A line torn by a crash or a write still in progress is skipped, as CursorTrack.load skips it.
+                log.debug({ path }, "cursor track: skipped a line that is not JSON");
+                return [];
+            }
+
+            const row = cursorRowSchema.safeParse(raw);
             return row.success
                 ? [
                       {
@@ -1379,41 +2003,150 @@ export function readCursorTrack(path: string | undefined): CursorSample[] {
 /** Clicks closer than this are one group: one auto zoom, one row of a movie's clickGroups(). */
 export const CLICK_GROUP_GAP_MS = 3000;
 
-/** The recorded clicks in time order, in groups: a click less than `gapMs` after the one before joins its group. */
-export function groupClicks(samples: readonly CursorSample[], gapMs = CLICK_GROUP_GAP_MS): CursorSample[][] {
+/**
+ * The recorded clicks in time order, in groups: a click less than `gapMs` after the one before joins its group. With
+ * `playedMs` (a click's ms to the output ms it plays at, undefined when it was cut) the gap is the one the viewer sees
+ * and a cut click is left out; without it, the gap is the recording's own.
+ */
+export function groupClicks(
+    samples: readonly CursorSample[],
+    options: { gapMs?: number; playedMs?: (ms: number) => number | undefined } = {}
+): CursorSample[][] {
+    const gapMs = options.gapMs ?? CLICK_GROUP_GAP_MS;
     const groups: CursorSample[][] = [];
+    let lastMs = 0;
 
     for (const click of samples.filter((sample) => sample.click)) {
+        const ms = options.playedMs ? options.playedMs(click.ms) : click.ms;
+
+        if (ms === undefined) {
+            continue;
+        }
+
         const group = groups.at(-1);
 
-        if (group && click.ms - (group.at(-1)?.ms ?? 0) < gapMs) {
+        if (group && ms - lastMs < gapMs) {
             group.push(click);
         } else {
             groups.push([click]);
         }
+
+        lastMs = ms;
     }
 
     return groups;
 }
 
 /**
- * Zooms on the recorded clicks, as the window's Auto zoom does: clicks under 3 s apart are one zoom from 0.6 s before
- * the first to 1.6 s after the last, following the cursor. It replaces the zooms an earlier auto zoom made (mode
- * `follow`) and keeps the manual ones; a group that would overlap a manual zoom is left out. No clicks is an error,
- * and nothing changes.
+ * Whether two zooms next to each other in play order are linked, the rule of the window's renderer (ZoomCurve.linked
+ * in TimelineMap.swift): both zoom the picture or both the canvas, the second starts to play after the first, and less
+ * time plays between the first one's last kept moment and the second one's first than one ease out and one ease in
+ * take. The view then glides from one zoom to the other and never shows the whole frame between them, across a cut too.
+ */
+export function zoomsLinked(project: EditProject, first: EditZoom, second: EditZoom): boolean {
+    if ((first.target === "canvas") !== (second.target === "canvas")) {
+        return false;
+    }
+
+    const firstSpans = outputSpansOf(project, first.startUs, first.endUs);
+    const firstStart = firstSpans[0]?.fromUs;
+    const firstEnd = firstSpans.at(-1)?.toUs;
+    const secondStart = outputSpansOf(project, second.startUs, second.endUs)[0]?.fromUs;
+
+    if (firstStart === undefined || firstEnd === undefined || secondStart === undefined) {
+        return false;
+    }
+
+    const later = secondStart > firstStart || (secondStart === firstStart && second.startUs > first.startUs);
+    return later && secondStart - firstEnd < (first.easeOutMs + second.easeInMs) * 1000;
+}
+
+/** What one view (the picture's or the canvas's) shows at a moment: one zoom, or the glide between two linked zooms. */
+export type ZoomShown = { zoom: EditZoom } | { glide: { from: EditZoom; to: EditZoom } };
+
+/**
+ * The zoom a view shows at a source moment that plays, the rule of the window's renderer (ZoomCurve.curve in
+ * TimelineMap.swift): between two linked zooms of that target, from where the first starts to leave to where the
+ * second has arrived (in output time), the glide from one to the other; elsewhere the zoom whose source range holds the
+ * moment, or null. A canvas zoom and a picture zoom play together, so each target has its own answer.
+ */
+export function zoomShownAt(
+    project: EditProject,
+    sourceUs: number,
+    target: NonNullable<EditZoom["target"]>
+): ZoomShown | null {
+    const outUs = outputTimeOf(project, sourceUs);
+
+    if (outUs === undefined) {
+        return null;
+    }
+
+    const ordered = project.zooms
+        .filter((zoom) => (zoom.target === "canvas") === (target === "canvas"))
+        .flatMap((zoom) => {
+            const spans = outputSpansOf(project, zoom.startUs, zoom.endUs);
+            const startOut = spans[0]?.fromUs;
+            const endOut = spans.at(-1)?.toUs;
+            return startOut === undefined || endOut === undefined ? [] : [{ zoom, startOut, endOut }];
+        })
+        .sort((a, b) => a.startOut - b.startOut || a.zoom.startUs - b.zoom.startUs);
+
+    for (const [index, first] of ordered.entries()) {
+        const second = ordered[index + 1];
+
+        if (!second || !zoomsLinked(project, first.zoom, second.zoom)) {
+            continue;
+        }
+
+        // A zoom shorter than its own ease would leave a gap: the glide starts no later than the first zoom's end and
+        // ends no earlier than the second's start.
+        const leaves = Math.max(
+            first.startOut + first.zoom.easeInMs * 1000,
+            first.endOut - first.zoom.easeOutMs * 1000
+        );
+        const arrives = Math.min(
+            second.endOut - second.zoom.easeOutMs * 1000,
+            second.startOut + second.zoom.easeInMs * 1000
+        );
+        const startUs = Math.min(first.endOut, leaves);
+        const endUs = Math.max(second.startOut, arrives);
+
+        if (endUs > startUs && outUs >= startUs && outUs < endUs) {
+            return { glide: { from: first.zoom, to: second.zoom } };
+        }
+    }
+
+    const live = ordered.findLast(({ zoom }) => zoom.startUs <= sourceUs && sourceUs < zoom.endUs);
+    return live ? { zoom: live.zoom } : null;
+}
+
+/**
+ * Zooms on the recorded clicks, as the window's Auto zoom does: clicks that play under 3 s apart (a cut between them
+ * brings them closer) are one zoom from 0.6 s before the first to 1.6 s after the last, following the cursor, and a
+ * click in a cut part gets none. Its zooms carry origin "auto": a later run replaces those and keeps every other zoom
+ * (a hand-made follow zoom and a canvas zoom too); a group that would overlap a kept picture zoom is left out, while a
+ * canvas zoom never blocks one. No clicks that play is an error, and nothing changes.
  */
 export function autoZoom(project: EditProject, samples: readonly CursorSample[], scale = 1.6): EditProject {
-    const groups = groupClicks(samples);
+    const groups = groupClicks(samples, {
+        playedMs: (ms) => {
+            const outUs = outputTimeOf(project, ms * 1000);
+            return outUs === undefined ? undefined : outUs / 1000;
+        },
+    });
 
     if (groups.length === 0) {
         throw new RangeError(
             samples.length === 0
                 ? "this movie has no cursor track, so there are no clicks to zoom on; the zooms are unchanged"
-                : "the cursor track has no clicks to zoom on; the zooms are unchanged"
+                : samples.some((sample) => sample.click)
+                  ? "every click of the cursor track is in a cut part, so there is nothing to zoom on; the zooms are unchanged"
+                  : "the cursor track has no clicks to zoom on; the zooms are unchanged"
         );
     }
 
-    const manual = project.zooms.filter((zoom) => zoom.mode === "manual");
+    const kept = project.zooms.filter((zoom) => zoom.origin !== "auto");
+    const pictures = kept.filter((zoom) => (zoom.target ?? "picture") === "picture");
     const added = groups.map((group) =>
         zoomSchema.parse({
             id: newId("z"),
@@ -1421,19 +2154,21 @@ export function autoZoom(project: EditProject, samples: readonly CursorSample[],
             endUs: Math.min(project.source.durationUs, ((group.at(-1)?.ms ?? 0) + 1600) * 1000),
             scale,
             mode: "follow",
+            origin: "auto",
             focusX: group.reduce((sum, sample) => sum + sample.x, 0) / group.length,
             focusY: group.reduce((sum, sample) => sum + sample.y, 0) / group.length,
         })
     );
     const free = added.filter(
-        (zoom) => !manual.some((other) => zoom.startUs < other.endUs && zoom.endUs > other.startUs)
+        (zoom) => !pictures.some((other) => zoom.startUs < other.endUs && zoom.endUs > other.startUs)
     );
-    return { ...project, zooms: [...manual, ...free].sort((a, b) => a.startUs - b.startUs) };
+    return { ...project, zooms: [...kept, ...free].sort((a, b) => a.startUs - b.startUs) };
 }
 
 /**
  * Marks every recorded click from `fromUs` to `toUs` (source) with a shape for `seconds`: a circle round the point
- * (default), a box, or an arrow pointing at it from towards the middle. A double click is one mark (clicks under
+ * (default), a box, or an arrow pointing at it from towards the middle. A circle or box is square in pixels, with a
+ * half side of 4.5 % of the picture's short side (circleAround). A double click is one mark (clicks under
  * 0.4 s apart and 2 % of the picture apart). A click that already has a shape of that kind starting within 0.1 s is
  * left alone, so a second run adds nothing. No clicks in the range is an error.
  */
@@ -1495,6 +2230,7 @@ export function annotateClicks(
         }
 
         const toward = { x: click.x > 0.5 ? -1 : 1, y: click.y > 0.5 ? -1 : 1 };
+        const ring = circleAround(click, 0.045, project.source);
         const corners =
             kind === "arrow"
                 ? {
@@ -1503,12 +2239,7 @@ export function annotateClicks(
                       x2: click.x,
                       y2: click.y,
                   }
-                : {
-                      x1: clamp(click.x - 0.03),
-                      y1: clamp(click.y - 0.045),
-                      x2: clamp(click.x + 0.03),
-                      y2: clamp(click.y + 0.045),
-                  };
+                : { x1: ring.start.x, y1: ring.start.y, x2: ring.end.x, y2: ring.end.y };
         shapes.push(
             shapeSchema.parse({
                 id: newId("s"),
@@ -1560,6 +2291,13 @@ const RANGE_RECTS = {
     spotlight: { x: 0.4, y: 0.4, width: 0.2, height: 0.2 },
 } as const;
 
+/** The redact op's options that one style alone draws; addRedaction keeps each only on its style. */
+const REDACT_STYLE_OPTIONS = [
+    ["dim", "spotlight"],
+    ["cutout", "spotlight"],
+    ["cell", "pixelate"],
+] as const satisfies ReadonlyArray<readonly [string, EditRedaction["style"]]>;
+
 export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("split"), at: sourceTimeSchema }).strict(),
     z.object({ op: z.literal("cut"), ...rangeFields }).strict(),
@@ -1578,7 +2316,10 @@ export const editOpSchema = z.discriminatedUnion("op", [
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
             // R5 4 canvas zoom
-            /** "canvas" zooms the whole framed export (focus is 0...1 of the canvas); absent zooms the picture. */
+            /**
+             * "canvas" zooms the whole framed export (focus is 0...1 of the canvas); absent zooms the picture. A canvas
+             * zoom holds its focus, so it refuses follow.
+             */
             target: z.enum(["picture", "canvas"]).optional(),
         })
         .strict(),
@@ -1588,8 +2329,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             op: z.literal("redact"),
             from: sourceTimeSchema,
             to: sourceTimeSchema,
-            /** 0...1 of the source picture from its top left; x + width and y + height stay inside it. */
-            rect: rectSchema,
+            /** 0...1 of the source picture from its top left; the part outside the picture is cut off. */
+            rect: drawnRectSchema,
             style: z.enum(REDACTION_STYLES).optional(),
             /** What it hides ("API token"), shown in the editor's lists. */
             label: z.string().max(60).optional(),
@@ -1629,8 +2370,11 @@ export const editOpSchema = z.discriminatedUnion("op", [
             op: z.literal("spotlight"),
             from: sourceTimeSchema,
             to: sourceTimeSchema,
-            /** Stays as it is while the rest of the picture dims; with follow, its size around the cursor. */
-            rect: rectSchema,
+            /**
+             * Stays as it is while the rest of the picture dims; with follow, its size around the cursor. The part
+             * outside the picture is cut off.
+             */
+            rect: drawnRectSchema,
             label: z.string().max(60).optional(),
             follow: z.boolean().optional(),
             /** How dark the rest gets, 0.2 to 0.95 black (0.5). */
@@ -1945,9 +2689,10 @@ export const editOpSchema = z.discriminatedUnion("op", [
             trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),
             /**
              * One track, as the editor's Audio tab changes it: with `on` it goes in or out of the cleaned tracks (no
-             * track left takes the noise reduction away); with `reductionDb` it gets its own strength. Both need
-             * `trackCount`, the movie's sound tracks: every track is written as no list, and a strength equal to the
-             * base is not written.
+             * track left takes the noise reduction away); with `reductionDb` it gets its own strength. Every track
+             * is written as no list, and a strength equal to the base is not written. The service counts the movie's
+             * sound tracks; `trackCount` is the count used only when the movie cannot be measured (no file), and a
+             * track op with neither is refused.
              */
             track: z.number().int().nonnegative().optional(),
             on: z.boolean().optional(),
@@ -1977,7 +2722,10 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("moveLane"), id: z.string(), to: z.number().int().min(0) }).strict(),
     /** Puts a zoom, hidden part, spotlight, text or shape (by id) on a lane that holds its kind. */
     z.object({ op: z.literal("moveToLane"), id: z.string(), lane: z.string() }).strict(),
-    /** Changes a zoom that exists; a focus placed by hand makes a following zoom manual (unless `mode` says). */
+    /**
+     * Changes a zoom that exists; a focus placed by hand makes a following zoom manual (unless `mode` says). A canvas
+     * zoom holds its focus, so mode "follow" is refused for it.
+     */
     z
         .object({
             op: z.literal("setZoom"),
@@ -1989,12 +2737,35 @@ export const editOpSchema = z.discriminatedUnion("op", [
             easeOutMs: z.number().optional(),
         })
         .strict(),
-    /** Changes a hidden part or spotlight that exists; the rectangle stays inside the picture, at least 1 % wide. */
+    /**
+     * Changes a hidden part or spotlight that exists; the rectangle stays inside the picture, at least 1 % wide. The
+     * renderers place a part with keyframes (hideText, hidePrivate, verifyHidden's fixOps, redact with track) by its
+     * keys alone, so on such a part a new rect moves every key by its change from the stored rect and scales every
+     * key's size by the same ratio (each kept inside the picture), and `follow` is refused: the part follows its text.
+     */
     z
         .object({
             op: z.literal("setRedaction"),
             id: z.string(),
             rect: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).strict().optional(),
+            /**
+             * New keyframes (`at`, source seconds) in place of the part's own, each kept inside the picture and taken as
+             * given (no holds are added at the part's edges, unlike redact's track); a rect sent with them does not move
+             * them again, and [] makes the part fixed at its rect.
+             */
+            track: z
+                .array(
+                    z
+                        .object({
+                            at: sourceTimeSchema,
+                            x: z.number(),
+                            y: z.number(),
+                            width: z.number(),
+                            height: z.number(),
+                        })
+                        .strict()
+                )
+                .optional(),
             style: z.enum(REDACTION_STYLES).optional(),
             /** "" takes the label away. */
             label: z.string().max(60).optional(),
@@ -2324,8 +3095,13 @@ export interface OpFacts {
     waits?: readonly WaitStretch[];
 }
 
-/** A `zoom` op whose zoom went past a zoom it met (`placeZoom`), as a sentence a caller can return. */
+/**
+ * A `zoom` op whose zoom went past a zoom it met (`placeZoom`), or a `retime` with `at` or `by` whose zoom went past a
+ * zoom of its target it met (`retimeItem`), as a sentence a caller can return.
+ */
 export function opPlacementWarnings(op: EditOp, before: EditProject, after: EditProject): string[] {
+    const seconds = (us: number) => Math.round(us / 1000) / 1000;
+
     // R6 1: a hide that could not follow a moving text says where, so its ok is not a guess.
     if (op.op === "hideText" || op.op === "hidePrivate") {
         return hidingOf(before, after).uncertain.map(
@@ -2334,9 +3110,42 @@ export function opPlacementWarnings(op: EditOp, before: EditProject, after: Edit
         );
     }
 
+    // The renderer's rule (MusicMix.Duck.of): while ducking() is set its dB alone decides the drop. The editor sends the
+    // saved duck again on every music change, so only a new value is named; it stays saved for ducking({ enabled: false }).
+    if (op.op === "music") {
+        const ducking = after.audio.ducking;
+
+        if (!ducking || op.duck === undefined || op.duck === before.audio.music?.duck) {
+            return [];
+        }
+
+        return [
+            `music: duck ${op.duck} does nothing while ducking() is set; the music drops ${ducking.db} dB under speech. Change it with ducking({ db }), or ducking({ enabled: false }) to go back to the duck share`,
+        ];
+    }
+
     // R7 6
     if (op.op === "unhide" && op.all && !(before.redactions ?? []).some((part) => part.hide)) {
         return ["unhide: nothing hidden (no part was made by hideText or hidePrivate)"];
+    }
+
+    if (op.op === "retime") {
+        const zoom = before.zooms.find((item) => item.id === op.id);
+        const moved = after.zooms.find((item) => item.id === op.id);
+
+        if (!zoom || !moved || (op.at === undefined && op.by === undefined)) {
+            return [];
+        }
+
+        const asked = retimeMovedSpan({ op, item: zoom, durationUs: before.source.durationUs });
+
+        if (Math.abs(moved.startUs - asked.startUs) < 1000) {
+            return [];
+        }
+
+        return [
+            `retime: ${op.id} met another zoom at ${seconds(asked.startUs)} s, so it went to ${seconds(moved.startUs)}-${seconds(moved.endUs)} s (two zooms of one target cannot overlap)`,
+        ];
     }
 
     if (op.op !== "zoom") {
@@ -2350,7 +3159,6 @@ export function opPlacementWarnings(op: EditOp, before: EditProject, after: Edit
         return [];
     }
 
-    const seconds = (us: number) => Math.round(us / 1000) / 1000;
     return [
         `zoom: ${seconds(timeToUs(op.from))} s met another zoom, so it went to ${seconds(added.startUs)}–${seconds(added.endUs)} s (zooms cannot overlap)`,
     ];
@@ -2387,11 +3195,29 @@ export function opTimeWarnings(op: EditOp, sourceDurationUs: number): string[] {
     return warnings;
 }
 
+/** Where a `retime` with `at` or `by` asks an item to go: its length kept, held inside the recording. */
+function retimeMovedSpan({
+    op,
+    item,
+    durationUs,
+}: {
+    op: Extract<EditOp, { op: "retime" }>;
+    item: { startUs: number; endUs: number };
+    durationUs: number;
+}): { startUs: number; endUs: number } {
+    const length = item.endUs - item.startUs;
+    const start = op.at !== undefined ? timeToUs(op.at) : item.startUs + Math.round((op.by ?? 0) * 1e6);
+    const moved = Math.min(Math.max(0, start), Math.max(0, durationUs - length));
+    return { startUs: moved, endUs: moved + length };
+}
+
 /** Applies one op; throws a RangeError a caller can show as it is. */
 /**
  * Moves or trims the zoom, hidden part, text or shape with this id: `at` (a new start) or `by` seconds moves it with
  * its length kept; `from` and `to` set its start and end, so `from` alone makes it longer or shorter (source time).
- * Held inside the recording; a zoom may not meet another zoom.
+ * Held inside the recording. A zoom may not meet another zoom of its target (a canvas zoom may overlap a picture
+ * zoom): moved with `at` or `by` onto one, it goes past it with its length kept, as a new zoom asked there would, and
+ * is refused when no room is left after it; stretched or dragged with `from` and `to` into one, it stops at it.
  */
 function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>): EditProject {
     const moves = [op.at, op.by].filter((value) => value !== undefined).length;
@@ -2412,10 +3238,7 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
     const keepsLength = moves > 0;
     const wanted = (startUs: number, endUs: number): { startUs: number; endUs: number } => {
         if (keepsLength) {
-            const length = endUs - startUs;
-            const start = op.at !== undefined ? timeToUs(op.at) : startUs + Math.round((op.by ?? 0) * 1e6);
-            const moved = Math.min(Math.max(0, start), Math.max(0, durationUs - length));
-            return { startUs: moved, endUs: moved + length };
+            return retimeMovedSpan({ op, item: { startUs, endUs }, durationUs });
         }
 
         return {
@@ -2439,16 +3262,33 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
     const zoom = project.zooms.find((item) => item.id === op.id);
 
     if (zoom) {
-        // The editor window's rule: a zoom moved or stretched into a neighbour stops at it, 0.2 s long at least.
-        const others = project.zooms.filter((other) => other.id !== op.id);
-        const lower = Math.max(0, ...others.filter((other) => other.endUs <= zoom.startUs).map((other) => other.endUs));
-        const upper = Math.min(
-            durationUs,
-            ...others.filter((other) => other.startUs >= zoom.endUs).map((other) => other.startUs)
-        );
-        const target = wanted(zoom.startUs, zoom.endUs);
-        const startUs = Math.max(lower, Math.min(target.startUs, upper - MINIMUM_ZOOM_US));
-        const span = { startUs, endUs: Math.min(upper, Math.max(target.endUs, startUs + MINIMUM_ZOOM_US)) };
+        const others = zoomsOfTarget(project, zoom.target ?? "picture", zoom.id);
+        const asked = wanted(zoom.startUs, zoom.endUs);
+        let span: { startUs: number; endUs: number };
+
+        if (keepsLength) {
+            span = pastZooms(others, asked);
+
+            if (span.endUs > durationUs) {
+                const seconds = (us: number) => Math.round(us / 1000) / 1000;
+                throw new RangeError(
+                    `no room for the ${seconds(asked.endUs - asked.startUs)} s zoom ${op.id} at ${seconds(asked.startUs)} s or later; two zooms of one target cannot overlap`
+                );
+            }
+        } else {
+            // The editor window's rule: a zoom dragged or stretched into a neighbour stops at it, 0.2 s long at least.
+            const lower = Math.max(
+                0,
+                ...others.filter((other) => other.endUs <= zoom.startUs).map((other) => other.endUs)
+            );
+            const upper = Math.min(
+                durationUs,
+                ...others.filter((other) => other.startUs >= zoom.endUs).map((other) => other.startUs)
+            );
+            const startUs = Math.max(lower, Math.min(asked.startUs, upper - MINIMUM_ZOOM_US));
+            span = { startUs, endUs: Math.min(upper, Math.max(asked.endUs, startUs + MINIMUM_ZOOM_US)) };
+        }
+
         return { ...project, zooms: project.zooms.map((item) => (item.id === op.id ? { ...item, ...span } : item)) };
     }
 
@@ -2496,8 +3336,8 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
     throw new Error(`no zoom, hidden part, text, shape or camera part ${op.id}; ids: ${ids.join(", ") || "none"}`);
 }
 
-/** The start of the transcript line spoken at `atUs` (source time); a time between lines is refused. */
-function lineStartUs(segments: readonly TranscriptSegment[], atUs: number): number {
+/** The start (seconds) of the transcript line spoken at `atUs` (source time); a time between lines is refused. */
+function lineStart(segments: readonly TranscriptSegment[], atUs: number): number {
     const seconds = atUs / 1_000_000;
     const line = segments.find((segment) => segment.start <= seconds + 0.0005 && seconds < segment.end);
 
@@ -2511,7 +3351,34 @@ function lineStartUs(segments: readonly TranscriptSegment[], atUs: number): numb
         );
     }
 
-    return Math.round(line.start * 1_000_000);
+    return line.start;
+}
+
+/**
+ * Refuses an audio track the movie does not have: a muted or cleaned track past the end changes nothing in the export.
+ * An unknown count (no movie file, a probe that failed) refuses nothing.
+ */
+function requireAudioTracks(audioTracks: number | undefined, tracks: readonly number[]): void {
+    if (audioTracks === undefined) {
+        return;
+    }
+
+    const missing = [...new Set(tracks.filter((track) => track >= audioTracks))].sort((a, b) => a - b);
+
+    if (missing.length === 0) {
+        return;
+    }
+
+    const has =
+        audioTracks === 0
+            ? "has no audio track"
+            : `has ${audioTracks} audio track${audioTracks === 1 ? "" : "s"} (${[...Array(audioTracks).keys()].join(", ")})`;
+    const which =
+        missing.length === 1
+            ? `track ${missing[0]} is not one of them`
+            : `tracks ${missing.join(", ")} are not among them`;
+    const frames = audioTracks === 1 ? ". A frames recording mixes the mic and the system sound into track 0" : "";
+    throw new RangeError(`this movie ${has}; ${which}${frames}`);
 }
 
 export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {
@@ -2671,13 +3538,40 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         case "unzoom":
             return removeZoom(project, op.id);
         case "redact": {
+            // The renderers place a part with keys by its keys alone, so a follow beside them would be ignored.
+            if (op.follow && op.track) {
+                throw new Error(
+                    "a hidden part with a track follows its text, so it cannot follow the cursor too: give it follow or track, not both"
+                );
+            }
+
+            // An option of another style was dropped without a word; it is refused, naming the style it needs. The
+            // check lives here and not in a schema refinement, which would change the protocol's JSON Schema.
+            const style = op.style ?? "blur";
+            const misplaced = REDACT_STYLE_OPTIONS.filter(
+                ([field, needs]) => op[field] !== undefined && style !== needs
+            );
+
+            if (misplaced.length > 0) {
+                throw new Error(
+                    misplaced
+                        .map(
+                            ([field, needs]) =>
+                                `${field} is for style "${needs}" only, and this part's style is "${style}": give style "${needs}" or leave ${field} out`
+                        )
+                        .join("; ")
+                );
+            }
+
             const added = addRedaction(project, {
                 fromUs: timeToUs(op.from),
                 toUs: timeToUs(op.to),
                 rect: op.rect,
-                style: op.style ?? "blur",
+                style,
                 label: op.label,
                 follow: op.follow,
+                dim: op.dim,
+                cutout: op.cutout,
                 cell: op.cell,
             });
             const part = added.redactions?.at(-1);
@@ -2766,7 +3660,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                     : placedShape(
                           op.kind,
                           op.at ??
-                              cursorPointAt(readCursorTrack(project.source.cursor), fromUs / 1000) ?? { x: 0.5, y: 0.5 }
+                              cursorPointAt(readCursorTrack(project.source.cursor), fromUs / 1000) ?? {
+                                  x: 0.5,
+                                  y: 0.5,
+                              },
+                          project.source
                       );
 
             if (Math.hypot(points.end.x - points.start.x, points.end.y - points.start.y) < 0.01) {
@@ -2801,14 +3699,17 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         }
         case "fixLine": {
             // A time copied from find() or the subtitles lies inside a line; a fix is keyed by the line's start.
-            const fromUs = facts.transcript ? lineStartUs(facts.transcript, timeToUs(op.from)) : timeToUs(op.from);
-            const key = String(Math.round(fromUs / 1000));
+            const start = facts.transcript ? lineStart(facts.transcript, timeToUs(op.from)) : timeToUs(op.from) / 1e6;
+            const key = transcriptFixKey(start);
             const fixes = { ...(project.transcript?.fixes ?? {}), [key]: op.text.trim() };
             return { ...project, transcript: { fixes } };
         }
         case "unfixLine": {
-            const key = String(Math.round(timeToUs(op.from) / 1000));
-            const { [key]: removed, ...rest } = project.transcript?.fixes ?? {};
+            // Keyed as fixLine keys it; a fix saved under the old key is found by that key too.
+            const start = facts.transcript ? lineStart(facts.transcript, timeToUs(op.from)) : timeToUs(op.from) / 1e6;
+            const saved = project.transcript?.fixes ?? {};
+            const key = transcriptFixKey(start) in saved ? transcriptFixKey(start) : oldTranscriptFixKey(start);
+            const { [key]: removed, ...rest } = saved;
 
             if (removed === undefined) {
                 const known = Object.keys(project.transcript?.fixes ?? {}).map((ms) => Number(ms) / 1000);
@@ -2846,8 +3747,12 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             return { ...project, texts: rest.length ? rest : undefined };
         }
         case "autoZoom":
-            // The editor window's rule: without a scale the zooms take the first zoom's, else 1.6.
-            return autoZoom(project, readCursorTrack(project.source.cursor), op.scale ?? project.zooms[0]?.scale);
+            // The editor window's rule: without a scale the zooms take the first picture zoom's, else 1.6.
+            return autoZoom(
+                project,
+                readCursorTrack(project.source.cursor),
+                op.scale ?? project.zooms.find((zoom) => (zoom.target ?? "picture") === "picture")?.scale
+            );
         case "annotateClicks":
             return annotateClicks(project, readCursorTrack(project.source.cursor), {
                 fromUs: op.from === undefined ? undefined : timeToUs(op.from),
@@ -2860,6 +3765,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         case "volume":
             return { ...project, audio: { ...project.audio, volume: op.volume } };
         case "mute": {
+            // Unmuting any track stays allowed, so a stale entry can be cleared.
+            if (op.muted !== false) {
+                requireAudioTracks(facts.audioTracks, [op.track]);
+            }
+
             const others = project.audio.mutedTracks.filter((track) => track !== op.track);
             const mutedTracks = op.muted === false ? others : [...others, op.track].sort((a, b) => a - b);
             return { ...project, audio: { ...project.audio, mutedTracks } };
@@ -2913,8 +3823,15 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 throw new Error("this movie has no sound to clean (it has no audio track)");
             }
 
+            // Taking a track out stays allowed, so a stale entry can be cleared.
+            requireAudioTracks(facts.audioTracks, [
+                ...(op.tracks ?? []),
+                ...Object.keys(op.trackReductionDb ?? {}).map(Number),
+                ...(op.track === undefined || op.on === false ? [] : [op.track]),
+            ]);
+
             if (op.track !== undefined) {
-                return denoiseTrack(project, op);
+                return denoiseTrack(project, op, { audioTracks: facts.audioTracks });
             }
 
             const denoise = denoiseSchema.parse({
@@ -2963,7 +3880,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 export: {
                     codec: op.codec ?? project.export.codec,
                     maxHeight: op.maxHeight ?? project.export.maxHeight,
-                    output: op.output ?? project.export.output,
+                    // Stored absolute: "~/" is the home folder, a relative path is against this process's cwd (the CLI
+                    // resolves it against the caller's first, movie-client PATH_PARAMS); "" goes back to the default.
+                    output: op.output
+                        ? resolve(op.output.replace(/^~(?=[/\\]|$)/, homedir()))
+                        : (op.output ?? project.export.output),
                     ...((op.format ?? project.export.format) ? { format: op.format ?? project.export.format } : {}),
                     ...((op.chapters ?? project.export.chapters) === undefined
                         ? {}
@@ -2983,6 +3904,15 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             const { op: _op, ...change } = op;
             // The editor window's JSON: no click sound is written as absent.
             const { sound, ...clicks } = clicksSchema.parse({ ...project.clicks, ...change });
+
+            // The renderer rings and ticks the cursor track's clicks; turning both off still passes, so an old edit
+            // can be cleared.
+            if ((clicks.highlight || sound) && readCursorTrack(project.source.cursor).length === 0) {
+                throw new Error(
+                    "this movie has no cursor track, so there are no clicks to ring or tick; record --display or --region for those"
+                );
+            }
+
             return { ...project, clicks: { ...clicks, ...(sound ? { sound } : {}) } };
         }
         case "keys": {
@@ -3021,8 +3951,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
-            const custom = change.x !== undefined || change.y !== undefined ? { corner: "custom" as const } : {};
-            return { ...project, camera: cameraBubbleSchema.parse({ ...project.camera, ...change, ...custom, file }) };
+            const placed =
+                change.x !== undefined || change.y !== undefined ? cameraPlacedAt(project, change, file) : {};
+            return { ...project, camera: cameraBubbleSchema.parse({ ...project.camera, ...change, ...placed, file }) };
         }
         case "cameraHide":
         case "cameraShow": {
@@ -3057,9 +3988,7 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         }
         case "cursor": {
             if (!trackDrawsCursor(project.source.cursor)) {
-                throw new Error(
-                    "this movie has the system cursor in its picture, so the editor cannot change it; record without --system-cursor to get a drawn cursor"
-                );
+                throw undrawnCursorError(project.source.cursor, "change");
             }
 
             const { op: _op, ...change } = op;
@@ -3087,6 +4016,14 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
+            // Only the op's new image: an older edit that holds one the renderer cannot read can still change its
+            // padding, and check() names it.
+            if (op.background?.image && background.image && !isPictureFile(background.image)) {
+                throw new Error(
+                    `the background image ${background.image} is not a picture (${PICTURE_EXTENSIONS.join(", ")})`
+                );
+            }
+
             // R5 4 frame layouts: a preset first, then the op's own fields.
             const preset = op.preset ? FRAME_PRESET_VALUES[op.preset] : undefined;
             const layout =
@@ -3094,7 +4031,12 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             const { aspect, fit, ...frame } = frameSchema.parse({
                 ...current,
                 ...(preset
-                    ? { aspect: preset.aspect, padding: preset.padding, cornerRadius: preset.cornerRadius }
+                    ? {
+                          aspect: preset.aspect,
+                          fit: preset.fit,
+                          padding: preset.padding,
+                          cornerRadius: preset.cornerRadius,
+                      }
                     : {}),
                 ...(layout ? { layout } : {}),
                 ...(op.aspect === undefined ? {} : { aspect: op.aspect }),
@@ -3219,6 +4161,7 @@ function unhide(project: EditProject, op: Extract<EditOp, { op: "unhide" }>): Ed
 /** What an agent reads back after an edit: seconds, not microseconds. */
 export function describeProject(project: EditProject, path: string) {
     const seconds = (us: number) => Math.round(us / 1000) / 1000;
+    const duck = musicDucking(project);
     return {
         path,
         revision: project.revision,
@@ -3248,13 +4191,11 @@ export function describeProject(project: EditProject, path: string) {
                   // Ducking reads the transcript's lines; without a cached transcript the music plays level.
                   music: {
                       ...project.audio.music,
-                      // R4 8 music ducking: the dB object decides the amount and what it ducks under.
+                      // R4 8 music ducking: the dB object decides the amount and what it ducks under (check()'s rule).
                       ducks:
-                          (project.audio.ducking ? project.audio.ducking.db > 0 : project.audio.music.duck > 0) &&
-                          (((project.audio.ducking?.transcript ?? true) &&
-                              existsSync(transcriptCachePath(project.source.video))) ||
-                              ((project.audio.ducking?.voiceovers ?? true) &&
-                                  (project.audio.voiceovers?.length ?? 0) > 0)),
+                          duck.drops &&
+                          ((duck.underTranscript && existsSync(transcriptCachePath(project.source.video))) ||
+                              duck.underVoiceovers),
                   },
               }
             : project.audio,
@@ -3584,9 +4525,7 @@ function smoothCursor(project: EditProject, op: Extract<EditOp, { op: "cursorSmo
     }
 
     if (!trackDrawsCursor(project.source.cursor)) {
-        throw new Error(
-            "this movie has the system cursor in its picture, so the editor cannot smooth it; record without --system-cursor to get a drawn cursor"
-        );
+        throw undrawnCursorError(project.source.cursor, "smooth");
     }
 
     return { ...project, cursorSmooth: cursorSmoothSchema.parse({ ...project.cursorSmooth, ...change }) };
@@ -3633,7 +4572,7 @@ function applyRange(project: EditProject, op: Extract<EditOp, { op: "range" }>):
         case "cut":
             return cutRange(project, fromUs, toUs);
         case "keep":
-            return partOf(project, fromOut, toOut);
+            return keptRangeOf(project, fromOut, toOut);
         case "speed":
             return speedRange(project, fromUs, toUs, op.factor ?? 2);
         case "zoom":
@@ -3674,7 +4613,7 @@ export function addMarker(project: EditProject, atUs: number, label?: string): E
 export interface TranscriptLine {
     from: number;
     to: number;
-    /** Output seconds where the line starts in the current edit; null when its middle was cut. */
+    /** Output seconds of the line's first kept moment in the current edit; null when no part of it plays. */
     plays: number | null;
     text: string;
 }
@@ -3697,24 +4636,111 @@ export function transcriptLines(raw: unknown, project: EditProject): TranscriptL
 
     const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
     const fixes = project.transcript?.fixes ?? {};
+    const owned = new Set(parsed.data.segments.map((segment) => transcriptFixKey(segment.start)));
     return parsed.data.segments
         .map((segment) => {
-            const fix = fixes[String(Math.round(segment.start * 1000))];
+            const fix = lineFixOf(fixes, segment.start, owned);
             return fix === undefined ? segment : { ...segment, text: fix };
         })
         .filter((segment) => segment.text.trim())
         .map((segment) => {
-            // A line whose middle was cut is cut: its start alone sat on the edge of the clip before the cut.
-            const middle = outputTimeOf(project, Math.round(((segment.start + segment.end) / 2) * 1_000_000));
-            const plays =
-                middle === undefined ? undefined : outputTimeOf(project, Math.round(segment.start * 1_000_000));
+            const from = round(segment.start);
+            const to = round(segment.end);
+            const first = transcriptLineSpans(project, { from, to })[0];
             return {
-                from: round(segment.start),
-                to: round(segment.end),
-                plays: plays === undefined ? null : round(plays / 1_000_000),
+                from,
+                to,
+                plays: first === undefined ? null : round(first.fromUs / 1_000_000),
                 text: segment.text.trim(),
             };
         });
+}
+
+const captionSegmentSchema = z.object({ text: z.string(), start: z.number(), end: z.number() });
+
+/**
+ * The transcript cache's lines as the burned-in captions read them (CaptionTrack.load in Captions.swift): each segment
+ * with words and an end after its start, in source microseconds, by start. A malformed segment is left out alone.
+ */
+function captionTrackLines(raw: unknown): Array<{ fromUs: number; toUs: number; text: string }> {
+    const parsed = z.object({ segments: z.array(z.unknown()) }).safeParse(raw);
+
+    if (!parsed.success) {
+        return [];
+    }
+
+    return parsed.data.segments
+        .flatMap((value) => {
+            const segment = captionSegmentSchema.safeParse(value);
+            const text = segment.success ? segment.data.text.trim() : "";
+
+            if (!segment.success || !text || !(segment.data.end > segment.data.start)) {
+                return [];
+            }
+
+            return [
+                {
+                    fromUs: Math.trunc(segment.data.start * 1_000_000),
+                    toUs: Math.trunc(segment.data.end * 1_000_000),
+                    text,
+                },
+            ];
+        })
+        .sort((a, b) => a.fromUs - b.fromUs);
+}
+
+/**
+ * The transcript line said at a source time, read as the captions read it (CaptionTrack.line(atSourceUs:) and
+ * EditRenderer.look): the last line that has started, kept only while it has not ended, then its fix from
+ * `transcript.fixes`. A fix with no words hides it, and an earlier line that overlaps it does not show through. Null
+ * where nothing is said. It does not look at `captions`: captionAt() does.
+ */
+export function spokenLineAt(project: EditProject, raw: unknown, sourceUs: number): string | null {
+    const started = captionTrackLines(raw)
+        .filter((line) => line.fromUs <= sourceUs)
+        .at(-1);
+
+    if (!started || started.toUs <= sourceUs) {
+        return null;
+    }
+
+    const fix = project.transcript?.fixes[String(Math.round(started.fromUs / 1000))];
+
+    if (fix === undefined) {
+        return started.text;
+    }
+
+    return fix === "" ? null : fix;
+}
+
+/** The caption line the export draws at a source time: the spoken line while captions show (absent is off), else null. */
+export function captionAt(project: EditProject, raw: unknown, sourceUs: number): string | null {
+    return project.captions?.show ? spokenLineAt(project, raw, sourceUs) : null;
+}
+
+/**
+ * Where a transcript line shows in the output, as the burned-in captions show it (Captions.swift
+ * CaptionTrack.line(atSourceUs:)): at every kept moment of its source range, pieces that touch in the output joined.
+ * A start that only touches the end of the clip before a cut is no kept moment, so it gives no piece there.
+ */
+export function transcriptLineSpans(
+    project: EditProject,
+    line: Pick<TranscriptLine, "from" | "to">
+): Array<{ fromUs: number; toUs: number }> {
+    const spans = outputSpansOf(project, Math.round(line.from * 1_000_000), Math.round(line.to * 1_000_000));
+    const joined: Array<{ fromUs: number; toUs: number }> = [];
+
+    for (const span of spans) {
+        const last = joined.at(-1);
+
+        if (last && span.fromUs === last.toUs) {
+            last.toUs = span.toUs;
+        } else {
+            joined.push({ ...span });
+        }
+    }
+
+    return joined;
 }
 
 /** The lines whose text holds `query`, case and accents ignored. */

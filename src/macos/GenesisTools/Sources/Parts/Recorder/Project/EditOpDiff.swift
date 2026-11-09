@@ -7,21 +7,23 @@ import Foundation
 /// own op.
 enum EditOpDiff {
     static func ops(from old: EditProject, to new: EditProject) -> [EditOp]? {
+        // Items are matched by id, never by place: the service sorts some lists (a hidden part moved past another), so
+        // the same items in another order are the same items.
         guard old.clips == new.clips, old.markers == new.markers, old.lanes == new.lanes,
-              old.zooms.map(\.id) == new.zooms.map(\.id), ids(old.redactions) == ids(new.redactions),
-              ids(old.texts) == ids(new.texts), ids(old.shapes) == ids(new.shapes),
-              (old.camera?.hidden ?? []).map(\.id) == (new.camera?.hidden ?? []).map(\.id),
+              sameItems(old.zooms, new.zooms, \.id), sameItems(old.redactions ?? [], new.redactions ?? [], \.id),
+              sameItems(old.texts ?? [], new.texts ?? [], \.id), sameItems(old.shapes ?? [], new.shapes ?? [], \.id),
+              sameItems(old.camera?.hidden ?? [], new.camera?.hidden ?? [], \.id),
               (old.camera == nil) == (new.camera == nil) || new.camera == nil,
               // A voiceover clip added here has no file length yet; the window adds one with its own op.
               Set(ids(new.audio.voiceovers)).isSubset(of: ids(old.audio.voiceovers)),
               // A lens added or deleted sends its own `lens` or `unlens` op (the service names a new lens).
               ids(old.lens?.items) == ids(new.lens?.items) else { return nil }
         var ops: [EditOp] = []
-        for (a, b) in zip(old.zooms, new.zooms) where a != b { ops += zoom(a, b) }
-        for (a, b) in zip(old.redactions ?? [], new.redactions ?? []) where a != b { ops += redaction(a, b) }
-        for (a, b) in zip(old.texts ?? [], new.texts ?? []) where a != b { ops += text(a, b) }
-        for (a, b) in zip(old.shapes ?? [], new.shapes ?? []) where a != b { ops += shape(a, b) }
-        for (a, b) in zip(old.camera?.hidden ?? [], new.camera?.hidden ?? []) where a != b {
+        for (a, b) in pairs(old.zooms, new.zooms, \.id) where a != b { ops += zoom(a, b) }
+        for (a, b) in pairs(old.redactions ?? [], new.redactions ?? [], \.id) where a != b { ops += redaction(a, b) }
+        for (a, b) in pairs(old.texts ?? [], new.texts ?? [], \.id) where a != b { ops += text(a, b) }
+        for (a, b) in pairs(old.shapes ?? [], new.shapes ?? [], \.id) where a != b { ops += shape(a, b) }
+        for (a, b) in pairs(old.camera?.hidden ?? [], new.camera?.hidden ?? [], \.id) where a != b {
             ops += retime(a.id, from: (a.startUs, a.endUs), to: (b.startUs, b.endUs))
         }
         if old.audio != new.audio { ops += audio(old.audio, new.audio) }
@@ -82,6 +84,18 @@ enum EditOpDiff {
 
     private static func ids<T: Identifiable>(_ list: [T]?) -> [T.ID] { (list ?? []).map(\.id) }
 
+    /// The two lists hold the same ids, each once, in any order.
+    private static func sameItems<T, ID: Hashable>(_ old: [T], _ new: [T], _ id: KeyPath<T, ID>) -> Bool {
+        let ids = Set(old.map { $0[keyPath: id] })
+        return old.count == new.count && ids.count == old.count && ids == Set(new.map { $0[keyPath: id] })
+    }
+
+    /// Each old item with the new item of its id, in the old list's order.
+    private static func pairs<T, ID: Hashable>(_ old: [T], _ new: [T], _ id: KeyPath<T, ID>) -> [(T, T)] {
+        let byID = Dictionary(new.map { ($0[keyPath: id], $0) }, uniquingKeysWith: { first, _ in first })
+        return old.compactMap { item in byID[item[keyPath: id]].map { (item, $0) } }
+    }
+
     /// A move that keeps the length is `at`; a change of either edge sends the edges that changed.
     static func retime(_ id: String, from old: (Int64, Int64), to new: (Int64, Int64)) -> [EditOp] {
         guard old != new else { return [] }
@@ -115,6 +129,12 @@ enum EditOpDiff {
         if a.cell != b.cell { op.cell = b.cell ?? 0 }
         // R8 11
         if a.dimAround != b.dimAround { op.dimAround = b.dimAround ?? 0 }
+        // A part with keyframes moves them with its rectangle (RedactionTrack.moved): the window sends the keys it drew.
+        if (a.track ?? []) != (b.track ?? []) {
+            op.track = (b.track ?? []).map {
+                EditOp.Redact.Key(at: Double($0.atUs) / 1_000_000, x: $0.x, y: $0.y, width: $0.width, height: $0.height)
+            }
+        }
         let set: [EditOp] = op == EditOp.SetRedaction(id: b.id) ? [] : [.setRedaction(op)]
         return set + retime(b.id, from: (a.startUs, a.endUs), to: (b.startUs, b.endUs))
     }

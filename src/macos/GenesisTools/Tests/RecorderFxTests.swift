@@ -296,11 +296,16 @@ final class RecorderFrameLayoutTests: XCTestCase {
         let canvasZoom = EditProject.Zoom(id: "c", startUs: 1_000_000, endUs: 3_000_000, scale: 2, focusX: 0.25, focusY: 0.5,
                                           easeInMs: 0, easeOutMs: 0, target: .canvas)
         let pictureZoom = EditProject.Zoom(id: "p", startUs: 1_000_000, endUs: 3_000_000, scale: 1.5, easeInMs: 0, easeOutMs: 0)
-        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, zooms: [canvasZoom], cursor: nil), .whole)
-        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, zooms: [canvasZoom, pictureZoom]).scale, 2)
-        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, zooms: [canvasZoom]).centerX, 0.25, accuracy: 0.001)
-        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, zooms: [canvasZoom, pictureZoom], cursor: nil).scale, 1.5)
-        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, zooms: [pictureZoom]), .whole)
+        let zoomed = { (zooms: [EditProject.Zoom]) -> EditProject in
+            var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 5_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
+            project.zooms = zooms
+            return project
+        }
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, project: zoomed([canvasZoom]), cursor: nil), .whole)
+        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, project: zoomed([canvasZoom, pictureZoom])).scale, 2)
+        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, project: zoomed([canvasZoom])).centerX, 0.25, accuracy: 0.001)
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, project: zoomed([canvasZoom, pictureZoom]), cursor: nil).scale, 1.5)
+        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, project: zoomed([pictureZoom])), .whole)
     }
 
     /// The zoomed canvas shows the left half (white) over the whole output.

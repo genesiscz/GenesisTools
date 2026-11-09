@@ -1,13 +1,15 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { readProject } from "@genesiscz/utils/recording-editor/project";
+import { liveRecordingFolders } from "@genesiscz/utils/screen-recorder/live";
 import { type RecordingStoreId, recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { z } from "zod";
-import { exportAs } from "./edit";
+import { exportAs, exportTargetOf } from "./edit";
 import { movieOf, RECORDING_SOURCE_MOVIES } from "./library";
 
 const { log } = logger.scoped("recorder-quick-actions");
@@ -15,7 +17,10 @@ const { log } = logger.scoped("recorder-quick-actions");
 /**
  * The quick actions of a recording that the menu bar's Recent list and the library window offer (Library/
  * RecordingActions.swift does the same for the window): copy the movie or a GIF to the clipboard, show it in Finder,
- * open its meeting, move it to the Trash. Rename is `renameRecording` (src/utils/screen-recorder/library.ts).
+ * open its meeting, move it to the Trash. Rename is `renameRecording` (src/utils/screen-recorder/library.ts). The trash
+ * lands in two places on purpose: here (the CLI and the REPL) it goes through `tools rm` into the GenesisTools trash,
+ * which `tools rm restore <batch>` puts back until it drains; the window's Move to Trash is a person's click and uses
+ * Finder's Trash with Put Back.
  */
 
 const EXPORT_EXTENSIONS = new Set(["mp4", "gif", "webm", "mov"]);
@@ -38,23 +43,34 @@ export function shareableMovie(folder: string): string | undefined {
 }
 
 /**
- * A GIF export that still shows the edit: the newest `.gif` beside the recording, unless the edit or the movie
- * changed after it was written.
+ * A GIF export that still shows the edit: the file the GIF export writes (`exportTargetOf`, so a GIF exported to a file
+ * chosen in the editor counts too), unless the edit or the movie changed after it was written.
  */
 export function currentGif(folder: string): string | undefined {
-    const gif = exportsIn(folder)
-        .filter((file) => file.path.toLowerCase().endsWith(".gif"))
-        .sort((a, b) => b.modified - a.modified)[0];
+    const edit = join(folder, "edit.json");
+    const movie = movieOf(folder);
+    let project: { source: { video: string }; export: { output: string } } | undefined;
 
-    if (!gif) {
+    try {
+        project = readProject(edit);
+    } catch {
+        project = movie ? { source: { video: movie }, export: { output: "" } } : undefined;
+    }
+
+    if (!project) {
         return undefined;
     }
 
-    const sources = [join(folder, "edit.json"), movieOf(folder)].filter(
-        (path): path is string => path !== undefined && existsSync(path)
-    );
-    const changed = sources.some((path) => statSync(path).mtimeMs > gif.modified);
-    return changed ? undefined : gif.path;
+    const gif = exportTargetOf({ project, format: "gif", overwrite: true });
+
+    if (!existsSync(gif)) {
+        return undefined;
+    }
+
+    const modified = statSync(gif).mtimeMs;
+    const sources = [edit, movie].filter((path): path is string => path !== undefined && existsSync(path));
+    const changed = sources.some((path) => statSync(path).mtimeMs > modified);
+    return changed ? undefined : gif;
 }
 
 async function run(argv: string[]): Promise<void> {
@@ -83,7 +99,8 @@ export async function copyRecording(folder: string, { gif = false }: { gif?: boo
 
     if (gif && !path) {
         log.debug({ folder }, "no current GIF; exporting one");
-        const answer = await exportAs(folder, { format: "gif" });
+        // A stale GIF is replaced where it is, so the next copy finds the new one.
+        const answer = await exportAs(folder, { format: "gif", overwrite: true });
 
         if (!answer.ok || !answer.path) {
             throw new Error(`the GIF export failed: ${answer.error ?? "no file"}`);
@@ -121,6 +138,21 @@ const removalPlanSchema = z.array(
     z.object({ path: z.string(), verdict: z.string(), reason: z.string().optional() }).passthrough()
 );
 
+/** What `tools rm --json` answers: the trash batch the folders went into and when the drain deletes it. */
+const removalResultSchema = z
+    .object({
+        batches: z.array(z.object({ id: z.string(), drainAfter: z.string() }).passthrough()),
+        request: z.string().optional(),
+    })
+    .passthrough();
+
+/** Where trashed recordings went: the `tools rm` batch, its drain time, and the command that puts it back. */
+export interface TrashedBatch {
+    batch: string;
+    drainAfter: string;
+    restore: string;
+}
+
 /**
  * Moves one library recording through the shared removal policy; `trashRecordings` for several at once. `tools rm trash`
  * lists its restore command. A kept meeting is refused. `roots` replaces a store's root, for a test.
@@ -131,9 +163,9 @@ const removalPlanSchema = z.array(
 export async function trashRecording(
     folder: string,
     options: { roots?: Partial<Record<RecordingStoreId, string>>; askUser?: boolean; aside?: boolean } = {}
-) {
-    await trashRecordings([folder], options);
-    return { trashed: folder };
+): Promise<{ trashed: string } & Partial<TrashedBatch>> {
+    const { trashed: _all, ...batch } = await trashRecordings([folder], options);
+    return { trashed: folder, ...batch };
 }
 
 /** The dry run's JSON, or null when its stdout is not JSON (a stray line): a plan that does not parse allows nothing. */
@@ -159,14 +191,23 @@ export async function trashRecordings(
         askUser = false,
         aside,
     }: { roots?: Partial<Record<RecordingStoreId, string>>; askUser?: boolean; aside?: boolean } = {}
-): Promise<{ trashed: string[] }> {
+): Promise<{ trashed: string[] } & Partial<TrashedBatch>> {
     const unique = [...new Set(folders)];
 
     if (unique.length === 0) {
         throw new Error("name at least one recording to trash");
     }
 
+    const live = liveRecordingFolders();
+
     for (const folder of unique) {
+        // Its recorder still writes there, so the join at its stop would fail; the window offers only Show in Finder.
+        if (live.has(resolve(folder))) {
+            throw new Error(
+                `${folder} is still recording; stop it first with ${toolCommand("recorder stop")}. Nothing was moved.`
+            );
+        }
+
         const kept = recordingStoreOf(folder, roots)?.kept;
 
         if (kept) {
@@ -213,13 +254,37 @@ export async function trashRecordings(
     }
 
     const flags = aside === undefined ? [] : [aside ? "--aside" : "--no-aside"];
-    const result = await execTool(["rm", ...flags, ...unique], { timeout: 30_000 });
+    const result = await execTool(["rm", "--json", ...flags, ...unique], { timeout: 30_000 });
+    // The answer names the GenesisTools trash batch (not Finder's Trash), which tools rm restore puts back before it
+    // drains, or the request the user must confirm. Folders that moved stay moved, so an unreadable answer only leaves
+    // the batch out.
+    let raw: unknown = null;
+
+    try {
+        raw = SafeJSON.parse(result.stdout, { strict: true });
+    } catch {
+        log.debug({ stdout: result.stdout.slice(0, 200) }, "tools rm --json answered no JSON");
+    }
+
+    const answer = removalResultSchema.safeParse(raw);
+
     if (!result.success) {
-        // stdout carries the policy's own words (the request id); stderr only its log lines.
+        const request = answer.success ? answer.data.request : undefined;
         throw new Error(
-            result.stdout.trim() || result.stderr.trim() || "removal policy refused the recordings; no file was moved"
+            request
+                ? `the removal waits for the user's confirmation in request ${request} (${toolCommand("rm approve")} ${request})`
+                : result.stdout.trim() ||
+                      result.stderr.trim() ||
+                      "removal policy refused the recordings; no file was moved"
         );
     }
-    log.debug({ folders: unique }, "moved recordings through the removal policy");
-    return { trashed: unique };
+
+    const batch = answer.success ? answer.data.batches[0] : undefined;
+    log.debug({ folders: unique, batch: batch?.id }, "moved recordings through the removal policy");
+    return {
+        trashed: unique,
+        ...(batch
+            ? { batch: batch.id, drainAfter: batch.drainAfter, restore: `${toolCommand("rm restore")} ${batch.id}` }
+            : {}),
+    };
 }

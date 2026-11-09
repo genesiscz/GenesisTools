@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
-import { runCountdown } from "@app/control/lib/peekaboo";
+import { type CountdownHold, runCountdown } from "@app/control/lib/peekaboo";
 import {
     audioTrackTitles,
     cursorTrackPath,
+    movieLengthMs,
     type NativeRecorderOptions,
     nativeSegmentRecorder,
     SESSION_MOTION_THRESHOLD,
@@ -21,16 +22,20 @@ import { formatCount } from "@genesiscz/utils/format";
 import type { FlockState } from "@genesiscz/utils/fs/flock";
 import { logger } from "@genesiscz/utils/logger";
 import { passStartGate, releaseStartGate } from "@genesiscz/utils/process/start-gate";
+import { alignCameraMovie, type CameraAlignment } from "@genesiscz/utils/recording-editor/camera";
 import {
     newVideoRecordingId,
     RECORDING_MANIFEST,
     type RecordingManifest,
+    type RecordingSpan,
+    readRecordingManifestSafe,
     recordingsLibraryDir,
     writeRecordingManifest,
 } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { trashRecordingFolder } from "@genesiscz/utils/screen-recorder/start";
 import {
+    type CameraHost,
     cameraRefusal,
     missingCameraWarning,
     recorderFaceState,
@@ -54,11 +59,14 @@ export interface VideoRecordingOptions {
     excludeWindowIds?: number[];
     /**
      * The menu bar recorder records the camera beside the screen into `camera.mov` (`settings.camera` asks for it):
-     * refused while it does not run, and a warning at the end when no camera movie came.
+     * refused while it does not run, and a warning at the end when no camera movie came. It is asked before the first
+     * segment, and the camera preview's window it answers is left out of every segment.
      */
     camera?: boolean;
     /** Whether the menu bar recorder runs; default its lock (`recorderFaceState`). */
     recorderFace?: () => FlockState;
+    /** Where `camera.start` and `camera.stop` go; default the recorder service (`recorderHost()`). */
+    cameraHost?: CameraHost;
     audio?: ("system" | "mic")[];
     micDevice?: string;
     /** Keep the system cursor in the movie; by default it stays out and the editor draws it from the track. */
@@ -80,11 +88,17 @@ export interface VideoRecordingOptions {
     startGate?: string;
     /** The slow part before the gate; default ax-tool's build, which a fresh checkout does first. */
     prepare?: () => Promise<unknown>;
-    /** Seconds counted down on screen right before it records (after the slow part), as the capture picker does. */
+    /**
+     * Seconds counted down on screen before it records (after the slow part), as the capture picker does: the recorder
+     * starts as the last second begins, and zero shows once the movie has its first frame.
+     */
     countdownSeconds?: number;
     /** Shows the countdown; default an overlay near the pointer and a line a second on stderr. */
-    countdown?: (seconds: number) => Promise<void>;
+    countdown?: RecorderCountdown;
 }
+
+/** A countdown before a recording: it calls `hold.lastSecond` as its last second begins and holds zero for `hold.until`. */
+export type RecorderCountdown = (seconds: number, hold: CountdownHold) => Promise<void>;
 
 /**
  * A display or an area records the pointer beside the movie (the drawn cursor, clicks and the ⌘/⌃ shortcut rows). A
@@ -116,9 +130,10 @@ export function segmentRecorderOptions(
 }
 
 /** The recorder's countdown: an overlay near the pointer and a line a second on stderr. */
-export const showRecorderCountdown = (seconds: number) =>
+export const showRecorderCountdown: RecorderCountdown = (seconds, hold) =>
     runCountdown(seconds, {
         text: { who: "recorder", line: "switch to what you record", overlay: "switch to what you record" },
+        hold,
     });
 
 /**
@@ -127,11 +142,11 @@ export const showRecorderCountdown = (seconds: number) =>
  */
 export function announcedCountdown(
     announce: (seconds: number) => void,
-    show: (seconds: number) => Promise<void> = showRecorderCountdown
-): (seconds: number) => Promise<void> {
-    return async (seconds) => {
+    show: RecorderCountdown = showRecorderCountdown
+): RecorderCountdown {
+    return async (seconds, hold) => {
         announce(seconds);
-        await show(seconds);
+        await show(seconds, hold);
     };
 }
 
@@ -154,7 +169,7 @@ export interface VideoRecordingResult {
     frames?: number;
     averageFps?: number;
     warnings: string[];
-    /** The start failed before it recorded anything, so its folder went to the GenesisTools trash. */
+    /** The recording was discarded, or failed before it recorded anything, so its folder went to the GenesisTools trash. */
     removed?: boolean;
     /** The recording asked for the camera and no camera movie came: the CLI exits 1. */
     cameraMissing?: boolean;
@@ -170,9 +185,13 @@ export function videoDoneLine(result: VideoRecordingResult): string {
         return `${result.outcome}: ${result.movie}${rate}`;
     }
 
-    return result.removed
+    if (!result.removed) {
+        return `${result.outcome}: ${result.folder}`;
+    }
+
+    return result.outcome === "failed"
         ? `failed, nothing was recorded: ${result.warnings[0] ?? "the capture did not start"}`
-        : `${result.outcome}: ${result.folder}`;
+        : `${result.outcome}: ${result.folder} went to the trash`;
 }
 
 /**
@@ -193,6 +212,57 @@ export async function recordedNothing(folder: string): Promise<boolean> {
     }
 
     return true;
+}
+
+/** What went wrong with a recording's camera movie at its end. */
+export interface CameraEndProblem {
+    /** `camera-missing`: no camera.json came; `camera-unaligned`: the movie could not be cut to the screen's spans. */
+    code: "camera-missing" | "camera-unaligned";
+    message: string;
+}
+
+/**
+ * Ends the camera of a recording that started it. The face stops and writes camera.json; a kept recording then gets
+ * its camera movie lined up with the screen's spans (`alignCameraMovie`), so the bubble keeps the voice's time through
+ * every pause and rollover. Returns what went wrong, or undefined.
+ */
+export async function endRecordingCamera({
+    folder,
+    outcome,
+    spans,
+    host,
+    align = alignCameraMovie,
+    finishWaitMs,
+}: {
+    folder: string;
+    outcome: VideoRecordingResult["outcome"];
+    spans: RecordingSpan[];
+    host?: CameraHost;
+    align?: (input: { folder: string; spans: RecordingSpan[] }) => Promise<CameraAlignment>;
+    /** How long to wait for camera.json; default `CAMERA_FINISH_WAIT_MS`. */
+    finishWaitMs?: number;
+}): Promise<CameraEndProblem | undefined> {
+    await stopRecordingCamera(folder, host);
+
+    if (outcome === "discarded") {
+        return undefined;
+    }
+
+    // The face finishes the camera movie once the live entry is gone; a recording that asked for it and got none says
+    // so, in the manifest and in the result, instead of a movie that quietly has no camera.
+    const missing = await missingCameraWarning({ folder, timeoutMs: finishWaitMs });
+
+    if (missing) {
+        return { code: "camera-missing", message: missing };
+    }
+
+    if (outcome !== "done") {
+        return undefined;
+    }
+
+    const aligned = await align({ folder, spans });
+    log.info({ folder, spans: spans.length, result: aligned.result }, "the camera movie is lined up with the screen");
+    return aligned.warning ? { code: "camera-unaligned", message: aligned.warning } : undefined;
 }
 
 /**
@@ -221,13 +291,69 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
 
     await (options.prepare ?? ensureBinaryAsync)();
 
-    // After the slow part, so the last second of the countdown is the start; before the gate, so a caller that gives
-    // up during it still cancels the start.
-    if (countdownSeconds > 0) {
-        log.info({ seconds: countdownSeconds }, "counting down before the recording");
-        await (options.countdown ?? showRecorderCountdown)(countdownSeconds);
+    if (countdownSeconds === 0) {
+        return recordThroughGate(options, gate);
     }
 
+    // After the slow part, so the countdown is not stretched by a build. ax-tool takes about a second from its start
+    // to the first frame, so the recording starts as the last second begins (the gate is passed then, so a caller that
+    // gives up during the countdown still cancels the start), and the countdown holds zero until the first frame: the
+    // first thing done after zero is in the movie. The overlay is kept out of the movie.
+    const firstFrame = Promise.withResolvers<void>();
+    let recording: Promise<VideoRecordingResult> | undefined;
+    const start = (excludeWindowIds: number[] = []): Promise<VideoRecordingResult> => {
+        if (recording) {
+            return recording;
+        }
+
+        const excluded = [...(options.excludeWindowIds ?? []), ...excludeWindowIds];
+        log.info({ excludeWindowIds: excluded }, "the countdown's last second began; starting the recorder");
+        recording = recordThroughGate(
+            {
+                ...options,
+                ...(excluded.length ? { excludeWindowIds: excluded } : {}),
+                emit: (event) => {
+                    if (endsCountdown(event)) {
+                        firstFrame.resolve();
+                    }
+
+                    options.emit?.(event);
+                },
+            },
+            gate
+        );
+        // A start that fails or is cancelled ends the countdown too; its error comes from the await below.
+        recording.then(
+            () => firstFrame.resolve(),
+            () => firstFrame.resolve()
+        );
+        return recording;
+    };
+
+    log.info({ seconds: countdownSeconds }, "counting down before the recording");
+    await (options.countdown ?? showRecorderCountdown)(countdownSeconds, {
+        lastSecond: ({ excludeWindowIds }) => void start(excludeWindowIds),
+        until: firstFrame.promise,
+    });
+    // A countdown that never said its last second began starts the recording at its end.
+    return await start();
+}
+
+/** The session's first frame (or its end before one): a held countdown may show zero. */
+function endsCountdown(event: RecordingSessionEvent): boolean {
+    return (
+        (event.event === "state" && event.state === "recording") ||
+        (event.event === "error" && event.fatal) ||
+        event.event === "done" ||
+        event.event === "discarded"
+    );
+}
+
+/** Records once the caller's start gate (when it has one) is passed, and releases the gate after. */
+async function recordThroughGate(
+    options: VideoRecordingOptions,
+    gate: string | undefined
+): Promise<VideoRecordingResult> {
     if (!gate) {
         return recordPassed(options);
     }
@@ -291,13 +417,37 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     let frameStats: { frames?: number; averageFps?: number } = {};
     let live: LiveRecordingServer | undefined;
     let control: SessionRecorderControl | undefined;
+    let firstFrameNoted = false;
     const emit = (event: RecordingSessionEvent) => {
         // One per second while it records: the day log keeps them, the terminal shows the CLI's own state lines.
         log.debug({ event }, "recording event");
         control?.observe(event);
 
-        if (event.event === "state" || event.event === "error") {
+        // The live entry says "recording" while a segment arms too, so `lastFrameAt` (set at a segment's first frame and
+        // with each elapsed second) is what tells a host that the movie records: the capture picker holds its
+        // countdown for it.
+        const framed =
+            (event.event === "state" && event.state === "recording") || event.event === "elapsed"
+                ? { lastFrameAt: new Date().toISOString() }
+                : {};
+
+        // The wall time of the movie's time 0, once: movies.record() resolves when the entry has it, so what its caller
+        // does next is in the movie, and a demo reads the movie time from it.
+        if (event.event === "state" && event.state === "recording" && !firstFrameNoted) {
+            firstFrameNoted = true;
+            const heard = Date.now();
+            void session.movieTimeOfMark().then((movieMs) => {
+                live?.update({ firstFrameAt: new Date(heard - movieMs).toISOString() });
+            });
+        }
+
+        // Each state event re-anchors the floating controls' clock on the movie time; an error changes only the entry.
+        if (event.event === "state") {
+            void control?.status().then((status) => live?.notifyStatus(status, framed));
+        } else if (event.event === "error") {
             void control?.status().then((status) => live?.update({ state: status.state, warning: status.warning }));
+        } else if (event.event === "elapsed") {
+            live?.update(framed);
         }
 
         if (event.event === "error") {
@@ -322,12 +472,15 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
         options.emit?.(event);
     };
+    // Read at each segment's start, so the camera preview's window joins the exclusions before the first one.
+    const segmentOptions = segmentRecorderOptions(options, folder);
     const session = new RecordingSession({
         target: options.target,
         directory: join(folder, `segments-${randomUUID().slice(0, 8)}`),
         output: movie,
-        recorder: nativeSegmentRecorder(segmentRecorderOptions(options, folder)),
+        recorder: nativeSegmentRecorder(segmentOptions),
         join: segmentJoiner(audioTrackTitles(options.audio)),
+        measure: movieLengthMs,
         emit,
         maxSeconds: options.maxSeconds ?? VIDEO_RECORDING_MAX_SECONDS,
         // The rates `settings.set` changes while it records; a movie without an idle rate keeps its fps when still.
@@ -369,19 +522,30 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
                         }),
                     { once: true }
                 );
-                await session.start();
-
-                // Asked for, not left to the face's watch of the live recordings; a refusal ends the start.
+                // Asked for before the first segment, not left to the face's watch of the live recordings: the face
+                // answers the camera preview's window, which ScreenCaptureKit records unless the movie leaves it out
+                // by its id (it ignores the panel's sharing type), and a refusal ends the start before it records.
                 if (options.camera) {
-                    cameraRefused = await startRecordingCamera(folder);
-                    cameraStarted = cameraRefused === undefined;
+                    const camera = await startRecordingCamera(folder, options.cameraHost);
 
-                    if (cameraRefused) {
-                        emit({ event: "error", message: cameraRefused, code: "camera-refused", fatal: true });
-                        await activeControl.discard();
+                    if (!camera.started) {
+                        cameraRefused = camera.reason;
+                        emit({ event: "error", message: camera.reason, code: "camera-refused", fatal: true });
+                        return "failed";
+                    }
+
+                    cameraStarted = true;
+                    segmentOptions.excludeWindowIds = [
+                        ...new Set([...(segmentOptions.excludeWindowIds ?? []), ...camera.windowIds]),
+                    ];
+
+                    // A stop that came while the camera started has ended the session; a segment now would record on.
+                    if (signal.aborted) {
+                        return session.finished;
                     }
                 }
 
+                await session.start();
                 return session.finished;
             },
             { handleTermination: true }
@@ -390,9 +554,10 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         activeLive.close();
     }
 
-    if (cameraStarted) {
-        await stopRecordingCamera(folder);
-    }
+    const spans = session.movieSpans();
+    const cameraProblem = cameraStarted
+        ? await endRecordingCamera({ folder, outcome, spans, host: options.cameraHost })
+        : undefined;
 
     // One segment is moved, not joined, so its tracks still read "Core Media Audio": title them by one stream copy.
     if (outcome === "done" && segments === 1 && options.audio?.length && existsSync(movie)) {
@@ -412,22 +577,23 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         await rename(joinedCursor, cursorTrack);
     }
 
-    // The face finishes the camera movie once the live entry is gone; a recording that asked for it and got none says
-    // so here, in the manifest and in the result, instead of a movie that quietly has no camera.
-    const cameraWarning = cameraStarted && outcome !== "discarded" ? await missingCameraWarning({ folder }) : undefined;
-
-    if (cameraWarning) {
-        log.warn({ id, folder }, "the recording asked for the camera and got no camera movie");
-        warnings.push(cameraWarning);
-        options.emit?.({ event: "error", message: cameraWarning, code: "camera-missing", fatal: false });
+    if (cameraProblem) {
+        log.warn({ id, folder, code: cameraProblem.code }, "the recording's camera movie has a problem");
+        warnings.push(cameraProblem.message);
+        options.emit?.({ event: "error", message: cameraProblem.message, code: cameraProblem.code, fatal: false });
     }
 
     await writeRecordingManifest(folder, {
         ...manifest,
+        // A rename while it recorded (tools recorder rename, movie.rename()) wrote the file: keep that title.
+        title: readRecordingManifestSafe(folder)?.manifest?.title ?? manifest.title,
         endedAt: new Date().toISOString(),
         settings: {
             ...manifest.settings,
-            video: existsSync(movie) ? { file: "screen.mp4", durationMs, ...frameStats } : undefined,
+            // Each kept segment on the wall clock, for any clock that has to line up with this movie (the camera's).
+            video: existsSync(movie)
+                ? { file: "screen.mp4", durationMs, ...frameStats, ...(spans.length ? { spans } : {}) }
+                : undefined,
             outcome,
             markers: activeControl.markers,
             // Since 2026-11-08 a marker counts from the movie's first frame; a manifest without this key counted from
@@ -439,7 +605,16 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     log.info({ id, outcome, durationMs, warnings: warnings.length }, "video recording ended");
     let removed = false;
 
-    if (outcome === "failed" && (await recordedNothing(folder))) {
+    // A discard removes the recording, as a discarded frames recording does; kept, it stayed in the library as a card
+    // with no movie that failed to open. The camera stopped above, so no late camera movie lands in the trashed folder.
+    if (outcome === "discarded") {
+        try {
+            removed = trashRecordingFolder(folder, "recording-discard");
+            log.info({ id, folder, removed }, "the discarded recording's folder goes to the trash");
+        } catch (error) {
+            log.warn({ error, folder }, "the discarded recording's folder stays in the library");
+        }
+    } else if (outcome === "failed" && (await recordedNothing(folder))) {
         try {
             removed = trashRecordingFolder(folder, "recording-failed-start");
             log.info({ id, folder, removed }, "the failed start recorded nothing; its folder goes to the trash");
@@ -458,6 +633,6 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         ...frameStats,
         warnings,
         ...(removed ? { removed } : {}),
-        ...(cameraWarning ? { cameraMissing: true } : {}),
+        ...(cameraProblem?.code === "camera-missing" ? { cameraMissing: true } : {}),
     };
 }

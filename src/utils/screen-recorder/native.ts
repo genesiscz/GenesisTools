@@ -71,6 +71,8 @@ const nativeTrack = z.object({
 const nativeResult = z.object({
     data: z.object({
         frames: z.array(nativeFrame).default([]),
+        /** The first frame's capture time on the wall clock: `timestampMs` 0. An older ax-tool does not send it. */
+        firstFrameEpochMs: z.number().positive().optional(),
         tracks: z.array(nativeTrack).optional(),
         cancelled: z.boolean().optional(),
         endedEarly: z.enum(CAPTURE_ENDINGS).optional(),
@@ -633,9 +635,14 @@ export class NativeFrameRecorder extends FrameRecorder {
         const parsed = nativeResult.safeParse(json);
 
         if (run.exitCode === 0 && parsed.success) {
-            const { frames, cancelled, endedEarly, stats, tracks } = parsed.data.data;
+            const { frames, cancelled, endedEarly, stats, tracks, firstFrameEpochMs } = parsed.data.data;
             const first = frames[0];
-            const firstMtime = first ? statSync(first.path, { throwIfNoEntry: false })?.mtimeMs : undefined;
+            // The first PNG lands up to a second after its frame was captured, while markers use the true wall
+            // clock, so its file time is only the fallback for an ax-tool that does not report the capture time.
+            const firstMtime =
+                firstFrameEpochMs === undefined && first
+                    ? statSync(first.path, { throwIfNoEntry: false })?.mtimeMs
+                    : undefined;
             const kept: CapturedFrame[] = frames.map((frame) => ({
                 path: frame.path,
                 atMs: frame.timestampMs,
@@ -648,7 +655,9 @@ export class NativeFrameRecorder extends FrameRecorder {
             }));
             const ending = endedEarly ?? (cancelled || run.aborted ? "stopped" : undefined);
             return {
-                startedAtMs: first && firstMtime !== undefined ? firstMtime - first.timestampMs : spawnedAt,
+                startedAtMs:
+                    firstFrameEpochMs ??
+                    (first && firstMtime !== undefined ? firstMtime - first.timestampMs : spawnedAt),
                 frames: kept,
                 ...(ending ? { endedEarly: ending } : {}),
                 ...(stats ? { stats } : {}),

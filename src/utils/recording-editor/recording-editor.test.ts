@@ -1,23 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
+    alignCameraMovie,
     bubbleFromSidecar,
     bubbleRect,
     bubbleShowsAt,
     CAMERA_SIDECAR,
     cameraBubbleSchema,
+    cameraTrimPlan,
     readCameraSidecar,
 } from "@genesiscz/utils/recording-editor/camera";
 import {
     canvasShape,
     checkProject,
     fixOps,
+    frameCrop,
     groupIssues,
     issueSummary,
     textBox,
@@ -31,8 +34,15 @@ import {
     removeComment,
     updateComment,
 } from "@genesiscz/utils/recording-editor/comments";
-import { idleRanges } from "@genesiscz/utils/recording-editor/idle";
+import {
+    editorFrozenRanges,
+    FreezePrint,
+    findIdle,
+    idleRanges,
+    silenceDetectArgs,
+} from "@genesiscz/utils/recording-editor/idle";
 import { laneItems, resolveLanes } from "@genesiscz/utils/recording-editor/lanes";
+import { audibleTracks, integratedLoudness, transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
 import {
     annotateClicks,
     applyOp,
@@ -41,17 +51,23 @@ import {
     describeProject,
     editOpSchema,
     editProjectSchema,
+    effectsOnSourceTime,
+    exportFps,
+    exportPlanOf,
     findInTranscript,
     opPlacementWarnings,
     outputDurationUs,
     outputTimeOf,
     parseEditOps,
     partOf,
+    readCursorTrack,
     readProject,
     replaceWordsInLines,
     shortcutsOf,
     sourceTimeOf,
     TEXT_ALIGNS,
+    trackDrawsCursor,
+    transcriptCachePath,
     transcriptLines,
     voiceoverExportSpans,
     wholeProject,
@@ -68,20 +84,33 @@ import cameraOps from "./__fixtures__/camera-ops.json";
 import cardVoiceovers from "./__fixtures__/card-voiceovers.json";
 import editMarkers from "./__fixtures__/edit-markers.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
+import logoPictureTypes from "./__fixtures__/logo-picture-types.json";
+import partAudio from "./__fixtures__/part-audio.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
-import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise";
+import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema, syncDenoisedTranscript } from "./denoise";
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, sampleFpsFilter, speedArgv, trimArgv } from "./ffmpeg";
+import { PICTURE_EXTENSIONS } from "./overlays";
 import { parseEditPlan, timeToUs } from "./plan";
+import { redactionBoxAt } from "./private-data";
 import * as projectOps from "./project";
 import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
 import { layoutText } from "./text-metrics";
 import textCases from "./text-metrics.cases.json";
 import { cutRanges, fillerCuts, fillerList, transcriptSegmentSchema, wordCuts, wordSpans } from "./transcript-cuts";
+import { voiceoverSchema } from "./voiceovers";
+import { pointerBusyRanges } from "./waits";
 
 function workspace(): string {
     return mkdtempSync(join(tmpdir(), "gt-editor-"));
+}
+
+/** `source` with a cursor track of one click, which the clicks op needs before it turns rings or the tick on. */
+function withClickTrack<T extends object>(source: T): T & { cursor: string } {
+    const path = join(workspace(), "cursor.jsonl");
+    writeFileSync(path, `${SafeJSON.stringify({ t: 1000, x: 0.5, y: 0.5, click: "left" })}\n`);
+    return { ...source, cursor: path };
 }
 
 /** A recording folder like startRecording writes: frames of two displays with a recording.json. */
@@ -626,6 +655,33 @@ describe.skipIf(skip.integration)("the editor on a video, and the frame review o
     }, 60_000);
 });
 
+describe("a part export's audio", () => {
+    // A part sounds like the same stretch of the whole export. The case is shared with the Swift TimelineMap.part
+    // (Tests/RecorderHuntR2PartExportAudioTests.swift), so the two part makers fail together.
+    test("keeps a voiceover that plays across the part's start and the music's place in the whole (part-audio.json)", () => {
+        const whole = editProjectSchema.parse(partAudio.edit);
+        const part = partOf(whole, partAudio.part.fromUs, partAudio.part.toUs);
+        expect(part.audio.voiceovers).toEqual(partAudio.voiceovers.map((clip) => voiceoverSchema.parse(clip)));
+        expect(part.audio.music?.inWhole).toEqual(partAudio.inWhole);
+        const { cards: _cards, ...exported } = part;
+        expect(voiceoverExportSpans(exported)).toEqual(partAudio.spans);
+        // A part of a part counts from the same whole.
+        const inner = partOf(exported, 1_000_000, 3_000_000);
+        expect(inner.audio.music?.inWhole).toEqual({ atUs: partAudio.inWhole.atUs + 1_000_000, lengthUs: 23_000_000 });
+        expect(inner.audio.voiceovers?.find((clip) => clip.id === "v1")).toMatchObject({
+            skipUs: 3_000_000,
+            durationUs: 3_000_000,
+        });
+    });
+
+    test("the keep op still makes the kept range the new whole: no music place, voiceovers as they were", () => {
+        const whole = editProjectSchema.parse(partAudio.edit);
+        const kept = applyOp(whole, editOpSchema.parse({ op: "range", action: "keep", from: 6, to: 12 }));
+        expect(kept.audio.music?.inWhole).toBeUndefined();
+        expect(kept.audio.voiceovers).toEqual(whole.audio.voiceovers);
+    });
+});
+
 describe("edit project (edit.json)", () => {
     const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
 
@@ -849,12 +905,316 @@ describe("edit project (edit.json)", () => {
         expect(() => autoZoom(manual, [{ ms: 1, x: 0, y: 0 }])).toThrow("no clicks");
     });
 
+    describe("autoZoom replaces only its own zooms", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 30_000_000, width: 1920, height: 1080 };
+        const clicks = [
+            { ms: 5000, x: 0.3, y: 0.3, click: "left" },
+            { ms: 12_000, x: 0.7, y: 0.7, click: "left" },
+        ];
+        const spans = (project: ReturnType<typeof wholeProject>) =>
+            project.zooms.map((zoom) => [
+                zoom.startUs / 1e6,
+                zoom.endUs / 1e6,
+                zoom.target ?? "picture",
+                zoom.origin ?? "-",
+            ]);
+
+        test("keeps a hand-made follow zoom and a canvas zoom, replaces an earlier auto zoom, and zooms under a canvas zoom", () => {
+            let project = autoZoom(wholeProject(source), [clicks[1]], 1.6);
+            expect(spans(project)).toEqual([[11.4, 13.6, "picture", "auto"]]);
+            project = applyOp(project, { op: "zoom", from: 20, to: 22, follow: true, scale: 2.5 });
+            project = applyOp(project, { op: "zoom", from: 4, to: 7, target: "canvas", scale: 2.5 });
+
+            const again = autoZoom(project, clicks, 1.6);
+            expect(spans(again)).toEqual([
+                [4, 7, "canvas", "-"],
+                [4.4, 6.6, "picture", "auto"],
+                [11.4, 13.6, "picture", "auto"],
+                [20, 22, "picture", "-"],
+            ]);
+        });
+
+        test("a picture zoom still blocks a click group, and setZoom and duplicate make an auto zoom the user's", () => {
+            const manual = applyOp(wholeProject(source), { op: "zoom", from: 5, to: 6 });
+            expect(spans(autoZoom(manual, clicks, 1.6))).toEqual([
+                [5, 6, "picture", "-"],
+                [11.4, 13.6, "picture", "auto"],
+            ]);
+
+            const auto = autoZoom(wholeProject(source), clicks, 1.6);
+            const id = auto.zooms[0]?.id ?? "";
+            expect(applyOp(auto, { op: "setZoom", id, scale: 2 }).zooms[0]).not.toHaveProperty("origin");
+            const copied = applyOp(auto, { op: "duplicate", id });
+            expect(copied.zooms.filter((zoom) => zoom.origin === "auto")).toHaveLength(2);
+        });
+    });
+
+    describe("a frame's background image is a picture the renderer decodes", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+        const folder = mkdtempSync(join(tmpdir(), "bg-picture-"));
+        const svg = join(folder, "bg.svg");
+        const png = join(folder, "bg.png");
+        writeFileSync(svg, "<svg/>");
+        writeFileSync(png, "png");
+
+        test("frame refuses an SVG background, takes a PNG, and an edit that holds an SVG can still change its padding", () => {
+            expect(() => applyOp(wholeProject(source), { op: "frame", background: { image: svg } })).toThrow(
+                "is not a picture"
+            );
+            expect(
+                applyOp(wholeProject(source), { op: "frame", background: { image: png } }).frame?.background
+            ).toMatchObject({
+                kind: "image",
+                image: png,
+            });
+
+            const old = applyOp(wholeProject(source), { op: "frame", background: { image: png } });
+            const holding = {
+                ...old,
+                frame: old.frame ? { ...old.frame, background: { ...old.frame.background, image: svg } } : undefined,
+            };
+            expect(applyOp(holding, { op: "frame", padding: 0.1 }).frame?.padding).toBe(0.1);
+
+            const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+            expect(checkProject(holding, facts).some((issue) => issue.kind === "background-not-picture")).toBe(true);
+            expect(checkProject(old, facts).some((issue) => issue.kind === "background-not-picture")).toBe(false);
+        });
+    });
+
+    describe("click rings and the click sound need a cursor track", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+
+        test("the clicks op refuses rings or a tick on a movie with no cursor track, and still turns them off", () => {
+            expect(() => applyOp(wholeProject(source), { op: "clicks", highlight: true })).toThrow("no cursor track");
+            expect(() => applyOp(wholeProject(source), { op: "clicks", highlight: false, sound: true })).toThrow(
+                "no cursor track"
+            );
+            const off = applyOp(wholeProject(source), { op: "clicks", highlight: false, sound: false });
+            expect(off.clicks?.highlight).toBe(false);
+        });
+
+        test("check() names a saved clicks setting whose movie has no cursor track, with an op that turns it off", () => {
+            const saved = {
+                ...wholeProject(source),
+                clicks: { highlight: true, color: "#FFD60A", radius: 0.03, durationMs: 450 },
+            };
+            const facts = { hasTranscript: true, hasCursorTrack: false, musicFileExists: true };
+            const issue = checkProject(saved, facts).find((each) => each.kind === "clicks-missing-cursor");
+            expect(issue?.severity).toBe("fix");
+            expect(issue?.action?.ops).toEqual([{ op: "clicks", highlight: false, sound: false }]);
+            expect(
+                checkProject(saved, { ...facts, hasCursorTrack: true }).some(
+                    (each) => each.kind === "clicks-missing-cursor"
+                )
+            ).toBe(false);
+        });
+    });
+
+    describe("the camera bubble and the captions share the bottom band", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const withCamera = (
+            camera: Partial<projectOps.EditProject["camera"]>,
+            aspect?: "9:16",
+            position: "bottom" | "top" = "bottom"
+        ): projectOps.EditProject => {
+            const whole = wholeProject(source);
+            return {
+                ...(aspect ? applyOp(whole, { op: "frame", aspect }) : whole),
+                captions: { show: true, size: 0.038, position },
+                camera: cameraBubbleSchema.parse({ file: "camera.mov", ...camera }),
+            };
+        };
+
+        test("a custom bubble near the middle of the caption band lifts the captions, with a fix to a top corner", () => {
+            const issue = checkProject(withCamera({ corner: "custom", x: 0.5, y: 0.9 }), facts).find(
+                (each) => each.kind === "camera-lifts-captions"
+            );
+            expect(issue?.severity).toBe("check");
+            expect(issue?.action?.ops).toEqual([{ op: "camera", corner: "topRight" }]);
+        });
+
+        test("the default bubble on a landscape canvas only narrows the captions, so check() says nothing", () => {
+            expect(checkProject(withCamera({}), facts).some((each) => each.kind === "camera-lifts-captions")).toBe(
+                false
+            );
+        });
+
+        test("the default bubble on a phone-portrait canvas lifts the captions", () => {
+            expect(
+                checkProject(withCamera({}, "9:16"), facts).some((each) => each.kind === "camera-lifts-captions")
+            ).toBe(true);
+        });
+
+        test("captions at the top, a hidden bubble or a bubble at the top give nothing", () => {
+            const middle = { corner: "custom" as const, x: 0.5, y: 0.9 };
+            const none = (project: projectOps.EditProject) =>
+                !checkProject(project, facts).some((each) => each.kind === "camera-lifts-captions");
+            expect(none(withCamera(middle, undefined, "top"))).toBe(true);
+            expect(none(withCamera({ ...middle, show: false }))).toBe(true);
+            expect(none(withCamera({ corner: "topRight" }))).toBe(true);
+        });
+    });
+
+    describe("a caption fix is keyed the way its readers look it up", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 20_000_000, width: 1920, height: 1080 };
+        const segments = [
+            { text: "First line.", start: 1, end: 4 },
+            { text: "Old words here.", start: 8.0025, end: 10 },
+        ];
+
+        test("fixLine on a line that starts on a half millisecond shows the fix, and unfixLine removes it", () => {
+            const fixed = applyOp(
+                wholeProject(source),
+                { op: "fixLine", from: 9, text: "New words here." },
+                {
+                    transcript: segments,
+                }
+            );
+            expect(transcriptLines({ segments }, fixed).map((line) => line.text)).toEqual([
+                "First line.",
+                "New words here.",
+            ]);
+            expect(
+                replaceWordsInLines(segments, fixed.transcript?.fixes ?? {}, { find: "New", replace: "Fresh" })
+            ).toEqual([{ from: 8.0025, text: "Fresh words here.", was: "New words here." }]);
+
+            const back = applyOp(fixed, { op: "unfixLine", from: 9 }, { transcript: segments });
+            expect(back.transcript).toBeUndefined();
+        });
+
+        test("a fix saved under the old double-rounded key still shows", () => {
+            const old = { ...wholeProject(source), transcript: { fixes: { "8003": "Saved before." } } };
+            expect(transcriptLines({ segments }, old).map((line) => line.text)).toEqual([
+                "First line.",
+                "Saved before.",
+            ]);
+            expect(
+                applyOp(old, { op: "unfixLine", from: 8.0025 }, { transcript: segments }).transcript
+            ).toBeUndefined();
+        });
+    });
+
+    describe("check() lays texts out and counts frames on the export's own canvas and rate", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const retina = { video: "/movies/screen.mp4", durationUs: 20_000_000, width: 4112, height: 2570 };
+        const overlapping = () => {
+            // One line on a 1080 px or 1600 px short side, two lines on 720: the second line reaches the text under it.
+            let project = applyOp(wholeProject(retina), {
+                op: "text",
+                from: 1,
+                to: 4,
+                text: "Open the settings and pick the export size you want fo",
+                size: 0.05,
+                x: 0.5,
+                y: 0.4,
+            });
+            project = applyOp(project, { op: "text", from: 1, to: 4, text: "Below", size: 0.03, x: 0.5, y: 0.484 });
+            return project;
+        };
+        const overlaps = (project: ReturnType<typeof wholeProject>) =>
+            checkProject(project, facts).filter((issue) => issue.kind === "text-overlap");
+
+        test("a text that wraps only on the Chat preset's 720 px canvas overlaps the text under it there", () => {
+            const project = overlapping();
+            expect(overlaps(project)).toEqual([]);
+            expect(overlaps(applyOp(project, { op: "exportSettings", maxHeight: 720 }))).toHaveLength(1);
+            expect(
+                overlaps(applyOp(project, { op: "exportSettings", maxHeight: 720, size: { height: 1080 } }))
+            ).toEqual([]);
+        });
+
+        test("a short hidden part names its frames at the export's rate, and none when the rate is not known", () => {
+            const project = applyOp(wholeProject(retina), {
+                op: "redact",
+                from: 10,
+                to: 10.1,
+                rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 },
+            });
+            const short = (nominalFps?: number) =>
+                checkProject(project, { ...facts, ...(nominalFps === undefined ? {} : { nominalFps }) }).find(
+                    (issue) => issue.kind === "hiding-too-short"
+                )?.message;
+            expect(short(45)).toContain("about 6 frames at 60 fps");
+            expect(short(30)).toContain("about 3 frames at 30 fps");
+            expect(short()).not.toContain("fps");
+        });
+
+        test("exportPlanOf follows the renderer's rate rule and the cases the Swift test holds plannedOutput to", () => {
+            expect([exportFps(45), exportFps(28.9), exportFps(8)]).toEqual([60, 29, 30]);
+            const gif = applyOp(wholeProject(retina), { op: "exportSettings", format: "gif" });
+            expect(exportPlanOf(gif)).toEqual({ fps: 10, canvas: { width: 960, height: 600 } });
+
+            const cases = SafeJSON.parse(readFileSync(join(import.meta.dir, "export-size.cases.json"), "utf8"), {
+                strict: true,
+            }) as ExportSizeCases;
+            for (const row of cases.cases) {
+                let project = wholeProject({ video: "/movies/x.mp4", durationUs: 1_000_000, ...row.source });
+                project = { ...project, export: { ...project.export, ...row.export } };
+
+                if (row.aspect) {
+                    project = applyOp(project, { op: "frame", aspect: row.aspect });
+                }
+
+                expect({ name: row.name, ...exportPlanOf(project, { nominalFps: row.nominalFps }) }).toEqual({
+                    name: row.name,
+                    fps: row.fps,
+                    canvas: row.canvas,
+                });
+            }
+        });
+    });
+
+    describe("a drawn hidden part keeps the piece inside the picture on every edge", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+
+        test("a rectangle that starts left of or above the picture is clipped, not refused", () => {
+            const left = applyOp(wholeProject(source), {
+                op: "redact",
+                from: 1,
+                to: 2,
+                rect: { x: -0.1, y: 0.2, width: 0.3, height: 0.2 },
+            }).redactions?.[0];
+            expect(left?.x).toBe(0);
+            expect(left?.width).toBeCloseTo(0.2);
+            expect(left?.y).toBeCloseTo(0.2);
+
+            const above = applyOp(wholeProject(source), {
+                op: "spotlight",
+                from: 1,
+                to: 2,
+                rect: { x: 0.5, y: -0.05, width: 0.2, height: 0.25 },
+            }).redactions?.[0];
+            expect(above?.y).toBe(0);
+            expect(above?.height).toBeCloseTo(0.2);
+
+            const past = applyOp(wholeProject(source), {
+                op: "redact",
+                from: 1,
+                to: 2,
+                rect: { x: 0.9, y: 0.9, width: 0.3, height: 0.3 },
+            }).redactions?.[0];
+            expect(past?.width).toBeCloseTo(0.1);
+            expect(past?.height).toBeCloseTo(0.1);
+
+            expect(() =>
+                applyOp(wholeProject(source), {
+                    op: "redact",
+                    from: 1,
+                    to: 2,
+                    rect: { x: -0.3, y: 0.2, width: 0.305, height: 0.2 },
+                })
+            ).toThrow("at least 0.01");
+        });
+    });
+
     test("check names a zoom whose ease out starts before a cut, so its last frames before the cut snap out", () => {
         // The zoom runs into the cut at 5 s, but its 450 ms ease out starts at 4.75 s: the 0.25 s before the cut
         // show the fast start of the ease out, a snap. Ending it at 5.5 s puts the whole ease out in the cut.
         let project = applyOp(wholeProject(source), { op: "cut", from: 5, to: 7 });
         project = applyOp(project, { op: "zoom", from: 2, to: 5.2, scale: 1.5 });
-        project = applyOp(project, { op: "zoom", from: 7.5, to: 9, scale: 1.5 });
+        // The zoom after the cut plays 1.5 s after it: too far to link with, so the first one eases out.
+        project = applyOp(project, { op: "zoom", from: 8.5, to: 9.5, scale: 1.5 });
         const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
         const snaps = checkProject(project, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut");
         expect(snaps).toHaveLength(1);
@@ -863,6 +1223,154 @@ describe("edit project (edit.json)", () => {
         expect(snaps[0]?.action?.ops).toEqual([{ op: "retime", id: project.zooms[0]?.id, to: 5.5 }]);
         const fixed = applyOp(project, { op: "retime", id: project.zooms[0]?.id ?? "", to: 5.5 });
         expect(checkProject(fixed, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut")).toEqual([]);
+    });
+
+    describe("the caption and the hidden parts as the renderer draws them", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+
+        test("captionAt draws the later of two overlapping lines, only while captions show, with the fix after the pick", () => {
+            const raw = {
+                segments: [
+                    { text: " first ", start: 1, end: 5 },
+                    { text: "second", start: 4.5, end: 6 },
+                    { text: "", start: 6, end: 7 },
+                    { text: "backwards", start: 8, end: 7.5 },
+                ],
+            };
+            const off = wholeProject(source);
+            expect(projectOps.captionAt(off, raw, 2_000_000)).toBeNull();
+            expect(projectOps.spokenLineAt(off, raw, 2_000_000)).toBe("first");
+            // The captions op needs a transcript file on disk, so these set the field the op would set.
+            const on = { ...off, captions: projectOps.captionsSchema.parse({ show: true }) };
+            expect(projectOps.captionAt(on, raw, 2_000_000)).toBe("first");
+            expect(projectOps.captionAt(on, raw, 4_700_000)).toBe("second");
+            // A line with no words, or one that ends before it starts, is no line.
+            expect(projectOps.captionAt(on, raw, 6_500_000)).toBeNull();
+            expect(projectOps.captionAt(on, raw, 7_700_000)).toBeNull();
+            // A fix with no words hides the picked line, and the earlier line under it does not show through.
+            const hidden = { ...on, transcript: { fixes: { "4500": "" } } };
+            expect(projectOps.captionAt(hidden, raw, 4_700_000)).toBeNull();
+            const fixed = { ...on, transcript: { fixes: { "4500": "Second, fixed" } } };
+            expect(projectOps.captionAt(fixed, raw, 4_700_000)).toBe("Second, fixed");
+            expect(
+                projectOps.captionAt(
+                    { ...on, captions: projectOps.captionsSchema.parse({ show: false }) },
+                    raw,
+                    4_700_000
+                )
+            ).toBeNull();
+        });
+
+        test("snappedRedactionSpans runs a blur that ends 200 ms before a cut up to the cut, and closes a short gap", () => {
+            const rect = { x: 0.1, y: 0.1, width: 0.2, height: 0.2 };
+            let project = applyOp(wholeProject(source), { op: "redact", from: 1, to: 2, rect });
+            project = applyOp(project, { op: "redact", from: 2.2, to: 3.8, rect, style: "black" });
+            project = applyOp(project, { op: "redact", from: 6.2, to: 7, rect });
+            project = applyOp(project, { op: "redact", from: 1, to: 3.8, rect, style: "spotlight" });
+            project = applyOp(project, { op: "cut", from: 4, to: 6 });
+            const drawn = (edit: projectOps.EditProject) =>
+                projectOps.snappedRedactionSpans(edit).map((part) => [part.style, part.startUs, part.endUs]);
+
+            expect(drawn(project)).toEqual([
+                ["blur", 1_000_000, 2_200_000],
+                ["black", 2_200_000, 4_000_000],
+                ["blur", 6_000_000, 7_000_000],
+                ["spotlight", 1_000_000, 3_800_000],
+            ]);
+            expect(drawn(applyOp(project, { op: "redactionJoins", snapMs: 0 }))).toEqual([
+                ["blur", 1_000_000, 2_000_000],
+                ["black", 2_200_000, 3_800_000],
+                ["blur", 6_200_000, 7_000_000],
+                ["spotlight", 1_000_000, 3_800_000],
+            ]);
+        });
+    });
+
+    describe("played time: the renderer's ramps and links", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 30_000_000, width: 1920, height: 1080 };
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const comingIn = (project: projectOps.EditProject) =>
+            checkProject(project, facts).filter((issue) => issue.kind === "text-animation-too-long");
+
+        test("check names a text still coming in when it ends, in the time the viewer sees", () => {
+            // A 1 s text that types over 3 s never shows its last words; one that types in 0.5 s leaves 0.5 s to read.
+            const slow = applyOp(wholeProject(source), {
+                op: "text",
+                from: 1,
+                to: 2,
+                text: "Typing the address",
+                animate: { kind: "typewriter", ms: 3000 },
+            });
+            const id = slow.texts?.[0]?.id ?? "";
+            const issues = comingIn(slow);
+            expect(issues).toHaveLength(1);
+            expect(issues[0]).toMatchObject({ severity: "check", at: 1, target: { list: "texts" } });
+            expect(issues[0]?.action?.ops).toEqual([{ op: "setText", id, animate: { kind: "typewriter", ms: 600 } }]);
+            const fixed = applyOp(slow, { op: "setText", id, animate: { kind: "typewriter", ms: 600 } });
+            expect(comingIn(fixed)).toEqual([]);
+            const quick = applyOp(wholeProject(source), {
+                op: "text",
+                from: 1,
+                to: 2,
+                text: "Typing the address",
+                animate: { kind: "typewriter", ms: 500 },
+            });
+            expect(comingIn(quick)).toEqual([]);
+
+            // 4 s of the movie at 4x play 1 s: a 900 ms way in leaves 0.1 s.
+            let sped = applyOp(wholeProject(source), { op: "speed", from: 1, to: 5, factor: 4 });
+            sped = applyOp(sped, { op: "text", from: 1, to: 5, text: "Fast", animate: { kind: "slideUp", ms: 900 } });
+            expect(comingIn(sped)).toHaveLength(1);
+            expect(comingIn(sped)[0]?.message).toContain("plays for 1 s");
+        });
+
+        test("zooms whose played gap is shorter than one ease out and one ease in are linked, across a cut too", () => {
+            let project = applyOp(wholeProject(source), { op: "zoom", from: 2, to: 5, scale: 2 });
+            project = applyOp(project, { op: "zoom", from: 10, to: 13, scale: 2 });
+            const [first, second] = project.zooms;
+            expect(projectOps.zoomsLinked(project, first, second)).toBe(false);
+            const cut = applyOp(project, { op: "cut", from: 5, to: 10 });
+            expect(projectOps.zoomsLinked(cut, cut.zooms[0], cut.zooms[1])).toBe(true);
+            expect(projectOps.zoomsLinked(cut, cut.zooms[1], cut.zooms[0])).toBe(false);
+            // A canvas zoom never links with a picture zoom: each kind has its own view.
+            const canvas = { ...cut.zooms[1], target: "canvas" as const };
+            expect(projectOps.zoomsLinked(cut, cut.zooms[0], canvas)).toBe(false);
+        });
+
+        test("check names no ease out at a cut for a zoom linked to the next one, because the view holds or glides on", () => {
+            // 2-5 s and 5.3-8 s with 4.8-6 s cut touch in what plays. Alone, the first one eases out 0.25 s before the cut.
+            const first = { op: "zoom", from: 2, to: 5, scale: 2, focus: { x: 0.3, y: 0.3 } } as const;
+            const cutOp = { op: "cut", from: 4.8, to: 6 } as const;
+            const easesAtCut = (project: projectOps.EditProject) =>
+                checkProject(project, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut");
+            const alone = applyOp(applyOp(wholeProject(source), first), cutOp);
+            expect(easesAtCut(alone).map((issue) => issue.message)).toEqual([
+                expect.stringContaining("starts its ease out 0.25 s before the cut at 4.8 s"),
+            ]);
+
+            for (const focus of [
+                { x: 0.3, y: 0.3 },
+                { x: 0.7, y: 0.7 },
+            ]) {
+                let linked = applyOp(wholeProject(source), first);
+                linked = applyOp(linked, { op: "zoom", from: 5.3, to: 8, scale: 2, focus });
+                expect(easesAtCut(applyOp(linked, cutOp))).toEqual([]);
+            }
+        });
+
+        test("auto zoom joins clicks that play under 3 s apart after a cut, and zooms on no click that is cut", () => {
+            const samples = [
+                { ms: 5000, x: 0.3, y: 0.3, click: "left" },
+                { ms: 8000, x: 0.9, y: 0.9, click: "left" },
+                { ms: 14000, x: 0.5, y: 0.5, click: "left" },
+            ];
+            const cut = applyOp(wholeProject(source), { op: "cut", from: 6.8, to: 13.2 });
+            expect(autoZoom(cut, samples).zooms.map((zoom) => [zoom.startUs, zoom.endUs])).toEqual([
+                [4_400_000, 15_600_000],
+            ]);
+            // Without the cut the clicks play 3 s and 6 s apart: three zooms, as before.
+            expect(autoZoom(wholeProject(source), samples).zooms).toHaveLength(3);
+        });
     });
 
     test("a voiceover on the intro or end card plays from the card's start, and the export lays each clip as the golden file says", () => {
@@ -910,6 +1418,39 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(gone, facts).map((issue) => issue.kind)).toContain("voiceover-card-missing");
     });
 
+    // Regression test: hunt r2-card-voiceovers. A card line whose card went away refused every change (even its
+    // volume), and check() never said a line past a shortened card plays nowhere.
+    test("a card voiceover whose card is gone or shorter stays editable and check() names it", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const folder = mkdtempSync(join(tmpdir(), "card-voice-"));
+        const voice = join(folder, "voice.mp3");
+        writeFileSync(voice, "");
+
+        const carded = applyOp(wholeProject(source), { op: "introCard", title: "Demo", seconds: 3 });
+        const voiced = applyOp(
+            carded,
+            { op: "voiceover", card: "intro", at: 0.4, file: voice },
+            { voiceoverDurationUs: 1_000_000 }
+        );
+        const id = voiced.audio.voiceovers?.[0]?.id ?? "";
+        const gone = applyOp(voiced, { op: "introCard", enabled: false });
+        const quieter = applyOp(gone, { op: "voiceover", id, volume: 0.5 });
+        expect(quieter.audio.voiceovers?.[0]?.volume).toBe(0.5);
+        expect(() => applyOp(gone, { op: "voiceover", id, at: 0.2 })).toThrow("no intro card");
+
+        // An end card shortened under its clip's start: the clip plays nowhere.
+        const ended = applyOp(wholeProject(source), { op: "endCard", text: "Bye", seconds: 4 });
+        const endVoiced = applyOp(
+            ended,
+            { op: "voiceover", card: "end", at: 3, file: voice },
+            { voiceoverDurationUs: 1_000_000 }
+        );
+        const shorter = applyOp(endVoiced, { op: "endCard", seconds: 2 });
+        const past = checkProject(shorter, facts).find((issue) => issue.kind === "voiceover-past-card");
+        expect(past?.severity).toBe("fix");
+        expect(past?.message).toContain("does not play");
+    });
+
     test("check names a voiceover that runs past the movie's end, where the export cuts it off", () => {
         // The renderer mixes a voice clip into the movie only: an end card does not carry it, so the words after the
         // movie's last frame are lost. A clip that ends inside the movie is no issue.
@@ -932,6 +1473,93 @@ describe("edit project (edit.json)", () => {
         expect(late).toHaveLength(1);
         expect(late[0]).toMatchObject({ severity: "fix", item: "voiceover v2", at: 8 });
         expect(late[0]?.message).toContain("1 s");
+    });
+
+    describe("check() ducks the music by the renderer's rule", () => {
+        const voice = { id: "v1", atUs: 1_000_000, file: "/voice/one.mp3", durationUs: 1_500_000, volume: 1 };
+
+        function withMusic(
+            duck: number,
+            ducking?: Partial<NonNullable<projectOps.EditProject["audio"]["ducking"]>>,
+            voiced = false,
+            video = source.video
+        ): projectOps.EditProject {
+            const project = wholeProject({ ...source, video });
+            return {
+                ...project,
+                audio: {
+                    ...project.audio,
+                    music: { file: "/m.m4a", volume: 0.25, duck, fadeMs: 1500 },
+                    ...(ducking
+                        ? { ducking: { db: 12, fadeMs: 300, transcript: true, voiceovers: true, ...ducking } }
+                        : {}),
+                    ...(voiced ? { voiceovers: [voice] } : {}),
+                },
+            };
+        }
+
+        const facts = (hasTranscript: boolean) => ({ hasTranscript, hasCursorTrack: true, musicFileExists: true });
+        const musicIssues = (project: projectOps.EditProject, hasTranscript: boolean) =>
+            checkProject(project, facts(hasTranscript)).filter((issue) => issue.item === "music");
+        const asksForTranscript = (project: projectOps.EditProject) =>
+            musicIssues(project, false).some((issue) => issue.kind === "no-transcript");
+        const describedDucks = (project: projectOps.EditProject) => {
+            const music = describeProject(project, "/x").audio.music;
+            return music && "ducks" in music ? music.ducks : undefined;
+        };
+
+        test("check's no-transcript music warning follows the ducking object, as describe() and the renderer do", () => {
+            // The older share alone: it ducks under the transcript, so check() asks for one (as before).
+            expect(asksForTranscript(withMusic(0.6))).toBe(true);
+            // The dB object decides the amount: 12 dB ducks although the older share is 0.
+            expect(asksForTranscript(withMusic(0, {}))).toBe(true);
+            // Off under the transcript: a transcript changes nothing.
+            expect(asksForTranscript(withMusic(0.6, { transcript: false }))).toBe(false);
+            // 0 dB never ducks, whatever the older share says.
+            expect(asksForTranscript(withMusic(0.6, { db: 0 }))).toBe(false);
+            // A voiceover ducks the music unless the ducking object turns that off.
+            expect(asksForTranscript(withMusic(0.6, undefined, true))).toBe(false);
+            expect(asksForTranscript(withMusic(0.6, { voiceovers: false }, true))).toBe(true);
+        });
+
+        test("with ducking under the transcript off and no voiceover, check() says nothing ducks without asking for a transcript", () => {
+            const off = withMusic(0.6, { transcript: false });
+            const without = musicIssues(off, false);
+            expect(without).toEqual([
+                expect.objectContaining({ severity: "check", kind: "music-ducks-nothing", item: "music" }),
+            ]);
+            expect(without[0]?.fix).toBeUndefined();
+            expect(without[0]?.message ?? "").not.toContain("transcript()");
+
+            // With a transcript, the switch back on is the call that makes the music duck.
+            expect(musicIssues(off, true)).toEqual([
+                expect.objectContaining({
+                    kind: "music-ducks-nothing",
+                    fix: "await movie.ducking({ transcript: true })",
+                }),
+            ]);
+            // A voiceover gives it something to duck under; 0 dB asks for no duck at all.
+            expect(musicIssues(withMusic(0.6, { transcript: false }, true), false)).toEqual([]);
+            expect(musicIssues(withMusic(0.6, { db: 0, transcript: false }), true)).toEqual([]);
+            // The older share with a transcript ducks under it: nothing to say.
+            expect(musicIssues(withMusic(0.6), true)).toEqual([]);
+        });
+
+        test("describe()'s ducks uses the same rule as check()", () => {
+            const video = join(workspace(), "screen.mp4");
+            writeFileSync(transcriptCachePath(video), "[]");
+
+            // With a cached transcript.
+            expect(describedDucks(withMusic(0.6, undefined, false, video))).toBe(true);
+            expect(describedDucks(withMusic(0, {}, false, video))).toBe(true);
+            expect(describedDucks(withMusic(0.6, { transcript: false }, false, video))).toBe(false);
+            expect(describedDucks(withMusic(0.6, { db: 0 }, false, video))).toBe(false);
+            // Without one, only a voiceover ducks the music.
+            expect(describedDucks(withMusic(0.6))).toBe(false);
+            expect(describedDucks(withMusic(0.6, undefined, true))).toBe(true);
+            expect(describedDucks(withMusic(0.6, { voiceovers: false }, true))).toBe(false);
+            expect(describedDucks(withMusic(0, { transcript: false }, true))).toBe(true);
+        });
     });
 
     test("check finds what never shows, what is missing and what flashes past, fixes first", () => {
@@ -987,6 +1615,40 @@ describe("edit project (edit.json)", () => {
             "captions",
         ]);
         expect(checkProject(wholeProject(source), facts)).toEqual([]);
+    });
+
+    // Move After rounded the earlier text's end down to a tenth: 5.04 gave at: 5, the two still showed together and
+    // fixOps stopped with the issue open.
+    describe("Move After starts the later text at the earlier text's exact end", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const overlaps = (project: Parameters<typeof checkProject>[0]) =>
+            checkProject(project, facts).filter((issue) => issue.kind === "text-overlap");
+
+        test("an end 0.04 s past a tenth: Move After and its REPL line say 5.04, and the overlap is gone", () => {
+            let project = applyOp(wholeProject(source), { op: "text", from: 1, to: 5.04, text: "First" });
+            project = applyOp(project, { op: "text", from: 3, to: 6, text: "Second" });
+            const second = project.texts?.find((note) => note.text === "Second");
+            const [issue] = overlaps(project);
+            expect(issue?.action).toEqual({
+                label: "Move After",
+                ops: [{ op: "retime", id: second?.id ?? "", at: 5.04 }],
+            });
+            expect(issue?.fix).toBe(`movie.retime({ id: "${second?.id}", at: 5.04 })`);
+            const moved = (issue?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
+            expect(moved.texts?.find((note) => note.text === "Second")?.startUs).toBe(5_040_000);
+            expect(overlaps(moved)).toEqual([]);
+        });
+
+        test("Lengthen then Move After in one fixOps run leaves check() with nothing to fix", () => {
+            let project = applyOp(wholeProject(source), { op: "text", from: 1.234, to: 1.534, text: "Open the menu" });
+            project = applyOp(project, { op: "text", from: 2, to: 5, text: "Pick Settings" });
+            const fixed = fixOps(project, facts).ops.reduce((next, op) => applyOp(next, op), project);
+            const pick = fixed.texts?.find((note) => note.text === "Pick Settings");
+            const open = fixed.texts?.find((note) => note.text === "Open the menu");
+            expect(pick?.startUs).toBeGreaterThanOrEqual(open?.endUs ?? Number.POSITIVE_INFINITY);
+            expect(overlaps(fixed)).toEqual([]);
+            expect(checkProject(fixed, facts).filter((issue) => issue.action)).toEqual([]);
+        });
     });
 
     // R5 5 redaction edges: check() said clean for each of these, and the export showed the picture there.
@@ -1377,6 +2039,158 @@ describe("edit project (edit.json)", () => {
         expect(zoomView({ scale: 2, focusX: 0.9, focusY: 0.1 })).toEqual({ x: 0.5, y: 0, width: 0.5, height: 0.5 });
     });
 
+    // A 1.2x zoom passed check() inside a phone layout grown 1.5x or a 9:16 cover, yet the frame cut what it showed
+    // again, and the Fit Text it offered still cut the lines.
+    describe("a zoom judged inside the frame's cover or grown-layout crop", () => {
+        type Project = Parameters<typeof checkProject>[0];
+        type ScreenText = NonNullable<Parameters<typeof checkProject>[1]["screenText"]>;
+        const phone = { video: "/movies/phone.mp4", durationUs: 10_000_000, width: 590, height: 1278 };
+        const zoomCuts = (project: Project, screenText: ScreenText) =>
+            checkProject(project, {
+                hasTranscript: true,
+                hasCursorTrack: false,
+                musicFileExists: true,
+                screenText,
+            }).filter((issue) => issue.kind === "zoom-cuts-text");
+        const fittedBy = (project: Project, issue: ReturnType<typeof checkProject>[number] | undefined) =>
+            (issue?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
+        const rounded = (rect: { x: number; y: number; width: number; height: number }) =>
+            [rect.x, rect.y, rect.width, rect.height].map((n) => Math.round(n * 10_000) / 10_000);
+
+        test("frameCrop is what framePlacement keeps in view (the same cases as RecorderHuntZoomEdgeFrameCropTests)", () => {
+            // A phone grown 1.5x in a 16:9 frame, its bottom kept: the whole width, the lower two thirds.
+            const grown = frameCrop(
+                applyOp(wholeProject(phone), {
+                    op: "frame",
+                    aspect: "16:9",
+                    padding: 0.04,
+                    layout: { align: "left", scale: 1.5, focus: { x: 0.5, y: 1 } },
+                })
+            );
+            expect(rounded(grown)).toEqual([0, 0.3333, 1, 0.6667]);
+            expect(grown.by).toEqual(["layout"]);
+            // A wide movie covering a 9:16 canvas: its middle 0.316, or its right edge for a focus far right.
+            const cover = applyOp(wholeProject(source), { op: "frame", aspect: "9:16", fit: "cover", padding: 0 });
+            expect(rounded(frameCrop(cover))).toEqual([0.3418, 0, 0.3164, 1]);
+            expect(rounded(frameCrop(cover, { x: 0.9, y: 0.2 }))).toEqual([0.6836, 0, 0.3164, 1]);
+            expect(frameCrop(cover).by).toEqual(["cover"]);
+            // Both: a cover grown 1.5x is cropped inside the cover, around the layout's focus.
+            const both = frameCrop(
+                applyOp(wholeProject(source), {
+                    op: "frame",
+                    aspect: "9:16",
+                    fit: "cover",
+                    padding: 0.05,
+                    layout: { scale: 1.5, focus: { x: 0.45, y: 0.4 } },
+                })
+            );
+            expect(rounded(both)).toEqual([0.3843, 0.0667, 0.2012, 0.6667]);
+            expect(both.by).toEqual(["cover", "layout"]);
+            // No frame, or a phone frame at its fitted size: the whole picture.
+            expect(rounded(frameCrop(wholeProject(source)))).toEqual([0, 0, 1, 1]);
+            expect(rounded(frameCrop(applyOp(wholeProject(phone), { op: "frame", preset: "phone-left" })))).toEqual([
+                0, 0, 1, 1,
+            ]);
+        });
+
+        test("check judges a zoom by what the frame's grown layout leaves in view, and its Fit Text keeps the lines whole there", () => {
+            const framed = applyOp(wholeProject(source), {
+                op: "frame",
+                aspect: "16:9",
+                layout: { align: "left", scale: 1.5, focus: { x: 0.5, y: 1 } },
+            });
+            const zoomed = applyOp(framed, { op: "zoom", from: 1, to: 5, scale: 1.2, focus: { x: 0.5, y: 0.5 } });
+            const screenText = [
+                {
+                    atUs: 0,
+                    untilUs: 6_000_000,
+                    lines: [
+                        { text: "Status 9:41", x: 0.4, y: 0.35, width: 0.2, height: 0.03 },
+                        { text: "Invoices", x: 0.16, y: 0.9, width: 0.2, height: 0.03 },
+                    ],
+                },
+            ];
+            const issues = zoomCuts(zoomed, screenText);
+            expect(issues).toHaveLength(1);
+            expect(issues[0]?.message).toContain(
+                'cuts 2 lines of screen text at the edge of what the frame\'s layout crop leaves in view ("Status 9:41", "Invoices"); 1.07x'
+            );
+            expect(issues[0]?.action?.ops).toEqual([
+                { op: "setZoom", id: zoomed.zooms[0]?.id ?? "", scale: 1.07, focus: { x: 0.477, y: 0.484 } },
+            ]);
+            expect(zoomCuts(fittedBy(zoomed, issues[0]), screenText)).toEqual([]);
+            // The frame alone keeps both lines whole: no zoom, no issue.
+            expect(zoomCuts(framed, screenText)).toEqual([]);
+        });
+
+        test("a phone-left frame grown 1.4x and a 1.3x zoom cut a line near the phone's top that the zoom view alone keeps", () => {
+            const framed = applyOp(wholeProject(phone), { op: "frame", preset: "phone-left", layout: { scale: 1.4 } });
+            const zoomed = applyOp(framed, { op: "zoom", from: 1, to: 5, scale: 1.3, focus: { x: 0.5, y: 0.5 } });
+            const screenText = [
+                {
+                    atUs: 0,
+                    untilUs: 6_000_000,
+                    lines: [
+                        { text: "9:41 Inbox", x: 0.3, y: 0.2, width: 0.4, height: 0.04 },
+                        { text: "Compose", x: 0.35, y: 0.5, width: 0.3, height: 0.04 },
+                    ],
+                },
+            ];
+            const zoom = zoomed.zooms[0];
+            expect(zoomView(zoom ?? { scale: 1, focusX: 0.5, focusY: 0.5 }).y).toBeLessThan(0.2);
+            const issues = zoomCuts(zoomed, screenText);
+            expect(issues).toHaveLength(1);
+            expect(issues[0]?.message).toContain('("9:41 Inbox")');
+            expect(issues[0]?.action?.ops[0]).toMatchObject({ op: "setZoom", id: zoom?.id });
+            expect(zoomCuts(fittedBy(zoomed, issues[0]), screenText)).toEqual([]);
+        });
+
+        test("under a cover frame a line the cover alone cuts is not the zoom's, and no Fit Text is offered when none keeps the lines whole", () => {
+            const cover = applyOp(wholeProject(source), { op: "frame", aspect: "9:16", fit: "cover", padding: 0 });
+            const zoomed = applyOp(cover, { op: "zoom", from: 2, to: 4, scale: 1.2 });
+            const line = (text: string, x: number, width: number) => [
+                { atUs: 0, untilUs: 6_000_000, lines: [{ text, x, y: 0.5, width, height: 0.03 }] },
+            ];
+            // Whole in the cover alone (x 0.342 to 0.658), cut in the zoom's part of it (x 0.368 to 0.632).
+            const issues = zoomCuts(zoomed, [
+                ...line("Left label", 0.36, 0.08),
+                { atUs: 0, untilUs: 6_000_000, lines: [{ text: "Total", x: 0.45, y: 0.6, width: 0.1, height: 0.03 }] },
+            ]);
+            expect(issues).toHaveLength(1);
+            expect(issues[0]?.message).toContain('the frame\'s cover crop leaves in view ("Left label"); 1.08x');
+            expect(zoomCuts(fittedBy(zoomed, issues[0]), line("Left label", 0.36, 0.08))).toEqual([]);
+            // The cover alone already cuts a line across its edge at 0.342: that is the frame's, not the zoom's.
+            expect(zoomCuts(zoomed, line("Edge", 0.3, 0.1))).toEqual([]);
+            // Too wide for any zoom of 1.05x or more inside the cover: the issue stays, with no setZoom.
+            const stuck = zoomCuts(zoomed, line("Left label", 0.35, 0.1));
+            expect(stuck).toHaveLength(1);
+            expect(stuck[0]?.action).toBeUndefined();
+            expect(stuck[0]?.message).toContain(
+                "no zoom of 1.05x or more keeps them whole inside the frame's cover crop"
+            );
+            // With a cursor track the export moves the cover with it; the message says where check() put it.
+            expect(
+                checkProject(zoomed, {
+                    hasTranscript: true,
+                    hasCursorTrack: true,
+                    musicFileExists: true,
+                    screenText: line("Left label", 0.36, 0.08),
+                }).find((issue) => issue.kind === "zoom-cuts-text")?.message
+            ).toContain("with the cursor at the zoom's focus");
+        });
+    });
+
+    // Regression test: hunt r2-phone-preset-fit. A phone preset over a cover frame kept cover, so the phone was cropped
+    // to the canvas instead of shown whole against one side.
+    test("a phone preset over a cover frame shows the whole phone, and the op's own fit still wins", () => {
+        const cover = applyOp(wholeProject(source), { op: "frame", aspect: "16:9", fit: "cover" });
+        const phone = applyOp(cover, { op: "frame", preset: "phone-left" });
+        expect(phone.frame?.fit).toBeUndefined();
+        expect(phone.frame?.layout?.align).toBe("left");
+        const kept = applyOp(cover, { op: "frame", preset: "phone-left", fit: "cover" });
+        expect(kept.frame?.fit).toBe("cover");
+    });
+
     // R5 4: a phone in 16:9 filled a quarter of the width, with no way to move it aside or zoom the whole canvas.
     test("a frame preset places a phone against one side, its own fields win, and a canvas zoom may overlap", () => {
         const phone = applyOp(wholeProject(source), { op: "frame", preset: "phone-left", layout: { scale: 1.1 } });
@@ -1409,6 +2223,45 @@ describe("edit project (edit.json)", () => {
         // A second canvas zoom over the first moves past it, as a picture zoom moves past a picture zoom.
         const second = applyOp(zoomed, { op: "zoom", from: 1.5, to: 2.5, target: "canvas" }).zooms.at(-1);
         expect([second?.startUs, second?.target]).toEqual([3_000_000, "canvas"]);
+    });
+
+    // A canvas zoom with follow was saved as mode follow, and the renderer held its focus (ZoomCurve.canvasView).
+    describe("canvas zooms hold their focus", () => {
+        test("a canvas zoom refuses follow, and setZoom will not make it follow", () => {
+            const base = wholeProject(source);
+            expect(() =>
+                applyOp(base, { op: "zoom", from: 2, to: 6, scale: 2, target: "canvas", follow: true })
+            ).toThrow(/canvas zoom holds its focus/);
+            const canvas = applyOp(base, {
+                op: "zoom",
+                from: 2,
+                to: 6,
+                scale: 2,
+                target: "canvas",
+                focus: { x: 0.2, y: 0.5 },
+            });
+            const id = canvas.zooms[0].id;
+            expect(canvas.zooms[0]).toMatchObject({ mode: "manual", target: "canvas" });
+            expect(() => applyOp(canvas, { op: "setZoom", id, mode: "follow" })).toThrow(/canvas zoom holds its focus/);
+            expect(applyOp(canvas, { op: "setZoom", id, scale: 3 }).zooms[0]).toMatchObject({
+                mode: "manual",
+                scale: 3,
+            });
+            // An edit saved before the rule loads and stays editable: a change to it stores the manual mode it renders with.
+            const saved = { ...canvas, zooms: canvas.zooms.map((zoom) => ({ ...zoom, mode: "follow" as const })) };
+            expect(applyOp(saved, { op: "setZoom", id, scale: 3 }).zooms[0]).toMatchObject({
+                mode: "manual",
+                scale: 3,
+            });
+            // A picture zoom still follows the cursor, by the zoom op and by setZoom.
+            const picture = applyOp(base, { op: "zoom", from: 2, to: 6, follow: true });
+            expect(picture.zooms[0].mode).toBe("follow");
+            expect(picture.zooms[0].target).toBeUndefined();
+            const manual = applyOp(base, { op: "zoom", from: 2, to: 6, focus: { x: 0.3, y: 0.3 } });
+            expect(applyOp(manual, { op: "setZoom", id: manual.zooms[0].id, mode: "follow" }).zooms[0].mode).toBe(
+                "follow"
+            );
+        });
     });
 
     // R5 10: a long callout was cut (setText cut it to 200 characters without a word) and "\n" was undocumented.
@@ -1519,10 +2372,64 @@ describe("edit project (edit.json)", () => {
         expect(fixOps(project, facts).fixed).toEqual([]);
     });
 
+    describe("titleMarkers' seconds are played seconds", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 20_000_000, width: 1920, height: 1080 };
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const span = (op: projectOps.EditOp | undefined) => (op?.op === "text" ? [op.from, op.to] : []);
+        const played = (project: ReturnType<typeof wholeProject>, op: projectOps.EditOp | undefined) => {
+            const [from, to] = span(op);
+            return projectOps.playedUs(project, Number(from) * 1_000_000, Number(to) * 1_000_000);
+        };
+
+        test("a title over a cut or a sped-up stretch plays its 2.5 s, and ends by the next marker's title", () => {
+            const cut = applyOp(wholeProject(source), { op: "cut", from: 1.5, to: 2.5 });
+            const [overCut] = projectOps.markerTitleOps(cut, [{ at: 1, label: "Open" }]);
+            expect(overCut).toMatchObject({ op: "text", from: 1, to: 4.5, text: "1. Open" });
+            expect(played(cut, overCut)).toBe(2_500_000);
+
+            const fast = applyOp(wholeProject(source), { op: "speed", from: 2, to: 10, factor: 4 });
+            const [overSpeed] = projectOps.markerTitleOps(fast, [{ at: 1, label: "Open" }]);
+            expect(played(fast, overSpeed)).toBe(2_500_000);
+
+            const close = projectOps.markerTitleOps(wholeProject(source), [
+                { at: 1, label: "Open" },
+                { at: 2, label: "Pick" },
+            ]);
+            expect(close.map(span)).toEqual([
+                [1, 2],
+                [2, 4.5],
+            ]);
+        });
+
+        test("check leaves a lengthened title alone and offers Lengthen for a text a cut leaves at 1 s", () => {
+            const cut = applyOp(wholeProject(source), { op: "cut", from: 1.5, to: 2.5 });
+            const titled = projectOps
+                .markerTitleOps(cut, [{ at: 1, label: "Open" }])
+                .reduce((edit, op) => applyOp(edit, op), cut);
+            expect(checkProject(titled, facts).filter((issue) => issue.kind === "cut-shortens-text")).toEqual([]);
+
+            let short = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "Title" });
+            short = applyOp(short, { op: "cut", from: 2, to: 6.5 });
+            const id = short.texts?.[0]?.id ?? "";
+            expect(checkProject(short, facts).filter((issue) => issue.kind === "cut-shortens-text")).toEqual([
+                {
+                    severity: "check",
+                    kind: "cut-shortens-text",
+                    item: `text ${id}`,
+                    message: 'The text "Title" (1 to 4 s) loses 2 s of its 3 s to a cut and plays for 1 s',
+                    at: 1,
+                    target: { list: "texts", id },
+                    fix: `movie.retime({ id: "${id}", to: 7 })`,
+                    action: { label: "Lengthen", ops: [{ op: "retime", id, to: 7 }] },
+                },
+            ]);
+        });
+    });
+
     test("check names a marker a cut hides (with a move to the nearest kept moment) and a text a cut shortens", () => {
         let project = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "Title" });
         project = applyOp(project, { op: "marker", at: 6.2, label: "Step two" });
-        project = applyOp(project, { op: "cut", from: 3, to: 6.5 });
+        project = applyOp(project, { op: "cut", from: 2, to: 6.5 });
         const marker = project.markers?.[0]?.id ?? "";
         const text = project.texts?.[0]?.id ?? "";
         const facts = {
@@ -1554,9 +2461,11 @@ describe("edit project (edit.json)", () => {
                 severity: "check",
                 kind: "cut-shortens-text",
                 item: `text ${text}`,
-                message: 'The text "Title" (1 to 4 s) loses 1 s of its 3 s to a cut',
+                message: 'The text "Title" (1 to 4 s) loses 2 s of its 3 s to a cut and plays for 1 s',
                 at: 1,
                 target: { list: "texts", id: text },
+                fix: `movie.retime({ id: "${text}", to: 7 })`,
+                action: { label: "Lengthen", ops: [{ op: "retime", id: text, to: 7 }] },
             },
             {
                 severity: "check",
@@ -1574,16 +2483,15 @@ describe("edit project (edit.json)", () => {
             'The recorded marker "Late" at 99 s never plays: that time is outside the 10 s movie, so it is no chapter'
         );
 
-        // fix() moves the edit marker onto the kept movie once; the recorded one has no fix it could make twice.
+        // fix() moves the edit marker onto the kept movie once and lengthens the text to play 1.5 s; the recorded
+        // marker has no fix it could make twice.
         const fixed = fixOps(project, facts).ops.reduce((next, op) => applyOp(next, op), project);
         expect(fixed.markers?.map((one) => [one.atUs, one.label])).toEqual([[6_500_000, "Step two"]]);
-        expect(checkProject(fixed, facts).map((issue) => issue.item)).toEqual([
-            `text ${text}`,
-            'recorded marker "Recorded"',
-        ]);
+        expect(fixed.texts?.map((one) => [one.startUs, one.endUs])).toEqual([[1_000_000, 7_000_000]]);
+        expect(checkProject(fixed, facts).map((issue) => issue.item)).toEqual(['recorded marker "Recorded"']);
         // An edit marker of the same name stands in for the recorded one.
         const stood = applyOp(fixed, { op: "marker", at: 7, label: "Recorded" });
-        expect(checkProject(stood, facts).map((issue) => issue.item)).toEqual([`text ${text}`]);
+        expect(checkProject(stood, facts).map((issue) => issue.item)).toEqual([]);
     });
 
     test("replace words fixes every line with the word, whole words, any case, over earlier fixes", () => {
@@ -1647,6 +2555,102 @@ describe("edit project (edit.json)", () => {
         expect(idleRanges({ ...base, silentUs: [] })).toEqual([]);
     });
 
+    describe("idle stretches keep what the drawn pointer does", () => {
+        test("idleRanges leaves out the busy ranges of a still, silent stretch", () => {
+            const frames = Array.from({ length: 301 }, (_, index) => index * 33_000);
+            expect(
+                idleRanges({
+                    frameTimesUs: frames,
+                    frozenUs: [[0, 10_000_000]],
+                    silentUs: [[0, 10_000_000]],
+                    busyUs: [[4_000_000, 5_000_000]],
+                    durationUs: 10_000_000,
+                    minUs: 2_000_000,
+                    keepUs: 300_000,
+                })
+            ).toEqual([
+                [300_000, 3_700_000],
+                [5_300_000, 9_700_000],
+            ]);
+        });
+
+        test("pointerBusyRanges covers a move, a click and a shortcut press", () => {
+            const busy = pointerBusyRanges([
+                { ms: 1000, x: 0.1, y: 0.1 },
+                { ms: 1100, x: 0.2, y: 0.1 },
+                { ms: 3000, x: 0.2, y: 0.1, key: "⌘C" },
+                { ms: 7500, x: 0.2, y: 0.1, click: "left" },
+            ]);
+            expect(busy).toEqual([
+                [1_000_000, 1_250_000],
+                [2_500_000, 3_500_000],
+                [7_000_000, 8_000_000],
+            ]);
+        });
+    });
+
+    describe("frozen stretches on the editor clock", () => {
+        /** A metadata print as ffmpeg writes it: each frame's header with its filter time, then the tags it carries. */
+        function metadataPrint(frames: Array<{ at: number; tags?: string[] }>): string {
+            return frames
+                .map((frame, index) =>
+                    [
+                        `frame:${index}    pts:${Math.round(frame.at * 600)}    pts_time:${frame.at}`,
+                        ...(frame.tags ?? []),
+                        "gt.f=1",
+                    ].join("\n")
+                )
+                .join("\n");
+        }
+
+        const behind = metadataPrint([
+            { at: 0 },
+            { at: 1.0 },
+            { at: 1.05 },
+            { at: 2.05 },
+            { at: 3.05, tags: ["lavfi.freezedetect.freeze_start=1.05"] },
+            { at: 4.05, tags: ["lavfi.freezedetect.freeze_duration=3", "lavfi.freezedetect.freeze_end=4.05"] },
+        ]);
+
+        test("frozen stretches land on the editor clock when ffmpeg's filter clock runs behind the packet times", () => {
+            // The simulator case: from frame 2 on, the packet times run 1.95 s ahead of ffmpeg's filter clock.
+            expect(editorFrozenRanges(behind, [0, 1_000_000, 3_000_000, 4_000_000, 5_000_000, 6_000_000])).toEqual([
+                [3_000_000, 6_000_000],
+            ]);
+            // When the two clocks agree, the stretch is the filter's own.
+            expect(editorFrozenRanges(behind, [0, 1_000_000, 1_050_000, 2_050_000, 3_050_000, 4_050_000])).toEqual([
+                [1_050_000, 4_050_000],
+            ]);
+        });
+
+        test("a freeze still open at the end lasts to the end of the movie, and a print read in pieces reads the same", () => {
+            const open = metadataPrint([
+                { at: 0 },
+                { at: 0.5 },
+                { at: 1.5 },
+                { at: 2.5, tags: ["lavfi.freezedetect.freeze_start=0.5"] },
+            ]);
+            expect(editorFrozenRanges(open, [0, 2_000_000, 3_000_000, 4_000_000])).toEqual([
+                [2_000_000, Number.POSITIVE_INFINITY],
+            ]);
+
+            const bytes = new TextEncoder().encode(behind);
+            const print = new FreezePrint();
+
+            for (let at = 0; at < bytes.length; at += 7) {
+                print.write(bytes.subarray(at, at + 7));
+            }
+
+            expect(print.rangesUs([0, 1_000_000, 3_000_000, 4_000_000, 5_000_000, 6_000_000])).toEqual([
+                [3_000_000, 6_000_000],
+            ]);
+        });
+
+        test("a print with another frame count than the container keeps ffmpeg's own times", () => {
+            expect(editorFrozenRanges(behind, [0, 1_000_000, 3_000_000])).toEqual([[1_050_000, 4_050_000]]);
+        });
+    });
+
     test("removeIdle cuts the probed stretches and refuses to run without them", () => {
         const project = wholeProject(source);
         const op = parseEditOps({ op: "removeIdle" })[0];
@@ -1659,8 +2663,81 @@ describe("edit project (edit.json)", () => {
         ]);
     });
 
+    test("the silence removeIdle hears is every audio track the export plays, mixed, and none when it plays none", () => {
+        const filterOf = (tracks: number[]) => {
+            const args = silenceDetectArgs({ video: "in.mp4", minUs: 2_000_000, tracks });
+            expect(args.slice(-5)).toEqual(["-map", "[out]", "-f", "null", "-"]);
+            return args[args.indexOf("-filter_complex") + 1];
+        };
+
+        expect(audibleTracks(2, { include: true, mutedTracks: [] })).toEqual([0, 1]);
+        expect(filterOf(audibleTracks(2, { include: true, mutedTracks: [] }))).toStartWith(
+            "[0:a:0][0:a:1]amix=inputs=2:normalize=0,silencedetect=n=-45dB:d=2,"
+        );
+        expect(filterOf(audibleTracks(2, { include: true, mutedTracks: [0] }))).toStartWith("[0:a:1]silencedetect=");
+        expect(audibleTracks(2)).toEqual([0, 1]);
+        expect(audibleTracks(2, { include: false, mutedTracks: [] })).toEqual([]);
+        expect(audibleTracks(2, { include: true, mutedTracks: [0, 1] })).toEqual([]);
+    });
+
+    test("the transcript hears every track the export plays and refuses when none plays", () => {
+        expect(transcribedTracks(2, {})).toEqual([0, 1]);
+        expect(transcribedTracks(2, { mutedTracks: [0] })).toEqual([1]);
+        expect(() => transcribedTracks(2, { mutedTracks: [0, 1] })).toThrow(/every audio track is muted or left out/);
+        expect(() => transcribedTracks(2, { include: false })).toThrow(/nothing to transcribe/);
+    });
+
+    describe.skipIf(skip.integration)("removeIdle on a movie with two audio tracks", () => {
+        test("findIdle hears every audio track the export plays, not only the first", async () => {
+            const movie = join(workspace(), "system-then-mic.mp4");
+            // A still picture; track 0 is silent (the system sound), track 1 plays a tone all along (the mic).
+            await runVideoCommand({
+                command: [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=gray:s=160x120:r=10:d=4",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=r=48000:cl=mono",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=f=440:r=48000:d=4",
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "1:a",
+                    "-map",
+                    "2:a",
+                    "-t",
+                    "4",
+                    "-c:v",
+                    "libx264",
+                    "-c:a",
+                    "aac",
+                    movie,
+                ],
+            });
+            const base = { video: movie, durationUs: 4_000_000, minUs: 1_000_000, keepUs: 200_000 };
+
+            expect(await findIdle({ ...base, audio: { include: true, mutedTracks: [] } })).toEqual([]);
+            expect(await findIdle({ ...base, audio: { include: true, mutedTracks: [1] } })).toEqual([
+                [200_000, 3_800_000],
+            ]);
+            expect(await findIdle({ ...base, audio: { include: false, mutedTracks: [] } })).toEqual([
+                [200_000, 3_800_000],
+            ]);
+        });
+    });
+
     test("clicks and frame are optional looks with defaults, merged on change and removable", () => {
-        const project = wholeProject(source);
+        const project = wholeProject(withClickTrack(source));
         expect(project.clicks).toBeUndefined();
         expect(project.frame).toBeUndefined();
 
@@ -1793,6 +2870,30 @@ describe("edit project (edit.json)", () => {
         expect(applyOp(framed, { op: "frame", background: { kind: "gradient" } }).frame?.background.kind).toBe(
             "gradient"
         );
+    });
+
+    describe("the intro card's logo types", () => {
+        // The editor's logo picker (CardsSection.logoTypes) offers exactly these; the Swift side checks the same
+        // fixture (RecorderHuntLogoPictureTypesTests).
+        test("a logo takes every type the editor's picker offers, and a song, an SVG or a PSD is refused", () => {
+            expect(PICTURE_EXTENSIONS).toEqual(logoPictureTypes.extensions);
+            const dir = workspace();
+            const project = wholeProject(source);
+
+            for (const extension of [...logoPictureTypes.extensions, "TIF"]) {
+                const logo = join(dir, `logo.${extension}`);
+                writeFileSync(logo, "not decoded here");
+                expect(applyOp(project, { op: "introCard", title: "T", logo }).cards?.intro?.logo).toBe(logo);
+            }
+
+            for (const extension of logoPictureTypes.refused) {
+                const file = join(dir, `file.${extension}`);
+                writeFileSync(file, "");
+                expect(() => applyOp(project, { op: "introCard", title: "T", logo: file })).toThrow(
+                    "a logo is a picture"
+                );
+            }
+        });
     });
 
     test("a redaction hides a rectangle inside the picture for a time and is removed by its id", () => {
@@ -2030,7 +3131,10 @@ describe("edit project (edit.json)", () => {
         // Motion blur is 0.5 until set, and an op merges into what is there.
         expect(describeProject(project, "/p/edit.json").motion).toEqual({ blur: 0.5 });
         expect(applyOp(project, { op: "motion", blur: 0 }).motion).toEqual({ blur: 0 });
-        expect(applyOp(project, { op: "clicks", sound: true }).clicks).toMatchObject({ highlight: true, sound: true });
+        expect(applyOp(wholeProject(withClickTrack(source)), { op: "clicks", sound: true }).clicks).toMatchObject({
+            highlight: true,
+            sound: true,
+        });
         expect(() => applyOp(project, { op: "motion", blur: 2 })).toThrow();
         // A text sits in the canvas with its defaults, follows source time, and goes with untext.
         const titled = applyOp(project, { op: "text", from: 1, to: 2.5, text: "  Step 1: sign in " });
@@ -2121,7 +3225,7 @@ describe("edit project (edit.json)", () => {
         expect(applyOp(on, { op: "captions", show: false }).captions?.position).toBe("top");
     });
 
-    test("the drawn cursor changes only for a movie recorded without the system cursor", () => {
+    test("the drawn cursor changes only for a movie recorded without the system cursor, with its pictures", () => {
         const dir = workspace();
         const system = join(dir, "system.jsonl");
         const drawn = join(dir, "drawn.jsonl");
@@ -2131,7 +3235,15 @@ describe("edit project (edit.json)", () => {
         const withSystem = wholeProject({ ...source, cursor: system });
         expect(() => applyOp(withSystem, { op: "cursor", size: 2 })).toThrow("system cursor in its picture");
 
+        // The window draws the cursor only with its pictures beside the track; without them TS says the same.
         const withDrawn = wholeProject({ ...source, cursor: drawn });
+        expect(trackDrawsCursor(drawn)).toBe(false);
+        expect(describeProject(withDrawn, join(dir, "screen.edit.json")).cursor).toBeNull();
+        expect(() => applyOp(withDrawn, { op: "cursor", size: 2 })).toThrow("cursor pictures are missing");
+        mkdirSync(join(dir, "cursor-shapes"));
+        writeFileSync(join(dir, "cursor-shapes", "57a1d610df3e.png"), "png");
+        writeFileSync(join(dir, "cursor-shapes", "57a1d610df3e.json"), '{"hotX":0,"hotY":0,"width":16,"height":16}');
+        expect(trackDrawsCursor(drawn)).toBe(true);
         const bigger = applyOp(withDrawn, { op: "cursor", size: 2 });
         expect(bigger.cursor).toEqual({ show: true, size: 2, smoothing: 0.5, hideAfterMs: 0 });
         expect(applyOp(bigger, { op: "cursor", show: false }).cursor?.size).toBe(2);
@@ -2190,6 +3302,69 @@ describe("edit project (edit.json)", () => {
         expect(subtitleCues(transcriptLines(raw, fast), fast)[0]).toMatchObject({ fromUs: 0, toUs: 750_000 });
     });
 
+    describe("subtitles follow the burned-in captions", () => {
+        test("subtitles keep a line whose start or middle is cut, as the burned-in caption shows it", () => {
+            const raw = {
+                text: "",
+                segments: [
+                    { text: "First.", start: 1, end: 3.8 },
+                    { text: "Um, then we pick the newest mail.", start: 4, end: 7.5 },
+                    { text: "Gone.", start: 9, end: 9.5 },
+                ],
+            };
+            const cuesOf = (cut: { from: number; to: number }) => {
+                const project = applyOp(wholeProject(source), { op: "cut", ...cut });
+                const lines = transcriptLines(raw, project);
+                return {
+                    plays: lines.map((line) => line.plays),
+                    cues: subtitleCues(lines, project).map((cue) => [cue.text, cue.fromUs, cue.toUs]),
+                };
+            };
+
+            // The start is cut: the line shows from the cut on, where the burned-in caption shows it.
+            expect(cuesOf({ from: 3.9, to: 4.4 })).toEqual({
+                plays: [1, 3.9, 8.5],
+                cues: [
+                    ["First.", 1_000_000, 3_800_000],
+                    ["Um, then we pick the newest mail.", 3_900_000, 7_000_000],
+                    ["Gone.", 8_500_000, 9_000_000],
+                ],
+            });
+            // The middle is cut: the two kept pieces touch in the output, so the line is one cue.
+            expect(cuesOf({ from: 5.5, to: 6 })).toEqual({
+                plays: [1, 4, 8.5],
+                cues: [
+                    ["First.", 1_000_000, 3_800_000],
+                    ["Um, then we pick the newest mail.", 4_000_000, 7_000_000],
+                    ["Gone.", 8_500_000, 9_000_000],
+                ],
+            });
+            // The end is cut: the cue ends at the cut, as the caption does, and does not run on into the next part.
+            expect(cuesOf({ from: 7, to: 8 }).cues[1]).toEqual([
+                "Um, then we pick the newest mail.",
+                4_000_000,
+                7_000_000,
+            ]);
+            // The whole line is cut: no cue, and plays is null.
+            expect(cuesOf({ from: 3.9, to: 7.6 })).toEqual({
+                plays: [1, null, 5.3],
+                cues: [
+                    ["First.", 1_000_000, 3_800_000],
+                    ["Gone.", 5_300_000, 5_800_000],
+                ],
+            });
+            // A line that starts on the edge of a cut has no kept moment before it: it starts where the cut is.
+            expect(cuesOf({ from: 3.8, to: 4 })).toEqual({
+                plays: [1, 3.8, 8.8],
+                cues: [
+                    ["First.", 1_000_000, 3_800_000],
+                    ["Um, then we pick the newest mail.", 3_800_000, 7_300_000],
+                    ["Gone.", 8_800_000, 9_300_000],
+                ],
+            });
+        });
+    });
+
     test("writes every field the Swift decoder needs and refuses a newer version", () => {
         const dir = mkdtempSync(join(tmpdir(), "edit-project-"));
         const path = join(dir, "edit.json");
@@ -2203,6 +3378,122 @@ describe("edit project (edit.json)", () => {
         expect(raw).toMatchObject({ audio: { include: true, volume: 1, mutedTracks: [] }, export: { codec: "h264" } });
         writeFileSync(path, SafeJSON.stringify({ ...saved, version: 9 }));
         expect(() => readProject(path)).toThrow("version 9");
+    });
+});
+
+describe("a redact op's style options", () => {
+    const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+    const rect = { x: 0.1, y: 0.1, width: 0.3, height: 0.3 };
+
+    test("a redact op of style spotlight keeps its dim and cutout, as the spotlight op does", () => {
+        const project = wholeProject(source);
+        const [redact] = parseEditOps({
+            op: "redact",
+            from: 1,
+            to: 3,
+            rect,
+            style: "spotlight",
+            dim: 0.85,
+            cutout: "circle",
+        });
+        const [spotlight] = parseEditOps({ op: "spotlight", from: 1, to: 3, rect, dim: 0.85, cutout: "circle" });
+        const viaRedact = applyOp(project, redact);
+        const viaSpotlight = applyOp(project, spotlight);
+
+        expect(viaRedact.redactions?.[0]).toMatchObject({ style: "spotlight", dim: 0.85, cutout: "circle" });
+        expect(describeProject(viaRedact, "/p/edit.json").redactions[0]).toMatchObject({ dim: 0.85, cutout: "circle" });
+        const { id: _redactId, ...redactPart } = viaRedact.redactions?.[0] ?? { id: "" };
+        const { id: _spotId, ...spotPart } = viaSpotlight.redactions?.[0] ?? { id: "" };
+        expect(redactPart).toEqual(spotPart);
+        // A part with keys keeps them too.
+        const [tracked] = parseEditOps({
+            op: "redact",
+            from: 1,
+            to: 3,
+            rect,
+            style: "spotlight",
+            dim: 0.3,
+            cutout: "rect",
+            track: [
+                { at: 1, ...rect },
+                { at: 3, ...rect, x: 0.5 },
+            ],
+        });
+        expect(applyOp(project, tracked).redactions?.[0]).toMatchObject({ dim: 0.3, cutout: "rect" });
+        // The default lit shape is not written, as the spotlight op leaves it out.
+        const [rounded] = parseEditOps({ op: "redact", from: 1, to: 3, rect, style: "spotlight", cutout: "rounded" });
+        expect(applyOp(project, rounded).redactions?.[0]).not.toHaveProperty("cutout");
+    });
+
+    test("a redact op refuses dim or cutout without style spotlight, and cell without style pixelate", () => {
+        const project = wholeProject(source);
+        const apply = (raw: Record<string, unknown>) => {
+            const [op] = parseEditOps({ op: "redact", from: 1, to: 3, rect, ...raw });
+            return applyOp(project, op);
+        };
+
+        expect(() => apply({ style: "blur", dim: 0.85 })).toThrow('dim is for style "spotlight" only');
+        // An absent style is blur.
+        expect(() => apply({ cutout: "circle" })).toThrow('cutout is for style "spotlight" only');
+        expect(() => apply({ style: "spotlight", cell: 24 })).toThrow('cell is for style "pixelate" only');
+        // The options of the right style still apply.
+        expect(apply({ style: "pixelate", cell: 24 }).redactions?.[0]).toMatchObject({ cell: 24 });
+        expect(apply({ style: "spotlight", dim: 0.6 }).redactions?.[0]).toMatchObject({ dim: 0.6 });
+    });
+});
+
+describe("camera({ x }) without y", () => {
+    const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+
+    test("keeps the other axis where the corner bubble is drawn", () => {
+        const project = applyOp(wholeProject(source), { op: "camera", file: "camera.mov" });
+        const canvas = canvasShape(project);
+        if (!project.camera) {
+            throw new Error("the camera op made no bubble");
+        }
+
+        const drawn = bubbleRect(project.camera, canvas);
+        const moved = applyOp(project, { op: "camera", x: 0.2 });
+        expect(moved.camera?.corner).toBe("custom");
+        expect(moved.camera?.x).toBe(0.2);
+        expect(moved.camera?.y).toBeCloseTo(drawn.y / canvas.height, 9);
+        expect(moved.camera?.y).not.toBe(0.82);
+    });
+
+    test("a custom bubble keeps its stored axis", () => {
+        const placed = applyOp(wholeProject(source), { op: "camera", file: "camera.mov", x: 0.5, y: 0.3 });
+        expect(applyOp(placed, { op: "camera", x: 0.2 }).camera).toMatchObject({ corner: "custom", x: 0.2, y: 0.3 });
+    });
+});
+
+describe("the effects sheet on source time", () => {
+    test("bakes the export's cut snap into the hidden parts and leaves the export-clock tilt and progress bar out", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+        let project = applyOp(wholeProject(source), { op: "cut", from: 5, to: 6 });
+        project = applyOp(project, {
+            op: "redact",
+            from: 2,
+            to: 4.8,
+            rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+        });
+        project = editProjectSchema.parse({ ...project, tilt: {}, progress: {} });
+        expect(project.tilt).toBeDefined();
+        const sheet = effectsOnSourceTime(project);
+        expect(sheet.redactions?.map((part) => [part.startUs, part.endUs])).toEqual([[2_000_000, 5_000_000]]);
+        expect(sheet.tilt).toBeUndefined();
+        expect(sheet.progress).toBeUndefined();
+        expect(sheet.clips).toEqual([{ id: "c00000000", fromUs: 0, toUs: 10_000_000, speed: 1 }]);
+    });
+});
+
+describe("a cursor track with a torn line", () => {
+    test("skips the line that does not parse and keeps the rows around it", () => {
+        const path = join(workspace(), "cursor.jsonl");
+        writeFileSync(path, '{"t":0,"x":1,"y":2}\n{"t": 12, "x"\n{"t":40,"x":3,"y":4,"click":"left"}\n');
+        expect(readCursorTrack(path)).toEqual([
+            { ms: 0, x: 1, y: 2 },
+            { ms: 40, x: 3, y: 4, click: "left" },
+        ]);
     });
 });
 
@@ -2284,7 +3575,7 @@ describe("the editor window's item ops", () => {
         const points = (shape: { x1: number; y1: number; x2: number; y2: number } | undefined) =>
             [shape?.x1, shape?.y1, shape?.x2, shape?.y2].map((value) => Math.round((value ?? -1) * 1000) / 1000);
         let project = applyOp(withCursor(), { op: "shape", from: 2, to: 4, kind: "circle" });
-        expect(points(project.shapes?.[0])).toEqual([0.62, 0.24, 0.78, 0.36]);
+        expect(points(project.shapes?.[0])).toEqual([0.666, 0.24, 0.734, 0.36]);
         project = applyOp(project, { op: "shape", from: 2, to: 4, kind: "arrow", at: { x: 0.2, y: 0.8 } });
         expect(points(project.shapes?.[1])).toEqual([0.29, 0.71, 0.2, 0.8]);
         const middle = applyOp(wholeProject(source), { op: "shape", from: 2, to: 4, kind: "box" });
@@ -2403,6 +3694,57 @@ describe("the editor window's item ops", () => {
         expect(() => applyOp(on, { op: "denoise", track: 0, trackCount: 2 })).toThrow("needs on or reductionDb");
     });
 
+    describe("a track index is one of the movie's audio tracks", () => {
+        test("mute refuses a track the movie does not have, and unmute of any track still clears a stale entry", () => {
+            const project = wholeProject(source);
+
+            expect(() => applyOp(project, { op: "mute", track: 1 }, { audioTracks: 1 })).toThrow(
+                "this movie has 1 audio track (0); track 1 is not one of them"
+            );
+            expect(() => applyOp(project, { op: "mute", track: 5 }, { audioTracks: 2 })).toThrow("2 audio tracks");
+            expect(applyOp(project, { op: "mute", track: 1 }, { audioTracks: 2 }).audio.mutedTracks).toEqual([1]);
+            const stale = { ...project, audio: { ...project.audio, mutedTracks: [5] } };
+            expect(
+                applyOp(stale, { op: "mute", track: 5, muted: false }, { audioTracks: 1 }).audio.mutedTracks
+            ).toEqual([]);
+            expect(applyOp(project, { op: "mute", track: 5 }).audio.mutedTracks).toEqual([5]);
+        });
+
+        test("denoise refuses tracks, a strength or one track the movie does not have", () => {
+            const project = wholeProject(source);
+
+            expect(() => applyOp(project, { op: "denoise", tracks: [5] }, { audioTracks: 2 })).toThrow(
+                "track 5 is not one of them"
+            );
+            expect(() =>
+                applyOp(project, { op: "denoise", trackReductionDb: { "2": 20 } }, { audioTracks: 2 })
+            ).toThrow("track 2 is not one of them");
+            expect(() => applyOp(project, { op: "denoise", track: 1, on: true }, { audioTracks: 1 })).toThrow(
+                "track 1 is not one of them"
+            );
+            expect(applyOp(project, { op: "denoise", reductionDb: 20, tracks: [1] }).audio.denoise?.tracks).toEqual([
+                1,
+            ]);
+        });
+
+        test("one denoise track takes the measured track count, so it needs no trackCount", () => {
+            const on = applyOp(wholeProject(source), { op: "denoise" }, { audioTracks: 2 });
+            const two = { audioTracks: 2 };
+
+            expect(applyOp(on, { op: "denoise", track: 1, on: false }, two).audio.denoise?.tracks).toEqual([0]);
+            expect(applyOp(on, { op: "denoise", track: 0, on: false }, two).audio.denoise?.tracks).toEqual([1]);
+            expect(applyOp(on, { op: "denoise", track: 1, reductionDb: 30 }, two).audio.denoise).toEqual({
+                method: "afftdn",
+                reductionDb: 12,
+                trackReductionDb: { "1": 30 },
+            });
+            expect(
+                applyOp(on, { op: "denoise", track: 1, on: false, trackCount: 1 }, two).audio.denoise?.tracks
+            ).toEqual([0]);
+            expect(() => applyOp(on, { op: "denoise", track: 1, on: false })).toThrow("needs the movie's track count");
+        });
+    });
+
     test("the range popover keeps only what plays between the times", () => {
         let project = applyOp(wholeProject(source), { op: "cut", from: 1, to: 2 });
         project = applyOp(project, { op: "range", from: 2, to: 4, action: "keep" });
@@ -2436,9 +3778,9 @@ describe("the editor window's item ops", () => {
             [4_000_000, 6_000_000],
         ]);
         expect(spans(applyOp(project, { op: "retime", id: second.id, by: -3.5 }))).toEqual([
-            // Moved 3.5 s back from 4–6 s, it stops at the first zoom's end and keeps what is left of the asked span.
+            // Moved 3.5 s back from 4-6 s onto the first zoom, it goes past it with its length kept.
             [1_000_000, 2_000_000],
-            [2_000_000, 2_500_000],
+            [2_000_000, 4_000_000],
         ]);
 
         let texted = applyOp(wholeProject(source), { op: "text", from: 1, to: 3, text: "Hi" });
@@ -2447,6 +3789,64 @@ describe("the editor window's item ops", () => {
         expect(texted.texts?.[0]).toMatchObject({ startUs: 1_000_000, endUs: 1_100_000 });
         texted = applyOp(texted, { op: "retime", id: text, from: 4 });
         expect(texted.texts?.[0]).toMatchObject({ startUs: 4_000_000, endUs: 4_100_000 });
+    });
+
+    describe("a zoom meets only zooms of its own target, and retime at or by keeps its length", () => {
+        const longer = { ...source, durationUs: 20_000_000 };
+        const spanOf = (project: ReturnType<typeof wholeProject>, id: string) => {
+            const zoom = project.zooms.find((item) => item.id === id);
+            return [zoom?.startUs, zoom?.endUs];
+        };
+
+        test("retime moves or stretches a zoom over a zoom of the other target, and a drag still stops at its own target", () => {
+            let project = applyOp(wholeProject(longer), { op: "zoom", from: 2, to: 4, target: "canvas" });
+            project = applyOp(project, { op: "zoom", from: 5, to: 7 });
+            const canvas = project.zooms.find((zoom) => zoom.target === "canvas")?.id ?? "";
+            const picture = project.zooms.find((zoom) => !zoom.target)?.id ?? "";
+            expect(spanOf(applyOp(project, { op: "retime", id: canvas, to: 8 }), canvas)).toEqual([
+                2_000_000, 8_000_000,
+            ]);
+            // The editor's drag sends both edges.
+            expect(spanOf(applyOp(project, { op: "retime", id: canvas, from: 6, to: 8 }), canvas)).toEqual([
+                6_000_000, 8_000_000,
+            ]);
+            expect(spanOf(applyOp(project, { op: "retime", id: canvas, at: 6 }), canvas)).toEqual([
+                6_000_000, 8_000_000,
+            ]);
+            expect(spanOf(applyOp(project, { op: "retime", id: picture, at: 2 }), picture)).toEqual([
+                2_000_000, 4_000_000,
+            ]);
+
+            let same = applyOp(wholeProject(longer), { op: "zoom", from: 2, to: 4 });
+            same = applyOp(same, { op: "zoom", from: 5, to: 7 });
+            const first = same.zooms[0]?.id ?? "";
+            expect(spanOf(applyOp(same, { op: "retime", id: first, from: 6, to: 8 }), first)).toEqual([
+                4_800_000, 5_000_000,
+            ]);
+        });
+
+        test("retime at or by keeps a zoom's length: it reaches free space past a zoom, goes past a zoom it meets with a warning, and no room is refused", () => {
+            let project = applyOp(wholeProject(longer), { op: "zoom", from: 1, to: 3 });
+            project = applyOp(project, { op: "zoom", from: 7, to: 9 });
+            const [first, second] = project.zooms.map((zoom) => zoom.id);
+            const met = { op: "retime", id: first ?? "", at: 6.5 } as const;
+            const moved = applyOp(project, met);
+            expect(spanOf(moved, first ?? "")).toEqual([9_000_000, 11_000_000]);
+            expect(opPlacementWarnings(met, project, moved)).toEqual([
+                `retime: ${first} met another zoom at 6.5 s, so it went to 9-11 s (two zooms of one target cannot overlap)`,
+            ]);
+            const free = { op: "retime", id: first ?? "", at: 12 } as const;
+            const clear = applyOp(project, free);
+            expect(spanOf(clear, first ?? "")).toEqual([12_000_000, 14_000_000]);
+            expect(opPlacementWarnings(free, project, clear)).toEqual([]);
+            expect(spanOf(applyOp(project, { op: "retime", id: second ?? "", by: -5.5 }), second ?? "")).toEqual([
+                3_000_000, 5_000_000,
+            ]);
+
+            let full = applyOp(wholeProject(longer), { op: "zoom", from: 1, to: 3 });
+            full = applyOp(full, { op: "zoom", from: 7, to: 19.5 });
+            expect(() => applyOp(full, { op: "retime", id: full.zooms[0]?.id ?? "", at: 18 })).toThrow("no room");
+        });
     });
 
     test("auto zoom takes the first zoom's scale, and a range spotlight follows a recorded cursor", () => {
@@ -2467,7 +3867,7 @@ describe("the editor window's item ops", () => {
         expect(back.frame).not.toHaveProperty("aspect");
         expect(back.frame).not.toHaveProperty("fit");
 
-        const clicks = applyOp(wholeProject(source), { op: "clicks", highlight: true, sound: false });
+        const clicks = applyOp(wholeProject(withClickTrack(source)), { op: "clicks", highlight: true, sound: false });
         expect(clicks.clicks).not.toHaveProperty("sound");
 
         const file = join(workspace(), "music.mp3");
@@ -2475,6 +3875,220 @@ describe("the editor window's item ops", () => {
         const music = applyOp(wholeProject(source), { op: "music", file, startMs: 0, loop: true }).audio.music;
         expect(music).not.toHaveProperty("startMs");
         expect(music).not.toHaveProperty("loop");
+    });
+});
+
+// Regression test: hunt 2026-11-09 circle-shape-aspect, the circles were ovals on every picture shape but one.
+describe("a music duck while ducking() is set", () => {
+    const base = wholeProject({ video: "/movie/screen.mp4", durationUs: 10_000_000, width: 100, height: 100 });
+    const withAudio = (ducking: boolean, duck: number) =>
+        editProjectSchema.parse({
+            ...base,
+            audio: {
+                ...base.audio,
+                music: { file: "/movie/song.mp3", duck },
+                ...(ducking ? { ducking: { db: 12 } } : {}),
+            },
+        });
+
+    test("warns that the duck share does nothing while ducking's dB decides the drop", () => {
+        const before = withAudio(true, 0.6);
+        expect(opPlacementWarnings({ op: "music", duck: 0.3 }, before, withAudio(true, 0.3))).toEqual([
+            "music: duck 0.3 does nothing while ducking() is set; the music drops 12 dB under speech. Change it with ducking({ db }), or ducking({ enabled: false }) to go back to the duck share",
+        ]);
+    });
+
+    test("says nothing for the saved duck sent again, or without ducking", () => {
+        expect(opPlacementWarnings({ op: "music", duck: 0.6 }, withAudio(true, 0.6), withAudio(true, 0.6))).toEqual([]);
+        expect(opPlacementWarnings({ op: "music", duck: 0.3 }, withAudio(false, 0.6), withAudio(false, 0.3))).toEqual(
+            []
+        );
+    });
+});
+
+describe("a circle placed at a point or a click", () => {
+    const pictures = [
+        { width: 1920, height: 1080 },
+        { width: 780, height: 1688 },
+    ];
+    const ofSize = ({ width, height }: { width: number; height: number }) =>
+        wholeProject({ video: "/movies/screen.mp4", durationUs: 10_000_000, width, height });
+    const pixels = (
+        shape: { x1: number; y1: number; x2: number; y2: number } | undefined,
+        { width, height }: { width: number; height: number }
+    ) => ({
+        wide: ((shape?.x2 ?? 0) - (shape?.x1 ?? 0)) * width,
+        tall: ((shape?.y2 ?? 0) - (shape?.y1 ?? 0)) * height,
+    });
+    const inPicture = (shape: { x1: number; y1: number; x2: number; y2: number } | undefined) =>
+        [shape?.x1, shape?.y1, shape?.x2, shape?.y2].every((value) => value !== undefined && value >= 0 && value <= 1);
+
+    test("is round in pixels on a landscape and a portrait picture", () => {
+        for (const picture of pictures) {
+            const click = annotateClicks(ofSize(picture), [{ ms: 1000, x: 0.5, y: 0.5, click: "left" }]).project;
+            const ring = pixels(click.shapes?.[0], picture);
+            expect(Math.abs(ring.wide - ring.tall)).toBeLessThan(1);
+            const placed = applyOp(ofSize(picture), {
+                op: "shape",
+                from: 2,
+                to: 4,
+                kind: "circle",
+                at: { x: 0.5, y: 0.5 },
+            });
+            const circle = pixels(placed.shapes?.[0], picture);
+            expect(Math.abs(circle.wide - circle.tall)).toBeLessThan(1);
+        }
+    });
+
+    test("near an edge moves inward and stays round inside the picture", () => {
+        for (const picture of pictures) {
+            for (const at of [
+                { x: 0.99, y: 0.5 },
+                { x: 0.01, y: 0.99 },
+            ]) {
+                const click = annotateClicks(ofSize(picture), [{ ms: 1000, ...at, click: "left" }]).project.shapes?.[0];
+                const placed = applyOp(ofSize(picture), { op: "shape", from: 2, to: 4, kind: "circle", at })
+                    .shapes?.[0];
+
+                for (const shape of [click, placed]) {
+                    const size = pixels(shape, picture);
+                    expect(inPicture(shape)).toBe(true);
+                    expect(Math.abs(size.wide - size.tall)).toBeLessThan(1);
+                }
+            }
+        }
+    });
+
+    test("a circle every click is 97 px on 1920x1080 and 70 px on 780x1688, a placed circle 130 px and 94 px", () => {
+        const sizes = pictures.map((picture) => {
+            const click = annotateClicks(ofSize(picture), [{ ms: 1000, x: 0.5, y: 0.5, click: "left" }]).project;
+            const placed = applyOp(ofSize(picture), {
+                op: "shape",
+                from: 2,
+                to: 4,
+                kind: "circle",
+                at: { x: 0.5, y: 0.5 },
+            });
+            return [pixels(click.shapes?.[0], picture).wide, pixels(placed.shapes?.[0], picture).wide].map(Math.round);
+        });
+        expect(sizes).toEqual([
+            [97, 130],
+            [70, 94],
+        ]);
+    });
+});
+
+describe("a move or resize of a hidden part with keyframes", () => {
+    const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+    // The case RecorderHuntTrackedPartMoveTests pins in Swift: keys at 1 s and 3 s, the stored rect on the first key.
+    const box = { x: 0.1, y: 0.1, width: 0.2, height: 0.05 };
+    function tracked() {
+        const project = applyOp(wholeProject(source), {
+            op: "redact",
+            from: 1,
+            to: 3,
+            style: "black",
+            rect: box,
+            track: [
+                { at: 1, ...box },
+                { at: 3, ...box, y: 0.5 },
+            ],
+        });
+        return { project, id: project.redactions?.[0]?.id ?? "" };
+    }
+
+    test("setRedaction rect moves every keyframe by the same amount, so the renderer draws the part where it was put", () => {
+        const { project, id } = tracked();
+        const moved = applyOp(project, { op: "setRedaction", id, rect: { ...box, x: 0.2 } });
+        const part = moved.redactions?.[0];
+        expect(part?.track?.map((key) => [key.atUs, key.x, key.y])).toEqual([
+            [1_000_000, expect.closeTo(0.2, 6), expect.closeTo(0.1, 6)],
+            [3_000_000, expect.closeTo(0.2, 6), expect.closeTo(0.5, 6)],
+        ]);
+        expect(part && redactionBoxAt(part, 2_000_000)).toEqual({
+            x: expect.closeTo(0.2, 6),
+            y: expect.closeTo(0.3, 6),
+            width: expect.closeTo(0.2, 6),
+            height: expect.closeTo(0.05, 6),
+        });
+        expect(part).toMatchObject({ x: 0.2, y: 0.1, width: 0.2, height: 0.05 });
+    });
+
+    test("setRedaction rect scales every keyframe's size by the same ratio (the case the Swift test pins)", () => {
+        const { project, id } = tracked();
+        const moved = applyOp(project, { op: "setRedaction", id, rect: { x: 0.2, y: 0.15, width: 0.3, height: 0.1 } });
+        const keys = moved.redactions?.[0]?.track?.map((key) => [key.atUs, key.x, key.y, key.width, key.height]);
+        expect(keys).toEqual([
+            [
+                1_000_000,
+                expect.closeTo(0.2, 6),
+                expect.closeTo(0.15, 6),
+                expect.closeTo(0.3, 6),
+                expect.closeTo(0.1, 6),
+            ],
+            [
+                3_000_000,
+                expect.closeTo(0.2, 6),
+                expect.closeTo(0.55, 6),
+                expect.closeTo(0.3, 6),
+                expect.closeTo(0.1, 6),
+            ],
+        ]);
+    });
+
+    test("a move past the picture's edge keeps every keyframe inside it", () => {
+        const { project, id } = tracked();
+        const moved = applyOp(project, { op: "setRedaction", id, rect: { ...box, x: 0.75, y: 0.6 } });
+        for (const key of moved.redactions?.[0]?.track ?? []) {
+            expect(key.x + key.width).toBeLessThanOrEqual(1 + 1e-9);
+            expect(key.y + key.height).toBeLessThanOrEqual(1 + 1e-9);
+        }
+
+        expect(moved.redactions?.[0]?.track?.map((key) => key.x)).toEqual([0.75, 0.75]);
+        expect(moved.redactions?.[0]?.track?.[1]?.y).toBeCloseTo(0.95, 6);
+    });
+
+    test("setRedaction track replaces the keyframes as given (inside the picture), and [] makes the part fixed", () => {
+        const { project, id } = tracked();
+        const op = editOpSchema.parse({
+            op: "setRedaction",
+            id,
+            rect: { x: 0.4, y: 0.4, width: 0.2, height: 0.05 },
+            track: [
+                { at: 3, x: 0.9, y: 0.2, width: 0.2, height: 0.05 },
+                { at: 1, x: 0.4, y: 0.4, width: 0.2, height: 0.05 },
+            ],
+        });
+        const replaced = applyOp(project, op).redactions?.[0];
+        expect(replaced?.track?.map((key) => [key.atUs, key.x, key.y])).toEqual([
+            [1_000_000, 0.4, 0.4],
+            [3_000_000, 0.8, 0.2],
+        ]);
+        expect(replaced).toMatchObject({ x: 0.4, y: 0.4 });
+        const fixed = applyOp(project, editOpSchema.parse({ op: "setRedaction", id, track: [] })).redactions?.[0];
+        expect(fixed).not.toHaveProperty("track");
+        expect(fixed && redactionBoxAt(fixed, 2_000_000)).toEqual(box);
+    });
+
+    test("follow on a part with keyframes is refused, because the part follows its text", () => {
+        const { project, id } = tracked();
+        expect(() => applyOp(project, { op: "setRedaction", id, follow: true })).toThrow("follows its text");
+        const fixed = applyOp(project, editOpSchema.parse({ op: "setRedaction", id, follow: true, track: [] }));
+        expect(fixed.redactions?.[0]).toMatchObject({ follow: true });
+        expect(fixed.redactions?.[0]).not.toHaveProperty("track");
+        expect(() =>
+            applyOp(wholeProject(source), {
+                op: "redact",
+                from: 1,
+                to: 3,
+                rect: box,
+                follow: true,
+                track: [
+                    { at: 1, ...box },
+                    { at: 3, ...box, y: 0.5 },
+                ],
+            })
+        ).toThrow("follows its text");
     });
 });
 
@@ -2532,6 +4146,30 @@ describe("noise reduction on export", () => {
         expect(denoisedSourcePath(movie, denoiseSchema.parse({ reductionDb: 20 }))).not.toBe(first);
         writeFileSync(movie, "ab");
         expect(denoisedSourcePath(movie, denoiseSchema.parse({}))).not.toBe(first);
+    });
+});
+
+describe("the transcript beside a cleaned copy", () => {
+    // Round 1 hunt (denoise-render-sidecars): the transcript beside the cleaned movie was copied only once, so after
+    // a new transcription a denoised export burned in the old captions while the subtitle file had the new ones.
+    test("the transcript beside the cleaned copy follows the source's on every export, and goes when the source's goes", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-denoise-"));
+        mkdirSync(join(dir, ".denoise"));
+        const transcript = transcriptCachePath(join(dir, "screen.mp4"));
+        const copy = transcriptCachePath(join(dir, ".denoise", "screen-x.mp4"));
+
+        writeFileSync(transcript, '{"segments":[{"start":0,"end":1,"text":"OLD"}]}');
+        syncDenoisedTranscript({ transcript, copy });
+        expect(readFileSync(copy, "utf8")).toContain("OLD");
+
+        writeFileSync(transcript, '{"segments":[{"start":0,"end":1,"text":"NEW"}]}');
+        syncDenoisedTranscript({ transcript, copy });
+        expect(readFileSync(copy, "utf8")).toContain("NEW");
+
+        unlinkSync(transcript);
+        syncDenoisedTranscript({ transcript, copy });
+        expect(existsSync(copy)).toBe(false);
+        expect(() => syncDenoisedTranscript({ transcript, copy })).not.toThrow();
     });
 });
 
@@ -2805,12 +4443,195 @@ describe("camera bubble", () => {
     });
 });
 
+describe("the camera on the screen's clock", () => {
+    const T0 = Date.parse("2026-11-09T10:00:00.000Z");
+    const iso = (ms: number) => new Date(ms).toISOString();
+
+    function folderWith(sidecar: Record<string, unknown>): string {
+        const folder = mkdtempSync(join(tmpdir(), "camera-align-"));
+        writeFileSync(join(folder, CAMERA_SIDECAR), SafeJSON.stringify({ version: 1, file: "camera.mov", ...sidecar }));
+        writeFileSync(join(folder, "camera.mov"), "raw camera movie");
+        return folder;
+    }
+
+    test("each screen span is the camera's stretch of the same wall time; a span before the camera is its first frame", () => {
+        const spans = [
+            { sourceStartMs: 0, firstFrameEpochMs: 11_370, lengthMs: 5000 },
+            { sourceStartMs: 5000, firstFrameEpochMs: 17_100, lengthMs: 3000 },
+        ];
+        expect(cameraTrimPlan({ cameraStartedAt: 10_000, spans })).toEqual({
+            padHeadMs: 0,
+            ranges: [
+                { startMs: 1370, endMs: 6370 },
+                { startMs: 7100, endMs: 10_100 },
+            ],
+        });
+        // The camera's first frame came 630 ms after the screen's: that head is the camera's first frame held.
+        expect(cameraTrimPlan({ cameraStartedAt: 12_000, spans })).toEqual({
+            padHeadMs: 630,
+            ranges: [
+                { startMs: 0, endMs: 4370 },
+                { startMs: 5100, endMs: 8100 },
+            ],
+        });
+    });
+
+    test("one span needs no cut: the offset counts from the screen's first frame, not from when the face saw it", async () => {
+        const folder = folderWith({
+            startedAt: iso(T0 + 250),
+            screenStartedAt: iso(T0),
+            clock: "wall",
+        });
+        const commands: string[][] = [];
+        const result = await alignCameraMovie({
+            folder,
+            spans: [{ sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 8000 }],
+            runCommand: async (command) => {
+                commands.push(command);
+            },
+        });
+        expect(result).toEqual({ result: "offset" });
+        expect(commands).toEqual([]);
+        const sidecar = readCameraSidecar(join(folder, "screen.mp4"));
+        expect(sidecar?.screenStartedAt).toBe(iso(T0 + 1400));
+        expect(sidecar && bubbleFromSidecar(sidecar).offsetMs).toBe(-1150);
+    });
+
+    test("a face that left out the paused time it saw is not cut: only its offset moves to the first frame", async () => {
+        const folder = folderWith({ startedAt: iso(T0 + 250), screenStartedAt: iso(T0) });
+        const before = statSync(join(folder, "camera.mov")).size;
+        const result = await alignCameraMovie({
+            folder,
+            spans: [
+                { sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 2000 },
+                { sourceStartMs: 2000, firstFrameEpochMs: T0 + 9000, lengthMs: 2000 },
+            ],
+            runCommand: async () => {
+                throw new Error("an old face's movie is never cut");
+            },
+        });
+        expect(result).toEqual({ result: "offset" });
+        expect(statSync(join(folder, "camera.mov")).size).toBe(before);
+        expect(readCameraSidecar(join(folder, "screen.mp4"))?.screenStartedAt).toBe(iso(T0 + 1400));
+    });
+
+    test("a cut that fails keeps the movie, still counts from the first frame, and says so", async () => {
+        const folder = folderWith({ startedAt: iso(T0 + 250), screenStartedAt: iso(T0), clock: "wall" });
+        const result = await alignCameraMovie({
+            folder,
+            spans: [
+                { sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 2000 },
+                { sourceStartMs: 2000, firstFrameEpochMs: T0 + 9000, lengthMs: 2000 },
+            ],
+            runCommand: async () => {
+                throw new Error("ffmpeg exited 1");
+            },
+        });
+        expect(result.result).toBe("offset");
+        expect(result.warning).toContain("ffmpeg exited 1");
+        expect(readFileSync(join(folder, "camera.mov"), "utf8")).toBe("raw camera movie");
+        const sidecar = readCameraSidecar(join(folder, "screen.mp4"));
+        expect(sidecar?.screenStartedAt).toBe(iso(T0 + 1400));
+        expect(sidecar?.clock).toBe("wall");
+    });
+
+    test.skipIf(skip.integration)(
+        "a wall-clock camera movie is cut to the screen's spans, so a source moment shows the camera at that wall time",
+        async () => {
+            const folder = mkdtempSync(join(tmpdir(), "camera-align-real-"));
+            const movie = join(folder, "camera.mov");
+            // Brightness 16 + 20 per second of camera time: a frame says when the camera filmed it.
+            await runVideoCommand({
+                command: [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-y",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=64x64:r=30:d=10,format=yuv420p,geq=lum='16+20*T':cb=128:cr=128",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-preset",
+                    "ultrafast",
+                    "-qp",
+                    "0",
+                    movie,
+                ],
+            });
+            writeFileSync(
+                join(folder, CAMERA_SIDECAR),
+                SafeJSON.stringify({
+                    version: 1,
+                    file: "camera.mov",
+                    startedAt: iso(T0),
+                    screenStartedAt: iso(T0 - 600),
+                    clock: "wall",
+                })
+            );
+            const result = await alignCameraMovie({
+                folder,
+                spans: [
+                    { sourceStartMs: 0, firstFrameEpochMs: T0 + 1500, lengthMs: 2000 },
+                    { sourceStartMs: 2000, firstFrameEpochMs: T0 + 6000, lengthMs: 2000 },
+                ],
+            });
+            expect(result).toEqual({ result: "trimmed" });
+            const sidecar = readCameraSidecar(join(folder, "screen.mp4"));
+            expect(sidecar).toMatchObject({
+                startedAt: iso(T0 + 1500),
+                screenStartedAt: iso(T0 + 1500),
+                clock: "screen",
+            });
+            expect(sidecar && bubbleFromSidecar(sidecar).offsetMs).toBe(0);
+
+            const filmedAt = async (atSeconds: number) => {
+                const printed = await runVideoCommand({
+                    command: [
+                        "ffmpeg",
+                        "-nostdin",
+                        "-v",
+                        "error",
+                        "-ss",
+                        String(atSeconds),
+                        "-i",
+                        movie,
+                        "-frames:v",
+                        "1",
+                        "-vf",
+                        "signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG:file=-",
+                        "-f",
+                        "null",
+                        "-",
+                    ],
+                });
+                return (Number(/YAVG=([\d.]+)/.exec(printed)?.[1]) - 16) / 20;
+            };
+            // Source 1.0 s is camera 2.5 s; source 3.0 s (the second span, after a 2.5 s gap) is camera 7.0 s.
+            expect(Math.abs((await filmedAt(1)) - 2.5)).toBeLessThan(0.1);
+            expect(Math.abs((await filmedAt(3)) - 7)).toBeLessThan(0.1);
+            const probe = await runVideoCommand({
+                command: ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", movie],
+            });
+            expect(Number(probe.trim())).toBeCloseTo(4, 1);
+        },
+        60_000
+    );
+});
+
 test("editor commands replace guarded outputs and force the requested container", () => {
     expect(trimArgv({ input: "in.mp4", output: "out.mp4", fromUs: 0, toUs: 1000000 })).toContain("-y");
     expect(speedArgv({ input: "in.mp4", output: "out.mp4", factor: 2, audio: true })).toContain("-y");
+    // A sped-up segment keeps every audio track (system sound and mic), as a trim does.
+    expect(speedArgv({ input: "in.mp4", output: "out.mp4", factor: 2, audio: true })).toContain("0:a");
+    expect(speedArgv({ input: "in.mp4", output: "out.mp4", factor: 2, audio: true })).not.toContain("0:a:0");
 
     for (const format of ["mp4", "webm", "gif"] as const) {
-        const args = exportVideoArgv({ input: "in.mp4", output: "out.wrong", format });
+        const args = exportVideoArgv({ input: "in.mp4", output: "out.wrong", format, audioTracks: 1 });
         expect(args).toContain("-y");
         expect(args[args.lastIndexOf("-f") + 1]).toBe(format);
     }
@@ -2819,9 +4640,32 @@ test("editor commands replace guarded outputs and force the requested container"
 // Regression test: deep test 2026-11-06 RE8 — a 20 s WebM took 121 s: libvpx ran one row at a time at its slowest
 // speed. Measured on 10 s of 1440p60: these flags cost a third less CPU at an SSIM no lower (0.99911 against 0.99900).
 test("a WebM encodes rows in parallel at speed 3, with the CRF that keeps its quality", () => {
-    const args = exportVideoArgv({ input: "in.mp4", output: "out.webm", format: "webm" }).join(" ");
+    const args = exportVideoArgv({ input: "in.mp4", output: "out.webm", format: "webm", audioTracks: 1 }).join(" ");
 
     expect(args).toContain("-c:v libvpx-vp9 -b:v 0 -crf 32 -row-mt 1 -deadline good -cpu-used 3");
+});
+
+// Regression test: hunt r2-repl-export-all-tracks. Without a map ffmpeg kept one audio track, so an export of a
+// recording of system sound and mic lost the mic; the Swift export mixes every track into one.
+describe("exportVideoArgv plays every audio track", () => {
+    test("two tracks are mixed into one with no level change, the picture mapped beside them", () => {
+        const args = exportVideoArgv({ input: "in.mp4", output: "out.mp4", format: "mp4", audioTracks: 2 });
+        const joined = args.join(" ");
+
+        expect(joined).toContain("amix=inputs=2:normalize=0");
+        expect(joined).toContain("-map [a]");
+        expect(joined).toContain("-map 0:v:0");
+    });
+
+    test("one track maps it, none drops audio, and a GIF never maps audio", () => {
+        expect(
+            exportVideoArgv({ input: "in.mp4", output: "o.mp4", format: "mp4", audioTracks: 1 }).join(" ")
+        ).toContain("-map 0:a:0");
+        expect(exportVideoArgv({ input: "in.mp4", output: "o.webm", format: "webm", audioTracks: 0 })).toContain("-an");
+        const gif = exportVideoArgv({ input: "in.mp4", output: "o.gif", format: "gif", audioTracks: 2 }).join(" ");
+        expect(gif).not.toContain("amix");
+        expect(gif).toContain("-an");
+    });
 });
 
 test("manifest duration preserves static recordings and the unchanged tail", async () => {
@@ -2964,3 +4808,69 @@ test("disabling track denoise preserves excluded audio", () => {
         );
     }
 });
+
+describe.skipIf(skip.integration)("normalize measures what the export plays", () => {
+    const makeTone = async (out: string, seconds: number, volume: string) => {
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                `color=c=black:s=64x64:d=${seconds}`,
+                "-f",
+                "lavfi",
+                "-i",
+                `sine=f=440:r=48000:d=${seconds},volume='${volume}':eval=frame`,
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+                out,
+            ],
+            timeoutMs: 60_000,
+        });
+    };
+
+    test("only the kept clips count, at their played speed, so a cut loud part does not lower the gain", async () => {
+        const dir = workspace();
+        const movie = join(dir, "loud-then-quiet.mp4");
+        const quiet = join(dir, "quiet.mp4");
+        await makeTone(movie, 4, "if(lt(t,2),1,0.25)");
+        await makeTone(quiet, 2, "0.25");
+
+        const alone = await integratedLoudness({ video: quiet });
+        const kept = await integratedLoudness({
+            video: movie,
+            clips: [{ fromUs: 2_000_000, toUs: 4_000_000, speed: 1 }],
+        });
+        expect(alone).toBeDefined();
+        expect(Math.abs((kept ?? 0) - (alone ?? 0))).toBeLessThan(1);
+
+        const sped = await integratedLoudness({
+            video: movie,
+            clips: [
+                { fromUs: 0, toUs: 400_000, speed: 2 },
+                { fromUs: 2_000_000, toUs: 4_000_000, speed: 1 },
+            ],
+        });
+        expect(Number.isFinite(sped)).toBe(true);
+    });
+});
+
+interface ExportSizeCases {
+    cases: Array<{
+        name: string;
+        source: { width: number; height: number };
+        export: { codec: "h264" | "hevc"; maxHeight: number; size?: { width?: number; height?: number } };
+        aspect?: "16:9" | "4:3" | "1:1" | "9:16";
+        nominalFps: number;
+        fps: number;
+        canvas: { width: number; height: number };
+    }>;
+}

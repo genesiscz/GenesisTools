@@ -6,8 +6,9 @@ import Foundation
 /// press. ax-tool's capture writes it beside `--video-out` (`--cursor-track`). Read once, kept sorted.
 ///
 /// A movie recorded without the system cursor (`--hide-cursor --cursor-shapes`) has `"shape": "<hash>"` on the row
-/// where the cursor's image changed and `"pw"` (the recorded width in points) on the first row; the images are
-/// `cursor-shapes/<hash>.png` (2x) and `.json` (hotspot) beside the track. The editor then draws the cursor itself.
+/// where the cursor's image changed and `"pw"` (the recorded width in points) on the first row of each segment and
+/// the first row after a display switch; the images are `cursor-shapes/<hash>.png` (2x) and `.json` (hotspot) beside
+/// the track. The editor then draws the cursor itself.
 final class CursorTrack: @unchecked Sendable {
     struct Sample: Equatable {
         var ms: Double
@@ -34,8 +35,16 @@ final class CursorTrack: @unchecked Sendable {
     /// The rows where the cursor's image changed. Empty when the system cursor is in the picture.
     let shapeChanges: [Sample]
     let shapes: [String: Shape]
-    /// The recorded rectangle's width in points, so a movie pixel can be measured in cursor points.
-    let pointWidth: Double?
+    /// A row's `pw`: the recorded rectangle's width in points from that time on.
+    struct PointWidth: Equatable {
+        var ms: Double
+        var width: Double
+    }
+
+    /// The recorded rectangle's width in points, so a movie pixel can be measured in cursor points: one entry per row
+    /// that names it, in time order. A joined recording has one per segment and a recording that moved to another
+    /// display one per display, because each part can show a display of another size at another scale.
+    let pointWidths: [PointWidth]
 
     /// The shortcuts pressed, in time order.
     let keys: [Sample]
@@ -53,7 +62,12 @@ final class CursorTrack: @unchecked Sendable {
     /// The movie has no system cursor in it, so the editor draws one.
     var drawsCursor: Bool { !shapeChanges.isEmpty && !shapes.isEmpty }
 
-    init(samples: [Sample], shapes: [String: Shape] = [:], pointWidth: Double? = nil) {
+    /// A track whose whole length was recorded at one point width.
+    convenience init(samples: [Sample], shapes: [String: Shape] = [:], pointWidth: Double? = nil) {
+        self.init(samples: samples, shapes: shapes, pointWidths: pointWidth.map { [PointWidth(ms: 0, width: $0)] } ?? [])
+    }
+
+    init(samples: [Sample], shapes: [String: Shape] = [:], pointWidths: [PointWidth]) {
         self.samples = samples.sorted { $0.ms < $1.ms }
         clicks = self.samples.filter { $0.click != nil }
         shapeChanges = self.samples.filter { $0.shape != nil }
@@ -69,25 +83,25 @@ final class CursorTrack: @unchecked Sendable {
         }
         moveTimes = moves
         self.shapes = shapes
-        self.pointWidth = pointWidth
+        self.pointWidths = pointWidths.sorted { $0.ms < $1.ms }
     }
 
     static func load(_ path: String?) -> CursorTrack? {
         guard let path, let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
         var samples: [Sample] = []
-        var pointWidth: Double?
+        var pointWidths: [PointWidth] = []
         for line in text.split(separator: "\n") {
             guard let data = line.data(using: .utf8),
                   let row = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let ms = row["t"] as? Double, let x = row["x"] as? Double, let y = row["y"] as? Double else { continue }
             samples.append(Sample(ms: ms, x: x, y: y, click: row["click"] as? String, shape: row["shape"] as? String,
                                   key: row["key"] as? String))
-            if let width = row["pw"] as? Double, width > 0 { pointWidth = width }
+            if let width = row["pw"] as? Double, width > 0 { pointWidths.append(PointWidth(ms: ms, width: width)) }
         }
         guard !samples.isEmpty else { return nil }
         let ids = Set(samples.compactMap(\.shape))
         let folder = ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent("cursor-shapes")
-        return CursorTrack(samples: samples, shapes: loadShapes(ids, folder: folder), pointWidth: pointWidth)
+        return CursorTrack(samples: samples, shapes: loadShapes(ids, folder: folder), pointWidths: pointWidths)
     }
 
     private static func loadShapes(_ ids: Set<String>, folder: String) -> [String: Shape] {
@@ -112,6 +126,17 @@ final class CursorTrack: @unchecked Sendable {
         }
         let change = low > 0 ? shapeChanges[low - 1] : shapeChanges.first
         return change?.shape.flatMap { shapes[$0] }
+    }
+
+    /// The recorded width in points at the time: the last `pw` at or before it (the first one before the first);
+    /// nil for a track that names none.
+    func pointWidth(atMs ms: Double) -> Double? {
+        var low = 0, high = pointWidths.count
+        while low < high {
+            let mid = (low + high) / 2
+            if pointWidths[mid].ms <= ms { low = mid + 1 } else { high = mid }
+        }
+        return (low > 0 ? pointWidths[low - 1] : pointWidths.first)?.width
     }
 
     /// Where the pointer was. A row is written only when it moved (60 Hz), so a gap means it stood still: it holds
@@ -141,6 +166,34 @@ final class CursorTrack: @unchecked Sendable {
         return averagedPoint(atMs: ms, halfMs: half)
     }
 
+    /// What sets where the viewer sees the pointer, read from an edit: the drawn cursor's smoothing, the smooth cursor,
+    /// and the picture's shape (height over width) the smooth cursor's jitter is measured in.
+    struct Pointer {
+        var cursor = EditProject.Cursor()
+        var smooth: EditProject.CursorSmooth?
+        var aspect = 9.0 / 16
+
+        /// A new edit's settings.
+        init() {}
+
+        init(_ project: EditProject) {
+            cursor = project.cursor ?? .init()
+            smooth = project.cursorSmooth
+            aspect = Double(project.source.height) / Double(max(1, project.source.width))
+        }
+    }
+
+    /// Where the viewer sees the pointer: the smooth cursor when it is on, else the drawn cursor when the track draws
+    /// one (shown or hidden, so a part keeps following an arrow the edit hides), else the system cursor the movie has in
+    /// its pixels (the raw track). A part or a lens that follows the cursor sits here, so it never lags at a click.
+    func pointerPoint(atMs ms: Double, pointer: Pointer) -> (x: Double, y: Double)? {
+        if let smooth = pointer.smooth {
+            return smoothMark(atMs: ms, settings: smooth, aspect: pointer.aspect).map { (x: $0.x, y: $0.y) }
+        }
+        if drawsCursor { return drawnPoint(atMs: ms, smoothing: pointer.cursor.smoothing) }
+        return point(atMs: ms)
+    }
+
     /// The path averaged with Gaussian weights over ±`halfMs`: what a crop that follows the cursor centres on, wide
     /// enough that it glides instead of chasing every move.
     func averagedPoint(atMs ms: Double, halfMs half: Double) -> (x: Double, y: Double)? {
@@ -160,8 +213,17 @@ final class CursorTrack: @unchecked Sendable {
         return sumW > 0 ? (sumX / sumW, sumY / sumW) : point(atMs: ms)
     }
 
+    /// The movie as it plays at one frame: the clips and the frame's output time. The keys plate, the hide after
+    /// standing still and the smooth cursor's fade measure their time on it, so a sped-up part does not shorten them
+    /// and a cut part takes no time (a press inside a cut shows no plate).
+    struct PlayedClock {
+        var placed: [TimelineMap.Placed]
+        var outUs: Int64
+    }
+
     /// 1 while the pointer moved within `hideAfterMs`, then down to 0 over 300 ms; back to 1 the moment it moves.
-    func visibility(atMs ms: Double, hideAfterMs: Int) -> Double {
+    /// With a clock, the stillness is the played time since the last move; without one, the recording's.
+    func visibility(atMs ms: Double, hideAfterMs: Int, clock: PlayedClock? = nil) -> Double {
         guard hideAfterMs > 0, !moveTimes.isEmpty else { return 1 }
         var low = 0, high = moveTimes.count
         while low < high {
@@ -171,20 +233,40 @@ final class CursorTrack: @unchecked Sendable {
         // A move row lands one sample after the motion starts; the next one counts from that sample.
         if low < moveTimes.count, moveTimes[low] - ms <= 16.7 { return 1 }
         guard low > 0 else { return 1 }
-        let still = ms - moveTimes[low - 1] - Double(hideAfterMs)
+        let lastMove = moveTimes[low - 1]
+        let stillMs = clock.map {
+            Double(TimelineMap.outputSpans(fromUs: Int64(lastMove * 1000), toUs: Int64(ms * 1000), placed: $0.placed)
+                .reduce(0) { $0 + $1.toUs - $1.fromUs }) / 1000
+        } ?? ms - lastMove
+        let still = stillMs - Double(hideAfterMs)
         return max(0, min(1, 1 - still / 300))
     }
 
     /// The shortcut showing at the time: the last press within `durationMs`, with its opacity (out over the last
-    /// 250 ms). A newer press replaces an older one at once.
-    func key(atMs ms: Double, durationMs: Int) -> (label: String, opacity: Double)? {
+    /// 250 ms). A newer press replaces an older one at once. With a clock, a press inside a cut never shows (as
+    /// shortcuts() and the timeline say) and its age is played time, so it holds its time in a sped-up part and over
+    /// a later cut (the plate is drawn over the picture, not on it).
+    func key(atMs ms: Double, durationMs: Int, clock: PlayedClock? = nil) -> (label: String, opacity: Double)? {
         var low = 0, high = keys.count
         while low < high {
             let mid = (low + high) / 2
             if keys[mid].ms <= ms { low = mid + 1 } else { high = mid }
         }
-        guard low > 0, let label = keys[low - 1].key else { return nil }
-        let age = ms - keys[low - 1].ms
+        var index = low - 1
+        var age: Double?
+        while index >= 0 {
+            guard let clock else {
+                age = ms - keys[index].ms
+                break
+            }
+            if let pressOut = TimelineMap.outputTime(ofSource: Int64(keys[index].ms * 1000), placed: clock.placed),
+               pressOut <= clock.outUs {
+                age = Double(clock.outUs - pressOut) / 1000
+                break
+            }
+            index -= 1
+        }
+        guard let age, let label = keys[index].key else { return nil }
         let duration = Double(max(300, durationMs))
         guard age < duration else { return nil }
         return (label, min(1, (duration - age) / 250))
@@ -238,17 +320,17 @@ extension CursorTrack {
             return cached
         }
         smoothLock.unlock()
-        // A recording without its width in points is taken as a 1440-point display.
-        let threshold = points / (pointWidth ?? 1440)
         var kept: [Sample] = []
         for sample in samples {
+            // A recording without its width in points is taken as a 1440-point display.
+            let threshold = points / (pointWidth(atMs: sample.ms) ?? 1440)
             if let last = kept.last, sample.click == nil, sample.shape == nil, sample.key == nil,
                hypot(sample.x - last.x, (sample.y - last.y) * aspect) < threshold {
                 continue
             }
             kept.append(sample)
         }
-        let track = CursorTrack(samples: kept, shapes: shapes, pointWidth: pointWidth)
+        let track = CursorTrack(samples: kept, shapes: shapes, pointWidths: pointWidths)
         smoothLock.lock()
         if smoothTracks.updateValue(track, forKey: key) == nil { smoothOrder.append(key) }
         while smoothOrder.count > Self.smoothTracksKept { smoothTracks[smoothOrder.removeFirst()] = nil }
@@ -268,10 +350,11 @@ extension CursorTrack {
 
     /// Where the smooth cursor is drawn and how visible it is: on the track without jitter, averaged over up to
     /// ±400 ms × strength (exact at a click), fading after `idleFadeSeconds` without a move.
-    func smoothMark(atMs ms: Double, settings: EditProject.CursorSmooth, aspect: Double) -> (x: Double, y: Double, opacity: Double)? {
+    func smoothMark(atMs ms: Double, settings: EditProject.CursorSmooth, aspect: Double,
+                    clock: PlayedClock? = nil) -> (x: Double, y: Double, opacity: Double)? {
         let track = dejittered(points: settings.jitterPx, aspect: aspect)
         guard let point = track.drawnPoint(atMs: ms, halfMs: max(0, min(1, settings.strength)) * Self.smoothMaxHalfMs) else { return nil }
-        let opacity = track.visibility(atMs: ms, hideAfterMs: Int((settings.idleFadeSeconds * 1000).rounded()))
+        let opacity = track.visibility(atMs: ms, hideAfterMs: Int((settings.idleFadeSeconds * 1000).rounded()), clock: clock)
         return (point.x, point.y, opacity)
     }
 }

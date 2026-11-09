@@ -125,6 +125,16 @@ final class EditorModel {
     @ObservationIgnored let cursor: CursorTrack?
     /// The review comments beside the recording (comments.jsonl), watched so an agent's comment shows at once.
     @ObservationIgnored let commentsStore: ReviewCommentsStore
+    /// The transcript cache beside the movie, watched so a transcription made outside the window (the REPL's
+    /// `movie.transcript({ refresh: true })`, `tools transcribe -o`) or a deleted file reaches the captions.
+    @ObservationIgnored let transcriptWatch: FileWatch
+    /// The recording's manifest: recording.json is the title's truth, and only a file watch sees every rename route
+    /// (the library, the REPL, and the CLI, which writes the file with no service involved).
+    @ObservationIgnored let titleWatch: FileWatch
+    /// Runs with the new title after a rename rewrote recording.json; the editor window shows it.
+    @ObservationIgnored var onTitleChange: ((String) -> Void)?
+    @ObservationIgnored private var shownTitle = ""
+    @ObservationIgnored var transcriptReload: DispatchWorkItem?
     private(set) var reviewComments: [ReviewComment] = []
     /// The comment whose popover is open over the marks lane.
     var openComment: String?
@@ -199,6 +209,9 @@ final class EditorModel {
         recordingMarkers = Self.readMarkers(video: project.source.video)
         commentsStore = ReviewCommentsStore(video: project.source.video)
         reviewComments = commentsStore.comments
+        transcriptWatch = FileWatch(url: CaptionTrack.cacheURL(video: project.source.video))
+        titleWatch = FileWatch(url: URL(fileURLWithPath: project.source.video).deletingLastPathComponent()
+            .appendingPathComponent("recording.json"))
         displayPlan = DisplayPlan.read(video: project.source.video)
         asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
         player.actionAtItemEnd = .pause
@@ -216,6 +229,11 @@ final class EditorModel {
         session.start()
         commentsStore.onChange = { [weak self] comments in self?.reviewComments = comments }
         commentsStore.watch()
+        transcriptWatch.onChange = { [weak self] in self?.transcriptWritten() }
+        transcriptWatch.start()
+        shownTitle = title
+        titleWatch.onChange = { [weak self] in self?.titleWritten() }
+        titleWatch.start()
         let video = URL(fileURLWithPath: project.source.video)
         filmstrip.load(video: video, durationUs: project.source.durationUs)
         waveform.load(video: video)
@@ -223,11 +241,19 @@ final class EditorModel {
             let count = (try? await AVURLAsset(url: video).loadTracks(withMediaType: .audio).count) ?? 0
             self?.audioTrackCount = count
         }
+        loadNominalFps(asset)
         rebuild()
     }
 
     /// The recording's title from its manifest (the name the library shows), else its folder's name, else the file's.
     var title: String { Self.readTitle(video: project.source.video) }
+
+    private func titleWritten() {
+        let now = title
+        guard now != shownTitle else { return }
+        shownTitle = now
+        onTitleChange?(now)
+    }
 
     static func readTitle(video: String) -> String {
         let url = URL(fileURLWithPath: video)
@@ -327,9 +353,27 @@ final class EditorModel {
         player.seek(to: EditRenderer.us(clamped), toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    /// One frame of the preview's movie (its `exportFps`), set by each render; 60 fps until the first.
+    @ObservationIgnored private(set) var frameUs = EditRenderer.defaultFrameUs
+
     func step(frames: Int) {
         player.pause()
-        seek(clock.outUs + Int64(frames) * 16_667)
+        seek(Self.steppedUs(from: clock.outUs, frames: frames, frameUs: frameUs))
+    }
+
+    /// The frames a second at a frame of `frameUs` (30 for 33 333 µs).
+    nonisolated static func framesPerSecond(frameUs: Int64) -> Int {
+        max(1, Int((1_000_000 / Double(max(1, frameUs))).rounded()))
+    }
+
+    /// `frames` frames on from `fromUs` on the movie's frame grid (frame n starts at n / fps s, as the composition
+    /// draws them): a clock between two frames counts from the frame it shows, so every press shows a new frame.
+    nonisolated static func steppedUs(from fromUs: Int64, frames: Int, frameUs: Int64) -> Int64 {
+        let fps = Double(framesPerSecond(frameUs: frameUs))
+        let position = Double(fromUs) * fps / 1_000_000
+        // Within a thousandth of a frame counts as on it: grid times are rounded to whole µs.
+        let shown = frames >= 0 ? (position + 0.001).rounded(.down) : (position - 0.001).rounded(.up)
+        return Int64(((shown + Double(frames)) * 1_000_000 / fps).rounded())
     }
 
     /// The arrow keys: with a shape selected they nudge it by 0.2 % of the picture (⇧: 2 %); otherwise ← and → step
@@ -341,7 +385,7 @@ final class EditorModel {
             return
         }
 
-        if dx != 0 { step(frames: dx * (shift ? 60 : 1)) }
+        if dx != 0 { step(frames: dx * (shift ? Self.framesPerSecond(frameUs: frameUs) : 1)) }
     }
 
     /// ⌥← and ⌥→: the selected zoom, hidden part, text, shape or camera part starts `byUs` earlier or later, its
@@ -430,33 +474,32 @@ final class EditorModel {
 
     /// Which parts of the edit differ, for telling one continuous change from the next.
     nonisolated static func changedParts(_ a: EditProject, _ b: EditProject) -> [String] {
-        var parts: [String] = []
-        if a.clips != b.clips { parts.append("clips") }
-        if a.zooms != b.zooms { parts.append("zooms") }
-        if a.audio != b.audio { parts.append("audio") }
-        if a.export != b.export { parts.append("export") }
-        if a.clicks != b.clicks { parts.append("clicks") }
-        if a.frame != b.frame { parts.append("frame") }
-        if a.cursor != b.cursor { parts.append("cursor") }
-        if a.captions != b.captions { parts.append("captions") }
-        if a.keys != b.keys { parts.append("keys") }
-        if a.redactions != b.redactions { parts.append("redactions") }
-        if a.texts != b.texts { parts.append("texts") }
-        if a.shapes != b.shapes { parts.append("shapes") }
-        if a.transcript != b.transcript { parts.append("transcript") }
-        if a.motion != b.motion { parts.append("motion") }
-        if a.lanes != b.lanes { parts.append("lanes") }
-        if a.camera != b.camera { parts.append("camera") }
-        if a.markers != b.markers { parts.append("markers") }
-        // Round 4 fx-render.
-        if a.transitions != b.transitions { parts.append("transitions") }
-        if a.lens != b.lens { parts.append("lens") }
-        if a.tilt != b.tilt { parts.append("tilt") }
+        var parts = EditParts.all.filter { $0.differs(a, b) }.map(\.key)
         // A count change (an add or a delete) is its own step, never part of a drag.
         if (a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count, a.markers?.count)
             != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count, b.markers?.count)
             || (a.camera == nil, a.camera?.hidden.count) != (b.camera == nil, b.camera?.hidden.count) { parts.append("count") }
         return parts
+    }
+
+    /// Whether the preview's movie must be made again for the change from `a` to `b`: an input changed that
+    /// EditRenderer.render reads once per build. Those are the clips' spans and speeds (not their ids), the sound, the
+    /// click sound's ticks, the canvas shape and the codec (outputSizes sizes the render from both), and the camera
+    /// movie (CameraFeed opens it, so a camera added to an edit that had none counts). Everything else reaches the
+    /// next frame drawn through ZoomState.
+    nonisolated static func needsNewMovie(_ a: EditProject, _ b: EditProject) -> Bool {
+        a.clips.count != b.clips.count
+            || zip(a.clips, b.clips).contains { $0.fromUs != $1.fromUs || $0.toUs != $1.toUs || $0.speed != $1.speed }
+            || a.audio != b.audio
+            || (a.clicks?.sound == true) != (b.clicks?.sound == true)
+            || a.frame?.aspect?.ratio != b.frame?.aspect?.ratio
+            || a.export.codec != b.export.codec
+            || a.camera?.file != b.camera?.file
+    }
+
+    /// Whether the transcript's lines reach the preview's sound: the music ducks under them.
+    nonisolated static func transcriptAffectsSound(_ project: EditProject) -> Bool {
+        project.audio.music != nil && (project.audio.ducking?.transcript ?? true)
     }
 
     /// What ⌘Z would take back ("Move Text", "Delete Zoom"), for the Edit menu and the notice; nil when nothing.
@@ -476,32 +519,11 @@ final class EditorModel {
         let parts = changedParts(a, b).filter { $0 != "count" }
         // A lane change pins items to their lanes too, so it touches several parts at once.
         if parts.contains("lanes") { return ("Lane Change", nil) }
-        guard parts.count == 1, let part = parts.first else { return ("Changes", nil) }
-        let counts: (Int, Int)
-        let named: (String, InspectorTab?)
-        switch part {
-        case "clips": named = ("Cut", .clip); counts = (a.clips.count, b.clips.count)
-        case "zooms": named = ("Zoom", .zoom); counts = (a.zooms.count, b.zooms.count)
-        case "redactions": named = ("Hidden Part", .hide); counts = (a.redactions?.count ?? 0, b.redactions?.count ?? 0)
-        case "texts": named = ("Text", .text); counts = (a.texts?.count ?? 0, b.texts?.count ?? 0)
-        case "shapes": named = ("Shape", .text); counts = (a.shapes?.count ?? 0, b.shapes?.count ?? 0)
-        case "markers": named = ("Marker", nil); counts = (a.markers?.count ?? 0, b.markers?.count ?? 0)
-        case "audio": return ("Sound Change", .audio)
-        case "export": return ("Export Settings", .export)
-        case "clicks": return ("Click Style", .style)
-        case "frame": return ("Background", .style)
-        case "motion": return ("Motion Blur", .zoom)
-        case "cursor": return ("Cursor Style", .cursor)
-        case "captions": return ("Captions", .captions)
-        case "keys": return ("Shortcuts", .captions)
-        case "transcript": return ("Caption Fix", .captions)
-        // Round 4 fx-render.
-        case "transitions": return ("Transitions", .style)
-        case "lens": return ("Lens", .style)
-        case "tilt": return ("3D Tilt", .style)
-        default: return ("Changes", nil)
-        }
-        if part == "clips" { return (counts.1 > counts.0 ? "Split" : counts.1 < counts.0 ? "Delete Clip" : "Clip Change", .clip) }
+        guard parts.count == 1, let part = EditParts.all.first(where: { $0.key == parts[0] }) else { return ("Changes", nil) }
+        guard let count = part.count else { return (part.name, part.tab) }
+        let counts = (count(a), count(b))
+        let named = (part.name, part.tab)
+        if part.key == "clips" { return (counts.1 > counts.0 ? "Split" : counts.1 < counts.0 ? "Delete Clip" : "Clip Change", .clip) }
         if counts.1 > counts.0 { return ("Add \(named.0)", named.1) }
         if counts.1 < counts.0 { return ("Delete \(named.0)", named.1) }
         return ("\(named.0) Change", named.1)
@@ -665,6 +687,22 @@ final class EditorModel {
         }
     }
 
+    /// Typing in a caption line goes through change(), as the Text tab's words do: the keystrokes are one gesture and
+    /// one "Caption Fix" undo step, and EditOpDiff sends fixLine or unfixLine from the gesture's mark. Empty words keep
+    /// the last fix (only the eye button hides a line), and the transcript's own words take the fix back.
+    func typeCaption(_ line: CaptionTrack.Line, text: String) {
+        change { $0.transcript = Self.typedCaption($0.transcript, line: line, text: text) }
+    }
+
+    nonisolated static func typedCaption(_ transcript: EditProject.TranscriptSettings?, line: CaptionTrack.Line,
+                                         text: String) -> EditProject.TranscriptSettings? {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return transcript }
+        var settings = transcript ?? .init()
+        let key = EditProject.TranscriptSettings.key(line)
+        if text == line.text { settings.fixes.removeValue(forKey: key) } else { settings.fixes[key] = text }
+        return settings.fixes.isEmpty ? nil : settings
+    }
+
     /// A copy of the selected zoom, hidden part, text, shape or camera part right after the original, selected (⌘D).
     func duplicateSelection() {
         let id: String
@@ -713,10 +751,9 @@ final class EditorModel {
     }
 
     /// A text at the top middle for 3 s from the playhead; the Text tab then writes and places it.
-    func addText(_ text: String = "Title", atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
-        // A text fades in from its start (`ZoomState.texts`): it starts that much earlier, so the paused frame at the
-        // playhead shows it whole.
-        let start = max(0, TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project) - ZoomState.textFadeUs(lengthUs: durationUs))
+    func addText(_ text: String = "Title", atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil,
+                 lead: Bool = true) {
+        let start = Self.textStart(project: project, atOutput: outUs ?? clock.outUs, lengthUs: durationUs, lead: lead)
         let op = EditOp.Text(from: EditOpDiff.seconds(start), to: EditOpDiff.seconds(start + durationUs), text: text, lane: lane)
         edit([.text(op)]) { [weak self] before, after in
             guard let self, let id = Self.addedID(before, after, { ($0.texts ?? []).map(\.id) }) else { return }
@@ -725,17 +762,43 @@ final class EditorModel {
         }
     }
 
+    /// Where a text added at output time `outUs` starts in source time. At the playhead (`lead`) it fades in from its
+    /// start (`ZoomState.texts`, in the movie as it plays), so it starts that much earlier in what plays and the paused
+    /// frame shows it whole in a sped-up part too; never before the clip that plays at the playhead, because the time
+    /// before it is cut. From a dragged range it starts where the range does, as every other kind the popover adds.
+    nonisolated static func textStart(project: EditProject, atOutput outUs: Int64, lengthUs: Int64, lead: Bool) -> Int64 {
+        let at = TimelineMap.sourceTime(atOutput: outUs, in: project)
+        guard lead else { return at }
+        let early = TimelineMap.sourceTime(atOutput: max(0, outUs - ZoomState.textFadeUs(lengthUs: lengthUs)), in: project)
+        guard let clip = TimelineMap.clip(atOutput: outUs, in: project)?.clip else { return early }
+        return min(at, max(clip.fromUs, early))
+    }
+
     /// Each recording marker in the kept movie as a 2.5 s step title, "1. Open the settings", in one undo step: the
     /// REPL's titleMarkers() on the service.
+    /// The step titles titleMarkers adds without the service, as markerTitleOps in project.ts does: one per marker
+    /// in the kept movie, playing 2.5 s of the finished movie (a cut or a speed-up after the marker moves its end later
+    /// in source time), ending by the next marker's title. A marker with a text starting within 0.1 s keeps it.
+    nonisolated static func markerTitleTexts(_ markers: [(us: Int64, label: String)], in project: EditProject) -> [EditOp.Text] {
+        let kept = markers.compactMap { marker in
+            TimelineMap.outputTime(ofSource: marker.us, in: project).map { (marker: marker, outUs: $0) }
+        }
+        let starts = kept.map(\.marker.us)
+        return kept.enumerated().compactMap { index, entry in
+            let marker = entry.marker
+            guard !(project.texts ?? []).contains(where: { abs($0.startUs - marker.us) <= 100_000 }) else { return nil }
+            let nextUs = starts.first { $0 > marker.us } ?? project.source.durationUs
+            let playedEndUs = TimelineMap.sourceTime(atOutput: entry.outUs + 2_500_000, in: project)
+            let endUs = min(playedEndUs, nextUs, project.source.durationUs)
+            guard endUs > marker.us else { return nil }
+            return EditOp.Text(from: EditOpDiff.seconds(marker.us), to: EditOpDiff.seconds(endUs),
+                text: String("\(index + 1). \(marker.label)".prefix(200)))
+        }
+    }
+
     func titleMarkers() {
         if !session.isOnline {
-            let kept = markers.filter { TimelineMap.outputTime(ofSource: $0.us, in: project) != nil }
-            let ops = kept.enumerated().compactMap { index, marker -> EditOp? in
-                guard !(project.texts ?? []).contains(where: { abs($0.startUs - marker.us) <= 100_000 }) else { return nil }
-                return .text(EditOp.Text(from: EditOpDiff.seconds(marker.us),
-                    to: EditOpDiff.seconds(min(project.source.durationUs, marker.us + 2_500_000)),
-                    text: String("\(index + 1). \(marker.label)".prefix(200))))
-            }
+            let ops = Self.markerTitleTexts(markers.map { (us: $0.us, label: $0.label) }, in: project).map(EditOp.text)
             guard !ops.isEmpty else {
                 show("No new marker titles in the kept movie.", error: false)
                 return
@@ -808,15 +871,10 @@ final class EditorModel {
         edit([.untext(EditOp.Untext(id: id))])
     }
 
-    /// How the source picture maps onto the canvas at the playhead: the zoom there and the frame (for the preview's
-    /// hidden-part handles).
+    /// How the source picture maps onto the canvas at the playhead, as the preview draws it there (the picture zoom,
+    /// the frame, the tilt and the canvas zoom): the hidden-part, spotlight, shape and screen-find handles use it.
     func sourceToCanvas(atOutput outUs: Int64) -> Looks.SourceToCanvas {
-        let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
-        let view = ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor)
-        let sizes = EditRenderer.outputSizes(source: CGSize(width: project.source.width, height: project.source.height),
-                                             maxHeight: 0, aspect: project.frame?.aspect)
-        let focus = ZoomState.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view)
-        return Looks.sourceToCanvas(view: view, frame: project.frame, picture: sizes.picture, canvas: sizes.canvas, coverFocus: focus)
+        Looks.sourceToCanvas(project: project, cursor: cursor, atOutput: outUs)
     }
 
     /// The moments marked while it recorded (`recording.json` settings.markers), at source microseconds.
@@ -944,10 +1002,20 @@ final class EditorModel {
         }
     }
 
-    func applyScaleToAll(_ scale: Double) {
+    /// Every zoom on zoom `id`'s target takes its level. A canvas zoom scales the whole framed export and a picture zoom
+    /// the movie inside it, so one level means another view on each, and one never sets the other.
+    func applyScaleToAll(of id: String) {
+        guard let source = project.zooms.first(where: { $0.id == id }) else { return }
         change { project in
-            for index in project.zooms.indices { project.zooms[index].scale = scale }
+            for index in project.zooms.indices where Self.sameTarget(project.zooms[index], source) {
+                project.zooms[index].scale = source.scale
+            }
         }
+    }
+
+    /// Both zooms are canvas zooms, or both zoom inside the picture (nil is the picture).
+    static func sameTarget(_ a: EditProject.Zoom, _ b: EditProject.Zoom) -> Bool {
+        (a.target ?? .picture) == (b.target ?? .picture)
     }
 
     /// A zoom moved or resized in time (a drag, ⌥← and ⌥→); the service keeps it clear of its neighbours.
@@ -1019,6 +1087,18 @@ final class EditorModel {
     /// The movie's sound tracks (a recording with the system sound and the microphone has two).
     private(set) var audioTrackCount = 0
 
+    /// The movie track's nominal frame rate, which sets the export's rate and so its H.264 size budget
+    /// (`EditRenderer.plannedOutput`); nil while it loads, which guesses 60.
+    private(set) var sourceNominalFps: Double?
+
+    private func loadNominalFps(_ asset: AVURLAsset) {
+        Task { [weak self] in
+            guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+                  let rate = try? await track.load(.nominalFrameRate) else { return }
+            self?.sourceNominalFps = Double(rate)
+        }
+    }
+
     func setTrackMuted(_ index: Int, _ muted: Bool) {
         setAudio { audio in
             audio.mutedTracks.removeAll { $0 == index }
@@ -1031,7 +1111,8 @@ final class EditorModel {
         self.change { change(&$0.audio) }
     }
 
-    /// The looks (frame and click highlight): drawn per frame from the project, so no movie rebuild.
+    /// The looks (frame and clicks): drawn per frame from the project, except the canvas shape and the click sound,
+    /// which make the movie again (needsNewMovie).
     func setLooks(_ change: (inout EditProject) -> Void) {
         self.change(change)
     }
@@ -1124,7 +1205,8 @@ final class EditorModel {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let image = try await stillFrame(project: snapshot, atOutput: at, zoom: self.zoom, maxHeight: snapshot.export.maxHeight)
+                let image = try await stillFrame(project: snapshot, atOutput: at, zoom: self.zoom, maxHeight: snapshot.export.maxHeight,
+                                                 size: snapshot.export.size)
                 guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
                     throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the frame could not be encoded"])
                 }
@@ -1158,11 +1240,13 @@ final class EditorModel {
     }
 
     /// One zoom on every click of the cursor track (the `autoZoom` op): clicks closer than 3 s share a zoom, which
-    /// starts 0.6 s before its first click and holds 1.6 s after its last; the manual zooms stay.
+    /// starts 0.6 s before its first click and holds 1.6 s after its last; it replaces only an earlier auto zoom's
+    /// zooms (origin "auto"), so the user's zooms stay.
     func autoZoom() {
         let clicks = cursor?.clicks.count ?? 0
-        edit([.autoZoom(EditOp.AutoZoom())], then: { [weak self] _, after in
-            let added = after.zooms.filter { $0.mode == .follow }.count
+        edit([.autoZoom(EditOp.AutoZoom())], then: { [weak self] before, after in
+            let had = Set(before.zooms.map(\.id))
+            let added = after.zooms.filter { !had.contains($0.id) }.count
             self?.show("Added \(Plural.count(added, "zoom")) from \(Plural.count(clicks, "click")).", error: false)
         }, failed: { [weak self] reason in
             self?.show(reason, error: false)
@@ -1184,6 +1268,7 @@ final class EditorModel {
                 let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1440)
                 span.end()
                 guard !Task.isCancelled, let self else { return }
+                self.frameUs = rendered.frameUs
                 let item = AVPlayerItem(asset: rendered.composition)
                 item.videoComposition = rendered.videoComposition
                 item.audioMix = rendered.audioMix
@@ -1204,6 +1289,7 @@ final class EditorModel {
         asset = AVURLAsset(url: video)
         filmstrip.load(video: video, durationUs: project.source.durationUs)
         waveform.load(video: video)
+        loadNominalFps(asset)
         rebuild()
     }
 
@@ -1225,23 +1311,45 @@ final class EditorModel {
         guard !isTranscribing else { return }
         isTranscribing = true
         show("Transcribing the movie…", error: false)
-        let cache = CaptionTrack.cacheURL(video: project.source.video).path
-        movie("transcript", argv: ["transcribe", project.source.video, "--format", "json", "-o", cache], timeout: 60 * 60) { [weak self] result, _ in
+        // `tools recorder transcribe` is movie.transcript(): it hears the tracks the export plays, on the movie's clock.
+        movie("transcript", argv: ["recorder", "transcribe", store.url.path], timeout: 60 * 60) { [weak self] result, _ in
             guard let self else { return }
             self.isTranscribing = false
             if case let .failure(failure) = result {
                 self.show("The transcription failed: \(failure.reason)", error: true)
                 return
             }
-            guard self.zoom.reloadCaptions() else {
+            self.reloadTranscript()
+            guard self.hasTranscript else {
                 self.show("The transcription failed: no transcript was written", error: true)
                 return
             }
-            self.hasTranscript = true
-            self.lineWords = nil
             self.setLooks { $0.captions = $0.captions ?? EditProject.Captions() }
             self.show("Captions are on.", error: false)
         }
+    }
+
+    /// The transcript cache changed on disk. It is read once the writer rests for 0.15 s, because a file written in
+    /// pieces fires an event per piece.
+    func transcriptWritten() {
+        transcriptReload?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.reloadTranscript() }
+        transcriptReload = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    /// Draws the cached transcript as it is now: its captions, its words read again at the next pick, and the music's
+    /// ducking under speech. Nothing changes when the lines are the same. The window's own Transcribe reads the file
+    /// when it ends, so the events of its writes wait for that.
+    func reloadTranscript() {
+        guard !isTranscribing else { return }
+        let before = zoom.captionLines
+        let has = zoom.reloadCaptions()
+        if has != hasTranscript { hasTranscript = has }
+        guard zoom.captionLines != before else { return }
+        lineWords = nil
+        refreshFrame()
+        if Self.transcriptAffectsSound(project) { rebuild() }
     }
 
     private(set) var isMarkingClicks = false
@@ -1370,6 +1478,16 @@ final class EditorModel {
         return format != .mp4 || project.audio.denoise != nil ? .tools(format) : .window
     }
 
+    /// What the window's MP4 export renders: the edit, or for a marked part a trimmed copy (the edit itself stays
+    /// whole). R4 9 intro and end cards: a part is a clip of the movie, without the cards around it, as `exportAs` in
+    /// src/recorder/lib/edit.ts makes it for the CLI, the REPL and the window's other formats. TimelineMap.part keeps
+    /// the cards, as partOf does there, so they go here; a part that keeps no clip exports the whole edit.
+    nonisolated static func exportedProject(_ project: EditProject, part: (fromUs: Int64, toUs: Int64)?) -> EditProject {
+        guard let part, var trimmed = TimelineMap.part(project, fromOut: part.fromUs, toOut: part.toUs) else { return project }
+        trimmed.cards = nil
+        return trimmed
+    }
+
     func export() {
         guard exportProgress == nil, !exportWaiting else { return }
         exportWaiting = true
@@ -1386,10 +1504,8 @@ final class EditorModel {
             exportThroughTools(format)
             return
         }
-        // A marked part exports a trimmed copy; the edit itself stays whole.
-        var rendered = project
         let part = exportPart
-        if let part, let trimmed = TimelineMap.part(project, fromOut: part.fromUs, toOut: part.toUs) { rendered = trimmed }
+        let rendered = Self.exportedProject(project, part: part)
         let url = EditExporter.outputURL(for: project)
         exportProgress = 0
         exportCancelled = false
@@ -1635,6 +1751,9 @@ final class EditorModel {
         session.stop()
         store.stopWatching()
         commentsStore.stopWatching()
+        transcriptWatch.stop()
+        titleWatch.stop()
+        transcriptReload?.cancel()
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         timeObserver = nil
