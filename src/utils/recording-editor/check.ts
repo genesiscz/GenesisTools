@@ -1,4 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isPictureFile } from "./overlays";
 import {
     applyOp,
     canvasShape,
@@ -159,6 +160,19 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                 at: seconds(part.startUs),
             });
         }
+    }
+
+    // A background picture saved before the frame op checked its type: the renderer draws a flat colour instead.
+    const backdrop = project.frame?.background;
+
+    if (backdrop?.kind === "image" && backdrop.image && !isPictureFile(backdrop.image)) {
+        issues.push({
+            severity: "fix",
+            kind: "background-not-picture",
+            item: "frame",
+            message: `The frame's background image ${backdrop.image} is not a picture the export reads, so it draws a flat colour`,
+            fix: "movie.frame({ background: { image: <a png, jpg, heic, tiff, gif, webp or bmp file> } })",
+        });
     }
 
     // An edit saved before the clicks op checked the track, or whose cursor.jsonl went missing: the renderer draws no

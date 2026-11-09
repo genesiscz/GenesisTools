@@ -919,6 +919,38 @@ describe("edit project (edit.json)", () => {
         });
     });
 
+    describe("a frame's background image is a picture the renderer decodes", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+        const folder = mkdtempSync(join(tmpdir(), "bg-picture-"));
+        const svg = join(folder, "bg.svg");
+        const png = join(folder, "bg.png");
+        writeFileSync(svg, "<svg/>");
+        writeFileSync(png, "png");
+
+        test("frame refuses an SVG background, takes a PNG, and an edit that holds an SVG can still change its padding", () => {
+            expect(() => applyOp(wholeProject(source), { op: "frame", background: { image: svg } })).toThrow(
+                "is not a picture"
+            );
+            expect(
+                applyOp(wholeProject(source), { op: "frame", background: { image: png } }).frame?.background
+            ).toMatchObject({
+                kind: "image",
+                image: png,
+            });
+
+            const old = applyOp(wholeProject(source), { op: "frame", background: { image: png } });
+            const holding = {
+                ...old,
+                frame: old.frame ? { ...old.frame, background: { ...old.frame.background, image: svg } } : undefined,
+            };
+            expect(applyOp(holding, { op: "frame", padding: 0.1 }).frame?.padding).toBe(0.1);
+
+            const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+            expect(checkProject(holding, facts).some((issue) => issue.kind === "background-not-picture")).toBe(true);
+            expect(checkProject(old, facts).some((issue) => issue.kind === "background-not-picture")).toBe(false);
+        });
+    });
+
     describe("click rings and the click sound need a cursor track", () => {
         const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
 

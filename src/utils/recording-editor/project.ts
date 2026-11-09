@@ -59,6 +59,8 @@ import {
     captionsStyleSchema,
     cardsLeadUs,
     cardsSchema,
+    isPictureFile,
+    PICTURE_EXTENSIONS,
     progressSchema,
     TEXT_ANIMATIONS,
     textAnimateOf,
@@ -3923,6 +3925,14 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                     background.image
                         ? `the background image ${background.image} does not exist`
                         : 'a background of kind "image" needs background.image, a picture file'
+                );
+            }
+
+            // Only the op's new image: an older edit that holds one the renderer cannot read can still change its
+            // padding, and check() names it.
+            if (op.background?.image && background.image && !isPictureFile(background.image)) {
+                throw new Error(
+                    `the background image ${background.image} is not a picture (${PICTURE_EXTENSIONS.join(", ")})`
                 );
             }
 

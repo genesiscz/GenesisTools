@@ -162,6 +162,14 @@ export const PICTURE_EXTENSIONS = [
     "dib",
 ];
 
+/**
+ * Whether `path` names a picture the renderer decodes (PICTURE_EXTENSIONS): an intro card's logo or a frame's
+ * background image. By the extension, since the REPL and the CLI have no decoder.
+ */
+export function isPictureFile(path: string): boolean {
+    return PICTURE_EXTENSIONS.includes(path.split(".").pop()?.toLowerCase() ?? "");
+}
+
 /** `introCard` and `endCard` ops: a change merges into the card; `enabled: false` removes that card. */
 export function applyCard(
     project: EditProject,
@@ -189,13 +197,11 @@ export function applyCard(
             const logo = typeof merged.logo === "string" && merged.logo ? files.resolve(merged.logo) : undefined;
 
             if (logo) {
-                const extension = logo.split(".").pop()?.toLowerCase() ?? "";
-
                 if (!files.exists(logo)) {
                     throw new Error(`the logo ${logo} does not exist`);
                 }
 
-                if (!PICTURE_EXTENSIONS.includes(extension)) {
+                if (!isPictureFile(logo)) {
                     throw new Error(`a logo is a picture (${PICTURE_EXTENSIONS.join(", ")}), not ${logo}`);
                 }
             }
