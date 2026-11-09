@@ -82,6 +82,14 @@ export const itemsList = defineMethod({
     effect: "read",
     doc: 'The meeting\'s items, optionally of one status ("suggested", "confirmed", "rejected") or kind ("speaker-range", "term", "question", "join", "label"). `what` is the one-line text the items command shows.',
 });
+export const itemsRows = defineMethod({
+    name: "items.rows",
+    params: z.object({ lowPriority: z.enum(["hide", "show"]).optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ meeting, rows: ReviewRow[], hidden }",
+    effect: "read",
+    doc: 'The review rows, as `tools meetings rows --json` prints them: each item in the order listen asks, with its question as parts, its typed choices with confidence, its edit kind, sources, Moment and last decision. lowPriority: "show" keeps the open questions under the priority line.',
+});
 export const add = defineMethod({
     name: "items.add",
     params: z.object({ findings: z.array(findingSchema).min(1) }),
@@ -426,6 +434,7 @@ export const meetingsToolsetApi = defineApi({
                 transcript,
                 evidence,
                 itemsList,
+                itemsRows,
                 add,
                 suggest,
                 confirm,

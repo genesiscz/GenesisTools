@@ -12,7 +12,7 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
-import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
+import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type ClipPlan, type CutControl, cutClip, probeAudio } from "./audio";
 import type { LinePoint, MomentErrorCode, MomentTarget } from "./moment-schema";
@@ -33,7 +33,9 @@ export {
     type LinePoint,
     MOMENT_ERROR_CODES,
     type MomentErrorCode,
+    type MomentMention,
     type MomentTarget,
+    momentsInText,
     momentTargetSchema,
 } from "./moment-schema";
 
@@ -195,56 +197,6 @@ export function speakerStretches(transcript: readonly TranscriptEntry[] | Transc
     });
 
     return stretches;
-}
-
-/** A time or a range named in a text, with where it stands in the text (UTF-16 offsets, end exclusive). */
-export interface MomentMention {
-    start: number;
-    end: number;
-    text: string;
-    target: Extract<MomentTarget, { kind: "time" | "range" }>;
-}
-
-const CLOCK_IN_TEXT = /(?<![\d:.])\d{1,2}:\d{2}(?::\d{2})?(?![\d:])/g;
-/** What joins two times into one range: a dash, or "to", "and", "until" (and the Czech "do", "a", "až"). */
-const RANGE_JOIN = /^\s*(?:[-–—]|to|and|until|till|do|a|až)\s*$/iu;
-
-/**
- * The times a text names, in order: "from 05:09 to 05:31", "between 1:02:10 and 1:02:40" and "05:09–05:31" are ranges,
- * a lone "1:49:48" is a time. A question's text is how it names the moments that settle it (R17: every time in it
- * plays; R38: "This answers 12:10–12:30" is a Moment the window pushes on its context stack, above the one playing).
- */
-export function momentsInText(text: string): MomentMention[] {
-    const clocks = [...text.matchAll(CLOCK_IN_TEXT)].flatMap((match) => {
-        const sec = parseClock(match[0]);
-        return sec === undefined ? [] : [{ start: match.index, end: match.index + match[0].length, sec }];
-    });
-    const mentions: MomentMention[] = [];
-
-    for (let index = 0; index < clocks.length; index++) {
-        const from = clocks[index]!;
-        const to = clocks[index + 1];
-
-        if (to && to.sec > from.sec && RANGE_JOIN.test(text.slice(from.end, to.start))) {
-            mentions.push({
-                start: from.start,
-                end: to.end,
-                text: text.slice(from.start, to.end),
-                target: { kind: "range", fromSec: from.sec, toSec: to.sec },
-            });
-            index++;
-            continue;
-        }
-
-        mentions.push({
-            start: from.start,
-            end: from.end,
-            text: text.slice(from.start, from.end),
-            target: { kind: "time", atSec: from.sec },
-        });
-    }
-
-    return mentions;
 }
 
 /**

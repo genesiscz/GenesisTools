@@ -13,7 +13,7 @@ import {
 } from "../config-edit";
 import { OpenedMeeting } from "../opened-meeting";
 import { screenTimeline } from "../screen-timeline";
-import { configShowRead, overviewRead, speakerStatsRead } from "../window-reads";
+import { configShowRead, overviewRead, rowsRead, speakerStatsRead } from "../window-reads";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
 import { type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
 
@@ -21,6 +21,23 @@ import { type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
  * The Meetings service's reads for the timeline and the settings (`meeting.speakers`, `meeting.screen`,
  * `meeting.waveform`, `meetings.overview`, `config.*`). Loaded by handlers.ts only when a call asks for one of them.
  */
+
+export async function readRows(
+    params: MeetingsParsedParams<"meeting.rows">,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"meeting.rows">> {
+    const record = recordOf(store, params.meeting);
+    const linked = deps.linkedSource?.(record);
+    const config = deps.config ? await deps.config() : undefined;
+    return rowsRead({
+        store,
+        record,
+        ...(linked ? { linked } : {}),
+        ...(config ? { minPriority: config.global.playback.listen.minPriority } : {}),
+        ...(params.lowPriority ? { lowPriority: params.lowPriority } : {}),
+    });
+}
 
 export async function readSpeakers(
     params: MeetingsParsedParams<"meeting.speakers">,

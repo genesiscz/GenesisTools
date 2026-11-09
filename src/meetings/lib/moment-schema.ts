@@ -1,3 +1,4 @@
+import { parseClock } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
 
 /**
@@ -88,3 +89,60 @@ export const momentSchema = z.object({
     repeatGapSec: z.number().optional(),
     screen: z.array(momentFrameSchema).optional(),
 });
+
+/** A time or a range named in a text, with where it stands in the text (UTF-16 offsets, end exclusive). */
+export interface MomentMention {
+    start: number;
+    end: number;
+    text: string;
+    target: Extract<MomentTarget, { kind: "time" | "range" }>;
+}
+
+const CLOCK_IN_TEXT = /(?<![\d:.])\d{1,2}:\d{2}(?::\d{2})?(?![\d:])/g;
+/** What joins two times into one range: a dash, or "to", "until" (and the Czech "do", "až"). */
+const RANGE_JOIN = /^\s*(?:[-–—]|to|until|till|do|až)\s*$/iu;
+/** "and" (Czech "a") joins a range only after "between" ("mezi"): "at 10:00 and 10:30" names two times. */
+const BETWEEN_JOIN = /^\s*(?:and|a)\s*$/iu;
+const BETWEEN = /(?:between|mezi)\s*$/iu;
+
+/**
+ * The times a text names, in order: "from 05:09 to 05:31", "between 1:02:10 and 1:02:40" and "05:09–05:31" are ranges,
+ * a lone "1:49:48" is a time, and "at 10:00 and 10:30" is two times. Every time is on the transcript clock: a time of
+ * day ("the 14:30 standup") reads as a transcript time too, a known limit (WaveA-Handoff). A question's text is how it names the moments that settle it (R17: every time in it
+ * plays; R38: "This answers 12:10–12:30" is a Moment the window pushes on its context stack, above the one playing).
+ */
+export function momentsInText(text: string): MomentMention[] {
+    const clocks = [...text.matchAll(CLOCK_IN_TEXT)].flatMap((match) => {
+        const sec = parseClock(match[0]);
+        return sec === undefined ? [] : [{ start: match.index, end: match.index + match[0].length, sec }];
+    });
+    const mentions: MomentMention[] = [];
+
+    for (let index = 0; index < clocks.length; index++) {
+        const from = clocks[index]!;
+        const to = clocks[index + 1];
+
+        const joint = to ? text.slice(from.end, to.start) : "";
+        const joins = RANGE_JOIN.test(joint) || (BETWEEN_JOIN.test(joint) && BETWEEN.test(text.slice(0, from.start)));
+
+        if (to && to.sec > from.sec && joins) {
+            mentions.push({
+                start: from.start,
+                end: to.end,
+                text: text.slice(from.start, to.end),
+                target: { kind: "range", fromSec: from.sec, toSec: to.sec },
+            });
+            index++;
+            continue;
+        }
+
+        mentions.push({
+            start: from.start,
+            end: from.end,
+            text: text.slice(from.start, from.end),
+            target: { kind: "time", atSec: from.sec },
+        });
+    }
+
+    return mentions;
+}

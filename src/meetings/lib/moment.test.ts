@@ -268,6 +268,23 @@ describe("times named in a text (R17, R38)", () => {
         expect(momentsInText("5:31 to 5:09").map((one) => one.target.kind)).toEqual(["time", "time"]);
         expect(momentsInText("version 1.2, ratio 3:2:1:4")).toEqual([]);
     });
+
+    test('"at 10:00 and 10:30" names two times; "between 10:00 and 10:30" names a range', () => {
+        expect(momentsInText("said at 10:00 and 10:30").map((one) => one.target)).toEqual([
+            { kind: "time", atSec: 600 },
+            { kind: "time", atSec: 630 },
+        ]);
+        expect(momentsInText("between 10:00 and 10:30").map((one) => one.target)).toEqual([
+            { kind: "range", fromSec: 600, toSec: 630 },
+        ]);
+    });
+
+    // A known limit (WaveA-Handoff): a time of day reads as a transcript time, so a row offers it as one.
+    test("a wall-clock time in a question reads as a transcript time", () => {
+        expect(momentsInText("Was this decided at the 14:30 standup?").map((one) => one.target)).toEqual([
+            { kind: "time", atSec: 870 },
+        ]);
+    });
 });
 
 describe("cutting a Moment", () => {

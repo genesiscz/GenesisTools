@@ -574,6 +574,33 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(undo.message).toContain("a sent comment cannot be taken back");
     });
 
+    test("meeting.rows answers the review rows, with the transcript line from the meeting's source", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const rows = await client.call("meeting.rows", { meeting: REVIEW.id });
+
+        expect(rows.meeting).toBe(REVIEW.id);
+        expect(rows.hidden).toEqual({ lowPriority: 0, minPriority: 0.5 });
+        expect(rows.rows.map((row) => [row.label, row.edit, row.needs])).toEqual([["i1", "person", undefined]]);
+        expect(rows.rows[0]?.parts).toEqual([
+            { kind: "who", text: "Speaker 3 → Alex Example" },
+            {
+                kind: "when",
+                from: { sec: 12, text: "00:12" },
+                to: { sec: 30, text: "00:30" },
+                target: { kind: "item", id: "i1" },
+            },
+        ]);
+        expect(rows.rows[0]?.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
+            ["suggested", "Alex Example", 0.82],
+            ["candidate", "Dana Example", undefined],
+            ["none", "none of these", undefined],
+        ]);
+        // No line starts in 0:12 to 0:30, so the row says no words; its source is the line it falls in.
+        expect(rows.rows[0]?.sources).toEqual([
+            { kind: "line", at: { sec: 9, text: "00:09" }, text: "The button moved to the right." },
+        ]);
+    });
+
     test("Clip 5s: a Moment of a selection with lengthSec ends that long after the selection's start", async () => {
         const { client } = await ADAPTERS[kind]();
         const selection = { kind: "selection" as const, from: { atSec: 2, line: 0 }, to: { atSec: 9, line: 1 } };
@@ -1001,6 +1028,7 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "config.read", { path: "global.playback.listen.longestClipSec" });
     await ask(window, "config.set", { path: "global.playback.listen.longestClipSec", value: 25 });
     await ask(window, "config.unset", { path: "global.playback.listen.longestClipSec" }, "Back to its default.");
+    await ask(window, "meeting.rows", { meeting: REVIEW.id }, "The review rows, in the order listen asks.");
     const selection = { kind: "selection", from: { atSec: 2, line: 0 }, to: { atSec: 9, line: 1 } };
     await ask(
         window,

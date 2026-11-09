@@ -607,6 +607,7 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
                         candidates: suspect.candidates.map(
                             (candidate) => `${candidate.term} ${candidate.confidence} %`
                         ),
+                        candidateScores: candidateScoresOf(suspect.candidates),
                     },
                 },
             ];
@@ -626,10 +627,19 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
                     verdict: word.verdict,
                     wordCheck: wordCheck?.provider,
                     candidates: word.candidates.map((candidate) => `${candidate.term} ${candidate.confidence} %`),
+                    candidateScores: candidateScoresOf(word.candidates),
                 },
             };
         }),
     ];
+}
+
+/**
+ * A term's candidates typed, each with its confidence 0 to 1 as an item's (WaveB-Plan decision 7): a review row shows
+ * them on its choices. `candidates` keeps the "EMP 82 %" strings older readers print.
+ */
+function candidateScoresOf(candidates: Array<{ term: string; confidence: number }>) {
+    return candidates.map((candidate) => ({ term: candidate.term, confidence: candidate.confidence / 100 }));
 }
 
 /** A line counts as one channel when that channel holds at least this share of it (rule E1). */
