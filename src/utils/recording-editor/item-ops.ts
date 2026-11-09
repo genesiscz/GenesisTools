@@ -369,23 +369,50 @@ export function removeCameraHidden(project: EditProject, id: string): EditProjec
 }
 
 /**
+ * The corners, in 0...1 of the picture, of a square in pixels round `at` whose half side is `radius` times the
+ * picture's short side, so the circle drawn in it is round on any picture shape. Near an edge the square moves
+ * inward and keeps its size, so the circle is never cut flat.
+ */
+export function circleAround(
+    at: { x: number; y: number },
+    radius: number,
+    picture: { width: number; height: number }
+): { start: { x: number; y: number }; end: { x: number; y: number } } {
+    const short = Math.min(picture.width, picture.height);
+    const half = { x: (radius * short) / picture.width, y: (radius * short) / picture.height };
+    const centre = { x: clamp(at.x, half.x, 1 - half.x), y: clamp(at.y, half.y, 1 - half.y) };
+    return {
+        start: { x: centre.x - half.x, y: centre.y - half.y },
+        end: { x: centre.x + half.x, y: centre.y + half.y },
+    };
+}
+
+/** Where an arrow that points at `at` starts: towards the middle of the picture (the editor window's arrow tail). */
+export function arrowTail(at: { x: number; y: number }): { x: number; y: number } {
+    const toward = { x: at.x > 0.5 ? -1 : 1, y: at.y > 0.5 ? -1 : 1 };
+    return { x: clamp(at.x + toward.x * 0.09, 0, 1), y: clamp(at.y + toward.y * 0.09, 0, 1) };
+}
+
+/**
  * Where a new shape goes when the op gives no points: at `at`, else where the pointer is at its start (the cursor
- * track), else the middle. An arrow points at it from towards the middle; a box or circle goes round it.
+ * track), else the middle. An arrow points at it from towards the middle (arrowTail). A circle goes round it, round
+ * in pixels with a radius of 6 % of the picture's short side (circleAround). A box goes round it as 16 % of the
+ * picture's width by 12 % of its height, so its shape in pixels follows the picture's shape.
  */
 export function placedShape(
     kind: "arrow" | "box" | "circle",
-    at: { x: number; y: number }
+    at: { x: number; y: number },
+    picture: { width: number; height: number }
 ): { start: { x: number; y: number }; end: { x: number; y: number } } {
-    const unit = (value: number) => clamp(value, 0, 1);
-
     if (kind === "arrow") {
-        const toward = { x: at.x > 0.5 ? -1 : 1, y: at.y > 0.5 ? -1 : 1 };
-        return {
-            start: { x: unit(at.x + toward.x * 0.09), y: unit(at.y + toward.y * 0.09) },
-            end: { x: at.x, y: at.y },
-        };
+        return { start: arrowTail(at), end: { x: at.x, y: at.y } };
     }
 
+    if (kind === "circle") {
+        return circleAround(at, 0.06, picture);
+    }
+
+    const unit = (value: number) => clamp(value, 0, 1);
     return {
         start: { x: unit(at.x - 0.08), y: unit(at.y - 0.06) },
         end: { x: unit(at.x + 0.08), y: unit(at.y + 0.06) },

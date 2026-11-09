@@ -2293,7 +2293,7 @@ describe("the editor window's item ops", () => {
         const points = (shape: { x1: number; y1: number; x2: number; y2: number } | undefined) =>
             [shape?.x1, shape?.y1, shape?.x2, shape?.y2].map((value) => Math.round((value ?? -1) * 1000) / 1000);
         let project = applyOp(withCursor(), { op: "shape", from: 2, to: 4, kind: "circle" });
-        expect(points(project.shapes?.[0])).toEqual([0.62, 0.24, 0.78, 0.36]);
+        expect(points(project.shapes?.[0])).toEqual([0.666, 0.24, 0.734, 0.36]);
         project = applyOp(project, { op: "shape", from: 2, to: 4, kind: "arrow", at: { x: 0.2, y: 0.8 } });
         expect(points(project.shapes?.[1])).toEqual([0.29, 0.71, 0.2, 0.8]);
         const middle = applyOp(wholeProject(source), { op: "shape", from: 2, to: 4, kind: "box" });
@@ -2484,6 +2484,79 @@ describe("the editor window's item ops", () => {
         const music = applyOp(wholeProject(source), { op: "music", file, startMs: 0, loop: true }).audio.music;
         expect(music).not.toHaveProperty("startMs");
         expect(music).not.toHaveProperty("loop");
+    });
+});
+
+// Regression test: hunt 2026-11-09 circle-shape-aspect, the circles were ovals on every picture shape but one.
+describe("a circle placed at a point or a click", () => {
+    const pictures = [
+        { width: 1920, height: 1080 },
+        { width: 780, height: 1688 },
+    ];
+    const ofSize = ({ width, height }: { width: number; height: number }) =>
+        wholeProject({ video: "/movies/screen.mp4", durationUs: 10_000_000, width, height });
+    const pixels = (
+        shape: { x1: number; y1: number; x2: number; y2: number } | undefined,
+        { width, height }: { width: number; height: number }
+    ) => ({
+        wide: ((shape?.x2 ?? 0) - (shape?.x1 ?? 0)) * width,
+        tall: ((shape?.y2 ?? 0) - (shape?.y1 ?? 0)) * height,
+    });
+    const inPicture = (shape: { x1: number; y1: number; x2: number; y2: number } | undefined) =>
+        [shape?.x1, shape?.y1, shape?.x2, shape?.y2].every((value) => value !== undefined && value >= 0 && value <= 1);
+
+    test("is round in pixels on a landscape and a portrait picture", () => {
+        for (const picture of pictures) {
+            const click = annotateClicks(ofSize(picture), [{ ms: 1000, x: 0.5, y: 0.5, click: "left" }]).project;
+            const ring = pixels(click.shapes?.[0], picture);
+            expect(Math.abs(ring.wide - ring.tall)).toBeLessThan(1);
+            const placed = applyOp(ofSize(picture), {
+                op: "shape",
+                from: 2,
+                to: 4,
+                kind: "circle",
+                at: { x: 0.5, y: 0.5 },
+            });
+            const circle = pixels(placed.shapes?.[0], picture);
+            expect(Math.abs(circle.wide - circle.tall)).toBeLessThan(1);
+        }
+    });
+
+    test("near an edge moves inward and stays round inside the picture", () => {
+        for (const picture of pictures) {
+            for (const at of [
+                { x: 0.99, y: 0.5 },
+                { x: 0.01, y: 0.99 },
+            ]) {
+                const click = annotateClicks(ofSize(picture), [{ ms: 1000, ...at, click: "left" }]).project.shapes?.[0];
+                const placed = applyOp(ofSize(picture), { op: "shape", from: 2, to: 4, kind: "circle", at })
+                    .shapes?.[0];
+
+                for (const shape of [click, placed]) {
+                    const size = pixels(shape, picture);
+                    expect(inPicture(shape)).toBe(true);
+                    expect(Math.abs(size.wide - size.tall)).toBeLessThan(1);
+                }
+            }
+        }
+    });
+
+    test("a circle every click is 97 px on 1920x1080 and 70 px on 780x1688, a placed circle 130 px and 94 px", () => {
+        const sizes = pictures.map((picture) => {
+            const click = annotateClicks(ofSize(picture), [{ ms: 1000, x: 0.5, y: 0.5, click: "left" }]).project;
+            const placed = applyOp(ofSize(picture), {
+                op: "shape",
+                from: 2,
+                to: 4,
+                kind: "circle",
+                at: { x: 0.5, y: 0.5 },
+            });
+            return [pixels(click.shapes?.[0], picture).wide, pixels(placed.shapes?.[0], picture).wide].map(Math.round);
+        });
+        expect(sizes).toEqual([
+            [97, 130],
+            [70, 94],
+        ]);
     });
 });
 

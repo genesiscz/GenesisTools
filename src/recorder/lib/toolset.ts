@@ -26,7 +26,7 @@ import {
 } from "@genesiscz/utils/recording-editor/events";
 import { TRANSITION_KINDS } from "@genesiscz/utils/recording-editor/fx";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
-import { placedShape } from "@genesiscz/utils/recording-editor/item-ops";
+import { arrowTail } from "@genesiscz/utils/recording-editor/item-ops";
 import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
 import {
     CAPTION_KINDS,
@@ -2327,7 +2327,7 @@ export class Movie {
                 from: options.from,
                 to: options.to,
                 // Where an arrow starts when only its head is given: the editor window's arrow tail.
-                start: options.tail ?? placedShape("arrow", options.at).start,
+                start: options.tail ?? arrowTail(options.at),
                 end: options.at,
                 ...(options.color ? { color: options.color } : {}),
                 ...(options.appear ? { appear: options.appear } : {}),

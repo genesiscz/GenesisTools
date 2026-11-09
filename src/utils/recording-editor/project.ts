@@ -11,6 +11,7 @@ import { DENOISE_METHODS, denoiseSchema } from "./denoise";
 import { applyFxOp, describeFx, fxOpSchemas, lensSchema, tiltSchema, transitionsSchema } from "./fx";
 import { recordingItemId, withItemIds } from "./item-ids";
 import {
+    circleAround,
     clipSpeed,
     cursorPointAt,
     deleteClip,
@@ -1429,7 +1430,8 @@ export function autoZoom(project: EditProject, samples: readonly CursorSample[],
 
 /**
  * Marks every recorded click from `fromUs` to `toUs` (source) with a shape for `seconds`: a circle round the point
- * (default), a box, or an arrow pointing at it from towards the middle. A double click is one mark (clicks under
+ * (default), a box, or an arrow pointing at it from towards the middle. A circle or box is square in pixels, with a
+ * half side of 4.5 % of the picture's short side (circleAround). A double click is one mark (clicks under
  * 0.4 s apart and 2 % of the picture apart). A click that already has a shape of that kind starting within 0.1 s is
  * left alone, so a second run adds nothing. No clicks in the range is an error.
  */
@@ -1491,6 +1493,7 @@ export function annotateClicks(
         }
 
         const toward = { x: click.x > 0.5 ? -1 : 1, y: click.y > 0.5 ? -1 : 1 };
+        const ring = circleAround(click, 0.045, project.source);
         const corners =
             kind === "arrow"
                 ? {
@@ -1499,12 +1502,7 @@ export function annotateClicks(
                       x2: click.x,
                       y2: click.y,
                   }
-                : {
-                      x1: clamp(click.x - 0.03),
-                      y1: clamp(click.y - 0.045),
-                      x2: clamp(click.x + 0.03),
-                      y2: clamp(click.y + 0.045),
-                  };
+                : { x1: ring.start.x, y1: ring.start.y, x2: ring.end.x, y2: ring.end.y };
         shapes.push(
             shapeSchema.parse({
                 id: newId("s"),
@@ -2790,7 +2788,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                     : placedShape(
                           op.kind,
                           op.at ??
-                              cursorPointAt(readCursorTrack(project.source.cursor), fromUs / 1000) ?? { x: 0.5, y: 0.5 }
+                              cursorPointAt(readCursorTrack(project.source.cursor), fromUs / 1000) ?? {
+                                  x: 0.5,
+                                  y: 0.5,
+                              },
+                          project.source
                       );
 
             if (Math.hypot(points.end.x - points.start.x, points.end.y - points.start.y) < 0.01) {
