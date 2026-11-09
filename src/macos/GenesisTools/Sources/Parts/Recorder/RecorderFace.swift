@@ -147,6 +147,9 @@ package func runRecorder(_ args: [String]) -> Never {
         recorderInstance.serve { forwarded in
             let next = RecorderRequest.parse(forwarded)
             MainActor.assumeIsolated {
+                // The recorder service launches the face when a camera or window call finds no host: attach at once
+                // rather than after the retry's back-off (up to a minute).
+                RecorderServiceHost.shared?.attachNow()
                 if let edit = next.edit { EditorWindows.shared.open(path: edit, focus: next.focus, atSeconds: next.atSeconds, tab: next.tab) }
                 if next.library { LibraryWindow.shared.show(focus: next.focus) }
                 if next.picker { CapturePicker.shared.show(focus: next.focus) }
