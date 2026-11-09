@@ -224,6 +224,47 @@ describe("proposals", () => {
     });
 });
 
+describe("calendar candidates with the meeting's people", () => {
+    test("an entry that names others but none of the meeting's people is left out; shared people rank first", () => {
+        const start = "2026-11-09T13:32:00.000Z";
+        const end = "2026-11-09T15:58:00.000Z";
+        const someoneElse = { name: "Holko Anna", email: "anna@example.com" };
+        const entries = [
+            entry({
+                entryId: "other",
+                title: "Time reports",
+                start: "2026-11-09T14:00:00.000Z",
+                end: "2026-11-09T14:15:00.000Z",
+                people: [someoneElse, ME],
+            }),
+            entry({
+                entryId: "short",
+                title: "Offers sync",
+                start: "2026-11-09T14:30:00.000Z",
+                end: "2026-11-09T14:45:00.000Z",
+                people: [BOB, ME],
+            }),
+            entry({ entryId: "long", title: "Focus", start, end, people: [] }),
+        ];
+        const people = [{ name: "Smith Bob (QT)" }, { name: "Owner Example", self: true }];
+
+        expect(
+            calendarCandidates({ entries, start, end, slackMin: 15, people }).map((c) => [
+                c.entry.entryId,
+                c.sharedPeople,
+            ])
+        ).toEqual([
+            ["short", 1],
+            ["long", 0],
+        ]);
+        expect(calendarCandidates({ entries, start, end, slackMin: 15 }).map((c) => c.entry.entryId)).toEqual([
+            "long",
+            "other",
+            "short",
+        ]);
+    });
+});
+
 describe("ask each time", () => {
     test("one question per ended meeting without a project; its answer applies project, labels and pairings", async () => {
         const start = "2026-11-04T14:00:00.000Z";
