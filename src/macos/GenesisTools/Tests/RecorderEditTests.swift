@@ -1162,9 +1162,9 @@ final class RecorderEditTests: XCTestCase {
     }
 
     func testTheSizeEstimateMatchesAMeasuredExport() {
-        let bytes = EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .h264)
+        let bytes = EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .h264, fps: 60)
         XCTAssertEqual(Double(bytes), 10_300_000, accuracy: 600_000, "the export measured at 10.3 MB")
-        XCTAssertLessThan(EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .hevc), bytes)
+        XCTAssertLessThan(EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .hevc, fps: 60), bytes)
     }
 
     /// The tag over a dragged segment names its start in the movie (after the cut) and its length.

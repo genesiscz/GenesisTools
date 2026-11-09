@@ -416,8 +416,8 @@ private struct ExportSummary: View {
         let settings = model.project.export
         let format = settings.format ?? .mp4
         let source = CGSize(width: model.project.source.width, height: model.project.source.height)
-        let size = EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: model.project.frame?.aspect,
-                                            h264Fps: settings.codec == .h264 ? 60 : nil).canvas
+        let size = EditRenderer.plannedOutput(export: settings, source: source, aspect: model.project.frame?.aspect,
+                                              nominalFps: model.sourceNominalFps).canvas
         let part = model.exportPart
         VStack(alignment: .leading, spacing: 8) {
             Text("Export").font(.system(size: 14, weight: .semibold))
@@ -686,10 +686,12 @@ func stillFrames(project: EditProject, atOutput times: [Int64], zoom: ZoomState)
     return images
 }
 
-/// One frame of the edit as the export draws it, for the snapshot's preview. Nonisolated, as `stillFrames`.
-func stillFrame(project: EditProject, atOutput outUs: Int64, zoom: ZoomState, maxHeight: Int = 1080) async throws -> CGImage {
+/// One frame of the edit as the export draws it, for the snapshot's preview. Nonisolated, as `stillFrames`. A poster
+/// passes the export's `maxHeight` and `size`, so it has the export's size; a size the export refuses fails it too.
+func stillFrame(project: EditProject, atOutput outUs: Int64, zoom: ZoomState, maxHeight: Int = 1080,
+                size: EditProject.OutputSize? = nil) async throws -> CGImage {
     let asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
-    let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: maxHeight)
+    let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: maxHeight, size: size)
     let generator = AVAssetImageGenerator(asset: rendered.composition)
     generator.videoComposition = rendered.videoComposition
     generator.requestedTimeToleranceBefore = .zero

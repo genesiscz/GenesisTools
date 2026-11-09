@@ -230,6 +230,7 @@ final class EditorModel {
             let count = (try? await AVURLAsset(url: video).loadTracks(withMediaType: .audio).count) ?? 0
             self?.audioTrackCount = count
         }
+        loadNominalFps(asset)
         rebuild()
     }
 
@@ -1052,6 +1053,18 @@ final class EditorModel {
     /// The movie's sound tracks (a recording with the system sound and the microphone has two).
     private(set) var audioTrackCount = 0
 
+    /// The movie track's nominal frame rate, which sets the export's rate and so its H.264 size budget
+    /// (`EditRenderer.plannedOutput`); nil while it loads, which guesses 60.
+    private(set) var sourceNominalFps: Double?
+
+    private func loadNominalFps(_ asset: AVURLAsset) {
+        Task { [weak self] in
+            guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+                  let rate = try? await track.load(.nominalFrameRate) else { return }
+            self?.sourceNominalFps = Double(rate)
+        }
+    }
+
     func setTrackMuted(_ index: Int, _ muted: Bool) {
         setAudio { audio in
             audio.mutedTracks.removeAll { $0 == index }
@@ -1158,7 +1171,8 @@ final class EditorModel {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let image = try await stillFrame(project: snapshot, atOutput: at, zoom: self.zoom, maxHeight: snapshot.export.maxHeight)
+                let image = try await stillFrame(project: snapshot, atOutput: at, zoom: self.zoom, maxHeight: snapshot.export.maxHeight,
+                                                 size: snapshot.export.size)
                 guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
                     throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the frame could not be encoded"])
                 }
@@ -1238,6 +1252,7 @@ final class EditorModel {
         asset = AVURLAsset(url: video)
         filmstrip.load(video: video, durationUs: project.source.durationUs)
         waveform.load(video: video)
+        loadNominalFps(asset)
         rebuild()
     }
 

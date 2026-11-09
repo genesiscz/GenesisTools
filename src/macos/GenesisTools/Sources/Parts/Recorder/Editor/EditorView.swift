@@ -1728,6 +1728,10 @@ private struct ExportInspector: View {
 
     var body: some View {
         let settings = model.project.export
+        // The export's own size rule: its frame rate, a fixed size and the H.264 budget, so the labels match the file.
+        let plan = EditRenderer.plannedOutput(export: settings,
+                                              source: CGSize(width: model.project.source.width, height: model.project.source.height),
+                                              aspect: model.project.frame?.aspect, nominalFps: model.sourceNominalFps)
         VStack(alignment: .leading, spacing: 12) {
             Text("Export").font(.system(size: 15, weight: .semibold))
                 // Once the edit rests for 0.4 s after a save: a drag saves many revisions, and each check is a tools run.
@@ -1774,6 +1778,19 @@ private struct ExportInspector: View {
                 GenSegmentedTabs("Size", items: offered.map { .init($0, $0 == 0 ? "Source" : ($0 == 2160 ? "4K" : "\($0)p")) },
                                  selection: Binding(get: { settings.maxHeight }, set: { value in model.setExport { $0.maxHeight = value } }),
                                  minSegmentWidth: 36, identifier: "recorder.export.size", fillsWidth: true)
+                // A fixed size (the exportSettings op) wins over Size and the presets, so it says so and can be cleared.
+                if let fixed = settings.size, fixed.width != nil || fixed.height != nil {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(verbatim: "The edit asks for exactly \(Int(plan.canvas.width)) × \(Int(plan.canvas.height)); that wins over Size and the presets.")
+                            .font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        IconButton(systemName: "xmark.circle.fill", tooltip: "Clear the fixed size: Size and the presets decide again", size: 12) {
+                            model.setExport { $0.size = nil }
+                        }
+                        .accessibilityIdentifier("recorder.export.clearSize")
+                    }
+                }
             }
             // A GIF has no sound and no player for subtitles or chapters; WebM players read WebVTT; only an MP4 carries chapters.
             if settings.format != .gif {
@@ -1795,13 +1812,7 @@ private struct ExportInspector: View {
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            let source = CGSize(width: model.project.source.width, height: model.project.source.height)
-            // A screen recording exports at 60 fps; the label uses the same size rule as the export.
-            let aspect = model.project.frame?.aspect
-            let size = EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: aspect,
-                                                h264Fps: settings.codec == .h264 ? 60 : nil).canvas
-            let full = EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: aspect).canvas
-            let capped = size.height < full.height
+            let size = plan.canvas
             let movie = (settings.format ?? .mp4) == .mp4
             let part = model.exportPart
             let length = part.map { $0.toUs - $0.fromUs } ?? model.durationUs
@@ -1827,17 +1838,17 @@ private struct ExportInspector: View {
             SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(length, tenths: true))"
                                                       : formatClock(length, tenths: true))
             if movie {
-                let bytes = EditExporter.estimatedBytes(size: size, lengthUs: length, codec: settings.codec)
+                let bytes = EditExporter.estimatedBytes(size: size, lengthUs: length, codec: settings.codec, fps: plan.fps)
                 SectionLabel(text: "File size", value: "about \(ByteFormat.file(bytes))")
-                    .instantTooltip("From screen exports of this kind (about 0.08 bits per pixel and frame at 60 fps, HEVC 40 % less); a busy movie can be twice as large")
+                    .instantTooltip("From screen exports of this kind (about 0.08 bits per pixel and frame, at the export's \(Int(plan.fps)) fps, HEVC 40 % less); a busy movie can be twice as large")
                 if bytes > 25_000_000 {
                     Text("Many chats take 25 MB at most: the Chat preset (720p) or a part from In to Out makes it smaller.")
                         .font(.system(size: 11)).foregroundStyle(Color.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if capped && movie {
-                Text(verbatim: "H.264 at 60 fps stops at \(Int(size.width)) × \(Int(size.height)). HEVC keeps \(Int(full.width)) × \(Int(full.height)).")
+            if plan.budgetCapped && movie {
+                Text(verbatim: "H.264 at \(Int(plan.fps)) fps stops at \(Int(size.width)) × \(Int(size.height)). HEVC keeps \(Int(plan.unbudgeted.width)) × \(Int(plan.unbudgeted.height)).")
                     .font(.system(size: 11))
                     .foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)

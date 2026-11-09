@@ -8,12 +8,14 @@ import SwiftUI
 /// sheet's labels are drawn with Core Text, and the exporter only calls its progress on the main actor. A snapshot
 /// draws a window, so it is main-actor work throughout; its awaits still give the main thread back between steps.
 enum RecorderRenders {
-    /// `--still`: one frame of the edit as it exports. `full` renders at the export's size (a poster).
+    /// `--still`: one frame of the edit as it exports. `full` renders at the export's size (a poster): its height, its
+    /// saved size and its H.264 budget (`EditRenderer.plannedOutput`). A size given to one export is that export's only.
     static func still(source: String, atSeconds: Double, out: String?, full: Bool) async throws -> [String: Any] {
         let project = try await openProject(source)
         let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
         let at = Int64((atSeconds * 1_000_000).rounded())
-        let image = try await stillFrame(project: project, atOutput: at, zoom: zoom, maxHeight: full ? project.export.maxHeight : 1080)
+        let image = try await stillFrame(project: project, atOutput: at, zoom: zoom, maxHeight: full ? project.export.maxHeight : 1080,
+                                         size: full ? project.export.size : nil)
         let url = URL(fileURLWithPath: out ?? NSTemporaryDirectory() + "recorder-still-\(UUID().uuidString.prefix(8)).png")
         try writePNG(image, to: url, what: "the frame")
         return ["ok": true, "path": url.path, "width": image.width, "height": image.height, "atSeconds": atSeconds]

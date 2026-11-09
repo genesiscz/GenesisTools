@@ -687,6 +687,30 @@ struct EditRenderer {
         return 30
     }
 
+    /// The export's picture, canvas and frame rate (`plannedOutput`).
+    struct OutputPlan: Equatable {
+        let picture: CGSize
+        let canvas: CGSize
+        /// The constant rate the movie is written at (`exportFps`).
+        let fps: Double
+        /// The canvas without the H.264 frame-rate budget: what HEVC keeps.
+        let unbudgeted: CGSize
+        /// The H.264 budget made the canvas smaller; never with a fixed size, which wins over the budget.
+        var budgetCapped: Bool { canvas.height < unbudgeted.height }
+    }
+
+    /// The one size rule of the export and of everything that names its size: the export itself, a full still (a
+    /// poster, `still --full`, Save Frame) and the Export tab's size, file size and H.264 note. `nominalFps` is the
+    /// movie track's rate; nil (not read yet) guesses 60, a screen recording's usual export rate.
+    static func plannedOutput(export: EditProject.ExportSettings, source: CGSize, aspect: EditProject.CanvasAspect?,
+                              nominalFps: Double?) -> OutputPlan {
+        let fps = exportFps(nominal: nominalFps ?? 60)
+        let sizes = outputSizes(source: source, maxHeight: export.maxHeight, aspect: aspect,
+                                h264Fps: export.codec == .h264 ? fps : nil, fixed: export.size)
+        let unbudgeted = outputSizes(source: source, maxHeight: export.maxHeight, aspect: aspect, fixed: export.size).canvas
+        return OutputPlan(picture: sizes.picture, canvas: sizes.canvas, fps: fps, unbudgeted: unbudgeted)
+    }
+
     /// `cards` (the export only) plays the intro card before the movie and the end card after it; every output time
     /// of the movie then sits `leadUs` later in the composition. The preview leaves them out, so its time is the edit's.
     /// R5 3 export size: both sides asked must keep the canvas's shape (within 1 %), or the picture would be stretched.
@@ -763,10 +787,14 @@ struct EditRenderer {
             cursor = cursor + us(cardSpans.tailUs)
         }
 
-        let fps = Self.exportFps(nominal: Double(nominalFps))
+        // The export and a full still pass the export's height and size; the preview and a preview still their own.
+        var rule = project.export
+        rule.maxHeight = maxHeight
+        rule.size = fixed
+        let plan = plannedOutput(export: rule, source: natural, aspect: project.frame?.aspect, nominalFps: Double(nominalFps))
+        let fps = plan.fps
         try checkSize(fixed, source: natural, aspect: project.frame?.aspect)
-        let (picture, size) = outputSizes(source: natural, maxHeight: maxHeight, aspect: project.frame?.aspect,
-                                          h264Fps: project.export.codec == .h264 ? fps : nil, fixed: fixed)
+        let (picture, size) = (plan.picture, plan.canvas)
         let outputScale = picture.height / natural.height
         let cameraFeed = await CameraFeed.make(project: project)
         // Round 4 fx-render: the frames a transition blends with, read when a frame first needs them.
@@ -954,16 +982,17 @@ final class EditExporter {
         let bytes: Int64
     }
 
-    /// Where an export goes: the file chosen with Change… (its extension set to the format), else beside the movie,
-    /// named after the recording's title ("cursor test 1.mp4") or `<movie>-edited` for a plain movie, with "-2", "-3"
-    /// so an export never overwrites a file. `tools recorder export` names a GIF or WebM by the same rule.
-    /// The MP4's likely size before it is made: screen exports measured at about 0.082 bits per pixel and frame at
-    /// 60 fps with H.264 (1152 × 720 for 20 s gave 10.3 MB), HEVC about 40 % less. An estimate for the Export tab.
-    nonisolated static func estimatedBytes(size: CGSize, lengthUs: Int64, codec: EditProject.Codec) -> Int64 {
-        let bitsPerSecond = Double(size.width * size.height) * 60 * 0.082 * (codec == .hevc ? 0.6 : 1)
+    /// The MP4's likely size before it is made: screen exports measured at about 0.082 bits per pixel and frame with
+    /// H.264 (1152 × 720 at 60 fps for 20 s gave 10.3 MB), HEVC about 40 % less. An estimate for the Export tab, at
+    /// the rate the export writes (`EditRenderer.plannedOutput`): a 30 fps export has half the frames of a 60 fps one.
+    nonisolated static func estimatedBytes(size: CGSize, lengthUs: Int64, codec: EditProject.Codec, fps: Double) -> Int64 {
+        let bitsPerSecond = Double(size.width * size.height) * fps * 0.082 * (codec == .hevc ? 0.6 : 1)
         return Int64(bitsPerSecond / 8 * Double(lengthUs) / 1_000_000)
     }
 
+    /// Where an export goes: the file chosen with Change… (its extension set to the format), else beside the movie,
+    /// named after the recording's title ("cursor test 1.mp4") or `<movie>-edited` for a plain movie, with "-2", "-3"
+    /// so an export never overwrites a file. `tools recorder export` names a GIF or WebM by the same rule.
     nonisolated static func outputURL(for project: EditProject, format: EditProject.ExportFormat = .mp4) -> URL {
         if !project.export.output.isEmpty {
             return URL(fileURLWithPath: (project.export.output as NSString).expandingTildeInPath)
