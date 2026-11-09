@@ -643,7 +643,7 @@ const movieMethods = [
                 durationMs: z.number().int().min(300).max(5000).optional(),
             })
             .strict(),
-        'Draws the ⌘/⌃ shortcuts the recording kept as they were pressed: show, size (0.05 of the short side), position "bottom" | "top", durationMs (1200). Throws when the recording kept none.'
+        'Draws the ⌘/⌃ shortcuts the recording kept as they were pressed: show, size (0.05 of the short side), position "bottom" | "top", durationMs (1200, of the movie as it plays; a press inside a cut shows nothing). Throws when the recording kept none.'
     ),
     edit(
         "captions",
@@ -666,7 +666,7 @@ const movieMethods = [
                 hideAfterMs: z.number().int().min(0).max(30_000).optional(),
             })
             .strict(),
-        "The cursor the editor draws (a movie recorded without the system cursor; info() shows cursor: null otherwise): show, size (times the recorded size, 1), smoothing (0 raw path, 1 smoothest, 0.5), hideAfterMs (fade out after standing still this long, 0 never). It still sits on every click."
+        "The cursor the editor draws (a movie recorded without the system cursor; info() shows cursor: null otherwise): show, size (times the recorded size, 1), smoothing (0 raw path, 1 smoothest, 0.5), hideAfterMs (fade out after standing still this long of the movie as it plays, 0 never). It still sits on every click."
     ),
     edit(
         "motion",
@@ -1416,7 +1416,7 @@ const movieMethods = [
                 idleFadeSeconds: z.number().min(0).max(30).optional(),
             })
             .strict(),
-        "The smooth cursor (a movie with a drawn cursor): the path follows an averaged curve, strength 0 to 1 (0.6; 1 averages over ±400 ms), moves under jitterPx points (3) are dropped, and the cursor fades after idleFadeSeconds (2; 0 keeps it) without a move. The cursor still sits exactly on each click. enabled: false turns it off (the cursor's own smoothing applies again)."
+        "The smooth cursor (a movie with a drawn cursor): the path follows an averaged curve, strength 0 to 1 (0.6; 1 averages over ±400 ms), moves under jitterPx points (3) are dropped, and the cursor fades after idleFadeSeconds (2; 0 keeps it) without a move, of the movie as it plays. The cursor still sits exactly on each click. enabled: false turns it off (the cursor's own smoothing applies again)."
     ),
     defineMethod({
         name: "waits",
