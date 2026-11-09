@@ -225,12 +225,13 @@ final class RecorderScreenFindViewTests: XCTestCase {
                                         displays: [(1, "Built-in Retina Display"), (4, "Studio")])
         model.screenQuery = "token"
         model.screenHits = hits
-        XCTAssertEqual(hits.map(\.shown), [true, false, true])
-        XCTAssertEqual(hits.map(\.sourceUs), [0, 4_000_000, 12_500_000])
+        // The shared fixture holds a fourth moment since 3cc80012cf: the same frame again at 14.5 s.
+        XCTAssertEqual(hits.map(\.shown), [true, false, true, true])
+        XCTAssertEqual(hits.map(\.sourceUs), [0, 4_000_000, 12_500_000, 14_500_000])
 
         let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen", width: 300)
         let text = try EditorShots.text(image).lowercased()
-        for word in ["find on screen", "3 moments", "api token: sk-123", "studio, not shown then", "00:12.5", "tokén list"] {
+        for word in ["find on screen", "4 moments", "api token: sk-123", "studio, not shown then", "00:12.5", "tokén list"] {
             XCTAssertTrue(text.contains(word), "\(word) missing from: \(text)")
         }
 
