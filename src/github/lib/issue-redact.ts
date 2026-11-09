@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { redact } from "@app/secrets/lib/redact/redact";
-import { DEFAULT_TYPES, type RedactType } from "@app/secrets/lib/redact/types";
+import type { RedactType } from "@app/secrets/lib/redact/types";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
@@ -50,6 +50,12 @@ export function loadPersonalMarkers(
     return markers;
 }
 
+/**
+ * The secrets redactor's kinds an issue needs. Not `ips`: its IPv6 pattern takes a log's clock time ("12:50:46") for an
+ * address, and a failure log is full of them.
+ */
+const ISSUE_TYPES: readonly RedactType[] = ["keys", "tokens", "emails", "paths"];
+
 export function emptyCounts(): RedactionCounts {
     return { keys: 0, tokens: 0, emails: 0, ips: 0, paths: 0, phones: 0, markers: 0 };
 }
@@ -85,7 +91,7 @@ export function redactIssueText(
         });
     }
 
-    const redacted = redact(result, { homeDir: options.homeDir, types: DEFAULT_TYPES });
+    const redacted = redact(result, { homeDir: options.homeDir, types: ISSUE_TYPES });
     for (const token of Object.keys(redacted.mapping)) {
         const kind = kindOfToken(token);
         if (kind) {

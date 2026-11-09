@@ -25,7 +25,7 @@ const BODY = [
     "## GenesisTools failure: The camera did not start.",
     "",
     "- **Recording folder:** `/Users/alice/.genesis-tools/recordings/library/video-1`",
-    "- contact alice@example.com, token ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+    "- contact alice@example.com, token ghp_abcdefghijklmnopqrstuvwxyz0123456789, at 12:50:46",
     "- reported by Wile E. Coyote at acme-corp.example",
 ].join("\n");
 
@@ -70,6 +70,7 @@ describe("tools github issues post", () => {
         expect(String(sent?.body)).not.toContain("Coyote");
         expect(String(sent?.body)).not.toContain("acme-corp.example");
         expect(String(sent?.body)).toContain("[HOME]/.genesis-tools/recordings/library/video-1");
+        expect(String(sent?.body)).toContain("at 12:50:46");
         expect(result.replaced).toMatchObject({ paths: 1, emails: 1, markers: 3 });
         expect(result.replaced.tokens + result.replaced.keys).toBeGreaterThanOrEqual(1);
         expect(result.skippedMarkers).toEqual(["broken"]);
