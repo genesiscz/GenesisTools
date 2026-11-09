@@ -797,3 +797,33 @@ extension EditProject {
         case topRight = "top-right", topLeft = "top-left", bottomRight = "bottom-right", bottomLeft = "bottom-left"
     }
 }
+
+/// The words and ranges the editor's fields take: the limits the edit ops' zod schemas hold
+/// (src/utils/recording-editor/project.ts), so a field never cuts what the op would keep or offers what it refuses.
+enum EditLimits {
+    /// A words field: its limit in UTF-16 units (what zod's max counts), whether the op trims before it counts, and
+    /// the advice said after a refusal.
+    struct Words {
+        let name: String
+        let limit: Int
+        var trims = false
+        var advice: String?
+
+        /// What the editor says when `value` is past the limit, or nil when it fits.
+        func refusal(_ value: String) -> String? {
+            let counted = trims ? value.trimmingCharacters(in: .whitespacesAndNewlines) : value
+            let count = counted.utf16.count
+            guard count > limit else { return nil }
+            return "\(name) holds at most \(limit) characters (this one has \(count))" + (advice.map { "; \($0)" } ?? "") + "."
+        }
+    }
+
+    static let text = Words(name: "A text", limit: 500, trims: true, advice: "split it into two texts")
+    static let introTitle = Words(name: "An intro title", limit: 120, trims: true)
+    static let introSubtitle = Words(name: "An intro subtitle", limit: 200)
+    static let introDate = Words(name: "An intro date", limit: 60)
+    static let endText = Words(name: "An end card text", limit: 200, trims: true)
+    static let endLink = Words(name: "An end card link", limit: 300)
+    static let cardSeconds: ClosedRange<Double> = 0.5...15
+    static let textAnimateMs: ClosedRange<Double> = 100...5000
+}

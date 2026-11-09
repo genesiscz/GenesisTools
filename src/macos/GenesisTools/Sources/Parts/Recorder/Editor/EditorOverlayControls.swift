@@ -163,9 +163,9 @@ struct CardsSection: View {
             .instantTooltip("A title card the export plays before the movie, on the frame's background")
             .accessibilityIdentifier("recorder.style.introCard")
             if let intro {
-                field("Title", intro.title) { value in if !value.trimmingCharacters(in: .whitespaces).isEmpty { setIntro { $0?.title = value } } }
-                field("Subtitle", intro.subtitle ?? "") { value in setIntro { $0?.subtitle = value.isEmpty ? nil : value } }
-                field("Date", intro.date ?? "") { value in setIntro { $0?.date = value.isEmpty ? nil : value } }
+                field("Title", intro.title, EditLimits.introTitle) { value in if !value.trimmingCharacters(in: .whitespaces).isEmpty { setIntro { $0?.title = value } } }
+                field("Subtitle", intro.subtitle ?? "", EditLimits.introSubtitle) { value in setIntro { $0?.subtitle = value.isEmpty ? nil : value } }
+                field("Date", intro.date ?? "", EditLimits.introDate) { value in setIntro { $0?.date = value.isEmpty ? nil : value } }
                 HStack(spacing: 8) {
                     WideButton(title: intro.logo == nil ? "Add a Logo…" : "Other Logo…", systemImage: "photo") {
                         let panel = NSOpenPanel()
@@ -191,8 +191,8 @@ struct CardsSection: View {
             .instantTooltip("A card the export plays after the movie: a line, a link and its QR code")
             .accessibilityIdentifier("recorder.style.endCard")
             if let end {
-                field("Text", end.text) { value in if !value.trimmingCharacters(in: .whitespaces).isEmpty { setEnd { $0?.text = value } } }
-                field("Link", end.link ?? "") { value in setEnd { card in
+                field("Text", end.text, EditLimits.endText) { value in if !value.trimmingCharacters(in: .whitespaces).isEmpty { setEnd { $0?.text = value } } }
+                field("Link", end.link ?? "", EditLimits.endLink) { value in setEnd { card in
                     card?.link = value.isEmpty ? nil : value
                     if value.isEmpty { card?.qr = false }
                 } }
@@ -210,8 +210,8 @@ struct CardsSection: View {
         }
     }
 
-    private func field(_ title: String, _ value: String, set: @escaping (String) -> Void) -> some View {
-        TextField(title, text: Binding(get: { value }, set: { set(String($0.prefix(200))) }))
+    private func field(_ title: String, _ value: String, _ words: EditLimits.Words, set: @escaping (String) -> Void) -> some View {
+        TextField(title, text: words.binding(value, set: set, refuse: { model.show($0, error: true) }))
             .textFieldStyle(.roundedBorder)
             .accessibilityLabel(title)
     }
@@ -219,7 +219,7 @@ struct CardsSection: View {
     private func seconds(_ title: String, _ value: Double, set: @escaping (Double) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(text: title, value: String(format: "%.1f s", value))
-            Slider(value: Binding(get: { value }, set: { set(($0 * 2).rounded() / 2) }), in: 1...10)
+            Slider(value: Binding(get: { value }, set: { set(($0 * 2).rounded() / 2) }), in: EditLimits.cardSeconds)
                 .accessibilityLabel(title)
         }
     }
@@ -275,10 +275,20 @@ struct TextAnimateControls: View {
                 SectionLabel(text: "Takes", value: String(format: "%.1f s", Double(animate.ms) / 1000))
                 Slider(value: Binding(get: { Double(animate.ms) }, set: { value in
                     model.updateText(id) { $0.animate?.ms = Int((value / 100).rounded() * 100) }
-                }), in: 100...3000)
+                }), in: EditLimits.textAnimateMs)
                 .accessibilityLabel("How long the text takes to come in")
                 .accessibilityIdentifier("recorder.text.animateMs")
             }
         }
+    }
+}
+
+extension EditLimits.Words {
+    /// A field's binding: a value that fits is sent whole, and one past the limit is refused aloud and never sent, so
+    /// the field keeps what it had (a longer value set through the API is never cut by an unrelated keystroke).
+    func binding(_ value: String, set: @escaping (String) -> Void, refuse: @escaping (String) -> Void) -> Binding<String> {
+        Binding(get: { value }, set: { typed in
+            if let refusal = refusal(typed) { refuse(refusal) } else { set(typed) }
+        })
     }
 }

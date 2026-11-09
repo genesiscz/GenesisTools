@@ -1113,10 +1113,9 @@ private struct TextInspector: View {
     private func editor(_ note: EditProject.TextNote) -> some View {
         let id = note.id
         return VStack(alignment: .leading, spacing: 8) {
-            TextField("Text", text: Binding(get: { note.text }, set: { value in
-                let words = String(value.prefix(200))
+            TextField("Text", text: EditLimits.text.binding(note.text, set: { words in
                 if !words.trimmingCharacters(in: .whitespaces).isEmpty { model.updateText(id) { $0.text = words } }
-            }), axis: .vertical)
+            }, refuse: { model.show($0, error: true) }), axis: .vertical)
             .lineLimit(1...3)
             .textFieldStyle(.roundedBorder)
             .accessibilityIdentifier("recorder.text.words")
