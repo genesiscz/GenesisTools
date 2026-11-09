@@ -1844,3 +1844,59 @@ it("a proxy retains its final still until stop and validates supplied plan windo
         expect(() => chosenPlan([], { plan: { policy: "most-change", windowSec, ranges: [] } })).toThrow("window");
     }
 });
+
+const followTestScreens = async () => ({
+    ok: true,
+    screens: [
+        {
+            displayID: 7,
+            index: 0,
+            isPrimary: true,
+            name: "Built-in",
+            position: { x: 0, y: 0 },
+            resolution: { width: 1512, height: 982 },
+            scaleFactor: 2,
+        },
+        {
+            displayID: 9,
+            index: 1,
+            isPrimary: false,
+            name: "Side",
+            position: { x: 1512, y: 0 },
+            resolution: { width: 1920, height: 1080 },
+            scaleFactor: 1,
+        },
+    ],
+});
+
+function followTestControl(target: RecordingTarget): SessionRecorderControl {
+    const directory = join(tmpdir(), `hunt-follow-${process.pid}`);
+    const recording = new RecordingSession({
+        target,
+        directory,
+        output: join(directory, "out.mp4"),
+        recorder: { record: async () => ({ ok: true, endedBy: "stop" }) },
+        join: async () => ({ durationMs: 0 }),
+        measure: async () => 0,
+        emit: () => {},
+        tickMs: 0,
+        slowStartMs: 0,
+    });
+    return new SessionRecorderControl(recording, { target, screens: followTestScreens });
+}
+
+describe("displays.list on a movie recording", () => {
+    it("marks no display for a recording that follows the pointer, whose display the capture picks itself", async () => {
+        const control = followTestControl({ kind: "display", screenIndex: 0, follow: true });
+        const recorded = (await control.listDisplays()).filter((display) => display.recorded).map((one) => one.id);
+
+        expect(recorded).toEqual([]);
+    });
+
+    it("marks the chosen display for a recording that stays on one display", async () => {
+        const control = followTestControl({ kind: "display", screenIndex: 1 });
+        const recorded = (await control.listDisplays()).filter((display) => display.recorded).map((one) => one.id);
+
+        expect(recorded).toEqual([9]);
+    });
+});

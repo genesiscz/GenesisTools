@@ -280,11 +280,15 @@ export class SessionRecorderControl extends RecorderControl {
         return { state: this.state };
     }
 
+    /**
+     * A display target that follows the pointer marks no display: its capture drops screenIndex
+     * (`segmentCaptureSpec`) and picks the display under the pointer itself, and this path does not hear which.
+     */
     override async listDisplays(): Promise<DisplayEntry[]> {
         const target = this.target;
         return (await this.connectedDisplays()).map((display) => ({
             ...display,
-            recorded: target.kind === "display" && target.screenIndex === display.index,
+            recorded: target.kind === "display" && !target.follow && target.screenIndex === display.index,
         }));
     }
 
