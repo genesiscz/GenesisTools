@@ -2533,11 +2533,11 @@ struct PRDetailView: View {
     // Folded sections, one key each so every PR opens the same way.
     @AppStorage("hub.prs.fold.description") private var foldDescription = false
     @AppStorage("hub.prs.fold.sessions") private var foldSessions = false
-    @AppStorage(HubPROverview.commitsFoldedKey) private var foldCommits = true
+    @AppStorage(HubPROverview.commitsFoldedKey, store: HubDefaults.store) private var foldCommits = true
     /// Settings, Hub, Panes, PR overview: every description in full instead of its first paragraph.
-    @AppStorage(HubPROverview.descriptionWholeKey) private var descriptionWhole = false
+    @AppStorage(HubPROverview.descriptionWholeKey, store: HubDefaults.store) private var descriptionWhole = false
     /// The reader's Show description / Show less, per PR (`PRDescriptionChoices`).
-    @AppStorage(HubPROverview.descriptionChoicesKey) private var descriptionChoices = ""
+    @AppStorage(HubPROverview.descriptionChoicesKey, store: HubDefaults.store) private var descriptionChoices = ""
     @AppStorage("hub.prs.fold.checks") private var foldChecks = false
     @State private var launching = false
     @State private var reviewing = false
