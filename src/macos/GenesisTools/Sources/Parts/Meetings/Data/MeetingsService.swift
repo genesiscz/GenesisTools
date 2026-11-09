@@ -154,6 +154,20 @@ enum MeetingsAPI {
         }
     }
 
+    /// `config.read` without a path, as the window's settings read it: the whole config, the `config show --json` shape.
+    enum ConfigShowRead: MeetingsServiceMethod {
+        static let name = "config.read"
+        typealias Params = ConfigRead.Params
+        typealias Result = ConfigShow
+    }
+
+    /// `meeting.speakers` as the Speakers tab reads it: the `speakers stats --json` shape (the spans are TL's).
+    enum SpeakerStatsRead: MeetingsServiceMethod {
+        static let name = "meeting.speakers"
+        typealias Params = MeetingSpeakers.Params
+        typealias Result = SpeakerStats
+    }
+
     /// What `config.set` and `config.unset` answer: the path as segments and the value now.
     struct ConfigChange: Decodable, Equatable {
         let path: [String]
@@ -502,7 +516,8 @@ final class MeetingsService {
                 return Unavailable(reason: "[\(code)] \(remote.message)")
             }
             return MeetingsCLI.Failure(sentence: MeetingsCLI.sentence(fromStderr: remote.message) ?? "The Meetings service refused it.",
-                                       detail: "The Meetings service refused \(method) [\(code)]:\n\(remote.message)", code: code)
+                                       detail: "The Meetings service refused \(method) [\(code)]:\n\(remote.message)", code: code,
+                                       data: remote.data)
         case let failure as JSONRPCSocketClient.Failure:
             // A service that does not answer in time may hang: the next call opens a new connection.
             if case .timeout = failure { drop(client) }

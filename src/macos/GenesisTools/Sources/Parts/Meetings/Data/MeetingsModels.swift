@@ -611,11 +611,27 @@ enum MeetingsFormat {
         return out.string(from: date)
     }
 
-    /// "1:05:09" or "5:09".
+    /// "Today 18:32", "Yesterday 09:05", "Mon 2 Nov 14:00": when a journal entry was made, in local time.
+    static func dayTime(_ text: String?, now: Date = Date(), calendar: Calendar = .current) -> String {
+        guard let date = date(text) else { return "" }
+        let day = DateFormatter()
+        day.calendar = calendar
+        day.timeZone = calendar.timeZone
+        day.locale = Locale(identifier: "en_US_POSIX")
+        day.dateFormat = "yyyy-MM-dd"
+        let clock = DateFormatter()
+        clock.locale = Locale(identifier: "en_GB")
+        clock.timeZone = calendar.timeZone
+        clock.dateFormat = "HH:mm"
+        return "\(dayTitle(day.string(from: date), now: now, calendar: calendar)) \(clock.string(from: date))"
+    }
+
+    /// "1:49:48" or "05:09": the same text the CLI and the review rows print (`formatClock`, src/utils/transcribe/
+    /// render.ts; candidate 7 of the architecture review), so a time reads the same in the terminal and the window.
     static func clock(_ seconds: Double) -> String {
         let total = max(0, Int(seconds.rounded(.down)))
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
-        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
     }
 
     /// "1 s", "0.5 s": a short setting's seconds.
