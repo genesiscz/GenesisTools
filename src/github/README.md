@@ -74,7 +74,8 @@ tools github status
 
 | Command | Description |
 |---------|-------------|
-| `issue <url-or-num>` | Fetch an issue with optional comments |
+| `issue <url-or-num>` | Fetch an issue with optional comments (`issues` is an alias) |
+| `issue post --repo <owner/repo> --title <t> --body-file <f>` | Open a new issue; `--redact` replaces personal data (the local placeholder-check list) and secrets first and says how many, `--label` repeats, `--dry-run` prints what would be posted, `--json` prints `{ posted, number, url, … }` |
 | `pr <url-or-num>` | Fetch a PR with optional comments and review comments |
 | `merge <url-or-num>` | Merge a PR; retarget stack dependents before optional branch delete |
 | `comments <url-or-num>` | Fetch only the comment thread |
