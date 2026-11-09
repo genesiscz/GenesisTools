@@ -1219,7 +1219,7 @@ const movieMethods = [
                 clip: z.string().optional(),
             })
             .strict(),
-        'The transition at the joins of two clips (a cut; a split alone joins nothing): kind "none" (a hard cut, the default), "crossfade", "zoom" (zooms through) or "blur" (a blurred wipe), ms its whole length centred on the join (300). Without clip it sets the edit-wide default; with clip (the id of the clip that starts at the join, from info().transitions.joins) only that join, and kind "default" gives it the default back. Every duration stays: the transition blends each side with a still of the other.'
+        'The transition at the joins of two clips (a cut; a split alone joins nothing): kind "none" (a hard cut, the default), "crossfade", "zoom" (zooms through) or "blur" (a blurred wipe), ms its whole length centred on the join (300), but each half plays inside at most half of its neighbouring clip, so a short clip shortens it: info().transitions.joins[].playsMs is the length that plays, and shortened: true marks such a join. Without clip it sets the edit-wide default; with clip (the id of the clip that starts at the join, from info().transitions.joins) only that join, and kind "default" gives it the default back. Every duration stays: the transition blends each side with a still of the other.'
     ),
     edit(
         "lens",

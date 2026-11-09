@@ -8,7 +8,7 @@ import { z } from "zod";
 import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { cursorSmoothSchema } from "./cursor-smooth";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
-import { applyFxOp, describeFx, fxOpSchemas, lensSchema, tiltSchema, transitionsSchema } from "./fx";
+import { applyFxOp, describeFx, fxOpSchemas, lensSchema, tiltSchema, transitionJoins, transitionsSchema } from "./fx";
 import { recordingItemId, withItemIds } from "./item-ids";
 import {
     circleAround,
@@ -1136,8 +1136,9 @@ export function leakFixOps(
 // R7 4 verifyHidden sampling
 /**
  * The stretches of the export (EXPORT microseconds, the intro card included) where verifyHidden reads every frame:
- * `aroundUs` (0.2 s) on each side of every cut, of every transition (its whole span), of the start and end of every
- * zoom and hidden part that plays, and of every scene change in `sceneUs` (SOURCE microseconds). Sorted and merged.
+ * `aroundUs` (0.2 s) on each side of every cut, of every transition (the span that plays, `transitionJoins`' halfUs),
+ * of the start and end of every zoom and hidden part that plays, and of every scene change in `sceneUs` (SOURCE
+ * microseconds). Sorted and merged.
  */
 export function boundaryWindows(
     project: EditProject,
@@ -1155,25 +1156,8 @@ export function boundaryWindows(
             windows.push([from, to]);
         }
     };
-    const transitions = transitionsSchema.parse(project.transitions ?? {});
-    let at = 0;
-    let previous: EditProject["clips"][number] | undefined;
-
-    for (const clip of project.clips) {
-        const length = clipOutputUs(clip);
-
-        if (length <= 0) {
-            continue;
-        }
-
-        if (previous && previous.toUs !== clip.fromUs) {
-            const chosen = transitions.joins?.[clip.id] ?? transitions.default;
-            const halfUs = chosen.kind === "none" ? 0 : chosen.ms * 500;
-            add(at - halfUs, at + halfUs);
-        }
-
-        at += length;
-        previous = clip;
+    for (const join of transitionJoins(project)) {
+        add(join.atUs - join.halfUs, join.atUs + join.halfUs);
     }
 
     const sourcePoints = [
