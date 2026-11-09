@@ -57,6 +57,7 @@ import {
 import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
+import * as converter from "@genesiscz/utils/audio/converter";
 import * as cli from "@genesiscz/utils/cli";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -65,6 +66,7 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-gate";
 import transcriptCuts from "@genesiscz/utils/recording-editor/__fixtures__/transcript-cuts.json";
 import transcriptWordsFixture from "@genesiscz/utils/recording-editor/__fixtures__/transcript-words.json";
+import * as denoise from "@genesiscz/utils/recording-editor/denoise";
 import { RecordingEditor } from "@genesiscz/utils/recording-editor/editor";
 import {
     readProject,
@@ -363,6 +365,10 @@ describe("a read call never starts the paid transcription", () => {
             spawned.push([...args]);
             throw new Error(`execTool reached: ${args.join(" ")}`);
         });
+        // transcript() reads the movie's audio tracks and mixes them before the paid call (91af263157); the movie here
+        // is only a path, so one track is reported and the mix is skipped.
+        const tracks = spyOn(denoise, "audioTrackCount").mockResolvedValue(1);
+        const mix = spyOn(converter, "convertFileToMonoMp3").mockImplementation(async (_input, output) => output);
 
         try {
             const { movies } = (await new MoviesToolset().load(ctx)) as {
@@ -391,6 +397,8 @@ describe("a read call never starts the paid transcription", () => {
             expect(spawned).toHaveLength(1);
         } finally {
             run.mockRestore();
+            tracks.mockRestore();
+            mix.mockRestore();
         }
     });
 
