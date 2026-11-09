@@ -545,7 +545,10 @@ private struct AudioLaneView: View {
 
     var body: some View {
         let waveform = model.waveform
-        let muted = !model.project.audio.include
+        // The tracks the preview and the export mix; with none playing the lane keeps every track's shape, dimmed.
+        let audible = model.project.audio.audibleTracks(count: waveform.trackCount)
+        let muted = audible.isEmpty
+        let tracks = muted ? IndexSet(integersIn: 0..<waveform.trackCount) : audible
         Canvas { context, size in
             guard waveform.hasAudio else { return }
             for placed in TimelineMap.placed(model.project) {
@@ -558,7 +561,8 @@ private struct AudioLaneView: View {
                     let a = Double(bar) / Double(bars), b = Double(bar + 1) / Double(bars)
                     let from = placed.clip.fromUs + Int64(Double(placed.clip.sourceDurationUs) * a)
                     let to = placed.clip.fromUs + Int64(Double(placed.clip.sourceDurationUs) * b)
-                    let peak = CGFloat(waveform.peak(fromUs: from, toUs: to, durationUs: model.project.source.durationUs))
+                    let peak = CGFloat(waveform.peak(fromUs: from, toUs: to, durationUs: model.project.source.durationUs,
+                                                     tracks: tracks))
                     let level = min(1, peak * CGFloat(model.project.audio.volume))
                     let height = max(1, level * (size.height - 6))
                     let rect = CGRect(x: x0 + CGFloat(bar) * 3, y: (size.height - height) / 2, width: 2, height: height)
@@ -567,7 +571,7 @@ private struct AudioLaneView: View {
             }
         }
         .frame(height: TimelineView.audioLaneHeight)
-        .instantTooltip("Sound (the waveform of the kept clips)")
+        .instantTooltip("Sound (the waveform of the tracks that play, over the kept clips)")
         .accessibilityLabel(waveform.hasAudio ? "Audio waveform" : "No audio")
     }
 }
