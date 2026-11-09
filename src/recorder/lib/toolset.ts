@@ -3275,6 +3275,7 @@ export function movieDemoDriver(options: RecordOptions, ctx?: ToolsetContext): D
                 durationUs: project.source.durationUs,
                 minUs: minMs * 1000,
                 keepUs: 0,
+                audio: project.audio,
             });
             return ranges.map(([from, to]): [number, number] => [from / 1000, to / 1000]);
         },

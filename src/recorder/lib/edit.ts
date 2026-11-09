@@ -632,6 +632,7 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFac
                 durationUs: project.source.durationUs,
                 minUs: op.minSeconds * 1_000_000,
                 keepUs: op.keepSeconds * 1_000_000,
+                audio: project.audio,
             }),
         };
     }

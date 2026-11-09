@@ -33,8 +33,9 @@ import {
     removeComment,
     updateComment,
 } from "@genesiscz/utils/recording-editor/comments";
-import { idleRanges } from "@genesiscz/utils/recording-editor/idle";
+import { findIdle, idleRanges, silenceDetectArgs } from "@genesiscz/utils/recording-editor/idle";
 import { laneItems, resolveLanes } from "@genesiscz/utils/recording-editor/lanes";
+import { audibleTracks } from "@genesiscz/utils/recording-editor/loudness";
 import {
     annotateClicks,
     applyOp,
@@ -1619,6 +1620,72 @@ describe("edit project (edit.json)", () => {
             [0, 4_300_000],
             [8_700_000, 10_000_000],
         ]);
+    });
+
+    test("the silence removeIdle hears is every audio track the export plays, mixed, and none when it plays none", () => {
+        const filterOf = (tracks: number[]) => {
+            const args = silenceDetectArgs({ video: "in.mp4", minUs: 2_000_000, tracks });
+            expect(args.slice(-5)).toEqual(["-map", "[out]", "-f", "null", "-"]);
+            return args[args.indexOf("-filter_complex") + 1];
+        };
+
+        expect(audibleTracks(2, { include: true, mutedTracks: [] })).toEqual([0, 1]);
+        expect(filterOf(audibleTracks(2, { include: true, mutedTracks: [] }))).toStartWith(
+            "[0:a:0][0:a:1]amix=inputs=2:normalize=0,silencedetect=n=-45dB:d=2,"
+        );
+        expect(filterOf(audibleTracks(2, { include: true, mutedTracks: [0] }))).toStartWith("[0:a:1]silencedetect=");
+        expect(audibleTracks(2)).toEqual([0, 1]);
+        expect(audibleTracks(2, { include: false, mutedTracks: [] })).toEqual([]);
+        expect(audibleTracks(2, { include: true, mutedTracks: [0, 1] })).toEqual([]);
+    });
+
+    describe.skipIf(skip.integration)("removeIdle on a movie with two audio tracks", () => {
+        test("findIdle hears every audio track the export plays, not only the first", async () => {
+            const movie = join(workspace(), "system-then-mic.mp4");
+            // A still picture; track 0 is silent (the system sound), track 1 plays a tone all along (the mic).
+            await runVideoCommand({
+                command: [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=gray:s=160x120:r=10:d=4",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=r=48000:cl=mono",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=f=440:r=48000:d=4",
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "1:a",
+                    "-map",
+                    "2:a",
+                    "-t",
+                    "4",
+                    "-c:v",
+                    "libx264",
+                    "-c:a",
+                    "aac",
+                    movie,
+                ],
+            });
+            const base = { video: movie, durationUs: 4_000_000, minUs: 1_000_000, keepUs: 200_000 };
+
+            expect(await findIdle({ ...base, audio: { include: true, mutedTracks: [] } })).toEqual([]);
+            expect(await findIdle({ ...base, audio: { include: true, mutedTracks: [1] } })).toEqual([
+                [200_000, 3_800_000],
+            ]);
+            expect(await findIdle({ ...base, audio: { include: false, mutedTracks: [] } })).toEqual([
+                [200_000, 3_800_000],
+            ]);
+        });
     });
 
     test("clicks and frame are optional looks with defaults, merged on change and removable", () => {

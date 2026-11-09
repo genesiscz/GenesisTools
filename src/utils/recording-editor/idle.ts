@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { audibleTracksOf, mixedTracksFilter, type PlayedAudio } from "@genesiscz/utils/recording-editor/loudness";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 
 const { log } = logger.scoped("recording-editor-idle");
@@ -88,52 +89,52 @@ export async function frozenRangesUs(video: string, minUs: number): Promise<Arra
     return metadataRanges(text, "lavfi.freezedetect.freeze");
 }
 
-/** The movie's silent stretches of at least `minUs`, or undefined when it has no audio track. */
-export async function silentRangesUs(video: string, minUs: number): Promise<Array<[number, number]> | undefined> {
-    const streams = await runVideoCommand({
-        command: [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "a",
-            "-show_entries",
-            "stream=index",
-            "-of",
-            "csv=p=0",
-            video,
-        ],
-    });
+/**
+ * The stretches of at least `minUs` where the audio the export plays is silent, all its tracks mixed as the export
+ * mixes them; undefined when it plays none (no audio track, the audio left out, or every track muted).
+ */
+export async function silentRangesUs(options: {
+    video: string;
+    minUs: number;
+    audio?: PlayedAudio;
+}): Promise<Array<[number, number]> | undefined> {
+    const tracks = await audibleTracksOf(options.video, options.audio);
 
-    if (!streams.trim()) {
+    if (tracks.length === 0) {
         return undefined;
     }
 
-    // silencedetect reports on stderr, which runVideoCommand drops; ametadata prints its tags to stdout instead.
     const text = await runVideoCommand({
-        command: [
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
-            "-i",
-            video,
-            "-map",
-            "0:a:0",
-            "-af",
-            `silencedetect=n=${SILENCE_DB}dB:d=${minUs / 1_000_000},ametadata=mode=print:file=-`,
-            "-f",
-            "null",
-            "-",
-        ],
+        command: silenceDetectArgs({ video: options.video, minUs: options.minUs, tracks }),
         timeoutMs: 10 * 60_000,
     });
     return metadataRanges(text, "lavfi.silence");
 }
 
+/** The ffmpeg command that prints the silences of `tracks` (`a:N`), mixed, as metadata lines on stdout. */
+export function silenceDetectArgs(options: { video: string; minUs: number; tracks: readonly number[] }): string[] {
+    // silencedetect reports on stderr, which runVideoCommand drops; ametadata prints its tags to stdout instead.
+    const detect = `silencedetect=n=${SILENCE_DB}dB:d=${options.minUs / 1_000_000},ametadata=mode=print:file=-`;
+    return [
+        "ffmpeg",
+        "-nostdin",
+        "-v",
+        "error",
+        "-i",
+        options.video,
+        "-filter_complex",
+        `${mixedTracksFilter(options.tracks)}${detect}[out]`,
+        "-map",
+        "[out]",
+        "-f",
+        "null",
+        "-",
+    ];
+}
+
 /**
  * The stretches to cut: no new video frame, or no change in the picture (`frozenUs`), for at least `minUs`,
- * overlapped with silence (all of it when the movie has no audio), each shortened by `keepUs` at both ends so a cut
+ * overlapped with silence (all of it when the export plays no audio), each shortened by `keepUs` at both ends so a cut
  * never lands on the change before or after it.
  */
 export function idleRanges(options: {
@@ -191,17 +192,21 @@ function mergeRanges(ranges: ReadonlyArray<readonly [number, number]>): Array<[n
     return merged;
 }
 
-/** Probes a movie and returns its idle stretches; logs what it found. */
+/**
+ * Probes a movie and returns its idle stretches; logs what it found. `audio` is the edit's (`project.audio`), so the
+ * silence is judged on what the export plays; absent, every audio track counts.
+ */
 export async function findIdle(options: {
     video: string;
     durationUs: number;
     minUs: number;
     keepUs: number;
+    audio?: PlayedAudio;
 }): Promise<Array<[number, number]>> {
     const [frames, frozen, silent] = await Promise.all([
         frameTimesUs(options.video),
         frozenRangesUs(options.video, options.minUs),
-        silentRangesUs(options.video, options.minUs),
+        silentRangesUs({ video: options.video, minUs: options.minUs, audio: options.audio }),
     ]);
     const ranges = idleRanges({ frameTimesUs: frames, frozenUs: frozen, silentUs: silent, ...options });
     log.debug(
@@ -209,7 +214,7 @@ export async function findIdle(options: {
             video: options.video,
             frames: frames.length,
             frozen: frozen.length,
-            silent: silent?.length ?? "no audio",
+            silent: silent?.length ?? "no audio played",
             idle: ranges.length,
         },
         "idle stretches found"
