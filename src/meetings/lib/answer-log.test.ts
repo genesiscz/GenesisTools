@@ -155,6 +155,25 @@ describe("answer log", () => {
         expect(lines.map((line) => SafeJSON.parse(line, { jsonl: true }).event)).toEqual(["round-start", "round-end"]);
     });
 
+    // A crash mid-append leaves a line with no line end: the readers pass over it, and the next event starts on a line
+    // of its own instead of being glued onto it.
+    test("a torn line is passed over: the round still reads, and the next event after it reads too", async () => {
+        const path = logFile([{ event: "round-start", at, pid: process.pid, open: 2 }, answered("i1", "alpha")]);
+        appendFileSync(path, '{"event":"answered","at":"2026-01-01T10:0');
+        const lines: string[] = [];
+        const done = subscribeAnswers({ path, fromStart: false, timeoutMs: 5000, write: (line) => lines.push(line) });
+        await Bun.sleep(50);
+        appendAnswerEvent(path, { event: "round-end", at, reason: "done", asked: 1, open: 1 });
+
+        expect(await done).toBe(0);
+        expect(lines.map((line) => SafeJSON.parse(line, { jsonl: true }).event)).toEqual([
+            "round-start",
+            "answered",
+            "round-end",
+        ]);
+        expect(readAnswerEvents(path).map((event) => event.event)).toEqual(["round-start", "answered", "round-end"]);
+    });
+
     test("no round ending before the timeout exits 2", async () => {
         const path = logFile([]);
         const code = await subscribeAnswers({ path, fromStart: false, timeoutMs: 60, write: () => undefined });

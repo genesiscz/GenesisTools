@@ -1,9 +1,9 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { classifyPid } from "@genesiscz/utils/process-identity";
+import { appendLines, parseJsonLine } from "./ndjson-lines";
 
 /**
  * The file in a meeting's folder that `listen` appends one event per line to, and `--subscribe-answers` follows. Its
@@ -45,8 +45,10 @@ export function appendAnswerEvent(path: string, event: AnswerEvent): void {
 
 /** Several events in one append, so a reader that follows the file sees them together. */
 export function appendAnswerEvents(path: string, events: AnswerEvent[]): void {
-    mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, events.map((event) => `${SafeJSON.stringify(event, { jsonl: true })}\n`).join(""));
+    appendLines(
+        path,
+        events.map((event) => SafeJSON.stringify(event, { jsonl: true }))
+    );
 }
 
 function isAnswerEvent(value: unknown): value is AnswerEvent {
@@ -59,8 +61,7 @@ export function readAnswerEvents(path: string): AnswerEvent[] {
     }
 
     return Array.from(readLinesSync(path))
-        .filter((line) => line.trim())
-        .map((line) => SafeJSON.parse(line, { jsonl: true }))
+        .map((line) => parseJsonLine(line, path))
         .filter(isAnswerEvent);
 }
 
@@ -121,8 +122,7 @@ export async function subscribeAnswers(options: {
         .subarray(0, replayEnd)
         .toString("utf8")
         .split("\n")
-        .filter((line) => line.trim())
-        .map((line) => SafeJSON.parse(line, { jsonl: true }))
+        .map((line) => parseJsonLine(line, options.path))
         .filter(isAnswerEvent);
     const running = runningRound(backlog);
     let roundPid = running[0]?.event === "round-start" ? running[0].pid : undefined;
