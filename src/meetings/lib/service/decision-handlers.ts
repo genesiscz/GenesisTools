@@ -2,7 +2,6 @@ import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { readCorrections } from "@genesiscz/utils/meetings/corrections";
 import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { RpcError } from "@genesiscz/utils/rpc/errors";
 import type { Decided, DecisionAction } from "../decision-actions";
 import {
     actorText,
@@ -15,8 +14,8 @@ import {
 } from "../decision-journal";
 import { CORRECTION_REPEATS } from "../dictionary-suggest";
 import { setMeetingFields } from "../meeting-fields";
-import { MEETINGS_REFUSED, type MeetingsParsedParams, type MeetingsResult } from "./api";
-import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf } from "./handlers";
+import type { MeetingsParsedParams, MeetingsResult } from "./api";
+import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
 
 /**
  * The Meetings service's decision methods (`decision.plan`, `decision.apply`, `decision.revert`, `journal.read`): the
@@ -255,9 +254,9 @@ function refuseDecided(store: MeetingStore, record: MeetingRecord, action: Decis
         ? new DecisionJournal({ store }).read(record.id, { item: decided[0]?.id }).find((one) => one.token === token)
         : undefined;
     const by = entry ? ` by ${actorText(entry.actor)}` : "";
-    throw new RpcError(
-        MEETINGS_REFUSED,
+    throw refusal(
+        "already-decided",
         `${decided.map((item) => `${item.id} is ${item.status}`).join(", ")} already${by}; nothing was decided`,
-        { code: "already-decided", items: decided.map((item) => item.id), ...(entry ? { entry } : {}) }
+        { items: decided.map((item) => item.id), ...(entry ? { entry } : {}) }
     );
 }

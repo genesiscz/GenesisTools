@@ -110,6 +110,8 @@ export interface ServiceHostOptions<S> {
     onStopped?: (reason: string) => void;
     /** How long a second start waits for a rival start's service.json (tests shorten it). */
     rivalWaitMs?: number;
+    /** A method whose newer call on a connection cancels its older ones (`RpcPeerOptions.supersedes`). */
+    supersedes?: (method: string) => string | undefined;
 }
 
 export interface ServiceHost<S> {
@@ -269,6 +271,7 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
             },
             logScope: options.logScope,
             label,
+            ...(options.supersedes ? { supersedes: options.supersedes } : {}),
         });
         atomicWriteFileSync(entryPath, SafeJSON.stringify(entry, null, 2));
         return listening;

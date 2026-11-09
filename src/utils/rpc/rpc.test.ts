@@ -31,13 +31,17 @@ afterEach(() => {
     }
 });
 
-function serve(call: ConstructorParameters<typeof RpcSocketServer<Role>>[0]["call"]) {
+function serve(
+    call: ConstructorParameters<typeof RpcSocketServer<Role>>[0]["call"],
+    supersedes?: (method: string) => string | undefined
+) {
     const socket = join(mkdtempSync(join(tmpdir(), "rpc-")), "s.sock");
     const connections: RpcConnection<Role>[] = [];
     const server = new RpcSocketServer<Role>({
         socket,
         state: () => ({}),
         call,
+        ...(supersedes ? { supersedes } : {}),
         onOpen: (connection) => connections.push(connection),
         logScope: "rpc-test",
         label: "rpc test",
@@ -153,6 +157,37 @@ describe("the JSON-RPC socket server, both directions", () => {
 
         await expect(exporting).rejects.toMatchObject({ code: RPC_CANCELLED });
         expect(await client.call<unknown>("status")).toEqual({ method: "status" });
+    });
+
+    test("a newer call of a supersede lane cancels the older one that runs and the one that waits", async () => {
+        const started: number[] = [];
+        const { socket } = serve(
+            async ({ method, params, context }) => {
+                const n = Number(Reflect.get(Object(params), "n"));
+                started.push(n);
+
+                if (method === "cut" && n < 3) {
+                    await new Promise((resolve) => context.signal.addEventListener("abort", resolve, { once: true }));
+                }
+
+                return { n };
+            },
+            (method) => (method === "cut" ? "cut" : undefined)
+        );
+        const client = await connect(socket);
+        const first = client.call("cut", { n: 1 });
+        await Bun.sleep(10);
+        const second = client.call("cut", { n: 2 });
+        const third = client.call("cut", { n: 3 });
+
+        const outcomes = await Promise.allSettled([first, second, third]);
+        const status = await client.call<unknown>("status", { n: 4 });
+
+        expect(
+            outcomes.map((one) => (one.status === "fulfilled" ? one.value : Reflect.get(one.reason, "code")))
+        ).toEqual([RPC_CANCELLED, RPC_CANCELLED, { n: 3 }]);
+        expect(status).toEqual({ n: 4 });
+        expect(started).toEqual([1, 3, 4]);
     });
 
     test("a client that goes rejects the server's waiting request", async () => {
