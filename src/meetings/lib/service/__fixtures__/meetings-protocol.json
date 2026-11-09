@@ -1,0 +1,591 @@
+{
+  "protocol": 1,
+  "about": "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these; src/meetings/lib/service/service.test.ts checks every one against the method's schemas and against a live service. Regenerate: set examples to [] and run bun run test src/meetings/lib/service/service.test.ts",
+  "examples": [
+    {
+      "method": "hello",
+      "direction": "client→service",
+      "note": "The window sends no code.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "hello",
+        "params": {
+          "role": "window",
+          "protocol": 1
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocol": 1,
+          "code": "0123456789ab",
+          "methods": [
+            "hello",
+            "meetings.list",
+            "meeting.show",
+            "meeting.transcript",
+            "meeting.revisions",
+            "subscribe"
+          ],
+          "events": [
+            "meeting.changed"
+          ],
+          "version": "e06d18be0224"
+        }
+      }
+    },
+    {
+      "method": "meetings.list",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "meetings.list",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": [
+          {
+            "id": "2026-11-03-1400-retro",
+            "title": "Retro",
+            "start": "2026-11-03T13:00:00.000Z",
+            "labels": [],
+            "sources": [],
+            "context": 0,
+            "items": {
+              "suggested": 0,
+              "confirmed": 0,
+              "rejected": 0
+            }
+          },
+          {
+            "id": "2026-11-03-1000-design-review",
+            "title": "Design review",
+            "start": "2026-11-03T09:00:00.000Z",
+            "end": "2026-11-03T09:45:00.000Z",
+            "project": "Atlas",
+            "labels": [
+              "Checkout"
+            ],
+            "sources": [
+              "wisprflow"
+            ],
+            "context": 0,
+            "items": {
+              "suggested": 1,
+              "confirmed": 0,
+              "rejected": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "meetings.list",
+      "direction": "client→service",
+      "note": "full: the whole records.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "meetings.list",
+        "params": {
+          "project": "Atlas",
+          "full": true
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": [
+          {
+            "version": 1,
+            "id": "2026-11-03-1000-design-review",
+            "title": "Design review",
+            "project": "Atlas",
+            "labels": [
+              "Checkout"
+            ],
+            "start": "2026-11-03T09:00:00.000Z",
+            "end": "2026-11-03T09:45:00.000Z",
+            "createdAt": "2026-11-03T09:46:00.000Z",
+            "createdBy": "link",
+            "sources": {
+              "wisprflow": {
+                "meetingId": "wf-2041"
+              }
+            },
+            "participants": [
+              {
+                "name": "Dana Example",
+                "self": true,
+                "from": [
+                  "wisprflow"
+                ]
+              },
+              {
+                "name": "Alex Example",
+                "from": [
+                  "calendar"
+                ]
+              }
+            ],
+            "context": [],
+            "speakers": {
+              "labels": {
+                "Speaker 2": "Alex Example"
+              }
+            },
+            "items": [
+              {
+                "kind": "speaker-range",
+                "label": "Speaker 3",
+                "fromSec": 12,
+                "toSec": 30,
+                "speaker": "Alex Example",
+                "candidates": [
+                  "Alex Example",
+                  "Dana Example"
+                ],
+                "id": "i1",
+                "status": "suggested",
+                "confidence": 0.82,
+                "rules": [
+                  "presence"
+                ],
+                "suggestedAt": "2026-11-03T09:47:00.000Z"
+              }
+            ],
+            "history": [
+              {
+                "at": "2026-11-03T09:46:00.000Z",
+                "command": "link",
+                "change": "linked wisprflow:wf-2041"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "method": "meeting.show",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "meeting.show",
+        "params": {
+          "ref": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "version": 1,
+          "id": "2026-11-03-1000-design-review",
+          "title": "Design review",
+          "project": "Atlas",
+          "labels": [
+            "Checkout"
+          ],
+          "start": "2026-11-03T09:00:00.000Z",
+          "end": "2026-11-03T09:45:00.000Z",
+          "createdAt": "2026-11-03T09:46:00.000Z",
+          "createdBy": "link",
+          "sources": {
+            "wisprflow": {
+              "meetingId": "wf-2041"
+            }
+          },
+          "participants": [
+            {
+              "name": "Dana Example",
+              "self": true,
+              "from": [
+                "wisprflow"
+              ]
+            },
+            {
+              "name": "Alex Example",
+              "from": [
+                "calendar"
+              ]
+            }
+          ],
+          "context": [],
+          "speakers": {
+            "labels": {
+              "Speaker 2": "Alex Example"
+            }
+          },
+          "items": [
+            {
+              "kind": "speaker-range",
+              "label": "Speaker 3",
+              "fromSec": 12,
+              "toSec": 30,
+              "speaker": "Alex Example",
+              "candidates": [
+                "Alex Example",
+                "Dana Example"
+              ],
+              "id": "i1",
+              "status": "suggested",
+              "confidence": 0.82,
+              "rules": [
+                "presence"
+              ],
+              "suggestedAt": "2026-11-03T09:47:00.000Z"
+            }
+          ],
+          "history": [
+            {
+              "at": "2026-11-03T09:46:00.000Z",
+              "command": "link",
+              "change": "linked wisprflow:wf-2041"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "meeting.show",
+      "direction": "client→service",
+      "note": "No meeting: meeting-not-found.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "meeting.show",
+        "params": {
+          "ref": "nope"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "error": {
+          "code": 1100,
+          "message": "No meeting \"nope\". List them: tools meetings list",
+          "data": {
+            "code": "meeting-not-found"
+          }
+        }
+      }
+    },
+    {
+      "method": "meeting.show",
+      "direction": "client→service",
+      "note": "A prefix of two meetings: meeting-ref.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "meeting.show",
+        "params": {
+          "ref": "2026-11-03"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "error": {
+          "code": 1100,
+          "message": "\"2026-11-03\" fits 2 meetings: 2026-11-03-1400-retro, 2026-11-03-1000-design-review",
+          "data": {
+            "code": "meeting-ref"
+          }
+        }
+      }
+    },
+    {
+      "method": "meeting.transcript",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "meeting.transcript",
+        "params": {
+          "ref": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "entries": [
+            {
+              "id": "l1",
+              "startSec": 2,
+              "speakerId": 1,
+              "speaker": "Dana Example",
+              "text": "Let us start with the checkout."
+            },
+            {
+              "id": "l2",
+              "startSec": 9,
+              "speakerId": 2,
+              "speaker": "Alex Example",
+              "text": "The button moved to the right."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "meeting.transcript",
+      "direction": "client→service",
+      "note": "No transcript source: a meeting state.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "meeting.transcript",
+        "params": {
+          "ref": "2026-11-03-1400-retro"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "error": {
+          "code": 1100,
+          "message": "2026-11-03-1400-retro has no source with a transcript. Link one: tools meetings link 2026-11-03-1400-retro 'wisprflow:<id>'",
+          "data": {
+            "code": "no-transcript-source"
+          }
+        }
+      }
+    },
+    {
+      "method": "meeting.revisions",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "meeting.revisions",
+        "params": {
+          "ref": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "show": "32y96zb50zq92",
+          "transcript": "2rgzmtnoaodnj",
+          "speakers": "4d0su6c2ttnn",
+          "timeline": "1mo7nddddf89a"
+        }
+      }
+    },
+    {
+      "method": "meetings.list",
+      "direction": "client→service",
+      "note": "A bad param: -32602 before any handler.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "meetings.list",
+        "params": {
+          "limit": 0
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "error": {
+          "code": -32602,
+          "message": "meetings.list: limit: Too small: expected number to be >0"
+        }
+      }
+    },
+    {
+      "method": "subscribe",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "subscribe",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "events": [
+            "meeting.changed"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "result": {
+          "events": [
+            "meeting.changed"
+          ]
+        }
+      }
+    },
+    {
+      "method": "meetings.list",
+      "direction": "client→service",
+      "note": "Sent after the event, so the event is in before its reply.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "meetings.list",
+        "params": {
+          "limit": 1
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "result": [
+          {
+            "id": "2026-11-03-1400-retro",
+            "title": "Retro",
+            "start": "2026-11-03T13:00:00.000Z",
+            "labels": [],
+            "sources": [],
+            "context": 0,
+            "items": {
+              "suggested": 0,
+              "confirmed": 0,
+              "rejected": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "meeting.changed",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "meeting.changed",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "parts": [
+            "show",
+            "transcript"
+          ]
+        }
+      }
+    },
+    {
+      "method": "hello",
+      "direction": "client→service",
+      "note": "A CLI in an agent session: the harness and session come from whoIsCalling.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "hello",
+        "params": {
+          "role": "cli",
+          "harness": "claude-code",
+          "session": "11111111-2222-4333-8444-555555555555",
+          "protocol": 1,
+          "code": "0123456789ab"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocol": 1,
+          "code": "0123456789ab",
+          "methods": [
+            "hello",
+            "meetings.list",
+            "meeting.show",
+            "meeting.transcript",
+            "meeting.revisions",
+            "subscribe"
+          ],
+          "events": [
+            "meeting.changed"
+          ],
+          "version": "e06d18be0224"
+        }
+      }
+    },
+    {
+      "method": "meeting.show",
+      "direction": "client→service",
+      "note": "A call before hello: no-hello.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "meeting.show",
+        "params": {
+          "ref": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {
+          "code": 1100,
+          "message": "say hello before meeting.show",
+          "data": {
+            "code": "no-hello"
+          }
+        }
+      }
+    },
+    {
+      "method": "hello",
+      "direction": "client→service",
+      "note": "Another protocol: protocol-mismatch.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "hello",
+        "params": {
+          "role": "cli",
+          "protocol": 2,
+          "code": "0123456789ab"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {
+          "code": 1100,
+          "message": "the meetings service speaks protocol 1, not 2",
+          "data": {
+            "code": "protocol-mismatch"
+          }
+        }
+      }
+    },
+    {
+      "method": "hello",
+      "direction": "client→service",
+      "note": "Another checkout's code: code-mismatch; the CLI answers in its own process.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "hello",
+        "params": {
+          "role": "cli",
+          "protocol": 1,
+          "code": "ffffffffffff"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "error": {
+          "code": 1100,
+          "message": "the meetings service runs the code of another checkout (0123456789ab)",
+          "data": {
+            "code": "code-mismatch"
+          }
+        }
+      }
+    }
+  ]
+}
