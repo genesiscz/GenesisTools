@@ -25,6 +25,9 @@ public struct FocusSettingsView: View {
     @State private var forgetting = false
     @State private var notice: FocusSettingsNotice?
     @State private var editor: FocusRuleEditor?
+    @State private var retrying = false
+    @State private var showsLedgerDetails = false
+    @GenReduceMotion private var reduceMotion
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -32,11 +35,7 @@ public struct FocusSettingsView: View {
                 NoticePill(text: error, isError: true, dismiss: configuration.dismissError)
             }
             if !controller.available {
-                NativeSettingsCard("Focus is off") {
-                    Text(controller.lastError ?? "The activity ledger could not be opened, so nothing is being recorded.")
-                        .font(.system(size: 12)).foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                ledgerErrorCard
             }
             timerCard
             alertsCard
@@ -59,6 +58,55 @@ public struct FocusSettingsView: View {
         // `.contain` first: on a plain VStack a bare identifier propagates to every child and clobbers their own ids.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings-focus")
+    }
+
+    // MARK: - Ledger error
+
+    /// "Focus is off" with a way out: Retry opens the ledger again, Details shows the error text to copy (hub UX
+    /// council, 2026-11-09: the card said nothing is recorded and offered nothing to do).
+    private var ledgerErrorCard: some View {
+        NativeSettingsCard("Focus is off") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("The activity ledger could not be opened, so nothing is being recorded.")
+                    .font(.system(size: 12)).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button(retrying ? "Retrying…" : "Retry") { retryLedger() }
+                        .buttonStyle(.bordered)
+                        .nativeSettingsPointer()
+                        .disabled(retrying || !controller.canRetryLedger)
+                        .instantTooltip(controller.canRetryLedger ? "Open the activity ledger again" : "Flow and Focus do not run in this window")
+                        .accessibilityIdentifier("focus.ledger.retry")
+                    Button(showsLedgerDetails ? "Hide details" : "Details") {
+                        GenMotion.perform(expanding: !showsLedgerDetails, reduceMotion: reduceMotion) { showsLedgerDetails.toggle() }
+                    }
+                    .buttonStyle(.bordered)
+                    .nativeSettingsPointer()
+                    .accessibilityValue(showsLedgerDetails ? "Expanded" : "Collapsed")
+                    .accessibilityIdentifier("focus.ledger.details")
+                }
+                if showsLedgerDetails {
+                    Text(controller.ledgerFailureDetails)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(.genReveal)
+                }
+            }
+            .clipped()
+        }
+    }
+
+    private func retryLedger() {
+        retrying = true
+        controller.retryLedger()
+        // The button says what it does until the runtime answers; a start that takes longer frees it after 5 s.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            retrying = false
+        }
     }
 
     // MARK: - Timer
