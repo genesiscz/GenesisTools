@@ -30,7 +30,8 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { prepareFindings } from "../lib/add-findings";
-import { decideItems, reopenItems } from "../lib/decide";
+import { decideEntry, decideResult, reopenEntry, reopenResult } from "../lib/decide";
+import { callerActor, DecisionJournal } from "../lib/decision-journal";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
@@ -374,7 +375,7 @@ async function decide(
     status: "confirmed" | "rejected",
     ref: string,
     ids: string[],
-    opts: { speaker?: string; proposed?: string; minConfidence?: string; json?: boolean }
+    opts: { speaker?: string; proposed?: string; minConfidence?: string; reason?: string; json?: boolean }
 ): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
@@ -400,7 +401,7 @@ async function decide(
     const failed = (skipped: Array<{ needs: string }>) => skipped.some((skip) => skip.needs !== "nothing");
 
     try {
-        const result = await decideItems({
+        const decided = await decideEntry({
             store,
             record,
             status,
@@ -408,10 +409,14 @@ async function decide(
             minConfidence,
             speaker: opts.speaker,
             proposed: opts.proposed,
+            actor: callerActor(),
+            ...(opts.reason ? { reason: opts.reason } : {}),
         });
+        const result = decideResult(decided);
 
         if (opts.json) {
-            out.result(SafeJSON.stringify(result, null, 2));
+            // `entry`: the decision journal entry, with who decided and the items before and after.
+            out.result(SafeJSON.stringify({ ...result, ...(decided.entry ? { entry: decided.entry } : {}) }, null, 2));
             process.exitCode = result.decided.length === 0 && failed(result.skipped) ? 1 : 0;
             return;
         }
@@ -435,7 +440,11 @@ async function decide(
     }
 }
 
-async function reopen(ref: string, ids: string[], opts: { token?: string; json?: boolean }): Promise<void> {
+async function reopen(
+    ref: string,
+    ids: string[],
+    opts: { token?: string; reason?: string; json?: boolean }
+): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -444,10 +453,18 @@ async function reopen(ref: string, ids: string[], opts: { token?: string; json?:
     }
 
     try {
-        const result = await reopenItems({ store, record, ids, ...(opts.token ? { token: opts.token } : {}) });
+        const decided = await reopenEntry({
+            store,
+            record,
+            ids,
+            ...(opts.token ? { token: opts.token } : {}),
+            actor: callerActor(),
+            ...(opts.reason ? { reason: opts.reason } : {}),
+        });
+        const result = reopenResult(decided);
 
         if (opts.json) {
-            out.result(SafeJSON.stringify(result, null, 2));
+            out.result(SafeJSON.stringify({ ...result, ...(decided.entry ? { entry: decided.entry } : {}) }, null, 2));
             return;
         }
 
@@ -497,7 +514,7 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
     }
 }
 
-async function speakersRename(ref: string, label: string, name: string): Promise<void> {
+async function speakersRename(ref: string, label: string, name: string, opts: { reason?: string }): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -514,7 +531,12 @@ async function speakersRename(ref: string, label: string, name: string): Promise
             return;
         }
 
-        await store.renameSpeaker(record.id, label, name);
+        await new DecisionJournal({ store }).apply({
+            meeting: record.id,
+            action: { kind: "rename", label, name },
+            actor: callerActor(),
+            ...(opts.reason ? { reason: opts.reason } : {}),
+        });
         ui.ok(
             name.trim() === label
                 ? `${record.id}: ${label} is ${label} again (the rename is gone)`
@@ -679,7 +701,8 @@ export function registerItemCommands(program: Command): void {
                     ? "Confirm items: transcripts apply confirmed items"
                     : "Reject items: they are never suggested again"
             )
-            .option("--min-confidence <0..1>", "every suggested item at or above this confidence");
+            .option("--min-confidence <0..1>", "every suggested item at or above this confidence")
+            .option("--reason <text>", "why: kept in the decision journal (tools meetings journal)");
 
         // Only a confirm takes a value: a reject keeps nothing of the item.
         if (status === "confirmed") {
@@ -689,12 +712,21 @@ export function registerItemCommands(program: Command): void {
         }
 
         command
-            .option("--json", "print { decided, token, skipped } as JSON (the token is what reopen --token takes)")
+            .option(
+                "--json",
+                "print { decided, token, skipped, entry } as JSON (the token is what reopen --token takes; entry is its decision journal entry)"
+            )
             .action(
                 (
                     ref: string,
                     ids: string[],
-                    opts: { speaker?: string; proposed?: string; minConfidence?: string; json?: boolean }
+                    opts: {
+                        speaker?: string;
+                        proposed?: string;
+                        minConfidence?: string;
+                        reason?: string;
+                        json?: boolean;
+                    }
                 ) => decide(status, ref, ids, opts)
             );
     }
@@ -702,13 +734,16 @@ export function registerItemCommands(program: Command): void {
     program
         .command("reopen")
         .argument("<meeting>", MEETING_REF)
-        .argument("<items...>", "item ids: i1 i2 …")
-        .description("Put confirmed or rejected items back to suggested: the Undo of confirm and reject")
+        .argument("<items...>", "item ids: i1 i2 …, or with --token a question's number: Q12")
+        .description(
+            "Put confirmed or rejected items back to suggested: the Undo of confirm and reject, and with --token of any decision journal entry"
+        )
         .option(
             "--token <token>",
-            "the decision to undo (confirm/reject --json prints it): refused with [item-changed] when another decision changed an item since"
+            "the decision to undo (confirm/reject --json prints it, tools meetings journal lists them): refused with [item-changed] when another decision changed an item since; a question named brings back its whole answer"
         )
-        .option("--json", "print { reopened, skipped } as JSON")
+        .option("--reason <text>", "why: kept in the decision journal")
+        .option("--json", "print { reopened, skipped, entry } as JSON")
         .action(reopen);
 
     const speakers = program
@@ -735,6 +770,7 @@ export function registerItemCommands(program: Command): void {
         .argument("<label>", "the source's label, as the transcript shows it")
         .argument("<name>", "the right name")
         .description("Rename a label for this meeting")
+        .option("--reason <text>", "why: kept in the decision journal")
         .action(speakersRename);
 
     program

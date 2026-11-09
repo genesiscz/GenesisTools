@@ -127,7 +127,7 @@ export const journalEntrySchema = z.object({
 });
 export type JournalEntry = z.infer<typeof journalEntrySchema>;
 
-/** An entry as `read` lists it: `revertedBy` names the later entry that undid it whole. */
+/** An entry as `read` lists it: `revertedBy` names the later entry that gave back every item it decided. */
 export type JournalReadEntry = JournalEntry & { revertedBy?: string };
 
 /** What a decision did: its saved entry, or none when it changed nothing; and what it left, with the reason. */
@@ -291,7 +291,7 @@ export function revertChanges(items: MeetingItem[], changes: ItemChange[]): Meet
 }
 
 /** The item id a reference names: `Q12` is the record's twelfth question, anything else is the id itself. */
-function itemIdOf(record: MeetingRecord, ref: string): string {
+export function itemIdOf(record: MeetingRecord, ref: string): string {
     return /^q\d+$/i.test(ref.trim()) ? questionIdOf(record, ref) : ref;
 }
 
@@ -962,11 +962,17 @@ export class DecisionJournal {
     /** A meeting's entries, newest first; `item`: only those that changed it. */
     read(meeting: string, filter: { item?: string; limit?: number } = {}): JournalReadEntry[] {
         const entries = this.entries(meeting);
+        const byToken = new Map(entries.map((entry) => [entry.token, entry]));
         const revertedBy = new Map<string, string>();
 
+        // An Undo that gave back every item its entry decided (the window and `reopen --token` name them) undid it whole.
         for (const entry of entries) {
-            if (entry.action.kind === "revert" && !entry.action.items) {
-                revertedBy.set(entry.action.token, entry.token);
+            const target = entry.action.kind === "revert" ? byToken.get(entry.action.token) : undefined;
+            const undone = new Set(entry.changes.map((change) => change.id));
+            const decided = target?.decided.length ? target.decided : target?.changes.map((change) => change.id);
+
+            if (target && (decided ?? []).every((id) => undone.has(id))) {
+                revertedBy.set(target.token, entry.token);
             }
         }
 
