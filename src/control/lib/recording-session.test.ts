@@ -9,19 +9,24 @@ import { chosenPlan } from "@app/recorder/lib/proxy";
 import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
+import * as mediaFacts from "@genesiscz/utils/video/media-facts";
 import * as videoProbe from "@genesiscz/utils/video/probe";
+import * as videoProcess from "@genesiscz/utils/video/process";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
 import {
     audioTitlesArgv,
     audioTrackTitles,
+    cursorTrackOffsets,
     type NativeRecorderOptions,
     nativeSegmentRecorder,
     segmentCaptureSpec,
+    segmentJoiner,
 } from "./recording-native";
 import {
     concatCopyArgv,
     concatListLine,
+    cursorTrackPath,
     FIRST_FRAME_MESSAGE,
     type FinishedSegment,
     joinCursorTracks,
@@ -1113,6 +1118,56 @@ describe("joining segments with their audio and cursor tracks", () => {
             '{"t":2010.0,"x":0.5,"y":0.6}',
         ]);
         expect(joinCursorTracks([])).toBe("");
+    });
+});
+
+describe("a joined cursor track on the joined movie's clock", () => {
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `cursor-join-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        mock.restore();
+        await rm(root, { recursive: true, force: true });
+    });
+
+    it("starts each segment's cursor rows where the lengths of the segments before it end", () => {
+        expect(cursorTrackOffsets([2530, 2513, 2530])).toEqual([0, 2530, 5043]);
+        expect(cursorTrackOffsets([])).toEqual([]);
+    });
+
+    it("moves a segment's cursor rows by the probed lengths of the segments before it, not by their wall time", async () => {
+        // A live run: ax-tool's wall durationMs was 2543 and 2545 ms, but concat stacked the files by their own
+        // lengths, 2530 and 2513 ms, so segment 2's frames start at 2530 ms of the joined movie.
+        const lengthsSec: Record<string, number | null> = { "a.mp4": 2.53, "b.mp4": 2.513 };
+        spyOn(mediaFacts, "readMediaFacts").mockImplementation(async ({ input }) => ({
+            path: input,
+            bytes: 1,
+            durationSec: lengthsSec[input.split("/").at(-1) ?? ""] ?? null,
+            streams: [{ type: "video", codec: "h264", attachedPicture: false, width: 160, height: 100 }],
+        }));
+        spyOn(videoProcess, "runVideoCommand").mockImplementation(async () => "");
+        spyOn(videoProbe, "probeVideo").mockImplementation(async () => ({
+            ...({} as Awaited<ReturnType<typeof videoProbe.probeVideo>>),
+            durationUs: 5_043_000,
+        }));
+        const segments: FinishedSegment[] = [
+            { index: 0, path: join(root, "a.mp4"), durationMs: 2543, movieMs: 2543, target: display },
+            { index: 1, path: join(root, "b.mp4"), durationMs: 2545, movieMs: 2561, target: display },
+        ];
+        await writeFile(cursorTrackPath(segments[0].path), '{"t":0.0,"x":0.1,"y":0.2}\n');
+        await writeFile(cursorTrackPath(segments[1].path), '{"t":100.0,"x":0.5,"y":0.6,"click":"left"}\n');
+        const output = join(root, "joined.mp4");
+
+        await segmentJoiner()({ segments, output });
+
+        expect((await readFile(cursorTrackPath(output), "utf8")).trim().split("\n")).toEqual([
+            '{"t":0.0,"x":0.1,"y":0.2}',
+            '{"t":2630.0,"x":0.5,"y":0.6,"click":"left"}',
+        ]);
     });
 });
 

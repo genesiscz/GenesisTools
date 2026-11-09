@@ -1,14 +1,18 @@
 import AppKit
 import CoreGraphics
+import CoreMedia
 import CryptoKit
 import Foundation
+import SnapshotSupport
 
 /// `capture --cursor-track <file>`: the pointer while the movie records, one JSON line per sample,
-/// `{"t": <ms since the capture started>, "x": 0...1, "y": 0...1}` from the top left of the recorded rectangle, and
+/// `{"t": <ms since the movie's first frame>, "x": 0...1, "y": 0...1}` from the top left of the recorded rectangle, and
 /// `"click": "left" | "right"` on the sample where a button went down. An editor zooms on the clicks and follows the
 /// smoothed path (GenesisTools' recorder part, CursorTrack.swift). Sampled at 60 Hz on its own queue from the
 /// window server's pointer (`CGEvent(source: nil)`) and button state, which needs no Input Monitoring grant; a
 /// sample is written only when something changed, plus one every 0.5 s so a still pointer keeps its place.
+/// `t` is on the host clock the frames carry, so it is the movie time of the frames that show the sample; nothing is
+/// written before the movie has its first frame.
 ///
 /// With `--cursor-shapes <dir>` (the movie then records without the system cursor, `--hide-cursor`) the writer also
 /// keeps the cursor's image: every 100 ms it reads `NSCursor.currentSystem` (0.64 ms a read) and hashes the image; a
@@ -25,7 +29,7 @@ final class CursorTrackWriter {
     private let rect: () -> CGRect
     private let queue = DispatchQueue(label: "ax-tool.cursor-track", qos: .userInitiated)
     private var timer: DispatchSourceTimer?
-    private var started = Date()
+    private var movieStart: () -> CMTime? = { nil }
     private var last: (x: Double, y: Double, ms: Double)?
     private var leftDown = false
     private var rightDown = false
@@ -104,8 +108,9 @@ final class CursorTrackWriter {
         return label
     }
 
-    func start(at started: Date) {
-        self.started = started
+    /// `movieStart` is the movie's first frame timestamp (host clock), nil until that frame came; it is read per sample.
+    func start(movieStart: @escaping () -> CMTime?) {
+        self.movieStart = movieStart
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .nanoseconds(16_666_667), leeway: .milliseconds(2))
         timer.setEventHandler { [weak self] in self?.sample() }
@@ -125,10 +130,11 @@ final class CursorTrackWriter {
     }
 
     private func sample() {
-        guard !paused, let point = CGEvent(source: nil)?.location else { return }
+        guard !paused, let origin = movieStart(), let point = CGEvent(source: nil)?.location else { return }
+        let now = CMClockGetTime(CMClockGetHostTimeClock())
         let frame = rect()
         guard frame.width > 0, frame.height > 0 else { return }
-        let ms = Date().timeIntervalSince(started) * 1000
+        let ms = movieTimeMs(of: now, movieStart: origin)
         let x = Double((point.x - frame.minX) / frame.width)
         let y = Double((point.y - frame.minY) / frame.height)
         let left = CGEventSource.buttonState(.combinedSessionState, button: .left)

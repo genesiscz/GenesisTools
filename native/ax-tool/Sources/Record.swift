@@ -405,6 +405,9 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     var rateChanged: ((Double) -> Void)?
     private let configuration: SCStreamConfiguration
     private var firstTimestamp: CMTime?
+    /// `firstTimestamp` for readers off the frame queue, which can be busy for about a second writing the first PNG.
+    private let movieStartLock = NSLock()
+    private var movieStartTime: CMTime?
     private var lastTimestamp: CMTime?
     private(set) var kept: [KeptFrame] = []
     /// PNG encoding runs here, off `queue` (`consume`). At most `maxPendingEncodes` frames wait, each a full-size
@@ -667,6 +670,9 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     func consume(_ pixelBuffer: CVPixelBuffer, timestamp: CMTime) {
         if firstTimestamp == nil {
             firstTimestamp = timestamp
+            movieStartLock.lock()
+            movieStartTime = timestamp
+            movieStartLock.unlock()
             writer?.startSession(atSourceTime: timestamp)
             audio?.movieStarted(at: timestamp)
             noteMovieStart(timestamp)
@@ -799,6 +805,13 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     /// The first frame's host time: the origin of every timestamp in the result, audio included.
     var origin: CMTime? { queue.sync { firstTimestamp } }
+
+    /// The same moment without waiting for the frame queue, for the cursor track's 60 Hz samples; nil before it.
+    var movieStart: CMTime? {
+        movieStartLock.lock()
+        defer { movieStartLock.unlock() }
+        return movieStartTime
+    }
 
     /// `set-fps`: a new rate pair, applied at once at the new active rate.
     func setFrameRates(active: Double?, idle: Double?) -> (active: Double, idle: Double) {
@@ -1122,9 +1135,11 @@ func cmdCaptureScreen() {
         if CommandLine.arguments.contains("--shortcuts") { cursorTrack?.watchShortcuts() }
         if cursorTrack == nil { recorder.warn("the cursor track \(path) could not be created") }
     }
+    // `started` only measures the run's wall time (stats.durationMs). The cursor track counts from the movie's first
+    // frame, which came up to 0.18 s before it when the capture records audio.
     let started = Date()
     host.cursorTrack = cursorTrack
-    cursorTrack?.start(at: started)
+    cursorTrack?.start { recorder.movieStart }
     let cancelled = runRecordingLoop(duration: options.duration) {
         if let target = windowTarget,
            let rows = CGWindowListCopyWindowInfo([.optionIncludingWindow], target.id) as? [[CFString: Any]],

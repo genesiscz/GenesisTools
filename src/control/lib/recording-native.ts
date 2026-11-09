@@ -3,7 +3,7 @@ import { readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { audioStreamCount, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
+import { audioStreamCount, type MediaFacts, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
@@ -15,6 +15,7 @@ import {
     concatCopyArgv,
     concatListLine,
     cursorTrackPath,
+    type FinishedSegment,
     joinCursorTracks,
     joinSegmentsArgv,
     type MovieRates,
@@ -398,26 +399,56 @@ const joinSegments = async ({
         { segments: segments.length, output, copied: sameShape, audioTracks: audioCounts[0] ?? 0 },
         sameShape ? "segments joined by stream copy" : "segments joined by re-encoding"
     );
-    await joinSegmentCursorTracks(segments, output);
+    await joinSegmentCursorTracks({
+        segments,
+        lengthsMs: segments.map((segment, index) => joinedLengthMs(segment, facts[index])),
+        output,
+    });
     const joined = await probeVideo({ input: output });
     return { durationMs: Math.round(joined.durationUs / 1000) };
 };
 
-async function joinSegmentCursorTracks(
-    segments: Array<{ path: string; durationMs: number }>,
-    output: string
-): Promise<void> {
-    const parts: Array<{ text: string; offsetMs: number }> = [];
-    let offsetMs = 0;
+/**
+ * How long a segment lasts in the joined movie: its file's duration as ffprobe reads it, which is where both the concat
+ * demuxer and the concat filter start the next file. ax-tool's wall `durationMs` and its `movieMs` differed from it by
+ * 13 to 48 ms per segment, so a cursor track shifted by them drifted further from the picture after every segment.
+ */
+function joinedLengthMs(segment: FinishedSegment, facts: MediaFacts): number {
+    if (facts.durationSec !== null && facts.durationSec > 0) {
+        return facts.durationSec * 1000;
+    }
 
-    for (const segment of segments) {
+    return segment.movieMs ?? segment.durationMs;
+}
+
+/** Where each segment starts in the joined movie (ms): the sum of the lengths of the segments before it. */
+export function cursorTrackOffsets(lengthsMs: number[]): number[] {
+    let offsetMs = 0;
+    return lengthsMs.map((lengthMs) => {
+        const start = offsetMs;
+        offsetMs += lengthMs;
+        return start;
+    });
+}
+
+async function joinSegmentCursorTracks({
+    segments,
+    lengthsMs,
+    output,
+}: {
+    segments: FinishedSegment[];
+    lengthsMs: number[];
+    output: string;
+}): Promise<void> {
+    const offsets = cursorTrackOffsets(lengthsMs);
+    const parts: Array<{ text: string; offsetMs: number }> = [];
+
+    for (const [index, segment] of segments.entries()) {
         const path = cursorTrackPath(segment.path);
 
         if (existsSync(path)) {
-            parts.push({ text: await readFile(path, "utf8"), offsetMs });
+            parts.push({ text: await readFile(path, "utf8"), offsetMs: offsets[index] ?? 0 });
         }
-
-        offsetMs += segment.durationMs;
     }
 
     if (parts.length > 0) {
