@@ -285,19 +285,31 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         return nil
     }
 
-    /// Whether `path` names the editor of `model`: its recording folder, its edit file or its movie.
+    /// Whether `path` names the editor of `model`: its edit file, its movie, or for a recording (edit file `edit.json`)
+    /// its folder. A folder of loose movies names none of them, so two plain movies there stay two windows.
     static func names(_ model: EditorModel, _ path: String) -> Bool {
         let given = URL(fileURLWithPath: path).standardizedFileURL.path
         let edit = model.store.url.standardizedFileURL
-        return given == edit.deletingLastPathComponent().path || given == edit.path
+        return (edit.lastPathComponent == "edit.json" && given == edit.deletingLastPathComponent().path)
+            || given == edit.path
             || given == URL(fileURLWithPath: model.project.source.video).standardizedFileURL.path
+    }
+
+    /// The path editor-open.json names a window by, the rule TypeScript editorWindowKeyOf (library.ts) keeps: a
+    /// recording folder (edit file `edit.json`) by the folder, any other edit by its movie.
+    nonisolated static func openPath(store: URL, video: String) -> String {
+        let edit = store.standardizedFileURL
+        return edit.lastPathComponent == "edit.json"
+            ? edit.deletingLastPathComponent().path
+            : URL(fileURLWithPath: video).standardizedFileURL.path
     }
 
     /// `{ front?, open: [{ path, title, window }] }`: the editor's windows, `window` being each one's window number
     /// (what `window.open` answers). The recorder host's `window.list` and `window.changed` carry it as is.
     func openState() -> [String: Any] {
         func row(_ entry: (NSWindow, EditorModel, Any?)) -> [String: Any] {
-            ["path": entry.1.store.url.deletingLastPathComponent().path, "title": entry.1.title, "window": entry.0.windowNumber]
+            ["path": EditorWindows.openPath(store: entry.1.store.url, video: entry.1.project.source.video), "title": entry.1.title,
+             "window": entry.0.windowNumber]
         }
         var state: [String: Any] = ["open": open.values.map(row)]
         if let id = frontWindow, let entry = open[id] { state["front"] = row(entry) }

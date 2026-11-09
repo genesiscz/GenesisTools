@@ -41,7 +41,7 @@ import * as edits from "./edit";
 import { editProject, readUndoSteps, redoEdit, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
-import { EDITOR_TABS, shortRecordingId } from "./library";
+import { EDITOR_TABS, editorWindowKeyOf, shortRecordingId } from "./library";
 import { chaptersOfPart } from "./moments";
 import { applyEdit, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
@@ -740,14 +740,12 @@ describe("the recorder service", () => {
             "--out",
             "/tmp/s.png",
         ]);
-        expect(await client.call<unknown>("window.open", { path: "/rec/talk/screen.edit.json", focus: false })).toEqual(
-            {
-                opened: true,
-                window: 7,
-            }
-        );
+        expect(await client.call<unknown>("window.open", { path: "/rec/talk/edit.json", focus: false })).toEqual({
+            opened: true,
+            window: 7,
+        });
         expect(opened[0]).toEqual(
-            expect.arrayContaining(["--recorder", "--edit", "/rec/talk/screen.edit.json", "--no-focus"])
+            expect.arrayContaining(["--recorder", "--edit", "/rec/talk/edit.json", "--no-focus"])
         );
         expect(await client.call<unknown>("window.list", {})).toEqual({
             open: [{ path: "/rec/talk", title: "Talk", window: 7 }],
@@ -1322,9 +1320,7 @@ describe("the REPL's and the CLI's way to the service", () => {
         expect(await client.call<unknown>("window.close", { path: "/rec/other/screen.edit.json" })).toEqual({
             closed: false,
         });
-        await expect(
-            client.call<unknown>("window.close", { path: "/rec/talk/screen.edit.json" })
-        ).rejects.toMatchObject({
+        await expect(client.call<unknown>("window.close", { path: "/rec/talk/edit.json" })).rejects.toMatchObject({
             code: RPC_ERRORS.hostUnavailable,
         });
         await expect(client.call<unknown>("window.close", { window: 7 })).rejects.toMatchObject({
@@ -2197,5 +2193,27 @@ describe("building the native recorder ahead of a recording", () => {
 
         expect(triggers[0]).toBe("recorder-service-start");
         expect(triggers.slice(1)).toContain("recorder-service-check");
+    });
+});
+
+describe("an editor window is named by its recording folder or, for a plain movie, by the movie", () => {
+    const root = mkdtempSync(join(tmpdir(), "open-state-"));
+    const loose = join(root, "Desktop");
+    const recording = join(root, "rec");
+    mkdirSync(loose);
+    mkdirSync(recording);
+    writeFileSync(join(loose, "demo.mov"), "");
+    writeFileSync(join(loose, "other.mov"), "");
+    writeFileSync(join(loose, "demo.edit.json"), "{}");
+    writeFileSync(join(recording, "recording.json"), "{}");
+    writeFileSync(join(recording, "screen.mp4"), "");
+
+    test("two plain movies in one folder get their own keys, and a recording keeps its folder", () => {
+        expect(editorWindowKeyOf(join(loose, "demo.mov"))).toBe(join(loose, "demo.mov"));
+        expect(editorWindowKeyOf(join(loose, "other.mov"))).toBe(join(loose, "other.mov"));
+        expect(editorWindowKeyOf(join(loose, "demo.edit.json"))).toBe(join(loose, "demo.mov"));
+        expect(editorWindowKeyOf(join(recording, "edit.json"))).toBe(recording);
+        expect(editorWindowKeyOf(join(recording, "screen.mp4"))).toBe(recording);
+        expect(editorWindowKeyOf(recording)).toBe(recording);
     });
 });

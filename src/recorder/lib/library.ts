@@ -268,6 +268,29 @@ function recordingOfUnwrittenEdit(path: string): string | undefined {
     return movie ? join(folder, movie) : undefined;
 }
 
+/**
+ * The path an editor window is named by in editor-open.json, by the one rule both sides keep (Swift
+ * EditorWindows.openState and names): a recording folder (its `edit.json`, its own movie, the folder) by the folder,
+ * any other edit by its movie, so two plain movies in one folder are two windows and `open` resolves to a movie.
+ */
+export function editorWindowKeyOf(path: string): string {
+    const file = basename(path);
+
+    if (file === "edit.json") {
+        return dirname(path);
+    }
+
+    if (file.endsWith(".edit.json")) {
+        return recordingOfUnwrittenEdit(path) ?? path;
+    }
+
+    if (/\.(mp4|mov|m4v)$/i.test(file)) {
+        return existsSync(join(dirname(path), "recording.json")) ? dirname(path) : path;
+    }
+
+    return path;
+}
+
 export function resolveRecording(value: string, { alive }: { alive?: (pid: number) => boolean } = {}): string {
     if (value === "open") {
         const state = readEditorOpenState({ alive });
