@@ -189,6 +189,8 @@ export interface DemoStep {
 /** The recording a demo drives: a mark for each step, its stop, the edit and the export. */
 export interface DemoSession {
     mark(label: string): Promise<{ atMs: number }>;
+    /** The movie time now, without a marker: where a step of a demo without markers starts. */
+    time(): Promise<{ atMs: number }>;
     /** Stops and waits for the finished movie; the recording's folder. */
     stop(): Promise<string>;
 }
@@ -238,7 +240,6 @@ export async function runDemo(options: {
     const edit = demoEditSchema.parse(options.edit ?? {});
     const { driver } = options;
     const session = await driver.start();
-    const recordingStarted = driver.now();
     const steps: DemoStepTiming[] = [];
     const failed: DemoResult["failed"] = [];
     let folder: string | undefined;
@@ -247,9 +248,12 @@ export async function runDemo(options: {
         await driver.sleep((options.settleSeconds ?? 0.6) * 1000);
 
         for (const step of options.steps) {
+            // A step starts at its movie time (its mark's, or the time now without markers), and its run is timed from
+            // that answer, so a mark that waited for the first frame does not count the wait into the step.
+            const { atMs: startMs } = edit.markers
+                ? await session.mark(step.caption.slice(0, 80))
+                : await session.time();
             const wallStart = driver.now();
-            const atMs = edit.markers ? (await session.mark(step.caption.slice(0, 80))).atMs : undefined;
-            const startMs = atMs ?? wallStart - recordingStarted;
 
             try {
                 await step.run?.();

@@ -412,6 +412,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     let frameStats: { frames?: number; averageFps?: number } = {};
     let live: LiveRecordingServer | undefined;
     let control: SessionRecorderControl | undefined;
+    let firstFrameNoted = false;
     const emit = (event: RecordingSessionEvent) => {
         // One per second while it records: the day log keeps them, the terminal shows the CLI's own state lines.
         log.debug({ event }, "recording event");
@@ -424,6 +425,16 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
             (event.event === "state" && event.state === "recording") || event.event === "elapsed"
                 ? { lastFrameAt: new Date().toISOString() }
                 : {};
+
+        // The wall time of the movie's time 0, once: movies.record() resolves when the entry has it, so what its caller
+        // does next is in the movie, and a demo reads the movie time from it.
+        if (event.event === "state" && event.state === "recording" && !firstFrameNoted) {
+            firstFrameNoted = true;
+            const heard = Date.now();
+            void session.movieTimeOfMark().then((movieMs) => {
+                live?.update({ firstFrameAt: new Date(heard - movieMs).toISOString() });
+            });
+        }
 
         // Each state event re-anchors the floating controls' clock on the movie time; an error changes only the entry.
         if (event.event === "state") {

@@ -157,6 +157,9 @@ function fakeDriver() {
                     marks.push(label);
                     return { atMs: clock };
                 },
+                async time() {
+                    return { atMs: clock };
+                },
                 async stop() {
                     stopped = true;
                     return "/library/video-demo";
@@ -244,6 +247,63 @@ describe("runDemo", () => {
 
     test("refuses a demo without steps", async () => {
         await expect(runDemo({ driver: fakeDriver().driver, steps: [] })).rejects.toThrow("at least one step");
+    });
+});
+
+describe("runDemo on the movie clock", () => {
+    /** A recording whose first frame comes `firstFrameMs` after start() resolved; marks wait for it, as movieTimeOfMark does. */
+    function slowFirstFrame(firstFrameMs: number) {
+        let clock = 0;
+        let frameAt = 0;
+        const movieTime = () => Math.max(0, clock - frameAt);
+        const driver: DemoDriver = {
+            async start() {
+                frameAt = clock + firstFrameMs;
+                return {
+                    async mark() {
+                        clock = Math.max(clock, frameAt);
+                        return { atMs: movieTime() };
+                    },
+                    async time() {
+                        return { atMs: movieTime() };
+                    },
+                    async stop() {
+                        return "/library/video-demo";
+                    },
+                };
+            },
+            durationMs: async () => clock,
+            idleMs: async () => [],
+            edit: async () => undefined,
+            sleep: async (ms) => {
+                clock += ms;
+            },
+            now: () => clock,
+        };
+        return { driver, advance: (ms: number) => (clock += ms) };
+    }
+
+    test("a mark that waits for the first frame does not count that wait into the step", async () => {
+        const fake = slowFirstFrame(800);
+        const result = await runDemo({
+            driver: fake.driver,
+            settleSeconds: 0,
+            export: false,
+            steps: [{ caption: "Open", run: () => fake.advance(2000), holdSeconds: 0.5 }],
+        });
+        expect(result.steps[0]).toEqual({ caption: "Open", startMs: 0, runEndMs: 2000, endMs: 2500 });
+    });
+
+    test("without markers a step starts at the movie time the recording answers, not the wall time since start()", async () => {
+        const fake = slowFirstFrame(300);
+        const result = await runDemo({
+            driver: fake.driver,
+            settleSeconds: 1,
+            export: false,
+            edit: { markers: false },
+            steps: [{ caption: "Open", run: () => fake.advance(2000), holdSeconds: 0.5 }],
+        });
+        expect(result.steps[0]).toEqual({ caption: "Open", startMs: 700, runEndMs: 2700, endMs: 3200 });
     });
 });
 

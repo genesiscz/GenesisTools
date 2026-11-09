@@ -1578,7 +1578,7 @@ export const moviesApi = defineApi({
             params: recordOptionsSchema,
             result: z.unknown(),
             resultName: "MovieRecording",
-            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title. It records what the user's screen shows, with an on-screen countdown and indicator unless they are off.`,
+            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title. It records what the user's screen shows, with an on-screen countdown and indicator unless they are off. It resolves once the movie has its first frame, so what you do after await movies.record() is in the movie.`,
             effect: "reversible",
             reaches: ["user"],
         }),
@@ -3228,7 +3228,12 @@ async function record({
         gate,
         find: () =>
             listLiveRecordings().find(
-                (entry) => !before.has(entry.id) && entry.folder?.includes("/video-") && entry.state === "recording"
+                // Its first frame is in, so what the caller does after `await record()` is in the movie.
+                (entry) =>
+                    !before.has(entry.id) &&
+                    entry.folder?.includes("/video-") &&
+                    entry.state === "recording" &&
+                    entry.firstFrameAt !== undefined
             ),
         timeoutMs: START_TIMEOUT_MS,
         graceMs: START_GRACE_MS,
@@ -3270,8 +3275,17 @@ export function movieDemoDriver(options: RecordOptions, ctx?: ToolsetContext): D
     return {
         async start() {
             const recording = await record({ options, ctx });
+            // record() resolved on an entry with its first frame. A demo neither pauses nor switches displays, so the
+            // movie time is the wall time since that frame (movieTimeOfMark's own sum for the first segment).
+            const firstFrameMs = Date.parse(recording.entry.firstFrameAt ?? "");
+
+            if (Number.isNaN(firstFrameMs)) {
+                throw new Error(`the recording ${recording.id} names no first frame`);
+            }
+
             return {
                 mark: async (label: string) => markerAnswer.parse(await recording.mark(label)),
+                time: async () => ({ atMs: Math.max(0, Date.now() - firstFrameMs) }),
                 stop: async () => {
                     await recording.stop();
 

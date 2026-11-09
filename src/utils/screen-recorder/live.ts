@@ -65,6 +65,8 @@ export const liveEntrySchema = z.object({
     displays: z.array(z.object({ id: z.number(), name: z.string() })).default([]),
     frames: z.number().int().nonnegative().default(0),
     lastFrameAt: z.string().optional(),
+    /** A movie recording's wall time of its movie's time 0 (its first frame), once that frame is in. */
+    firstFrameAt: z.string().optional(),
     warning: z.string().optional(),
     folder: z.string().optional(),
     /** The RPC methods this recording serves (`RECORDER_METHODS`); the menu bar shows a button per control. */
@@ -164,7 +166,7 @@ export function readLiveRecording(id: string, dir = liveRecordingsDir()): LiveEn
 }
 
 export type LiveEntryChange = Partial<
-    Pick<LiveEntry, "title" | "state" | "displays" | "frames" | "lastFrameAt" | "warning">
+    Pick<LiveEntry, "title" | "state" | "displays" | "frames" | "lastFrameAt" | "firstFrameAt" | "warning">
 >;
 
 /** What `notifyStatus` takes from a recorder's status: its state and warning, and a movie's recorded time. */

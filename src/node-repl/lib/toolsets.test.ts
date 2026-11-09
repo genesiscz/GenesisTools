@@ -2189,23 +2189,32 @@ test("shutdown prevents a worker timer from starting another recording during fi
 });
 
 describe("movies.record() takes the options of tools recorder start", () => {
-    /** A fake `tools recorder start`: the CLI's own flag parse, then a live movie entry, as the real one makes. */
-    function fakeRecorder() {
+    /**
+     * A fake `tools recorder start`: the CLI's own flag parse, then a live movie entry, as the real one makes, which
+     * gains its first frame `firstFrameAfterMs` later.
+     */
+    function fakeRecorder(firstFrameAfterMs = 0) {
         const started: StartRequest[] = [];
         const servers: LiveRecordingServer[] = [];
         const start: MovieRecorderDeps["start"] = (args) => {
             expect(args.slice(0, 2)).toEqual(["recorder", "start"]);
             const request = parseStartFlags(readStartArgs(args.slice(2)));
             started.push(request);
-            servers.push(
-                new LiveRecordingServer({
-                    id: `movie-start-${process.pid}-${started.length}`,
-                    kind: "movie",
-                    title: request.title ?? "Screen recording",
-                    folder: join(mkdtempSync(join(tmpdir(), "movie-start-")), `video-${started.length}`),
-                    control: new SettingsControl(),
-                })
-            );
+            const server = new LiveRecordingServer({
+                id: `movie-start-${process.pid}-${started.length}`,
+                kind: "movie",
+                title: request.title ?? "Screen recording",
+                folder: join(mkdtempSync(join(tmpdir(), "movie-start-")), `video-${started.length}`),
+                control: new SettingsControl(),
+            });
+            servers.push(server);
+            const frame = () => server.update({ firstFrameAt: new Date().toISOString() });
+
+            if (firstFrameAfterMs === 0) {
+                frame();
+            } else {
+                setTimeout(frame, firstFrameAfterMs);
+            }
         };
         const close = () => {
             for (const server of servers.splice(0)) {
@@ -2324,6 +2333,24 @@ describe("movies.record() takes the options of tools recorder start", () => {
             "display?: number (0–16)",
         ]) {
             expect(line).toContain(field);
+        }
+    });
+
+    test("record() resolves once the movie has its first frame, not when its entry appears", async () => {
+        const fake = fakeRecorder(700);
+        const { movies } = (await new MoviesToolset({ start: fake.start, checkTarget: fake.checkTarget }).load(
+            ctx
+        )) as {
+            movies: { record(options: unknown): Promise<{ entry: { firstFrameAt?: string } }> };
+        };
+
+        try {
+            const asked = Date.now();
+            const recording = await movies.record({ title: "First frame" });
+            expect(Date.now() - asked).toBeGreaterThanOrEqual(650);
+            expect(recording.entry.firstFrameAt).toBeString();
+        } finally {
+            fake.close();
         }
     });
 
