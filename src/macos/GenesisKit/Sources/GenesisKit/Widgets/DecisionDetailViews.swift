@@ -80,7 +80,7 @@ extension DecisionContextSection {
     /// A line that opens a quoted decision: "❓ **DECISION 11**: title", also as a heading or a list item, with the
     /// number as a link or not. The colon after it is required: a sentence that only mentions a decision is no quote.
     private static let quoteStart = try! NSRegularExpression(
-        pattern: #"^\s{0,3}(?:#{1,6}\s+)?(?:[-*+]\s+)?\**\[?\s*(?:❓\s*)?\**DECISION\s+\d+\**\]?(?:\([^)]*\))?\**\s*:"#)
+        pattern: #"^\s{0,3}(?:#{1,6}\s+)?(?:[-*+]\s+)?(?:❓\s*)?\**\[?\s*(?:❓\s*)?\**DECISION\s+\d+\**\]?(?:\([^)]*\))?\**\s*:"#)
     /// An option line of a quoted decision: "- **a)** words", "b) words", "**(c)** words".
     private static let optionLine = try! NSRegularExpression(
         pattern: #"^\s*(?:[-*+]\s+)?\**\(?([a-z])\)\**\s*(.*)$"#)
