@@ -6,6 +6,7 @@ import { RecordingSession, type SegmentRecorder } from "@app/control/lib/recordi
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
 import type { AppStatus } from "@app/macos/lib/permissions/app";
 import * as appModule from "@app/macos/lib/permissions/app";
+import { DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { ReplEngine } from "@app/node-repl/lib/engine";
@@ -1826,6 +1827,31 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         await expect(meetings.config.get("global.no.such.key")).rejects.toThrow(
             '"global.no.such.key" is not set and has no default'
         );
+    });
+
+    // A rename through the REPL is a decision as `tools meetings speakers rename` is: in the decision journal, with
+    // who made it, and undone by its token.
+    test("meetings: speakers.rename is a decision journal entry, and its token undoes it", async () => {
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Rename", start: "2026-11-02T15:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: { open(ref: string): { speakers: { rename(label: string, name: string): Promise<unknown> } } };
+        };
+        await meetings.open(record.id).speakers.rename("Speaker 2", "Alex Example");
+
+        const journal = new DecisionJournal({ store });
+        const [entry] = journal.read(record.id);
+        expect(entry).toMatchObject({
+            action: { kind: "rename", label: "Speaker 2", name: "Alex Example" },
+            labels: [{ label: "Speaker 2", after: "Alex Example" }],
+        });
+        expect(store.read(record.id)?.speakers.labels).toEqual({ "Speaker 2": "Alex Example" });
+
+        await journal.revert({ meeting: record.id, token: entry!.token, actor: { kind: "cli" } });
+        expect(store.read(record.id)?.speakers.labels).toEqual({});
     });
 
     // R2-MC9: the toolset had its own copy of set, which took a label the meeting does not carry and wrote a history
