@@ -1696,7 +1696,17 @@ export function readCursorTrack(path: string | undefined): CursorSample[] {
         .split("\n")
         .filter(Boolean)
         .flatMap((line) => {
-            const row = cursorRowSchema.safeParse(SafeJSON.parse(line, { strict: true }));
+            let raw: unknown;
+
+            try {
+                raw = SafeJSON.parse(line, { strict: true });
+            } catch {
+                // A line torn by a crash or a write still in progress is skipped, as CursorTrack.load skips it.
+                log.debug({ path }, "cursor track: skipped a line that is not JSON");
+                return [];
+            }
+
+            const row = cursorRowSchema.safeParse(raw);
             return row.success
                 ? [
                       {

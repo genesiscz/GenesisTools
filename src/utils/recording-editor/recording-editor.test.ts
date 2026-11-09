@@ -57,6 +57,7 @@ import {
     outputTimeOf,
     parseEditOps,
     partOf,
+    readCursorTrack,
     readProject,
     replaceWordsInLines,
     shortcutsOf,
@@ -3109,6 +3110,17 @@ describe("a redact op's style options", () => {
         // The options of the right style still apply.
         expect(apply({ style: "pixelate", cell: 24 }).redactions?.[0]).toMatchObject({ cell: 24 });
         expect(apply({ style: "spotlight", dim: 0.6 }).redactions?.[0]).toMatchObject({ dim: 0.6 });
+    });
+});
+
+describe("a cursor track with a torn line", () => {
+    test("skips the line that does not parse and keeps the rows around it", () => {
+        const path = join(workspace(), "cursor.jsonl");
+        writeFileSync(path, '{"t":0,"x":1,"y":2}\n{"t": 12, "x"\n{"t":40,"x":3,"y":4,"click":"left"}\n');
+        expect(readCursorTrack(path)).toEqual([
+            { ms: 0, x: 1, y: 2 },
+            { ms: 40, x: 3, y: 4, click: "left" },
+        ]);
     });
 });
 
