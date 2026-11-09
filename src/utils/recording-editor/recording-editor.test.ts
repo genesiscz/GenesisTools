@@ -74,6 +74,7 @@ import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema, syncDenoisedTran
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, sampleFpsFilter, speedArgv, trimArgv } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
+import { redactionBoxAt } from "./private-data";
 import * as projectOps from "./project";
 import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
@@ -2414,6 +2415,120 @@ describe("the editor window's item ops", () => {
         const music = applyOp(wholeProject(source), { op: "music", file, startMs: 0, loop: true }).audio.music;
         expect(music).not.toHaveProperty("startMs");
         expect(music).not.toHaveProperty("loop");
+    });
+});
+
+describe("a move or resize of a hidden part with keyframes", () => {
+    const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+    // The case RecorderHuntTrackedPartMoveTests pins in Swift: keys at 1 s and 3 s, the stored rect on the first key.
+    const box = { x: 0.1, y: 0.1, width: 0.2, height: 0.05 };
+    function tracked() {
+        const project = applyOp(wholeProject(source), {
+            op: "redact",
+            from: 1,
+            to: 3,
+            style: "black",
+            rect: box,
+            track: [
+                { at: 1, ...box },
+                { at: 3, ...box, y: 0.5 },
+            ],
+        });
+        return { project, id: project.redactions?.[0]?.id ?? "" };
+    }
+
+    test("setRedaction rect moves every keyframe by the same amount, so the renderer draws the part where it was put", () => {
+        const { project, id } = tracked();
+        const moved = applyOp(project, { op: "setRedaction", id, rect: { ...box, x: 0.2 } });
+        const part = moved.redactions?.[0];
+        expect(part?.track?.map((key) => [key.atUs, key.x, key.y])).toEqual([
+            [1_000_000, expect.closeTo(0.2, 6), expect.closeTo(0.1, 6)],
+            [3_000_000, expect.closeTo(0.2, 6), expect.closeTo(0.5, 6)],
+        ]);
+        expect(part && redactionBoxAt(part, 2_000_000)).toEqual({
+            x: expect.closeTo(0.2, 6),
+            y: expect.closeTo(0.3, 6),
+            width: expect.closeTo(0.2, 6),
+            height: expect.closeTo(0.05, 6),
+        });
+        expect(part).toMatchObject({ x: 0.2, y: 0.1, width: 0.2, height: 0.05 });
+    });
+
+    test("setRedaction rect scales every keyframe's size by the same ratio (the case the Swift test pins)", () => {
+        const { project, id } = tracked();
+        const moved = applyOp(project, { op: "setRedaction", id, rect: { x: 0.2, y: 0.15, width: 0.3, height: 0.1 } });
+        const keys = moved.redactions?.[0]?.track?.map((key) => [key.atUs, key.x, key.y, key.width, key.height]);
+        expect(keys).toEqual([
+            [
+                1_000_000,
+                expect.closeTo(0.2, 6),
+                expect.closeTo(0.15, 6),
+                expect.closeTo(0.3, 6),
+                expect.closeTo(0.1, 6),
+            ],
+            [
+                3_000_000,
+                expect.closeTo(0.2, 6),
+                expect.closeTo(0.55, 6),
+                expect.closeTo(0.3, 6),
+                expect.closeTo(0.1, 6),
+            ],
+        ]);
+    });
+
+    test("a move past the picture's edge keeps every keyframe inside it", () => {
+        const { project, id } = tracked();
+        const moved = applyOp(project, { op: "setRedaction", id, rect: { ...box, x: 0.75, y: 0.6 } });
+        for (const key of moved.redactions?.[0]?.track ?? []) {
+            expect(key.x + key.width).toBeLessThanOrEqual(1 + 1e-9);
+            expect(key.y + key.height).toBeLessThanOrEqual(1 + 1e-9);
+        }
+
+        expect(moved.redactions?.[0]?.track?.map((key) => key.x)).toEqual([0.75, 0.75]);
+        expect(moved.redactions?.[0]?.track?.[1]?.y).toBeCloseTo(0.95, 6);
+    });
+
+    test("setRedaction track replaces the keyframes as given (inside the picture), and [] makes the part fixed", () => {
+        const { project, id } = tracked();
+        const op = editOpSchema.parse({
+            op: "setRedaction",
+            id,
+            rect: { x: 0.4, y: 0.4, width: 0.2, height: 0.05 },
+            track: [
+                { at: 3, x: 0.9, y: 0.2, width: 0.2, height: 0.05 },
+                { at: 1, x: 0.4, y: 0.4, width: 0.2, height: 0.05 },
+            ],
+        });
+        const replaced = applyOp(project, op).redactions?.[0];
+        expect(replaced?.track?.map((key) => [key.atUs, key.x, key.y])).toEqual([
+            [1_000_000, 0.4, 0.4],
+            [3_000_000, 0.8, 0.2],
+        ]);
+        expect(replaced).toMatchObject({ x: 0.4, y: 0.4 });
+        const fixed = applyOp(project, editOpSchema.parse({ op: "setRedaction", id, track: [] })).redactions?.[0];
+        expect(fixed).not.toHaveProperty("track");
+        expect(fixed && redactionBoxAt(fixed, 2_000_000)).toEqual(box);
+    });
+
+    test("follow on a part with keyframes is refused, because the part follows its text", () => {
+        const { project, id } = tracked();
+        expect(() => applyOp(project, { op: "setRedaction", id, follow: true })).toThrow("follows its text");
+        const fixed = applyOp(project, editOpSchema.parse({ op: "setRedaction", id, follow: true, track: [] }));
+        expect(fixed.redactions?.[0]).toMatchObject({ follow: true });
+        expect(fixed.redactions?.[0]).not.toHaveProperty("track");
+        expect(() =>
+            applyOp(wholeProject(source), {
+                op: "redact",
+                from: 1,
+                to: 3,
+                rect: box,
+                follow: true,
+                track: [
+                    { at: 1, ...box },
+                    { at: 3, ...box, y: 0.5 },
+                ],
+            })
+        ).toThrow("follows its text");
     });
 });
 

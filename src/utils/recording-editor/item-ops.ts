@@ -1,6 +1,7 @@
 import { cameraHiddenId } from "./camera";
 import { denoiseSchema } from "./denoise";
 import { textAnimateOf } from "./overlays";
+import { timeToUs } from "./plan";
 import type { CursorSample, EditOp, EditProject } from "./project";
 import { MINIMUM_CLIP_US, newId, placeZoom, TEXT_MAX_CHARS } from "./project";
 
@@ -19,6 +20,44 @@ const SPOTLIGHT_DIM = 0.5;
 
 /** The shortest a hidden part, text, shape or camera part may last. */
 const MINIMUM_ITEM_US = 100_000;
+
+/** The smallest share of the picture a hidden part's rectangle, or one of its keyframes, is wide or high. */
+const MINIMUM_PART_SIDE = 0.01;
+
+interface PartBox {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+type TrackKey = NonNullable<NonNullable<EditProject["redactions"]>[number]["track"]>[number];
+
+/** A box held inside the picture and at least 1 % wide and high: a drag past the edge stops at the edge. */
+function inPicture(box: PartBox): PartBox {
+    const width = clamp(box.width, MINIMUM_PART_SIDE, 1);
+    const height = clamp(box.height, MINIMUM_PART_SIDE, 1);
+    return { x: clamp(box.x, 0, 1 - width), y: clamp(box.y, 0, 1 - height), width, height };
+}
+
+/**
+ * A tracked part's keyframes after its rectangle moved from `from` to `to`: every key moves by the same amount and its
+ * size scales by the same ratio, each held inside the picture, so the part keeps its motion at the place it was put.
+ * The editor window moves the keys by the same rule (RedactionTrack.moved), measured from the box it shows.
+ */
+function movedKeys(keys: readonly TrackKey[], from: PartBox, to: PartBox): TrackKey[] {
+    const scaleX = to.width / Math.max(from.width, Number.EPSILON);
+    const scaleY = to.height / Math.max(from.height, Number.EPSILON);
+    return keys.map((key) => ({
+        atUs: key.atUs,
+        ...inPicture({
+            x: key.x + to.x - from.x,
+            y: key.y + to.y - from.y,
+            width: key.width * scaleX,
+            height: key.height * scaleY,
+        }),
+    }));
+}
 
 function missing(kind: string, id: string, ids: readonly string[]): Error {
     return new Error(`no ${kind} ${id}; ${kind}s: ${ids.join(", ") || "none"}`);
@@ -61,10 +100,9 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
         );
     }
 
-    const rect = op.rect ?? { x: item.x, y: item.y, width: item.width, height: item.height };
-    const width = clamp(rect.width, 0.01, 1);
-    const height = clamp(rect.height, 0.01, 1);
+    const rect = inPicture(op.rect ?? item);
     const {
+        track: oldTrack,
         label: oldLabel,
         follow: oldFollow,
         dim: oldDim,
@@ -84,12 +122,25 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
     const cutout = op.cutout ?? oldCutout;
     // R8 11: 0 makes the edge sharp again.
     const dimAround = op.dimAround === undefined ? oldDimAround : op.dimAround || undefined;
+    // The renderers place a part with keyframes by its keys alone, so a new rect moves the keys with it, and a track
+    // sent with the op (the editor's, already moved) replaces them; [] makes the part fixed at its rect.
+    const track = op.track
+        ? op.track.map(({ at, ...box }) => ({ atUs: timeToUs(at), ...inPicture(box) })).sort((a, b) => a.atUs - b.atUs)
+        : op.rect && oldTrack?.length
+          ? movedKeys(oldTrack, item, rect)
+          : oldTrack;
+    const keyed = track && track.length > 0 ? track : undefined;
+
+    if (follow && keyed && (op.follow || op.track)) {
+        throw new Error(
+            `hidden part ${op.id} follows its text through ${keyed.length} keyframes, so it cannot follow the cursor too; send track: [] with follow: true to make it a fixed part that follows the cursor`
+        );
+    }
+
     const next = {
         ...rest,
-        x: clamp(rect.x, 0, 1 - width),
-        y: clamp(rect.y, 0, 1 - height),
-        width,
-        height,
+        ...rect,
+        ...(keyed ? { track: keyed } : {}),
         ...(op.style ? { style: op.style } : {}),
         ...(label === undefined ? {} : { label }),
         ...(follow === undefined ? {} : { follow }),

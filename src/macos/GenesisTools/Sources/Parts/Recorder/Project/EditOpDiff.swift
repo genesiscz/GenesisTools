@@ -173,6 +173,12 @@ enum EditOpDiff {
         if a.cell != b.cell { op.cell = b.cell ?? 0 }
         // R8 11
         if a.dimAround != b.dimAround { op.dimAround = b.dimAround ?? 0 }
+        // A part with keyframes moves them with its rectangle (RedactionTrack.moved): the window sends the keys it drew.
+        if (a.track ?? []) != (b.track ?? []) {
+            op.track = (b.track ?? []).map {
+                EditOp.Redact.Key(at: Double($0.atUs) / 1_000_000, x: $0.x, y: $0.y, width: $0.width, height: $0.height)
+            }
+        }
         let set: [EditOp] = op == EditOp.SetRedaction(id: b.id) ? [] : [.setRedaction(op)]
         return set + retime(b.id, from: (a.startUs, a.endUs), to: (b.startUs, b.endUs))
     }

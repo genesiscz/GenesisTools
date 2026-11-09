@@ -1985,12 +1985,35 @@ export const editOpSchema = z.discriminatedUnion("op", [
             easeOutMs: z.number().optional(),
         })
         .strict(),
-    /** Changes a hidden part or spotlight that exists; the rectangle stays inside the picture, at least 1 % wide. */
+    /**
+     * Changes a hidden part or spotlight that exists; the rectangle stays inside the picture, at least 1 % wide. The
+     * renderers place a part with keyframes (hideText, hidePrivate, verifyHidden's fixOps, redact with track) by its
+     * keys alone, so on such a part a new rect moves every key by its change from the stored rect and scales every
+     * key's size by the same ratio (each kept inside the picture), and `follow` is refused: the part follows its text.
+     */
     z
         .object({
             op: z.literal("setRedaction"),
             id: z.string(),
             rect: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).strict().optional(),
+            /**
+             * New keyframes (`at`, source seconds) in place of the part's own, each kept inside the picture and taken as
+             * given (no holds are added at the part's edges, unlike redact's track); a rect sent with them does not move
+             * them again, and [] makes the part fixed at its rect.
+             */
+            track: z
+                .array(
+                    z
+                        .object({
+                            at: sourceTimeSchema,
+                            x: z.number(),
+                            y: z.number(),
+                            width: z.number(),
+                            height: z.number(),
+                        })
+                        .strict()
+                )
+                .optional(),
             style: z.enum(REDACTION_STYLES).optional(),
             /** "" takes the label away. */
             label: z.string().max(60).optional(),
@@ -2665,6 +2688,13 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         case "unzoom":
             return removeZoom(project, op.id);
         case "redact": {
+            // The renderers place a part with keys by its keys alone, so a follow beside them would be ignored.
+            if (op.follow && op.track) {
+                throw new Error(
+                    "a hidden part with a track follows its text, so it cannot follow the cursor too: give it follow or track, not both"
+                );
+            }
+
             const added = addRedaction(project, {
                 fromUs: timeToUs(op.from),
                 toUs: timeToUs(op.to),

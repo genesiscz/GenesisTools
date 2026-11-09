@@ -1138,6 +1138,9 @@ private struct RedactionEditor: View {
 
     var body: some View {
         let id = redaction.id
+        // A part with keyframes follows its text: the controls show and move its box at its start, and every key with it.
+        let tracked = redaction.track?.isEmpty == false
+        let shown = RedactionTrack.shownRect(redaction, atSourceUs: redaction.startUs)
         VStack(alignment: .leading, spacing: 8) {
             TextField("Name (what it hides)", text: Binding(get: { redaction.label ?? "" }, set: { value in
                 let name = String(value.prefix(60))
@@ -1145,7 +1148,7 @@ private struct RedactionEditor: View {
             }))
             .textFieldStyle(.roundedBorder)
             .accessibilityIdentifier("recorder.hide.name")
-            if redaction.follow == true {
+            if redaction.follow == true && !tracked {
                 Text("Centred on the pointer: only its size below counts.")
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1163,9 +1166,10 @@ private struct RedactionEditor: View {
             SwitchRow("Follow the cursor", isOn: Binding(get: { redaction.follow == true }, set: { on in
                 model.updateRedaction(id) { $0.follow = on ? true : nil }
             }))
-            .disabled(model.cursor == nil)
+            .disabled(model.cursor == nil || tracked)
             .accessibilityIdentifier("recorder.hide.follow")
-            .instantTooltip(model.cursor == nil ? "This recording has no cursor track"
+            .instantTooltip(tracked ? "This part follows its text through its keyframes, so it cannot follow the pointer"
+                            : model.cursor == nil ? "This recording has no cursor track"
                             : "The part keeps its size and moves with the pointer, so a spotlight lights where you point")
             if redaction.style == .spotlight {
                 GenSegmentedTabs("Lit shape", items: [.init(EditProject.SpotlightCutout.rounded, "Rounded"), .init(.rect, "Rectangle"), .init(.circle, "Circle")],
@@ -1187,11 +1191,23 @@ private struct RedactionEditor: View {
                 }), in: 0...0.3)
                     .accessibilityLabel("How far the dim fades in from the lit shape")
             }
-            SectionLabel(text: "Width", value: "\(Int((redaction.width * 100).rounded()))%")
-            Slider(value: Binding(get: { redaction.width }, set: { value in model.updateRedaction(id) { $0.width = (value * 200).rounded() / 200 } }), in: 0.02...1)
+            SectionLabel(text: "Width", value: "\(Int((shown.width * 100).rounded()))%")
+            Slider(value: Binding(get: { Double(shown.width) }, set: { value in
+                model.updateRedaction(id) { part in
+                    var box = RedactionTrack.shownRect(part, atSourceUs: part.startUs)
+                    box.size.width = (value * 200).rounded() / 200
+                    part = RedactionTrack.moved(part, to: box, atSourceUs: part.startUs)
+                }
+            }), in: 0.02...1)
                 .accessibilityLabel("Hidden part width")
-            SectionLabel(text: "Height", value: "\(Int((redaction.height * 100).rounded()))%")
-            Slider(value: Binding(get: { redaction.height }, set: { value in model.updateRedaction(id) { $0.height = (value * 200).rounded() / 200 } }), in: 0.02...1)
+            SectionLabel(text: "Height", value: "\(Int((shown.height * 100).rounded()))%")
+            Slider(value: Binding(get: { Double(shown.height) }, set: { value in
+                model.updateRedaction(id) { part in
+                    var box = RedactionTrack.shownRect(part, atSourceUs: part.startUs)
+                    box.size.height = (value * 200).rounded() / 200
+                    part = RedactionTrack.moved(part, to: box, atSourceUs: part.startUs)
+                }
+            }), in: 0.02...1)
                 .accessibilityLabel("Hidden part height")
             SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(redaction.endUs - redaction.startUs) / 1_000_000))
             Slider(value: Binding(get: { Double(redaction.endUs - redaction.startUs) / 1_000_000 }, set: { value in
@@ -1210,11 +1226,12 @@ private struct RedactionThumb: View {
     let redaction: EditProject.Redaction
 
     var body: some View {
+        let shown = RedactionTrack.shownRect(redaction, atSourceUs: redaction.startUs)
         Group {
             if let tile = model.filmstrip.tile(atSource: redaction.startUs),
-               let crop = tile.image.cropping(to: CGRect(x: redaction.x * Double(tile.image.width), y: redaction.y * Double(tile.image.height),
-                                                         width: max(1, redaction.width * Double(tile.image.width)),
-                                                         height: max(1, redaction.height * Double(tile.image.height))).integral) {
+               let crop = tile.image.cropping(to: CGRect(x: shown.minX * Double(tile.image.width), y: shown.minY * Double(tile.image.height),
+                                                         width: max(1, shown.width * Double(tile.image.width)),
+                                                         height: max(1, shown.height * Double(tile.image.height))).integral) {
                 Image(decorative: crop, scale: 1).resizable().aspectRatio(contentMode: .fill)
             } else {
                 Image(systemName: "eye.slash").font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
@@ -1237,8 +1254,10 @@ private struct RedactionPicker: View {
         let aspect = CGFloat(model.project.source.width) / CGFloat(max(1, model.project.source.height))
         GeometryReader { geometry in
             let size = geometry.size
-            let rect = CGRect(x: redaction.x * size.width, y: redaction.y * size.height,
-                              width: redaction.width * size.width, height: redaction.height * size.height)
+            // Where the part shows at its start: a part with keyframes moves them all with this box.
+            let shown = RedactionTrack.shownRect(redaction, atSourceUs: redaction.startUs)
+            let rect = CGRect(x: shown.minX * size.width, y: shown.minY * size.height,
+                              width: shown.width * size.width, height: shown.height * size.height)
             ZStack(alignment: .topLeading) {
                 if let tile = model.filmstrip.tile(atSource: redaction.startUs) {
                     Image(decorative: tile.image, scale: 1).resizable().aspectRatio(contentMode: .fill)
@@ -1258,9 +1277,10 @@ private struct RedactionPicker: View {
                     ? CGSize(width: value.startLocation.x - rect.minX, height: value.startLocation.y - rect.minY)
                     : CGSize(width: rect.width / 2, height: rect.height / 2))
                 grab = offset
-                model.updateRedaction(redaction.id) {
-                    $0.x = Double((value.location.x - offset.width) / size.width)
-                    $0.y = Double((value.location.y - offset.height) / size.height)
+                model.updateRedaction(redaction.id) { part in
+                    var box = RedactionTrack.shownRect(part, atSourceUs: part.startUs)
+                    box.origin = CGPoint(x: (value.location.x - offset.width) / size.width, y: (value.location.y - offset.height) / size.height)
+                    part = RedactionTrack.moved(part, to: box, atSourceUs: part.startUs)
                 }
             }.onEnded { _ in grab = nil })
         }
@@ -1912,7 +1932,8 @@ private struct HiddenPartHandles: View {
                             model.selectedRedaction = redaction.id
                             let start = grabbed ?? rect
                             grabbed = start
-                            move(redaction.id, to: start.offsetBy(dx: value.translation.width, dy: value.translation.height), size: size, map: map)
+                            move(redaction.id, to: start.offsetBy(dx: value.translation.width, dy: value.translation.height), size: size, map: map,
+                                 atSourceUs: sourceUs)
                         }.onEnded { _ in grabbed = nil })
                         .instantTooltip("\(redaction.style.rawValue.capitalized): drag to move")
                         .accessibilityLabel("\(redaction.style == .spotlight ? "Spotlight" : "Hidden part"), \(redaction.style.rawValue)")
@@ -1927,7 +1948,8 @@ private struct HiddenPartHandles: View {
                                 .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                                     let start = grabbed ?? rect
                                     grabbed = start
-                                    move(redaction.id, to: Self.resized(start, grip: grip, by: value.translation), size: size, map: map)
+                                    move(redaction.id, to: Self.resized(start, grip: grip, by: value.translation), size: size, map: map,
+                                         atSourceUs: sourceUs)
                                 }.onEnded { _ in grabbed = nil })
                                 .accessibilityHidden(true)
                         }
@@ -1944,16 +1966,13 @@ private struct HiddenPartHandles: View {
         }
     }
 
-    private func move(_ id: String, to rect: CGRect, size: CGSize, map: Looks.SourceToCanvas) {
+    /// Puts the part at the dragged box where it shows now; a part with keyframes moves every key with it, so the
+    /// outline follows the drag and the export hides the new place (RedactionTrack.moved).
+    private func move(_ id: String, to rect: CGRect, size: CGSize, map: Looks.SourceToCanvas, atSourceUs sourceUs: Int64) {
         let canvas = CGRect(x: rect.minX / size.width, y: rect.minY / size.height,
                             width: max(4, rect.width) / size.width, height: max(4, rect.height) / size.height)
         let source = map.sourceRect(ofCanvas: canvas)
-        model.updateRedaction(id) {
-            $0.x = source.minX
-            $0.y = source.minY
-            $0.width = source.width
-            $0.height = source.height
-        }
+        model.updateRedaction(id) { $0 = RedactionTrack.moved($0, to: source, atSourceUs: sourceUs) }
     }
 
     private static func corner(_ grip: Grip, of rect: CGRect) -> CGPoint {
