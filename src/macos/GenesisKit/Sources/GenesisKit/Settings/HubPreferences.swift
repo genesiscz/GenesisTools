@@ -111,6 +111,15 @@ public enum HubInboxCards {
     public static let readingWidth: CGFloat = 860
 }
 
+/// The hub's Agents mode. Both faces read and write the keys through `@AppStorage`; unset reads as on.
+public enum HubAgentsEntry {
+    /// Entering Agents with nothing open opens the newest running sub-agent, or the newest live session's Main row.
+    /// Off, the mode opens on "No agent open" with a button to the newest session (hub UX council, 2026-11-09).
+    public static let openNewestKey = "hub.agents.openNewest"
+    /// A session's finished sub-agents fold into one "N finished agents" row under its running ones.
+    public static let foldFinishedKey = "hub.agents.foldFinished"
+}
+
 /// How the Agents list lands a refresh that moves a few rows: at their new places at once, or with a slide there.
 /// The slide moves every row between a moved row's old and new place on each frame of the spring. With about 700 rows
 /// a one-row slide kept the main thread busy for about 300 ms, against about 60 ms for a refresh that moved more than
