@@ -161,7 +161,9 @@ export function correctionsOf(
         const line = lineOf(item);
         return line === undefined ? {} : { line };
     };
-    // A person's own assignments (`assign`) come after the items' ranges, so they win over a rule's or an answer's.
+    // A person's own assignments (`assign`) come after the items' ranges, so they win over a rule's or an answer's;
+    // among them the latest act wins (`at`), since a stretch given again keeps its place and id in the list.
+    const assignments = [...(record.speakers.assignments ?? [])].sort((a, b) => a.at.localeCompare(b.at));
     const ranges = [
         ...used.flatMap((item) =>
             item.kind === "speaker-range" && item.speaker
@@ -176,7 +178,7 @@ export function correctionsOf(
                   ]
                 : []
         ),
-        ...(record.speakers.assignments ?? []).map((assignment) => ({
+        ...assignments.map((assignment) => ({
             label: assignment.label,
             fromSec: assignment.fromSec - LINE_AT_TOLERANCE_SEC,
             toSec: assignment.toSec + LINE_AT_TOLERANCE_SEC,

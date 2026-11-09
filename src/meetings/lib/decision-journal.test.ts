@@ -548,6 +548,41 @@ describe("speaker assignments (assign)", () => {
         ).rejects.toMatchObject({ code: "item-changed" });
     });
 
+    // record.ts: "A later assignment over the same lines wins". A stretch given again keeps its id, so the order of
+    // the acts, not the order of the list, must decide a line two assignments cover.
+    test("the latest act wins on a line two assignments cover, also when it gives an earlier stretch again", async () => {
+        const fx = await assignFixture();
+        let tick = 0;
+        const journal = new DecisionJournal({
+            store: fx.store,
+            ledger: () => undefined,
+            split: { transcript: async () => transcript },
+            now: () => new Date(Date.parse(now) + 1000 * tick++),
+        });
+        const give = (who: string, fromSec: number, toSec: number) =>
+            journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "assign", person: who, stretches: [{ label: "S1", fromSec, toSec }] },
+                actor: person,
+            });
+        await give("Dana Example", 5, 35);
+        const lee = await give("Lee Example", 25, 35);
+        const kim = await give("Kim Example", 5, 35);
+        const speakers = () =>
+            correctTranscript({
+                record: fx.record(),
+                transcript,
+                config: meetingsConfigSchema.parse({}),
+                format: "txt",
+            }).entries.map((line) => line.speaker);
+
+        expect(speakers()).toEqual(["Kim Example", "Alex Example", "Kim Example", "S1", "S3"]);
+        await journal.revert({ meeting: fx.meeting.id, token: kim.entry!.token, actor: person });
+        expect(speakers()).toEqual(["Dana Example", "Alex Example", "Lee Example", "S1", "S3"]);
+        await journal.revert({ meeting: fx.meeting.id, token: lee.entry!.token, actor: person });
+        expect(speakers()).toEqual(["Dana Example", "Alex Example", "Dana Example", "S1", "S3"]);
+    });
+
     test("a rename to a name another label holds says both labels become one person (G-PPL-4)", async () => {
         const fx = await assignFixture();
         const planned = await fx.journal.plan({
