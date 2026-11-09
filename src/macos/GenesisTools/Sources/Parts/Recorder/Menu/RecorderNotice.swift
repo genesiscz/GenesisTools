@@ -6,7 +6,8 @@ import SwiftUI
 /// The stored choices decide the way (`RecorderFailureStyle`, `IdleShortcutFeedback`); a test swaps the outlets.
 @MainActor
 struct RecorderNoticeOutlets {
-    var notice: @MainActor (_ text: String, _ more: String?) -> Void
+    /// The failure window: the report, and the action to run again when there is one.
+    var notice: @MainActor (_ report: FailureReport, _ retry: (@MainActor () -> Void)?) -> Void
     var alert: @MainActor (_ text: String, _ more: String?) -> Void
     var note: @MainActor (_ title: String, _ detail: String) -> Void
     var beep: @MainActor () -> Void
@@ -14,7 +15,7 @@ struct RecorderNoticeOutlets {
     var titleAlert: @MainActor (_ request: RecorderTitleRequest) -> String?
 
     static let live = RecorderNoticeOutlets(
-        notice: { RecorderNoticePanel.shared.show(text: $0, more: $1) },
+        notice: { RecorderNoticePanel.shared.show($0, retry: $1) },
         alert: { RecorderNotice.modalAlert($0, more: $1) },
         note: { CopyToast.post(title: $0, detail: $1, style: .problem) },
         beep: { NSSound.beep() },
@@ -34,24 +35,78 @@ enum RecorderNotice {
     static var outlets = RecorderNoticeOutlets.live
 
     /// A failure the person should read: `text` says what happened in one sentence, `more` holds the raw output
-    /// (behind Details in the note, the informative text of the alert).
-    static func failure(_ text: String, more: String? = nil, defaults: UserDefaults = .standard) {
-        let style = RecorderFailureStyle.load(defaults)
-        HubPerf.log("recorder: failure (\(style.rawValue)): \(text)")
+    /// (the notice's log, the informative text of the alert).
+    static func failure(_ text: String, more: String? = nil, title: String = "Recorder", defaults: UserDefaults = .standard) {
         let more = more.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        let report = FailureReport(title: title, headline: FailureLog.sentence(text) ?? text, dayLog: FailureReport.dayLogPath(),
+                                   log: more ?? "", app: FailureAppFacts.current())
+        failure(report, defaults: defaults)
+    }
+
+    /// A failed `tools` command: the headline is the error its output names (`FailureLog.headline`), never a help dump
+    /// or an indented field; `text` says what was running. The log holds the whole output, or `fallback` when it
+    /// printed nothing.
+    static func failure(_ text: String, output: String, fallback: String? = nil, defaults: UserDefaults = .standard) {
+        let printed = !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let summary = FailureLog.sentence(text)
+        let report = FailureReport(title: "Recorder", headline: FailureLog.headline(in: output) ?? summary ?? text,
+                                   summary: printed ? summary : nil, dayLog: FailureReport.dayLogPath(),
+                                   log: printed ? output : (fallback ?? ""), app: FailureAppFacts.current())
+        failure(report, defaults: defaults)
+    }
+
+    /// Shows `report` the chosen way: the failure window (with Try again when `retry` is given), or an alert.
+    static func failure(_ report: FailureReport, retry: (@MainActor () -> Void)? = nil, defaults: UserDefaults = .standard) {
+        let style = RecorderFailureStyle.load(defaults)
+        HubPerf.log("recorder: failure (\(style.rawValue)): \(report.headline)")
         switch style {
-        case .notice: outlets.notice(text, more)
-        case .alert: outlets.alert(text, more)
+        case .notice: outlets.notice(report, retry)
+        case .alert:
+            let more = [report.summary, report.hasLog ? report.log : nil].compactMap { $0 }.joined(separator: "\n\n")
+            outlets.alert(report.headline, more.isEmpty ? nil : more)
         }
     }
 
-    /// A failed `tools` command: `text`, then the line of its output that names the problem (`ToolsRunner.problem`),
-    /// never a help dump; Details holds the whole output, or `fallback` when it printed nothing.
-    static func failure(_ text: String, output: String, fallback: String? = nil, defaults: UserDefaults = .standard) {
-        let problem = ToolsRunner.problem(in: output)
-        let headline = problem.map { "\(text): \($0.hasSuffix(".") ? String($0.dropLast()) : $0)." } ?? "\(text)."
-        failure(headline, more: output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : output,
-                defaults: defaults)
+    /// A recording start that stopped at once (`tools recorder start` exited non-zero within seconds).
+    static func startFailed(_ failure: ToolsRunner.EarlyFailure, defaults: UserDefaults = .standard,
+                            retry: (@MainActor () -> Void)?) {
+        self.failure(startReport(failure, time: Date(), app: FailureAppFacts.current()), retry: retry, defaults: defaults)
+    }
+
+    /// The report of a start that stopped at once: the error its output names, what was being recorded, the recording
+    /// folder it named, and where this run's output sits in the log.
+    nonisolated static func startReport(_ failure: ToolsRunner.EarlyFailure, time: Date, app: FailureAppFacts?,
+                                        home: String = genesisHome()) -> FailureReport {
+        let printed = !failure.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let events = FailureLog.events(in: failure.output)
+        let folder = events.flatMap(\.fields).last { $0.name == "folder" }.map { FailureReport.unquoted($0.value) }
+        let nothing = failure.output.contains("nothing was recorded")
+        return FailureReport(
+            title: "Recording failed",
+            headline: FailureLog.headline(in: failure.output) ?? "The recording stopped at once.",
+            summary: "\(recordingWhat(failure.argv)) stopped at once (exit \(failure.status)).",
+            nextStep: (nothing ? "Nothing was recorded. " : "") + "Try again, or copy the context for an agent to look into it.",
+            action: "Start a recording",
+            command: failure.command,
+            exitStatus: failure.status,
+            folder: folder,
+            logFile: failure.logFile,
+            logLine: failure.logLine,
+            dayLog: FailureReport.dayLogPath(home: home, time: time),
+            log: printed ? failure.output : "",
+            time: time,
+            app: app,
+            expected: "The recording starts, and its controls and the red menu bar item appear.",
+            area: "recorder")
+    }
+
+    /// "Recording a window", from the start's target flag.
+    nonisolated static func recordingWhat(_ argv: [String]) -> String {
+        if argv.contains("--window") { return "Recording a window" }
+        if argv.contains("--app") { return "Recording an app" }
+        if argv.contains("--region") { return "Recording an area" }
+        if argv.contains("--display") { return "Recording the screen" }
+        return "The recording"
     }
 
     /// A shortcut pressed with nothing to act on (no recording runs).
@@ -104,168 +159,31 @@ enum RecorderNotice {
     }
 }
 
-// MARK: - The note under the menu bar item
+// MARK: - The failure window under the menu bar item
 
-/// A failure note that floats under the recorder's menu bar item: the kit's `NoticePill` (the full output behind
-/// Details, a close button) in a borderless panel that never activates the app. It takes the keyboard only when the
-/// person clicks into it to select its text. A new failure replaces the shown one; it stays until it is closed.
+/// The recorder's failure window: GenesisKit's `FailureNoticePanel` under the recorder's menu bar item, with the
+/// notice settings of Settings → Recorder → Menu bar.
 @MainActor
 final class RecorderNoticePanel {
     static let shared = RecorderNoticePanel()
-    static let width: CGFloat = 340
 
-    /// The menu bar item's frame on screen, nil while it is hidden.
-    var anchor: () -> CGRect? = { RecorderMenu.shared.statusItemFrame }
-    private var panel: RecorderNoticeWindow?
-    private var host: RecorderNoticeHostingView?
-    private var generation = 0
+    let panel = FailureNoticePanel(identifier: "recorder.notice", anchor: { RecorderMenu.shared.statusItemFrame })
 
-    var isVisible: Bool { panel?.isVisible ?? false }
+    var isVisible: Bool { panel.isVisible }
 
-    func show(text: String, more: String?) {
-        generation += 1
-        let shown = generation
-        let host = host ?? RecorderNoticeHostingView(rootView: AnyView(EmptyView()))
-        // The panel's size is set here, from the content's reported size, so it keeps its top edge when Details opens.
-        host.sizingOptions = []
-        self.host = host
-        host.rootView = AnyView(RecorderNoticeView(
-            text: text, more: more,
-            dismiss: { [weak self] in self?.close(shown) },
-            resized: { [weak self] size in self?.fit(size, generation: shown) }))
-        let panel = panel ?? makePanel(host: host)
-        self.panel = panel
-        let size = Self.measure(text: text, more: more)
-        let anchor = anchor()
-        let visible = Self.screen(for: anchor)?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-        panel.setFrame(CGRect(origin: Self.origin(size: size, anchor: anchor, visible: visible), size: size), display: true)
-        // A short fade in; under Reduce Motion it appears at once.
-        let fades = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        panel.alphaValue = fades ? 0 : 1
-        panel.orderFrontRegardless()
-        if fades {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.15
-                panel.animator().alphaValue = 1
-            }
-        }
-        NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [
-            .announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue,
-        ])
+    /// Where "Draft an issue" posts. `recorder.debug.issueDryRun` (a test switch, off) makes the post a dry run.
+    static let issueRepo = "genesiscz/GenesisTools"
+
+    func show(_ report: FailureReport, retry: (@MainActor () -> Void)?, defaults: UserDefaults = .standard) {
+        let poster = ToolsIssuePoster(dryRun: defaults.bool(forKey: "recorder.debug.issueDryRun"))
+        var report = report
+        report.area = report.area ?? "recorder"
+        panel.show(report, options: RecorderFailureStyle.noticeOptions(defaults), retry: retry,
+                   issue: FailureNoticeIssueTarget(repo: Self.issueRepo, poster: poster),
+                   environment: { await FailureEnvironment.load() })
     }
 
-    /// The note's size before it shows. The panel's own host has no sizing options (the panel sets its size), so its
-    /// `fittingSize` is 0 x 0, and every note opened as a 0 x 0 window; a throwaway controller measures the same pill.
-    static func measure(text: String, more: String?) -> CGSize {
-        let probe = NSHostingController(rootView: RecorderNoticeContent(text: text, more: more, dismiss: {})
-            .environment(\.colorScheme, .dark))
-        let size = probe.sizeThatFits(in: CGSize(width: width, height: 10_000))
-        return CGSize(width: width, height: max(size.height.rounded(.up), 1))
-    }
-
-    func close() { close(generation) }
-
-    private func close(_ shown: Int) {
-        guard shown == generation else { return }
-        panel?.orderOut(nil)
-    }
-
-    /// Details opened or closed: the panel keeps its top edge and grows or shrinks downward.
-    private func fit(_ size: CGSize, generation shown: Int) {
-        // Not only while visible: the first report comes during the show, before the panel is ordered in.
-        guard shown == generation, let panel, size.height > 0 else { return }
-        let frame = panel.frame
-        guard abs(frame.height - size.height) > 0.5 || abs(frame.width - size.width) > 0.5 else { return }
-        panel.setFrame(CGRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height), display: true)
-    }
-
-    private func makePanel(host: NSView) -> RecorderNoticeWindow {
-        let panel = RecorderNoticeWindow(contentRect: CGRect(x: 0, y: 0, width: Self.width, height: 60),
-                                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.title = "Recorder notice"
-        panel.identifier = NSUserInterfaceItemIdentifier("recorder.notice")
-        panel.isFloatingPanel = true
-        // After isFloatingPanel, whose setter resets the level: over other apps' windows, under the menus.
-        panel.level = .statusBar
-        panel.becomesKeyOnlyIfNeeded = true
-        panel.hidesOnDeactivate = false
-        panel.isReleasedWhenClosed = false
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        panel.contentView = host
-        return panel
-    }
-
-    /// The display of the menu bar item, else the pointer's.
-    private static func screen(for anchor: CGRect?) -> NSScreen? {
-        if let anchor, let screen = NSScreen.screens.first(where: { $0.frame.contains(CGPoint(x: anchor.midX, y: anchor.midY)) }) {
-            return screen
-        }
-        return NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
-    }
-
-    /// Under the menu bar item, centred on it, inside the visible screen; without the item, the top right corner.
-    nonisolated static func origin(size: CGSize, anchor: CGRect?, visible: CGRect) -> CGPoint {
-        let margin: CGFloat = 8
-        var origin: CGPoint
-        if let anchor {
-            origin = CGPoint(x: anchor.midX - size.width / 2, y: anchor.minY - 6 - size.height)
-        } else {
-            origin = CGPoint(x: visible.maxX - size.width - 12, y: visible.maxY - size.height - 12)
-        }
-        origin.x = min(max(origin.x, visible.minX + margin), visible.maxX - size.width - margin)
-        origin.y = min(max(origin.y, visible.minY + margin), visible.maxY - size.height)
-        return CGPoint(x: origin.x.rounded(), y: origin.y.rounded())
-    }
-}
-
-/// Becomes key only when a click needs the keyboard (selecting the message), never on its own.
-final class RecorderNoticeWindow: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
-
-/// The first click on the note acts (close, Details) even while another app is in front.
-final class RecorderNoticeHostingView: NSHostingView<AnyView> {
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-}
-
-private struct RecorderNoticeView: View {
-    let text: String
-    let more: String?
-    let dismiss: () -> Void
-    let resized: (CGSize) -> Void
-
-    var body: some View {
-        RecorderNoticeContent(text: text, more: more, dismiss: dismiss)
-            .background(GeometryReader { proxy in
-                Color.clear
-                    .onAppear { resized(proxy.size) }
-                    .onChange(of: proxy.size) { _, size in resized(size) }
-            })
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .environment(\.colorScheme, .dark)
-            .accessibilityIdentifier("recorder.notice")
-    }
-}
-
-/// The note itself, at its own height: what the panel shows and what `RecorderNoticePanel.measure` measures.
-struct RecorderNoticeContent: View {
-    let text: String
-    let more: String?
-    let dismiss: () -> Void
-
-    var body: some View {
-        // The pill's own translucent fill sits on an opaque backing of the same shape, so it reads over any window.
-        // The backing goes under the pill, at the pill's width: on the panel's full width it showed past a short pill.
-        NoticePill(text: text, more: more, tone: .error, dismiss: dismiss)
-            .fixedSize(horizontal: false, vertical: true)
-            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color(white: 0.11)))
-            .frame(width: RecorderNoticePanel.width, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
-    }
+    func close() { panel.close() }
 }
 
 // MARK: - The Rename prompt

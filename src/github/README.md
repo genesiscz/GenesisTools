@@ -56,7 +56,7 @@ tools github issue 123 --save                     # write ./.claude/github/owner
 ```
 
 `issue` works on a PR number too: GitHub serves a PR's conversation as an issue. Use it for a PR's comments,
-because `pr` does not fetch them yet.
+because `pr` does not fetch them yet. `issues` is an alias of `issue`.
 
 - Comments: `--no-comments`, `-L, --limit <n>`, `--all`, `--first <n>`, `--last <n>`, `--since <id|url>`,
   `--after <date>`, `--before <date>`, `--author <user>`, `--no-bots` (no effect at the moment, see below).
@@ -89,6 +89,18 @@ data object, to stdout, or to the `-o` or `--save` file (then stdout gets only a
 A comment counts as a bot's (`isBot` in `-f json`) when its author is a GitHub `Bot` account, a login ending in
 `[bot]`, or a login that contains a known bot name (dependabot, renovate, github-actions, codecov, stale, mergify
 and a few more).
+
+### `issue post`: open a new issue
+
+```bash
+tools github issue post --repo owner/repo --title "Crash on start" --body-file report.md   # open it
+tools github issue post -r owner/repo -t "Crash on start" --body-file report.md --redact --dry-run   # check it first
+```
+
+`issue post` opens an issue from a title and a body: `--body-file <file>` (`-` reads stdin) or `--body <text>`.
+`--redact` replaces personal data (the local placeholder-check list) and secrets in the title and the body before it
+posts, and says how many it replaced. `-l, --label <name>` repeats. `--dry-run` prints what would be posted and sends
+nothing to GitHub. `--json` prints `{ posted, number, url, title, body, replaced }`.
 
 ### `media upload`: images and videos for a PR or an issue
 

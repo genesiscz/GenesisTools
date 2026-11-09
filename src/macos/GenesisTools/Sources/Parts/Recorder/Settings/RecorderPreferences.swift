@@ -19,6 +19,62 @@ enum RecorderFailureStyle: String, CaseIterable, Identifiable {
     }
 }
 
+/// The failure window's own choices (Settings → Recorder → Menu bar, under "Recorder failures"). They apply while
+/// failures show as a notice.
+enum RecorderFailureDetails: String, CaseIterable, Identifiable {
+    /// The log is open when the window appears: the error, its warnings and every step.
+    case open
+    /// Only the error and its actions; "Show details" opens the log.
+    case folded
+
+    static let key = "recorder.failures.details"
+
+    var id: String { rawValue }
+
+    static func load(_ defaults: UserDefaults = .standard) -> RecorderFailureDetails {
+        defaults.string(forKey: key).flatMap(Self.init(rawValue:)) ?? .open
+    }
+}
+
+/// Whether the failure window closes by itself after a while without the pointer on it.
+enum RecorderFailureAutoClose: String, CaseIterable, Identifiable {
+    /// It stays until it is closed: an error is read before it goes.
+    case never
+    case oneMinute = "1m"
+    case fiveMinutes = "5m"
+
+    static let key = "recorder.failures.autoClose"
+
+    var id: String { rawValue }
+
+    var seconds: TimeInterval? {
+        switch self {
+        case .never: nil
+        case .oneMinute: 60
+        case .fiveMinutes: 300
+        }
+    }
+
+    static func load(_ defaults: UserDefaults = .standard) -> RecorderFailureAutoClose {
+        defaults.string(forKey: key).flatMap(Self.init(rawValue:)) ?? .never
+    }
+}
+
+extension RecorderFailureStyle {
+    static let placementKey = "recorder.failures.placement"
+
+    /// Where the failure window appears: under the recorder's menu bar item unless another place is chosen.
+    static func placement(_ defaults: UserDefaults = .standard) -> FailureNoticePlacement {
+        defaults.string(forKey: placementKey).flatMap(FailureNoticePlacement.init(rawValue:)) ?? .belowAnchor
+    }
+
+    /// The notice's options as the settings store them.
+    static func noticeOptions(_ defaults: UserDefaults = .standard) -> FailureNoticeOptions {
+        FailureNoticeOptions(detailsOpen: RecorderFailureDetails.load(defaults) == .open, placement: placement(defaults),
+                             autoClose: RecorderFailureAutoClose.load(defaults).seconds)
+    }
+}
+
 /// When the camera bubble's live preview shows on screen. Settings → Recorder → Camera.
 /// The preview shows while it records only when the movie leaves it out: its window id reached the recorder's
 /// `--exclude-window-ids` before the first frame (ScreenCaptureKit ignores the panel's sharing type, so a preview the

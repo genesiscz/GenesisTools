@@ -1,4 +1,5 @@
 import SwiftUI
+import GenesisKit
 import XCTest
 @testable import GenesisToolsRecorder
 
@@ -55,33 +56,8 @@ final class RecorderSettingsTests: XCTestCase {
         RecorderNotice.outlets = recordingOutlets { calls.append($0) }
         defer { RecorderNotice.outlets = .live }
         RecorderNotice.failure("“Demo” did not open (exit 1)", output: dump, defaults: defaults)
-        XCTAssertEqual(calls.first, "notice: “Demo” did not open (exit 1): unknown command 'open'. | \(dump)")
-    }
-
-    /// The defect: the pill takes its text's width, but its dark backing filled all 340 pt, so a short note showed a
-    /// second, darker shape at its right end (review 2026-11-06). The backing follows the pill now.
-    @MainActor
-    func testAShortNoteHasNoBackingBeyondItsPill() throws {
-        let renderer = ImageRenderer(content: RecorderNoticeContent(text: "Short.", more: nil, dismiss: {})
-            .environment(\.colorScheme, .dark))
-        renderer.scale = 1
-        let image = try XCTUnwrap(renderer.cgImage)
-        let bitmap = NSBitmapImageRep(cgImage: image)
-        let middle = image.height / 2
-        XCTAssertGreaterThan(bitmap.colorAt(x: 4, y: middle)?.alphaComponent ?? 0, 0.5, "the pill's own left end")
-        XCTAssertLessThan(bitmap.colorAt(x: image.width - 3, y: middle)?.alphaComponent ?? 1, 0.05, "clear past the pill")
-    }
-
-    /// The defect: the note measured its own host with no sizing options (0 x 0), so every failure note opened as an
-    /// invisible 0 x 0 window (review 2026-11-06).
-    @MainActor
-    func testAFailureNoteIsMeasuredAtItsRealSizeBeforeItShows() {
-        let short = RecorderNoticePanel.measure(text: "The recording did not start.", more: nil)
-        XCTAssertEqual(short.width, RecorderNoticePanel.width)
-        XCTAssertGreaterThan(short.height, 24)
-        let long = RecorderNoticePanel.measure(text: String(repeating: "The recording did not start. ", count: 8),
-                                               more: "exit 2")
-        XCTAssertGreaterThan(long.height, short.height, "a longer message wraps onto more lines")
+        XCTAssertEqual(calls.first, "notice: Unknown command 'open'. | \(dump)",
+                       "the headline is the error itself; what was running is the report's summary")
     }
 
     /// The defect: the prompt's content ignored the hidden title bar's safe area, but the panel took the hosting
@@ -194,14 +170,18 @@ final class RecorderSettingsTests: XCTestCase {
     func testTheNoteSitsUnderTheMenuBarItemInsideTheScreen() {
         let visible = CGRect(x: 0, y: 0, width: 1440, height: 875)
         let size = CGSize(width: 340, height: 44)
+        func origin(_ anchor: CGRect?, _ placement: FailureNoticePlacement = .belowAnchor) -> CGPoint {
+            FailureNoticePanel.origin(size: size, anchor: anchor, visible: visible, placement: placement)
+        }
         // An item in the middle of the menu bar: centred under it, 6 pt below.
-        XCTAssertEqual(RecorderNoticePanel.origin(size: size, anchor: CGRect(x: 900, y: 875, width: 30, height: 25), visible: visible),
-                       CGPoint(x: 745, y: 825))
+        XCTAssertEqual(origin(CGRect(x: 900, y: 875, width: 30, height: 25)), CGPoint(x: 745, y: 825))
         // Near the right edge: pulled inside the screen, 8 pt from it.
-        XCTAssertEqual(RecorderNoticePanel.origin(size: size, anchor: CGRect(x: 1420, y: 875, width: 30, height: 25), visible: visible),
-                       CGPoint(x: 1092, y: 825))
+        XCTAssertEqual(origin(CGRect(x: 1420, y: 875, width: 30, height: 25)), CGPoint(x: 1092, y: 825))
         // No item on screen: the top right corner.
-        XCTAssertEqual(RecorderNoticePanel.origin(size: size, anchor: nil, visible: visible), CGPoint(x: 1088, y: 819))
+        XCTAssertEqual(origin(nil), CGPoint(x: 1088, y: 819))
+        // The other places ignore the item.
+        XCTAssertEqual(origin(CGRect(x: 900, y: 875, width: 30, height: 25), .topRight), CGPoint(x: 1088, y: 819))
+        XCTAssertEqual(origin(CGRect(x: 900, y: 875, width: 30, height: 25), .center), CGPoint(x: 550, y: 656))
     }
 
     func testThePageWritesTheKeysTheRecorderReads() {
@@ -253,7 +233,7 @@ final class RecorderSettingsTests: XCTestCase {
     private func recordingOutlets(_ record: @escaping (String) -> Void, panelAnswer: @escaping () -> String? = { nil },
                                   alertAnswer: String? = nil) -> RecorderNoticeOutlets {
         RecorderNoticeOutlets(
-            notice: { record("notice: \($0) | \($1 ?? "-")") },
+            notice: { report, _ in record("notice: \(report.headline) | \(report.hasLog ? report.log : "-")") },
             alert: { record("alert: \($0) | \($1 ?? "-")") },
             note: { record("note: \($0) | \($1)") },
             beep: { record("beep") },

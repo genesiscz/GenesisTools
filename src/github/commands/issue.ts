@@ -2,6 +2,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createIssuePostCommand } from "@app/github/commands/issue-post";
 import {
     getComments as getCachedComments,
     getCommentCount,
@@ -673,7 +674,9 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
  */
 export function createIssueCommand(): Command {
     const cmd = new Command("issue")
-        .description("Fetch GitHub issue details and comments")
+        .alias("issues")
+        .enablePositionalOptions()
+        .description("Fetch GitHub issue details and comments; `issue post` opens a new one")
         .argument("<input>", "Issue number, URL, or comma-separated numbers (e.g. 123,456,789)")
         .option("-r, --repo <owner/repo>", "Repository (auto-detected from URL or git)")
         .option("-c, --comments", "Include comments (default: true)", true)
@@ -713,5 +716,6 @@ export function createIssueCommand(): Command {
             }
         });
 
+    cmd.addCommand(createIssuePostCommand());
     return cmd;
 }
