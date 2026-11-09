@@ -196,6 +196,7 @@ enum HubBench {
             if only.contains("follow") { addFileFollow() }
             if only.contains("reveal"), model.mode == .worktrees { addSidebarReveal() }
             if only.contains("threads"), model.mode == .prs { addThreadsLanding() }
+            if only.contains("commitlink"), model.mode == .prs { addCommitLink() }
             PerfLog.mark("hub.bench start: \(steps.count) steps, panes \(model.panes.map(\.rawValue).joined(separator: ","))")
             guard ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AX"] == "1" else {
                 tick()
@@ -331,6 +332,87 @@ enum HubBench {
                 }, delay: delay))
             }
             steps.append(Step(scenario: "reveal.settle", action: {}, delay: 2.0))
+        }
+
+        /// `commitlink` (opt-in, PRs mode): a commit link landing in a warm hub, the way PR #507's link to b9524fadf took
+        /// 20.9 s to show the commit (2026-11-09 20:29). `GENESIS_HUB_BENCH_LINK=<pr ref>@<commit or from..to>` names the
+        /// link. Another PR opens first, so the link's PR is not on screen. `GENESIS_HUB_BENCH_LINK_STALE=1` rewinds the
+        /// link's PR in memory to the commit before the link's first one (its row's head and its cached detail), as when
+        /// the hub listed the PR before that commit was pushed; the forge's answer then moves the head while the link
+        /// waits. app-perf.log gets `hub.bench commitlink first diff <ms>` (the link's commit or range on the page) with
+        /// the diffs the page showed before it, then `settled <ms>` (the forge's answer decided the pick) with the main
+        /// thread's awake time from the link on. `GENESIS_HUB_BENCH_LINK_WAIT` caps the wait in seconds (default 90).
+        private func addCommitLink() {
+            let env = ProcessInfo.processInfo.environment
+            guard let spec = env["GENESIS_HUB_BENCH_LINK"], let at = spec.lastIndex(of: "@"),
+                  let ref = HubPRRef(String(spec[..<at])) else {
+                PerfLog.mark("hub.bench commitlink: set GENESIS_HUB_BENCH_LINK=<pr ref>@<commit>")
+                return
+            }
+            let commit = String(spec[spec.index(after: at)...])
+            guard let span = HubCommitSpan(commit) else {
+                PerfLog.mark("hub.bench commitlink: \(commit) is not a commit or a range")
+                return
+            }
+            let prs = model.prs
+            let cap = env["GENESIS_HUB_BENCH_LINK_WAIT"].flatMap(Double.init) ?? 90
+            order.append("commitlink")
+            steps.append(Step(scenario: "commitlink.away", action: {
+                if let other = prs.prs.first(where: { !ref.matches($0) }) {
+                    prs.select(other, opened: false)
+                }
+            }, delay: 4.0))
+            if env["GENESIS_HUB_BENCH_LINK_STALE"] == "1" {
+                steps.append(Step(scenario: "commitlink.rewind", action: {
+                    PerfLog.mark("hub.bench commitlink rewind: \(prs.benchRewind(ref, before: span.from))")
+                }, delay: 0.5))
+            }
+            /// The link's own commit (one commit) or its range (a range whose head is one of its ends).
+            func names(_ scope: DiffScope) -> Bool {
+                switch scope {
+                case .commit(let sha, _):
+                    return span.to == nil && HubCommitSha.matches(span.from, sha)
+                case .range(_, let head, _, _):
+                    guard let to = span.to else { return false }
+                    return HubCommitSha.matches(to, head) || HubCommitSha.matches(span.from, head)
+                default:
+                    return false
+                }
+            }
+            var started: CFAbsoluteTime = 0
+            var shown: [String] = []
+            var firstDiff: Double?
+            func elapsed() -> Int { Int((CFAbsoluteTimeGetCurrent() - started) * 1000) }
+            func wait() -> Step {
+                Step(scenario: "commitlink.wait", action: { [weak self] in
+                    guard let self else { return }
+                    if let review = prs.review, review.diffOnPage {
+                        let label = "\(review.scope.title) (\(Plural.count(review.files.count, "file")))"
+                        if shown.last != label { shown.append(label) }
+                        if firstDiff == nil, names(review.scope) {
+                            firstDiff = Double(elapsed())
+                            PerfLog.mark("hub.bench commitlink first diff \(elapsed()) ms; shown: \(shown.joined(separator: " → "))")
+                        }
+                    }
+                    if firstDiff != nil, prs.pendingCommit == nil {
+                        let awake = ((busy["commitlink"] ?? []) + (busy["commitlink.wait"] ?? [])).reduce(0, +)
+                        PerfLog.mark("hub.bench commitlink settled \(elapsed()) ms, main busy \(Int(awake)) ms; shown: \(shown.joined(separator: " → "))")
+                        return
+                    }
+                    guard Double(elapsed()) < cap * 1000 else {
+                        PerfLog.mark("hub.bench commitlink gave up after \(elapsed()) ms: first diff \(firstDiff.map { "\(Int($0)) ms" } ?? "none"), "
+                            + "pending \(prs.pendingCommit != nil); shown: \(shown.joined(separator: " → "))")
+                        return
+                    }
+                    steps.insert(wait(), at: index)
+                }, delay: 0.02)
+            }
+            steps.append(Step(scenario: "commitlink", action: {
+                started = CFAbsoluteTimeGetCurrent()
+                PerfLog.mark("hub.bench commitlink request \(ref.label) \(span.label)")
+                prs.request(ref, commit: commit)
+            }, delay: 0.02))
+            steps.append(wait())
         }
 
         /// The PR's threads as the host answered them, kept by `threads.wait` for every later step.

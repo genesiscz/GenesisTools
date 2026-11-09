@@ -1646,6 +1646,28 @@ final class PRsModel: ObservableObject {
         review?.setScope(Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)))
     }
 
+    /// HubBench `commitlink`: a hub that listed `ref` before `sha` was pushed. Its row's head and its detail go back to
+    /// the commit before `sha` in the cached detail's list, in memory only. Says what it did, for the log.
+    func benchRewind(_ ref: HubPRRef, before sha: String) -> String {
+        guard let index = prs.firstIndex(where: ref.matches) else { return "no row for \(ref.label)" }
+        let id = prs[index].id
+        guard let data = PRListCache.readDetail(id) ?? PRListCache.readDetail(for: ref),
+              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let commits = json["commits"] as? [[String: Any]],
+              let at = commits.firstIndex(where: { ($0["sha"] as? String).map { HubCommitSha.matches(sha, $0) } ?? false }), at > 0,
+              let parent = commits[at - 1]["sha"] as? String else { return "no cached detail lists \(sha) after another commit" }
+        json["commits"] = Array(commits[..<at])
+        json["headSha"] = parent
+        guard let rewound = try? JSONSerialization.data(withJSONObject: json),
+              var row = try? JSONDecoder().decode(HubPR.self, from: rewound),
+              let detail = try? JSONDecoder().decode(HubPRDetail.self, from: rewound) else { return "the rewound detail does not decode" }
+        row.localWorktree = prs[index].localWorktree
+        prs[index] = row
+        details[id] = detail
+        detailFetched[id] = nil
+        return "\(ref.label) at \(parent.prefix(10)), \(at) of \(commits.count) commits"
+    }
+
     /// The PR's own base, not the branch scope's guess (which picks master for a stacked PR). The
     /// base commit the host recorded wins over `origin/<base>`, which can be stale or gone: a merged
     /// PR showed +50473 lines against an old `origin/` ref where the host shows +1895. A fetched head

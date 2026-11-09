@@ -663,6 +663,8 @@ final class ReviewModel: ObservableObject {
     /// Root folders that have a fresh answer for this scope: a cached snapshot never replaces one.
     private var freshFolders: Set<String> = []
     var showingCache: Bool { !cachedFolders.isEmpty }
+    /// The scope on screen has its files on the page: the page answered the last push of them (HubBench `commitlink`).
+    var diffOnPage: Bool { rendered && renderStart == nil && !files.isEmpty }
     private var rendered = false
     /// A file asked for by `reveal(path:)` before the diff had it.
     private(set) var pendingRevealPath: String?
