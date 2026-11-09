@@ -700,7 +700,9 @@ export class PeopleDirectory {
             { name: person.name, ...(person.email ? { email: person.email } : {}) },
             hidden
         );
-        return { person: { ...person, ...(hidden ? { hidden: true as const } : {}) }, changed };
+        // The person as the lists show them now: resolved before the change, so their `hidden` is the old one.
+        const { hidden: _before, ...shown } = person;
+        return { person: hidden ? { ...shown, hidden: true as const } : shown, changed };
     }
 
     private async resolve(ref: string): Promise<{ person: KnownPerson; identity: Identity }> {
