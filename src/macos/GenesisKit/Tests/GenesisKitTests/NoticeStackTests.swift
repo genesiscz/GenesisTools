@@ -219,6 +219,73 @@ final class NoticeStackTests: XCTestCase {
         XCTAssertGreaterThan(onContent.minY, 2500, "without a viewport it sits at the content's end: \(onContent)")
     }
 
+    /// A new notice never moves the ones already there, at either edge a stack is pinned to: pinned at the bottom
+    /// the newest goes above the others, pinned at the top below them (Meetings, `meetings.notices.place`).
+    func testANewNoticeMovesNoOlderOneAtEitherEdge() async throws {
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        for alignment in [Alignment.bottom, .top] {
+            let edge = alignment.vertical == .top ? "top" : "bottom"
+            FrameProbe.reset()
+            let model = stack(ManualNoticeClock())
+            let host = NSHostingView(rootView: Color.clear.frame(width: 500, height: 600).noticeStack(model, alignment: alignment))
+            host.frame = NSRect(x: 0, y: 0, width: 500, height: 600)
+            model.push(StackedNotice(text: "First", lasting: .untilDismissed))
+            let first = try await settledFrame("notice-stack-item:First", in: host)
+            model.push(StackedNotice(text: "Second", lasting: .untilDismissed))
+            _ = try await settledFrame("notice-stack-item:Second", in: host)
+            let after = try await settledFrame("notice-stack-item:First", in: host)
+            XCTAssertEqual(after, first, "pinned at the \(edge): the second notice moved the first")
+        }
+    }
+
+    /// Pinned at the top, the newest notice is the last of the list: past the stack's height the list keeps its end
+    /// in view, so the notice that just arrived is never scrolled out of sight.
+    func testAStackPinnedAtTheTopKeepsItsNewestNoticeInViewPastItsHeight() async throws {
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        let model = stack(ManualNoticeClock())
+        let host = NSHostingView(rootView: Color.clear.frame(width: 500, height: 700).noticeStack(model, alignment: .top))
+        host.frame = NSRect(x: 0, y: 0, width: 500, height: 700)
+        // A scroll view scrolls only inside a window on screen; this one is transparent, under the desktop.
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.close() }
+        for index in 1...12 {
+            model.push(StackedNotice(text: "Notice \(index)", lasting: .untilDismissed))
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let stackFrame = try await settledFrame("notice-stack", in: host)
+        let newest = try await settledFrame("notice-stack-item:Notice 12", in: host)
+        XCTAssertEqual(stackFrame.height, 360, accuracy: 0.5, "twelve notices overflow the stack")
+        XCTAssertTrue(stackFrame.insetBy(dx: -1, dy: -1).contains(newest), "the newest notice is in view: \(newest) in \(stackFrame)")
+    }
+
+    /// The frame `name` reports once it holds still for three layout rounds.
+    private func settledFrame(_ name: String, in host: NSView) async throws -> CGRect {
+        var last: CGRect?
+        var still = 0
+        for _ in 0..<60 {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+            let frame = FrameProbe.frames[name]
+            if let frame, frame == last {
+                still += 1
+                if still >= 3 { return frame }
+            } else {
+                still = 0
+            }
+            last = frame
+        }
+        return try XCTUnwrap(last, "\(name) is drawn")
+    }
+
     private func settledHeight(_ host: NSHostingView<NoticeStackView>) async throws -> CGFloat {
         var last: CGFloat = -1
         for _ in 0..<20 {

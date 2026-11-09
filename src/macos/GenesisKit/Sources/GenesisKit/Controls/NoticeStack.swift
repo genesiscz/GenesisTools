@@ -338,19 +338,30 @@ public final class NoticeStackModel {
 
 // MARK: - Views
 
-/// The stack: the newest notice on top, so a notice that arrives never moves the ones below it, and the oldest sit
-/// at the edge the stack grows from. Taller than `maxHeight`, it scrolls.
+/// The stack: the oldest notices sit at the edge the stack is pinned to and the newest goes to the far side (on top
+/// for a stack at the bottom of its host, below the others for one at the top), so a notice that arrives never moves
+/// the ones already there. Taller than `maxHeight`, it scrolls; a stack pinned at the top then follows its newest
+/// notice at the end.
 public struct NoticeStackView: View {
     let model: NoticeStackModel
     var maxWidth: CGFloat
     var maxHeight: CGFloat
+    var edge: VerticalEdge
     @GenReduceMotion private var reduceMotion
     @State private var contentHeight: CGFloat = 0
 
-    public init(_ model: NoticeStackModel, maxWidth: CGFloat = 520, maxHeight: CGFloat = 360) {
+    /// `pinnedTo` is the edge of its host the stack sits at (`.noticeStack(_:alignment:)` passes it).
+    public init(_ model: NoticeStackModel, maxWidth: CGFloat = 520, maxHeight: CGFloat = 360,
+                pinnedTo edge: VerticalEdge = .bottom) {
         self.model = model
         self.maxWidth = maxWidth
         self.maxHeight = maxHeight
+        self.edge = edge
+    }
+
+    /// The notices top to bottom: the newest is the one farthest from the pinned edge.
+    static func drawOrder(_ notices: [StackedNotice], pinnedTo edge: VerticalEdge) -> [StackedNotice] {
+        edge == .bottom ? notices.reversed() : notices
     }
 
     public var body: some View {
@@ -358,7 +369,7 @@ public struct NoticeStackView: View {
         if !notices.isEmpty {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(notices.reversed()) { notice in
+                    ForEach(Self.drawOrder(notices, pinnedTo: edge)) { notice in
                         pill(notice)
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .offset(y: 6)),
@@ -370,6 +381,8 @@ public struct NoticeStackView: View {
             }
             .scrollDisabled(contentHeight <= maxHeight)
             .scrollIndicators(contentHeight > maxHeight ? .automatic : .never)
+            // The newest notice is at the far end from the pinned edge; past `maxHeight` that end stays in view.
+            .defaultScrollAnchor(edge == .top ? .bottom : .top)
             .frame(maxWidth: maxWidth)
             .frame(height: min(contentHeight, maxHeight))
             .frameProbe("notice-stack")
@@ -395,6 +408,7 @@ public struct NoticeStackView: View {
             .fixedSize(horizontal: false, vertical: true)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
+            .frameProbe("notice-stack-item:\(notice.text)")
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("notice-stack-item")
     }
@@ -435,10 +449,15 @@ private struct NoticeStackModifier: ViewModifier {
             content.preference(key: NoticeStackHostKey.self, value: [.init(model: model)])
         } else {
             content.overlay(alignment: alignment) {
-                NoticeStackView(model).padding(8)
+                NoticeStackView(model, pinnedTo: alignment.noticeStackEdge).padding(8)
             }
         }
     }
+}
+
+private extension Alignment {
+    /// The edge a stack drawn at this alignment is pinned to; anything but the top keeps the stack at the bottom.
+    var noticeStackEdge: VerticalEdge { vertical == .top ? .top : .bottom }
 }
 
 public extension View {
@@ -455,7 +474,7 @@ public extension View {
             .overlayPreferenceValue(NoticeStackHostKey.self, alignment: alignment) { entries in
                 VStack(spacing: 0) {
                     ForEach(entries.indices, id: \.self) { index in
-                        NoticeStackView(entries[index].model)
+                        NoticeStackView(entries[index].model, pinnedTo: alignment.noticeStackEdge)
                     }
                 }
                 .padding(8)
