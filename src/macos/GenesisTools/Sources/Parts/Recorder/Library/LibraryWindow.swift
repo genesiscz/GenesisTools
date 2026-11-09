@@ -42,8 +42,14 @@ final class LibraryModel {
     }
     /// The card the keyboard is on (arrows move it, Return opens it, ⌘⌫ moves it to the Trash).
     var selected: URL?
-    @ObservationIgnored private var watch: DispatchSourceFileSystemObject?
+    @ObservationIgnored private var watch: DirectoryWatcher?
     @ObservationIgnored private var reading = false
+    /// A change came while the list was read: read it once more when that read lands, so no change is dropped.
+    @ObservationIgnored private var again = false
+    /// The folders the list reads (the library and the meetings); a test passes its own.
+    @ObservationIgnored var folders: [URL] = RecorderMenu.recordingFolders
+    /// The live entries, whose start and end turn a card's Recording badge on and off.
+    @ObservationIgnored var liveFolder: URL = RecorderMenu.libraryFolder.deletingLastPathComponent().appendingPathComponent("live", isDirectory: true)
 
     static let thumbnailSize = NSSize(width: 248, height: 155)
 
@@ -102,9 +108,12 @@ final class LibraryModel {
     }
 
     func load() {
-        guard !reading else { return }
+        guard !reading else {
+            again = true
+            return
+        }
         reading = true
-        let folders = RecorderMenu.recordingFolders
+        let folders = folders
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("recorder.library.read", folders.map(\.path).joined(separator: ", "))
             let list = RecorderMenu.readRecents(folders)
@@ -117,6 +126,10 @@ final class LibraryModel {
                     self.thumbnails = self.thumbnails.filter { available.contains($0.key) }
                     self.scrubFrames = self.scrubFrames.filter { available.contains($0.key) }
                     self.items = list
+                    if self.again {
+                        self.again = false
+                        self.load()
+                    }
                 }
             }
         }
@@ -143,22 +156,38 @@ final class LibraryModel {
         }
     }
 
-    /// Reads the list again when a recording folder appears or goes.
+    /// Reads the list again when anything it shows changes, as the menu bar's Recent list does: a recording folder that
+    /// appears or goes, its recording.json (a stop, a rename), its movies, edit and comments, and the live entries.
     func startWatching() {
         guard watch == nil else { return }
-        try? FileManager.default.createDirectory(at: RecorderMenu.libraryFolder, withIntermediateDirectories: true)
-        let descriptor = open(RecorderMenu.libraryFolder.path, O_EVTONLY)
-        guard descriptor >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .delete, .rename], queue: .main)
-        source.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.load() } }
-        source.setCancelHandler { close(descriptor) }
-        source.resume()
-        watch = source
+        let roots = folders.map(\.standardizedFileURL.path)
+        let live = liveFolder.standardizedFileURL.path
+        watch = DirectoryWatcher(paths: roots + [live], latency: 0.25) { path in
+            Self.reloads(path: path, roots: roots, live: live)
+        } onChange: { [weak self] _ in
+            MainActor.assumeIsolated { self?.load() }
+        }
     }
 
     func stopWatching() {
-        watch?.cancel()
+        watch?.stop()
         watch = nil
+    }
+
+    /// The files of a recording folder the list reads; the rest (frames, OCR, a meeting's notes) leave it as it was.
+    nonisolated static let listedFiles: Set<String> = Set(["recording.json", "edit.json", "comments.jsonl", "camera.mov"] + RecordingMovie.names)
+
+    /// Whether a changed `path` changes the list: a folder in a root, one of the `listedFiles` directly in such a
+    /// folder, or a live entry.
+    nonisolated static func reloads(path: String, roots: [String], live: String) -> Bool {
+        let path = URL(fileURLWithPath: path).standardizedFileURL.path
+        if path == live || path.hasPrefix(live + "/") { return true }
+        for root in roots where path.hasPrefix(root + "/") {
+            let parts = path.dropFirst(root.count).split(separator: "/")
+            if parts.count == 1 { return !parts[0].hasPrefix(".") }
+            return parts.count == 2 && listedFiles.contains(String(parts[1]))
+        }
+        return false
     }
 
     /// Reads `scrubFrameCount` frames spread over the movie, once, on a background queue.
