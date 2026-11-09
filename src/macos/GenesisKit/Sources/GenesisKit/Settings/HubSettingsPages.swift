@@ -21,7 +21,7 @@ public enum HubSettingsPages {
                 },
                 NativeSettingsPage(
                     id: panesPageID, title: "Panes", symbol: "rectangle.split.3x1", tint: .teal,
-                    subtitle: "Defaults for the Agents list, the Agent processes pane and the Worktree cleanup pane."
+                    subtitle: "Defaults for the diff, the Agents list, the Agent processes pane and the Worktree cleanup pane."
                 ) {
                     HubPaneSettings(preferences: preferences)
                 },
@@ -94,9 +94,19 @@ private struct HubPaneSettings: View {
     @ObservedObject var preferences: HubPreferences
     @AppStorage(GitCommitClickMode.defaultsKey) private var commitClick = GitCommitClickMode.chooseThenShow.rawValue
     @AppStorage(HubResizeGrips.key) private var resizeGrips = HubResizeGrips.auto.rawValue
+    @AppStorage(HubDiffLayout.key) private var diffLayout = HubDiffLayout.auto.rawValue
 
     var body: some View {
         VStack(spacing: 18) {
+            NativeSettingsCard("Diff", subtitle: "The Split / Unified button in a review's header picks for that review only.") {
+                NativeSettingsSegmented(
+                    "Layout", identifier: "hub.diff.layout",
+                    options: HubDiffLayout.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                    selection: Binding(
+                        get: { HubDiffLayout(rawValue: diffLayout) ?? .auto },
+                        set: { diffLayout = $0.rawValue }),
+                    minSegmentWidth: 90)
+            }
             NativeSettingsCard("Agents list") {
                 NativeSettingsSegmented(
                     "When a refresh moves a row", identifier: "hub.agents.motion",

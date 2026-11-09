@@ -250,6 +250,8 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
         }
         // A review window shows one review: its own renderer, and no spare kept for a next one.
         let model = ReviewModel(repo: repo, options: options, session: launch.session, renderer: PierreWebDiffRenderer())
+        // `--style` is a pick for this review: the pane's width no longer changes it.
+        if let style = launch.style { model.setStyle(style) }
         model.scope = scope
         // A PR without a local worktree (`openInReviewWindow`): its files open on the host, as in the hub.
         model.remoteHead = ReviewRemoteHead(launchArguments: launch.args)
@@ -1816,9 +1818,31 @@ final class ReviewModel: ObservableObject {
         reload()
     }
 
+    /// The reader's pick for this review (header button, View menu): from then on neither the width nor the Diff
+    /// layout setting changes it.
     func setStyle(_ style: DiffViewOptions.Style) {
+        styleChosen = true
+        guard options.diffStyle != style else { return }
         options.diffStyle = style
-        DiffViewOptions.remember(style)
+        renderer.apply(options)
+    }
+
+    /// The reader picked Split or Unified in this review; a change of the Diff layout setting clears it.
+    private var styleChosen = false
+    /// The last width the diff pane reported: too narrow for two sides of `HubDiffLayout.autoSideWidth`.
+    private var narrowForSplit = false
+
+    /// The Diff layout setting and the pane's width pick the style, until the reader picks one here. `narrow`: the
+    /// pane crossed `HubDiffLayout.autoSplitBelow`; `layout`: the setting changed, which also undoes the reader's pick.
+    func fitStyle(narrow: Bool? = nil, layout changed: HubDiffLayout? = nil, store: UserDefaults = HubDefaults.store) {
+        if let narrow { narrowForSplit = narrow }
+        if changed != nil { styleChosen = false }
+        guard !styleChosen else { return }
+        let layout = changed ?? HubDiffLayout.stored(in: store)
+        let style: DiffViewOptions.Style = layout.unified(narrow: narrowForSplit) ? .unified : .split
+        guard options.diffStyle != style else { return }
+        options.diffStyle = style
+        HubPerf.log("review.style \(style.rawValue) (\(layout.rawValue), pane \(narrowForSplit ? "narrow" : "wide"))")
         renderer.apply(options)
     }
 
@@ -2804,6 +2828,8 @@ struct ReviewRootView: View {
     private static let contextMinWidth: CGFloat = 320
     /// Below this width long diff lines wrap, unless the reader chose (`ReviewModel.fitWrap`).
     static let wrapBelow: CGFloat = 680
+    /// Settings, Hub, Panes, Diff layout: read here so a change reaches the open review at once.
+    @AppStorage(HubDiffLayout.key, store: HubDefaults.store) private var diffLayout = HubDiffLayout.auto.rawValue
 
     private var showsContext: Bool { !model.embedded }
     private var contextSqueezed: Bool { width > 0 && width * Self.contextFraction < Self.contextMinWidth }
@@ -2850,6 +2876,10 @@ struct ReviewRootView: View {
                 .freezesWidthWhileResizing(heavy: false, neighbourOf: "review.files")
                 // The diff's own width decides; only a crossing of the threshold re-renders.
                 .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < Self.wrapBelow }) { model.fitWrap(narrow: $0) }
+                .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < HubDiffLayout.autoSplitBelow }) {
+                    model.fitStyle(narrow: $0)
+                }
+                .onChange(of: diffLayout) { _, raw in model.fitStyle(layout: HubDiffLayout(rawValue: raw) ?? .auto) }
             if showsFileList {
                 ResizableSidePanel(key: "review.files", edge: .trailing, title: "Files", defaultWidth: 320,
                                    minWidth: Self.listMinWidth, maxWidth: max(Self.listMinWidth, room),
@@ -3181,7 +3211,7 @@ private struct ReviewHeader: View {
                     .font(.system(size: 12, weight: .semibold))
                     .fixedSize()
             }
-            .instantTooltip(model.options.diffStyle == .split ? "Side by side (click for one column)" : "One column (click for side by side)")
+            .instantTooltip(model.options.diffStyle == .split ? "Side by side (click for one column in this review; Settings, Hub, Panes sets the default)" : "One column (click for side by side in this review; Settings, Hub, Panes sets the default)")
             HStack(spacing: 0) {
                 IconButton(systemName: "textformat.size.smaller", tooltip: "Smaller diff text") { model.stepFont(-1) }
                 Text(verbatim: "\(Int(model.options.fontSize))")
