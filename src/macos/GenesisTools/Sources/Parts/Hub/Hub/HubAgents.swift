@@ -1124,6 +1124,30 @@ private enum AgentListItem: Identifiable {
     }
 }
 
+/// Which roster pills the shown rows need (hub UX C42). A pill that every shown row carries says nothing, so it goes:
+/// the harness pill when every Main and agent row runs on one harness, an agent's kind ("background") when every agent
+/// row has the same one. A Main row's "lead" is always the same, and its title already says it.
+private struct AgentRosterPills: Equatable {
+    var showsProvider = true
+    var showsRole = true
+
+    init(_ rows: [AgentListItem]) {
+        var providers = Set<String>()
+        var roles = Set<String>()
+        for row in rows {
+            switch row {
+            case .main(let parent): providers.insert(parent.provider)
+            case .child(let node, _, _):
+                providers.insert(node.harness)
+                roles.insert(node.kind)
+            default: break
+            }
+        }
+        showsProvider = providers.count > 1
+        showsRole = roles.count > 1
+    }
+}
+
 /// Which agents the list shows (the chips in the "Live" header). Active is the default: running
 /// agents, and ones that ran in the last two minutes (`StickyOrder`'s hold), so a turn boundary does
 /// not hide a row.
@@ -1280,6 +1304,7 @@ struct AgentsListView: View {
         // Read once per body and handed to every row as a value, so a row whose values did not change skips its
         // body (`.equatable()` on each row type in `row(_:selectedID:)`).
         let selectedID = agents.selectedID
+        let pills = AgentRosterPills(sections.flatMap(\.rows))
         Group {
             if !agents.loaded && agents.parents.isEmpty {
                 SkeletonRows(count: 10, leading: .dot)
@@ -1308,7 +1333,7 @@ struct AgentsListView: View {
                             ForEach(sections, id: \.title) { section in
                                 Section {
                                     ForEach(section.rows) { item in
-                                        row(item, selectedID: selectedID)
+                                        row(item, selectedID: selectedID, pills: pills)
                                             .transition(SWR.rowTransition)
                                     }
                                     if section.title == "Live", section.rows.isEmpty {
@@ -1391,7 +1416,7 @@ struct AgentsListView: View {
     /// Each row is a value with its actions as closures and `.equatable()` here: a refresh that changes nothing a
     /// row draws skips its body (`agents.childRow.body` ran 21 to 25 times per refresh, 2026-10-29).
     @ViewBuilder
-    private func row(_ item: AgentListItem, selectedID: String?) -> some View {
+    private func row(_ item: AgentListItem, selectedID: String?, pills: AgentRosterPills) -> some View {
         switch item {
         case .parent(let parent, let open, let running, let total):
             AgentParentRow(
@@ -1407,7 +1432,7 @@ struct AgentsListView: View {
         case .main(let parent):
             AgentMainRow(
                 parent: parent, present: agents.isPresent(parent),
-                selected: selectedID == AgentTree.mainKey(parent.sessionId),
+                selected: selectedID == AgentTree.mainKey(parent.sessionId), showsProvider: pills.showsProvider,
                 select: {
                     listFocused = true
                     agents.openMain(parent)
@@ -1417,7 +1442,7 @@ struct AgentsListView: View {
         case .child(let node, let parent, let depth):
             let key = AgentTree.key(parent: parent, child: node.id)
             AgentChildRow(
-                node: node, depth: depth, selected: selectedID == key, showsProject: parent == nil,
+                node: node, depth: depth, selected: selectedID == key, showsProject: parent == nil, pills: pills,
                 select: {
                     HubMainBusy.measure("agents.select")
                     listFocused = true
@@ -1530,6 +1555,8 @@ private struct AgentMainRow: View, Equatable {
     /// In the Live group: drawn as "running".
     let present: Bool
     let selected: Bool
+    /// `AgentRosterPills.showsProvider`: off while every row runs on one harness.
+    let showsProvider: Bool
     let select: () -> Void
 
     /// The fields the row draws, not `children`.
@@ -1537,13 +1564,14 @@ private struct AgentMainRow: View, Equatable {
         a.parent.sessionId == b.parent.sessionId && a.parent.provider == b.parent.provider
             && a.parent.model == b.parent.model && a.parent.account == b.parent.account
             && a.parent.lastAt == b.parent.lastAt && a.present == b.present && a.selected == b.selected
+            && a.showsProvider == b.showsProvider
     }
 
     var body: some View {
         let _ = RenderProbe.hit("agents.mainRow.body")
         AgentRosterRow(title: "Main", provider: parent.provider, role: "lead", model: parent.model,
                        account: parent.account, status: present ? "running" : "recent", lastAt: parent.last,
-                       selected: selected, showsRunningLabel: true)
+                       selected: selected, showsRunningLabel: true, showsProvider: showsProvider, showsRole: false)
             .padding(.leading, 30).padding(.trailing, 10).padding(.vertical, 5)
             .background(selectionBackground).padding(.horizontal, 6)
             .rowButton { select() }
@@ -1564,10 +1592,12 @@ private struct AgentChildRow: View, Equatable {
     let depth: Int
     let selected: Bool
     let showsProject: Bool
+    let pills: AgentRosterPills
     let select: () -> Void
 
     static func == (a: AgentChildRow, b: AgentChildRow) -> Bool {
         a.node == b.node && a.depth == b.depth && a.selected == b.selected && a.showsProject == b.showsProject
+            && a.pills == b.pills
     }
 
     var body: some View {
@@ -1576,7 +1606,8 @@ private struct AgentChildRow: View, Equatable {
         AgentRosterRow(title: node.title, provider: node.harness, role: node.kind, model: node.model,
                        account: account.isEmpty ? nil : account,
                        status: node.status, startedAt: node.started, lastAt: node.last,
-                       toolCalls: node.toolCalls ?? 0, unread: node.unreadMail ?? 0, selected: selected)
+                       toolCalls: node.toolCalls ?? 0, unread: node.unreadMail ?? 0, selected: selected,
+                       showsProvider: pills.showsProvider, showsRole: pills.showsRole)
             .instantTooltip(AgentTree.started(node.started).map { "Started \($0)" } ?? "Start time unknown")
             .padding(.leading, 30 + CGFloat(depth) * 14).padding(.trailing, 10).padding(.vertical, 5)
             .background(

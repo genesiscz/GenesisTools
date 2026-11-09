@@ -120,6 +120,16 @@ public enum HubAgentsEntry {
     public static let foldFinishedKey = "hub.agents.foldFinished"
 }
 
+/// The hub's Activity rows. Both faces read and write the keys through `@AppStorage`; unset reads as off.
+public enum HubActivityRows {
+    /// Every action of a row as its own icon on hover. Off (the default), a row shows its open and copy icons and one
+    /// more-menu with the rest: six to eight icons on every row made about 270 on screen (hub UX C36).
+    public static let allActionsKey = "hub.activity.allActions"
+    /// A commit row's title keeps its "type(scope): " prefix. Off (the default), the row starts with the subject and
+    /// the whole line is in the tooltip and the open row (hub UX C37).
+    public static let commitPrefixKey = "hub.activity.commitPrefix"
+}
+
 /// The PR overview beside a PR's diff. Both faces read and write the keys through `@AppStorage`.
 public enum HubPROverview {
     /// The description opens in full; off (the default), it opens on its first paragraph with Show description,

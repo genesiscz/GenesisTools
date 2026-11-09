@@ -87,8 +87,9 @@ extension DecisionContextSection {
     private static let headingMarks = try! NSRegularExpression(pattern: #"^\s{0,3}(?:#{1,6}\s+)?(?:[-*+]\s+)?(?:❓\s*)?"#)
 
     /// Another decision quoted in a context becomes a blockquote: its title line says "Quoted", its description stays,
-    /// and each option is a plain "a) words" line, never a list item that looks like the card's own option rows. The
-    /// quote ends at the first prose line after its options, a heading, or the next quoted decision.
+    /// and each option is a plain "a) words" line right under the one before, never a list item that looks like the
+    /// card's own option rows. The quote ends at the first prose line after its options, a heading, or the next quoted
+    /// decision.
     public static func quotingDecisions(_ markdown: String) -> String {
         guard markdown.contains("DECISION") else { return markdown }
         func matches(_ regex: NSRegularExpression, _ line: String) -> NSTextCheckingResult? {
@@ -121,7 +122,9 @@ extension DecisionContextSection {
             let heading = trimmed.hasPrefix("#")
             if let option = matches(optionLine, line), !heading,
                let letter = Range(option.range(at: 1), in: line), let words = Range(option.range(at: 2), in: line) {
-                out.append(">")
+                // One empty quote line between the description and the first option; the options follow each other
+                // on consecutive lines (the quote keeps its line breaks), not as paragraphs with gaps between.
+                if !seenOption { out.append(">") }
                 out.append("> \(line[letter])) \(line[words])")
                 seenOption = true
                 blanks = 0
