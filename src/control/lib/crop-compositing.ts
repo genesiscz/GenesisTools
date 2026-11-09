@@ -8,13 +8,14 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { canvasFont } from "@genesiscz/utils/image/canvas-fonts";
 import { type Canvas, createCanvas, type Image, loadImage } from "@napi-rs/canvas";
 import { type CropOut, type CropSpec, type FrameInfo, parseRegion } from "./capture-plan";
 
 const TILE_BG = "#181818";
 const LABEL_FG = "#ffb020";
 const LABEL_H = 34;
-const LABEL_FONT = "20px sans-serif";
+const LABEL_FONT = canvasFont({ sizePx: 20 });
 const BORDER_V = 2;
 const REVIEW_MAX = 1600;
 

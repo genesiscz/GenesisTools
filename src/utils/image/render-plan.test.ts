@@ -119,6 +119,39 @@ describe("renderAnnotationPlan", () => {
         expect(near(b, 17)).toBe(true);
     });
 
+    // On macOS a bare `sans-serif` drew every Czech letter (á, č, ě, ř, š, ž) as a box. A real "č" is a "c" with a
+    // caron above it: below the c's top the two labels differ by a few anti-aliased pixels (14 with Helvetica Neue).
+    // A box glyph replaces the whole c, hundreds of pixels.
+    test("label draws a letter with a caron, not a missing-glyph box", async () => {
+        const style = { bg: "#111111", fg: "#ffffff", fontSize: 40 };
+        const pixels = async (text: string) => {
+            const { ctx } = await decode((await render([{ kind: "label", at: { x: 50, y: 50 }, text, style }])).png);
+            return ctx.getImageData(0, 0, 400, 300).data;
+        };
+        const a = await pixels("c");
+        const b = await pixels("č");
+        let inkTop = -1;
+        const diffRows: number[] = [];
+
+        for (let y = 0; y < 300; y++) {
+            for (let x = 0; x < 400; x++) {
+                const i = (y * 400 + x) * 4;
+
+                if (inkTop < 0 && a[i] > 128 && a[i + 1] > 128 && a[i + 2] > 128) {
+                    inkTop = y;
+                }
+
+                if (Math.abs(a[i] - b[i]) > 8) {
+                    diffRows.push(y);
+                }
+            }
+        }
+
+        expect(inkTop).toBeGreaterThan(0);
+        expect(diffRows.filter((y) => y < inkTop).length).toBeGreaterThan(20);
+        expect(diffRows.filter((y) => y > inkTop + 1).length).toBeLessThan(40);
+    });
+
     test("blur softens the hard edge inside the rect and leaves the outside intact", async () => {
         const result = await render([{ kind: "blur", rect: { x: 300, y: 200, w: 60, h: 60 }, strength: 8 }]);
         const { ctx } = await decode(result.png);

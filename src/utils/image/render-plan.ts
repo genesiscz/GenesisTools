@@ -16,6 +16,7 @@ import {
     type ShapeLabel,
     type ShapeStyle,
 } from "./annotation-plan";
+import { canvasFont } from "./canvas-fonts";
 
 const KNOWN_KINDS = ["highlight", "box", "ellipse", "arrow", "label", "blur", "crop", "grid"] as const;
 
@@ -141,7 +142,7 @@ function drawChip(
     place: (chipW: number, chipH: number) => { x: number; y: number },
     bounds: { width: number; height: number }
 ): ChipMetrics {
-    ctx.font = `600 ${style.fontSize}px sans-serif`;
+    ctx.font = canvasFont({ sizePx: style.fontSize, weight: 600 });
     const padX = Math.round(style.fontSize * 0.5);
     const padY = Math.round(style.fontSize * 0.3);
     const textW = ctx.measureText(text).width;
@@ -322,7 +323,7 @@ function drawGrid(
         return;
     }
 
-    ctx.font = `${style.fontSize}px sans-serif`;
+    ctx.font = canvasFont({ sizePx: style.fontSize });
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
     const drawGridLabel = (text: string, x: number, y: number): void => {
