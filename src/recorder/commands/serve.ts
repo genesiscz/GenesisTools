@@ -1,25 +1,11 @@
-import { mkdirSync } from "node:fs";
-import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { logger, out } from "@genesiscz/utils/logger";
-import {
-    awaitStart,
-    passStartGate,
-    releaseStartGate,
-    startGatePath,
-    stopPassedChild,
-    sweepStartGates,
-} from "@genesiscz/utils/process/start-gate";
-import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { passStartGate, releaseStartGate } from "@genesiscz/utils/process/start-gate";
 import { type Command, Option } from "commander";
+import { launchRecorderService } from "../lib/service-launch";
 import { readLiveService, recorderServiceDir } from "../lib/service-protocol";
 
 const { log } = logger.scoped("recorder-service");
-
-/** How long `--detach` waits for the service to listen; the app's host waits 20 s for the socket. */
-const DETACH_TIMEOUT_MS = 15_000;
-const DETACH_GRACE_MS = 5_000;
-const START_GATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 interface ServeFlags {
     detach?: boolean;
@@ -30,46 +16,15 @@ interface ServeFlags {
 
 /** `--detach`: starts the service in its own process and answers its service.json once it listens. */
 async function detach(): Promise<void> {
-    const running = readLiveService();
+    const launch = await launchRecorderService();
 
-    if (running) {
-        out.result(running);
+    if (launch.status === "failed") {
+        out.printlnErr(launch.reason);
+        process.exitCode = 1;
         return;
     }
 
-    const gates = toolDataDir("recorder", "start-gates");
-    mkdirSync(gates, { recursive: true });
-    sweepStartGates(gates, START_GATE_MAX_AGE_MS);
-    const gate = startGatePath(gates);
-    spawnToolDetached(["recorder", "serve", "--start-gate", gate], { reparent: true });
-    const outcome = await awaitStart({
-        gate,
-        find: () => readLiveService(),
-        timeoutMs: DETACH_TIMEOUT_MS,
-        graceMs: DETACH_GRACE_MS,
-        pollMs: 200,
-        stop: (pid) => {
-            stopPassedChild({
-                gate,
-                pid,
-                signal: (target) => {
-                    log.warn({ pid: target, gate }, "the recorder service passed its start but never listened");
-                    // pid-verified: stopPassedChild calls this only after inspectPidFile confirmed the gate's writer is this live process
-                    process.kill(target, "SIGTERM");
-                },
-            });
-        },
-    });
-
-    if (outcome.status === "started") {
-        out.result(outcome.value);
-        return;
-    }
-
-    out.printlnErr(
-        `the recorder service did not start within ${(DETACH_TIMEOUT_MS + DETACH_GRACE_MS) / 1000} s (${outcome.status}); run it in a terminal to see why`
-    );
-    process.exitCode = 1;
+    out.result(launch.entry);
 }
 
 async function serve(flags: ServeFlags): Promise<void> {

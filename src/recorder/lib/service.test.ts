@@ -2027,6 +2027,53 @@ describe("a connection to the service that closes under a call", () => {
     });
 });
 
+// Regression test: 2026-11-09 12:50 a window recording with the camera failed at once ("the camera needs
+// GenesisTools.app's recorder face connected to the recorder service as its host"): no service ran, and a caller with
+// no live service took the headless face, which never answers the camera.
+describe("a call only the app answers, with no service running", () => {
+    test("starts the service, which launches the face and waits for its hello, and the camera answers", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rs-none-"));
+        let launches = 0;
+        const recorder = serviceClient.recorderHost({
+            dir,
+            launch: async () => {
+                launches += 1;
+                const { service } = await serviceFixture({
+                    hostWaitMs: 5_000,
+                    headless: {
+                        // The face the service launches says hello as the host.
+                        open: () => {
+                            void connect(service.entry, async ({ method }) =>
+                                method === "camera.start" ? { started: true, windowIds: [41] } : { stopped: true }
+                            ).then((face) => face.call("hello", hello("host", ["camera.start", "camera.stop"])));
+                        },
+                    },
+                });
+                return { status: "started", entry: service.entry };
+            },
+        });
+
+        expect(await recorder.call("camera.start", { folder: "/rec/talk" })).toEqual({
+            started: true,
+            windowIds: [41],
+        });
+        expect(launches).toBe(1);
+    });
+
+    test("a service that does not start is the refusal's reason", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rs-none-"));
+        const recorder = serviceClient.recorderHost({
+            dir,
+            launch: async () => ({ status: "failed", reason: "SyntaxError: Export named 'x' not found" }),
+        });
+
+        await expect(recorder.call("camera.start", { folder: "/rec/talk" })).rejects.toMatchObject({
+            code: RPC_ERRORS.hostUnavailable,
+            message: expect.stringContaining("SyntaxError: Export named 'x' not found"),
+        });
+    });
+});
+
 // Regression test: 2026-11-09 00:43, 01:05, 01:12 and 01:33 the service exited for a code change while an export
 // ran through it, and each caller failed with "the connection to the recorder service closed while the call ran".
 describe("a code change while a call runs", () => {
