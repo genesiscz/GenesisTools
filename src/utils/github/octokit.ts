@@ -195,7 +195,7 @@ export function getOctokitForWrite(): Octokit {
  *
  * @param mode default — env first (read-friendly). prefer-gh-cli — gh OAuth first (write-friendly).
  */
-function getGitHubToken(mode: OctokitAuthMode = "default"): string | undefined {
+export function getGitHubToken(mode: OctokitAuthMode = "default"): string | undefined {
     const tryEnv = (): string | undefined => {
         const token = env.github.getToken();
         if (token) {
