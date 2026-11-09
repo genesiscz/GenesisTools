@@ -49,26 +49,33 @@ export function reopenResult(decided: Decided): ReopenResult {
     };
 }
 
+type DecideOptions = {
+    store: MeetingStore;
+    record: MeetingRecord;
+    status: "confirmed" | "rejected";
+    ids: string[];
+    minConfidence?: number;
+    speaker?: string;
+    proposed?: string;
+} & ActorOptions;
+
+type ReopenOptions = { store: MeetingStore; record: MeetingRecord; ids: string[]; token?: string } & ActorOptions;
+
 /**
  * Confirms or rejects items in one save, the CLI's `confirm` and `reject` and the REPL's meeting.confirm() and
  * meeting.reject(), through the decision journal. A question (Q12 or its id) is answered by ear, not confirmed; a range
  * nobody named or a term with no spelling needs `speaker` or `proposed`. Those are skipped with the reason; the rest
  * are decided, and each confirmed correction goes into the corrections ledger.
  */
-export async function decideItems(
-    options: {
-        store: MeetingStore;
-        record: MeetingRecord;
-        status: "confirmed" | "rejected";
-        ids: string[];
-        minConfidence?: number;
-        speaker?: string;
-        proposed?: string;
-    } & ActorOptions
-): Promise<DecideResult> {
+export async function decideItems(options: DecideOptions): Promise<DecideResult> {
+    return decideResult(await decideEntry(options));
+}
+
+/** `decideItems` with its journal entry, for `confirm --json` and `reject --json`. */
+export async function decideEntry(options: DecideOptions): Promise<Decided> {
     const { store, record, status, ids, minConfidence, speaker, proposed } = options;
     const journal = new DecisionJournal({ store });
-    const decided = await journal.apply({
+    return journal.apply({
         meeting: record.id,
         action:
             status === "confirmed"
@@ -83,7 +90,6 @@ export async function decideItems(
         actor: options.actor ?? callerActor(),
         ...(options.reason ? { reason: options.reason } : {}),
     });
-    return decideResult(decided);
 }
 
 /**
@@ -94,15 +100,17 @@ export async function decideItems(
  * items. The corrections ledger is append-only, so a confirm's line stays and a retraction line follows it, which
  * `dictionary suggest` reads as the confirmation withdrawn.
  */
-export async function reopenItems(
-    options: { store: MeetingStore; record: MeetingRecord; ids: string[]; token?: string } & ActorOptions
-): Promise<ReopenResult> {
+export async function reopenItems(options: ReopenOptions): Promise<ReopenResult> {
+    return reopenResult(await reopenEntry(options));
+}
+
+/** `reopenItems` with its journal entry, for `reopen --json`. */
+export async function reopenEntry(options: ReopenOptions): Promise<Decided> {
     const { store, record, ids, token } = options;
     const journal = new DecisionJournal({ store });
     const actor = options.actor ?? callerActor();
     const reason = options.reason ? { reason: options.reason } : {};
-    const decided = token
-        ? await journal.revert({ meeting: record.id, token, items: ids, actor, ...reason })
-        : await journal.apply({ meeting: record.id, action: { kind: "reopen", items: ids }, actor, ...reason });
-    return reopenResult(decided);
+    return token
+        ? journal.revert({ meeting: record.id, token, items: ids, actor, ...reason })
+        : journal.apply({ meeting: record.id, action: { kind: "reopen", items: ids }, actor, ...reason });
 }

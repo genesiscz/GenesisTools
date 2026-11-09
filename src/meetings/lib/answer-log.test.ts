@@ -3,7 +3,17 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { type AnswerEvent, appendAnswerEvent, readAnswerEvents, runningRound, subscribeAnswers } from "./answer-log";
+import { type MeetingItem, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { Storage } from "@genesiscz/utils/storage/storage";
+import {
+    ANSWER_LOG_FILE,
+    type AnswerEvent,
+    appendAnswerEvent,
+    readAnswerEvents,
+    runningRound,
+    subscribeAnswers,
+} from "./answer-log";
+import { DecisionJournal } from "./decision-journal";
 import { askedSpotSec, type QuestionItem } from "./questions";
 
 const at = "2026-01-01T10:00:00.000Z";
@@ -149,6 +159,69 @@ describe("answer log", () => {
         const code = await subscribeAnswers({ path, fromStart: false, timeoutMs: 60, write: () => undefined });
 
         expect(code).toBe(2);
+    });
+
+    // The decision journal writes the answer log's decision lines now: the keys --subscribe-answers prints, in their
+    // order, stay as listen-session wrote them (new keys may be added, none removed or renamed).
+    test("the journal's answered and reopened lines keep the --subscribe-answers shape", async () => {
+        const store = new MeetingStore(new Storage(`meetings-answer-log-${process.pid}`));
+        const items = [
+            {
+                id: "i1",
+                kind: "term",
+                status: "suggested",
+                atSec: 50,
+                heard: "Ada",
+                proposed: "ADA",
+                rules: [],
+                suggestedAt: at,
+            },
+            {
+                id: "i2",
+                kind: "question",
+                status: "suggested",
+                about: "term",
+                heard: "Ada",
+                fromSec: 50,
+                toSec: 54,
+                question: "Which word?",
+                choices: ["ADA", "ADO"],
+                decides: ["i1"],
+                rules: [],
+                suggestedAt: at,
+            },
+        ] as MeetingItem[];
+        const meeting = await store.create(
+            { title: "Harbor sync", start: at, createdBy: "new", items },
+            { command: "test", change: "fixture" }
+        );
+        const journal = new DecisionJournal({ store, ledger: () => undefined });
+        const { entry } = await journal.apply({
+            meeting: meeting.id,
+            action: { kind: "answer", question: "i2", answer: "ADO", comment: "clear" },
+            actor: { kind: "listen" },
+        });
+        await journal.revert({ meeting: meeting.id, token: entry!.token, actor: { kind: "listen" } });
+        const lines = readAnswerEvents(join(store.folder(meeting.id), ANSWER_LOG_FILE));
+
+        expect(lines.map((line) => Object.keys(line))).toEqual([
+            [
+                "event",
+                "at",
+                "item",
+                "about",
+                "fromSec",
+                "toSec",
+                "question",
+                "heard",
+                "answer",
+                "comment",
+                "settled",
+                "decided",
+            ],
+            ["event", "at", "item"],
+        ]);
+        expect(lines[0]).toMatchObject({ item: "i2", answer: "ADO", decided: [{ item: "i1", status: "confirmed" }] });
     });
 });
 

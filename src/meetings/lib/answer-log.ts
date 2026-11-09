@@ -5,7 +5,11 @@ import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 
-/** The file in a meeting's folder that `listen` appends one event per line to, and `--subscribe-answers` follows. */
+/**
+ * The file in a meeting's folder that `listen` appends one event per line to, and `--subscribe-answers` follows. Its
+ * decision lines (answered, skipped, split, reopened) are a projection of the decision journal, which alone writes
+ * them (src/meetings/lib/decision-journal.ts); a round's own lines (round-start, round-end) are the round's.
+ */
 export const ANSWER_LOG_FILE = "questions.ndjson";
 
 export type RoundEndReason = "done" | "stopped" | "aborted" | "budget";
