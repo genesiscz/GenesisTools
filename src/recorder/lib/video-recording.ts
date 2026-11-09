@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
-import { runCountdown } from "@app/control/lib/peekaboo";
+import { type CountdownHold, runCountdown } from "@app/control/lib/peekaboo";
 import {
     audioTrackTitles,
     cursorTrackPath,
@@ -83,11 +83,17 @@ export interface VideoRecordingOptions {
     startGate?: string;
     /** The slow part before the gate; default ax-tool's build, which a fresh checkout does first. */
     prepare?: () => Promise<unknown>;
-    /** Seconds counted down on screen right before it records (after the slow part), as the capture picker does. */
+    /**
+     * Seconds counted down on screen before it records (after the slow part), as the capture picker does: the recorder
+     * starts as the last second begins, and zero shows once the movie has its first frame.
+     */
     countdownSeconds?: number;
     /** Shows the countdown; default an overlay near the pointer and a line a second on stderr. */
-    countdown?: (seconds: number) => Promise<void>;
+    countdown?: RecorderCountdown;
 }
+
+/** A countdown before a recording: it calls `hold.lastSecond` as its last second begins and holds zero for `hold.until`. */
+export type RecorderCountdown = (seconds: number, hold: CountdownHold) => Promise<void>;
 
 /**
  * A display or an area records the pointer beside the movie (the drawn cursor, clicks and the ⌘/⌃ shortcut rows). A
@@ -119,9 +125,10 @@ export function segmentRecorderOptions(
 }
 
 /** The recorder's countdown: an overlay near the pointer and a line a second on stderr. */
-export const showRecorderCountdown = (seconds: number) =>
+export const showRecorderCountdown: RecorderCountdown = (seconds, hold) =>
     runCountdown(seconds, {
         text: { who: "recorder", line: "switch to what you record", overlay: "switch to what you record" },
+        hold,
     });
 
 /**
@@ -130,11 +137,11 @@ export const showRecorderCountdown = (seconds: number) =>
  */
 export function announcedCountdown(
     announce: (seconds: number) => void,
-    show: (seconds: number) => Promise<void> = showRecorderCountdown
-): (seconds: number) => Promise<void> {
-    return async (seconds) => {
+    show: RecorderCountdown = showRecorderCountdown
+): RecorderCountdown {
+    return async (seconds, hold) => {
         announce(seconds);
-        await show(seconds);
+        await show(seconds, hold);
     };
 }
 
@@ -275,13 +282,69 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
 
     await (options.prepare ?? ensureBinaryAsync)();
 
-    // After the slow part, so the last second of the countdown is the start; before the gate, so a caller that gives
-    // up during it still cancels the start.
-    if (countdownSeconds > 0) {
-        log.info({ seconds: countdownSeconds }, "counting down before the recording");
-        await (options.countdown ?? showRecorderCountdown)(countdownSeconds);
+    if (countdownSeconds === 0) {
+        return recordThroughGate(options, gate);
     }
 
+    // After the slow part, so the countdown is not stretched by a build. ax-tool takes about a second from its start
+    // to the first frame, so the recording starts as the last second begins (the gate is passed then, so a caller that
+    // gives up during the countdown still cancels the start), and the countdown holds zero until the first frame: the
+    // first thing done after zero is in the movie. The overlay is kept out of the movie.
+    const firstFrame = Promise.withResolvers<void>();
+    let recording: Promise<VideoRecordingResult> | undefined;
+    const start = (excludeWindowIds: number[] = []): Promise<VideoRecordingResult> => {
+        if (recording) {
+            return recording;
+        }
+
+        const excluded = [...(options.excludeWindowIds ?? []), ...excludeWindowIds];
+        log.info({ excludeWindowIds: excluded }, "the countdown's last second began; starting the recorder");
+        recording = recordThroughGate(
+            {
+                ...options,
+                ...(excluded.length ? { excludeWindowIds: excluded } : {}),
+                emit: (event) => {
+                    if (endsCountdown(event)) {
+                        firstFrame.resolve();
+                    }
+
+                    options.emit?.(event);
+                },
+            },
+            gate
+        );
+        // A start that fails or is cancelled ends the countdown too; its error comes from the await below.
+        recording.then(
+            () => firstFrame.resolve(),
+            () => firstFrame.resolve()
+        );
+        return recording;
+    };
+
+    log.info({ seconds: countdownSeconds }, "counting down before the recording");
+    await (options.countdown ?? showRecorderCountdown)(countdownSeconds, {
+        lastSecond: ({ excludeWindowIds }) => void start(excludeWindowIds),
+        until: firstFrame.promise,
+    });
+    // A countdown that never said its last second began starts the recording at its end.
+    return await start();
+}
+
+/** The session's first frame (or its end before one): a held countdown may show zero. */
+function endsCountdown(event: RecordingSessionEvent): boolean {
+    return (
+        (event.event === "state" && event.state === "recording") ||
+        (event.event === "error" && event.fatal) ||
+        event.event === "done" ||
+        event.event === "discarded"
+    );
+}
+
+/** Records once the caller's start gate (when it has one) is passed, and releases the gate after. */
+async function recordThroughGate(
+    options: VideoRecordingOptions,
+    gate: string | undefined
+): Promise<VideoRecordingResult> {
     if (!gate) {
         return recordPassed(options);
     }
@@ -350,8 +413,20 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         log.debug({ event }, "recording event");
         control?.observe(event);
 
+        // The live entry says "recording" while a segment arms too, so `lastFrameAt` (set at a segment's first frame and
+        // with each elapsed second) is what tells a host that the movie records: the capture picker holds its
+        // countdown for it.
+        const framed =
+            (event.event === "state" && event.state === "recording") || event.event === "elapsed"
+                ? { lastFrameAt: new Date().toISOString() }
+                : {};
+
         if (event.event === "state" || event.event === "error") {
-            void control?.status().then((status) => live?.update({ state: status.state, warning: status.warning }));
+            void control
+                ?.status()
+                .then((status) => live?.update({ state: status.state, warning: status.warning, ...framed }));
+        } else if (event.event === "elapsed") {
+            live?.update(framed);
         }
 
         if (event.event === "error") {

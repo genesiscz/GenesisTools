@@ -1,12 +1,15 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as captureRunner from "@app/control/lib/capture-runner";
 import type { ScreenInfo } from "@app/control/lib/native-record";
 import { segmentCaptureSpec } from "@app/control/lib/recording-native";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-gate";
 import { RpcError } from "@genesiscz/utils/screen-recorder/control";
+import { listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
 import { framesDoneLine } from "./frames-recording";
 import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library";
@@ -19,7 +22,9 @@ import {
 import {
     announcedCountdown,
     endRecordingCamera,
+    RecordingStartCancelled,
     recordedNothing,
+    recordVideo,
     segmentRecorderOptions,
     videoDoneLine,
 } from "./video-recording";
@@ -125,6 +130,108 @@ describe("the commands GenesisTools.app runs", () => {
         expect(calls.filter((call) => !commands.has(call.command))).toEqual([]);
     });
 });
+
+describe("a countdown that ends when the movie records", () => {
+    it("the countdown's last second starts the recorder, and zero waits for the movie's first frame", async () => {
+        const scratch = await mkdtemp(join(tmpdir(), "gt-countdown-hold-"));
+        const events: string[] = [];
+        const excluded: number[][] = [];
+        const framed: Array<string | undefined> = [];
+        let liveId = "";
+        const spy = spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(
+            async ({ plan, onRecording }) => {
+                events.push("recorder starts");
+                excluded.push(plan.capture?.excludeWindowIds ?? []);
+                // ax-tool's arming: longer than what is left of the last second.
+                await Bun.sleep(400);
+                events.push("first frame");
+                const before = listLiveRecordings().find((entry) => entry.id === liveId)?.lastFrameAt;
+                onRecording?.({ sessionDir: join(scratch, "session") });
+                await Bun.sleep(50);
+                framed.push(before, listLiveRecordings().find((entry) => entry.id === liveId)?.lastFrameAt);
+                return {
+                    ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                    captureFailed: false,
+                    sessionDir: join(scratch, "session"),
+                    warnings: [],
+                    capture: null,
+                };
+            }
+        );
+
+        try {
+            await recordVideo({
+                target: { kind: "region", x: 0, y: 0, width: 320, height: 200 },
+                countdownSeconds: 2,
+                prepare: async () => {},
+                onStarted: (started) => {
+                    liveId = started.liveId;
+                },
+                countdown: async (seconds, hold) => {
+                    events.push(`countdown ${seconds}`);
+                    await Bun.sleep(20);
+                    events.push("last second");
+                    hold.lastSecond({ excludeWindowIds: [77] });
+                    await Bun.sleep(250);
+                    events.push("last tick ends");
+                    await hold.until;
+                    events.push("zero");
+                },
+            });
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(events).toEqual([
+            "countdown 2",
+            "last second",
+            "recorder starts",
+            "last tick ends",
+            "first frame",
+            "zero",
+        ]);
+        // The overlay's window is kept out of the movie.
+        expect(excluded).toEqual([[77]]);
+        // The live entry says "recording" while it arms too; lastFrameAt is what tells the picker that it records.
+        expect(framed[0]).toBeUndefined();
+        expect(framed[1]).toBeString();
+    });
+
+    it("a start gate the caller closed during the countdown ends the hold at once and cancels the start", async () => {
+        const gate = startGatePath(await mkdtemp(join(tmpdir(), "gt-countdown-gate-")));
+        expect(await closeStartGate(gate)).toEqual({ status: "cancelled" });
+        const spy = spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async () => {
+            throw new Error("a cancelled start must not reach the recorder");
+        });
+        let held = "not reached";
+        let recorderCalls = -1;
+
+        try {
+            await expect(
+                recordVideo({
+                    target: { kind: "region", x: 0, y: 0, width: 320, height: 200 },
+                    startGate: gate,
+                    countdownSeconds: 1,
+                    prepare: async () => {},
+                    countdown: async (_seconds, hold) => {
+                        hold.lastSecond({ excludeWindowIds: [] });
+                        held = await Promise.race([
+                            hold.until.then(() => "settled"),
+                            Bun.sleep(2000).then(() => "still held"),
+                        ]);
+                    },
+                })
+            ).rejects.toBeInstanceOf(RecordingStartCancelled);
+            recorderCalls = spy.mock.calls.length;
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(held).toBe("settled");
+        expect(recorderCalls).toBe(0);
+    });
+});
+
 const window: RecordingTarget = { kind: "window", windowIds: [83493] };
 const app: RecordingTarget = { kind: "app", app: "Notes" };
 const display: RecordingTarget = { kind: "display", screenIndex: 0, follow: true };
@@ -295,14 +402,15 @@ describe("a window or app movie", () => {
 
     it("a countdown is announced before it runs, so a --json reader knows why nothing records yet", async () => {
         const calls: string[] = [];
+        const hold = { lastSecond: () => {}, until: Promise.resolve() };
         const countdown = announcedCountdown(
             (seconds) => calls.push(`announce ${seconds}`),
-            async (seconds) => {
-                calls.push(`show ${seconds}`);
+            async (seconds, given) => {
+                calls.push(`show ${seconds}${given === hold ? " with the hold" : ""}`);
             }
         );
-        await countdown(2);
-        expect(calls).toEqual(["announce 2", "show 2"]);
+        await countdown(2, hold);
+        expect(calls).toEqual(["announce 2", "show 2 with the hold"]);
     });
 
     it("the done lines count one frame as one frame", () => {

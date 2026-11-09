@@ -6,7 +6,7 @@
 
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { abortableSleep } from "@genesiscz/utils/async";
+import { abortableSleep, untilAborted, withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
@@ -539,10 +539,19 @@ export const MEDIA_KEY_SCRIPTS: Record<string, string> = {
 // "Recording in N…" countdown for user-driven captures. stderr always; plus a
 // best-effort floating overlay near the mouse via JXA NSPanel. JXA landmines
 // (from live debugging, do not "simplify"): CALayer.setBackgroundColor hangs
-// the runtime — use NSPanel.setBackgroundColor; orderFrontRegardless/close are
-// silent no-ops without the () call parens.
-function countdownOverlayScript(sec: number, hint: string): string {
+// the runtime — use NSPanel.setBackgroundColor. A method without arguments
+// (orderFrontRegardless, close) goes through `call`: macOS 27's bridge runs it
+// on the property read and has no function to call after it (`panel.close()`
+// threw, so the overlay never showed), older bridges return the function.
+// The panel says its window number on stdout once it is on screen, for a
+// recorder that keeps it out of the movie; `holdSec` keeps it up after the
+// last second for a recorder that is still arming (the caller kills it).
+function countdownOverlayScript(sec: number, hint: string, holdSec: number): string {
     return `ObjC.import('Cocoa'); ObjC.import('CoreGraphics');
+function call(object, name) {
+  var method = object[name];
+  if (typeof method === 'function') { method.call(object); }
+}
 function run() {
   var app = $.NSApplication.sharedApplication;
   app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
@@ -556,19 +565,45 @@ function run() {
   panel.setOpaque(false);
   panel.setBackgroundColor($.NSColor.blackColor.colorWithAlphaComponent(0.8));
   panel.setIgnoresMouseEvents(true);
+  panel.setHidesOnDeactivate(false);
+  panel.setSharingType($.NSWindowSharingNone);
   var label = $.NSTextField.alloc.initWithFrame($.NSMakeRect(0, 0, winW, winH));
   label.setEditable(false); label.setBordered(false); label.setDrawsBackground(false);
   label.setAlignment($.NSTextAlignmentCenter);
   label.setTextColor($.NSColor.whiteColor);
   label.setFont($.NSFont.boldSystemFontOfSize(20));
   panel.setContentView(label);
-  panel.orderFrontRegardless();
+  call(panel, 'orderFrontRegardless');
+  $.NSFileHandle.fileHandleWithStandardOutput.writeData(
+    $('window ' + panel.windowNumber + '\\n').dataUsingEncoding($.NSUTF8StringEncoding));
   for (var i = ${sec}; i >= 1; i--) {
     label.setStringValue('Recording in ' + i + '\\u2026 ' + ${SafeJSON.stringify(hint)});
     $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(1.0));
   }
-  panel.close();
+  if (${holdSec} > 0) {
+    label.setStringValue('Starting the recording\\u2026 ' + ${SafeJSON.stringify(hint)});
+    $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(${holdSec}));
+  }
+  call(panel, 'close');
 }`;
+}
+
+/** The overlay's CG window id, from the `window <number>` line its script prints once the panel is on screen. */
+async function overlayWindowId(stdout: ReadableStream<Uint8Array>): Promise<number | undefined> {
+    const decoder = new TextDecoder();
+    let text = "";
+
+    for await (const chunk of stdout) {
+        text += decoder.decode(chunk, { stream: true });
+        const match = /window (\d+)\n/.exec(text);
+
+        if (match) {
+            const id = Number(match[1]);
+            return id > 0 ? id : undefined;
+        }
+    }
+
+    return undefined;
 }
 
 /** What a countdown says: on stderr after `<who>: recording in N…`, and in the overlay after `Recording in N…`. */
@@ -587,26 +622,66 @@ const CAPTURE_COUNTDOWN: CountdownText = {
 /** How long the overlay may take to close after the last tick (osascript starts late, so it ends late). */
 const OVERLAY_CLOSE_MS = 1_500;
 
+/** The longest a held countdown waits past its last second for the recorder's first frame. */
+export const COUNTDOWN_HOLD_MS = 10_000;
+
 /**
- * Returns early when `signal` aborts, taking the overlay down with it. Otherwise it returns once the overlay is
- * closed (at most 1.5 s after the last tick), so a capture that starts next does not record it.
+ * A countdown that reaches zero when the recording records, not when its last second ends. ax-tool takes about a
+ * second to arm (0.74 to 1.14 s from its start to the first frame, measured 2026-11-08), so a recorder started at
+ * zero lost the first thing the user did after it.
+ */
+export interface CountdownHold {
+    /**
+     * The last second begins: start the recorder now. `excludeWindowIds` holds the overlay's CG window id when it is
+     * on screen by then. Its sharing type keeps it out of a capture on macOS 27, but ScreenCaptureKit has ignored
+     * that on macOS 15, so a recorder that can leave windows out leaves it out too.
+     */
+    lastSecond: (overlay: { excludeWindowIds: number[] }) => void;
+    /** The last second's text stays on screen until this settles, at most `COUNTDOWN_HOLD_MS` past that second. */
+    until: Promise<unknown>;
+}
+
+/**
+ * Returns early when `signal` aborts, taking the overlay down with it. Without `hold` it returns once the overlay is
+ * closed (at most 1.5 s after the last tick), so a capture that starts next does not record it. With `hold` the
+ * caller's recorder starts during the last second and the overlay stays up until `hold.until` settles.
  */
 export async function runCountdown(
     sec: number,
-    { signal, text = CAPTURE_COUNTDOWN }: { signal?: AbortSignal; text?: CountdownText } = {}
+    {
+        signal,
+        text = CAPTURE_COUNTDOWN,
+        hold,
+    }: { signal?: AbortSignal; text?: CountdownText; hold?: CountdownHold } = {}
 ): Promise<void> {
     // overlay runs detached and paces itself; stderr ticks are the guaranteed channel
+    const holdSec = hold ? COUNTDOWN_HOLD_MS / 1000 : 0;
     const overlay = Bun.spawn(
-        wrapWithGenesisApp(["osascript", "-l", "JavaScript", "-e", countdownOverlayScript(sec, text.overlay)]),
+        wrapWithGenesisApp(["osascript", "-l", "JavaScript", "-e", countdownOverlayScript(sec, text.overlay, holdSec)]),
         {
-            stdout: "ignore",
+            stdout: "pipe",
             stderr: "ignore",
         }
     );
     overlay.unref();
+    const excludeWindowIds: number[] = [];
+    void overlayWindowId(overlay.stdout)
+        .then((id) => {
+            if (id !== undefined) {
+                excludeWindowIds.push(id);
+            }
+        })
+        .catch((error: unknown) => {
+            logger.debug({ error }, "the countdown overlay named no window");
+        });
 
     for (let i = sec; i >= 1; i--) {
         console.error(`${text.who}: recording in ${i}… ${text.line}`);
+
+        if (i === 1) {
+            hold?.lastSecond({ excludeWindowIds: [...excludeWindowIds] });
+        }
+
         try {
             await abortableSleep(1000, signal);
         } catch (error) {
@@ -617,6 +692,30 @@ export async function runCountdown(
             overlay.kill();
             return;
         }
+    }
+
+    if (hold) {
+        const settled = hold.until.then(
+            () => undefined,
+            () => undefined
+        );
+
+        try {
+            await withTimeout(untilAborted(settled, signal), COUNTDOWN_HOLD_MS);
+        } catch (error) {
+            overlay.kill();
+
+            if (signal?.aborted) {
+                return;
+            }
+
+            logger.warn(
+                { error, holdMs: COUNTDOWN_HOLD_MS },
+                "the recorder did not record within the countdown's hold; the countdown ends anyway"
+            );
+        }
+
+        overlay.kill();
     }
 
     const closed = await Promise.race([overlay.exited.then(() => true), Bun.sleep(OVERLAY_CLOSE_MS).then(() => false)]);

@@ -303,7 +303,14 @@ stop, pause and mark keys" is on. `GenesisTools --recorder --picker` opens it; w
 An area is `--region x,y,width,height` in global screen points from the top-left corner (CoreGraphics), recorded in
 ax-tool's region mode. `--idle-fps` and `--threshold` reach the capture; without them a movie keeps one rate.
 `--countdown [seconds]` (1 to 10, bare 3) counts down on screen and on stderr before the recording starts, as the
-picker does; it runs after ax-tool is ready, so the last second is the start.
+picker does. It runs after ax-tool is built. ax-tool needs about a second from its start to the first frame, so the
+recorder starts as the last second begins, and the last second stays on screen ("Starting the recording…" past it)
+until the movie has its first frame, at most 10 s longer. Zero never shows before the movie records, so the first thing
+done after it is in the movie. The overlay is kept out of the movie (its sharing type, and its window id in the
+excluded windows); a frames recording, which cannot exclude windows, relies on the sharing type alone. The picker's
+countdown does the same: it starts `tools recorder start` as its last second begins and holds that number until the
+live entry has its first frame (`lastFrameAt`, which a movie sets at each segment's first frame and every second
+after it). Escape cancels the picker's countdown until the recorder starts.
 
 The flags, their limits and their parse live once in `lib/start-options.ts`: `tools recorder start` declares them
 there, and `movies.record()` takes the same options in camelCase (`region`, `idleFps`, `threshold`, `countdown`,

@@ -385,26 +385,55 @@ export async function runCapturePlanWithSignal({
     }
 
     throwIfCancelled("during focus");
+    // With a countdown the recorder starts as its last second begins, and the countdown holds zero until the first
+    // frame: arming takes about a second, which used to come after zero. The overlay stays out of the movie.
+    let arming: Promise<CaptureAttempt> | undefined;
+    const startRecorder = (excludeWindowIds: number[] = []): Promise<CaptureAttempt> => {
+        if (arming) {
+            return arming;
+        }
+
+        if (backend === "native") {
+            const spec = excludeWindowIds.length
+                ? { ...cap, excludeWindowIds: [...(cap.excludeWindowIds ?? []), ...excludeWindowIds] }
+                : cap;
+            const outDir = join(captureSessionsRoot(), `native-${randomUUID()}`);
+            arming = startCapture([axTool, ...nativeCaptureArgv(spec, outDir)], signal);
+        } else {
+            arming = startPeekabooCapture({ cap, warnings, signal });
+        }
+
+        return arming;
+    };
     if (cap.countdownSec && cap.countdownSec > 0) {
-        await runCountdown(Math.min(cap.countdownSec, 10), { signal });
+        const armed = Promise.withResolvers<void>();
+        await runCountdown(Math.min(cap.countdownSec, 10), {
+            signal,
+            hold: {
+                // A failed start ends the hold; its error comes from the await below.
+                lastSecond: ({ excludeWindowIds }) => {
+                    startRecorder(excludeWindowIds).then(
+                        () => armed.resolve(),
+                        () => armed.resolve()
+                    );
+                },
+                until: armed.promise,
+            },
+        });
     }
 
-    throwIfCancelled("before the recorder started");
-    let attempt: CaptureAttempt;
-    if (backend === "native") {
-        const outDir = join(captureSessionsRoot(), `native-${randomUUID()}`);
-        attempt = await startCapture([axTool, ...nativeCaptureArgv(cap, outDir)], signal);
+    if (!arming) {
+        throwIfCancelled("before the recorder started");
+    }
 
-        if (!attempt.sessionDir) {
-            throwIfCancelled("while the recorder was arming");
+    const attempt = await startRecorder();
+    if (!attempt.sessionDir) {
+        throwIfCancelled("while the recorder was arming");
+
+        if (backend === "native") {
             throw new CaptureRunError(
                 `Native recording never started: ${attempt.failDiag}. No fallback was attempted.`
             );
-        }
-    } else {
-        attempt = await startPeekabooCapture({ cap, warnings, signal });
-        if (!attempt.sessionDir) {
-            throwIfCancelled("while the recorder was arming");
         }
     }
 
