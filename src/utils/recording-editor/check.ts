@@ -6,6 +6,7 @@ import {
     type EditOp,
     type EditProject,
     type EditTextNote,
+    exportPlanOf,
     outputDurationUs,
     outputSpansOf,
     outputTimeOf,
@@ -59,6 +60,11 @@ export interface EditFacts {
         untilUs: number;
         lines: ReadonlyArray<{ text: string; x: number; y: number; width: number; height: number }>;
     }>;
+    /**
+     * The movie track's frame rate (recording.json settings.video.averageFps); absent: not known, so the export canvas
+     * is planned at 60 fps and no frame count is named.
+     */
+    nominalFps?: number;
 }
 
 /** A text that loses less than this to a cut is not worth a word. */
@@ -159,7 +165,9 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
     // R6 9: two texts overlap when what they show does (the renderer's font, wrap and clamp to the canvas; a plate
     // text's plate, a plain text's letters), not when their anchors are near: "same place" for texts side by side was
     // most of check()'s noise.
-    const canvas = canvasShape(project);
+    // The export's real canvas: a text wraps and clamps at its pixel size (exportPlanOf, EditRenderer.plannedOutput).
+    const plan = exportPlanOf(project, { nominalFps: facts.nominalFps });
+    const canvas = { ...canvasShape(project), shortSidePx: Math.min(plan.canvas.width, plan.canvas.height) };
     const shown = texts.flatMap((note) => {
         const box = shownBox(note, canvas);
         return box ? [{ note, box }] : [];
@@ -314,7 +322,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
     }
 
     // R5 5 redaction edges
-    issues.push(...redactionEdgeIssues(project));
+    issues.push(...redactionEdgeIssues(project, facts.nominalFps === undefined ? undefined : plan.fps));
     issues.push(...zoomEaseAtCutIssues(project));
     // R7 10 zoom edge text
     issues.push(...zoomEdgeIssues(project, facts));
@@ -336,6 +344,16 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
 }
 /** Source seconds to a tenth, as the messages say them. */
 const tenths = (us: number) => Math.round(us / 100_000) / 10;
+
+/** " (about N frames at F fps)" for `playedUs` of the export at `fps`; nothing when the rate is not known. */
+function framesAt(playedUs: number, fps: number | undefined): string {
+    if (fps === undefined) {
+        return "";
+    }
+
+    const frames = Math.max(1, Math.round((playedUs * fps) / 1_000_000));
+    return ` (about ${frames} frame${frames === 1 ? "" : "s"} at ${fps} fps)`;
+}
 
 /** The kinds the check looks at, each with how to remove it and how to name it for a person. */
 /** How long a lengthened item lasts: long enough to read. */
@@ -473,10 +491,13 @@ export function issueSummary(issues: readonly EditIssue[]): {
 export { canvasShape };
 
 /**
- * The canvas's short side in pixels that check() lays texts out at, since it does not know the export's size. The size
- * matters little: the font sets a line about 1.5 % wider in em at 31 px than at 54 px, and the same from 78 px up.
+ * The canvas's short side in pixels a text is laid out at when the caller names none; check() passes the export's own
+ * (exportPlanOf), because a line that fits at 1080 px can wrap at 720 (the font sets a line wider in em when small).
  */
-const CHECK_SHORT_SIDE_PX = 1080;
+const DEFAULT_SHORT_SIDE_PX = 1080;
+
+/** A canvas in units of its short side (canvasShape), with that side's pixels when the export's size is known. */
+type TextCanvas = { width: number; height: number; shortSidePx?: number };
 /**
  * A plate's left edge before the canvas clamp, from the block's centre and width, the plate's width and `edge`: how far
  * inside the plate the edge that lines up lies. A plate text lines up its plate (`edge` 0), a plain text its letters
@@ -504,7 +525,7 @@ type CanvasBox = { left: number; top: number; right: number; bottom: number };
 
 /**
  * A text's plate on the canvas (units of the canvas's short side, y from the top), as the renderer draws it
- * (Captions.swift drawText, TextPlates.render and textOrigin) on a canvas whose short side is CHECK_SHORT_SIDE_PX:
+ * (Captions.swift drawText, TextPlates.render and textOrigin) on a canvas whose short side is `canvas.shortSidePx`:
  * the font is `size` of the short side in whole pixels, the lines are set with the renderer's font (text-metrics.ts)
  * and wrap at the block's width (0.8 of the canvas) less the plate's inset (0.7 × size each side, 0.38 × size above
  * and below). x, y is the block's centre: a centred text is centred on it, and a left- or right-aligned text lines up
@@ -512,7 +533,7 @@ type CanvasBox = { left: number; top: number; right: number; bottom: number };
  * lines up its plate and keeps it inside the canvas; a plain text draws no plate, so it lines up its letters and keeps
  * them inside the canvas, and its plate (the inset around them) may reach past the block's and the canvas's edge.
  */
-export function textBox(note: TextBoxNote, canvas: { width: number; height: number }): CanvasBox {
+export function textBox(note: TextBoxNote, canvas: TextCanvas): CanvasBox {
     return textBoxes(note, canvas).plate;
 }
 
@@ -521,11 +542,8 @@ export function textBox(note: TextBoxNote, canvas: { width: number; height: numb
  * lines that hold a letter. A blank line can make a plate much wider than its letters (text-metrics.ts layoutText).
  * No letters when the text has none.
  */
-export function textBoxes(
-    note: TextBoxNote,
-    canvas: { width: number; height: number }
-): { plate: CanvasBox; letters?: CanvasBox } {
-    const unit = CHECK_SHORT_SIDE_PX;
+export function textBoxes(note: TextBoxNote, canvas: TextCanvas): { plate: CanvasBox; letters?: CanvasBox } {
+    const unit = canvas.shortSidePx ?? DEFAULT_SHORT_SIDE_PX;
     const font = Math.max(8, Math.round(note.size * unit));
     const insetX = font * 0.7;
     const insetY = font * 0.38;
@@ -572,7 +590,7 @@ export function textBoxes(
  * and its blank lines are empty space, and a subtitle may sit inside a title's inset without touching its letters.
  * Nothing for a plain text with no letters.
  */
-function shownBox(note: EditTextNote, canvas: { width: number; height: number }): CanvasBox | undefined {
+function shownBox(note: EditTextNote, canvas: TextCanvas): CanvasBox | undefined {
     const boxes = textBoxes(note, canvas);
     return note.style === "plain" ? boxes.letters : boxes.plate;
 }
@@ -676,7 +694,8 @@ function zoomsLinkedToNext(project: EditProject): Set<string> {
  * near each other (text that scrolled from one box into the next). Holes up to `redactionJoins.snapMs` (250 ms) the
  * export closes by itself; the message says so, and the action writes the same times into the edit.
  */
-function redactionEdgeIssues(project: EditProject): EditIssue[] {
+/** `fps` is the export's frame rate when the movie's rate is known; without it no frame count is named. */
+function redactionEdgeIssues(project: EditProject, fps: number | undefined): EditIssue[] {
     const issues: EditIssue[] = [];
     const snapUs = (project.redactionJoins?.snapMs ?? 250) * 1000;
     const seconds = (us: number) => Math.round(us / 1000) / 1000;
@@ -703,7 +722,7 @@ function redactionEdgeIssues(project: EditProject): EditIssue[] {
                 severity: "check",
                 kind: "hiding-too-short",
                 item,
-                message: `The ${said(part)} covers only ${Math.round(played / 1000)} ms of the export (about ${Math.max(1, Math.round(played / 33_333))} frame${played < 50_000 ? "" : "s"} at 30 fps); check that it spans every frame the hidden thing shows`,
+                message: `The ${said(part)} covers only ${Math.round(played / 1000)} ms of the export${framesAt(played, fps)}; check that it spans every frame the hidden thing shows`,
                 fix: `movie.retime({ id: "${part.id}", from: ${seconds(Math.max(0, part.startUs - 100_000))}, to: ${seconds(Math.min(project.source.durationUs, part.endUs + 100_000))} })`,
                 at: tenths(part.startUs),
                 target,
@@ -1036,7 +1055,8 @@ export function frameCrop(project: EditProject, focus: { x: number; y: number } 
     // Canvas units with its short side 1; the picture's height is the canvas's short side, as in the export.
     const canvas = canvasShape(project);
     const picture = { width: (project.source.width || 16) / (project.source.height || 9), height: 1 };
-    const pixel = 1 / CHECK_SHORT_SIDE_PX;
+    const planned = exportPlanOf(project).canvas;
+    const pixel = 1 / Math.min(planned.width, planned.height);
     const room = {
         width: Math.max(2 * pixel, canvas.width - 2 * frame.padding),
         height: Math.max(2 * pixel, canvas.height - 2 * frame.padding),

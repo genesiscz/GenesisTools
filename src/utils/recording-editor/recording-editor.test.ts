@@ -52,6 +52,8 @@ import {
     editOpSchema,
     editProjectSchema,
     effectsOnSourceTime,
+    exportFps,
+    exportPlanOf,
     findInTranscript,
     opPlacementWarnings,
     outputDurationUs,
@@ -906,6 +908,76 @@ describe("edit project (edit.json)", () => {
             expect(applyOp(auto, { op: "setZoom", id, scale: 2 }).zooms[0]).not.toHaveProperty("origin");
             const copied = applyOp(auto, { op: "duplicate", id });
             expect(copied.zooms.filter((zoom) => zoom.origin === "auto")).toHaveLength(2);
+        });
+    });
+
+    describe("check() lays texts out and counts frames on the export's own canvas and rate", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const retina = { video: "/movies/screen.mp4", durationUs: 20_000_000, width: 4112, height: 2570 };
+        const overlapping = () => {
+            // One line on a 1080 px or 1600 px short side, two lines on 720: the second line reaches the text under it.
+            let project = applyOp(wholeProject(retina), {
+                op: "text",
+                from: 1,
+                to: 4,
+                text: "Open the settings and pick the export size you want fo",
+                size: 0.05,
+                x: 0.5,
+                y: 0.4,
+            });
+            project = applyOp(project, { op: "text", from: 1, to: 4, text: "Below", size: 0.03, x: 0.5, y: 0.484 });
+            return project;
+        };
+        const overlaps = (project: ReturnType<typeof wholeProject>) =>
+            checkProject(project, facts).filter((issue) => issue.kind === "text-overlap");
+
+        test("a text that wraps only on the Chat preset's 720 px canvas overlaps the text under it there", () => {
+            const project = overlapping();
+            expect(overlaps(project)).toEqual([]);
+            expect(overlaps(applyOp(project, { op: "exportSettings", maxHeight: 720 }))).toHaveLength(1);
+            expect(
+                overlaps(applyOp(project, { op: "exportSettings", maxHeight: 720, size: { height: 1080 } }))
+            ).toEqual([]);
+        });
+
+        test("a short hidden part names its frames at the export's rate, and none when the rate is not known", () => {
+            const project = applyOp(wholeProject(retina), {
+                op: "redact",
+                from: 10,
+                to: 10.1,
+                rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 },
+            });
+            const short = (nominalFps?: number) =>
+                checkProject(project, { ...facts, ...(nominalFps === undefined ? {} : { nominalFps }) }).find(
+                    (issue) => issue.kind === "hiding-too-short"
+                )?.message;
+            expect(short(45)).toContain("about 6 frames at 60 fps");
+            expect(short(30)).toContain("about 3 frames at 30 fps");
+            expect(short()).not.toContain("fps");
+        });
+
+        test("exportPlanOf follows the renderer's rate rule and the cases the Swift test holds plannedOutput to", () => {
+            expect([exportFps(45), exportFps(28.9), exportFps(8)]).toEqual([60, 29, 30]);
+            const gif = applyOp(wholeProject(retina), { op: "exportSettings", format: "gif" });
+            expect(exportPlanOf(gif)).toEqual({ fps: 10, canvas: { width: 960, height: 600 } });
+
+            const cases = SafeJSON.parse(readFileSync(join(import.meta.dir, "export-size.cases.json"), "utf8"), {
+                strict: true,
+            }) as ExportSizeCases;
+            for (const row of cases.cases) {
+                let project = wholeProject({ video: "/movies/x.mp4", durationUs: 1_000_000, ...row.source });
+                project = { ...project, export: { ...project.export, ...row.export } };
+
+                if (row.aspect) {
+                    project = applyOp(project, { op: "frame", aspect: row.aspect });
+                }
+
+                expect({ name: row.name, ...exportPlanOf(project, { nominalFps: row.nominalFps }) }).toEqual({
+                    name: row.name,
+                    fps: row.fps,
+                    canvas: row.canvas,
+                });
+            }
         });
     });
 
@@ -4534,3 +4606,15 @@ describe.skipIf(skip.integration)("normalize measures what the export plays", ()
         expect(Number.isFinite(sped)).toBe(true);
     });
 });
+
+interface ExportSizeCases {
+    cases: Array<{
+        name: string;
+        source: { width: number; height: number };
+        export: { codec: "h264" | "hevc"; maxHeight: number; size?: { width?: number; height?: number } };
+        aspect?: "16:9" | "4:3" | "1:1" | "9:16";
+        nominalFps: number;
+        fps: number;
+        canvas: { width: number; height: number };
+    }>;
+}

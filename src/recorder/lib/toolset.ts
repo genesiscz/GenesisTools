@@ -1724,7 +1724,16 @@ function facts(opened: { path: string; project: EditProject }): EditFacts {
             .map((clip) => clip.id),
         // R7 10 zoom edge text: only what was read already; check() never starts an OCR.
         screenText: screenTextForCheck(project),
+        ...nominalFpsOf(opened),
     };
+}
+
+/** The movie's frame rate as recording.json saved it (settings.video.averageFps); nothing for a plain movie. */
+function nominalFpsOf(opened: { path: string; project: EditProject }): { nominalFps?: number } {
+    const folder = recordingFolderOf(opened);
+    const video = folder ? readRecordingManifest(folder)?.settings.video : undefined;
+    const parsed = z.object({ averageFps: z.number().positive() }).safeParse(video);
+    return parsed.success ? { nominalFps: parsed.data.averageFps } : {};
 }
 
 function screenTextForCheck(project: EditProject): EditFacts["screenText"] {

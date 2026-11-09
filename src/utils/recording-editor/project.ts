@@ -400,6 +400,88 @@ function exportSizeOf(size: z.infer<typeof exportSizeSchema> | undefined) {
     return size && (size.width !== undefined || size.height !== undefined) ? { size } : {};
 }
 
+/** The pixels a second the H.264 export keeps at its full rate (EditRenderer.h264PixelRate): 2560×1600 at 60 fps. */
+const H264_PIXEL_RATE = 2560 * 1600 * 60;
+/** A GIF export is 10 fps and at most 960 wide (ffmpeg.ts GIF_FILTER). */
+const GIF_FPS = 10;
+const GIF_MAX_WIDTH = 960;
+
+/**
+ * The output's constant frame rate from the movie track's (nominal) rate, as EditRenderer.exportFps: above film rates
+ * a screen recording exports at 60, a film rate is kept, and anything slower exports at 30.
+ */
+export function exportFps(nominal: number): number {
+    if (nominal > 31) {
+        return 60;
+    }
+
+    if (nominal >= 23.5) {
+        return Math.round(nominal);
+    }
+
+    return 30;
+}
+
+/**
+ * The exported file's canvas in pixels and its frame rate, by the export's one size rule. It mirrors Swift
+ * EditRenderer.plannedOutput (keep the two in step; export-size.cases.json pins both): `export.size` exactly (to even
+ * pixels, the other side from the canvas's shape), else the source height scaled down to `maxHeight`, the frame's
+ * aspect, and for H.264 the pixel budget at the export rate; even pixels. A GIF is made from that movie at 10 fps and
+ * at most 960 wide. `nominalFps` is the movie track's rate; absent guesses 60, a screen recording's usual export rate.
+ */
+export function exportPlanOf(
+    project: EditProject,
+    options: { nominalFps?: number } = {}
+): { fps: number; canvas: { width: number; height: number } } {
+    const source = { width: project.source.width || 1920, height: project.source.height || 1080 };
+    const settings = project.export;
+    const movieFps = exportFps(options.nominalFps ?? 60);
+    const aspect = project.frame?.aspect;
+    const [aspectWidth, aspectHeight] = aspect && aspect !== "source" ? aspect.split(":").map(Number) : [];
+    const ratio = aspectWidth && aspectHeight ? aspectWidth / aspectHeight : undefined;
+    const canvasAt = (height: number) => {
+        if (ratio === undefined) {
+            return { width: (source.width / source.height) * height, height };
+        }
+
+        return ratio >= 1 ? { width: height * ratio, height } : { width: height, height: height / ratio };
+    };
+    const nearestEven = (value: number) => Math.max(2, Math.round(value / 2) * 2);
+    const evenDown = (value: number) => Math.max(2, Math.floor(value / 2) * 2);
+    let canvas: { width: number; height: number };
+    const fixed = settings.size;
+
+    if (fixed && (fixed.width !== undefined || fixed.height !== undefined)) {
+        const shape = canvasAt(source.height);
+        const factor = fixed.height !== undefined ? fixed.height / shape.height : (fixed.width ?? 0) / shape.width;
+        const made = canvasAt(source.height * factor);
+        canvas = { width: nearestEven(fixed.width ?? made.width), height: nearestEven(fixed.height ?? made.height) };
+    } else {
+        let scale =
+            settings.maxHeight > 0 && source.height > settings.maxHeight ? settings.maxHeight / source.height : 1;
+
+        if (settings.codec === "h264") {
+            const full = canvasAt(source.height * scale);
+            const limit = H264_PIXEL_RATE / movieFps;
+
+            if (full.width * full.height > limit) {
+                scale *= Math.sqrt(limit / (full.width * full.height));
+            }
+        }
+
+        const shape = canvasAt(source.height * scale);
+        canvas = { width: evenDown(shape.width), height: evenDown(shape.height) };
+    }
+
+    if (settings.format === "gif") {
+        // scale='min(960,iw)':-2 keeps the shape and rounds the height to an even pixel.
+        const width = Math.min(GIF_MAX_WIDTH, canvas.width);
+        return { fps: GIF_FPS, canvas: { width, height: nearestEven((canvas.height * width) / canvas.width) } };
+    }
+
+    return { fps: movieFps, canvas };
+}
+
 /**
  * Corrections to the cached transcript, kept in the edit so a new transcription does not lose them: the fixed text
  * of a line by its start in source milliseconds; an empty text hides the line. Captions, `transcript()`, `find()`
