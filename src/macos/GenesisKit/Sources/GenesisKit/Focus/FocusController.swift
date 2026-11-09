@@ -212,6 +212,25 @@ public final class FocusController: ObservableObject {
 
     func reportFailure(_ message: String) { lastError = message }
 
+    /// Set by the Flow and Focus runtime: stop and start again, which opens the activity ledger once more.
+    var reopenLedger: (() -> Void)?
+    /// Set by the runtime: what it does now, in words.
+    var runtimeStatus: (() -> String)?
+
+    /// Settings, Focus, Retry is offered only when a runtime can reopen the ledger.
+    public var canRetryLedger: Bool { reopenLedger != nil }
+
+    public func retryLedger() {
+        FlowFocusLog.focus.info("focus: retry opening the activity ledger")
+        reopenLedger?()
+    }
+
+    /// Settings, Focus, Details: the error as it was raised, then what the runtime does now.
+    public var ledgerFailureDetails: String {
+        [lastError, runtimeStatus?()]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
     // MARK: - Surfaces
 
     public func toggleHUD() { hud?.toggle() }
