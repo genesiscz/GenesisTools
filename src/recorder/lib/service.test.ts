@@ -37,7 +37,7 @@ import screenOpsFixture from "./__fixtures__/screen-hit-ops.json";
 import fixture from "./__fixtures__/service-protocol.json";
 import schemasFixture from "./__fixtures__/service-protocol.schemas.json";
 import * as edits from "./edit";
-import { editProject, readUndoSteps, undoEdit } from "./edit";
+import { editProject, readUndoSteps, redoEdit, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS, shortRecordingId } from "./library";
@@ -352,6 +352,44 @@ async function connect(entry: ServiceEntry, onRequest?: RpcSocketClientOptions["
 function hello(role: "host" | "client" | "recording", answers?: string[]) {
     return { role, protocol: SERVICE_PROTOCOL, pid: process.pid, ...(answers ? { answers } : {}) };
 }
+
+describe("one undo and redo journal for the session and the file", () => {
+    test("ops that change nothing say so and make no undo step", async () => {
+        const { session } = await openSession(editFixture("gt-es-noop-"));
+        const first = await session.apply([{ op: "volume", volume: 0.5 }], { by: "agent" });
+        expect(first.changed).toBeUndefined();
+        const depth = session.undoDepth;
+        const again = await session.apply([{ op: "volume", volume: 0.5 }], { by: "agent" });
+        expect(again.changed).toBe(false);
+        expect(session.undoDepth).toBe(depth);
+
+        session.beginGesture("g");
+        const empty = await session.commitGesture("g", { by: "editor" });
+        expect(empty.changed).toBe(false);
+    });
+
+    test("a session takes the file's redo when the undo was the file's last change", async () => {
+        const path = editFixture("gt-es-redo-in-");
+        await editProject(path, [{ op: "volume", volume: 0.4 }]);
+        await undoEdit(path);
+        const { session } = await openSession(path);
+        expect(session.redoDepth).toBe(1);
+        const redone = await session.redo({ by: "editor" });
+        expect(redone.redone).toEqual(["volume"]);
+        expect(redone.project.audio.volume).toBe(0.4);
+    });
+
+    test("an undo in the session can be redone from the file after the session closes", async () => {
+        const path = editFixture("gt-es-redo-out-");
+        const { session } = await openSession(path);
+        await session.apply([{ op: "volume", volume: 0.4 }], { by: "agent" });
+        await session.undo({ by: "agent" });
+        session.close();
+        const redone = await redoEdit(path);
+        expect(redone.redone).toEqual(["volume"]);
+        expect(redone.project.audio.volume).toBe(0.4);
+    });
+});
 
 describe("the recorder service", () => {
     test("hello names the methods, refuses another protocol (1011) and a second host (1012); a second start finds the first", async () => {

@@ -86,6 +86,8 @@ const editAnswer = z.object({
     warnings: z.array(z.string()).optional(),
     removedIdleUs: z.array(z.tuple([z.number(), z.number()])).optional(),
     loudness: z.object({ measuredLufs: z.number().nullable(), volume: z.number() }).optional(),
+    /** false: the ops changed nothing, so no revision and no undo step was made. */
+    changed: z.literal(false).optional(),
 });
 const windowRow = z.object({ path: z.string(), title: z.string(), window: z.number().int() });
 export const windowStateSchema = z.object({ front: windowRow.optional(), open: z.array(windowRow) });
@@ -107,8 +109,14 @@ export const serviceApi = defineApi({
         defineMethod({
             name: "session.open",
             params: z.object({ path, holder }),
-            // undoDepth: the undo steps the edit keeps (they outlive a close), so a reopened window can undo them.
-            result: z.object({ path, ...project, undoDepth: z.number().int().nonnegative().optional() }),
+            // undoDepth and redoDepth: the undo and redo steps the edit keeps (they outlive a close), so a reopened
+            // window can undo and redo them.
+            result: z.object({
+                path,
+                ...project,
+                undoDepth: z.number().int().nonnegative().optional(),
+                redoDepth: z.number().int().nonnegative().optional(),
+            }),
             doc: "Opens (or holds once more) the edit session of a recording; the connection's holder holds it until session.close or the connection's end. Opening it again for the same holder reads it and adds no hold.",
             effect: "read",
         }),

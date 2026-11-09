@@ -3711,6 +3711,11 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
+          },
+          "redoDepth": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
           }
         },
         "required": [
@@ -3753,6 +3758,9 @@
           "loudness": {
             "$ref": "#/$defs/__schema15"
           },
+          "changed": {
+            "$ref": "#/$defs/__schema16"
+          },
           "undone": {
             "type": "array",
             "items": {
@@ -3784,6 +3792,9 @@
           },
           "loudness": {
             "$ref": "#/$defs/__schema15"
+          },
+          "changed": {
+            "$ref": "#/$defs/__schema16"
           },
           "redone": {
             "type": "array",
@@ -4022,12 +4033,12 @@
         "type": "object",
         "properties": {
           "front": {
-            "$ref": "#/$defs/__schema16"
+            "$ref": "#/$defs/__schema17"
           },
           "open": {
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema16"
+              "$ref": "#/$defs/__schema17"
             }
           }
         },
@@ -6053,6 +6064,9 @@
           },
           "loudness": {
             "$ref": "#/$defs/__schema15"
+          },
+          "changed": {
+            "$ref": "#/$defs/__schema16"
           }
         },
         "required": [
@@ -6104,6 +6118,10 @@
         "additionalProperties": false
       },
       "__schema16": {
+        "type": "boolean",
+        "const": false
+      },
+      "__schema17": {
         "type": "object",
         "properties": {
           "path": {

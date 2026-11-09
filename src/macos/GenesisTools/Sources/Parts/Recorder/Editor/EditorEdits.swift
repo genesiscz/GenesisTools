@@ -103,6 +103,14 @@ extension EditorModel {
                 guard let self else { return }
                 switch result {
                 case let .success(answer):
+                    // Ops that changed nothing make no step on the service (an older service: the edit is the
+                    // drag's start), so the step the drag put on the stack goes too, or the next ⌘Z would name
+                    // "Changes" and take back the change before it.
+                    if answer.changed == false || (answer.changed == nil && answer.project == open.mark),
+                       let at = self.undoStack.lastIndex(of: .edit(open.mark)) {
+                        self.undoStack.remove(at: at)
+                        self.refreshUndoState()
+                    }
                     self.adopt(answer.project, rebuild: Self.needsNewMovie(self.project, answer.project))
                 case let .failure(error):
                     if let at = self.undoStack.lastIndex(of: .edit(open.mark)) { self.undoStack.remove(at: at) }

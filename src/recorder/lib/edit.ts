@@ -730,7 +730,7 @@ const redoStepSchema = z.object({
     undoneRevision: z.number().int().nonnegative(),
     ops: z.array(z.string()).optional(),
 });
-type RedoStep = z.infer<typeof redoStepSchema>;
+export type RedoStep = z.infer<typeof redoStepSchema>;
 
 /** `redo` came later than `steps`; a file without it has nothing to redo. Any new change writes `steps` alone. */
 const undoFileSchema = z.object({
@@ -751,6 +751,22 @@ export function readUndoSteps(editPath: string): UndoStep[] {
 /** Replaces the undo file's steps (the newest `UNDO_STEPS` of them). */
 export function writeUndoSteps(editPath: string, steps: readonly UndoStep[]): void {
     atomicWriteFileSync(undoPath(editPath), SafeJSON.stringify({ steps: steps.slice(-UNDO_STEPS) }));
+}
+
+/** The undo file's steps and its redo list, as the service session keeps them while it holds the edit. */
+export function readUndoJournal(editPath: string): { steps: UndoStep[]; redo: RedoStep[] } {
+    return readJournal(editPath);
+}
+
+/** Replaces the undo file's steps and redo list (the newest `UNDO_STEPS` of each). */
+export function writeUndoJournal(
+    editPath: string,
+    journal: { steps: readonly UndoStep[]; redo: readonly RedoStep[] }
+): void {
+    atomicWriteFileSync(
+        undoPath(editPath),
+        SafeJSON.stringify({ steps: journal.steps.slice(-UNDO_STEPS), redo: journal.redo.slice(-UNDO_STEPS) })
+    );
 }
 
 function readUndo(editPath: string): UndoStep[] {

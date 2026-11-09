@@ -153,8 +153,9 @@ final class FakeServiceLink: RecorderServiceLink {
             project = next
             revision += 1
             project.revision = revision
+            return try edited([:])
         }
-        return try edited([:])
+        return try edited(["changed": false])
     }
 
     private func edited(_ extra: [String: Any]) throws -> Any? {

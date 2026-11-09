@@ -347,7 +347,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
             if (connection.state.holds.get(path)?.has(holder)) {
                 const held = sessionOf(path);
-                return { path, ...held.current, undoDepth: held.undoDepth };
+                return { path, ...held.current, undoDepth: held.undoDepth, redoDepth: held.redoDepth };
             }
 
             // One hold per holder, so one editor window's close leaves another window's session of the same edit.
@@ -368,7 +368,12 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
             holders.add(holder);
             connection.state.holds.set(session.path, holders);
-            return { path: session.path, ...session.current, undoDepth: session.undoDepth };
+            return {
+                path: session.path,
+                ...session.current,
+                undoDepth: session.undoDepth,
+                redoDepth: session.redoDepth,
+            };
         },
         "session.close": (params, { connection }: HandlerContext) => {
             const path = editPathOf(params.path);

@@ -16,10 +16,10 @@ import {
     editPathOf,
     inItsFolder,
     openProject,
-    readUndoSteps,
+    readUndoJournal,
     throwIfEditCancelled,
     type UndoStep,
-    writeUndoSteps,
+    writeUndoJournal,
 } from "./edit";
 import { recordedMarkersOf } from "./moments";
 
@@ -46,6 +46,8 @@ export interface EditAnswer {
     warnings?: string[];
     removedIdleUs?: Array<[number, number]>;
     loudness?: { measuredLufs: number | null; volume: number };
+    /** False when the ops changed nothing: no new revision and no undo step, so a window drops the step it added. */
+    changed?: false;
 }
 
 /** A change made since the last save: ops can be applied again on a newer file, an undo or redo cannot. */
@@ -127,8 +129,12 @@ export class EditSession {
         this.fresh = opened.fresh;
         this.diskText = opened.text;
         // The file's history continues here when it ends at this revision; otherwise undo refuses, as undoEdit does.
-        const steps = readUndoSteps(path);
+        const { steps, redo } = readUndoJournal(path);
         this.undoSteps = steps.at(-1)?.afterRevision === opened.project.revision ? steps : [];
+        // The file's redo too, while the undo it keeps was the edit's last change (what `redoEdit` checks).
+        if (redo.at(-1)?.undoneRevision === opened.project.revision) {
+            this.redoSteps = redo.map((step) => ({ after: step.after, ops: step.ops ?? [] }));
+        }
     }
 
     /** Opens a recording's edit (a library id, `last`, a folder, a movie or an edit file). */
@@ -195,7 +201,7 @@ export class EditSession {
             };
 
             if (!edit.changed) {
-                return { revision: this.project.revision, project: this.project, ...extras };
+                return { revision: this.project.revision, project: this.project, changed: false, ...extras };
             }
 
             this.change({
@@ -269,7 +275,7 @@ export class EditSession {
 
         // Nothing waits for a save: the undo file gets the collapsed history now.
         if (this.unsaved.length === 0 && this.diskText !== null) {
-            writeUndoSteps(this.path, this.undoSteps);
+            this.writeJournal();
         }
     }
 
@@ -319,7 +325,7 @@ export class EditSession {
         this.gestures.delete(id);
 
         if (!gesture.ops?.length) {
-            return this.current;
+            return { ...this.current, changed: false };
         }
 
         return this.apply(gesture.ops, options);
@@ -331,6 +337,18 @@ export class EditSession {
         gesture?.waiting?.answer.resolve({ project: this.project, superseded: true });
         this.gestures.delete(id);
         return this.current;
+    }
+
+    /**
+     * The undo file gets the session's steps and its redo list, so a redo outlives the session as an undo does. Each
+     * redo step may run while the edit is at this revision; `redoEdit` moves the next one's revision on as it redoes.
+     */
+    private writeJournal(): void {
+        const undoneRevision = this.project.revision;
+        writeUndoJournal(this.path, {
+            steps: this.undoSteps,
+            redo: this.redoSteps.map((step) => ({ after: step.after, undoneRevision, ops: step.ops })),
+        });
     }
 
     /** Saves now when a change waits for its save. Throws `staleRevision` when a newer file could not take it. */
@@ -353,7 +371,7 @@ export class EditSession {
                 }
 
                 this.diskText = saveAt(this.path, this.project);
-                writeUndoSteps(this.path, this.undoSteps);
+                this.writeJournal();
                 this.unsaved = [];
                 log.debug({ path: this.path, revision: this.project.revision }, "edit session saved");
             });
