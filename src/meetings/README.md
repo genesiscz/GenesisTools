@@ -19,6 +19,10 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `context add <meeting> [file\|url] [--title] [--note]`, `context list`, `context remove` | Reference material; a file is kept as its path, never copied |
 | `speakers stats <meeting> [--attendance <platform>\|<file>]` | Per label: origin, turns, spoken time, spans, with hints |
 | `speakers rename <meeting> <label> <name>` | Rename a label for this meeting |
+| `people [query] [--meeting <meeting> [--at <time>]] [--limit <n>] [--hidden] [--json]` | The people directory: everyone the meetings, the projects, Contacts and the people book name, one row per person, matched with case and accents ignored and ranked (see [People](#people)). `--json` prints `{ query, people, total, sources }`; a source that is off or refused says why in `sources` |
+| `people add <name> [--email <address>] [--note <text>]`, `people hide <person> [--show]` | Add a person to the people book, or give one it has an email or a note; hide a person from every list, or show them again |
+| `people merge <a> <b> [--name <name>] [--yes]`, `people unmerge <token>` | Show two people as one. Without `--yes` it prints the meetings that name either of them and the speaker labels renamed to them, and writes nothing; with `--yes` it writes the merge and prints its token, which `unmerge` takes. No meeting record changes |
+| `people assign <meeting> <person> --from <time> [--to <time>] [--label <label>] [--line <time>]… [--plan]`, `people unassign <meeting> <token>` | Give lines of one meeting to a person without renaming the whole label: a stretch (one label's lines with `--label`, every voice's without it) or single lines by their start. The corrected transcript, `show` and `speakers stats` show them as that person. `--plan` prints what it would give and the other stretches it may reach, and saves nothing. `unassign` undoes it by the token it printed |
 | `evidence <meeting> [--attendance <platform>\|<file>] [--files] [--json]` | Which voice each label's lines are: audio channel and the platform's speaking indicator, plus the volume check (`--format json`, or its short form `--json`: one row per line) |
 | `suggest <meeting> [--rules speakers,evidence,terms] [--attendance <platform>\|<file>]` | Run the rules and add what they find as suggested items. A second run adds no item it already made and no question while the meeting has `questionCap` open. It first retires (rejects, with `evidence.retired`) the suggested words that a dictionary entry or the slang rule settles now, and the questions that decided only them |
 | `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
@@ -370,6 +374,32 @@ bound to its line (`atSec`), so it never changes the same words elsewhere.
   or a slash (`/{type}`). A comma between the words ends the run. The words stay; `meaning` names the identifier,
   shown after them. An identifier is marked at its first mention and again after two minutes without one.
 
+## People
+
+The people directory answers "who do we know" from every place a person is named: a meeting's participants,
+attendance, calendar attendees, speaker renames and assignments; the projects' paired people (`projects.<p>.match.people`);
+Contacts (`contacts.search`, under GenesisTools.app's Contacts grant); and the people book,
+`~/.genesis-tools/meetings/people.json` (`{ version: 1, entries, merges, hidden }`: people added by hand, merges,
+hidden people). One person is the same email, or, when either side has no email, the same name tokens (`nameKey`:
+"Dana Exámple" and "dana example" are one person). A record is read again only when its file changed.
+
+- **Ranking** for a meeting and a moment (`people --meeting <m> --at <time>`, the Meetings service's `people.known`):
+  the people in the call at that moment, then that meeting's people, then other meetings by count and recency, then
+  Contacts, then the people book. Nothing is preselected.
+- **Merges** are aliases in the people book. No meeting record changes, so `unmerge` undoes a merge fully.
+- **Assignments** (`people assign`, the decision journal's `assign`) live in the record as `speakers.assignments`,
+  one per source label and stretch. A later assignment over the same lines wins over an earlier one and over a
+  confirmed speaker range. The journal keeps each one's before and after, so its token undoes it; one changed since is
+  refused with `[item-changed]`. Its plan names the other stretches it may reach: the same label inside the hint range
+  around it, or in the sections with the same people present, never "sounds the same".
+- A rename to a name another label holds already is planned with the warning that both labels become one person.
+- `listen`'s typed answer completes from the record's people, then the directory's people for the meeting, then the
+  dictionary. It never reads Contacts.
+- Settings: `global.people.sources.contacts` and `global.people.sources.calendar` (both `true`). A refused Contacts
+  grant is a reason in `sources`, never an empty list.
+- A `people.json` that is not JSON reads as empty, and the next write moves it aside to `people.json.broken-<time>`.
+  A value this build cannot read (a newer build's) is kept and written back.
+
 ## The dictionary
 
 - `fix`: a misheard spelling, replaced at every whole-word match in any letter case (`DTLčko` becomes `DTOčko`, and so
@@ -405,7 +435,8 @@ that varies by recorder, source or language sits under that axis:
         "assign": {
             "ask": true, "lookbackHours": 48, "maxProposals": 5, "calendarSlackMin": 15,
             "calendarLookbehindHours": 3, "folderWaitDays": 14, "retryFailedMin": 10
-        }
+        },
+        "people": { "sources": { "contacts": true, "calendar": true } }
     },
     "projects": {
         "work": {
