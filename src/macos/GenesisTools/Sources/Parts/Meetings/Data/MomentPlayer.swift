@@ -638,7 +638,10 @@ final class MomentPlayer {
 
     /// The clip's identity: the same meeting, target, pad and length cut the same clip.
     static func key(_ params: MeetingsAPI.MomentParams) -> String {
-        let target = (try? JSONEncoder().encode(params.target)).map { String(decoding: $0, as: UTF8.self) } ?? "?"
+        // Sorted keys: an encoder may write the same target's keys in another order, and the key must not change.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let target = (try? encoder.encode(params.target)).map { String(decoding: $0, as: UTF8.self) } ?? "?"
         return [params.meeting, target, params.padSec.map { "\($0)" } ?? "-", params.lengthSec.map { "\($0)" } ?? "-"]
             .joined(separator: "|")
     }
