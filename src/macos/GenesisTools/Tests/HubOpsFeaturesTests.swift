@@ -145,6 +145,21 @@ final class HubOpsFeaturesTests: XCTestCase {
         XCTAssertEqual(PRReadinessBadge.look(readiness).2, "3 open")
     }
 
+    /// The PR description opens on its first paragraph; the reader's choice is kept per PR, newest last.
+    func testThePRDescriptionLeadIsItsFirstParagraphAndTheChoiceIsKeptPerPR() {
+        let body = "## About\n\nThe unified branch: every session commits here first.\nIt is never merged.\n\n## Waves so far\n- #497 (merged)"
+        XCTAssertEqual(PRDescriptionView.lead(of: body), "The unified branch: every session commits here first.\nIt is never merged.")
+        XCTAssertNil(PRDescriptionView.lead(of: "One short paragraph."), "nothing more to show: no button")
+        var stored = PRDescriptionChoices.set("", pr: "https://example.org/pr/1", whole: true)
+        stored = PRDescriptionChoices.set(stored, pr: "https://example.org/pr/2", whole: false)
+        XCTAssertEqual(PRDescriptionChoices.whole(stored, pr: "https://example.org/pr/1"), true)
+        XCTAssertEqual(PRDescriptionChoices.whole(stored, pr: "https://example.org/pr/2"), false)
+        XCTAssertNil(PRDescriptionChoices.whole(stored, pr: "https://example.org/pr/3"), "no choice: the setting decides")
+        stored = PRDescriptionChoices.set(stored, pr: "https://example.org/pr/1", whole: false)
+        XCTAssertEqual(PRDescriptionChoices.whole(stored, pr: "https://example.org/pr/1"), false)
+        XCTAssertEqual(stored.split(separator: "\n").count, 2, "one line per PR")
+    }
+
     /// The PR row's meta line: the author is whole, then truncated to at least 48 pt, then hidden with its dot.
     func testMetaLineAuthorGivesWayFirst() {
         let ideal: [CGFloat] = [40, 80, 4, 30, 50]
