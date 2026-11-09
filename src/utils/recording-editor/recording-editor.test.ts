@@ -103,6 +103,13 @@ function workspace(): string {
     return mkdtempSync(join(tmpdir(), "gt-editor-"));
 }
 
+/** `source` with a cursor track of one click, which the clicks op needs before it turns rings or the tick on. */
+function withClickTrack<T extends object>(source: T): T & { cursor: string } {
+    const path = join(workspace(), "cursor.jsonl");
+    writeFileSync(path, `${SafeJSON.stringify({ t: 1000, x: 0.5, y: 0.5, click: "left" })}\n`);
+    return { ...source, cursor: path };
+}
+
 /** A recording folder like startRecording writes: frames of two displays with a recording.json. */
 function recordingFolder(): string {
     const dir = workspace();
@@ -909,6 +916,35 @@ describe("edit project (edit.json)", () => {
             expect(applyOp(auto, { op: "setZoom", id, scale: 2 }).zooms[0]).not.toHaveProperty("origin");
             const copied = applyOp(auto, { op: "duplicate", id });
             expect(copied.zooms.filter((zoom) => zoom.origin === "auto")).toHaveLength(2);
+        });
+    });
+
+    describe("click rings and the click sound need a cursor track", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+
+        test("the clicks op refuses rings or a tick on a movie with no cursor track, and still turns them off", () => {
+            expect(() => applyOp(wholeProject(source), { op: "clicks", highlight: true })).toThrow("no cursor track");
+            expect(() => applyOp(wholeProject(source), { op: "clicks", highlight: false, sound: true })).toThrow(
+                "no cursor track"
+            );
+            const off = applyOp(wholeProject(source), { op: "clicks", highlight: false, sound: false });
+            expect(off.clicks?.highlight).toBe(false);
+        });
+
+        test("check() names a saved clicks setting whose movie has no cursor track, with an op that turns it off", () => {
+            const saved = {
+                ...wholeProject(source),
+                clicks: { highlight: true, color: "#FFD60A", radius: 0.03, durationMs: 450 },
+            };
+            const facts = { hasTranscript: true, hasCursorTrack: false, musicFileExists: true };
+            const issue = checkProject(saved, facts).find((each) => each.kind === "clicks-missing-cursor");
+            expect(issue?.severity).toBe("fix");
+            expect(issue?.action?.ops).toEqual([{ op: "clicks", highlight: false, sound: false }]);
+            expect(
+                checkProject(saved, { ...facts, hasCursorTrack: true }).some(
+                    (each) => each.kind === "clicks-missing-cursor"
+                )
+            ).toBe(false);
         });
     });
 
@@ -2552,7 +2588,7 @@ describe("edit project (edit.json)", () => {
     });
 
     test("clicks and frame are optional looks with defaults, merged on change and removable", () => {
-        const project = wholeProject(source);
+        const project = wholeProject(withClickTrack(source));
         expect(project.clicks).toBeUndefined();
         expect(project.frame).toBeUndefined();
 
@@ -2926,7 +2962,10 @@ describe("edit project (edit.json)", () => {
         // Motion blur is 0.5 until set, and an op merges into what is there.
         expect(describeProject(project, "/p/edit.json").motion).toEqual({ blur: 0.5 });
         expect(applyOp(project, { op: "motion", blur: 0 }).motion).toEqual({ blur: 0 });
-        expect(applyOp(project, { op: "clicks", sound: true }).clicks).toMatchObject({ highlight: true, sound: true });
+        expect(applyOp(wholeProject(withClickTrack(source)), { op: "clicks", sound: true }).clicks).toMatchObject({
+            highlight: true,
+            sound: true,
+        });
         expect(() => applyOp(project, { op: "motion", blur: 2 })).toThrow();
         // A text sits in the canvas with its defaults, follows source time, and goes with untext.
         const titled = applyOp(project, { op: "text", from: 1, to: 2.5, text: "  Step 1: sign in " });
@@ -3659,7 +3698,7 @@ describe("the editor window's item ops", () => {
         expect(back.frame).not.toHaveProperty("aspect");
         expect(back.frame).not.toHaveProperty("fit");
 
-        const clicks = applyOp(wholeProject(source), { op: "clicks", highlight: true, sound: false });
+        const clicks = applyOp(wholeProject(withClickTrack(source)), { op: "clicks", highlight: true, sound: false });
         expect(clicks.clicks).not.toHaveProperty("sound");
 
         const file = join(workspace(), "music.mp3");

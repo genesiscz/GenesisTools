@@ -161,6 +161,20 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
         }
     }
 
+    // An edit saved before the clicks op checked the track, or whose cursor.jsonl went missing: the renderer draws no
+    // ring and plays no tick without a track.
+    if ((project.clicks?.highlight || project.clicks?.sound) && !facts.hasCursorTrack) {
+        issues.push({
+            severity: "fix",
+            kind: "clicks-missing-cursor",
+            item: "clicks",
+            message:
+                "Click rings or the click sound are on, but the movie has no cursor track, so no click shows or ticks",
+            fix: "movie.clicks({ highlight: false, sound: false }), or record with --display or --region for clicks",
+            action: { label: "Turn off", ops: [{ op: "clicks", highlight: false, sound: false }] },
+        });
+    }
+
     const texts = [...(project.texts ?? [])].sort((a, b) => a.startUs - b.startUs);
     // R6 9: two texts overlap when what they show does (the renderer's font, wrap and clamp to the canvas; a plate
     // text's plate, a plain text's letters), not when their anchors are near: "same place" for texts side by side was

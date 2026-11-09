@@ -3814,6 +3814,15 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             const { op: _op, ...change } = op;
             // The editor window's JSON: no click sound is written as absent.
             const { sound, ...clicks } = clicksSchema.parse({ ...project.clicks, ...change });
+
+            // The renderer rings and ticks the cursor track's clicks; turning both off still passes, so an old edit
+            // can be cleared.
+            if ((clicks.highlight || sound) && readCursorTrack(project.source.cursor).length === 0) {
+                throw new Error(
+                    "this movie has no cursor track, so there are no clicks to ring or tick; record --display or --region for those"
+                );
+            }
+
             return { ...project, clicks: { ...clicks, ...(sound ? { sound } : {}) } };
         }
         case "keys": {

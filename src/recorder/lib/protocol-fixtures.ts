@@ -390,7 +390,6 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
     ]);
     const looks = apply([
         { op: "frame", aspect: "16:9", fit: "cover", padding: 0.08 },
-        { op: "clicks", highlight: true, sound: true },
         { op: "motion", blur: 0.4 },
         { op: "exportSettings", codec: "hevc", maxHeight: 1080, format: "mp4", subtitles: "vtt", chapters: false },
         { op: "volume", volume: 0.8 },
@@ -399,6 +398,7 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
     ]);
     const tracked = editProjectSchema.parse({
         ...looks,
+        clicks: { highlight: true, sound: true },
         cursor: { show: true, size: 1.5, smoothing: 0.6, hideAfterMs: 3000 },
         captions: { show: true, size: 0.05, position: "top" },
         keys: { show: true, position: "bottom", durationMs: 1500 },
