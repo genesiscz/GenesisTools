@@ -143,6 +143,24 @@ final class HubOpsFeaturesTests: XCTestCase {
             "1 outdated thread still unresolved (not blocking)",
         ]))
         XCTAssertEqual(PRReadinessBadge.look(readiness).2, "3 open")
+        XCTAssertFalse(PRReadinessBadge.saysCI(readiness), "the word names the threads, not CI")
+    }
+
+    /// One CI state on most of a project's rows is its usual state, and a row in it leaves the CI icon out (hub UX C9).
+    func testTheUsualCIIsTheStateOfMoreThanHalfTheRows() throws {
+        func pr(_ number: Int, ci: String?) throws -> HubPR {
+            let ciJSON = ci.map { "\"\($0)\"" } ?? "null"
+            let json = """
+            {"repo":"app","number":\(number),"title":"t","state":"open","draft":false,"headBranch":"b","baseBranch":"main",
+             "url":"https://example.com/o/app/pull/\(number)","labels":[],"reviewers":[],"ci":\(ciJSON)}
+            """
+            return try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        }
+        let failing = try [pr(1, ci: "failed"), pr(2, ci: "failed"), pr(3, ci: "failed"), pr(4, ci: "success")]
+        XCTAssertEqual(PRRow.usualCI(failing), "failed")
+        XCTAssertNil(PRRow.usualCI(Array(failing.prefix(2))), "two rows set no norm")
+        let split = try [pr(1, ci: "failed"), pr(2, ci: "success"), pr(3, ci: "failed"), pr(4, ci: "success")]
+        XCTAssertNil(PRRow.usualCI(split), "no state holds more than half")
     }
 
     /// The PR description opens on its first paragraph; the reader's choice is kept per PR, newest last.

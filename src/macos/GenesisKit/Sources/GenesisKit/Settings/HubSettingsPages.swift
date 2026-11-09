@@ -100,6 +100,11 @@ private struct HubPaneSettings: View {
     @AppStorage(HubPROverview.descriptionWholeKey) private var prDescriptionWhole = false
     @AppStorage(HubActivityRows.allActionsKey) private var activityAllActions = false
     @AppStorage(HubActivityRows.commitPrefixKey) private var activityCommitPrefix = false
+    @AppStorage(HubSessionRows.hideSharedKey) private var sessionsHideShared = true
+    @AppStorage(HubPRRowCI.key) private var prRowCI = HubPRRowCI.unusual.rawValue
+    @AppStorage(HubFileTreeFold.key) private var filesFoldAbove = HubFileTreeFold.defaultAbove
+    @AppStorage(TranscriptOutputFold.key) private var transcriptOutputFold = TranscriptOutputFold.defaultLines
+    @AppStorage(HubChrome.glassButtonKey) private var glassButton = false
 
     var body: some View {
         VStack(spacing: 18) {
@@ -196,6 +201,47 @@ private struct HubPaneSettings: View {
                         get: { HubResizeGrips(rawValue: resizeGrips) ?? .auto },
                         set: { resizeGrips = $0.rawValue }),
                     minSegmentWidth: 80)
+            }
+            NativeSettingsCard("Lists and transcript") {
+                NativeSettingsToggle(
+                    "Hide what every session in a group shares",
+                    detail: "A project, account or app chip that every row of a group shows appears on the group's first row only.",
+                    identifier: "hub.sessions.hideShared", isOn: $sessionsHideShared)
+                Divider()
+                NativeSettingsSegmented(
+                    "PR rows show CI", identifier: "hub.prs.rowCI",
+                    options: HubPRRowCI.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                    selection: Binding(get: { HubPRRowCI.stored(prRowCI) }, set: { prRowCI = $0.rawValue }),
+                    minSegmentWidth: 90)
+                Divider()
+                NativeSettingsRow(
+                    "Fold a files folder above",
+                    detail: "A folder with more changed files starts folded, unless it holds half of the change or more. 0 never folds."
+                ) {
+                    HStack(spacing: 8) {
+                        NativeSettingsNumberPicker(
+                            "Files", range: HubFileTreeFold.range.lowerBound ..< (HubFileTreeFold.range.upperBound + 1),
+                            identifier: "hub.files.foldAbove", value: $filesFoldAbove)
+                        Text("files").font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
+                Divider()
+                NativeSettingsRow(
+                    "Fold tool output after",
+                    detail: "Longer output shows these lines and \"… +N lines\" at every transcript level, Verbose too. 0 shows it all in Verbose."
+                ) {
+                    HStack(spacing: 8) {
+                        NativeSettingsNumberPicker(
+                            "Lines", range: TranscriptOutputFold.range.lowerBound ..< (TranscriptOutputFold.range.upperBound + 1),
+                            identifier: "sessionTranscript.outputFold", value: $transcriptOutputFold)
+                        Text("lines").font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
+                Divider()
+                NativeSettingsToggle(
+                    "Show a Glass button beside Settings",
+                    detail: "Off: Glass stays in View → Glass (⌘⇧G), the command palette and Appearance.",
+                    identifier: "hub.chrome.glassButton", isOn: $glassButton)
             }
             Text("The panes in the hub show the same controls. Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)

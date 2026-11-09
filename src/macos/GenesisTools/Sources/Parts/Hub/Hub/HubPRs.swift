@@ -1927,6 +1927,8 @@ struct PRListView: View {
     @ObservedObject var prs: PRsModel
     @StateObject private var prefs = GroupPrefs(key: "prs.repos")
     @ObservedObject private var readiness = PRReadinessStore.shared
+    /// When a row shows its CI icon (Settings → Hub → Panes → PR list; `HubPRRowCI`).
+    @AppStorage(HubPRRowCI.key, store: HubDefaults.store) private var rowCI = HubPRRowCI.unusual.rawValue
     @GenReduceMotion private var reduceMotion
     /// The list's keyboard focus: a click on a row gives it, then Up and Down move the selection (`SidebarArrowKeys`).
     @FocusState private var listFocused: Bool
@@ -2047,8 +2049,9 @@ struct PRListView: View {
                         ForEach(groups, id: \.project) { group in
                             Section {
                                 if !prefs.collapsed.contains(group.project) {
+                                    let usual = HubPRRowCI.stored(rowCI) == .always ? nil : PRRow.usualCI(group.rows)
                                     ForEach(group.rows) { pr in
-                                        row(pr)
+                                        row(pr, usualCI: usual)
                                             .id(pr.id)
                                             .transition(SWR.rowTransition)
                                     }
@@ -2169,15 +2172,21 @@ struct PRListView: View {
         .equatable()
     }
 
-    private func row(_ pr: HubPR) -> some View {
+    /// `usualCI`: the CI state most of the project's rows share; a row in that state leaves its CI icon out.
+    private func row(_ pr: HubPR, usualCI: String?) -> some View {
         // A value row (`PRRow`, `Equatable`): a publish of the hub's models re-renders it only when what it shows
         // changed, and at rest it carries no button, tooltip or link (`live`), so a drag step or a focus walk
         // with an accessibility client meets 40 labels, not 40 × 3 responders.
-        PRRow(
+        let ready = readiness.readiness(for: pr)
+        let always = HubPRRowCI.stored(rowCI) == .always
+        return PRRow(
             pr: pr,
             selected: prs.selectedID == pr.id,
             flash: prs.changed.contains(pr.id),
-            readiness: readiness.readiness(for: pr),
+            readiness: ready,
+            showsCI: always || (pr.ci != usualCI && !PRReadinessBadge.saysCI(ready)),
+            usualCI: usualCI,
+            failedChecks: (prs.details[pr.id]?.checks ?? []).filter { $0.status == "failed" }.map(\.name),
             select: { listFocused = true; prs.select(pr, opened: true) }
         )
         .equatable()
@@ -2239,10 +2248,39 @@ struct PRRow: View, Equatable {
     /// New or updated after a refresh: flashes once.
     let flash: Bool
     let readiness: PRReadiness?
+    /// The CI icon shows: its state differs from most of the project's PRs, and the readiness word does not say it.
+    var showsCI = true
+    /// The CI state most of the project's PRs share, for the icon's tooltip; nil when there is none.
+    var usualCI: String?
+    /// The failed checks' names, when the PR's detail was loaded: the icon's tooltip names them.
+    var failedChecks: [String] = []
     let select: () -> Void
 
     static func == (a: PRRow, b: PRRow) -> Bool {
         a.pr == b.pr && a.selected == b.selected && a.flash == b.flash && a.readiness == b.readiness
+            && a.showsCI == b.showsCI && a.usualCI == b.usualCI && a.failedChecks == b.failedChecks
+    }
+
+    /// The CI state most of a project's rows share: one red mark on nearly every row said nothing (hub UX C9). nil
+    /// when fewer than three rows report CI or no state holds more than half of them, so every row shows its own.
+    static func usualCI(_ rows: [HubPR]) -> String? {
+        let states = rows.compactMap(\.ci)
+        guard states.count >= 3 else { return nil }
+        let counts = Dictionary(grouping: states, by: { $0 }).mapValues(\.count)
+        guard let top = counts.max(by: { $0.value < $1.value }), top.value * 2 > states.count else { return nil }
+        return top.key
+    }
+
+    /// What the CI icon's tooltip adds to its sentence: the failed checks, and how this project's PRs usually do.
+    private var ciNote: String? {
+        var parts: [String] = []
+        if pr.ci == "failed", !failedChecks.isEmpty {
+            parts.append("Failed: " + failedChecks.joined(separator: ", "))
+        }
+        if let usualCI, usualCI != pr.ci {
+            parts.append("Most \(pr.repo) \(pr.isGitLab ? "MRs" : "PRs"): \(CIBadge.sentence(usualCI).lowercased())")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
     var body: some View {
@@ -2311,7 +2349,9 @@ struct PRRow: View, Equatable {
                     .instantTooltip("The branch is checked out locally: New session here works in its worktree")
             }
             PRReadinessBadge(readiness: readiness)
-            CIBadge(ci: pr.ci)
+            if showsCI {
+                CIBadge(ci: pr.ci, note: ciNote)
+            }
         }
         .fixedSize()
     }
@@ -2454,6 +2494,8 @@ struct CIBadge: View {
     let ci: String?
     /// The checks page; the badge opens it when set.
     var url: URL?
+    /// More lines for the tooltip under the sentence (the failed checks' names, the project's usual state).
+    var note: String?
     /// Its link and tooltip exist only while its row is live (`liveRow`); alone, it is always live.
     @Environment(\.rowLive) private var live
 
@@ -2467,15 +2509,7 @@ struct CIBadge: View {
                 default: return ("clock", ReviewPalette.dim)
                 }
             }()
-            let sentence: String = {
-                switch ci {
-                case "success": return "All checks passed"
-                case "failed": return "Some checks failed"
-                case "running": return "Checks are running"
-                case "pending": return "Checks are waiting to start"
-                default: return "The checks report “\(ci)”"
-                }
-            }()
+            let sentence = Self.sentence(ci) + (note.map { "\n" + $0 } ?? "")
             let icon = Image(systemName: symbol).font(.system(size: 11)).foregroundColor(color)
             if let url, live {
                 Button { ExternalOpener.open(url) } label: { icon }
@@ -2497,6 +2531,19 @@ struct CIBadge: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text(verbatim: sentence))
             }
+        }
+    }
+}
+
+extension CIBadge {
+    /// The CI state in words.
+    static func sentence(_ ci: String) -> String {
+        switch ci {
+        case "success": return "All checks passed"
+        case "failed": return "Some checks failed"
+        case "running": return "Checks are running"
+        case "pending": return "Checks are waiting to start"
+        default: return "The checks report “\(ci)”"
         }
     }
 }

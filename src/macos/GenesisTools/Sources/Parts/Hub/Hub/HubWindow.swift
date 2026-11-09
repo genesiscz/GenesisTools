@@ -2649,6 +2649,8 @@ private struct SessionListView: View {
     @Bindable var model: HubModel
     @StateObject private var history = HubHistoryModel()
     @AppStorage("hub.sessions.grouping") private var grouping = SessionGrouping.time.rawValue
+    /// A chip every row of a group shows is left out of the rows after the first (`SessionRowHidden`).
+    @AppStorage(HubSessionRows.hideSharedKey, store: HubDefaults.store) private var hideShared = true
     @StateObject private var prefs = GroupPrefs(key: "sessions.groups")
     /// Stuck verdicts of the live sessions (Hub/HubStuck.swift); rows take the value, not the store.
     @ObservedObject private var stuck = HubStuckStore.shared
@@ -2685,7 +2687,9 @@ private struct SessionListView: View {
         case .timeline: return "Filter activity, authors, SHAs…"
         case .agents: return "Filter agents, sessions, models, accounts…"
         case .usage: return "Filter accounts…"
-        case .worktrees, .prs: return "Filter repos, branches…"
+        case .worktrees: return "Filter repos, branches…"
+        // The field searches PRs (`PRQuery`): title, repo, branch, author, number.
+        case .prs: return "Filter PRs: title, #123, @author…"
         }
     }
 
@@ -2718,18 +2722,17 @@ private struct SessionListView: View {
         VStack(spacing: 0) {
             // Back and forward sit in the band under the title bar, right above the mode switch:
             // the switch row has no room left in a narrow sidebar.
-            // The glass switch sits here too: five modes need the whole width of the row below.
+            // The palette and Settings sit here too (the glass switch when asked for): the modes need the whole row below.
             HStack(spacing: 0) {
                 HubNavButtons(model: model)
                 Spacer(minLength: 0)
-                // The palette had only a key (⌘K) and a menu item; this is the one-click way in.
-                IconButton(systemName: "command", tooltip: HubKeymap.hint("Command palette", HubKeymap.commandPalette)) {
-                    model.paletteRequest = ""
-                }
-                .foregroundColor(ReviewPalette.dim)
+                // The palette had only a key (⌘K) and a menu item; this is the one-click way in, with a word: a bare ⌘
+                // glyph read as no button at all (hub UX C2).
+                HubPaletteButton { model.paletteRequest = "" }
                 // Settings, plus the widget's and Clicky's where the build has them (Hub/HubSettingsGear.swift).
                 HubSettingsGear()
-                GlassToggle()
+                // Off by default: Glass lives in View → Glass (⌘⇧G), the palette and Settings (Hub/HubPanels.swift).
+                GlassToggleSlot()
             }
             .padding(.horizontal, 12)
             .frame(height: 28)
@@ -2815,10 +2818,17 @@ private struct SessionListView: View {
                             ForEach(sections, id: \.title) { section in
                                 Section {
                                     if !(section.managed && prefs.collapsed.contains(section.title)) {
+                                        let hidden = hideShared
+                                            ? SessionRowHidden.shared(section.rows, projectInTitle: mode == .project || mode == .projectHarness)
+                                            : (first: SessionRowHidden(), rest: SessionRowHidden())
+                                        let firstID = section.rows.first?.id
                                         ForEach(section.rows) { session in
                                             let activity = SessionRowActivity(work: live.work[session.sessionId], isLive: session.isLive)
                                             let selected = session.id == model.selectedID
-                                            SessionRowView(session: session, selected: selected, stuck: stuck.verdicts[session.sessionId], activity: activity) {
+                                            SessionRowView(
+                                                session: session, selected: selected, stuck: stuck.verdicts[session.sessionId], activity: activity,
+                                                hidden: session.id == firstID ? hidden.first : hidden.rest
+                                            ) {
                                                 listFocused = true
                                                 model.select(session.id)
                                             }
@@ -2961,16 +2971,41 @@ enum SessionRowActivity: Equatable {
 /// One session of the list, from values. Live (its row button, the provider tooltip) under the pointer or when
 /// selected (`liveRow`); the same labels with no control at rest, so the 69-row list adds two responders, not 140,
 /// to the accessibility walks a sidebar drag pays for (`PRRow` in Hub/HubPRs.swift, 2026-10-29).
+/// The chips a session row leaves out because every row of its group shows the same one: three identical marks per
+/// row said nothing (hub UX C8, Settings → Hub → Panes → Sessions list). The group's first row keeps them, so the list
+/// still says the shared project or account once; a group titled by its project drops the project from every row.
+struct SessionRowHidden: Equatable {
+    var project = false
+    var account = false
+    var host = false
+
+    /// What the first row and the rows after it leave out. A group of one shares nothing with another row.
+    static func shared(_ rows: [HubSession], projectInTitle: Bool) -> (first: SessionRowHidden, rest: SessionRowHidden) {
+        func same<T: Equatable>(_ value: (HubSession) -> T?) -> Bool {
+            guard rows.count > 1, let first = rows.first.flatMap(value) else { return false }
+            return rows.allSatisfy { value($0) == first }
+        }
+        let rest = SessionRowHidden(
+            project: projectInTitle || same { $0.project },
+            account: same { $0.account },
+            host: same { $0.host?.badge }
+        )
+        return (SessionRowHidden(project: projectInTitle), rest)
+    }
+}
+
 private struct SessionRowView: View, Equatable {
     let session: HubSession
     let selected: Bool
     var stuck: StuckVerdict?
     /// The dot: working or waiting from the open transcript's follow, else live from the list; nil for a quiet row.
     var activity: SessionRowActivity?
+    var hidden = SessionRowHidden()
     let select: () -> Void
 
     static func == (a: SessionRowView, b: SessionRowView) -> Bool {
         a.session == b.session && a.selected == b.selected && a.stuck == b.stuck && a.activity == b.activity
+            && a.hidden == b.hidden
     }
 
     var body: some View {
@@ -2991,26 +3026,30 @@ private struct SessionRowView: View, Equatable {
             VStack(alignment: .leading, spacing: 3) {
                 // The stuck badge sits by the title: on the meta line it squeezed the project and account to "Gene…".
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    // The selected row keeps the title's ending ("… wave 1b" against "… wave 1"), which tells similar
+                    // sessions apart; its whole title is in the tooltip (hub UX C5).
                     Text(session.displayTitle)
                         .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
                         .lineLimit(2)
+                        .truncationMode(selected ? .middle : .tail)
+                        .instantTooltip(selected ? session.displayTitle : "")
                     if let stuck {
                         Spacer(minLength: 0)
                         StuckBadge(verdict: stuck)
                     }
                 }
                 HStack(spacing: 6) {
-                    if let project = session.project {
+                    if let project = session.project, !hidden.project {
                         Text(project).layoutPriority(-2)
                     }
-                    if let account = session.account {
+                    if let account = session.account, !hidden.account {
                         Text(account)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Capsule().stroke(Color.white.opacity(0.15)))
                             .layoutPriority(-1)
                     }
-                    if let host = session.host {
+                    if let host = session.host, !hidden.host {
                         Badge(host.badge, tooltip: host.id.map { "Ran in \(host.appName), thread \($0)" } ?? "Ran in \(host.appName)")
                     }
                     Spacer(minLength: 0)
