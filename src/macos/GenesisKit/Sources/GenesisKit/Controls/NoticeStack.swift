@@ -32,14 +32,16 @@ public protocol NoticeClock: AnyObject {
     func schedule(after seconds: TimeInterval, _ action: @escaping @MainActor () -> Void) -> NoticeTimer
 }
 
-/// The real clock: uptime, and a main-actor task per timer.
+/// The real clock: seconds that keep counting while the Mac sleeps (`CLOCK_MONOTONIC`, which on macOS counts sleep),
+/// and a main-actor task per timer on the continuous clock, which counts sleep too. A notice shown before a sleep has
+/// its time used up after it; uptime stopped during sleep, so a paused notice's remaining time came back whole.
 @MainActor
 public final class SystemNoticeClock: NoticeClock {
     public static let shared = SystemNoticeClock()
 
     public init() {}
 
-    public var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+    public var now: TimeInterval { Double(clock_gettime_nsec_np(CLOCK_MONOTONIC)) / 1_000_000_000 }
 
     public func schedule(after seconds: TimeInterval, _ action: @escaping @MainActor () -> Void) -> NoticeTimer {
         let task = Task { @MainActor in
@@ -238,6 +240,8 @@ public final class NoticeStackModel {
             if let index = notices.firstIndex(where: { $0.id == notice.id }) {
                 stopClock(notice.id)
                 notices.remove(at: index)
+                // A new notice under a waiting one's id is that wait's answer: its buttons and its clock come back.
+                waiting[notice.id] = nil
             }
             notices.append(notice)
         }
