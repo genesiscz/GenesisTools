@@ -8,6 +8,8 @@ import {
     outputDurationUs,
     outputSpansOf,
     outputTimeOf,
+    playedUs,
+    sourceAfterPlayed,
     type TEXT_ALIGNS,
     zoomsLinked,
 } from "./project";
@@ -577,34 +579,6 @@ const SHORT_HIDING_US = 150_000;
 /** Holes around hiding parts up to this long are worth a look; longer ones are taken as meant. */
 const HIDING_HOLE_US = 1_000_000;
 
-/** The output length of `startUs`..`endUs` (source): each kept piece at its clip's speed. */
-function playedUs(project: EditProject, startUs: number, endUs: number): number {
-    return project.clips.reduce(
-        (sum, clip) =>
-            sum + Math.max(0, Math.min(clip.toUs, endUs) - Math.max(clip.fromUs, startUs)) / (clip.speed || 1),
-        0
-    );
-}
-
-/** The source time where `playUs` of output has played from `startUs` on, through the clips at their speeds. */
-function sourceAfterPlayed(project: EditProject, startUs: number, playUs: number): number {
-    let leftUs = playUs;
-
-    for (const clip of project.clips) {
-        const fromUs = Math.max(clip.fromUs, startUs);
-        const speed = clip.speed || 1;
-        const availableUs = Math.max(0, clip.toUs - fromUs) / speed;
-
-        if (availableUs >= leftUs) {
-            return Math.min(project.source.durationUs, Math.round(fromUs + leftUs * speed));
-        }
-
-        leftUs -= availableUs;
-    }
-
-    return project.source.durationUs;
-}
-
 /** The source time from which `playUs` of output plays up to `endUs`, through the clips at their speeds. */
 function sourceBeforePlayed(project: EditProject, endUs: number, playUs: number): number {
     let leftUs = playUs;
@@ -872,14 +846,27 @@ export function cutIssues(
                 target,
                 action: { label: "Remove", ops: [{ op: entry.remove, id: entry.id }] },
             });
-        } else if (entry.kind === "text" && entry.endUs - entry.startUs - kept >= SHORTENED_US) {
+        } else if (
+            entry.kind === "text" &&
+            entry.endUs - entry.startUs - kept >= SHORTENED_US &&
+            playedUs(project, entry.startUs, entry.endUs) < LENGTHENED_US
+        ) {
+            // A text that runs on past a cut (a step title from titleMarkers) still plays long enough to read; only
+            // one the cut leaves under the lengthened time is worth a word, and the lengthen retime repairs it.
+            const longer = lengthened(project, entry, SHORTEST_READABLE_US);
             issues.push({
                 severity: "check",
                 kind: "cut-shortens-text",
                 item: `text ${entry.id}`,
-                message: `The ${entry.said} (${span(entry.startUs, entry.endUs)}) loses ${tenths(entry.endUs - entry.startUs - kept)} s of its ${tenths(entry.endUs - entry.startUs)} s to a cut`,
+                message: `The ${entry.said} (${span(entry.startUs, entry.endUs)}) loses ${tenths(entry.endUs - entry.startUs - kept)} s of its ${tenths(entry.endUs - entry.startUs)} s to a cut and plays for ${tenths(playedUs(project, entry.startUs, entry.endUs))} s`,
                 at: tenths(entry.startUs),
                 target,
+                ...(longer && {
+                    fix: `movie.retime({ id: "${entry.id}", ${Object.entries(longer)
+                        .map(([key, value]) => `${key}: ${value}`)
+                        .join(", ")} })`,
+                    action: { label: "Lengthen", ops: [{ op: "retime", id: entry.id, ...longer }] },
+                }),
             });
         }
     }

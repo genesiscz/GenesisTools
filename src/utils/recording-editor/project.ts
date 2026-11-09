@@ -773,6 +773,77 @@ export function outputTimeOf(project: EditProject, sourceUs: number): number | u
     return undefined;
 }
 
+/** The output length of `startUs`..`endUs` (source): each kept piece at its clip's speed. */
+export function playedUs(project: EditProject, startUs: number, endUs: number): number {
+    return project.clips.reduce(
+        (sum, clip) =>
+            sum + Math.max(0, Math.min(clip.toUs, endUs) - Math.max(clip.fromUs, startUs)) / (clip.speed || 1),
+        0
+    );
+}
+
+/** The source time where `playUs` of output has played from `startUs` on, through the clips at their speeds. */
+export function sourceAfterPlayed(project: EditProject, startUs: number, playUs: number): number {
+    let leftUs = playUs;
+
+    for (const clip of project.clips) {
+        const fromUs = Math.max(clip.fromUs, startUs);
+        const speed = clip.speed || 1;
+        const availableUs = Math.max(0, clip.toUs - fromUs) / speed;
+
+        if (availableUs >= leftUs) {
+            return Math.min(project.source.durationUs, Math.round(fromUs + leftUs * speed));
+        }
+
+        leftUs -= availableUs;
+    }
+
+    return project.source.durationUs;
+}
+
+/**
+ * The text ops of a step title at each marker that plays (`at` in source seconds, in order), as titleMarkers adds
+ * them: "N. label" (or the label alone with numbered false), playing for `seconds` (2.5) of the finished movie, so a
+ * cut or a sped-up stretch after the marker moves its end later in source time. A title ends at the source's end and
+ * no later than the next marker's start, so it never covers the next step's title. A marker that already has a text
+ * starting within 0.1 s keeps it, so a second run adds nothing.
+ */
+export function markerTitleOps(
+    project: EditProject,
+    marks: ReadonlyArray<{ at: number; label: string }>,
+    options: {
+        seconds?: number;
+        numbered?: boolean;
+        y?: number;
+        animate?: { kind: (typeof TEXT_ANIMATIONS)[number]; ms?: number };
+    } = {}
+): EditOp[] {
+    const lengthUs = Math.round((options.seconds ?? 2.5) * 1_000_000);
+    const taken = (project.texts ?? []).map((note) => note.startUs);
+    const starts = marks.map((mark) => Math.round(mark.at * 1_000_000));
+    return marks.flatMap((mark, index): EditOp[] => {
+        const startUs = starts[index];
+
+        if (taken.some((us) => Math.abs(us - startUs) <= 100_000)) {
+            return [];
+        }
+
+        const nextUs = starts.find((us) => us > startUs) ?? project.source.durationUs;
+        const endUs = Math.min(sourceAfterPlayed(project, startUs, lengthUs), nextUs, project.source.durationUs);
+        const text = options.numbered === false ? mark.label : `${index + 1}. ${mark.label}`;
+        return [
+            {
+                op: "text",
+                from: mark.at,
+                to: Math.floor(endUs / 1000) / 1000,
+                text: text.slice(0, 200),
+                ...(options.y === undefined ? {} : { y: options.y }),
+                ...(options.animate ? { animate: options.animate } : {}),
+            },
+        ];
+    });
+}
+
 /**
  * The source times where a kept clip ends before a cut (or the movie's end), and where one starts after a cut. The
  * Swift twin is RedactionEdges.cutEdges.

@@ -1942,10 +1942,64 @@ describe("edit project (edit.json)", () => {
         expect(fixOps(project, facts).fixed).toEqual([]);
     });
 
+    describe("titleMarkers' seconds are played seconds", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 20_000_000, width: 1920, height: 1080 };
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const span = (op: projectOps.EditOp | undefined) => (op?.op === "text" ? [op.from, op.to] : []);
+        const played = (project: ReturnType<typeof wholeProject>, op: projectOps.EditOp | undefined) => {
+            const [from, to] = span(op);
+            return projectOps.playedUs(project, Number(from) * 1_000_000, Number(to) * 1_000_000);
+        };
+
+        test("a title over a cut or a sped-up stretch plays its 2.5 s, and ends by the next marker's title", () => {
+            const cut = applyOp(wholeProject(source), { op: "cut", from: 1.5, to: 2.5 });
+            const [overCut] = projectOps.markerTitleOps(cut, [{ at: 1, label: "Open" }]);
+            expect(overCut).toMatchObject({ op: "text", from: 1, to: 4.5, text: "1. Open" });
+            expect(played(cut, overCut)).toBe(2_500_000);
+
+            const fast = applyOp(wholeProject(source), { op: "speed", from: 2, to: 10, factor: 4 });
+            const [overSpeed] = projectOps.markerTitleOps(fast, [{ at: 1, label: "Open" }]);
+            expect(played(fast, overSpeed)).toBe(2_500_000);
+
+            const close = projectOps.markerTitleOps(wholeProject(source), [
+                { at: 1, label: "Open" },
+                { at: 2, label: "Pick" },
+            ]);
+            expect(close.map(span)).toEqual([
+                [1, 2],
+                [2, 4.5],
+            ]);
+        });
+
+        test("check leaves a lengthened title alone and offers Lengthen for a text a cut leaves at 1 s", () => {
+            const cut = applyOp(wholeProject(source), { op: "cut", from: 1.5, to: 2.5 });
+            const titled = projectOps
+                .markerTitleOps(cut, [{ at: 1, label: "Open" }])
+                .reduce((edit, op) => applyOp(edit, op), cut);
+            expect(checkProject(titled, facts).filter((issue) => issue.kind === "cut-shortens-text")).toEqual([]);
+
+            let short = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "Title" });
+            short = applyOp(short, { op: "cut", from: 2, to: 6.5 });
+            const id = short.texts?.[0]?.id ?? "";
+            expect(checkProject(short, facts).filter((issue) => issue.kind === "cut-shortens-text")).toEqual([
+                {
+                    severity: "check",
+                    kind: "cut-shortens-text",
+                    item: `text ${id}`,
+                    message: 'The text "Title" (1 to 4 s) loses 2 s of its 3 s to a cut and plays for 1 s',
+                    at: 1,
+                    target: { list: "texts", id },
+                    fix: `movie.retime({ id: "${id}", to: 7 })`,
+                    action: { label: "Lengthen", ops: [{ op: "retime", id, to: 7 }] },
+                },
+            ]);
+        });
+    });
+
     test("check names a marker a cut hides (with a move to the nearest kept moment) and a text a cut shortens", () => {
         let project = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "Title" });
         project = applyOp(project, { op: "marker", at: 6.2, label: "Step two" });
-        project = applyOp(project, { op: "cut", from: 3, to: 6.5 });
+        project = applyOp(project, { op: "cut", from: 2, to: 6.5 });
         const marker = project.markers?.[0]?.id ?? "";
         const text = project.texts?.[0]?.id ?? "";
         const facts = {
@@ -1977,9 +2031,11 @@ describe("edit project (edit.json)", () => {
                 severity: "check",
                 kind: "cut-shortens-text",
                 item: `text ${text}`,
-                message: 'The text "Title" (1 to 4 s) loses 1 s of its 3 s to a cut',
+                message: 'The text "Title" (1 to 4 s) loses 2 s of its 3 s to a cut and plays for 1 s',
                 at: 1,
                 target: { list: "texts", id: text },
+                fix: `movie.retime({ id: "${text}", to: 7 })`,
+                action: { label: "Lengthen", ops: [{ op: "retime", id: text, to: 7 }] },
             },
             {
                 severity: "check",
@@ -1997,16 +2053,15 @@ describe("edit project (edit.json)", () => {
             'The recorded marker "Late" at 99 s never plays: that time is outside the 10 s movie, so it is no chapter'
         );
 
-        // fix() moves the edit marker onto the kept movie once; the recorded one has no fix it could make twice.
+        // fix() moves the edit marker onto the kept movie once and lengthens the text to play 1.5 s; the recorded
+        // marker has no fix it could make twice.
         const fixed = fixOps(project, facts).ops.reduce((next, op) => applyOp(next, op), project);
         expect(fixed.markers?.map((one) => [one.atUs, one.label])).toEqual([[6_500_000, "Step two"]]);
-        expect(checkProject(fixed, facts).map((issue) => issue.item)).toEqual([
-            `text ${text}`,
-            'recorded marker "Recorded"',
-        ]);
+        expect(fixed.texts?.map((one) => [one.startUs, one.endUs])).toEqual([[1_000_000, 7_000_000]]);
+        expect(checkProject(fixed, facts).map((issue) => issue.item)).toEqual(['recorded marker "Recorded"']);
         // An edit marker of the same name stands in for the recorded one.
         const stood = applyOp(fixed, { op: "marker", at: 7, label: "Recorded" });
-        expect(checkProject(stood, facts).map((issue) => issue.item)).toEqual([`text ${text}`]);
+        expect(checkProject(stood, facts).map((issue) => issue.item)).toEqual([]);
     });
 
     test("replace words fixes every line with the word, whole words, any case, over earlier fixes", () => {

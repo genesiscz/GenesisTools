@@ -700,8 +700,8 @@ describe("what a cut costs, in the answer of the call", () => {
         const marker = readProject(path).markers?.[0]?.id ?? "";
         const text = readProject(path).texts?.[0]?.id ?? "";
 
-        expect((await movie.cut(3, 6.5)).warnings).toEqual([
-            'The text "Title" (1 to 4 s) loses 1 s of its 3 s to a cut',
+        expect((await movie.cut(2, 6.5)).warnings).toEqual([
+            `The text "Title" (1 to 4 s) loses 2 s of its 3 s to a cut and plays for 1 s; movie.retime({ id: "${text}", to: 7 }) fixes it`,
             `The marker "Step two" at 6.2 s never plays: that time is cut, so it is no chapter; movie.apply([{"op":"unmarker","id":"${marker}"},{"op":"marker","at":6.5,"label":"Step two"}]) fixes it`,
             'The recorded marker "Recorded" at 5 s never plays: that time is cut, so it is no chapter; movie.marker(6.5, "Recorded") fixes it',
         ]);

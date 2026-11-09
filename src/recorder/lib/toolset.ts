@@ -65,6 +65,7 @@ import {
     findInTranscript,
     hexColor,
     hidingOf,
+    markerTitleOps,
     outputDurationUs,
     outputTimeOf,
     RANGE_ACTIONS,
@@ -439,7 +440,7 @@ const movieMethods = [
                     .optional(),
             })
             .strict(),
-        'Puts each marker\'s label on screen as a step title for `seconds` (2.5), "1. Open the settings" (numbered: false drops the number), at the top middle (y 0...1 of the canvas, 0.12): one text per marker in the kept movie, saved once, one undo(). A marker that has a text already is left alone, so running it again adds nothing. Throws when there is no marker.'
+        "Puts each marker's label on screen as a step title that plays for `seconds` (2.5) of the finished movie (a cut or a speed-up after the marker moves its end later in source time; it ends by the next marker's title), \"1. Open the settings\" (numbered: false drops the number), at the top middle (y 0...1 of the canvas, 0.12): one text per marker in the kept movie, saved once, one undo(). A marker that has a text already is left alone, so running it again adds nothing. Throws when there is no marker."
     ),
     edit(
         "annotateClicks",
@@ -2866,29 +2867,7 @@ export class Movie {
             );
         }
 
-        const lengthUs = Math.round((options.seconds ?? 2.5) * 1_000_000);
-        // A marker that already has a text starting within 0.1 s keeps it, so a second run adds nothing.
-        const taken = (opened.project.texts ?? []).map((note) => note.startUs);
-        const ops = marks.flatMap((mark, index): EditOp[] => {
-            const startUs = Math.round(mark.at * 1_000_000);
-
-            if (taken.some((us) => Math.abs(us - startUs) <= 100_000)) {
-                return [];
-            }
-
-            const text = options.numbered === false ? mark.label : `${index + 1}. ${mark.label}`;
-            const to = Math.min(opened.project.source.durationUs, startUs + lengthUs) / 1_000_000;
-            return [
-                {
-                    op: "text",
-                    from: mark.at,
-                    to,
-                    text: text.slice(0, 200),
-                    ...(options.y === undefined ? {} : { y: options.y }),
-                    ...(options.animate ? { animate: options.animate } : {}),
-                },
-            ];
-        });
+        const ops = markerTitleOps(opened.project, marks, options);
 
         if (!ops.length) {
             throw new RangeError(`every marker has its title already (${marks.length}); nothing was saved`);
