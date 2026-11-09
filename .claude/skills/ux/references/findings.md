@@ -3,6 +3,17 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-11-09 21:12 — **A PR commit link showed an empty hub for 20 s, then the whole PR, then the commit (Martin: "it
+  shouldnt load the entire PR first ... focus on the commits alone THEN in smaller priority the rest").**
+  - *The part a link names waited for the slowest source of the whole.* The pick needed the forge's commit list, which
+    predated the commit, so it waited for `hub pr show` (18.9 s) while the review painted 450 files nobody asked for.
+    Fix: the commit is read from the checkout the review already reads, and opens first; the forge's answer settles
+    it later (unified 333dc73fc2). Rule: a link to a part (a commit, a file, a line) shows that part from the
+    nearest source that has it, and the slow source only confirms or corrects.
+  - *A push threw the reader's page away.* A new head built a new review: the file list went empty and 687 files were
+    parsed again. Now the review follows the head in place and the page re-parses only what changed. Rule: a newer
+    answer to the same question updates what is on screen; it never rebuilds the view. Bench: HubBench `headmove`.
+
 - 2026-11-09 13:13 — **The recorder's failure note: a title cut at "{", and the whole log as a 340 pt column of raw text
   (Martin: "it should probably somehow nicely show me the error log ... the size should be also whole different").**
   - *The title was "The recording stopped at once (exit 1): {."* `ToolsRunner.problem` trimmed every line before it
