@@ -372,6 +372,20 @@ const storedConfigSchema = z
                     })
                     .prefault({}),
                 assign: assignSchema.prefault({}),
+                people: z
+                    .object({
+                        /**
+                         * Where the people directory looks besides the meetings, the projects and the people book:
+                         * Contacts (GenesisTools.app's Contacts grant), and the meetings' calendar attendees.
+                         */
+                        sources: z
+                            .object({
+                                contacts: z.boolean().default(true),
+                                calendar: z.boolean().default(true),
+                            })
+                            .prefault({}),
+                    })
+                    .prefault({}),
                 export: z
                     .object({
                         /**

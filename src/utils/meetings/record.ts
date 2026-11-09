@@ -95,6 +95,7 @@ export const DECISION_ACTIONS = [
     "skip",
     "split",
     "rename",
+    "assign",
     "reopen",
     "revert",
     "add",
@@ -148,6 +149,22 @@ const itemBase = {
         })
         .optional(),
 };
+
+/**
+ * The lines of one source label from `fromSec` to `toSec` (inclusive, transcript seconds) given to a person for this
+ * meeting (R21, R44): the corrected transcript, its speaker list and the speaker stats show them as `person`. A later
+ * assignment over the same lines wins; the decision journal keeps each one's before and after, so its Undo removes it.
+ */
+export const speakerAssignmentSchema = z.object({
+    id: z.string().regex(/^a\d+$/),
+    label: z.string().min(1),
+    fromSec: z.number().min(0),
+    toSec: z.number().min(0),
+    person: z.string().trim().min(1),
+    email: z.string().trim().min(1).optional(),
+    at: isoTime,
+});
+export type SpeakerAssignment = z.infer<typeof speakerAssignmentSchema>;
 
 /** A suggestion a rule made and a person decides: confirm or reject. */
 export const meetingItemSchema = z.discriminatedUnion("kind", [
@@ -336,8 +353,17 @@ export const meetingRecordSchema = z.object({
     calendar: calendarSchema.optional(),
     participants: z.array(participantSchema).default([]),
     context: z.array(contextSchema).default([]),
-    /** Renames for this meeting. A rename is a person's act, so it has no status. */
-    speakers: z.object({ labels: z.record(z.string(), z.string()).default({}) }).prefault({}),
+    /**
+     * Renames for this meeting, and stretches given to a person (the decision journal's `assign`). Both are a
+     * person's act, so they have no status. `assignments` is absent until the first one, so older records write as
+     * they were.
+     */
+    speakers: z
+        .object({
+            labels: z.record(z.string(), z.string()).default({}),
+            assignments: z.array(speakerAssignmentSchema).optional(),
+        })
+        .prefault({}),
     /** The meeting's own dictionary level, over the project's and the global one. */
     dictionary: dictionaryLevelSchema.optional(),
     items: z.array(meetingItemSchema).default([]),
@@ -713,8 +739,8 @@ export class MeetingStore {
     }
 }
 
-/** The next free id in a list: `c1`, `c2` … or `i1`, `i2` …. */
-export function nextId(prefix: "c" | "i", taken: Array<{ id: string }>): string {
+/** The next free id in a list: `c1`, `c2` …, `i1`, `i2` … or (speaker assignments) `a1`, `a2` …. */
+export function nextId(prefix: "a" | "c" | "i", taken: Array<{ id: string }>): string {
     const highest = taken.reduce((max, entry) => Math.max(max, Number(entry.id.slice(1)) || 0), 0);
     return `${prefix}${highest + 1}`;
 }
