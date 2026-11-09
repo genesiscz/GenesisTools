@@ -2,25 +2,15 @@ import AppKit
 import Foundation
 import Observation
 
-/// A note the window shows on the pane that caused it: a success fades, an error stays with Retry and Details.
-struct MeetingsNotice: Equatable, Identifiable {
-    let id = UUID()
-    let text: String
-    var detail: String?
-    var more: String?
-    let tone: NoticePill.Tone
-    /// A button beside the note ("Undo", "Retry"), and what it does.
-    var actionTitle: String?
-    /// The button's SF Symbol; without one the pill draws its generic fix glyph.
-    var actionSymbol: String?
-    var action: (@MainActor () -> Void)?
-
-    static func == (a: MeetingsNotice, b: MeetingsNotice) -> Bool { a.id == b.id }
-
-    static func failure(_ error: Error, retry: (@MainActor () -> Void)? = nil) -> MeetingsNotice {
+extension StackedNotice {
+    /// A failed meetings command as a notice on the pane that ran it: the CLI's sentence, its own text behind Details,
+    /// and Retry when running it again can help. An error stays until it is closed or retried. A source that can fail
+    /// again and again (a test run per keystroke) passes one `id`, so its next failure replaces the last.
+    static func meetingsFailure(_ error: Error, id: StackedNotice.ID = StackedNotice.ID(),
+                                retry: (@MainActor () -> Void)? = nil) -> StackedNotice {
         let failure = error as? MeetingsCLI.Failure
-        return MeetingsNotice(text: failure?.sentence ?? "The meetings command failed.", more: failure?.detail ?? "\(error)",
-                              tone: .error, actionTitle: retry == nil ? nil : "Retry", actionSymbol: "arrow.clockwise", action: retry)
+        return StackedNotice(id: id, text: failure?.sentence ?? "The meetings command failed.", more: failure?.detail ?? "\(error)",
+                             tone: .error, actions: retry.map { [.retry($0)] } ?? [])
     }
 }
 
@@ -87,22 +77,36 @@ final class MeetingsWindowModel {
     @ObservationIgnored private(set) var overviewSets = 0
     private(set) var settings: Loadable<MeetingsSettings> = .idle
     private(set) var detail: MeetingDetailModel?
-    var notice: MeetingsNotice?
     var days: Int
     /// The meeting audio that plays from a transcript time, shown and stopped by the bar under the window.
     var playback = MeetingsPlayback()
     private var overviewGeneration = 0
     private let loadDetail: @MainActor (MeetingDetailModel) -> Void
     private let refreshLive: @MainActor (MeetingDetailModel) -> Void
+    @ObservationIgnored private let defaults: UserDefaults
+    /// The clock the panes' notices count on; nil is the real one (a test passes a `ManualNoticeClock`).
+    @ObservationIgnored private let noticeClock: NoticeClock?
 
-    init(defaults: UserDefaults = .standard,
+    init(defaults: UserDefaults = .standard, noticeClock: NoticeClock? = nil,
          loadDetail: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.load() },
          refreshLive: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.refreshLoaded(proposals: false) }) {
         self.loadDetail = loadDetail
         self.refreshLive = refreshLive
+        self.defaults = defaults
+        self.noticeClock = noticeClock
+        MeetingsPreferences.migrate(defaults)
         place = MeetingsPreferences.openOn(defaults) == .needs ? .needs : .all
         days = MeetingsPreferences.days(defaults)
     }
+
+    /// A notice stack for one meeting's pane, with the window's notice times (Settings → Meetings → Window), read at
+    /// each notice.
+    func makeNoticeStack() -> NoticeStackModel {
+        NoticeStackModel(clock: noticeClock, timing: { [defaults] in MeetingsPreferences.noticeTiming(defaults) })
+    }
+
+    /// The edge of a pane its notices float at (Settings → Meetings → Window).
+    var noticePlace: MeetingsPreferences.NoticePlace { MeetingsPreferences.noticePlace(defaults) }
 
     /// The meetings the sidebar's place shows, newest first.
     var visibleMeetings: [OverviewMeeting] {

@@ -1,8 +1,8 @@
 import SwiftUI
 import GenesisToolsHost
 
-/// One meeting: the header (title, time, project, labels, the editor and the export), the tabs, and the note of the
-/// last action on the pane that ran it.
+/// One meeting: the header (title, time, project, labels, the editor and the export), the tabs, and the notices of
+/// its actions floating over the tabs, so an answer never moves the rows under the pointer.
 struct MeetingDetailView: View {
     @Bindable var detail: MeetingDetailModel
     let window: MeetingsWindowModel
@@ -16,19 +16,10 @@ struct MeetingDetailView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if let notice = detail.notice {
-                NoticePill(text: notice.text, detail: notice.detail, more: notice.more, tone: notice.tone,
-                           fixes: notice.actionTitle.map { title in
-                               [NoticeFix.button(title, symbol: notice.actionSymbol) {
-                                   detail.notice = nil
-                                   notice.action?()
-                               }]
-                           } ?? []) { detail.notice = nil }
-                    .padding(.horizontal, 14).padding(.top, 8)
-                    .id(notice.id)
-            }
             tabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frameProbe("meetings.detail.content")
+                .noticeStack(detail.notices, alignment: window.noticePlace.alignment)
         }
         .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.narrowWidth }) { narrow = $0 }
         .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }

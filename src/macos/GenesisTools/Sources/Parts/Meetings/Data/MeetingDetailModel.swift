@@ -35,8 +35,8 @@ final class MeetingDetailModel {
     /// Item ids with a command in flight: their buttons wait, so a second press cannot run it twice.
     private(set) var busyItems: Set<String> = []
     private(set) var busy: Set<String> = []
-    var notice: MeetingsNotice?
-    private var undoTask: Task<Void, Never>?
+    /// The notices of this pane's actions, floating over its tabs: several at once, each with its own Undo and time.
+    @ObservationIgnored let notices: NoticeStackModel
     private var recordGeneration = 0
     private var transcriptGeneration = 0
     private var timelineGeneration = 0
@@ -61,9 +61,10 @@ final class MeetingDetailModel {
     /// read without one (the first open) reads on the first return and keeps a token from then on.
     @ObservationIgnored private var readAt: [RevisionPart: String] = [:]
 
-    init(id: String, window: MeetingsWindowModel?) {
+    init(id: String, window: MeetingsWindowModel?, notices: NoticeStackModel? = nil) {
         self.id = id
         self.window = window
+        self.notices = notices ?? window?.makeNoticeStack() ?? NoticeStackModel(timing: { MeetingsPreferences.noticeTiming() })
     }
 
     func load() {
@@ -217,10 +218,15 @@ final class MeetingDetailModel {
 
     // MARK: - Actions
 
-    /// Runs one change; on success reads the record (and the window's list) again and shows `done`.
+    /// Runs one change; on success reads the record (and the window's list) again and shows `done`. `replacing` is
+    /// the notice whose button started it (an Undo): the result takes that notice's place.
     private func change(_ key: String, _ args: [String], done: String?, reloadTranscript: Bool = false,
-                        undo: (title: String, args: [String])? = nil, applied: (() -> Void)? = nil) {
-        guard !busy.contains(key) else { return }
+                        undo: (title: String, args: [String])? = nil, applied: (() -> Void)? = nil,
+                        replacing: StackedNotice.ID? = nil) {
+        guard !busy.contains(key) else {
+            if let replacing { notices.release(replacing) }
+            return
+        }
         busy.insert(key)
         Task {
             defer { busy.remove(key) }
@@ -231,18 +237,19 @@ final class MeetingDetailModel {
                 window?.loadOverview()
                 if reloadTranscript { transcriptChanged() }
                 if let done {
-                    var note = MeetingsNotice(text: done, tone: .success)
-                    if let undo {
-                        note.actionTitle = undo.title
-                        note.actionSymbol = "arrow.uturn.backward"
-                        note.action = { [weak model = self] in model?.change(key + ".undo", undo.args, done: "Undone", reloadTranscript: reloadTranscript) }
-                    }
-                    notice = note
+                    let actions = undo.map { undo in
+                        [StackedNotice.Action(undo.title, symbol: "arrow.uturn.backward", afterPress: .wait("Undoing…")) { [weak model = self] id in
+                            model?.change(key + ".undo", undo.args, done: "Undone", reloadTranscript: reloadTranscript, replacing: id)
+                        }]
+                    } ?? []
+                    notices.push(StackedNotice(text: done, actions: actions), replacing: replacing)
+                } else if let replacing {
+                    notices.dismiss(replacing)
                 }
             } catch {
-                notice = .failure(error) { [weak model = self] in
+                notices.push(.meetingsFailure(error) { [weak model = self] in
                     model?.change(key, args, done: done, reloadTranscript: reloadTranscript, undo: undo, applied: applied)
-                }
+                }, replacing: replacing)
             }
         }
     }
@@ -344,8 +351,8 @@ final class MeetingDetailModel {
                     token = undoToken
                 case .skipped(let reason):
                     // Another window or the terminal decided it first: show why, and read what is saved now.
-                    notice = MeetingsNotice(text: Self.skipNote(title: MeetingsWords.itemTitle(item), confirm: confirm, reason: reason),
-                                            tone: .warning)
+                    notices.push(StackedNotice(text: Self.skipNote(title: MeetingsWords.itemTitle(item), confirm: confirm, reason: reason),
+                                               tone: .warning))
                     reloadRecord()
                     window?.loadOverview()
                     return
@@ -353,19 +360,23 @@ final class MeetingDetailModel {
                 mark(item.id, status: confirm ? "confirmed" : "rejected")
                 reloadRecord()
                 window?.loadOverview()
-                var note = MeetingsNotice(text: "\(confirm ? "Confirmed" : "Rejected") \(MeetingsWords.itemTitle(item))", tone: .success)
-                if let token {
-                    note.actionTitle = "Undo"
-                    note.actionSymbol = "arrow.uturn.backward"
-                    note.action = { [weak model = self] in model?.reopen(item, token: token) }
-                }
-                notice = note
-                if token != nil { scheduleUndoExpiry(for: note.id) }
+                showDecided(item, confirm: confirm, token: token)
                 if Self.reloadsTranscript(after: .decision) { transcriptChanged() }
             } catch {
-                notice = .failure(error) { [weak model = self] in model?.decide(item, confirm: confirm, speaker: speaker) }
+                notices.push(.meetingsFailure(error) { [weak model = self] in model?.decide(item, confirm: confirm, speaker: speaker) })
             }
         }
+    }
+
+    /// The notice of one confirm or reject. With the decision's token it carries an Undo that takes back exactly that
+    /// decision, and it stays the window's notice time (Settings → Meetings → Window); a second decision adds its own.
+    @discardableResult
+    func showDecided(_ item: MeetingItem, confirm: Bool, token: String?) -> StackedNotice.ID {
+        let actions: [StackedNotice.Action] = token.map { token in
+            [.undo { [weak model = self] id in model?.reopen(item, token: token, replacing: id) }]
+        } ?? []
+        return notices.push(StackedNotice(text: "\(confirm ? "Confirmed" : "Rejected") \(MeetingsWords.itemTitle(item))",
+                                          actions: actions))
     }
 
     /// What one confirm or reject did to its item. `decided` carries the token an Undo needs: without one (an older
@@ -392,21 +403,24 @@ final class MeetingDetailModel {
         ["reopen", meeting, item] + (token.map { ["--token", $0] } ?? [])
     }
 
-    /// The Undo of a confirm or a reject: `tools meetings reopen`.
-    func reopen(_ item: MeetingItem, token: String?) {
+    /// The Undo of a confirm or a reject: `tools meetings reopen`. The result takes the place of the notice `replacing`.
+    func reopen(_ item: MeetingItem, token: String?, replacing: StackedNotice.ID? = nil) {
         let key = "reopen.\(item.id)"
-        guard !busy.contains(key) else { return }
+        guard !busy.contains(key) else {
+            if let replacing { notices.release(replacing) }
+            return
+        }
         busy.insert(key)
         Task {
             defer { busy.remove(key) }
             do {
                 _ = try await MeetingsCLI.run(Self.reopenArgs(meeting: id, item: item.id, token: token))
-                notice = MeetingsNotice(text: "Suggested again: \(MeetingsWords.itemTitle(item))", tone: .success)
+                notices.push(StackedNotice(text: "Suggested again: \(MeetingsWords.itemTitle(item))"), replacing: replacing)
             } catch let failure as MeetingsCLI.Failure where failure.code == "item-changed" {
-                notice = MeetingsNotice(text: "Not undone: this item was decided again in another window or the terminal.",
-                                        more: failure.detail, tone: .error)
+                notices.push(StackedNotice(text: "Not undone: this item was decided again in another window or the terminal.",
+                                           more: failure.detail, tone: .error), replacing: replacing)
             } catch {
-                notice = .failure(error) { [weak model = self] in model?.reopen(item, token: token) }
+                notices.push(.meetingsFailure(error) { [weak model = self] in model?.reopen(item, token: token) }, replacing: replacing)
             }
             reloadRecord()
             window?.loadOverview()
@@ -419,17 +433,6 @@ final class MeetingDetailModel {
         guard var value = record.value, let index = value.items.firstIndex(where: { $0.id == itemID }) else { return }
         value.items[index].status = status
         record = .loaded(value)
-    }
-
-    /// The Undo button stays for the window's setting (Settings → Meetings → Window), then the note goes.
-    private func scheduleUndoExpiry(for noteID: UUID) {
-        undoTask?.cancel()
-        let seconds = MeetingsPreferences.undoSeconds()
-        undoTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(seconds))
-            guard !Task.isCancelled, let self, self.notice?.id == noteID else { return }
-            self.notice = nil
-        }
     }
 
     /// Answers an open question without listening: the same as `listen --item <id> --answer <choice>`.
@@ -479,11 +482,12 @@ final class MeetingDetailModel {
             do {
                 let result = try await MeetingsCLI.bridge.run(subcommand: "recorder", args: ["edit", id], timeoutSeconds: 180)
                 if result.exitCode != 0 {
-                    notice = MeetingsNotice(text: MeetingsCLI.sentence(fromStderr: result.stderr) ?? "The recorder editor did not open.",
-                                            more: result.stderr, tone: .error, actionTitle: "Retry") { [weak model = self] in model?.openInRecorder() }
+                    notices.push(StackedNotice(text: MeetingsCLI.sentence(fromStderr: result.stderr) ?? "The recorder editor did not open.",
+                                               more: result.stderr, tone: .error,
+                                               actions: [.retry { [weak model = self] in model?.openInRecorder() }]))
                 }
             } catch {
-                notice = .failure(error) { [weak model = self] in model?.openInRecorder() }
+                notices.push(.meetingsFailure(error) { [weak model = self] in model?.openInRecorder() })
             }
         }
     }
@@ -505,7 +509,7 @@ final class MeetingDetailModel {
                         window?.loadSettings()
                         await runExport(to: nil)
                     } catch {
-                        notice = .failure(error)
+                        notices.push(.meetingsFailure(error))
                     }
                 }
             } else {
@@ -523,26 +527,23 @@ final class MeetingDetailModel {
         do {
             let args = ["export", id, "--json"] + (folder.map { ["--to", $0] } ?? []) + (ifEdited.map { ["--if-edited", $0] } ?? [])
             let result = try await MeetingsCLI.json(ExportResult.self, args, timeoutSeconds: 120)
-            var note = MeetingsNotice(text: result.noticeText, detail: (result.folder as NSString).abbreviatingWithTildeInPath, tone: .success)
             let kept = result.kept.map { "\(($0 as NSString).lastPathComponent) holds edits the last export did not write, so it stays as it was." }
             let more = [kept, result.warning].compactMap { $0 }
-            if !more.isEmpty { note.more = more.joined(separator: "\n") }
-            note.actionTitle = "Show"
-            note.actionSymbol = "folder"
-            note.action = { PathOpener.reveal(result.path) }
-            notice = note
+            notices.push(StackedNotice(text: result.noticeText, detail: (result.folder as NSString).abbreviatingWithTildeInPath,
+                                       more: more.isEmpty ? nil : more.joined(separator: "\n"),
+                                       actions: [.init("Show", symbol: "folder", afterPress: .keep) { _ in PathOpener.reveal(result.path) }]))
             switch MeetingsPreferences.afterExport() {
             case .genesis: PathOpener.genesisMarkdown(result.path)
             case .finder: PathOpener.reveal(result.path)
             case .nothing: break
             }
         } catch let failure as MeetingsCLI.Failure where failure.code == "export-edited" {
-            notice = MeetingsNotice(text: failure.sentence, more: failure.detail, tone: .error, actionTitle: "Replace",
-                                    actionSymbol: "doc.badge.arrow.up") { [weak model = self] in
-                Task { await model?.runExport(to: folder, ifEdited: "replace") }
-            }
+            notices.push(StackedNotice(text: failure.sentence, more: failure.detail, tone: .error,
+                                       actions: [.init("Replace", symbol: "doc.badge.arrow.up") { [weak model = self] _ in
+                                           Task { await model?.runExport(to: folder, ifEdited: "replace") }
+                                       }]))
         } catch {
-            notice = .failure(error) { [weak model = self] in Task { await model?.runExport(to: folder, ifEdited: ifEdited) } }
+            notices.push(.meetingsFailure(error) { [weak model = self] in Task { await model?.runExport(to: folder, ifEdited: ifEdited) } })
         }
     }
 
@@ -666,18 +667,15 @@ extension MeetingDetailModel {
                 for itemID in result.decided { mark(itemID, status: "confirmed") }
                 reloadRecord()
                 window?.loadOverview()
-                var note = MeetingsNotice(text: Self.bulkNote(result, threshold: threshold), tone: .success)
-                note.more = result.skipped.isEmpty ? nil : result.skipped.map { "\($0.id): \($0.reason)" }.joined(separator: "\n")
-                if !result.decided.isEmpty, let token = result.token {
-                    note.actionTitle = "Undo"
-                    note.actionSymbol = "arrow.uturn.backward"
-                    note.action = { [weak model = self] in model?.reopenAll(result.decided, token: token) }
-                }
-                notice = note
-                scheduleUndoExpiry(for: note.id)
+                let undo: [StackedNotice.Action] = !result.decided.isEmpty ? result.token.map { token in
+                    [.undo { [weak model = self] id in model?.reopenAll(result.decided, token: token, replacing: id) }]
+                } ?? [] : []
+                notices.push(StackedNotice(text: Self.bulkNote(result, threshold: threshold),
+                                           more: result.skipped.isEmpty ? nil : result.skipped.map { "\($0.id): \($0.reason)" }.joined(separator: "\n"),
+                                           actions: undo))
                 if !result.decided.isEmpty, Self.reloadsTranscript(after: .decision) { transcriptChanged() }
             } catch {
-                notice = .failure(error) { [weak model = self] in model?.confirmAll(atOrAbove: threshold) }
+                notices.push(.meetingsFailure(error) { [weak model = self] in model?.confirmAll(atOrAbove: threshold) })
             }
         }
     }
@@ -687,21 +685,24 @@ extension MeetingDetailModel {
         ["reopen", meeting] + items + (token.map { ["--token", $0] } ?? [])
     }
 
-    /// The Undo of a bulk confirm.
-    func reopenAll(_ items: [String], token: String?) {
+    /// The Undo of a bulk confirm. The result takes the place of the notice `replacing`.
+    func reopenAll(_ items: [String], token: String?, replacing: StackedNotice.ID? = nil) {
         let key = "reopen.all"
-        guard !busy.contains(key) else { return }
+        guard !busy.contains(key) else {
+            if let replacing { notices.release(replacing) }
+            return
+        }
         busy.insert(key)
         Task {
             defer { busy.remove(key) }
             do {
                 _ = try await MeetingsCLI.run(Self.reopenArgs(meeting: id, items: items, token: token))
-                notice = MeetingsNotice(text: "Suggested again: \(Plural.count(items.count, "item"))", tone: .success)
+                notices.push(StackedNotice(text: "Suggested again: \(Plural.count(items.count, "item"))"), replacing: replacing)
             } catch let failure as MeetingsCLI.Failure where failure.code == "item-changed" {
-                notice = MeetingsNotice(text: "Not undone: some of these items were decided again in another window or the terminal.",
-                                        more: failure.detail, tone: .error)
+                notices.push(StackedNotice(text: "Not undone: some of these items were decided again in another window or the terminal.",
+                                           more: failure.detail, tone: .error), replacing: replacing)
             } catch {
-                notice = .failure(error) { [weak model = self] in model?.reopenAll(items, token: token) }
+                notices.push(.meetingsFailure(error) { [weak model = self] in model?.reopenAll(items, token: token) }, replacing: replacing)
             }
             reloadRecord()
             window?.loadOverview()
