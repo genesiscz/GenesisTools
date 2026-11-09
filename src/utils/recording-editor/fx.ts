@@ -191,6 +191,21 @@ export function transitionJoins(project: FxProject): TransitionJoin[] {
     return joins;
 }
 
+/** True when a lens shows at some moment of the SOURCE range `fromUs`..`toUs` (a point when they are equal). */
+export function lensShowsAt(project: FxProject, fromUs: number, toUs = fromUs): boolean {
+    return (project.lens?.items ?? []).some((item) => item.startUs <= toUs && item.endUs > fromUs);
+}
+
+/**
+ * The join whose transition plays at some moment of the OUTPUT range `fromUs`..`toUs` (a point when they are equal):
+ * a transition plays `halfUs` on each side of its join; kind none plays nothing.
+ */
+export function transitionPlayingAt(project: FxProject, fromUs: number, toUs = fromUs): TransitionJoin | undefined {
+    return transitionJoins(project).find(
+        (join) => join.halfUs > 0 && join.atUs - join.halfUs <= toUs && join.atUs + join.halfUs > fromUs
+    );
+}
+
 function seconds(us: number): number {
     return Math.round(us / 1000) / 1000;
 }

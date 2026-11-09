@@ -978,6 +978,57 @@ describe("verifyHidden reads every frame at the edges and says how to fix a leak
         expect(rect?.height).toBeCloseTo(0.05 + 0.1 / 3, 3);
     });
 
+    // Regression test: hunt verifyhidden-moved-picture. With no frame and no zoom the export's box was taken as the
+    // source box, though a tilt, a lens or a transition moves the picture, so the fix op redacted the wrong place.
+    test("a leak with no source read is placed only where the export shows the source as it is", () => {
+        const read: PrivateHit = {
+            id: "h1",
+            kind: "text",
+            label: "Text",
+            masked: "or•••ve",
+            fromUs: 9_000_000,
+            toUs: 14_000_000,
+            box: { x: 0.2, y: 0.3, width: 0.3, height: 0.5 },
+            keys: [],
+        };
+        const canvasBox = { x: 0.5, y: 0.5, width: 0.1, height: 0.02 };
+        const unplaced = {
+            fromUs: 30_000_000,
+            toUs: 31_000_000,
+            label: "Text",
+            masked: "x",
+            sourceHits: [read],
+            canvasBox,
+        };
+        const plain = wholeProject(source);
+
+        const tilted = applyOp(plain, op({ op: "tilt", strength: 1 }));
+        const lensed = applyOp(plain, op({ op: "lens", from: 29, to: 32 }));
+        // The cut 25..29.5 joins at output 25 s; the zoom transition there plays from 24.5 to 25.5 s (source 29..30).
+        const joined = applyOp(
+            applyOp(plain, op({ op: "cut", from: 25, to: 29.5 })),
+            op({ op: "transition", kind: "zoom", ms: 1000 })
+        );
+        const atJoin = { ...unplaced, fromUs: 29_600_000, toUs: 29_800_000 };
+
+        expect(leakSourceBox(plain, unplaced)).toEqual(canvasBox);
+        expect(leakSourceBox(tilted, unplaced)).toBeNull();
+        expect(leakSourceBox(lensed, unplaced)).toBeNull();
+        expect(leakSourceBox(joined, atJoin)).toBeNull();
+        // Far from the join the joined edit shows the source as it is.
+        expect(leakSourceBox(joined, unplaced)).toEqual(canvasBox);
+
+        const keys = [{ atUs: 30_500_000, ...canvasBox }];
+        const sourceKeys = (project: typeof plain, at = keys) =>
+            leakSourceKeys(project, { keys: at, label: "Text", masked: "x", sourceHits: [] });
+        expect(sourceKeys(plain)).toHaveLength(1);
+        expect(sourceKeys(tilted)).toEqual([]);
+        expect(sourceKeys(lensed)).toEqual([]);
+        // Export 25.2 s is inside the join's transition; 30.5 s is past it.
+        expect(sourceKeys(joined, [{ atUs: 25_200_000, ...canvasBox }])).toEqual([]);
+        expect(sourceKeys(joined)).toHaveLength(1);
+    });
+
     test("a moving leak gets one op that follows it frame by frame, never a box over its whole path (round 8)", () => {
         const project = wholeProject(source);
         const read: PrivateHit = {

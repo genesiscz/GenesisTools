@@ -8,7 +8,17 @@ import { z } from "zod";
 import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { cursorSmoothSchema } from "./cursor-smooth";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
-import { applyFxOp, describeFx, fxOpSchemas, lensSchema, tiltSchema, transitionJoins, transitionsSchema } from "./fx";
+import {
+    applyFxOp,
+    describeFx,
+    fxOpSchemas,
+    lensSchema,
+    lensShowsAt,
+    tiltSchema,
+    transitionJoins,
+    transitionPlayingAt,
+    transitionsSchema,
+} from "./fx";
 import { recordingItemId, withItemIds } from "./item-ids";
 import {
     circleAround,
@@ -1043,10 +1053,39 @@ export function exportToOutputClampedUs(
 
 // R7 3 verifyHidden fixes
 /**
+ * True when the export shows the source picture as it is over the SOURCE range `fromUs`..`toUs` (a point when they are
+ * equal), so a box read on the export is the same box in the source: no frame, no zoom of either target then, no tilt
+ * (TiltLook tilts the whole picture over black whenever it is set), no lens then, and no transition playing at the
+ * output moments that show it (`outUs` when the caller knows the one output moment). Any of those moves the picture.
+ */
+export function exportShowsSourceAsIs(
+    project: EditProject,
+    range: { fromUs: number; toUs: number; outUs?: number }
+): boolean {
+    if (project.frame || project.tilt) {
+        return false;
+    }
+
+    if (project.zooms.some((zoom) => zoom.startUs <= range.toUs && zoom.endUs > range.fromUs)) {
+        return false;
+    }
+
+    if (lensShowsAt(project, range.fromUs, range.toUs)) {
+        return false;
+    }
+
+    const outputs =
+        range.outUs !== undefined
+            ? [{ fromUs: range.outUs, toUs: range.outUs }]
+            : outputSpansOf(project, range.fromUs, range.toUs);
+    return !outputs.some((span) => transitionPlayingAt(project, span.fromUs, span.toUs));
+}
+
+/**
  * Where a text verifyHidden read on the export sits in the SOURCE picture (fractions of the source movie's picture) from
  * `fromUs` to `toUs` (SOURCE microseconds): the source's own tracked hits of the same kind that show then (the same
  * masked value first), as one rectangle over their places in that time. With none, the export's box itself when the
- * export shows the source picture as it is (no frame, no zoom then); else null.
+ * export shows the source picture as it is then (exportShowsSourceAsIs); else null.
  */
 export function leakSourceBox(
     project: EditProject,
@@ -1082,13 +1121,12 @@ export function leakSourceBox(
         return { x, y, width: right - x, height: bottom - y };
     }
 
-    const zoomed = project.zooms.some((zoom) => zoom.startUs < options.toUs && zoom.endUs > options.fromUs);
-    return !project.frame && !zoomed ? { ...options.canvasBox } : null;
+    return exportShowsSourceAsIs(project, options) ? { ...options.canvasBox } : null;
 }
 
 /**
  * R8 4: a leak's place in the SOURCE picture at each export frame it was read (`keys`: EXPORT microseconds and boxes on
- * the export frame): the export's own box where the export shows the source picture as it is (no frame, no zoom then),
+ * the export frame): the export's own box where the export shows the source picture as it is (exportShowsSourceAsIs),
  * else the place then of the source's own hit of the same value (the same masked value first, else the same label)
  * nearest to it. A frame inside a card, or with no such hit, has no key. Source seconds and fractions, in time order.
  */
@@ -1116,9 +1154,7 @@ export function leakSourceKeys(
         const sourceUs = sourceTimeOf(project, outUs);
         const at = Math.round(sourceUs / 1000) / 1000;
         const { atUs: _atUs, ...canvas } = key;
-        const zoomed = project.zooms.some((zoom) => zoom.startUs <= sourceUs && zoom.endUs > sourceUs);
-
-        if (!project.frame && !zoomed) {
+        if (exportShowsSourceAsIs(project, { fromUs: sourceUs, toUs: sourceUs, outUs })) {
             return [{ at, ...canvas }];
         }
 
@@ -1148,8 +1184,8 @@ export type LeakOverlay = { kind: "text"; id: string } | { kind: "caption"; at: 
  * whose time meets the leak's and whose words hold its value (the same masked value, by `matcher`, the one the export
  * was read with), else, with captions on, a caption line then that holds it (`captionLines`: the transcript's lines
  * with their fixes, as transcriptLines gives them). Undefined when no overlay draws it, and when the source picture
- * shows the same value then (a source hit of the same masked value), which a redact op does hide: with no frame and no
- * zoom the export shows the source as it is, so there only a hit at the place it was read (`canvasBox`) counts.
+ * shows the same value then (a source hit of the same masked value), which a redact op does hide: where the export shows
+ * the source as it is (exportShowsSourceAsIs), only a hit at the place it was read (`canvasBox`) counts.
  */
 export function leakOverlay(
     project: EditProject,
@@ -1189,8 +1225,7 @@ export function leakOverlay(
 
     // The source's reads sit up to 300 ms off the export's, as leakSourceBox takes them.
     const hitSlackUs = 300_000;
-    const zoomed = project.zooms.some((zoom) => zoom.startUs < options.toUs && zoom.endUs > options.fromUs);
-    const asIs = !project.frame && !zoomed;
+    const asIs = exportShowsSourceAsIs(project, options);
     const at = options.canvasBox;
     const meetsBox = (box: FractionBox) =>
         !at ||
