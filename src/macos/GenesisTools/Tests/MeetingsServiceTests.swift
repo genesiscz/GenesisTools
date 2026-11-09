@@ -318,7 +318,8 @@ final class MeetingsServiceTests: XCTestCase {
 
     private func makeService() -> MeetingsService {
         let log = commands!
-        return MeetingsService(folder: folder, timing: .init(helloTimeout: 2, startThrottle: 30, refusedBackoff: 60, idleClose: 60),
+        return MeetingsService(folder: folder, timing: .init(helloTimeout: 2, startThrottle: 30, refusedBackoff: 60, idleClose: 60,
+                                                             reconnectDelay: 0.05),
                                pid: 4242, startService: {
                                    log.starts += 1
                                    if let failure = log.startFailure { throw failure }
@@ -468,6 +469,30 @@ final class MeetingsServiceTests: XCTestCase {
         // The new connection sends the kept subscription on its own, after its hello.
         for _ in 0..<150 where fake.count("subscribe") < 2 { try await Task.sleep(nanoseconds: 20_000_000) }
         XCTAssertEqual(fake.count("subscribe"), 2, "the new connection subscribed again")
+    }
+
+    /// F6 drops the 5 s timer and lives on these events, so a kept subscription connects again by itself after the
+    /// service hung up (a code change, a crash), with no read to open the connection, and tells the subscriber that
+    /// events were missed meanwhile; without a subscription nothing connects.
+    func testAKeptSubscriptionConnectsAgainWithoutARead() async throws {
+        try writeServiceEntry()
+        let service = makeService()
+        var resumed = 0
+        service.onSubscriptionResumed = { resumed += 1 }
+        _ = try await service.subscribe(meeting: Self.design, events: ["meeting.changed"])
+        XCTAssertEqual(fake.count("hello"), 1)
+        XCTAssertEqual(resumed, 0, "the first subscription missed nothing")
+
+        fake.hangUp()
+        for _ in 0..<150 where fake.count("subscribe") < 2 || resumed == 0 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(fake.count("hello"), 2, "the kept subscription opened a new connection")
+        XCTAssertEqual(fake.count("subscribe"), 2, "and subscribed on it")
+        XCTAssertEqual(resumed, 1, "the subscriber hears that events between the connections were missed")
+        XCTAssertEqual(commands.runs, [], "no read ran")
+
+        service.unsubscribe()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fake.count("hello"), 2, "without a subscription nothing connects again")
     }
 
     func testACancelledReadIsCancelledOnTheWireAndRunsNoCommand() async throws {
