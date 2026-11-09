@@ -23,15 +23,23 @@ final class CapturePicker {
     private var anchor = CGPoint.zero
     private var countdown: CaptureCountdown?
     private var area: AreaSelection?
+    /// Whether the open picker took the keyboard; a redraw after the targets load keeps it.
+    private var takesFocus = true
 
     var isVisible: Bool { panel.isVisible }
 
-    /// Opens the picker under the pointer, on the front window of the app the person was in.
-    func show() {
+    /// Opens the picker under the pointer, on the front window of the app the person was in. Without `focus`
+    /// (`--no-focus`, `window.show { focus: false }`) it comes to the front and that app keeps the keyboard.
+    func show(focus: Bool = true) {
         if panel.isVisible {
-            panel.window.makeKeyAndOrderFront(nil)
+            if focus {
+                panel.window.makeKeyAndOrderFront(nil)
+            } else {
+                panel.window.orderFrontRegardless()
+            }
             return
         }
+        takesFocus = focus
         model.reload()
         anchor = NSEvent.mouseLocation
         let front = NSWorkspace.shared.frontmostApplication.flatMap { app in
@@ -84,7 +92,7 @@ final class CapturePicker {
                 self?.selectArea()
                 return .handled
             }
-        panel.present(view, near: anchor) { [weak self] in self?.cancel() }
+        panel.present(view, near: anchor, focus: takesFocus) { [weak self] in self?.cancel() }
     }
 
     private func refresh(preferredPid: Int32?) async {

@@ -24,7 +24,8 @@ struct RecorderRequest {
     var export: String?
     var out: String?
     var json = false
-    /// `--no-focus`: the editor opens behind the front window and the app is not activated (tests, agents).
+    /// `--no-focus`: the editor opens behind the front window and the app is not activated (tests, agents); the
+    /// library goes behind too, and the picker comes to the front without the keyboard.
     var focus = true
     var snapshot: String?
     var width: CGFloat = 1440
@@ -148,7 +149,7 @@ package func runRecorder(_ args: [String]) -> Never {
             MainActor.assumeIsolated {
                 if let edit = next.edit { EditorWindows.shared.open(path: edit, focus: next.focus, atSeconds: next.atSeconds, tab: next.tab) }
                 if next.library { LibraryWindow.shared.show(focus: next.focus) }
-                if next.picker { CapturePicker.shared.show() }
+                if next.picker { CapturePicker.shared.show(focus: next.focus) }
             }
         }
         RecorderMenu.shared.install()
@@ -158,7 +159,7 @@ package func runRecorder(_ args: [String]) -> Never {
         RecorderServiceHost.startForFace()
         if let edit = request.edit { EditorWindows.shared.open(path: edit, focus: request.focus, atSeconds: request.atSeconds, tab: request.tab) }
         if request.library { LibraryWindow.shared.show(focus: request.focus) }
-        if request.picker { CapturePicker.shared.show() }
+        if request.picker { CapturePicker.shared.show(focus: request.focus) }
         app.run()
     }
     exit(0)

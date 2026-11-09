@@ -299,8 +299,9 @@ system audio, microphone, the drawn cursor, the shortcuts overlay and the camera
 recorder start` with those flags, the one start path the menu uses too. The panel's Shortcuts section rebinds or
 turns off each global shortcut: open the picker (⌘7), start with the picker's options without it (⌥⌘7), stop (⌥⌘8),
 pause or resume (⌥⌘9) and mark (⌥⌘0). Stop, pause and mark hold their keys only while a recording runs, unless "Hold
-stop, pause and mark keys" is on. `GenesisTools --recorder --picker` opens it; with `--snapshot <png>` (and
-`--shortcuts`) it draws the panel over made-up targets.
+stop, pause and mark keys" is on. `GenesisTools --recorder --picker` opens it; with `--no-focus` (or the service's
+`window.show { which: "picker", focus: false }`) it comes to the front without taking the keyboard from the app in
+front, and its first click takes it. With `--snapshot <png>` (and `--shortcuts`) it draws the panel over made-up targets.
 
 An area is `--region x,y,width,height` in global screen points from the top-left corner (CoreGraphics), recorded in
 ax-tool's region mode. `--idle-fps` and `--threshold` reach the capture; without them a movie keeps one rate.

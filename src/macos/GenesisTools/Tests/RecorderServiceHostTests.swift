@@ -157,7 +157,7 @@ private final class FakeFace: RecorderHostFace {
     }
 
     func showLibrary(focus: Bool) { shown.append("library:\(focus)") }
-    func showPicker() { shown.append("picker") }
+    func showPicker(focus: Bool) { shown.append("picker:\(focus)") }
     func openWindows() -> [String: Any] { windows }
 
     func startCamera(folder: URL) async -> CameraBubble.StartAnswer {
@@ -357,8 +357,9 @@ final class RecorderServiceHostTests: XCTestCase {
     func testWindowShowAndListAnswerFromTheFace() async throws {
         _ = try await connectedHost()
         _ = try await ask(20, "window.show", ["which": "library", "focus": false])
-        _ = try await ask(21, "window.show", ["which": "picker"])
-        XCTAssertEqual(face.shown, ["library:false", "picker"])
+        _ = try await ask(21, "window.show", ["which": "picker", "focus": false])
+        _ = try await ask(24, "window.show", ["which": "picker"])
+        XCTAssertEqual(face.shown, ["library:false", "picker:false", "picker:true"], "the picker gets focus as the library does")
         let wrong = try await ask(22, "window.show", ["which": "hub"])
         XCTAssertEqual(errorCode(wrong), -32602)
         let list = try await result(23, "window.list")

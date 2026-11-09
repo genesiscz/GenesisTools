@@ -341,8 +341,9 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
     public var isVisible: Bool { window.isVisible }
 
     /// Shows the picker with its top centred under `anchor` (Cocoa screen point), inside that screen, and gives it
-    /// the keyboard without activating the app.
-    public func present(_ view: some View, near anchor: CGPoint, onDismiss: @escaping () -> Void) {
+    /// the keyboard without activating the app. Without `focus` it only comes to the front and the app in front keeps
+    /// the keyboard; the panel's first click takes it (`FirstMouseHostingView`).
+    public func present(_ view: some View, near anchor: CGPoint, focus: Bool = true, onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
         // A fresh hosting view each time: a reused one that had been on screen measured 0x0 after a new root view, so
         // the second picker of a session opened invisible and the recorder waited for a choice nobody could see.
@@ -354,7 +355,11 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? CGRect(origin: .zero, size: size)
         window.setFrame(RecordingPanelLayout.picker(size: size, anchor: anchor, visible: visible), display: true)
-        window.makeKeyAndOrderFront(nil)
+        if focus {
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            window.orderFrontRegardless()
+        }
     }
 
     /// The content's size, read before the sizing options are cleared: with none, `fittingSize` is 0 x 0. From then
