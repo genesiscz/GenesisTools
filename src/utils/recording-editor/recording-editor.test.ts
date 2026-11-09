@@ -2355,6 +2355,69 @@ describe("edit project (edit.json)", () => {
         expect(subtitleCues(transcriptLines(raw, fast), fast)[0]).toMatchObject({ fromUs: 0, toUs: 750_000 });
     });
 
+    describe("subtitles follow the burned-in captions", () => {
+        test("subtitles keep a line whose start or middle is cut, as the burned-in caption shows it", () => {
+            const raw = {
+                text: "",
+                segments: [
+                    { text: "First.", start: 1, end: 3.8 },
+                    { text: "Um, then we pick the newest mail.", start: 4, end: 7.5 },
+                    { text: "Gone.", start: 9, end: 9.5 },
+                ],
+            };
+            const cuesOf = (cut: { from: number; to: number }) => {
+                const project = applyOp(wholeProject(source), { op: "cut", ...cut });
+                const lines = transcriptLines(raw, project);
+                return {
+                    plays: lines.map((line) => line.plays),
+                    cues: subtitleCues(lines, project).map((cue) => [cue.text, cue.fromUs, cue.toUs]),
+                };
+            };
+
+            // The start is cut: the line shows from the cut on, where the burned-in caption shows it.
+            expect(cuesOf({ from: 3.9, to: 4.4 })).toEqual({
+                plays: [1, 3.9, 8.5],
+                cues: [
+                    ["First.", 1_000_000, 3_800_000],
+                    ["Um, then we pick the newest mail.", 3_900_000, 7_000_000],
+                    ["Gone.", 8_500_000, 9_000_000],
+                ],
+            });
+            // The middle is cut: the two kept pieces touch in the output, so the line is one cue.
+            expect(cuesOf({ from: 5.5, to: 6 })).toEqual({
+                plays: [1, 4, 8.5],
+                cues: [
+                    ["First.", 1_000_000, 3_800_000],
+                    ["Um, then we pick the newest mail.", 4_000_000, 7_000_000],
+                    ["Gone.", 8_500_000, 9_000_000],
+                ],
+            });
+            // The end is cut: the cue ends at the cut, as the caption does, and does not run on into the next part.
+            expect(cuesOf({ from: 7, to: 8 }).cues[1]).toEqual([
+                "Um, then we pick the newest mail.",
+                4_000_000,
+                7_000_000,
+            ]);
+            // The whole line is cut: no cue, and plays is null.
+            expect(cuesOf({ from: 3.9, to: 7.6 })).toEqual({
+                plays: [1, null, 5.3],
+                cues: [
+                    ["First.", 1_000_000, 3_800_000],
+                    ["Gone.", 5_300_000, 5_800_000],
+                ],
+            });
+            // A line that starts on the edge of a cut has no kept moment before it: it starts where the cut is.
+            expect(cuesOf({ from: 3.8, to: 4 })).toEqual({
+                plays: [1, 3.8, 8.8],
+                cues: [
+                    ["First.", 1_000_000, 3_800_000],
+                    ["Um, then we pick the newest mail.", 3_800_000, 7_300_000],
+                    ["Gone.", 8_800_000, 9_300_000],
+                ],
+            });
+        });
+    });
+
     test("writes every field the Swift decoder needs and refuses a newer version", () => {
         const dir = mkdtempSync(join(tmpdir(), "edit-project-"));
         const path = join(dir, "edit.json");

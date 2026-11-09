@@ -3780,7 +3780,7 @@ export function addMarker(project: EditProject, atUs: number, label?: string): E
 export interface TranscriptLine {
     from: number;
     to: number;
-    /** Output seconds where the line starts in the current edit; null when its middle was cut. */
+    /** Output seconds of the line's first kept moment in the current edit; null when no part of it plays. */
     plays: number | null;
     text: string;
 }
@@ -3810,17 +3810,41 @@ export function transcriptLines(raw: unknown, project: EditProject): TranscriptL
         })
         .filter((segment) => segment.text.trim())
         .map((segment) => {
-            // A line whose middle was cut is cut: its start alone sat on the edge of the clip before the cut.
-            const middle = outputTimeOf(project, Math.round(((segment.start + segment.end) / 2) * 1_000_000));
-            const plays =
-                middle === undefined ? undefined : outputTimeOf(project, Math.round(segment.start * 1_000_000));
+            const from = round(segment.start);
+            const to = round(segment.end);
+            const first = transcriptLineSpans(project, { from, to })[0];
             return {
-                from: round(segment.start),
-                to: round(segment.end),
-                plays: plays === undefined ? null : round(plays / 1_000_000),
+                from,
+                to,
+                plays: first === undefined ? null : round(first.fromUs / 1_000_000),
                 text: segment.text.trim(),
             };
         });
+}
+
+/**
+ * Where a transcript line shows in the output, as the burned-in captions show it (Captions.swift
+ * CaptionTrack.line(atSourceUs:)): at every kept moment of its source range, pieces that touch in the output joined.
+ * A start that only touches the end of the clip before a cut is no kept moment, so it gives no piece there.
+ */
+export function transcriptLineSpans(
+    project: EditProject,
+    line: Pick<TranscriptLine, "from" | "to">
+): Array<{ fromUs: number; toUs: number }> {
+    const spans = outputSpansOf(project, Math.round(line.from * 1_000_000), Math.round(line.to * 1_000_000));
+    const joined: Array<{ fromUs: number; toUs: number }> = [];
+
+    for (const span of spans) {
+        const last = joined.at(-1);
+
+        if (last && span.fromUs === last.toUs) {
+            last.toUs = span.toUs;
+        } else {
+            joined.push({ ...span });
+        }
+    }
+
+    return joined;
 }
 
 /** The lines whose text holds `query`, case and accents ignored. */
