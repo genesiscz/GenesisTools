@@ -1,6 +1,25 @@
 import AppKit
 import SwiftUI
 
+/// What the capture picker does when another app or window takes the keyboard. Settings → Recorder → Recording.
+enum CapturePickerFocusLoss: String, CaseIterable, Identifiable {
+    /// It stays until its close control, Escape, a choice or the menu bar's start: agents' apps took the focus and
+    /// closed it under the person (2026-11-09).
+    case stayOpen
+    /// It closes as a cancel, the way it did before.
+    case close
+
+    static let key = "recorder.picker.focusLoss"
+
+    var id: String { rawValue }
+
+    var closesPicker: Bool { self == .close }
+
+    static func load(_ defaults: UserDefaults = .standard) -> CapturePickerFocusLoss {
+        defaults.string(forKey: key).flatMap(Self.init(rawValue:)) ?? .stayOpen
+    }
+}
+
 /// The capture picker (⌘7 by default, from any app): what to record (a window, an app, a display or an area) and the
 /// recording's options in one panel. A choice starts `tools recorder start` through `RecorderMenu.startRecording`,
 /// the one start path; with the countdown on, as its last second begins (see `CaptureCountdown`).
@@ -31,6 +50,7 @@ final class CapturePicker {
     /// Opens the picker under the pointer, on the front window of the app the person was in. Without `focus`
     /// (`--no-focus`, `window.show { focus: false }`) it comes to the front and that app keeps the keyboard.
     func show(focus: Bool = true) {
+        panel.closesOnFocusLoss = CapturePickerFocusLoss.load().closesPicker
         if panel.isVisible {
             if focus {
                 panel.window.makeKeyAndOrderFront(nil)
@@ -60,6 +80,7 @@ final class CapturePicker {
 
     /// Settings changed in the settings window: an open picker shows the stored options again.
     func preferencesChanged() {
+        panel.closesOnFocusLoss = CapturePickerFocusLoss.load().closesPicker
         guard panel.isVisible else { return }
         model.reloadFromDefaults()
         CameraBubble.shared.optionChanged(model.options.camera)

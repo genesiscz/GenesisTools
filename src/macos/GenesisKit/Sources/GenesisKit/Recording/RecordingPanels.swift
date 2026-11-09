@@ -321,12 +321,16 @@ enum RecordingPanelChrome {
     }
 }
 
-/// The floating window that holds the target picker. It closes, as a cancel, when it loses the keyboard (a click in
-/// another app or window). Public for a host with its own picker (the recorder's capture picker).
+/// The floating window that holds the target picker. By default it closes, as a cancel, when it loses the keyboard (a
+/// click in another app or window); `closesOnFocusLoss` false keeps it until its close control, Escape or a choice.
+/// Public for a host with its own picker (the recorder's capture picker).
 @MainActor
 public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
     public let window: RecordingPickerWindow
     private var onDismiss: (() -> Void)?
+    /// Whether losing the keyboard closes the picker as a cancel. The recorder's capture picker sets it from its
+    /// setting (stay open by default): agents' apps that take the focus closed it under the person (2026-11-09).
+    public var closesOnFocusLoss = true
 
     override public init() {
         window = RecordingPickerWindow(contentRect: CGRect(x: 0, y: 0, width: 400, height: 420),
@@ -385,6 +389,10 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
     }
 
     public func windowDidResignKey(_ notification: Notification) {
+        guard closesOnFocusLoss else {
+            PerfLog.mark("recording.picker stays open: lost the keyboard to \(NSApp.keyWindow?.title ?? "another app")")
+            return
+        }
         guard window.isVisible, let onDismiss else { return }
         PerfLog.mark("recording.picker cancelled: lost the keyboard to \(NSApp.keyWindow?.title ?? "another app")")
         self.onDismiss = nil
