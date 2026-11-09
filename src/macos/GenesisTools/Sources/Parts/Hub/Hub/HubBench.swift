@@ -197,6 +197,7 @@ enum HubBench {
             if only.contains("reveal"), model.mode == .worktrees { addSidebarReveal() }
             if only.contains("threads"), model.mode == .prs { addThreadsLanding() }
             if only.contains("commitlink"), model.mode == .prs { addCommitLink() }
+            if only.contains("headmove"), model.mode == .prs { addHeadMove() }
             PerfLog.mark("hub.bench start: \(steps.count) steps, panes \(model.panes.map(\.rawValue).joined(separator: ","))")
             guard ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AX"] == "1" else {
                 tick()
@@ -413,6 +414,117 @@ enum HubBench {
                 prs.request(ref, commit: commit)
             }, delay: 0.02))
             steps.append(wait())
+        }
+
+        /// `headmove` (opt-in, PRs mode): the whole PR on screen at an older head, then the forge's answer with its real
+        /// head, as a push or a force push lands while the reader looks at it. `GENESIS_HUB_BENCH_HEADMOVE=<pr ref>@<sha>`
+        /// names the PR and the head it starts at: an ancestor of the real head is a push, any other commit a force push.
+        /// The PR opens at that head (its row and detail set in memory, the detail counted fresh so no forge answer moves
+        /// it first); once its diff is on the page, the bench moves it as `loadDetail` does. app-perf.log gets
+        /// `hub.bench headmove moved <ms>` (from the move to the new head's diff on the page), whether the review and its
+        /// page stayed and whether the file list went empty meanwhile, then `hub.bench headmove check`: the files on
+        /// screen against a fresh load of the new head's diff, which must match.
+        private func addHeadMove() {
+            let env = ProcessInfo.processInfo.environment
+            guard let spec = env["GENESIS_HUB_BENCH_HEADMOVE"], let at = spec.lastIndex(of: "@"),
+                  let ref = HubPRRef(String(spec[..<at])) else {
+                PerfLog.mark("hub.bench headmove: set GENESIS_HUB_BENCH_HEADMOVE=<pr ref>@<older head>")
+                return
+            }
+            let start = String(spec[spec.index(after: at)...])
+            let prs = model.prs
+            order.append("headmove")
+            var real: String?
+            var original: ReviewModel?
+            var blanked = false
+            var opened: CFAbsoluteTime = 0
+            var moved: CFAbsoluteTime = 0
+            var polls = 0
+            func headOf(_ scope: DiffScope) -> String? {
+                if case .range(_, let head, _, _) = scope { return head }
+                return nil
+            }
+            /// The review once its scope ends at `head`, its load answered and its files are on the page.
+            func settled(at head: String?) -> ReviewModel? {
+                guard let review = prs.review, let head, headOf(review.scope) == head, !review.loading, review.diffOnPage else { return nil }
+                return review
+            }
+            func check(_ review: ReviewModel) {
+                let (scope, repo, shown) = (review.scope, review.repo, review.files)
+                Task.detached(priority: .userInitiated) {
+                    let result: String
+                    do {
+                        let fresh = try GitWorkingTreeSource(repo: repo).load(scope: scope).files
+                        let missing = Set(fresh.map(\.id)).symmetricDifference(shown.map(\.id)).count
+                        let changed = zip(fresh.sorted { $0.id < $1.id }, shown.sorted { $0.id < $1.id }).filter { $0 != $1 }.count
+                        result = missing + changed == 0 ? "match: \(fresh.count) files"
+                            : "MISMATCH: \(missing) files only on one side, \(changed) differ, of \(fresh.count)"
+                    } catch {
+                        result = "the fresh load failed: \(error)"
+                    }
+                    await MainActor.run { PerfLog.mark("hub.bench headmove check \(result)") }
+                }
+            }
+            func waitMoved() -> Step {
+                Step(scenario: "headmove.wait", action: { [weak self] in
+                    guard let self else { return }
+                    polls += 1
+                    if prs.review?.files.isEmpty ?? true { blanked = true }
+                    if let review = settled(at: real) {
+                        let ms = Int((CFAbsoluteTimeGetCurrent() - moved) * 1000)
+                        PerfLog.mark("hub.bench headmove moved \(ms) ms: \(review === original ? "the same review and page" : "a new review and page"), "
+                            + "\(blanked ? "the file list went empty" : "the file list never went empty"), \(Plural.count(review.files.count, "file"))")
+                        check(review)
+                        steps.insert(Step(scenario: "headmove.check", action: {}, delay: 10.0), at: index)
+                        return
+                    }
+                    guard polls < 6000 else {
+                        PerfLog.mark("hub.bench headmove gave up waiting for \(real ?? "-")")
+                        return
+                    }
+                    steps.insert(waitMoved(), at: index)
+                }, delay: 0.02)
+            }
+            func waitOpened() -> Step {
+                Step(scenario: "headmove.wait", action: { [weak self] in
+                    guard let self else { return }
+                    polls += 1
+                    if let review = settled(at: start) {
+                        original = review
+                        PerfLog.mark("hub.bench headmove opened at \(start.prefix(10)) in \(Int((CFAbsoluteTimeGetCurrent() - opened) * 1000)) ms, "
+                            + "\(Plural.count(review.files.count, "file")); moving to \(real?.prefix(10) ?? "-")")
+                        // The page fills the first diff batch by batch after its first paint: the move waits for the
+                        // whole of it (`page diff.files … all on the page` in app-perf.log), as a reader's diff has.
+                        steps.insert(Step(scenario: "headmove.settle", action: {}, delay: 10.0), at: index)
+                        steps.insert(Step(scenario: "headmove.move", action: {
+                            moved = CFAbsoluteTimeGetCurrent()
+                            PerfLog.mark("hub.bench headmove move: \(prs.benchMoveHead(ref, to: real ?? start))")
+                        }, delay: 0.02), at: index + 1)
+                        steps.insert(waitMoved(), at: index + 2)
+                        return
+                    }
+                    guard polls < 6000 else {
+                        PerfLog.mark("hub.bench headmove gave up waiting for the diff at \(start)")
+                        return
+                    }
+                    steps.insert(waitOpened(), at: index)
+                }, delay: 0.02)
+            }
+            steps.append(Step(scenario: "headmove.away", action: {
+                if let other = prs.prs.first(where: { !ref.matches($0) }) {
+                    prs.select(other, opened: false)
+                }
+            }, delay: 4.0))
+            steps.append(Step(scenario: "headmove.open", action: {
+                let answer = prs.benchSetHead(ref, head: start)
+                real = answer.real
+                PerfLog.mark("hub.bench headmove open: \(answer.note)")
+                opened = CFAbsoluteTimeGetCurrent()
+                if let row = prs.prs.first(where: ref.matches) {
+                    prs.select(row, opened: false)
+                }
+            }, delay: 0.02))
+            steps.append(waitOpened())
         }
 
         /// The PR's threads as the host answered them, kept by `threads.wait` for every later step.
