@@ -70,17 +70,16 @@ private struct HubAppearanceSettings: View {
                         Text("Reduce transparency is on, so the hub shows solid surfaces.")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
+                } else {
+                    // Glass belongs to the Hub style, so its switch shows only there, under the style it changes. The
+                    // Native style takes its whole look from General → Theme (the row above), and a dimmed Glass switch
+                    // beside "Theme: Glass" read as a contradiction (hub UX pass C54, 2026-11-10).
+                    Divider()
+                    NativeSettingsToggle(
+                        "Glass",
+                        detail: "Let the desktop show through the hub, blurred. ⌘⇧G in the hub does the same.",
+                        identifier: "hub.glass", isOn: $preferences.glass)
                 }
-            }
-            NativeSettingsCard {
-                // Glass belongs to the Hub style; the Native style takes its look from General → Theme alone.
-                NativeSettingsToggle(
-                    "Glass",
-                    detail: native
-                        ? "Native follows General → Theme."
-                        : "Let the desktop show through the hub, blurred. ⌘⇧G in the hub does the same.",
-                    identifier: "hub.glass", isOn: $preferences.glass)
-                    .disabled(native)
             }
             Text("Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -196,6 +195,9 @@ private struct HubPaneSettings: View {
 private struct HubHistorySettings: View {
     @ObservedObject var preferences: HubPreferences
 
+    /// Where `tools hub nav` keeps the places.
+    static let logPath = (NSHomeDirectory() as NSString).appendingPathComponent(".genesis-tools/hub/data.db")
+
     var body: some View {
         VStack(spacing: 18) {
             NativeSettingsCard(
@@ -208,9 +210,7 @@ private struct HubHistorySettings: View {
                     selection: $preferences.agentNavigation, minSegmentWidth: 90)
             }
             NativeSettingsCard("History") {
-                NativeSettingsRow(
-                    "Keep the last", detail: "Older places leave History, Back and Forward. The log is in ~/.genesis-tools/hub/data.db."
-                ) {
+                NativeSettingsRow("Keep the last", detail: "Older places leave History, Back and Forward.") {
                     HStack(spacing: 8) {
                         NativeSettingsNumberPicker(
                             "Places kept",
@@ -219,6 +219,18 @@ private struct HubHistorySettings: View {
                             identifier: "hub.nav.limit", value: $preferences.navigationLimit)
                         Text("places").font(.system(size: 12)).foregroundStyle(.secondary)
                     }
+                }
+                Divider()
+                // The database path is a diagnostic detail: it sits behind a button, not in the retention choice's text.
+                NativeSettingsRow("History log", detail: "The places live in the hub's database, kept by tools hub nav.") {
+                    Button("Reveal in Finder") { PathOpener.reveal(Self.logPath) }
+                        .buttonStyle(.bordered)
+                        .nativeSettingsPointer()
+                        .instantTooltip((Self.logPath as NSString).abbreviatingWithTildeInPath)
+                        .contextMenu {
+                            Button("Copy Path") { Clipboard.copy(Self.logPath, what: "path") }
+                        }
+                        .accessibilityIdentifier("hub.nav.revealLog")
                 }
             }
             Text("⌘[ and ⌘] go back and forward; ⌘Y lists every place. Changes apply to a running hub at once.")
