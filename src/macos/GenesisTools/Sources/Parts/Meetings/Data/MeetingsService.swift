@@ -247,7 +247,8 @@ final class MeetingsService {
         self.startService = startService
     }
 
-    /// Calls one method. Throws `Unavailable` when the service does not answer it (the caller runs the command), the
+    /// Calls one method. Throws `Unavailable` when the service does not answer it or answers a shape this app cannot
+    /// decode (the caller runs the command), the
     /// `MeetingsCLI.Failure` the command would have thrown when the service refuses it (its `code` is the refusal's
     /// `data.code`, `no-transcript-source` and the like), and `CancellationError` when the task was cancelled (the
     /// service hears `$/cancel`).
@@ -328,9 +329,13 @@ final class MeetingsService {
             if case .timeout = failure { drop(client) }
             return Unavailable(reason: "\(method): \(failure.localizedDescription)")
         case let decoding as DecodeFailure:
-            return MeetingsCLI.Failure(
-                sentence: "The app and the Meetings service expect different formats. Updating both usually fixes it.",
-                detail: "\(method): \(decoding.error)\n\(decoding.preview)")
+            // A service this app cannot read (another checkout or version: the window's hello names no code) is not the
+            // answer. The command answers, as with no service, and shows its own format error when it cannot be read
+            // either; this service is not asked again before the backoff.
+            HubPerf.log("meetings.service: \(method) answered a shape the window cannot read (\(decoding.error)); "
+                + "the command answers it: \(decoding.preview.prefix(300))")
+            drop(client, backoff: timing.refusedBackoff)
+            return Unavailable(reason: "\(method): the answer does not decode")
         default:
             return Unavailable(reason: "\(method): \(error)")
         }
