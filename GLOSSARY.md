@@ -37,7 +37,16 @@ these names.
   spot and tone policy lives in one place. A Moment also names the screen frame on each display at its spot when the
   screen was recorded then.
 - **Review row**: one thing to review in a meeting: an item or a question, with its Moment, its answer choices and its
-  state. The window and the terminal show the same rows in the same order.
+  state. The window and the terminal show the same rows in the same order (`src/meetings/lib/review-rows.ts`,
+  `tools meetings rows`).
+- **Presumed**: the choice of a term that is the best candidate the engine scored, other than its suggested spelling
+  and the words as heard. A term with no such candidate has no presumed choice. A review row offers it as a respelling.
 - **Decision journal**: the append-only record of who decided what in a meeting, when and why: each confirm, reject,
   respell, answer, skip or rename, with its actor (the window, `listen`, an agent and its session, a rule), its reason,
-  and the items it changed before and after under one token that an Undo reverts.
+  and the items it changed before and after under one token that an Undo reverts. Comments sent to the listening agent
+  are entries too, which no Undo reverts. An agent that drives the Meetings window through accessibility (macos-control)
+  clicks as the window, so the journal records it as the window actor ("you"): the service knows a caller only by the
+  hello of its connection.
+- **Reason**: why a decision was made, in the decider's words: the window's comment field, `--reason` on a command,
+  `listen --comment` on an answer, an agent's stated reason. The decision journal keeps it on the entry, and each item it
+  decided keeps it too.
