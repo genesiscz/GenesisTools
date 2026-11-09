@@ -2614,40 +2614,6 @@ private struct HubModePicker: View {
     }
 }
 
-/// A row at the top of the Agents sidebar that opens another face of the app: a title, what it opens,
-/// the row hover and the pointer.
-private struct AgentsLaunchRow: View {
-    let title: String
-    let detail: String
-    let symbol: String
-    let tooltip: String
-    let action: () -> Void
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: symbol)
-                .font(.system(size: 12))
-                .foregroundColor(ReviewPalette.dim)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 12.5))
-                Text(detail).font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "arrow.up.forward.app")
-                .font(.system(size: 10))
-                .foregroundColor(ReviewPalette.dim)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .contentShape(Rectangle())
-        .rowButton(action)
-        .padding(.horizontal, 6)
-        .instantTooltip(tooltip)
-        .accessibilityLabel(Text("\(title): \(detail)"))
-    }
-}
-
 /// The mode switch in the folded sidebar's rail: the six modes as one column of icons. At 900 pt the
 /// sidebar folds and the switch used to fold with it, so reaching Worktrees took two clicks (H13).
 private struct HubModeRail: View {
@@ -2716,7 +2682,7 @@ private struct SessionListView: View {
         switch model.mode {
         case .sessions: return "Filter sessions, projects, accounts…"
         case .inbox: return "Filter waiting sessions and questions…"
-        case .timeline: return "Filter the activity: title, project, branch, author, sha…"
+        case .timeline: return "Filter activity, authors, SHAs…"
         case .agents: return "Filter agents, sessions, models, accounts…"
         case .usage: return "Filter accounts…"
         case .worktrees, .prs: return "Filter repos, branches…"
@@ -2761,11 +2727,8 @@ private struct SessionListView: View {
                     model.paletteRequest = ""
                 }
                 .foregroundColor(ReviewPalette.dim)
-                // A gear is the settings glyph; the shield read as a security warning (H19).
-                IconButton(systemName: "gearshape", tooltip: HubKeymap.hint("Settings", "hub.app.settings")) {
-                    AppMenuTarget.shared.openSettings(nil)
-                }
-                .foregroundColor(ReviewPalette.dim)
+                // Settings, plus the widget's and Clicky's where the build has them (Hub/HubSettingsGear.swift).
+                HubSettingsGear()
                 GlassToggle()
             }
             .padding(.horizontal, 12)
@@ -2835,28 +2798,6 @@ private struct SessionListView: View {
             } else if model.mode == .usage {
                 UsageListView(usage: model.usage, filter: model.filter)
             } else if model.mode == .agents {
-                // Staging: the widget and Clicky entries exist only in the Preview app (main.swift).
-                if NativeStaging.facesEnabled {
-                    // Each says what it opens: two bare names read as list entries nobody could place (H22).
-                    VStack(spacing: 2) {
-                        AgentsLaunchRow(
-                            title: "Widget",
-                            detail: "Opens the notch widget's settings",
-                            symbol: "rectangle.rightthird.inset.filled",
-                            tooltip: "Start the notch and side widget and open its settings: modules, edges and pinned sessions"
-                        ) { WidgetLaunch.start() }
-                        AgentsLaunchRow(
-                            title: "Clicky",
-                            detail: "Key sounds and the app's settings",
-                            symbol: "keyboard",
-                            tooltip: "Open the settings window at Clicky, the keyboard sounds"
-                        ) {
-                            guard AppParts.requirePart("clicky", for: "open Clicky's settings") else { return }
-                            FeatureSettingsLaunch.open(pageID: "clicky.sound")
-                        }
-                    }
-                    .padding(.bottom, 6)
-                }
                 AgentsListView(model: model, agents: model.agents)
             } else {
                 ScrollViewReader { proxy in

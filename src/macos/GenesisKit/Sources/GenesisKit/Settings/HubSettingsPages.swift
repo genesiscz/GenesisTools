@@ -21,7 +21,7 @@ public enum HubSettingsPages {
                 },
                 NativeSettingsPage(
                     id: panesPageID, title: "Panes", symbol: "rectangle.split.3x1", tint: .teal,
-                    subtitle: "Defaults for the diff, the Inbox, the PR overview, the Agents list, the Agent processes pane and the Worktree cleanup pane."
+                    subtitle: "Defaults for the diff, the Inbox, the PR overview, Activity, the Agents list, the Agent processes pane and the Worktree cleanup pane."
                 ) {
                     HubPaneSettings(preferences: preferences)
                 },
@@ -98,6 +98,8 @@ private struct HubPaneSettings: View {
     @AppStorage(HubAgentsEntry.openNewestKey) private var agentsOpenNewest = true
     @AppStorage(HubAgentsEntry.foldFinishedKey) private var agentsFoldFinished = true
     @AppStorage(HubPROverview.descriptionWholeKey) private var prDescriptionWhole = false
+    @AppStorage(HubActivityRows.allActionsKey) private var activityAllActions = false
+    @AppStorage(HubActivityRows.commitPrefixKey) private var activityCommitPrefix = false
 
     var body: some View {
         VStack(spacing: 18) {
@@ -121,6 +123,17 @@ private struct HubPaneSettings: View {
                     "Show each PR's whole description",
                     detail: "Off: a PR opens on the first paragraph of its description and Show description. The hub remembers what you open per PR.",
                     identifier: "hub.prs.descriptionWhole", isOn: $prDescriptionWhole)
+            }
+            NativeSettingsCard("Activity") {
+                NativeSettingsToggle(
+                    "Show every action on a row",
+                    detail: "Off: a hovered row shows open and copy, and one menu holds the rest. The right-click menu always lists every action.",
+                    identifier: "hub.activity.allActions", isOn: $activityAllActions)
+                Divider()
+                NativeSettingsToggle(
+                    "Start commit titles with their type and scope",
+                    detail: "Off: a commit row starts with what changed, and its tooltip and open row keep the whole title.",
+                    identifier: "hub.activity.commitPrefix", isOn: $activityCommitPrefix)
             }
             NativeSettingsCard("Agents list") {
                 NativeSettingsToggle(

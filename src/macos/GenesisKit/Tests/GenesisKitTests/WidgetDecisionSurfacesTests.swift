@@ -977,9 +977,7 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         > Claude Code reports the plan only for a stored login.
         >
         > a) A T3 change that only you would use.
-        >
         > b) A GenesisTools change.
-        >
         > c) Leave it.
 
         I recorded [❓ DECISION 2](https://example.org/d/2): as a).
