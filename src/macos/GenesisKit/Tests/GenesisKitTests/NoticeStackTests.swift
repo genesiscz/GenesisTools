@@ -51,6 +51,33 @@ final class NoticeStackTests: XCTestCase {
         XCTAssertEqual(model.waiting[first.id], "Undoing…")
     }
 
+    func testAPushUnderAWaitingNoticesIDEndsTheWait() {
+        let clock = ManualNoticeClock()
+        let model = stack(clock)
+        let id = model.push(StackedNotice(text: "Confirmed", actions: [.undo { _ in }]))
+        let undo = model.notices[0].actions[0]
+        model.press(undo, of: id)
+        XCTAssertEqual(model.waiting[id], "Undoing…")
+        model.push(StackedNotice(id: id, text: "Suggested again"))
+        XCTAssertNil(model.waiting[id], "the new notice under the same id is the wait's answer")
+        clock.advance(by: 6)
+        XCTAssertTrue(model.notices.isEmpty, "its clock runs: it leaves after the plain time")
+    }
+
+    /// The clock counts time across a sleep (`SystemNoticeClock` counts it since Wave B): a notice shown before the Mac
+    /// slept has used that time when the pointer stops the clocks after it wakes.
+    func testTimeThatPassedWhileTheMacSleptCountsAgainstANotice() {
+        let clock = ManualNoticeClock()
+        let model = stack(clock)
+        let id = model.push(StackedNotice(text: "Confirmed", actions: [.undo { _ in }]))
+        clock.advance(by: 25)
+        model.setPaused(true)
+        XCTAssertEqual(model.remaining(id) ?? -1, 5, accuracy: 0.001)
+        let system = SystemNoticeClock()
+        let monotonic = Double(clock_gettime_nsec_np(CLOCK_MONOTONIC)) / 1_000_000_000
+        XCTAssertEqual(system.now, monotonic, accuracy: 0.5, "the app's clock is the one that counts sleep")
+    }
+
     func testThePointerOverTheStackStopsEveryClock() {
         let clock = ManualNoticeClock()
         let model = stack(clock)
