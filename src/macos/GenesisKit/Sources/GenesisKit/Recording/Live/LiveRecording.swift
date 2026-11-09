@@ -43,6 +43,13 @@ public struct LiveRecording: Equatable, Identifiable, Sendable {
     public var lastError: String?
     /// False while there is no socket to send a command to.
     public var canControl = true
+    /// A movie recording's recorded time (arming, pauses and a rollover's gap left out, 0 again after a restart), as
+    /// its socket last said it; nil for a recorder that sends none, such as the meeting recorder.
+    public var recordedMs: Double?
+    /// When `recordedMs` came in.
+    public var recordedAt: Date?
+    /// False while the recorded time stands still although the state says recording: a segment arms.
+    public var recordedRunning = true
 
     public struct ConnectedDisplay: Equatable, Sendable {
         public var id: Int64
@@ -93,8 +100,12 @@ public struct LiveRecording: Equatable, Identifiable, Sendable {
         canControl && !isStopping && controls.contains(command.rawValue)
     }
 
+    /// What the clock shows: a movie's recorded time, which grows only while a segment records; without one, the time
+    /// since the entry appeared.
     public func elapsedMs(now: Date) -> Double {
-        max(0, now.timeIntervalSince(startedAt) * 1000)
+        guard let recordedMs, let recordedAt else { return max(0, now.timeIntervalSince(startedAt) * 1000) }
+        guard isRecording && recordedRunning else { return recordedMs }
+        return recordedMs + max(0, now.timeIntervalSince(recordedAt) * 1000)
     }
 
     public var displayNames: String {

@@ -156,6 +156,9 @@ export type LiveEntryChange = Partial<
     Pick<LiveEntry, "title" | "state" | "displays" | "frames" | "lastFrameAt" | "warning">
 >;
 
+/** What `notifyStatus` takes from a recorder's status: its state and warning, and a movie's recorded time. */
+export type LiveStatus = Pick<RecorderStatus, "state" | "warning" | "elapsedMs" | "elapsedRunning" | "limitMs">;
+
 /** Methods that answer after the recording's post-processing (OCR, the summary, the collect): a discard waits for it too. */
 const FINISHING_METHODS = new Set(["stop", "discard"]);
 
@@ -284,9 +287,47 @@ export class LiveRecordingServer {
         return { ...this.entry };
     }
 
+    /** Writes the change and notifies `state` when the state word changed. */
     update(change: LiveEntryChange): void {
-        if (this.closed) {
+        const before = this.apply(change);
+
+        if (!before) {
             return;
+        }
+
+        if (change.state && change.state !== before.state) {
+            this.emit("state", { state: change.state });
+        }
+
+        this.notifyWarning(before, change);
+    }
+
+    /**
+     * A recorder's status after one of its own state events: the entry takes its state and warning (and `change`), and
+     * every subscriber gets a `state` notification with the movie's recorded time even when the state word stayed, so
+     * a client's clock re-anchors on each start, arm, pause, rollover and restart. The entry file keeps no time: the
+     * socket is the live source.
+     */
+    notifyStatus(status: LiveStatus, change: LiveEntryChange = {}): void {
+        const before = this.apply({ ...change, state: status.state, warning: status.warning });
+
+        if (!before) {
+            return;
+        }
+
+        this.emit("state", {
+            state: status.state,
+            ...(status.elapsedMs === undefined ? {} : { elapsedMs: status.elapsedMs }),
+            ...(status.elapsedRunning === undefined ? {} : { elapsedRunning: status.elapsedRunning }),
+            ...(status.limitMs === undefined ? {} : { limitMs: status.limitMs }),
+        });
+        this.notifyWarning(before, { warning: status.warning });
+    }
+
+    /** The entry before the change, or undefined once the recording closed. */
+    private apply(change: LiveEntryChange): LiveEntry | undefined {
+        if (this.closed) {
+            return undefined;
         }
 
         const before = this.entry;
@@ -298,11 +339,10 @@ export class LiveRecordingServer {
 
         this.write();
         this.registration?.changed(change);
+        return before;
+    }
 
-        if (change.state && change.state !== before.state) {
-            this.emit("state", { state: change.state });
-        }
-
+    private notifyWarning(before: LiveEntry, change: LiveEntryChange): void {
         if ("warning" in change && change.warning !== before.warning) {
             this.emit("warning", { warning: change.warning ?? null });
         }

@@ -81,6 +81,8 @@ export class SessionRecorderControl extends RecorderControl {
     private target: RecordingTarget;
     private warning?: string;
     private elapsedMs = 0;
+    /** A segment records: the session is `recording`, not `starting` (arming), paused or finishing. */
+    private elapsedRunning = false;
     private limitMs?: number;
     private segments = 0;
     private readonly jobs: JobRegistry;
@@ -166,6 +168,7 @@ export class SessionRecorderControl extends RecorderControl {
             this.state = CONTROL_STATE[event.state];
             this.target = event.target;
             this.elapsedMs = event.elapsedMs;
+            this.elapsedRunning = event.state === "recording";
             this.limitMs = event.limitMs;
             this.segments = event.segments;
         } else if (event.event === "elapsed") {
@@ -186,6 +189,7 @@ export class SessionRecorderControl extends RecorderControl {
             displays: [],
             frames: 0,
             elapsedMs: this.elapsedMs,
+            elapsedRunning: this.elapsedRunning,
             segments: this.segments,
             ...(this.limitMs === undefined ? {} : { limitMs: this.limitMs }),
             ...(this.warning ? { warning: this.warning } : {}),
