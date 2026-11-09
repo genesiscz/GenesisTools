@@ -66,6 +66,7 @@ import {
     shortcutsOf,
     sourceTimeOf,
     TEXT_ALIGNS,
+    trackDrawsCursor,
     transcriptCachePath,
     transcriptLines,
     voiceoverExportSpans,
@@ -2977,7 +2978,7 @@ describe("edit project (edit.json)", () => {
         expect(applyOp(on, { op: "captions", show: false }).captions?.position).toBe("top");
     });
 
-    test("the drawn cursor changes only for a movie recorded without the system cursor", () => {
+    test("the drawn cursor changes only for a movie recorded without the system cursor, with its pictures", () => {
         const dir = workspace();
         const system = join(dir, "system.jsonl");
         const drawn = join(dir, "drawn.jsonl");
@@ -2987,7 +2988,15 @@ describe("edit project (edit.json)", () => {
         const withSystem = wholeProject({ ...source, cursor: system });
         expect(() => applyOp(withSystem, { op: "cursor", size: 2 })).toThrow("system cursor in its picture");
 
+        // The window draws the cursor only with its pictures beside the track; without them TS says the same.
         const withDrawn = wholeProject({ ...source, cursor: drawn });
+        expect(trackDrawsCursor(drawn)).toBe(false);
+        expect(describeProject(withDrawn, join(dir, "screen.edit.json")).cursor).toBeNull();
+        expect(() => applyOp(withDrawn, { op: "cursor", size: 2 })).toThrow("cursor pictures are missing");
+        mkdirSync(join(dir, "cursor-shapes"));
+        writeFileSync(join(dir, "cursor-shapes", "57a1d610df3e.png"), "png");
+        writeFileSync(join(dir, "cursor-shapes", "57a1d610df3e.json"), '{"hotX":0,"hotY":0,"width":16,"height":16}');
+        expect(trackDrawsCursor(drawn)).toBe(true);
         const bigger = applyOp(withDrawn, { op: "cursor", size: 2 });
         expect(bigger.cursor).toEqual({ show: true, size: 2, smoothing: 0.5, hideAfterMs: 0 });
         expect(applyOp(bigger, { op: "cursor", show: false }).cursor?.size).toBe(2);

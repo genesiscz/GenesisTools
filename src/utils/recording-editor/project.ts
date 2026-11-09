@@ -1787,13 +1787,18 @@ const cursorRowSchema = z.object({
     key: z.string().optional(),
 });
 
+/** The folder beside a cursor track that holds its cursor pictures (`<shape>.png` and `<shape>.json`), as the window reads it. */
+export function cursorShapesFolderOf(trackPath: string): string {
+    return join(dirname(trackPath), "cursor-shapes");
+}
+
 /**
- * Whether the movie was recorded without the system cursor, so the editor draws it: the track's first row then names
- * the cursor's image (`"shape"`). Reads only the start of the file.
+ * The cursor picture the track's first row names (`"shape"`), which the recorder writes only for a movie recorded
+ * without the system cursor; undefined for a movie with the system cursor in its picture. Reads only the file's start.
  */
-export function trackDrawsCursor(path: string | undefined): boolean {
+function firstCursorShape(path: string | undefined): string | undefined {
     if (!path || !existsSync(path)) {
-        return false;
+        return undefined;
     }
 
     const fd = openSync(path, "r");
@@ -1801,10 +1806,39 @@ export function trackDrawsCursor(path: string | undefined): boolean {
         const buffer = Buffer.alloc(512);
         const read = readSync(fd, buffer, 0, buffer.length, 0);
         const first = buffer.subarray(0, read).toString("utf8").split("\n")[0] ?? "";
-        return first.includes('"shape":');
+        return /"shape"\s*:\s*"([^"]+)"/.exec(first)?.[1];
     } finally {
         closeSync(fd);
     }
+}
+
+/**
+ * Whether the editor draws the cursor: the track names a cursor picture and that picture is beside it in
+ * cursor-shapes/. The same test as the window's CursorTrack.drawsCursor, so a track whose pictures were left behind
+ * (a copy) is not offered cursor settings the export cannot draw.
+ */
+export function trackDrawsCursor(path: string | undefined): boolean {
+    const shape = firstCursorShape(path);
+
+    if (!path || !shape) {
+        return false;
+    }
+
+    const folder = cursorShapesFolderOf(path);
+    return existsSync(join(folder, `${shape}.png`)) && existsSync(join(folder, `${shape}.json`));
+}
+
+/** Why the editor cannot `action` the cursor: the system cursor is in the picture, or the drawn cursor's pictures are gone. */
+function undrawnCursorError(path: string | undefined, action: string): Error {
+    if (path && firstCursorShape(path)) {
+        return new Error(
+            `this movie's cursor pictures are missing (${cursorShapesFolderOf(path)}), so the editor cannot ${action} its drawn cursor; copy the recording's cursor-shapes folder beside its cursor track`
+        );
+    }
+
+    return new Error(
+        `this movie has the system cursor in its picture, so the editor cannot ${action} it; record without --system-cursor to get a drawn cursor`
+    );
 }
 
 /** The recorder's `cursor.jsonl`: one `{t, x, y, click?}` row per change; an unreadable row is skipped. */
@@ -3816,9 +3850,7 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         }
         case "cursor": {
             if (!trackDrawsCursor(project.source.cursor)) {
-                throw new Error(
-                    "this movie has the system cursor in its picture, so the editor cannot change it; record without --system-cursor to get a drawn cursor"
-                );
+                throw undrawnCursorError(project.source.cursor, "change");
             }
 
             const { op: _op, ...change } = op;
@@ -4347,9 +4379,7 @@ function smoothCursor(project: EditProject, op: Extract<EditOp, { op: "cursorSmo
     }
 
     if (!trackDrawsCursor(project.source.cursor)) {
-        throw new Error(
-            "this movie has the system cursor in its picture, so the editor cannot smooth it; record without --system-cursor to get a drawn cursor"
-        );
+        throw undrawnCursorError(project.source.cursor, "smooth");
     }
 
     return { ...project, cursorSmooth: cursorSmoothSchema.parse({ ...project.cursorSmooth, ...change }) };

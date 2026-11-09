@@ -2,7 +2,7 @@ import { constants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, st
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { editProjectSchema } from "@genesiscz/utils/recording-editor/project";
+import { cursorShapesFolderOf, editProjectSchema } from "@genesiscz/utils/recording-editor/project";
 import {
     newVideoRecordingId,
     RECORDING_MANIFEST,
@@ -178,6 +178,14 @@ export async function duplicateRecording(
         if (path !== movie && !isUndoFile(path)) {
             clone(path, join(target, relative(movieFolder, path)));
         }
+    }
+
+    // No edit names the drawn cursor's pictures, but the window draws the cursor from them: they travel with the track.
+    const cursor = opened.project.source.cursor;
+    const shapes = cursor?.startsWith(movieFolder + sep) ? cursorShapesFolderOf(cursor) : undefined;
+
+    if (shapes && existsSync(shapes)) {
+        clone(shapes, join(target, relative(movieFolder, shapes)));
     }
 
     const project = editProjectSchema.parse(movedPaths(opened.project, movieFolder, target));

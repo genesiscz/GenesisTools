@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -401,6 +401,10 @@ describe("smooth cursor and old files", () => {
         const drawn = join(folder, "cursor.jsonl");
         writeFileSync(drawn, '{"t":0,"x":0.5,"y":0.5,"shape":"abc","pw":1440}\n');
         const project = wholeProject({ ...source, cursor: drawn });
+        expect(() => applyOp(project, op({ op: "cursorSmooth" }))).toThrow(/cursor pictures are missing/);
+        mkdirSync(join(folder, "cursor-shapes"));
+        writeFileSync(join(folder, "cursor-shapes", "abc.png"), "png");
+        writeFileSync(join(folder, "cursor-shapes", "abc.json"), '{"hotX":0,"hotY":0,"width":16,"height":16}');
         const on = applyOp(project, op({ op: "cursorSmooth", strength: 0.8 }));
         expect(on.cursorSmooth).toEqual({ strength: 0.8, jitterPx: 3, idleFadeSeconds: 2 });
         expect(applyOp(on, op({ op: "cursorSmooth", enabled: false })).cursorSmooth).toBeUndefined();
