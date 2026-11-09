@@ -163,6 +163,17 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(MomentPlayer.resumeOffset(pausedAt: 95.4, startSec: 95, rewindSec: 1, toneEndSec: nil), 0)
     }
 
+    /// The clip key is the same text for the same Moment every time: a JSON encoder may order keys differently between
+    /// two encodes, which made a pre-cut clip miss and cut again.
+    func testTheClipKeyNeverChangesForTheSameMoment() {
+        let params = MeetingsAPI.MomentParams(meeting: "m", target: .selection(from: LinePoint(atSec: 2, line: 0, fraction: 0.5),
+                                                                               to: LinePoint(atSec: 9, line: 1)))
+        let first = MomentPlayer.key(params)
+        for _ in 0..<200 { XCTAssertEqual(MomentPlayer.key(params), first) }
+        XCTAssertNotEqual(MomentPlayer.key(MeetingsAPI.MomentParams(meeting: "m", target: .item("i1"), lengthSec: 5)),
+                          MomentPlayer.key(MeetingsAPI.MomentParams(meeting: "m", target: .item("i1"))))
+    }
+
     func testCuttingWordsWaitTwoHundredMillisecondsAndCancelFiveSeconds() {
         XCTAssertFalse(MomentPlayer.cuttingShows(elapsed: 0.15).words)
         XCTAssertTrue(MomentPlayer.cuttingShows(elapsed: 0.2).words)
