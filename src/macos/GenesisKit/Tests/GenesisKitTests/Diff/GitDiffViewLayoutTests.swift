@@ -111,6 +111,49 @@ final class GitDiffViewLayoutTests: XCTestCase {
         XCTAssertEqual(after, "Show code|2|2", "after the switch: before and after pictures, both loaded through the page's scheme")
     }
 
+    /// A file skipped for its size has "Show whole file" after its name; a click turns it into a disabled "Loading…" and
+    /// asks the host once, a second click asks nothing (Martin, 2026-11-09: "the click to show anyway doesnt work").
+    func testALargeFileHeaderButtonSaysLoadingAndAsksTheHostOnce() async throws {
+        let dir = NSHomeDirectory() + "/Applications/GenesisTools.app/Contents/Resources/diff-viewer"
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: dir + "/index.html"), "no installed diff page")
+        setenv("GENESIS_DIFF_VIEWER_DIR", dir, 1)
+        let file = DiffFile(id: "board.tsx", path: "src/board.tsx", status: .modified, additions: 1, deletions: 1,
+                            oldContents: "a\n", newContents: "b\n", skipped: GitWorkingTreeSource.largeNote(3_600_000))
+        let renderer = PierreWebDiffRenderer.make()
+        var asks: [String] = []
+        renderer.onEvent = { event in
+            if case .showLargeFile(let id) = event { asks.append(id) }
+        }
+        renderer.apply(DiffViewOptions(diffStyle: .split, wrap: true, fontSize: 12))
+        renderer.show([file], fresh: true)
+        let view = renderer.view
+        view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        defer { window.contentView = nil }
+        let web = try XCTUnwrap(webView(in: view))
+        web.configuration.userContentController.addUserScript(WKUserScript(
+            source: "window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16); window.cancelAnimationFrame = (id) => clearTimeout(id);",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true
+        ))
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        web.reload()
+
+        let find = "roots.flatMap(r => [...r.querySelectorAll('button')]).find(b => /Show whole file|Loading/.test(b.textContent))"
+        let state = "const b = \(find); return b ? b.textContent + '|' + b.disabled : 'none';"
+        let before = try await poll(web, state) { $0.hasPrefix("Show whole file") }
+        XCTAssertEqual(before, "Show whole file|false", "the large file offers its whole text after its name")
+
+        _ = try await query(web, "\(find)?.click(); return '';")
+        let after = try await poll(web, state) { $0.hasPrefix("Loading") }
+        XCTAssertEqual(after, "Loading…|true", "the click shows at once, before the file arrives")
+
+        _ = try await query(web, "\(find)?.click(); return '';")
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(asks, ["board.tsx"], "one ask reaches the host, a second click asks nothing")
+    }
+
     func testTheLayoutChoiceReachesThePage() async throws {
         let dir = NSHomeDirectory() + "/Applications/GenesisTools.app/Contents/Resources/diff-viewer"
         try XCTSkipUnless(FileManager.default.fileExists(atPath: dir + "/index.html"), "no installed diff page")
