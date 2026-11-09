@@ -38,6 +38,16 @@ GenesisTools checkout.
   `hub.resize` line), `drag-frames.ts` (the far edge frame by frame), `release-sample.ts` + `sample-who.ts` (what a
   release spends). Resize engine: GenesisKit `Controls/GenResize.swift`; hosts `Hub/HubPanels.swift`
   (`ResizableSidePanel`, `PaneHold`, `HubLiveResize`) and `Review/PRThreadsPanel.swift` (2026-10-29).
+- A PR link's time to its commit (2026-11-09): `GENESIS_HUB_BENCH_ONLY=commitlink GENESIS_HUB_BENCH_LINK='<pr ref>@<sha
+  or from..to>' [GENESIS_HUB_BENCH_LINK_STALE=1] … --hub --mode prs --pr <another PR> --bench <out.json>` opens another PR,
+  then fires the link as a forwarded one does and marks `hub.bench commitlink first diff <ms>` with the diffs the page
+  showed before it; `STALE=1` rewinds the PR in memory to before the commit (a list from before the push). A push or a
+  force push landing on the PR on screen: `GENESIS_HUB_BENCH_ONLY=headmove GENESIS_HUB_BENCH_HEADMOVE='<pr ref>@<older
+  head>'` (an ancestor is a push, any other commit a force push) marks whether the review and page stayed, whether the
+  file list went empty, and `check match` against a fresh load of the new head. A debug build loads the real diff page
+  with `GENESIS_DIFF_VIEWER_DIR=~/Applications/GenesisTools.app/Contents/Resources/diff-viewer`. The page's own
+  `page diff.files N files … all on the page` line is the end of a load: `diffOnPage` fires at the first batch of a
+  page that fills batch by batch.
 
 ## What was done (2026-10-08, PR #479)
 
