@@ -134,10 +134,10 @@ final class CapturePicker {
         }
     }
 
-    /// Starts a recording of `choice` with the saved options: the countdown first when it is on.
-    func choose(_ choice: CaptureChoice) {
+    /// Starts a recording of `choice` with the saved options (or the menu's): the countdown first when it is on. Every
+    /// start of the app comes through here.
+    func choose(_ choice: CaptureChoice, options: CaptureOptions = .load()) {
         panel.dismiss()
-        let options = CaptureOptions.load()
         let screen = Self.screen(for: choice)
         Task {
             let need = PermissionNeed(.screenRecording, reason: "The recorder records the screen you choose.",

@@ -371,13 +371,20 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     @objc private func recordScreenWithAudio() { startRecording(audio: true) }
     @objc private func openPicker() { CapturePicker.shared.show() }
 
-    /// The display in use, with the capture picker's saved options; the menu's two rows set the audio themselves.
+    /// The display in use, through the picker's one start path (the Screen Recording grant, the countdown, the camera
+    /// preview left out) with the saved options, as the Start shortcut does.
     func startRecording(audio: Bool) {
-        var options = CaptureOptions.load()
-        options.systemAudio = audio
-        options.microphone = audio
-        options.camera = false
-        startRecording(arguments: options.startArguments(.followPointer))
+        CapturePicker.shared.choose(.followPointer, options: Self.menuOptions(audio: audio, saved: .load()))
+    }
+
+    /// The saved options; "Record Screen with Audio" turns both audio sources on, "Record Screen" keeps the saved ones.
+    nonisolated static func menuOptions(audio: Bool, saved: CaptureOptions) -> CaptureOptions {
+        var options = saved
+        if audio {
+            options.systemAudio = true
+            options.microphone = true
+        }
+        return options
     }
 
     /// The one start path: `tools recorder start` in its own process (it owns the recording and its socket); the live
