@@ -390,6 +390,36 @@ describe("RecordingSession", () => {
         expect((await control.addMarker("no first frame named")).atMs).toBe(5400);
     });
 
+    // 2026-11-09: the camera bubble lagged the voice by 0.5 to 2 s and more after each pause or rollover. The camera
+    // runs on the wall clock, so it is cut to these spans after the recording (camera.ts alignCameraMovie).
+    it("each kept segment is a span from its own first frame, after a resume and from 0 again after a restart", async () => {
+        const { recorder, runs } = fakeRecorder({ armLater: true, movieMs: 2500 });
+        const recording = session(recorder);
+        await recording.start();
+        clock = 1_001_400;
+        runs[0].arm({ firstFrameAt: 1_000_800 });
+        clock = 1_003_300;
+        await recording.command({ cmd: "pause" });
+        clock = 1_060_000;
+        await recording.command({ cmd: "resume" });
+        clock = 1_060_900;
+        runs[1].arm({ firstFrameAt: 1_060_550 });
+        clock = 1_063_000;
+        await recording.command({ cmd: "pause" });
+        expect(recording.movieSpans()).toEqual([
+            { sourceStartMs: 0, firstFrameEpochMs: 1_000_800, lengthMs: 2500 },
+            { sourceStartMs: 2500, firstFrameEpochMs: 1_060_550, lengthMs: 2500 },
+        ]);
+
+        await recording.command({ cmd: "restart" });
+        clock = 1_070_700;
+        runs[2].arm({ firstFrameAt: 1_070_200 });
+        clock = 1_072_000;
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("done");
+        expect(recording.movieSpans()).toEqual([{ sourceStartMs: 0, firstFrameEpochMs: 1_070_200, lengthMs: 2500 }]);
+    });
+
     it("one segment is moved into place without a join", async () => {
         const { recorder } = fakeRecorder();
         const recording = session(recorder);

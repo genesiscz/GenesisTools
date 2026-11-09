@@ -16,7 +16,13 @@ import {
     refuseMissingWindowOrApp,
     refuseTargetOffScreen,
 } from "./start-options";
-import { announcedCountdown, recordedNothing, segmentRecorderOptions, videoDoneLine } from "./video-recording";
+import {
+    announcedCountdown,
+    endRecordingCamera,
+    recordedNothing,
+    segmentRecorderOptions,
+    videoDoneLine,
+} from "./video-recording";
 
 const folder = "/tmp/recording";
 const repo = join(moduleDir(import.meta), "..", "..", "..");
@@ -200,6 +206,62 @@ describe("a window or app movie", () => {
         );
         await stopRecordingCamera("/tmp/rec", host("no recorder host said hello"));
         expect(calls).toEqual(["camera.start /tmp/rec", "camera.start /tmp/rec", "camera.stop /tmp/rec"]);
+    });
+
+    it("the camera.stop step is followed by the align step, with the screen's spans; a discard or no movie skips it", async () => {
+        const folder = await mkdtemp(join(tmpdir(), "recorder-camera-end-"));
+        const spans = [{ sourceStartMs: 0, firstFrameEpochMs: 1_000_800, lengthMs: 2500 }];
+        const steps: string[] = [];
+        const host = (writes: boolean): CameraHost => ({
+            call: async (method, params) => {
+                steps.push(method);
+
+                // The face writes camera.json once the camera movie is finished.
+                if (method === "camera.stop" && writes) {
+                    await writeFile(join(params.folder, "camera.json"), "{}");
+                }
+
+                return { stopped: true };
+            },
+        });
+        const align = async (input: { folder: string; spans: typeof spans }) => {
+            steps.push(`align ${input.folder === folder} ${input.spans.length}`);
+            return { result: "trimmed" as const };
+        };
+
+        expect(await endRecordingCamera({ folder, outcome: "done", spans, host: host(true), align })).toBeUndefined();
+        expect(steps).toEqual(["camera.stop", "align true 1"]);
+
+        steps.length = 0;
+        expect(
+            await endRecordingCamera({ folder, outcome: "discarded", spans, host: host(true), align })
+        ).toBeUndefined();
+        expect(steps).toEqual(["camera.stop"]);
+
+        steps.length = 0;
+        const empty = await mkdtemp(join(tmpdir(), "recorder-camera-end-"));
+        const missing = await endRecordingCamera({
+            folder: empty,
+            outcome: "done",
+            spans,
+            host: host(false),
+            align,
+            finishWaitMs: 50,
+        });
+        expect(missing?.code).toBe("camera-missing");
+        expect(steps).toEqual(["camera.stop"]);
+
+        steps.length = 0;
+        const unaligned = await endRecordingCamera({
+            folder,
+            outcome: "done",
+            spans,
+            host: host(true),
+            align: async () => ({ result: "offset" as const, warning: "the camera movie could not be cut" }),
+        });
+        expect(unaligned).toEqual({ code: "camera-unaligned", message: "the camera movie could not be cut" });
+        await rm(folder, { recursive: true, force: true });
+        await rm(empty, { recursive: true, force: true });
     });
 
     it("two target flags are refused, naming both, instead of one silently winning", () => {

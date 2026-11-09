@@ -37,6 +37,18 @@ export const recordingManifestSchema = z.object({
 export type RecordingManifest = z.infer<typeof recordingManifestSchema>;
 
 /**
+ * One kept segment of a movie recording on the wall clock (`settings.video.spans` in recording.json): the movie's
+ * `sourceStartMs` to `sourceStartMs + lengthMs` was captured from `firstFrameEpochMs` (epoch ms) on. What lies between
+ * two spans (a pause, a rollover's re-arm, a retune, a switch) is in no movie, so a clock that kept running, the
+ * camera's, lines up with the screen only through them. A manifest written before 2026-11-09 has none.
+ */
+export interface RecordingSpan {
+    sourceStartMs: number;
+    firstFrameEpochMs: number;
+    lengthMs: number;
+}
+
+/**
  * A new movie recording's library id, `video-<local date>_<time>-<uuid>`: the library sorts its folders by the time in
  * the name, and `shortRecordingId` shortens it to the part before the uuid's second group.
  */

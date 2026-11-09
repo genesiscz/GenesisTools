@@ -318,8 +318,13 @@ without it are refused by name.
 With "Camera bubble" on, a live preview of the camera floats where the bubble will be (Small, Medium or Large; circle,
 rounded or square); drag it before or while recording. The movie leaves the preview out (`--exclude-window-ids`), and
 the recorder face records the camera through GenesisKit's camera (`CameraFrameSource`) into `camera.mov` beside
-`screen.mp4`, paused when the recording pauses. At the end it writes `camera.json` (`version`, `file`, `startedAt`,
-`screenStartedAt`, `placement: { x, y, size, shape }`), and a new edit takes it as `camera` in `edit.json`:
+`screen.mp4`. The camera movie runs on the wall clock, pauses included. At the end the face writes `camera.json`
+(`version`, `file`, `startedAt`, `screenStartedAt`, `clock: "wall"`, `placement: { x, y, size, shape }`), and the
+recording lines the camera up with the screen: it writes each kept segment's first frame and length into
+`recording.json` (`settings.video.spans`), cuts `camera.mov` to those spans when there are two or more (a pause, a
+180 s rollover, a rate change or a switch leaves a gap the screen movie does not have), and sets `camera.json` to count
+from the screen's first frame (`clock: "screen"`, offset 0 after a cut). A cut that fails keeps the movie, still counts
+from the first frame, and adds a warning (`camera-unaligned`). A new edit takes it as `camera` in `edit.json`:
 
 ```json
 "camera": { "file": "camera.mov", "offsetMs": 0, "show": true, "corner": "custom", "x": 0.88, "y": 0.82,

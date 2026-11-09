@@ -1,17 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
+    alignCameraMovie,
     bubbleFromSidecar,
     bubbleRect,
     bubbleShowsAt,
     CAMERA_SIDECAR,
     cameraBubbleSchema,
+    cameraTrimPlan,
     readCameraSidecar,
 } from "@genesiscz/utils/recording-editor/camera";
 import {
@@ -2881,6 +2883,186 @@ describe("camera bubble", () => {
         writeFileSync(join(folder, CAMERA_SIDECAR), '{ "version": 2 }');
         expect(readCameraSidecar(video)).toBeUndefined();
     });
+});
+
+describe("the camera on the screen's clock", () => {
+    const T0 = Date.parse("2026-11-09T10:00:00.000Z");
+    const iso = (ms: number) => new Date(ms).toISOString();
+
+    function folderWith(sidecar: Record<string, unknown>): string {
+        const folder = mkdtempSync(join(tmpdir(), "camera-align-"));
+        writeFileSync(join(folder, CAMERA_SIDECAR), SafeJSON.stringify({ version: 1, file: "camera.mov", ...sidecar }));
+        writeFileSync(join(folder, "camera.mov"), "raw camera movie");
+        return folder;
+    }
+
+    test("each screen span is the camera's stretch of the same wall time; a span before the camera is its first frame", () => {
+        const spans = [
+            { sourceStartMs: 0, firstFrameEpochMs: 11_370, lengthMs: 5000 },
+            { sourceStartMs: 5000, firstFrameEpochMs: 17_100, lengthMs: 3000 },
+        ];
+        expect(cameraTrimPlan({ cameraStartedAt: 10_000, spans })).toEqual({
+            padHeadMs: 0,
+            ranges: [
+                { startMs: 1370, endMs: 6370 },
+                { startMs: 7100, endMs: 10_100 },
+            ],
+        });
+        // The camera's first frame came 630 ms after the screen's: that head is the camera's first frame held.
+        expect(cameraTrimPlan({ cameraStartedAt: 12_000, spans })).toEqual({
+            padHeadMs: 630,
+            ranges: [
+                { startMs: 0, endMs: 4370 },
+                { startMs: 5100, endMs: 8100 },
+            ],
+        });
+    });
+
+    test("one span needs no cut: the offset counts from the screen's first frame, not from when the face saw it", async () => {
+        const folder = folderWith({
+            startedAt: iso(T0 + 250),
+            screenStartedAt: iso(T0),
+            clock: "wall",
+        });
+        const commands: string[][] = [];
+        const result = await alignCameraMovie({
+            folder,
+            spans: [{ sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 8000 }],
+            runCommand: async (command) => {
+                commands.push(command);
+            },
+        });
+        expect(result).toEqual({ result: "offset" });
+        expect(commands).toEqual([]);
+        const sidecar = readCameraSidecar(join(folder, "screen.mp4"));
+        expect(sidecar?.screenStartedAt).toBe(iso(T0 + 1400));
+        expect(sidecar && bubbleFromSidecar(sidecar).offsetMs).toBe(-1150);
+    });
+
+    test("a face that left out the paused time it saw is not cut: only its offset moves to the first frame", async () => {
+        const folder = folderWith({ startedAt: iso(T0 + 250), screenStartedAt: iso(T0) });
+        const before = statSync(join(folder, "camera.mov")).size;
+        const result = await alignCameraMovie({
+            folder,
+            spans: [
+                { sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 2000 },
+                { sourceStartMs: 2000, firstFrameEpochMs: T0 + 9000, lengthMs: 2000 },
+            ],
+            runCommand: async () => {
+                throw new Error("an old face's movie is never cut");
+            },
+        });
+        expect(result).toEqual({ result: "offset" });
+        expect(statSync(join(folder, "camera.mov")).size).toBe(before);
+        expect(readCameraSidecar(join(folder, "screen.mp4"))?.screenStartedAt).toBe(iso(T0 + 1400));
+    });
+
+    test("a cut that fails keeps the movie, still counts from the first frame, and says so", async () => {
+        const folder = folderWith({ startedAt: iso(T0 + 250), screenStartedAt: iso(T0), clock: "wall" });
+        const result = await alignCameraMovie({
+            folder,
+            spans: [
+                { sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 2000 },
+                { sourceStartMs: 2000, firstFrameEpochMs: T0 + 9000, lengthMs: 2000 },
+            ],
+            runCommand: async () => {
+                throw new Error("ffmpeg exited 1");
+            },
+        });
+        expect(result.result).toBe("offset");
+        expect(result.warning).toContain("ffmpeg exited 1");
+        expect(readFileSync(join(folder, "camera.mov"), "utf8")).toBe("raw camera movie");
+        const sidecar = readCameraSidecar(join(folder, "screen.mp4"));
+        expect(sidecar?.screenStartedAt).toBe(iso(T0 + 1400));
+        expect(sidecar?.clock).toBe("wall");
+    });
+
+    test.skipIf(skip.integration)(
+        "a wall-clock camera movie is cut to the screen's spans, so a source moment shows the camera at that wall time",
+        async () => {
+            const folder = mkdtempSync(join(tmpdir(), "camera-align-real-"));
+            const movie = join(folder, "camera.mov");
+            // Brightness 16 + 20 per second of camera time: a frame says when the camera filmed it.
+            await runVideoCommand({
+                command: [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-y",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=64x64:r=30:d=10,format=yuv420p,geq=lum='16+20*T':cb=128:cr=128",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-preset",
+                    "ultrafast",
+                    "-qp",
+                    "0",
+                    movie,
+                ],
+            });
+            writeFileSync(
+                join(folder, CAMERA_SIDECAR),
+                SafeJSON.stringify({
+                    version: 1,
+                    file: "camera.mov",
+                    startedAt: iso(T0),
+                    screenStartedAt: iso(T0 - 600),
+                    clock: "wall",
+                })
+            );
+            const result = await alignCameraMovie({
+                folder,
+                spans: [
+                    { sourceStartMs: 0, firstFrameEpochMs: T0 + 1500, lengthMs: 2000 },
+                    { sourceStartMs: 2000, firstFrameEpochMs: T0 + 6000, lengthMs: 2000 },
+                ],
+            });
+            expect(result).toEqual({ result: "trimmed" });
+            const sidecar = readCameraSidecar(join(folder, "screen.mp4"));
+            expect(sidecar).toMatchObject({
+                startedAt: iso(T0 + 1500),
+                screenStartedAt: iso(T0 + 1500),
+                clock: "screen",
+            });
+            expect(sidecar && bubbleFromSidecar(sidecar).offsetMs).toBe(0);
+
+            const filmedAt = async (atSeconds: number) => {
+                const printed = await runVideoCommand({
+                    command: [
+                        "ffmpeg",
+                        "-nostdin",
+                        "-v",
+                        "error",
+                        "-ss",
+                        String(atSeconds),
+                        "-i",
+                        movie,
+                        "-frames:v",
+                        "1",
+                        "-vf",
+                        "signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG:file=-",
+                        "-f",
+                        "null",
+                        "-",
+                    ],
+                });
+                return (Number(/YAVG=([\d.]+)/.exec(printed)?.[1]) - 16) / 20;
+            };
+            // Source 1.0 s is camera 2.5 s; source 3.0 s (the second span, after a 2.5 s gap) is camera 7.0 s.
+            expect(Math.abs((await filmedAt(1)) - 2.5)).toBeLessThan(0.1);
+            expect(Math.abs((await filmedAt(3)) - 7)).toBeLessThan(0.1);
+            const probe = await runVideoCommand({
+                command: ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", movie],
+            });
+            expect(Number(probe.trim())).toBeCloseTo(4, 1);
+        },
+        60_000
+    );
 });
 
 test("editor commands replace guarded outputs and force the requested container", () => {

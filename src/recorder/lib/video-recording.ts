@@ -21,16 +21,19 @@ import { formatCount } from "@genesiscz/utils/format";
 import type { FlockState } from "@genesiscz/utils/fs/flock";
 import { logger } from "@genesiscz/utils/logger";
 import { passStartGate, releaseStartGate } from "@genesiscz/utils/process/start-gate";
+import { alignCameraMovie, type CameraAlignment } from "@genesiscz/utils/recording-editor/camera";
 import {
     newVideoRecordingId,
     RECORDING_MANIFEST,
     type RecordingManifest,
+    type RecordingSpan,
     recordingsLibraryDir,
     writeRecordingManifest,
 } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { trashRecordingFolder } from "@genesiscz/utils/screen-recorder/start";
 import {
+    type CameraHost,
     cameraRefusal,
     missingCameraWarning,
     recorderFaceState,
@@ -193,6 +196,57 @@ export async function recordedNothing(folder: string): Promise<boolean> {
     }
 
     return true;
+}
+
+/** What went wrong with a recording's camera movie at its end. */
+export interface CameraEndProblem {
+    /** `camera-missing`: no camera.json came; `camera-unaligned`: the movie could not be cut to the screen's spans. */
+    code: "camera-missing" | "camera-unaligned";
+    message: string;
+}
+
+/**
+ * Ends the camera of a recording that started it. The face stops and writes camera.json; a kept recording then gets
+ * its camera movie lined up with the screen's spans (`alignCameraMovie`), so the bubble keeps the voice's time through
+ * every pause and rollover. Returns what went wrong, or undefined.
+ */
+export async function endRecordingCamera({
+    folder,
+    outcome,
+    spans,
+    host,
+    align = alignCameraMovie,
+    finishWaitMs,
+}: {
+    folder: string;
+    outcome: VideoRecordingResult["outcome"];
+    spans: RecordingSpan[];
+    host?: CameraHost;
+    align?: (input: { folder: string; spans: RecordingSpan[] }) => Promise<CameraAlignment>;
+    /** How long to wait for camera.json; default `CAMERA_FINISH_WAIT_MS`. */
+    finishWaitMs?: number;
+}): Promise<CameraEndProblem | undefined> {
+    await stopRecordingCamera(folder, host);
+
+    if (outcome === "discarded") {
+        return undefined;
+    }
+
+    // The face finishes the camera movie once the live entry is gone; a recording that asked for it and got none says
+    // so, in the manifest and in the result, instead of a movie that quietly has no camera.
+    const missing = await missingCameraWarning({ folder, timeoutMs: finishWaitMs });
+
+    if (missing) {
+        return { code: "camera-missing", message: missing };
+    }
+
+    if (outcome !== "done") {
+        return undefined;
+    }
+
+    const aligned = await align({ folder, spans });
+    log.info({ folder, spans: spans.length, result: aligned.result }, "the camera movie is lined up with the screen");
+    return aligned.warning ? { code: "camera-unaligned", message: aligned.warning } : undefined;
 }
 
 /**
@@ -390,9 +444,8 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         activeLive.close();
     }
 
-    if (cameraStarted) {
-        await stopRecordingCamera(folder);
-    }
+    const spans = session.movieSpans();
+    const cameraProblem = cameraStarted ? await endRecordingCamera({ folder, outcome, spans }) : undefined;
 
     // One segment is moved, not joined, so its tracks still read "Core Media Audio": title them by one stream copy.
     if (outcome === "done" && segments === 1 && options.audio?.length && existsSync(movie)) {
@@ -412,14 +465,10 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         await rename(joinedCursor, cursorTrack);
     }
 
-    // The face finishes the camera movie once the live entry is gone; a recording that asked for it and got none says
-    // so here, in the manifest and in the result, instead of a movie that quietly has no camera.
-    const cameraWarning = cameraStarted && outcome !== "discarded" ? await missingCameraWarning({ folder }) : undefined;
-
-    if (cameraWarning) {
-        log.warn({ id, folder }, "the recording asked for the camera and got no camera movie");
-        warnings.push(cameraWarning);
-        options.emit?.({ event: "error", message: cameraWarning, code: "camera-missing", fatal: false });
+    if (cameraProblem) {
+        log.warn({ id, folder, code: cameraProblem.code }, "the recording's camera movie has a problem");
+        warnings.push(cameraProblem.message);
+        options.emit?.({ event: "error", message: cameraProblem.message, code: cameraProblem.code, fatal: false });
     }
 
     await writeRecordingManifest(folder, {
@@ -427,7 +476,10 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         endedAt: new Date().toISOString(),
         settings: {
             ...manifest.settings,
-            video: existsSync(movie) ? { file: "screen.mp4", durationMs, ...frameStats } : undefined,
+            // Each kept segment on the wall clock, for any clock that has to line up with this movie (the camera's).
+            video: existsSync(movie)
+                ? { file: "screen.mp4", durationMs, ...frameStats, ...(spans.length ? { spans } : {}) }
+                : undefined,
             outcome,
             markers: activeControl.markers,
             // Since 2026-11-08 a marker counts from the movie's first frame; a manifest without this key counted from
@@ -458,6 +510,6 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         ...frameStats,
         warnings,
         ...(removed ? { removed } : {}),
-        ...(cameraWarning ? { cameraMissing: true } : {}),
+        ...(cameraProblem?.code === "camera-missing" ? { cameraMissing: true } : {}),
     };
 }

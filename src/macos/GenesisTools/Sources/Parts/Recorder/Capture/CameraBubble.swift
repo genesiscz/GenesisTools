@@ -59,6 +59,8 @@ final class CameraBubble {
     private var panel: CameraBubblePanel?
     private var writer: CameraMovieWriter?
     private var recording: Session?
+    /// When the face saw the recording start, before the screen's first frame: camera.json's offset until the
+    /// recording replaces it with that frame's time (camera.ts `alignCameraMovie`).
     private var screenStartedAt: Date?
     /// The picker started a camera recording at this time: the next one that asks for the camera shows the preview.
     private var awaitingSince: Date?
@@ -122,7 +124,9 @@ final class CameraBubble {
                 // Looked at: when the service stops the camera, this recording does not start it again.
                 asked[entry.id] = true
             }
-            if entry.isPaused { writer?.pause() } else if entry.isRecording { writer?.resume() }
+            // The camera keeps recording through a pause and every gap between screen segments: the live state reads
+            // "recording" while the next segment still arms, so pausing on it kept up to two seconds per gap. The
+            // recording cuts camera.mov to the screen's own spans after it stops (camera.ts `alignCameraMovie`).
             return
         }
         for entry in recordings where asked[entry.id] == nil {
@@ -327,10 +331,12 @@ final class CameraBubble {
         return root["settings"] as? [String: Any]
     }
 
-    /// `camera.json` beside the recording (src/utils/recording-editor/camera.ts `cameraSidecarSchema`).
+    /// `camera.json` beside the recording (src/utils/recording-editor/camera.ts `cameraSidecarSchema`). `clock` "wall":
+    /// the movie runs on, pauses included, so the recording may cut it to the screen's spans.
     static func writeSidecar(folder: URL, startedAt: Date, screenStartedAt: Date?, placement: [String: Any]?) {
         var object: [String: Any] = [
             "version": 1, "file": "camera.mov", "startedAt": ISO8601DateFormatter.withFraction.string(from: startedAt),
+            "clock": "wall",
         ]
         if let screenStartedAt { object["screenStartedAt"] = ISO8601DateFormatter.withFraction.string(from: screenStartedAt) }
         if let placement { object["placement"] = placement }

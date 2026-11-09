@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import { type RecordingTarget, recordingTargetSchema } from "./recording-targets";
@@ -83,6 +84,8 @@ export type RecordingSessionEvent =
           durationMs: number;
           target: RecordingTarget;
           frames?: number;
+          firstFrameAt?: number;
+          movieMs?: number;
       }
     | {
           event: "done";
@@ -158,6 +161,10 @@ export interface FinishedSegment {
     durationMs: number;
     target: RecordingTarget;
     frames?: number;
+    /** When its first frame was captured (epoch ms): the wall time of its movie's time 0. */
+    firstFrameAt?: number;
+    /** Its length in the joined movie: the recorder's movie length, or its duration when it reported none. */
+    movieMs?: number;
 }
 
 /** The frames of the whole movie and its average rate: undefined unless every segment reported its frames. */
@@ -337,6 +344,26 @@ export class RecordingSession {
 
     elapsedMs(): number {
         return this.recordedMs + (this.current ? this.liveMs(this.current) : 0);
+    }
+
+    /**
+     * The kept segments on the wall clock, in movie order: where each starts in the joined movie and when its first
+     * frame was captured. A restart drops the earlier segments, so the spans start at 0 again; the camera, which kept
+     * running, is cut to them after the recording (`alignCameraMovie`).
+     */
+    movieSpans(): RecordingSpan[] {
+        let sourceStartMs = 0;
+        return [...this.segments]
+            .sort((a, b) => a.index - b.index)
+            .flatMap((segment) => {
+                const lengthMs = segment.movieMs ?? segment.durationMs;
+                const span =
+                    segment.firstFrameAt === undefined
+                        ? []
+                        : [{ sourceStartMs, firstFrameEpochMs: segment.firstFrameAt, lengthMs }];
+                sourceStartMs += lengthMs;
+                return span;
+            });
     }
 
     /**
@@ -569,18 +596,21 @@ export class RecordingSession {
             return;
         }
 
+        const durationMs = result.durationMs ?? wallMs;
         const segment: FinishedSegment = {
             index: run.index,
             path: run.path,
-            durationMs: result.durationMs ?? wallMs,
+            durationMs,
             target: run.target,
             ...(result.frames === undefined ? {} : { frames: result.frames }),
+            firstFrameAt: run.startedAt,
+            movieMs: result.movieMs ?? durationMs,
         };
         this.segments.push(segment);
         // The longer of the movie and the wall time this session saw: the recorder's deadline runs from its own launch,
         // so its movie can be longer, and the limit must count what the movie holds.
         this.recordedMs += Math.max(wallMs, segment.durationMs);
-        this.movieMs += result.movieMs ?? segment.durationMs;
+        this.movieMs += segment.movieMs ?? durationMs;
         this.options.emit({ event: "segment", ...segment });
     }
 
