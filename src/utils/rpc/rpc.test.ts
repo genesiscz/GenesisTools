@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -521,5 +521,109 @@ describe("the service host (service-host.ts)", () => {
 
         expect(outcome).toBe("running");
         expect(start.host.connections).toHaveLength(1);
+    });
+
+    /** A module this process loaded under a root of its own, written a minute ago, and a way to change it. */
+    async function loadedModule() {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), "rpc-host-src-")));
+        const module = join(root, "loaded.ts");
+        writeFileSync(module, "export const loaded = true;\n");
+        const earlier = new Date(Date.now() - 60_000);
+        utimesSync(module, earlier, earlier);
+        await import(module);
+        return {
+            root,
+            change: () => {
+                const later = new Date(Date.now() + 60_000);
+                utimesSync(module, later, later);
+            },
+        };
+    }
+
+    async function started(dir: string, options: Partial<ServiceHostOptions<Role>>) {
+        const start = await host(dir, options);
+
+        if (start.status !== "started") {
+            throw new Error("the host did not start");
+        }
+
+        return start.host;
+    }
+
+    const outcome = (stopped: Promise<string>, ms: number) =>
+        Promise.race([stopped, Bun.sleep(ms).then(() => "still running")]);
+
+    test("a socket it is given is where it listens and what service.json names; a stop removes it", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const socket = join(dir, "own.sock");
+        const service = await started(dir, { socket });
+
+        expect(readLiveServiceEntry(dir)?.socket).toBe(socket);
+        expect(existsSync(serviceSocketPath(dir))).toBe(false);
+        const client = await connect(socket);
+        expect(await client.call<{ method: string }>("hello", { role: "client" })).toEqual({ method: "hello" });
+        service.stop("test");
+        expect(existsSync(socket)).toBe(false);
+    });
+
+    test("a source root it does not publish is still watched: service.json leaves it out, and its change stops the service", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const loaded = await loadedModule();
+        const service = await started(dir, { sourceRoot: loaded.root, publishSourceRoot: false, checkEveryMs: 15 });
+
+        expect(readLiveServiceEntry(dir)).not.toHaveProperty("sourceRoot");
+        expect(await outcome(service.stopped, 100)).toBe("still running");
+        loaded.change();
+        expect(await outcome(service.stopped, 1_000)).toBe("code-changed");
+    });
+
+    test("keepAlive.idle holds back only the idle exit, keepAlive.codeChange only the exit on a code change", async () => {
+        let idleKept = true;
+        const idle = await started(mkdtempSync(join(tmpdir(), "rpc-host-")), {
+            idleMs: 1,
+            checkEveryMs: 15,
+            keepAlive: { idle: () => idleKept, codeChange: () => true },
+        });
+        expect(await outcome(idle.stopped, 120)).toBe("still running");
+        idleKept = false;
+        expect(await outcome(idle.stopped, 1_000)).toBe("idle");
+
+        let codeKept = true;
+        const loaded = await loadedModule();
+        const changed = await started(mkdtempSync(join(tmpdir(), "rpc-host-")), {
+            sourceRoot: loaded.root,
+            checkEveryMs: 15,
+            keepAlive: { idle: () => true, codeChange: () => codeKept },
+        });
+        loaded.change();
+        expect(await outcome(changed.stopped, 120)).toBe("still running");
+        codeKept = false;
+        expect(await outcome(changed.stopped, 1_000)).toBe("code-changed");
+    });
+
+    test("onCheck runs at each check, and onStopping runs before the connections end and before onStopped", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        let checks = 0;
+        const order: string[] = [];
+        let connectionsAtStopping = -1;
+        const service = await started(dir, {
+            checkEveryMs: 15,
+            onCheck: () => {
+                checks += 1;
+            },
+            onStopping: (reason) => {
+                order.push(`stopping ${reason}`);
+                connectionsAtStopping = service.connections.filter((connection) => !connection.closed).length;
+            },
+            onStopped: (reason) => order.push(`stopped ${reason}`),
+        });
+        const client = await connect(serviceSocketPath(dir));
+        await client.call("hello", { role: "client" });
+        await Bun.sleep(80);
+        service.stop("test");
+
+        expect(checks).toBeGreaterThanOrEqual(2);
+        expect(order).toEqual(["stopping test", "stopped test"]);
+        expect(connectionsAtStopping).toBe(1);
     });
 });
