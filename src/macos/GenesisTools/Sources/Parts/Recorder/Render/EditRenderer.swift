@@ -151,6 +151,8 @@ final class ZoomState: @unchecked Sendable {
         var shapes: [(shape: EditProject.Shape, drawn: Double, opacity: Double)] = []
         /// The zoom one output frame earlier, for the motion blur; nil at the start and across a cut.
         var previousView: ZoomCurve.View?
+        /// The canvas zoom's view one output frame earlier, for the motion blur; nil at the start and across a cut.
+        var previousCanvasView: ZoomCurve.View?
         var motionBlur = 0.0
         // R4 overlays (fx-overlay): the frame's times, for the texts' animations and the progress bar.
         var sourceUs: Int64 = 0
@@ -198,11 +200,13 @@ final class ZoomState: @unchecked Sendable {
         let pointer = CursorTrack.Pointer(project)
         let motionBlur = (project.motion ?? .init()).blur
         var previousView: ZoomCurve.View?
+        var previousCanvasView: ZoomCurve.View?
         if motionBlur > 0, outUs >= frameUs, !project.zooms.isEmpty {
             let previousUs = TimelineMap.sourceTime(atOutput: outUs - frameUs, in: project)
             // A cut jumps in source time; the frame after it has no move to smear.
             if sourceUs > previousUs, sourceUs - previousUs <= frameUs * 17 {
                 previousView = ZoomCurve.view(atSource: previousUs, project: project, cursor: cursor)
+                previousCanvasView = ZoomCurve.canvasView(atSource: previousUs, project: project)
             }
         }
         var look = FrameLook(view: view,
@@ -232,6 +236,7 @@ final class ZoomState: @unchecked Sendable {
                              .map { Self.placed($0, atSourceUs: sourceUs, track: cursor, pointer: pointer) },
                          texts: Self.texts(atSourceUs: sourceUs, project: project))
         look.previousView = previousView
+        look.previousCanvasView = previousCanvasView
         look.motionBlur = motionBlur
         // R4 overlays (fx-overlay)
         look.sourceUs = sourceUs
@@ -948,6 +953,10 @@ struct EditRenderer {
                 movieRect = movieRect.map { Looks.zoomCanvasRect($0, view: look.canvasView, size: size) }
                 result = Looks.zoomCanvas(result, view: look.canvasView, size: size)
                 cursor = cursor.map { Looks.zoomCanvas($0, view: look.canvasView, size: size) }
+            }
+            // A canvas zoom's move smears the framed canvas as a picture zoom's smears the picture; the cursor stays sharp.
+            if let previous = look.previousCanvasView, previous != look.canvasView {
+                result = Looks.motionBlur(from: previous, to: look.canvasView, amount: look.motionBlur, on: result)
             }
             // The still's own canvas: its parts, its picture zoom, its cover crop, the same frame and tilt, its canvas zoom.
             // Clicks, lenses, the cursor, captions and texts stay the live side's.
