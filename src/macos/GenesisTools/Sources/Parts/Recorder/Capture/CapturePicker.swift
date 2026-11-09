@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The capture picker (⌘7 by default, from any app): what to record (a window, an app, a display or an area) and the
 /// recording's options in one panel. A choice starts `tools recorder start` through `RecorderMenu.startRecording`,
-/// the one start path, after the countdown when it is on.
+/// the one start path; with the countdown on, as its last second begins (see `CaptureCountdown`).
 @MainActor
 final class CapturePicker {
     static let shared = CapturePicker()
@@ -144,23 +144,28 @@ final class CapturePicker {
             }
             let countdown = CaptureCountdown(seconds: options.countdownSeconds, screen: screen)
             self.countdown = countdown
-            countdown.run { [weak self] finished in
+            countdown.run(onStart: { [weak self, weak countdown] in
+                // The countdown panel stays up while the recording starts, so the movie leaves it out.
+                self?.start(choice, options: options, exclude: countdown.map { [$0.windowID] } ?? []) {
+                    countdown?.recorderFailed()
+                }
+            }, done: { [weak self] finished in
                 guard let self else { return }
                 self.countdown = nil
-                if finished {
-                    start(choice, options: options)
-                } else {
+                if !finished {
                     HubPerf.log("recorder: countdown cancelled")
                     CameraBubble.shared.pickerClosed(started: false)
                 }
-            }
+            })
         }
     }
 
-    private func start(_ choice: CaptureChoice, options: CaptureOptions) {
-        let exclude = options.camera ? CameraBubble.shared.windowIDs : []
+    private func start(_ choice: CaptureChoice, options: CaptureOptions, exclude panels: [Int] = [],
+                       onFailure: (() -> Void)? = nil) {
+        let exclude = (options.camera ? CameraBubble.shared.windowIDs : []) + panels.filter { $0 > 0 }
         CameraBubble.shared.pickerClosed(started: options.camera)
-        RecorderMenu.shared.startRecording(arguments: options.startArguments(choice, excludeWindowIds: exclude))
+        RecorderMenu.shared.startRecording(arguments: options.startArguments(choice, excludeWindowIds: exclude),
+                                           onFailure: onFailure)
     }
 
     /// `--picker --snapshot`: the panel over made-up targets, drawn off screen into a PNG (verification without a
@@ -593,16 +598,40 @@ final class AreaSelectionView: NSView {
 
 // MARK: - Countdown
 
-/// The seconds before a recording starts, large in the middle of the recorded screen. Escape cancels. The panel is
-/// gone before the recorder starts, so it is never in the movie.
+/// The seconds before a recording starts, large in the middle of the recorded screen. Escape cancels until the
+/// recorder starts. The recorder starts as the last second begins, because `tools recorder start` and ax-tool's arming
+/// take about 1.5 s before the first frame (0.66 s to the CLI's start and 0.74 to 1.14 s to the frame, measured
+/// 2026-11-08), and the last number stays until the recording's live entry has its first frame (at most `holdLimit`
+/// longer). So zero never shows before the movie records, and the first thing done after it is in the movie. The panel
+/// is kept out of the movie: its sharing type, and its window id in `--exclude-window-ids`.
 @MainActor
 final class CaptureCountdown {
+    /// The longest the last number waits past its second for the recording's first frame.
+    static let holdLimit: TimeInterval = 10
+
     private let seconds: Int
     private let panel: AreaSelectionWindow
     private let model = CountdownModel()
     private var monitor: Any?
     private var timer: Timer?
+    private var holdTimer: Timer?
     private var done: ((Bool) -> Void)?
+    private var onStart: (() -> Void)?
+    /// When the recorder was started; nil while Escape still cancels.
+    private var startedAt: Date?
+    private var lastSecondOver = false
+    private var framed = false
+    private var watcher: LiveRecordingsWatcher?
+
+    /// The panel's CG window id, for the recorder's `--exclude-window-ids`.
+    var windowID: Int { panel.windowNumber }
+
+    /// Whether the recording started at `since` records: its live entry, written after the start, has `lastFrameAt`.
+    /// The entry says "recording" while ax-tool still arms, so its state cannot tell.
+    nonisolated static func firstFrameIn(_ recordings: [LiveRecording], since: Date) -> Bool {
+        // Up to a second earlier: a start time read back from the entry's text can be rounded down.
+        recordings.contains { $0.startedAt >= since.addingTimeInterval(-1) && $0.lastFrameAt != nil }
+    }
 
     init(seconds: Int, screen: NSScreen?) {
         self.seconds = max(1, seconds)
@@ -623,24 +652,72 @@ final class CaptureCountdown {
         panel.contentView = NSHostingView(rootView: CountdownView(model: model))
     }
 
-    func run(_ done: @escaping (Bool) -> Void) {
+    /// `onStart` runs as the last second begins (the recorder starts); `done` runs when the panel goes, false for an
+    /// Escape before the start.
+    func run(onStart: @escaping () -> Void, done: @escaping (Bool) -> Void) {
         self.done = done
+        self.onStart = onStart
         model.remaining = seconds
         panel.orderFrontRegardless()
         panel.makeKey()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }
-            self?.finish(false)
+            // Once the recorder runs, its controls stop or discard it; the panel only shows the last number.
+            if self?.startedAt == nil { self?.finish(false) }
             return nil
         }
+        if seconds == 1 { startRecorder() }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 if self.model.remaining <= 1 {
-                    self.finish(true)
+                    self.lastSecondEnded()
                 } else {
                     self.model.remaining -= 1
+                    if self.model.remaining == 1 { self.startRecorder() }
                 }
+            }
+        }
+    }
+
+    /// The recording did not start (the CLI failed): the panel goes now, and the failure note says why.
+    func recorderFailed() {
+        HubPerf.log("recorder: countdown ends, the recording did not start")
+        finish(true)
+    }
+
+    private func startRecorder() {
+        guard startedAt == nil, let onStart else { return }
+        self.onStart = nil
+        startedAt = Date()
+        model.starting = true
+        let watcher = LiveRecordingsWatcher()
+        watcher.onRefresh = { [weak self] recordings in self?.observe(recordings) }
+        self.watcher = watcher
+        watcher.start()
+        onStart()
+    }
+
+    private func observe(_ recordings: [LiveRecording]) {
+        guard let startedAt, !framed, Self.firstFrameIn(recordings, since: startedAt) else { return }
+        framed = true
+        HubPerf.log("recorder: first frame \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms after the start")
+        if lastSecondOver { finish(true) }
+    }
+
+    private func lastSecondEnded() {
+        timer?.invalidate()
+        timer = nil
+        lastSecondOver = true
+        startRecorder()
+        if framed {
+            finish(true)
+            return
+        }
+        holdTimer = Timer.scheduledTimer(withTimeInterval: Self.holdLimit, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                HubPerf.log("recorder: no first frame \(Int(Self.holdLimit)) s after the countdown; it ends anyway")
+                self?.finish(true)
             }
         }
     }
@@ -648,8 +725,13 @@ final class CaptureCountdown {
     private func finish(_ completed: Bool) {
         guard let done else { return }
         self.done = nil
+        onStart = nil
         timer?.invalidate()
         timer = nil
+        holdTimer?.invalidate()
+        holdTimer = nil
+        watcher?.stop()
+        watcher = nil
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         panel.orderOut(nil)
@@ -661,6 +743,8 @@ final class CaptureCountdown {
 @MainActor
 final class CountdownModel: ObservableObject {
     @Published var remaining = 3
+    /// The recorder runs: Escape no longer cancels.
+    @Published var starting = false
 }
 
 struct CountdownView: View {
@@ -674,7 +758,8 @@ struct CountdownView: View {
                 .monospacedDigit()
                 .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: model.remaining)
-            Text("Esc cancels").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
+            Text(model.starting ? "Starting the recording" : "Esc cancels").font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.7))
         }
         .foregroundStyle(.white)
         .frame(width: 200, height: 200)

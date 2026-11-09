@@ -381,15 +381,18 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     }
 
     /// The one start path: `tools recorder start` in its own process (it owns the recording and its socket); the live
-    /// recordings' item and the floating controls (on by default) appear when its live entry does.
-    func startRecording(arguments args: [String]) {
+    /// recordings' item and the floating controls (on by default) appear when its live entry does. `onFailure` runs
+    /// when it does not start or stops at once (the capture picker's countdown, held until the first frame, ends then).
+    func startRecording(arguments args: [String], onFailure: (() -> Void)? = nil) {
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
         do {
             try ToolsRunner.detached(args) { status, output in
+                onFailure?()
                 RecorderNotice.failure("The recording stopped at once (exit \(status))", output: output,
                                        fallback: "See ~/.genesis-tools/logs/recorder-start.log")
             }
         } catch {
+            onFailure?()
             RecorderNotice.failure("The recording did not start.", more: error.localizedDescription)
         }
     }
