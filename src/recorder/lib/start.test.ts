@@ -1,4 +1,5 @@
 import { describe, expect, it, spyOn } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-gate";
 import { RpcError } from "@genesiscz/utils/screen-recorder/control";
-import { listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import { listLiveRecordings, liveRecordingsDir, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
 import { framesDoneLine } from "./frames-recording";
 import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library";
@@ -326,6 +327,54 @@ describe("a camera recording leaves the camera preview out of its movie", () => 
             started: true,
             windowIds: [],
         });
+    });
+});
+
+// Regression test: a discarded movie recording stayed in the library with no movie, a card that failed to open,
+// while a discarded frames recording goes to the trash (hunt 2026-11-09).
+describe("a discarded movie recording", () => {
+    it("goes to the trash with its folder, as a discarded frames recording does", async () => {
+        const spy = spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(
+            async ({ onRecording, signal }) => {
+                onRecording?.({ sessionDir: "/nonexistent/session" });
+                await new Promise<void>((resolve) => {
+                    signal.addEventListener("abort", () => resolve(), { once: true });
+                });
+                return {
+                    ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                    captureFailed: false,
+                    sessionDir: "/nonexistent/session",
+                    warnings: [],
+                    capture: null,
+                };
+            }
+        );
+        let discarded: Promise<unknown> | undefined;
+
+        try {
+            const result = await recordVideo({
+                target: { kind: "region", x: 0, y: 0, width: 320, height: 200 },
+                recorderFace: () => "held",
+                onStarted: ({ liveId }) => {
+                    discarded = (async () => {
+                        const client = await RecorderClient.connect(liveId, { dir: liveRecordingsDir() });
+                        try {
+                            return await client.discard();
+                        } finally {
+                            client.close();
+                        }
+                    })();
+                },
+            });
+            await discarded;
+
+            expect(result.outcome).toBe("discarded");
+            expect(result.removed).toBe(true);
+            expect(existsSync(join(result.folder, "recording.json"))).toBe(false);
+            expect(videoDoneLine(result)).toBe(`discarded: ${result.folder} went to the trash`);
+        } finally {
+            spy.mockRestore();
+        }
     });
 });
 

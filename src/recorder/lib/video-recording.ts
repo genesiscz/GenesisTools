@@ -169,7 +169,7 @@ export interface VideoRecordingResult {
     frames?: number;
     averageFps?: number;
     warnings: string[];
-    /** The start failed before it recorded anything, so its folder went to the GenesisTools trash. */
+    /** The recording was discarded, or failed before it recorded anything, so its folder went to the GenesisTools trash. */
     removed?: boolean;
     /** The recording asked for the camera and no camera movie came: the CLI exits 1. */
     cameraMissing?: boolean;
@@ -185,9 +185,13 @@ export function videoDoneLine(result: VideoRecordingResult): string {
         return `${result.outcome}: ${result.movie}${rate}`;
     }
 
-    return result.removed
+    if (!result.removed) {
+        return `${result.outcome}: ${result.folder}`;
+    }
+
+    return result.outcome === "failed"
         ? `failed, nothing was recorded: ${result.warnings[0] ?? "the capture did not start"}`
-        : `${result.outcome}: ${result.folder}`;
+        : `${result.outcome}: ${result.folder} went to the trash`;
 }
 
 /**
@@ -601,7 +605,16 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     log.info({ id, outcome, durationMs, warnings: warnings.length }, "video recording ended");
     let removed = false;
 
-    if (outcome === "failed" && (await recordedNothing(folder))) {
+    // A discard removes the recording, as a discarded frames recording does; kept, it stayed in the library as a card
+    // with no movie that failed to open. The camera stopped above, so no late camera movie lands in the trashed folder.
+    if (outcome === "discarded") {
+        try {
+            removed = trashRecordingFolder(folder, "recording-discard");
+            log.info({ id, folder, removed }, "the discarded recording's folder goes to the trash");
+        } catch (error) {
+            log.warn({ error, folder }, "the discarded recording's folder stays in the library");
+        }
+    } else if (outcome === "failed" && (await recordedNothing(folder))) {
         try {
             removed = trashRecordingFolder(folder, "recording-failed-start");
             log.info({ id, folder, removed }, "the failed start recorded nothing; its folder goes to the trash");
