@@ -2529,20 +2529,39 @@ private struct HubModePicker: View {
         .inbox: "tray", .timeline: "clock", .agents: "person.2", .usage: "chart.bar.xaxis",
     ]
 
-    /// Six titles need about 340 pt at the small control size; narrower, the row shows icons.
+    /// Narrower than `titlesWidth`, the row shows icons with tooltips: a title is never cut ("Worktr…").
     @State private var icons = false
 
+    /// Room each title takes beside its text: the segment's own inset, so a title never touches its neighbour.
+    private static let titleInset: CGFloat = 8
+    private static let spacing: CGFloat = 1
+    private static let outerPadding: CGFloat = 2
+
+    /// The width the row needs to show every title whole, each at the semibold weight a selected one takes and
+    /// the Inbox one with its count. The segments are equal, so the widest title sets every segment's width. It was
+    /// a fixed 340 pt written when six modes fitted; with seven, "Worktrees" was cut at 350 pt (hub UX council,
+    /// 2026-11-09).
+    static func titlesWidth(waiting: Int) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let widest = HubMode.allCases.map { mode in
+            let text = mode == .inbox && waiting > 0 ? "\(mode.title) \(waiting)" : mode.title
+            return (text as NSString).size(withAttributes: [.font: font]).width
+        }.max() ?? 0
+        let count = CGFloat(HubMode.allCases.count)
+        return (count * (ceil(widest) + titleInset) + (count - 1) * spacing + 2 * outerPadding).rounded(.up)
+    }
+
     var body: some View {
-        HStack(spacing: 1) {
+        HStack(spacing: Self.spacing) {
             ForEach(HubMode.allCases, id: \.self) { mode in
                 segment(mode, icons: icons)
             }
         }
-        .padding(2)
+        .padding(Self.outerPadding)
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(ReviewPalette.hairline))
         .frame(maxWidth: .infinity)
-        .measuredWidth("hub.modes", narrowerThan: 340, $icons)
+        .measuredWidth("hub.modes", narrowerThan: Self.titlesWidth(waiting: inbox.waitingCount), $icons)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Mode"))
     }
@@ -2563,6 +2582,7 @@ private struct HubModePicker: View {
                     Text(verbatim: mode.title + count)
                         .font(.system(size: 11, weight: selected ? .semibold : .regular))
                         .lineLimit(1)
+                        .padding(.horizontal, Self.titleInset / 2)
                 }
             }
             .foregroundColor(selected ? .white : Color.white.opacity(0.7))
