@@ -1077,8 +1077,8 @@ const movieMethods = [
         name: "trash",
         params: z.object({}).strict(),
         result: z.unknown(),
-        resultName: "{ trashed }",
-        doc: `Moves a library recording through the shared removal policy and recovery trash. Use ${toolCommand("rm", "trash")} to find its restore command. A meeting's screen recording is refused: its folder holds the whole meeting.`,
+        resultName: "{ trashed, batch?, drainAfter?, restore? }",
+        doc: `Moves a library recording through the shared removal policy into the GenesisTools trash (not Finder's Trash): batch is its trash batch, drainAfter when the drain deletes it, and restore the command that puts it back before then (${toolCommand("rm", "trash")} lists it too). A meeting's screen recording is refused: its folder holds the whole meeting.`,
         effect: "destructive",
     }),
     defineMethod({

@@ -62,8 +62,10 @@ tools recorder show|info <recording>             # one recording's row of list -
 tools recorder copy <recording> [--gif]          # the movie (the newest export, else its own) to the clipboard as a
                                                  # file; --gif a GIF of the edit, exported when none is current
 tools recorder reveal <recording> [--meeting]    # its folder in Finder; --meeting its meeting's meeting.json
-tools recorder trash <recording>                 # to the Trash (Finder's Put Back restores it); a meeting's screen
-                                                 # recording is refused
+tools recorder trash <recording>                 # into the GenesisTools trash (tools rm trash lists it; the
+                                                 # printed `tools rm restore <batch>` puts it back until it
+                                                 # drains); a meeting's screen recording is refused. The
+                                                 # window's Move to Trash uses Finder's Trash and Put Back
 tools recorder comment <recording> <at> <text>   # a review comment at an OUTPUT time (seconds or m:ss); the editor
                                                  # shows it on the timeline (`comment add` is the same command);
                                                  # --export takes a time of the exported file (the intro card first),

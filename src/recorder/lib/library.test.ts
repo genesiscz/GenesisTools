@@ -1019,8 +1019,38 @@ it("recording trash from the CLI forwards policy refusal without touching the re
     });
     try {
         await expect(trashRecording(folder, { askUser: true })).rejects.toThrow("policy refused");
-        expect(run).toHaveBeenCalledWith(["rm", folder], { timeout: 30_000 });
+        expect(run).toHaveBeenCalledWith(["rm", "--json", folder], { timeout: 30_000 });
         expect(existsSync(folder)).toBe(true);
+    } finally {
+        run.mockRestore();
+    }
+});
+
+it("a trashed recording says which batch holds it, when it drains and how to put it back", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "recording-trash-batch-"));
+    const calls: string[][] = [];
+    const run = spyOn(cli, "execTool").mockImplementation(async (args: readonly string[]) => {
+        calls.push([...args]);
+
+        if (args.includes("--dry-run")) {
+            const plan = [{ path: folder, verdict: "allow", bytes: 1, willAside: false }];
+            return { success: true, exitCode: 0, stdout: SafeJSON.stringify(plan), stderr: "" };
+        }
+
+        const answer = {
+            items: [],
+            batches: [{ id: "20261109-000000-1-abcd", drainAfter: "2026-11-09T01:00:00.000Z", items: 1 }],
+        };
+        return { success: true, exitCode: 0, stdout: SafeJSON.stringify(answer), stderr: "" };
+    });
+    try {
+        expect(await trashRecording(folder)).toEqual({
+            trashed: folder,
+            batch: "20261109-000000-1-abcd",
+            drainAfter: "2026-11-09T01:00:00.000Z",
+            restore: "tools rm restore 20261109-000000-1-abcd",
+        });
+        expect(calls[1]).toEqual(["rm", "--json", folder]);
     } finally {
         run.mockRestore();
     }
@@ -1052,7 +1082,7 @@ it("recording trash from an agent call asks no one: a policy that would ask refu
         expect(await trashRecording(folder)).toEqual({ trashed: folder });
         expect(calls.slice(1)).toEqual([
             ["rm", "--dry-run", "--json", folder],
-            ["rm", folder],
+            ["rm", "--json", folder],
         ]);
     } finally {
         run.mockRestore();
@@ -1148,7 +1178,7 @@ it("several recordings go through the removal policy in one call: one request, a
         expect(await trashRecordings([first, second, first], { askUser: true, aside: false })).toEqual({
             trashed: [first, second],
         });
-        expect(calls).toEqual([["rm", "--no-aside", first, second]]);
+        expect(calls).toEqual([["rm", "--json", "--no-aside", first, second]]);
 
         // An agent's call: one dry run for both, and when one would ask, none is moved and no one is asked.
         calls.length = 0;
@@ -1162,7 +1192,7 @@ it("several recordings go through the removal policy in one call: one request, a
         expect(await trashRecordings([first, second])).toEqual({ trashed: [first, second] });
         expect(calls).toEqual([
             ["rm", "--dry-run", "--json", first, second],
-            ["rm", first, second],
+            ["rm", "--json", first, second],
         ]);
     } finally {
         run.mockRestore();

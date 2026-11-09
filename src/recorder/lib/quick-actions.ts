@@ -17,7 +17,10 @@ const { log } = logger.scoped("recorder-quick-actions");
 /**
  * The quick actions of a recording that the menu bar's Recent list and the library window offer (Library/
  * RecordingActions.swift does the same for the window): copy the movie or a GIF to the clipboard, show it in Finder,
- * open its meeting, move it to the Trash. Rename is `renameRecording` (src/utils/screen-recorder/library.ts).
+ * open its meeting, move it to the Trash. Rename is `renameRecording` (src/utils/screen-recorder/library.ts). The trash
+ * lands in two places on purpose: here (the CLI and the REPL) it goes through `tools rm` into the GenesisTools trash,
+ * which `tools rm restore <batch>` puts back until it drains; the window's Move to Trash is a person's click and uses
+ * Finder's Trash with Put Back.
  */
 
 const EXPORT_EXTENSIONS = new Set(["mp4", "gif", "webm", "mov"]);
@@ -135,6 +138,21 @@ const removalPlanSchema = z.array(
     z.object({ path: z.string(), verdict: z.string(), reason: z.string().optional() }).passthrough()
 );
 
+/** What `tools rm --json` answers: the trash batch the folders went into and when the drain deletes it. */
+const removalResultSchema = z
+    .object({
+        batches: z.array(z.object({ id: z.string(), drainAfter: z.string() }).passthrough()),
+        request: z.string().optional(),
+    })
+    .passthrough();
+
+/** Where trashed recordings went: the `tools rm` batch, its drain time, and the command that puts it back. */
+export interface TrashedBatch {
+    batch: string;
+    drainAfter: string;
+    restore: string;
+}
+
 /**
  * Moves one library recording through the shared removal policy; `trashRecordings` for several at once. `tools rm trash`
  * lists its restore command. A kept meeting is refused. `roots` replaces a store's root, for a test.
@@ -145,9 +163,9 @@ const removalPlanSchema = z.array(
 export async function trashRecording(
     folder: string,
     options: { roots?: Partial<Record<RecordingStoreId, string>>; askUser?: boolean; aside?: boolean } = {}
-) {
-    await trashRecordings([folder], options);
-    return { trashed: folder };
+): Promise<{ trashed: string } & Partial<TrashedBatch>> {
+    const { trashed: _all, ...batch } = await trashRecordings([folder], options);
+    return { trashed: folder, ...batch };
 }
 
 /**
@@ -163,7 +181,7 @@ export async function trashRecordings(
         askUser = false,
         aside,
     }: { roots?: Partial<Record<RecordingStoreId, string>>; askUser?: boolean; aside?: boolean } = {}
-): Promise<{ trashed: string[] }> {
+): Promise<{ trashed: string[] } & Partial<TrashedBatch>> {
     const unique = [...new Set(folders)];
 
     if (unique.length === 0) {
@@ -218,13 +236,37 @@ export async function trashRecordings(
     }
 
     const flags = aside === undefined ? [] : [aside ? "--aside" : "--no-aside"];
-    const result = await execTool(["rm", ...flags, ...unique], { timeout: 30_000 });
+    const result = await execTool(["rm", "--json", ...flags, ...unique], { timeout: 30_000 });
+    // The answer names the GenesisTools trash batch (not Finder's Trash), which tools rm restore puts back before it
+    // drains, or the request the user must confirm. Folders that moved stay moved, so an unreadable answer only leaves
+    // the batch out.
+    let raw: unknown = null;
+
+    try {
+        raw = SafeJSON.parse(result.stdout, { strict: true });
+    } catch {
+        log.debug({ stdout: result.stdout.slice(0, 200) }, "tools rm --json answered no JSON");
+    }
+
+    const answer = removalResultSchema.safeParse(raw);
+
     if (!result.success) {
-        // stdout carries the policy's own words (the request id); stderr only its log lines.
+        const request = answer.success ? answer.data.request : undefined;
         throw new Error(
-            result.stdout.trim() || result.stderr.trim() || "removal policy refused the recordings; no file was moved"
+            request
+                ? `the removal waits for the user's confirmation in request ${request} (${toolCommand("rm approve")} ${request})`
+                : result.stdout.trim() ||
+                      result.stderr.trim() ||
+                      "removal policy refused the recordings; no file was moved"
         );
     }
-    log.debug({ folders: unique }, "moved recordings through the removal policy");
-    return { trashed: unique };
+
+    const batch = answer.success ? answer.data.batches[0] : undefined;
+    log.debug({ folders: unique, batch: batch?.id }, "moved recordings through the removal policy");
+    return {
+        trashed: unique,
+        ...(batch
+            ? { batch: batch.id, drainAfter: batch.drainAfter, restore: `${toolCommand("rm restore")} ${batch.id}` }
+            : {}),
+    };
 }
