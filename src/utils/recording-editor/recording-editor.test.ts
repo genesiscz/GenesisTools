@@ -33,7 +33,13 @@ import {
     removeComment,
     updateComment,
 } from "@genesiscz/utils/recording-editor/comments";
-import { findIdle, idleRanges, silenceDetectArgs } from "@genesiscz/utils/recording-editor/idle";
+import {
+    editorFrozenRanges,
+    FreezePrint,
+    findIdle,
+    idleRanges,
+    silenceDetectArgs,
+} from "@genesiscz/utils/recording-editor/idle";
 import { laneItems, resolveLanes } from "@genesiscz/utils/recording-editor/lanes";
 import { audibleTracks } from "@genesiscz/utils/recording-editor/loudness";
 import {
@@ -1696,6 +1702,68 @@ describe("edit project (edit.json)", () => {
             })
         ).toEqual([[300_000, 5_700_000]]);
         expect(idleRanges({ ...base, silentUs: [] })).toEqual([]);
+    });
+
+    describe("frozen stretches on the editor clock", () => {
+        /** A metadata print as ffmpeg writes it: each frame's header with its filter time, then the tags it carries. */
+        function metadataPrint(frames: Array<{ at: number; tags?: string[] }>): string {
+            return frames
+                .map((frame, index) =>
+                    [
+                        `frame:${index}    pts:${Math.round(frame.at * 600)}    pts_time:${frame.at}`,
+                        ...(frame.tags ?? []),
+                        "gt.f=1",
+                    ].join("\n")
+                )
+                .join("\n");
+        }
+
+        const behind = metadataPrint([
+            { at: 0 },
+            { at: 1.0 },
+            { at: 1.05 },
+            { at: 2.05 },
+            { at: 3.05, tags: ["lavfi.freezedetect.freeze_start=1.05"] },
+            { at: 4.05, tags: ["lavfi.freezedetect.freeze_duration=3", "lavfi.freezedetect.freeze_end=4.05"] },
+        ]);
+
+        test("frozen stretches land on the editor clock when ffmpeg's filter clock runs behind the packet times", () => {
+            // The simulator case: from frame 2 on, the packet times run 1.95 s ahead of ffmpeg's filter clock.
+            expect(editorFrozenRanges(behind, [0, 1_000_000, 3_000_000, 4_000_000, 5_000_000, 6_000_000])).toEqual([
+                [3_000_000, 6_000_000],
+            ]);
+            // When the two clocks agree, the stretch is the filter's own.
+            expect(editorFrozenRanges(behind, [0, 1_000_000, 1_050_000, 2_050_000, 3_050_000, 4_050_000])).toEqual([
+                [1_050_000, 4_050_000],
+            ]);
+        });
+
+        test("a freeze still open at the end lasts to the end of the movie, and a print read in pieces reads the same", () => {
+            const open = metadataPrint([
+                { at: 0 },
+                { at: 0.5 },
+                { at: 1.5 },
+                { at: 2.5, tags: ["lavfi.freezedetect.freeze_start=0.5"] },
+            ]);
+            expect(editorFrozenRanges(open, [0, 2_000_000, 3_000_000, 4_000_000])).toEqual([
+                [2_000_000, Number.POSITIVE_INFINITY],
+            ]);
+
+            const bytes = new TextEncoder().encode(behind);
+            const print = new FreezePrint();
+
+            for (let at = 0; at < bytes.length; at += 7) {
+                print.write(bytes.subarray(at, at + 7));
+            }
+
+            expect(print.rangesUs([0, 1_000_000, 3_000_000, 4_000_000, 5_000_000, 6_000_000])).toEqual([
+                [3_000_000, 6_000_000],
+            ]);
+        });
+
+        test("a print with another frame count than the container keeps ffmpeg's own times", () => {
+            expect(editorFrozenRanges(behind, [0, 1_000_000, 3_000_000])).toEqual([[1_050_000, 4_050_000]]);
+        });
     });
 
     test("removeIdle cuts the probed stretches and refuses to run without them", () => {

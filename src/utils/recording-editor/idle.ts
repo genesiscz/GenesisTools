@@ -4,6 +4,12 @@ import { runVideoCommand } from "@genesiscz/utils/video/process";
 
 const { log } = logger.scoped("recording-editor-idle");
 
+/*
+ * Every time here is on the editor's clock: the frame times the container lists (`frameTimesUs`). ffmpeg's filter
+ * clock runs a simulator recording about 1.95 s behind it after the first seconds (R8, the header of frame-grid.ts),
+ * so each freezedetect bound moves to the frame it names before it meets the frame gaps.
+ */
+
 /** Quieter than this is silence; a screen recording's system audio idles at -60 dB or lower. */
 const SILENCE_DB = -45;
 
@@ -62,31 +68,148 @@ function metadataRanges(text: string, key: string): Array<[number, number]> {
     return ranges;
 }
 
+/** The tag every frame gets before the print, so ffmpeg prints the header (and the filter time) of every frame. */
+const FRAME_TAG = "gt.f";
+
+const FRAME_HEADER = /^frame:\s*\d+\s+pts:\s*\S+\s+pts_time:(\S+)/;
+const FREEZE_BOUND = /^lavfi\.freezedetect\.freeze_(start|end)=(\S+)$/;
+
+interface FreezeBound {
+    edge: "start" | "end";
+    /** On ffmpeg's filter clock. */
+    us: number;
+    /** The ordinal of the frame whose metadata carried the bound. */
+    frame: number;
+}
+
 /**
- * The stretches where the picture does not change for at least `minUs`. A screen recording keeps writing frames
- * (the menu bar clock, the cursor), so frame gaps alone found nothing in one; freezedetect on a small copy compares
- * the pictures with a noise margin.
+ * Reads a freezedetect metadata print as it arrives: the filter time of every frame and the freeze bounds. It keeps
+ * one number per frame, never the text.
  */
-export async function frozenRangesUs(video: string, minUs: number): Promise<Array<[number, number]>> {
-    const text = await runVideoCommand({
+export class FreezePrint {
+    private readonly decoder = new TextDecoder();
+    private rest = "";
+    private readonly filterUs: number[] = [];
+    private readonly bounds: FreezeBound[] = [];
+
+    write(chunk: Uint8Array | string): void {
+        const text = this.rest + (typeof chunk === "string" ? chunk : this.decoder.decode(chunk, { stream: true }));
+        const lines = text.split("\n");
+        this.rest = lines.pop() ?? "";
+
+        for (const line of lines) {
+            this.read(line);
+        }
+    }
+
+    /**
+     * The frozen stretches on the editor clock. Each bound takes the presentation time (`presentationUs`, the list
+     * `frameTimesUs` gives) of the first frame at or past its filter time, which is the frame freezedetect named; an
+     * open freeze lasts to the end of the movie. ffmpeg hands its filters the frames in presentation order, so frame N
+     * of the print is the Nth listed time; a print with another frame count keeps ffmpeg's own times.
+     */
+    rangesUs(presentationUs: readonly number[]): Array<[number, number]> {
+        this.read(this.rest + this.decoder.decode());
+        this.rest = "";
+
+        if (this.filterUs.length !== presentationUs.length) {
+            log.warn(
+                { printed: this.filterUs.length, listed: presentationUs.length },
+                "ffmpeg printed another frame count than the container lists; freeze times stay on its filter clock"
+            );
+            return freezeRanges(this.bounds, (bound) => bound.us);
+        }
+
+        let frame = 0;
+        return freezeRanges(this.bounds, (bound) => {
+            while (frame < bound.frame && !(this.filterUs[frame] >= bound.us)) {
+                frame++;
+            }
+
+            return presentationUs[frame];
+        });
+    }
+
+    private read(line: string): void {
+        const header = FRAME_HEADER.exec(line);
+
+        if (header) {
+            this.filterUs.push(Math.round(Number(header[1]) * 1_000_000));
+            return;
+        }
+
+        const bound = FREEZE_BOUND.exec(line.trim());
+        const us = bound ? Math.round(Number(bound[2]) * 1_000_000) : Number.NaN;
+
+        if (bound && Number.isFinite(us) && this.filterUs.length > 0) {
+            this.bounds.push({ edge: bound[1] === "start" ? "start" : "end", us, frame: this.filterUs.length - 1 });
+        }
+    }
+}
+
+/** The bounds as ranges, each timed by `timeOf` (called on every bound, in order); an open start lasts to the end. */
+function freezeRanges(bounds: readonly FreezeBound[], timeOf: (bound: FreezeBound) => number): Array<[number, number]> {
+    const ranges: Array<[number, number]> = [];
+    let start: number | undefined;
+
+    for (const bound of bounds) {
+        const us = timeOf(bound);
+
+        if (bound.edge === "start") {
+            start = us;
+        } else if (start !== undefined) {
+            ranges.push([start, us]);
+            start = undefined;
+        }
+    }
+
+    if (start !== undefined) {
+        ranges.push([start, Number.POSITIVE_INFINITY]);
+    }
+
+    return ranges;
+}
+
+/** The frozen stretches a whole metadata print names, on the editor clock (`FreezePrint.rangesUs`). */
+export function editorFrozenRanges(metadataText: string, presentationUs: readonly number[]): Array<[number, number]> {
+    const print = new FreezePrint();
+    print.write(metadataText);
+    return print.rangesUs(presentationUs);
+}
+
+/**
+ * The stretches where the picture does not change for at least `minUs`, on the editor clock. A screen recording keeps
+ * writing frames (the menu bar clock, the cursor), so frame gaps alone found nothing in one; freezedetect on a small
+ * copy compares the pictures with a noise margin. `presentationUs` is the movie's frame list from `frameTimesUs`.
+ */
+export async function frozenRangesUs(options: {
+    video: string;
+    minUs: number;
+    presentationUs: readonly number[];
+}): Promise<Array<[number, number]>> {
+    const print = new FreezePrint();
+    const detect = `freezedetect=n=${FREEZE_NOISE_DB}dB:d=${options.minUs / 1_000_000}`;
+    await runVideoCommand({
         command: [
             "ffmpeg",
             "-nostdin",
             "-v",
             "error",
             "-i",
-            video,
+            options.video,
             "-map",
             "0:v:0",
             "-vf",
-            `scale=480:-2,freezedetect=n=${FREEZE_NOISE_DB}dB:d=${minUs / 1_000_000},metadata=mode=print:file=-`,
+            `scale=480:-2,${detect},metadata=mode=add:key=${FRAME_TAG}:value=1,metadata=mode=print:file=-`,
             "-f",
             "null",
             "-",
         ],
         timeoutMs: 10 * 60_000,
+        // A header line per frame: a long simulator recording (near 120 frames a second) outgrows a buffered read.
+        onStdout: (chunk) => print.write(chunk),
     });
-    return metadataRanges(text, "lavfi.freezedetect.freeze");
+    return print.rangesUs(options.presentationUs);
 }
 
 /**
@@ -203,9 +326,12 @@ export async function findIdle(options: {
     keepUs: number;
     audio?: PlayedAudio;
 }): Promise<Array<[number, number]>> {
-    const [frames, frozen, silent] = await Promise.all([
-        frameTimesUs(options.video),
-        frozenRangesUs(options.video, options.minUs),
+    const pictures = frameTimesUs(options.video).then(async (frames) => ({
+        frames,
+        frozen: await frozenRangesUs({ video: options.video, minUs: options.minUs, presentationUs: frames }),
+    }));
+    const [{ frames, frozen }, silent] = await Promise.all([
+        pictures,
         silentRangesUs({ video: options.video, minUs: options.minUs, audio: options.audio }),
     ]);
     const ranges = idleRanges({ frameTimesUs: frames, frozenUs: frozen, silentUs: silent, ...options });
