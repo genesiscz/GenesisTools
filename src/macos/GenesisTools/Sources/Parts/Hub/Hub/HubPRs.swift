@@ -353,6 +353,11 @@ final class PRsModel: ObservableObject {
     private(set) var pendingReveal: PRReveal?
     /// A commit to select in one PR's review once the review and the PR's commits are in (`request(_:commit:)`).
     private(set) var pendingCommit: PRCommitPick?
+    /// The checkout's answer for the pending link's commits, asked before the forge lists the PR's commits.
+    private var linkLocal: PRLinkLocal?
+    /// The PR whose new review waits for the checkout's answer about a link's commits (`showReview`); the PR's cached
+    /// commits, when they arrive first and list the commit, open it at once.
+    private var deferredReview: String?
     /// The commit row the overview scrolls to, set when a link selected it.
     @Published private(set) var commitScroll: PRCommitScroll?
     /// The range a link's `commit=<from>..<to>` set, so the commits list marks its commits even when it spans
@@ -799,29 +804,25 @@ final class PRsModel: ObservableObject {
         review.reveal(path: pending.path, thread: pending.threadID)
     }
 
-    /// The pending commit, once the review on screen is its PR's and the PR's commits are in. It stays
-    /// pending until a detail fetched after the request answers for the head the review shows: a review
-    /// rebuilt for a moved head or a new base starts on the whole PR again, and a cached detail can
-    /// predate the commit. Then it is selected for good, or the PR is said not to hold it.
+    /// The pending commit, once the review on screen is its PR's: from the PR's commits when they list it, else from
+    /// the checkout while the forge has not answered (`showLocalFirst`). It stays pending until a detail fetched after
+    /// the request answers for the head the review shows, since a cached detail can predate the commit. Then it is
+    /// selected for good, or the PR is said not to hold it.
     private func pickPendingCommit() {
         guard let pending = pendingCommit, let review, let id = reviewPRID, let shown = prs.first(where: { $0.id == id }),
-              pending.ref.matches(shown), let commits = details[id]?.commits else { return }
-        let settled = (detailFetched[id].map { $0 >= pending.asked } ?? false) && reviewHeadSha == shown.headSha
-        guard let commit = HubCommitSha.find(pending.sha, in: commits) else {
+              pending.ref.matches(shown) else { return }
+        let commits = details[id]?.commits ?? []
+        let settled = details[id]?.commits != nil && (detailFetched[id].map { $0 >= pending.asked } ?? false)
+            && reviewHeadSha == shown.headSha
+        let last = pending.to.flatMap { HubCommitSha.find($0, in: commits) }
+        guard let commit = HubCommitSha.find(pending.sha, in: commits), pending.to == nil || last != nil else {
             if settled {
                 pickLocalCommits(pending, in: shown, commits: commits, review: review)
+            } else {
+                // Not listed yet (no list, or a list from before the push): the checkout shows them first.
+                showLocalFirst(pending, in: shown, commits: commits, review: review)
             }
             return
-        }
-        var last: HubPRDetail.Commit?
-        if let to = pending.to {
-            guard let found = HubCommitSha.find(to, in: commits) else {
-                if settled {
-                    pickLocalCommits(pending, in: shown, commits: commits, review: review)
-                }
-                return
-            }
-            last = found
         }
         if settled {
             pendingCommit = nil
@@ -832,6 +833,82 @@ final class PRsModel: ObservableObject {
         } else {
             showLinkedCommit(commit, prID: id, review: review)
         }
+    }
+
+    /// The link's commits from the checkout while the forge has not listed them (no list yet, or a cached one from
+    /// before they were pushed): they show now, and the pick stays pending until the forge's answer settles it. The
+    /// first call asks the checkout (`lookUpLinkLocally`), whose answer calls this again.
+    private func showLocalFirst(_ pending: PRCommitPick, in shown: HubPR, commits: [HubPRDetail.Commit], review: ReviewModel) {
+        guard let local = linkLocal, local.pick == pending, local.repo == review.home.path else {
+            lookUpLinkLocally(pending, pr: shown, repo: review.home.path)
+            return
+        }
+        guard case .found(let found, let parent) = local.state else { return }
+        let whole = Self.scope(shown, detail: details[shown.id], fetch: fetchedHead(shown))
+        let (scope, range) = Self.localScope(found, parent: parent, commits: commits, pr: shown, whole: whole)
+        HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
+        HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
+        if let range { linkedRange = range }
+        guard review.scope != scope else { return }
+        HubPerf.log("prs.commit \(shown.label) \(scope.title) from the checkout, before the forge lists it")
+        review.setScope(scope)
+    }
+
+    /// Asks the checkout at `repo` where the pending link's commits are, off the main thread, once per link and
+    /// checkout: a few git calls (`HubLocalCommits.resolve`), against the PR's head and base as the hub knows them now.
+    /// A head the hub has not seen yet (a commit pushed after the list) still counts, as `resolve` takes commits after
+    /// the head. The answer builds the review (`showReview`) or moves the one on screen (`pickPendingCommit`).
+    private func lookUpLinkLocally(_ pending: PRCommitPick, pr: HubPR, repo: String) {
+        if let current = linkLocal, current.pick == pending, current.repo == repo { return }
+        linkLocal = PRLinkLocal(pick: pending, repo: repo, state: .asking)
+        let ends = [pending.sha] + (pending.to.map { [$0] } ?? [])
+        let head = pr.headSha ?? "HEAD"
+        let bases = [details[pr.id]?.baseSha, fetchedHead(pr)?.base, "origin/\(pr.baseBranch)"].compactMap { $0 }
+        let pushed = Set(details[pr.id]?.commits?.map(\.sha) ?? [])
+        let span = HubPerf.begin("prs.commit.local", "\(pr.label) \(HubCommitSpan(from: pending.sha, to: pending.to).label)", awaits: true)
+        Task {
+            let state = await Task.detached(priority: .userInitiated) { () -> PRLinkLocal.State in
+                guard case .success(let found) = HubLocalCommits.resolve(ends: ends, repo: repo, head: head, bases: bases, pushed: pushed) else {
+                    return .none
+                }
+                return .found(found, parent: found.last == nil ? nil : HubCommitLookup.parent(of: found.first, in: repo))
+            }.value
+            guard var current = linkLocal, current.pick == pending, current.repo == repo else {
+                span.end("superseded")
+                return
+            }
+            current.state = state
+            linkLocal = current
+            if case .found(let found, _) = state {
+                span.end("\(Plural.count(found.count, "commit")), \(found.unpushed) after the head the hub knows")
+            } else {
+                span.end("not in this checkout's PR line; the forge decides")
+            }
+            guard pendingCommit == pending, let shown = selected, pending.ref.matches(shown) else { return }
+            if reviewPRID == shown.id, let review, review.home.path == repo {
+                pickPendingCommit()
+            } else {
+                showDiff(shown)
+            }
+        }
+    }
+
+    /// The diff of a link's commits read from the checkout: one commit; or a range from the commit before its first one
+    /// (`parent`, else `<first>^`), or from the PR's own base (`whole`) when the first one is the PR's first listed
+    /// commit. With a range, the listed commits it covers, for the commits list to mark.
+    nonisolated static func localScope(_ local: HubLocalCommits, parent: String?, commits: [HubPRDetail.Commit], pr: HubPR,
+                                       whole: DiffScope) -> (scope: DiffScope, range: PRLinkedRange?) {
+        guard let last = local.last else { return (.commit(sha: local.first, title: local.title), nil) }
+        let label = "\(pr.label) \(local.first.prefix(7))..\(last.prefix(7)) (\(Plural.count(local.count, "commit")))"
+        let index = commits.firstIndex(where: { $0.sha == local.first })
+        let scope: DiffScope
+        if index == 0, case .range(let base, _, _, let fallback) = whole {
+            scope = .range(base: base, head: last, label: label, fallbackBase: fallback)
+        } else {
+            scope = .range(base: parent ?? local.first + "^", head: last, label: label)
+        }
+        // The listed commits it covers: the pushed ones from its first on; none when it starts after the pushed head.
+        return (scope, PRLinkedRange(scope: scope, shas: index.map { Set(commits[$0...].map(\.sha)) } ?? []))
     }
 
     /// A link's commit that the forge does not list may be one the PR's checkout has not pushed yet, one past the end
@@ -931,21 +1008,14 @@ final class PRsModel: ObservableObject {
         HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
         HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
         HubPerf.log("prs.commit \(pr.label) \(local.first.prefix(10))\(local.last.map { "..\($0.prefix(10))" } ?? "") local unpushed=\(local.unpushed)")
-        let scope: DiffScope
-        if let last = local.last {
-            let label = "\(pr.label) \(local.first.prefix(7))..\(last.prefix(7)) (\(Plural.count(local.count, "commit")))"
-            let index = commits.firstIndex(where: { $0.sha == local.first })
-            // The PR's first commit starts at the PR's own base; any other at its first parent from git (`rangeScope`).
-            if index == 0, case .range(let base, _, _, let fallback) = Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)) {
-                scope = .range(base: base, head: last, label: label, fallbackBase: fallback)
-            } else {
-                scope = .range(base: local.first + "^", head: last, label: label)
-            }
-            // The listed commits it covers: the pushed ones from its first on; none when it starts after the pushed head.
-            linkedRange = PRLinkedRange(scope: scope, shas: index.map { Set(commits[$0...].map(\.sha)) } ?? [])
-        } else {
-            scope = .commit(sha: local.first, title: local.title)
+        // The parent the checkout already named for this link (`lookUpLinkLocally`), so the diff shown first stays.
+        var parent: String?
+        if let early = linkLocal, early.pick == pending, case .found(let found, let named) = early.state, found.first == local.first {
+            parent = named
         }
+        let whole = Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr))
+        let (scope, range) = Self.localScope(local, parent: parent, commits: commits, pr: pr, whole: whole)
+        if let range { linkedRange = range }
         if review.scope != scope { review.setScope(scope) }
         if local.unpushed > 0 {
             notice = PRNotice(ref: pending.ref, text: "\(Plural.count(local.unpushed, "commit")) of this link \(local.unpushed == 1 ? "is" : "are") not pushed yet; the diff comes from \((review.repo.path as NSString).abbreviatingWithTildeInPath)", isError: false)
@@ -1306,28 +1376,43 @@ final class PRsModel: ObservableObject {
     /// The embedded review of `pr` at `path`: its worktree, or the main checkout with `fetch` naming the
     /// head there. Rebuilt only when the PR, the folder, the stored proposal or the head changed.
     private func showReview(_ pr: HubPR, path: String, fetch: HubPRFetch?) {
+        let home = URL(fileURLWithPath: path).path
         // Same PR in a different worktree: the old model still points at the old checkout.
-        guard reviewPRID != pr.id || review?.home.path != URL(fileURLWithPath: path).path
+        guard reviewPRID != pr.id || review?.home.path != home
             || reviewProposalStamp != pr.proposalStamp || reviewHeadSha != pr.headSha else { return }
         if reviewPRID == pr.id, reviewHeadSha != pr.headSha, details[pr.id]?.headSha != pr.headSha {
             // A new head can come with a new recorded base (a rebase): fetch the detail again. A detail
             // already for this head (it is what noticed the push) stays.
             details[pr.id] = nil
         }
+        // Only the head moved (a push, a force push, a rebase): the review on screen follows it in place.
+        if reviewPRID == pr.id, let current = review, current.home.path == home, reviewProposalStamp == pr.proposalStamp {
+            moveHead(of: current, to: pr, fetch: fetch)
+            return
+        }
         let samePR = reviewPRID == pr.id
         let sameHead = reviewHeadSha == pr.headSha
+        let scope: DiffScope
+        if samePR, let previous = review, previous.repo.path == home, sameHead {
+            // Only the proposal changed (a review landed, no push): the commit the reader picked still exists.
+            scope = previous.scope
+        } else if let opening = openingScope(pr, path: home, fetch: fetch) {
+            scope = opening
+        } else {
+            // A link's commits open first: the checkout is asked (a few git calls) instead of loading the whole PR
+            // first. Another PR's diff does not stay under this PR's header meanwhile.
+            if !samePR { clearReview() }
+            deferredReview = pr.id
+            return
+        }
+        deferredReview = nil
         reviewPRID = pr.id
         reviewProposalStamp = pr.proposalStamp
         reviewHeadSha = pr.headSha
         let next = ReviewModel(repo: URL(fileURLWithPath: path), options: DiffViewOptions.remembered())
         next.embedded = true
         next.openInWindow = { [weak self] in self?.openInReviewWindow(pr) }
-        // Only the proposal changed (a review landed, no push): the commit the reader picked still exists.
-        if samePR, let previous = review, previous.repo.path == URL(fileURLWithPath: path).path, sameHead {
-            next.scope = previous.scope
-        } else {
-            next.scope = Self.scope(pr, detail: details[pr.id], fetch: fetch)
-        }
+        next.scope = scope
         if let fetch {
             // The main checkout is on another branch: file actions open the host's copy at the head.
             next.remoteHead = ReviewRemoteHead(branch: pr.headBranch, sha: fetch.head, base: fetch.mergeBase ?? fetch.base,
@@ -1355,6 +1440,55 @@ final class PRsModel: ObservableObject {
         review = next
         revealPending()
         pickPendingCommit()
+    }
+
+    /// The scope a new review of `pr` opens on: the pending link's commits when the PR's commits list its one commit or
+    /// the checkout placed them (`lookUpLinkLocally`), else the whole PR. Nil while the checkout is asked.
+    private func openingScope(_ pr: HubPR, path: String, fetch: HubPRFetch?) -> DiffScope? {
+        let whole = Self.scope(pr, detail: details[pr.id], fetch: fetch)
+        guard let pending = pendingCommit, pending.ref.matches(pr) else { return whole }
+        if pending.to == nil, let commit = details[pr.id]?.commits.flatMap({ HubCommitSha.find(pending.sha, in: $0) }) {
+            return .commit(sha: commit.sha, title: commit.title)
+        }
+        guard let local = linkLocal, local.pick == pending, local.repo == path else {
+            lookUpLinkLocally(pending, pr: pr, repo: path)
+            return nil
+        }
+        switch local.state {
+        case .asking:
+            return nil
+        case .found(let found, let parent):
+            return Self.localScope(found, parent: parent, commits: details[pr.id]?.commits ?? [], pr: pr, whole: whole).scope
+        case .none:
+            return whole
+        }
+    }
+
+    /// The PR on screen at a new head (a push, a force push, a rebase): the same review and its page follow it, so the
+    /// diff is not built again from nothing. A review of the whole PR moves to the new head and base, and the page
+    /// parses again only the files whose text changed (`ReviewModel.follow`). A commit, a range or a compare on screen
+    /// stays, since its diff does not depend on the head, and a pending link picks its own (`pickPendingCommit`).
+    private func moveHead(of current: ReviewModel, to pr: HubPR, fetch: HubPRFetch?) {
+        let whole = Self.showsWholePR(current.scope, pr: pr, head: current.remoteHead?.sha ?? reviewHeadSha ?? "HEAD")
+        let linked = pendingCommit.map { $0.ref.matches(pr) } ?? false
+        let follows = whole && !linked
+        HubPerf.log("prs.review \(pr.label) head \(reviewHeadSha?.prefix(10) ?? "-") -> \(pr.headSha?.prefix(10) ?? "-") in place: "
+            + (follows ? "the whole PR follows it" : "\(current.scope.title) stays"))
+        reviewHeadSha = pr.headSha
+        let remote = fetch.map { ReviewRemoteHead(branch: pr.headBranch, sha: $0.head, base: $0.mergeBase ?? $0.base, forge: pr.commitForge) }
+        if follows {
+            current.follow(Self.scope(pr, detail: details[pr.id], fetch: fetch), remoteHead: remote)
+        } else if let remote {
+            current.remoteHead = remote
+        }
+        revealPending()
+        pickPendingCommit()
+    }
+
+    /// Whether `scope` is the whole PR (`scope(_:detail:fetch:)`) at `head`, not a range a link or the reader picked.
+    nonisolated static func showsWholePR(_ scope: DiffScope, pr: HubPR, head: String) -> Bool {
+        guard case .range(_, let shown, let label, _) = scope else { return false }
+        return shown == head && label.hasPrefix("\(pr.label) vs ")
     }
 
     /// The review on screen in its own window (`GenesisTools --review`): the same folder, commit range,
@@ -1442,6 +1576,9 @@ final class PRsModel: ObservableObject {
             // Only the review: `select` would start a second detail load while the first still runs.
             if selectedID == key, let current = selected, let root = current.repoRoot, let fetch = fetchedHead(current) {
                 showReview(current, path: root, fetch: fetch)
+            } else if selectedID == key, case .failed = state, reviewPRID == key {
+                // The diff of the older head stayed while this one fetched (`showDiff`); without the new head it goes.
+                clearReview()
             }
         }
     }
@@ -1479,7 +1616,12 @@ final class PRsModel: ObservableObject {
                 }.value
                 if let cached, details[key] == nil {
                     details[key] = cached
-                    pickPendingCommit()
+                    // A review waiting for the checkout opens now when this list names the link's commit.
+                    if deferredReview == key, selectedID == key, let pr = selected {
+                        showDiff(pr)
+                    } else {
+                        pickPendingCommit()
+                    }
                 }
             }
         }
@@ -1512,7 +1654,12 @@ final class PRsModel: ObservableObject {
             if let fetch = fetchedHead(pr) {
                 showReview(pr, path: root, fetch: fetch)
             } else {
-                clearReview()
+                // A new head of the PR on screen fetches behind its diff, which then moves in place (`moveHead`). Another
+                // PR's diff, or a head whose fetch failed, goes at once.
+                let failed = fetchState(pr).map { if case .failed = $0 { true } else { false } } ?? false
+                if failed || reviewPRID != pr.id || review?.home.path != URL(fileURLWithPath: root).path {
+                    clearReview()
+                }
                 if fetches[pr.id].map({ $0.forHead != pr.headSha }) ?? true {
                     fetchHead(pr, root: root)
                 }
@@ -1607,8 +1754,10 @@ final class PRsModel: ObservableObject {
                     prefetchThreads(row, headMoved: true)
                     showDiff(row)
                 }
-            } else if reviewPRID == key, detail.baseSha != nil, previous?.baseSha != detail.baseSha {
-                review?.setScope(Self.scope(current, detail: detail, fetch: fetchedHead(current)))
+            } else if reviewPRID == key, detail.baseSha != nil, previous?.baseSha != detail.baseSha, let review,
+                      Self.showsWholePR(review.scope, pr: current, head: review.remoteHead?.sha ?? reviewHeadSha ?? "HEAD") {
+                // The recorded base arrived or moved (a rebase): the whole PR follows it in place. A commit stays.
+                review.follow(Self.scope(current, detail: detail, fetch: fetchedHead(current)), remoteHead: nil)
             }
             // A row only `openDirect` keeps (the list does not hold it, and it may have come from disk): this
             // answer is its one fresh source, so its title, state and checks follow it too.

@@ -69,6 +69,24 @@ struct PRCommitPick: Equatable {
     let asked: Date
 }
 
+/// What the PR's checkout said about a link's commits before the forge listed them (`PRsModel.lookUpLinkLocally`):
+/// the review opens on them at once, and the forge's answer still settles the pick (`PRsModel.pickPendingCommit`).
+struct PRLinkLocal: Equatable {
+    enum State: Equatable {
+        /// git runs; a new review of the PR waits for it rather than loading the whole PR first.
+        case asking
+        /// The link's commits continue the PR here; `parent` is the first parent of a range's first commit.
+        case found(HubLocalCommits, parent: String?)
+        /// The checkout cannot place them in the PR: the forge's answer decides, as it did before.
+        case none
+    }
+
+    let pick: PRCommitPick
+    /// The checkout's path, as the review that shows it was opened on (`ReviewModel.home`).
+    let repo: String
+    var state: State
+}
+
 /// A message about one PR for its header (`PRsModel.notice`): a link's commit it does not hold.
 struct PRNotice: Equatable {
     let ref: HubPRRef
