@@ -251,6 +251,88 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(asked, ["a 12.7"])
     }
 
+    // MARK: R15, R31 notices float over the pane, stack, and each keeps its Undo
+
+    func testTwoAnswersInARowKeepTwoUndoButtons() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let clock = ManualNoticeClock()
+        let model = MeetingsWindowModel(defaults: defaults, noticeClock: clock, loadDetail: { _ in })
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()))
+        model.select("a")
+        let detail = try XCTUnwrap(model.detail)
+        let items = try JSONDecoder().decode([MeetingItem].self, from: Self.itemsJSON())
+
+        detail.showDecided(items[0], confirm: true, token: "t-1")
+        clock.advance(by: 10)
+        detail.showDecided(items[3], confirm: false, token: "t-2")
+        XCTAssertEqual(detail.notices.notices.map(\.text),
+                       ["Confirmed \(MeetingsWords.itemTitle(items[0]))", "Rejected \(MeetingsWords.itemTitle(items[3]))"],
+                       "the second decision adds a notice; it does not replace the first")
+        XCTAssertEqual(detail.notices.notices.map { $0.actions.map(\.label) }, [["Undo"], ["Undo"]],
+                       "each decision keeps its own Undo")
+
+        clock.advance(by: 19.9)
+        XCTAssertEqual(detail.notices.notices.count, 2, "a notice with Undo stays 30 s by default (R15)")
+        clock.advance(by: 0.1)
+        XCTAssertEqual(detail.notices.notices.map(\.text), ["Rejected \(MeetingsWords.itemTitle(items[3]))"],
+                       "each notice leaves after its own time")
+        detail.showDecided(items[0], confirm: true, token: nil)
+        XCTAssertEqual(detail.notices.notices.last?.actions.count, 0, "no token, no Undo: it could take back a decision made elsewhere")
+    }
+
+    func testTheNoticeTimeIsAWindowSettingAndTheOldUndoTimeIsRemoved() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(15, forKey: MeetingsPreferences.legacyUndoSecondsKey)
+        let clock = ManualNoticeClock()
+        let model = MeetingsWindowModel(defaults: defaults, noticeClock: clock, loadDetail: { _ in })
+        XCTAssertNil(defaults.object(forKey: MeetingsPreferences.legacyUndoSecondsKey), "the replaced key is removed once")
+        XCTAssertEqual(MeetingsPreferences.noticeSeconds(defaults), 30, "R15: about 30 s, longer than any old choice")
+        XCTAssertEqual(MeetingsPreferences.plainNoticeSeconds(defaults), 6)
+        XCTAssertEqual(MeetingsPreferences.noticePlace(defaults), .bottom)
+
+        defaults.set(8, forKey: MeetingsPreferences.noticeSecondsKey)
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()))
+        model.select("a")
+        let detail = try XCTUnwrap(model.detail)
+        let items = try JSONDecoder().decode([MeetingItem].self, from: Self.itemsJSON())
+        let id = detail.showDecided(items[0], confirm: true, token: "t-1")
+        XCTAssertEqual(detail.notices.remaining(id), 8, "the setting decides how long the Undo stays")
+    }
+
+    /// The notice used to sit between the header and the tabs, so each answer pushed the rows down (R15). Now the
+    /// pane's content keeps its frame and the stack floats inside it.
+    func testNoticesFloatOverTheContentAndMoveNothing() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), loadDetail: { _ in })
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()))
+        model.select("a")
+        let detail = try XCTUnwrap(model.detail)
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+
+        let window = hiddenWindow(model, size: NSSize(width: 1100, height: 700))
+        defer { window.orderOut(nil); window.close() }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        let before = try XCTUnwrap(FrameProbe.frames["meetings.detail.content"], "the pane's content is on screen")
+        XCTAssertNil(FrameProbe.frames["notice-stack"], "no notices, no stack")
+
+        let items = try JSONDecoder().decode([MeetingItem].self, from: Self.itemsJSON())
+        detail.showDecided(items[0], confirm: true, token: "t-1")
+        detail.showDecided(items[3], confirm: false, token: "t-2")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+
+        let after = try XCTUnwrap(FrameProbe.frames["meetings.detail.content"])
+        XCTAssertEqual(after, before, "two notices moved the content: \(before) → \(after)")
+        let stack = try XCTUnwrap(FrameProbe.frames["notice-stack"], "the notices are on screen")
+        XCTAssertTrue(before.insetBy(dx: -1, dy: -1).contains(stack), "the stack floats inside the content: \(stack) in \(before)")
+        XCTAssertGreaterThan(stack.height, 40, "two notices, both drawn")
+        XCTAssertEqual(stack.maxY, before.maxY - 8, accuracy: 2, "the stack sits at the content's bottom edge by default")
+    }
+
     // MARK: MU4 confirm all at or above a line, with one Undo
 
     static func itemsJSON() -> Data {

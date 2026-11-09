@@ -28,7 +28,10 @@ final class MeetingsSettingsModel {
     /// Paths with a write in flight, so their control waits and a second change does not race the first.
     private(set) var writing: Set<String> = []
     var drafts: [String: MatchRulesDraft] = [:]
-    var notice: MeetingsNotice?
+    /// The notices of the pages' actions, floating over the visible page.
+    @ObservationIgnored let notices: NoticeStackModel
+    /// The phrase test runs as the reader types: its failure replaces the one before instead of piling up.
+    @ObservationIgnored private let phraseFailureID = StackedNotice.ID()
     /// The dictionary page's scope: nil is the global dictionary.
     var dictionaryScope: String? {
         didSet { if oldValue != dictionaryScope { loadDictionary(); testPhrase(phrase) } }
@@ -39,8 +42,9 @@ final class MeetingsSettingsModel {
     private var previewTask: Task<Void, Never>?
     private var phraseTask: Task<Void, Never>?
 
-    init(writes: Bool = true) {
+    init(writes: Bool = true, notices: NoticeStackModel? = nil) {
         self.writes = writes
+        self.notices = notices ?? NoticeStackModel(timing: { MeetingsPreferences.noticeTiming() })
     }
 
     /// Every read has ended, with data or with its error (a snapshot waits for this).
@@ -252,12 +256,12 @@ final class MeetingsSettingsModel {
             defer { writing.remove("rules.\(project)") }
             do {
                 _ = try await MeetingsCLI.run(["config", "edit", MeetingsCLI.jsonArgument(edits)])
-                notice = MeetingsNotice(text: "Saved the \(project) rules", tone: .success)
+                notices.push(StackedNotice(text: "Saved the \(project) rules"))
             } catch let failure as MeetingsCLI.Failure where failure.code == "config-stale" {
                 // The draft stays: the reload brings the other editor's rules into the saved side to compare with.
-                notice = Self.staleNotice(failure)
+                notices.push(Self.staleNotice(failure))
             } catch {
-                notice = .failure(error) { [weak model = self] in model?.saveRules(project) }
+                notices.push(.meetingsFailure(error) { [weak model = self] in model?.saveRules(project) })
             }
             loadSettings()
             loadPreview()
@@ -375,7 +379,7 @@ final class MeetingsSettingsModel {
                 phraseResult = result
             } catch {
                 guard !Task.isCancelled else { return }
-                notice = .failure(error)
+                notices.push(.meetingsFailure(error, id: phraseFailureID))
             }
         }
     }
@@ -383,9 +387,9 @@ final class MeetingsSettingsModel {
     // MARK: Runner
 
     /// Another editor changed the setting after this page read it: nothing was written, and the page reads it again.
-    static func staleNotice(_ failure: MeetingsCLI.Failure) -> MeetingsNotice {
-        MeetingsNotice(text: "Not saved: this setting changed in another window or the terminal. The page shows its new value now.",
-                       more: failure.detail, tone: .error)
+    static func staleNotice(_ failure: MeetingsCLI.Failure) -> StackedNotice {
+        StackedNotice(text: "Not saved: this setting changed in another window or the terminal. The page shows its new value now.",
+                      more: failure.detail, tone: .error)
     }
 
     func isWriting(_ key: String) -> Bool { writing.contains(key) }
@@ -403,16 +407,22 @@ final class MeetingsSettingsModel {
                 _ = try await MeetingsCLI.run(args)
                 saved?(self)
                 if let done {
-                    notice = MeetingsNotice(text: done, tone: .success, actionTitle: undo == nil ? nil : "Undo", actionSymbol: "arrow.uturn.backward", action: undo)
+                    // The Undo closes this notice; what it undid reports as a notice of its own.
+                    let actions = undo.map { undo in
+                        [StackedNotice.Action("Undo", symbol: "arrow.uturn.backward") { _ in undo() }]
+                    } ?? []
+                    notices.push(StackedNotice(text: done, actions: actions))
                 }
             } catch let failure as MeetingsCLI.Failure where failure.code == "config-stale" {
-                notice = Self.staleNotice(failure)
+                notices.push(Self.staleNotice(failure))
                 loadSettings()
             } catch let failure as MeetingsCLI.Failure where failure.code == "dictionary-exists" {
                 // An Undo found the entry made again: a retry would be refused the same way.
-                notice = MeetingsNotice(text: failure.sentence, more: failure.detail, tone: .error)
+                notices.push(StackedNotice(text: failure.sentence, more: failure.detail, tone: .error))
             } catch {
-                notice = .failure(error) { [weak model = self] in model?.run(key: key, args, done: done, undo: undo, saved: saved, then: then) }
+                notices.push(.meetingsFailure(error) { [weak model = self] in
+                    model?.run(key: key, args, done: done, undo: undo, saved: saved, then: then)
+                })
             }
             then(self)
         }
@@ -468,15 +478,15 @@ extension MeetingsSettingsModel {
             defer { writing.remove(key) }
             do {
                 let removal = try await MeetingsCLI.json(ProjectRemoval.self, Self.removeArgs(name, unassign: unassign))
-                notice = MeetingsNotice(text: Self.removalNote(removal),
-                                        detail: "Its settings are kept in \((removal.backup as NSString).abbreviatingWithTildeInPath)",
-                                        tone: .success)
+                notices.push(StackedNotice(text: Self.removalNote(removal),
+                                           detail: "Its settings are kept in \((removal.backup as NSString).abbreviatingWithTildeInPath)"))
             } catch let failure as MeetingsCLI.Failure where !unassign && Self.offersUnassign(failure) {
-                notice = MeetingsNotice(text: failure.sentence, more: failure.detail, tone: .error,
-                                        actionTitle: "Remove and leave them without a project", actionSymbol: "trash",
-                                        action: { [weak self] in self?.removeProject(name, unassign: true) })
+                notices.push(StackedNotice(text: failure.sentence, more: failure.detail, tone: .error,
+                                           actions: [.init("Remove and leave them without a project", symbol: "trash") { [weak self] _ in
+                                               self?.removeProject(name, unassign: true)
+                                           }]))
             } catch {
-                notice = .failure(error) { [weak self] in self?.removeProject(name, unassign: unassign) }
+                notices.push(.meetingsFailure(error) { [weak self] in self?.removeProject(name, unassign: unassign) })
             }
             loadSettings()
         }

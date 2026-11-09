@@ -43,6 +43,8 @@ enum MeetingsSettingsPages {
     static let windowPage = "meetings.window"
     /// The card on the Window page that picks where a transcript time plays.
     static let playbackAnchor = "playback"
+    /// The card on the Window page that sets how long notices stay and where they float.
+    static let noticesAnchor = "notices"
 
     static func section(model: MeetingsSettingsModel, defaults: UserDefaults) -> NativeSettingsSection {
         NativeSettingsSection(id: "meetings", title: "Meetings", pages: [
@@ -66,7 +68,8 @@ enum MeetingsSettingsPages {
     }
 }
 
-/// The page's read state, the last action's note, and the content once the settings are there.
+/// The page's read state, the notices of its actions (floating over the visible page), and the content once the
+/// settings are there.
 struct MeetingsSettingsFrame<Content: View>: View {
     @Bindable var model: MeetingsSettingsModel
     /// What the page shows beside the settings; only these read when it appears.
@@ -76,13 +79,6 @@ struct MeetingsSettingsFrame<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if let notice = model.notice, !indexing {
-                NoticePill(text: notice.text, detail: notice.detail, more: notice.more, tone: notice.tone,
-                           fixes: notice.actionTitle.map { title in
-                               [NoticeFix.button(title, symbol: notice.actionSymbol) { model.notice = nil; notice.action?() }]
-                           } ?? []) { model.notice = nil }
-                    .id(notice.id)
-            }
             if let failure = model.settings.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
                            fixes: [.button("Retry", symbol: "arrow.clockwise") { model.load(reads) }])
@@ -98,7 +94,18 @@ struct MeetingsSettingsFrame<Content: View>: View {
                 }
             }
         }
+        .modifier(PageNotices(model: model.notices, shown: !indexing))
         .onAppear { model.ensure(reads) }
+    }
+}
+
+/// The settings pages' notices over the visible page; none while the search index draws the page off screen.
+private struct PageNotices: ViewModifier {
+    let model: NoticeStackModel
+    let shown: Bool
+
+    func body(content: Content) -> some View {
+        if shown { content.noticeStack(model) } else { content }
     }
 }
 
@@ -261,7 +268,9 @@ struct MeetingsWindowPage: View {
     @State private var days: Int
     @State private var timeline: String
     @State private var afterExport: String
-    @State private var undoSeconds: Int
+    @State private var noticeSeconds: Int
+    @State private var plainNoticeSeconds: Int
+    @State private var noticePlace: String
     @State private var typedAnswer: String
     @State private var player: String
     @State private var speakerOrder: String
@@ -273,7 +282,9 @@ struct MeetingsWindowPage: View {
         _days = State(initialValue: MeetingsPreferences.days(defaults))
         _timeline = State(initialValue: MeetingsPreferences.timelineLines(defaults).rawValue)
         _afterExport = State(initialValue: MeetingsPreferences.afterExport(defaults).rawValue)
-        _undoSeconds = State(initialValue: MeetingsPreferences.undoSeconds(defaults))
+        _noticeSeconds = State(initialValue: MeetingsPreferences.noticeSeconds(defaults))
+        _plainNoticeSeconds = State(initialValue: MeetingsPreferences.plainNoticeSeconds(defaults))
+        _noticePlace = State(initialValue: MeetingsPreferences.noticePlace(defaults).rawValue)
         _typedAnswer = State(initialValue: MeetingsPreferences.typedAnswer(defaults).rawValue)
         _player = State(initialValue: MeetingsPreferences.player(defaults).rawValue)
         _speakerOrder = State(initialValue: MeetingsPreferences.speakerOrder(defaults).rawValue)
@@ -282,6 +293,7 @@ struct MeetingsWindowPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             windowCard
+            noticesCard
             audioCard
         }
     }
@@ -310,11 +322,6 @@ struct MeetingsWindowPage: View {
                                      NativeSettingsOption(MeetingsPreferences.AfterExport.nothing.rawValue, "Nothing"),
                                  ], selection: binding($afterExport, key: MeetingsPreferences.afterExportKey))
             Divider()
-            NativeSettingsPicker("Undo stays for", detail: "After a confirm or a reject, the Undo button waits this long.",
-                                 identifier: "meetings.window.undoSeconds",
-                                 options: MeetingsPreferences.undoChoices.map { NativeSettingsOption($0, "\($0) s") },
-                                 selection: Binding(get: { undoSeconds }, set: { undoSeconds = $0; defaults.set($0, forKey: MeetingsPreferences.undoSecondsKey) }))
-            Divider()
             NativeSettingsSegmented("Type an answer", identifier: "meetings.window.typedAnswer", options: [
                 NativeSettingsOption(MeetingsPreferences.TypedAnswer.always.rawValue, "On every question", detail: "A field beside the choices takes the word you heard."),
                 NativeSettingsOption(MeetingsPreferences.TypedAnswer.noChoices.rawValue, "Without choices", detail: "Only a question with no choices gets the field."),
@@ -325,6 +332,30 @@ struct MeetingsWindowPage: View {
                 NativeSettingsOption(MeetingsPreferences.SpeakerOrder.transcript.rawValue, "Transcript", detail: "The order the transcript first names them."),
             ], selection: binding($speakerOrder, key: MeetingsPreferences.speakerOrderKey))
         }
+    }
+
+    /// How long the notices of an action stay and where they float (R15, R26, R31).
+    private var noticesCard: some View {
+        NativeSettingsCard("Notices") {
+            NativeSettingsPicker("A notice with Undo stays for",
+                                 detail: "After a confirm, a reject, a removal or an export, its notice and its button stay this long. The pointer over the notices stops the time.",
+                                 identifier: "meetings.window.noticeSeconds",
+                                 options: MeetingsPreferences.noticeChoices.map { NativeSettingsOption($0, "\($0) s") },
+                                 selection: Binding(get: { noticeSeconds },
+                                                    set: { noticeSeconds = $0; defaults.set($0, forKey: MeetingsPreferences.noticeSecondsKey) }))
+            Divider()
+            NativeSettingsPicker("Any other notice stays for", detail: "A note without a button, such as “Label added”. An error stays until you close it.",
+                                 identifier: "meetings.window.plainNoticeSeconds",
+                                 options: MeetingsPreferences.plainNoticeChoices.map { NativeSettingsOption($0, "\($0) s") },
+                                 selection: Binding(get: { plainNoticeSeconds },
+                                                    set: { plainNoticeSeconds = $0; defaults.set($0, forKey: MeetingsPreferences.plainNoticeSecondsKey) }))
+            Divider()
+            NativeSettingsSegmented("Notices float at", identifier: "meetings.window.noticePlace", options: [
+                NativeSettingsOption(MeetingsPreferences.NoticePlace.bottom.rawValue, "Bottom", detail: "Over the last rows of the meeting, newest on top."),
+                NativeSettingsOption(MeetingsPreferences.NoticePlace.top.rawValue, "Top", detail: "Under the meeting's header, over its first rows."),
+            ], selection: binding($noticePlace, key: MeetingsPreferences.noticePlaceKey))
+        }
+        .nativeSettingsAnchor(MeetingsSettingsPages.noticesAnchor)
     }
 
     private var audioCard: some View {
