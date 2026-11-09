@@ -2617,9 +2617,9 @@ struct PRDetailView: View {
                         Button("Copy \(pr.label) and title") { Clipboard.copy("\(pr.label) \(pr.title)", what: "title") }
                     }
                     .layoutPriority(1)
-                statePill
+                // One merge state: "Draft, not mergeable", or the state and the readiness verdict (C15).
+                PRHeaderState(pr: pr, mergeable: detail.flatMap { $0.headSha == nil || pr.headSha == nil || $0.headSha == pr.headSha ? $0.mergeable : nil })
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
-                PRReadinessHeaderChip(pr: pr)
                 Spacer()
                 if let notice = model.headerNotice {
                     NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
@@ -2698,9 +2698,8 @@ struct PRDetailView: View {
                     if let add = detail.additions, let del = detail.deletions {
                         lineStat(added: add, removed: del, url: filesURL)
                     }
-                    if let mergeable = detail.mergeable {
-                        Text(mergeable).foregroundColor(mergeable == "conflicting" ? ReviewPalette.removed : ReviewPalette.dim)
-                    }
+                    // Git's mergeability is part of the title row's state (`PRHeaderState`): "mergeable" here sat
+                    // beside "blocked it is a draft" (hub UX pass C15).
                 }
                 if let approvals = pr.approvals, approvals > 0 {
                     Label("\(approvals)", systemImage: "hand.thumbsup").instantTooltip("\(approvals) approvals")
@@ -2726,12 +2725,6 @@ struct PRDetailView: View {
                     .padding(.top, 6)
             }
         }
-    }
-
-    /// Open / Draft / Merged / Closed in the same color as the state icon.
-    private var statePill: some View {
-        let tone = PRStateTone(pr: pr)
-        return Badge(tone.title, color: tone.color, look: .tone, tooltip: "\(pr.isGitLab ? "MR" : "PR") state: \(tone.title)")
     }
 
     /// `+33560 −2119`: with a diff (a worktree, or the head fetched) a click shows the whole PR beside

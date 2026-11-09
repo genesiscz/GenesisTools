@@ -700,10 +700,62 @@ final class ReviewModel: ObservableObject {
             if let error = store.saveError { self.notice = error }
             if self.builtRenderer != nil { self.pushComments() }
         }
+        // The hub's session header has the one reload button of the session view: its click reloads this
+        // Changes pane too, so the diff toolbar shows no second one (`headerReloads`).
+        if let session {
+            sessionReloadObserver = NotificationCenter.default.addObserver(forName: Self.sessionReload, object: nil, queue: .main) { [weak self] note in
+                guard let self, self.embedded, note.object as? String == session else { return }
+                self.reloadAll()
+            }
+            sessionHeaderObserver = NotificationCenter.default.addObserver(forName: Self.sessionHeaderChanged, object: nil, queue: .main) { [weak self] note in
+                guard let self, note.object as? String == session else { return }
+                self.objectWillChange.send()
+            }
+        }
     }
 
     deinit {
         if let commentsObserver { NotificationCenter.default.removeObserver(commentsObserver) }
+        if let sessionReloadObserver { NotificationCenter.default.removeObserver(sessionReloadObserver) }
+        if let sessionHeaderObserver { NotificationCenter.default.removeObserver(sessionHeaderObserver) }
+    }
+
+    /// Posted by the hub's session header reload, with the session id as the object.
+    static let sessionReload = Notification.Name("hub.session.reload")
+    private var sessionReloadObserver: NSObjectProtocol?
+    private var sessionHeaderObserver: NSObjectProtocol?
+    /// Posted when a hub session header comes on screen or leaves it, with the session id as the object.
+    static let sessionHeaderChanged = Notification.Name("hub.session.header")
+    /// Hub session headers on screen, by session id (a count: a session can show in two places at once).
+    private static var headersOnScreen: [String: Int] = [:]
+
+    /// The hub's session detail tells which session's header (and so its reload button) is on screen.
+    static func sessionHeader(_ id: String, onScreen: Bool) {
+        let count = (headersOnScreen[id] ?? 0) + (onScreen ? 1 : -1)
+        headersOnScreen[id] = count > 0 ? count : nil
+        NotificationCenter.default.post(name: sessionHeaderChanged, object: id)
+    }
+
+    /// The session's header is on screen beside this diff: its reload covers the diff too, so the diff toolbar
+    /// has none of its own. With the transcript pane hidden, the toolbar keeps its reload.
+    var headerReloads: Bool {
+        guard embedded, let session else { return false }
+        return Self.headersOnScreen[session] != nil
+    }
+
+    /// The reload button: the diff, and on a PR its threads and stored agent reviews as well, so one button
+    /// refreshes everything the window shows (the PR bar had a second one).
+    func reloadAll() {
+        reload()
+        if let pr {
+            pr.load(noCache: true)
+            lookupStoredProposals()
+        }
+    }
+
+    /// The reload button's tooltip, naming what it reloads.
+    var reloadTooltip: String {
+        pr == nil ? "Reload the diff" : "Reload the diff, the PR threads and the stored agent reviews"
     }
 
     /// Built on first use, not in `init`: the hub makes a review for every session it selects, even
@@ -1079,6 +1131,19 @@ final class ReviewModel: ObservableObject {
         switch scope {
         case .branch, .range, .compare: return true
         default: return false
+        }
+    }
+
+    /// The scope as words in a sentence: "uncommitted changes", "commit 1a2b3c4", "the last 3 turns".
+    var scopeWords: String {
+        switch scope {
+        case .uncommitted: return "uncommitted changes"
+        case .unstaged: return "unstaged changes"
+        case .staged: return "staged changes"
+        case .lastTurns(let count): return count == 1 ? "the last turn's changes" : "the last \(count) turns' changes"
+        case .commit(let sha, _): return "commit \(sha.prefix(7))"
+        case .branch: return "the branch vs \(base ?? "its base")"
+        case .range(_, _, let label, _), .compare(_, _, let label, _): return label
         }
     }
 
@@ -3199,8 +3264,8 @@ private struct ReviewHeader: View {
                     .font(.system(size: 12, weight: .semibold))
                     .fixedSize()
             }
-            .disabled(model.unsentCount == 0)
-            .instantTooltip(model.unsentCount > 0 ? "Pick the agent session that gets the \(Plural.count(model.unsentCount, "queued comment"))" : "No comments waiting for an agent")
+            .modifier(DisabledReason(reason: sendDisabledReason,
+                                     tooltip: "Pick the agent session that gets the \(Plural.count(model.unsentCount, "queued comment"))"))
             .popover(isPresented: live ? $pickingAgent : .constant(false), arrowEdge: .bottom) {
                 AgentSendForm(model: model) { pickingAgent = false }
             }
@@ -3212,20 +3277,57 @@ private struct ReviewHeader: View {
                     .fixedSize()
             }
             .instantTooltip(model.options.diffStyle == .split ? "Side by side (click for one column in this review; Settings, Hub, Panes sets the default)" : "One column (click for side by side in this review; Settings, Hub, Panes sets the default)")
-            HStack(spacing: 0) {
-                IconButton(systemName: "textformat.size.smaller", tooltip: "Smaller diff text") { model.stepFont(-1) }
-                Text(verbatim: "\(Int(model.options.fontSize))")
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundColor(ReviewPalette.dim)
-                    .frame(width: 18)
-                IconButton(systemName: "textformat.size.larger", tooltip: "Larger diff text") { model.stepFont(1) }
-            }
             IconButton(
                 systemName: model.options.wrap ? "text.alignleft" : "arrow.left.and.right.text.vertical",
                 tooltip: model.options.wrap ? "Long lines wrap (click to scroll instead)" : "Long lines scroll (click to wrap)"
             ) { model.toggleWrap() }
             findButton
-            IconButton(systemName: "arrow.clockwise", tooltip: "Reload the diff") { model.reload() }
+            // The text size is a rare setting: one menu, not a stepper in the row ("A 13 A" read as three letters).
+            textSizeMenu
+            reloadButton
+    }
+
+    /// Why Send is off, or nil while it works. A greyed Send with no reason was a dead end.
+    private var sendDisabledReason: String? {
+        model.unsentCount > 0 ? nil : "Nothing to send yet. Comment on a line of the diff first; Send then gives the queued comments to an agent."
+    }
+
+    /// The one reload of what this view shows. In the hub's session view the session header's reload does it, so
+    /// none here (two reload buttons on one screen, hub UX pass C16).
+    @ViewBuilder
+    private var reloadButton: some View {
+        if !model.headerReloads {
+            IconButton(systemName: "arrow.clockwise", tooltip: model.reloadTooltip) { model.reloadAll() }
+        }
+    }
+
+    /// "13" with the text-size glyph: a menu with larger, smaller and the standard size. The View menu has the
+    /// same three with ⌘+, ⌘− and ⌘0 in the hub.
+    private var textSizeMenu: some View {
+        let model = model
+        let size = Int(model.options.fontSize)
+        let standard = Int(DiffViewOptions().fontSize)
+        let keys = model.embedded ? " (⌘+, ⌘−, ⌘0 in the View menu)" : ""
+        return MenuButton(style: .genHoverPlain()) {
+            [
+                .action("Larger Text", enabled: size < 20) { model.stepFont(1) },
+                .action("Smaller Text", enabled: size > 10) { model.stepFont(-1) },
+                .divider,
+                .action("Standard Size (\(standard) pt)", checked: size == standard) { model.stepFont(Double(standard - size)) },
+            ]
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "textformat.size")
+                    .font(.system(size: 11))
+                Text(verbatim: "\(size)")
+                    .font(.system(size: 11, design: .monospaced))
+            }
+            .foregroundColor(ReviewPalette.dim)
+            .fixedSize()
+        }
+        .fixedSize()
+        .instantTooltip("Diff text size: \(size) pt. Click for larger, smaller or the standard size\(keys).")
+        .accessibilityLabel(Text("Diff text size, \(size) points"))
     }
 
     private var findButton: some View {
@@ -3234,10 +3336,10 @@ private struct ReviewHeader: View {
 
     private func sendButton(live: Bool) -> some View {
         IconButton(systemName: "paperplane",
-                   tooltip: model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "queued comment")) to an agent…" : "No comments waiting for an agent") {
+                   tooltip: model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "queued comment")) to an agent…" : "Send to an agent") {
             pickingAgent = true
         }
-        .disabled(model.unsentCount == 0)
+        .modifier(DisabledReason(reason: sendDisabledReason))
         .popover(isPresented: live ? $pickingAgent : .constant(false), arrowEdge: .bottom) {
             AgentSendForm(model: model) { pickingAgent = false }
         }
@@ -3257,7 +3359,7 @@ private struct ReviewHeader: View {
         ) { model.toggleWrap() }
         findButton
         viewMenu
-        IconButton(systemName: "arrow.clockwise", tooltip: "Reload the diff") { model.reload() }
+        reloadButton
     }
 
     /// The narrowest pane: send, and everything else in one menu.
@@ -3277,11 +3379,12 @@ private struct ReviewHeader: View {
                 .action("One column", checked: model.options.diffStyle == .unified) { model.setStyle(.unified) },
                 .action("Wrap long lines", checked: model.options.wrap) { model.toggleWrap() },
                 .divider,
-                .action("Larger text") { model.stepFont(1) },
-                .action("Smaller text") { model.stepFont(-1) },
+                .action("Larger Text") { model.stepFont(1) },
+                .action("Smaller Text") { model.stepFont(-1) },
+                .action("Standard Text Size") { model.stepFont(DiffViewOptions().fontSize - model.options.fontSize) },
                 .divider,
                 .action("Find in the Diff…") { model.find() },
-                .action("Reload") { model.reload() },
+                .action(model.pr == nil ? "Reload" : "Reload the Diff and Threads") { model.reloadAll() },
             ]
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -3291,6 +3394,41 @@ private struct ReviewHeader: View {
         .fixedSize()
         .instantTooltip("Layout, wrap, text size, find, reload")
         .accessibilityLabel(Text("Layout, wrap, text size, find, reload"))
+    }
+}
+
+/// A control that says why it is off. SwiftUI gives a disabled view no hover, so a tooltip inside it never shows
+/// (a greyed Send with no reason, hub UX pass C24): while it is off, the reason sits on a clear layer over it.
+/// `tooltip` is the hover text while it is on.
+struct DisabledReason: ViewModifier {
+    let reason: String?
+    var tooltip: String?
+
+    func body(content: Content) -> some View {
+        content
+            .disabled(reason != nil)
+            .modifier(OptionalTooltip(text: reason == nil ? tooltip : nil))
+            .overlay {
+                if let reason {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .instantTooltip(reason)
+                }
+            }
+            .accessibilityHint(Text(verbatim: reason ?? ""))
+    }
+}
+
+/// `.instantTooltip` when there is a text.
+private struct OptionalTooltip: ViewModifier {
+    let text: String?
+
+    func body(content: Content) -> some View {
+        if let text {
+            content.instantTooltip(text)
+        } else {
+            content
+        }
     }
 }
 
@@ -3473,6 +3611,7 @@ struct ScopeMenu: View {
         switch model.scope {
         case .branch: return "Branch vs \(model.base ?? "base")"
         case .commit(let sha, let title): return "\(sha.prefix(7)) \(title.prefix(40))"
+        case .uncommitted, .unstaged, .staged: return "\(model.scopeWords) in \(model.repo.path)"
         default: return model.scope.title
         }
     }
@@ -3482,6 +3621,9 @@ struct ScopeMenu: View {
         switch model.scope {
         case .branch: return ("Branch", "vs \(model.base ?? "base")", false)
         case .commit(let sha, let title): return (String(sha.prefix(7)), title, true)
+        // The working tree's scopes name the checkout: "Uncommitted" alone sat over a PR's threads and read as the
+        // PR's diff (hub UX pass C49).
+        case .uncommitted, .unstaged, .staged: return (model.scope.title, "in \(model.repo.lastPathComponent)", false)
         default: return (model.scope.title, nil, false)
         }
     }

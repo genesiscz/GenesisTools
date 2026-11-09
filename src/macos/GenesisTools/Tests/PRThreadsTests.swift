@@ -21,6 +21,25 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertEqual(counts, PRThreadCounts(total: 4, open: 1, outdated: 1))
     }
 
+    // MARK: card lede (hub UX pass C51)
+
+    func testABotsTagLinesBecomeOneLineAboveItsTitle() {
+        let body = "🧹 Quality | 🟡 Medium · confidence 98/100\n\n_⚠️ Potential issue_\n\n**Honor the filters**\n\nThe command inherits common()."
+        let lede = PRNoteLede.split(body)
+        XCTAssertEqual(lede.tags, ["🧹 Quality | 🟡 Medium · confidence 98/100", "⚠️ Potential issue"])
+        XCTAssertEqual(lede.body, "**Honor the filters**\n\nThe command inherits common().")
+        XCTAssertEqual(PRNoteLede.plain("_⚠️ Potential issue_ | _🟠 Major_"), "⚠️ Potential issue | 🟠 Major")
+        XCTAssertEqual(PRNoteLede.plain("_keep snake_case_"), "keep snake_case")
+    }
+
+    func testAPlainCommentKeepsItsFirstLines() {
+        for body in ["nit: rename this", "nit: rename this\n\nIt reads better.", "Short line\n\n- a list"] {
+            let lede = PRNoteLede.split(body)
+            XCTAssertEqual(lede.tags, [], body)
+            XCTAssertEqual(lede.body, body)
+        }
+    }
+
     func testTheBarCountShortensInWholeWordsAndDropsZeroDraftsFirst() {
         let none = PRReviewBar.summaryVariants(threads: 137, open: 48, drafts: 0)
         XCTAssertEqual(none, ["137 threads · 48 open", "48/137 open", "48 open"])
