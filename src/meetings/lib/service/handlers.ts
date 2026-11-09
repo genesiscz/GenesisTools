@@ -7,8 +7,10 @@ import {
     MeetingsStateError,
 } from "@genesiscz/utils/meetings/conflict";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
+import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { RpcError } from "@genesiscz/utils/rpc/errors";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { TOOL } from "../shared";
@@ -70,6 +72,8 @@ export interface MeetingsHandlerDeps {
     hasFfmpeg?: () => boolean;
     /** Makes a tone preview (tests pass a fake); ffmpeg by default. */
     tone?: typeof cutTone;
+    /** The channel energy of a recording (tests pass a table); ffmpeg with the meeting folder's cache by default. */
+    energy?: typeof channelEnergy;
 }
 
 /**
@@ -165,6 +169,7 @@ export function recordOf(store: MeetingStore, ref: string): MeetingRecord {
 
 const decisions = () => import("./decision-handlers");
 const moments = () => import("./moment-handlers");
+const reads = () => import("./reads-handlers");
 
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
@@ -192,7 +197,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 },
                 linked: deps.linkedSource?.(record),
             });
-            return transcriptJsonView(record, applied);
+            return withLineEnds(transcriptJsonView(record, applied));
         },
         "meeting.revisions": (params) => {
             const store = storeOf();
@@ -211,6 +216,25 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "moment.clip": async (params, context) => (await moments()).clipMomentCall(params, context, storeOf(), deps),
         "tone.preview": async (params) => (await moments()).previewTone(params, deps),
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
+        "meeting.speakers": async (params) => (await reads()).readSpeakers(params, storeOf(), deps),
+        "meeting.screen": async (params) => (await reads()).readScreen(params, storeOf()),
+        "meeting.waveform": async (params) => (await reads()).readWaveform(params, storeOf(), deps),
+        "meetings.overview": async (params) => (await reads()).readOverview(params, storeOf()),
+        "config.read": async (params) => (await reads()).readConfig(params),
+        "config.set": async (params) => (await reads()).setConfig(params),
+        "config.unset": async (params) => (await reads()).unsetConfig(params),
+    };
+}
+
+/** The corrected lines, each with its end (the next timed line's start), which `transcript --format json` leaves out. */
+function withLineEnds(view: ReturnType<typeof transcriptJsonView>) {
+    const lines = new TranscriptLines(view.entries);
+    return {
+        ...view,
+        entries: view.entries.map((entry, index) => {
+            const endSec = lines.end(index);
+            return endSec === undefined ? entry : { ...entry, endSec };
+        }),
     };
 }
 

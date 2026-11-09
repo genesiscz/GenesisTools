@@ -31,9 +31,15 @@ export function windowJson(value: unknown): string {
 }
 
 /** `meetings overview --days <n>`: the meetings of the last `days`, with what needs the user. */
-export async function overviewRead(options: { days: number; now: Date }): Promise<MeetingsOverview> {
+export async function overviewRead(options: {
+    days: number;
+    now: Date;
+    store?: MeetingStore;
+}): Promise<MeetingsOverview> {
     const { days, now } = options;
-    const bounded = new MeetingStore().listBounded({ since: new Date(now.getTime() - days * 86_400_000) });
+    const bounded = (options.store ?? new MeetingStore()).listBounded({
+        since: new Date(now.getTime() - days * 86_400_000),
+    });
     const view = meetingsOverview({
         records: bounded.records,
         config: await new MeetingsConfigStore().read(),
@@ -191,9 +197,11 @@ export async function speakerStatsRead(options: {
     record: MeetingRecord;
     gapSec: number;
     attendance?: string;
+    /** The record's source, when the caller holds it already (a test's fake one); else its linked source. */
+    linked?: LinkedSource;
 }): Promise<SpeakerStatsView> {
     const { store, record, gapSec } = options;
-    const opened = OpenedMeeting.of(store, record);
+    const opened = OpenedMeeting.of(store, record, options.linked);
     const meeting = await opened.meeting();
     const stats = speakerStats(meeting.transcript, {
         gapSec,

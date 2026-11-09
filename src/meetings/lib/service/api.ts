@@ -3,9 +3,11 @@ import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
 import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import type { SpeakerHint, SpeakerLeave } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 import { decisionActionSchema, journalEntrySchema, skipSchema } from "../decision-actions";
 import { MOMENT_ERROR_CODES, MOMENT_STATE_CODES, momentSchema, momentTargetSchema } from "../moment-schema";
+import type { MeetingsOverview } from "../overview";
 
 /**
  * The Meetings service's interface: one descriptor for the window, every `tools meetings` command, the REPL and an MCP
@@ -79,10 +81,14 @@ export const meetingListRowSchema = z.object({
         .optional(),
 });
 
-/** One corrected transcript line, as `transcript --format json` prints it. */
+/**
+ * One corrected transcript line, as `transcript --format json` prints it; the service adds `endSec` (the next timed
+ * line's start, at least a moment after its own), so a player highlights the line it hears (G-TR-1).
+ */
 export const transcriptLineSchema = z.object({
     id: z.string().optional(),
     startSec: z.number().optional(),
+    endSec: z.number().optional(),
     speakerId: z.number().optional(),
     speaker: z.string(),
     text: z.string(),
@@ -327,6 +333,153 @@ const meetingAudio = defineMethod({
     effect: "read",
 });
 
+const speakerSpanSchema = z.object({ fromSec: z.number(), toSec: z.number(), turns: z.number() });
+
+const meetingSpeakers = defineMethod({
+    name: "meeting.speakers",
+    params: z
+        .object({
+            meeting: meetingRef,
+            /** A silence this long ends a span (`speakers stats --gap`); 120 s when absent. */
+            gapSec: z.number().positive().optional(),
+            /** The attendance source (`zoom`, `meet`…); the record's when absent. */
+            attendance: z.string().min(1).optional(),
+        })
+        .strict(),
+    result: z.object({
+        meeting: z.string(),
+        gapSec: z.number(),
+        /** False when no line has a time: then the lanes show nothing, only counts. */
+        timed: z.boolean(),
+        speakers: z.array(
+            z.object({
+                label: z.string(),
+                speakerId: z.number().optional(),
+                origin: z.enum(["platform", "llm", "self", "unknown"]),
+                turns: z.number(),
+                lines: z.number(),
+                words: z.number(),
+                spokenSec: z.number(),
+                firstSec: z.number().optional(),
+                lastSec: z.number().optional(),
+                spans: z.array(speakerSpanSchema),
+                leaves: z.array(z.custom<SpeakerLeave>((value) => typeof value === "object" && value !== null)),
+            })
+        ),
+        /**
+         * Hints (`SpeakerHint`, src/utils/transcribe/speakers.ts): each names its kind, label and strength; the
+         * attendance hints carry ranges with fromSec, toSec and present.
+         */
+        hints: z.array(z.custom<SpeakerHint>((value) => typeof value === "object" && value !== null)),
+    }),
+    resultName: "{ meeting, gapSec, timed, speakers: SpeakerStat[], hints: SpeakerHint[] }",
+    doc: "Per label its turns, spoken time and spans, and the hints against labels with their ranges (fromSec, toSec, present), as `speakers stats --json` prints them: the Speakers tab's talk-time lanes and range chips.",
+    effect: "read",
+});
+
+const meetingScreen = defineMethod({
+    name: "meeting.screen",
+    params: z
+        .object({
+            meeting: meetingRef,
+            fromSec: z.number().min(0).optional(),
+            toSec: z.number().min(0).optional(),
+            /** Only this display's frames. */
+            display: z.number().int().optional(),
+        })
+        .strict(),
+    result: z.object({
+        meeting: z.string(),
+        /** False without a screen recording: no pane, and the dock keeps its height (G-SCR-2). */
+        recorded: z.boolean(),
+        displays: z.array(z.object({ id: z.number().optional(), name: z.string().optional(), frames: z.number() })),
+        frames: z.array(
+            z.object({
+                file: z.string(),
+                path: z.string(),
+                meetingSec: z.number(),
+                displayId: z.number().optional(),
+                width: z.number(),
+                height: z.number(),
+                lineCount: z.number(),
+            })
+        ),
+    }),
+    resultName:
+        "{ meeting, recorded, displays, frames: { file, path, meetingSec, displayId?, width, height, lineCount }[] }",
+    doc: "The screen frames by time, oldest first, between fromSec and toSec (all without them): what the timeline shows beside the sound (R41).",
+    effect: "read",
+});
+
+const meetingWaveform = defineMethod({
+    name: "meeting.waveform",
+    params: z
+        .object({
+            meeting: meetingRef,
+            fromSec: z.number().min(0).optional(),
+            toSec: z.number().min(0).optional(),
+            /** How many peaks the span is cut into. */
+            buckets: z.number().int().min(1).max(4000),
+        })
+        .strict(),
+    result: z.object({
+        meeting: z.string(),
+        fromSec: z.number(),
+        toSec: z.number(),
+        /** The loudest 100 ms of each bucket, 0 to 1 of the recording's loudest; empty when `cannot`. */
+        peaks: z.array(z.number()),
+        cannot: z.object({ code: z.enum(["no-audio", "no-ffmpeg", "mono"]), message: z.string() }).optional(),
+    }),
+    resultName: "{ meeting, fromSec, toSec, peaks: number[], cannot? }",
+    doc: "Peaks of the recording for the whole-conversation strip and the zoomed timeline (R47), from the channel energy kept per meeting (rebuilt only when the recording is newer).",
+    effect: "read",
+});
+
+const overview = defineMethod({
+    name: "meetings.overview",
+    params: z.object({ days: z.number().positive().optional() }).strict(),
+    result: z.custom<MeetingsOverview>((value) => typeof value === "object" && value !== null),
+    resultName: "MeetingsOverview",
+    doc: "The meetings of the last days (14 when absent) with what each waits for, as `overview --json` prints it.",
+    effect: "read",
+});
+
+const configRead = defineMethod({
+    name: "config.read",
+    params: z.object({ path: z.string().min(1).optional() }).strict(),
+    result: z.object({ path: z.string(), value: z.unknown() }),
+    resultName: "{ path, value }",
+    doc: "The meetings config file's path and the value at a dotted path (the whole config without one), as `config show --json` prints it. An unknown path is refused.",
+    effect: "read",
+});
+
+const configChangeResult = z.object({ path: z.array(z.string()), value: z.unknown() });
+
+const configSet = defineMethod({
+    name: "config.set",
+    params: z
+        .object({
+            path: z.string().min(1),
+            value: z.unknown(),
+            /** The value this change replaces; refused with `config-stale` when another editor changed it. */
+            expect: z.unknown().optional(),
+        })
+        .strict(),
+    result: configChangeResult,
+    resultName: "{ path: string[], value }",
+    doc: "Sets one meetings config value, as `config set --json` does; an engine value (pad, tone, longestClipSec) applies from the next clip.",
+    effect: "reversible",
+});
+
+const configUnset = defineMethod({
+    name: "config.unset",
+    params: z.object({ path: z.string().min(1), expect: z.unknown().optional() }).strict(),
+    result: configChangeResult,
+    resultName: "{ path: string[], value }",
+    doc: "Puts one meetings config value back to its default, as `config unset --json` does.",
+    effect: "reversible",
+});
+
 export const meetingsApi = defineApi({
     id: "meetings-service",
     global: "meetings",
@@ -347,6 +500,13 @@ export const meetingsApi = defineApi({
         momentClip,
         tonePreview,
         meetingAudio,
+        meetingSpeakers,
+        meetingScreen,
+        meetingWaveform,
+        overview,
+        configRead,
+        configSet,
+        configUnset,
     ],
     notes: [
         "`subscribe { meeting?, events? }` (answered by the transport) starts the notifications; no events: all of them, no meeting: every meeting's.",
