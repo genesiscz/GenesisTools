@@ -3020,6 +3020,57 @@ describe("the editor window's item ops", () => {
         expect(() => applyOp(on, { op: "denoise", track: 0, trackCount: 2 })).toThrow("needs on or reductionDb");
     });
 
+    describe("a track index is one of the movie's audio tracks", () => {
+        test("mute refuses a track the movie does not have, and unmute of any track still clears a stale entry", () => {
+            const project = wholeProject(source);
+
+            expect(() => applyOp(project, { op: "mute", track: 1 }, { audioTracks: 1 })).toThrow(
+                "this movie has 1 audio track (0); track 1 is not one of them"
+            );
+            expect(() => applyOp(project, { op: "mute", track: 5 }, { audioTracks: 2 })).toThrow("2 audio tracks");
+            expect(applyOp(project, { op: "mute", track: 1 }, { audioTracks: 2 }).audio.mutedTracks).toEqual([1]);
+            const stale = { ...project, audio: { ...project.audio, mutedTracks: [5] } };
+            expect(
+                applyOp(stale, { op: "mute", track: 5, muted: false }, { audioTracks: 1 }).audio.mutedTracks
+            ).toEqual([]);
+            expect(applyOp(project, { op: "mute", track: 5 }).audio.mutedTracks).toEqual([5]);
+        });
+
+        test("denoise refuses tracks, a strength or one track the movie does not have", () => {
+            const project = wholeProject(source);
+
+            expect(() => applyOp(project, { op: "denoise", tracks: [5] }, { audioTracks: 2 })).toThrow(
+                "track 5 is not one of them"
+            );
+            expect(() =>
+                applyOp(project, { op: "denoise", trackReductionDb: { "2": 20 } }, { audioTracks: 2 })
+            ).toThrow("track 2 is not one of them");
+            expect(() => applyOp(project, { op: "denoise", track: 1, on: true }, { audioTracks: 1 })).toThrow(
+                "track 1 is not one of them"
+            );
+            expect(applyOp(project, { op: "denoise", reductionDb: 20, tracks: [1] }).audio.denoise?.tracks).toEqual([
+                1,
+            ]);
+        });
+
+        test("one denoise track takes the measured track count, so it needs no trackCount", () => {
+            const on = applyOp(wholeProject(source), { op: "denoise" }, { audioTracks: 2 });
+            const two = { audioTracks: 2 };
+
+            expect(applyOp(on, { op: "denoise", track: 1, on: false }, two).audio.denoise?.tracks).toEqual([0]);
+            expect(applyOp(on, { op: "denoise", track: 0, on: false }, two).audio.denoise?.tracks).toEqual([1]);
+            expect(applyOp(on, { op: "denoise", track: 1, reductionDb: 30 }, two).audio.denoise).toEqual({
+                method: "afftdn",
+                reductionDb: 12,
+                trackReductionDb: { "1": 30 },
+            });
+            expect(
+                applyOp(on, { op: "denoise", track: 1, on: false, trackCount: 1 }, two).audio.denoise?.tracks
+            ).toEqual([0]);
+            expect(() => applyOp(on, { op: "denoise", track: 1, on: false })).toThrow("needs the movie's track count");
+        });
+    });
+
     test("the range popover keeps only what plays between the times", () => {
         let project = applyOp(wholeProject(source), { op: "cut", from: 1, to: 2 });
         project = applyOp(project, { op: "range", from: 2, to: 4, action: "keep" });

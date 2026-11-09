@@ -457,7 +457,7 @@ const movieMethods = [
     edit(
         "mute",
         z.object({ track: z.number().int().nonnegative() }),
-        "Mutes an audio track (0 is the first); a movie whose video has no audio track is refused.",
+        "Mutes an audio track (0 is the first). A track the movie does not have is refused (a frames recording has one track, 0, with the mic and the system sound mixed), and so is a movie whose video has no audio track.",
         ["track"]
     ),
     edit("unmute", z.object({ track: z.number().int().nonnegative() }), "Unmutes an audio track.", ["track"]),
@@ -796,7 +796,7 @@ const movieMethods = [
                 trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),
             })
             .strict(),
-        "Turns the room and fan noise of the sound down on export (ffmpeg afftdn): reductionDb 12 by default (8 is gentle, 20+ starts to blur words), on every audio track or only tracks (0 is the first; a screen recording's microphone is its last); trackReductionDb { 1: 20 } gives a track (here the second) its own strength (merged with earlier ones). The export renders from a cleaned copy of the movie, made once per setting under .denoise/ beside it. enabled: false takes it away. A movie whose video has no audio track is refused."
+        "Turns the room and fan noise of the sound down on export (ffmpeg afftdn): reductionDb 12 by default (8 is gentle, 20+ starts to blur words), on every audio track or only tracks (0 is the first; a screen recording's microphone is its last); trackReductionDb { 1: 20 } gives a track (here the second) its own strength (merged with earlier ones). The export renders from a cleaned copy of the movie, made once per setting under .denoise/ beside it. enabled: false takes it away. A track the movie does not have is refused (a frames recording has one track, 0, with the mic and the system sound mixed), and so is a movie whose video has no audio track."
     ),
     edit(
         "normalize",

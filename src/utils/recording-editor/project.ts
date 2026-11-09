@@ -2148,9 +2148,10 @@ export const editOpSchema = z.discriminatedUnion("op", [
             trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),
             /**
              * One track, as the editor's Audio tab changes it: with `on` it goes in or out of the cleaned tracks (no
-             * track left takes the noise reduction away); with `reductionDb` it gets its own strength. Both need
-             * `trackCount`, the movie's sound tracks: every track is written as no list, and a strength equal to the
-             * base is not written.
+             * track left takes the noise reduction away); with `reductionDb` it gets its own strength. Every track
+             * is written as no list, and a strength equal to the base is not written. The service counts the movie's
+             * sound tracks; `trackCount` is the count used only when the movie cannot be measured (no file), and a
+             * track op with neither is refused.
              */
             track: z.number().int().nonnegative().optional(),
             on: z.boolean().optional(),
@@ -2796,6 +2797,33 @@ function lineStartUs(segments: readonly TranscriptSegment[], atUs: number): numb
     return Math.round(line.start * 1_000_000);
 }
 
+/**
+ * Refuses an audio track the movie does not have: a muted or cleaned track past the end changes nothing in the export.
+ * An unknown count (no movie file, a probe that failed) refuses nothing.
+ */
+function requireAudioTracks(audioTracks: number | undefined, tracks: readonly number[]): void {
+    if (audioTracks === undefined) {
+        return;
+    }
+
+    const missing = [...new Set(tracks.filter((track) => track >= audioTracks))].sort((a, b) => a - b);
+
+    if (missing.length === 0) {
+        return;
+    }
+
+    const has =
+        audioTracks === 0
+            ? "has no audio track"
+            : `has ${audioTracks} audio track${audioTracks === 1 ? "" : "s"} (${[...Array(audioTracks).keys()].join(", ")})`;
+    const which =
+        missing.length === 1
+            ? `track ${missing[0]} is not one of them`
+            : `tracks ${missing.join(", ")} are not among them`;
+    const frames = audioTracks === 1 ? ". A frames recording mixes the mic and the system sound into track 0" : "";
+    throw new RangeError(`this movie ${has}; ${which}${frames}`);
+}
+
 export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {
     facts.generatedIds ??= [];
     const next = withItemIds(facts.generatedIds, () => applyOpItself(project, op, facts));
@@ -3173,6 +3201,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         case "volume":
             return { ...project, audio: { ...project.audio, volume: op.volume } };
         case "mute": {
+            // Unmuting any track stays allowed, so a stale entry can be cleared.
+            if (op.muted !== false) {
+                requireAudioTracks(facts.audioTracks, [op.track]);
+            }
+
             const others = project.audio.mutedTracks.filter((track) => track !== op.track);
             const mutedTracks = op.muted === false ? others : [...others, op.track].sort((a, b) => a - b);
             return { ...project, audio: { ...project.audio, mutedTracks } };
@@ -3226,8 +3259,15 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 throw new Error("this movie has no sound to clean (it has no audio track)");
             }
 
+            // Taking a track out stays allowed, so a stale entry can be cleared.
+            requireAudioTracks(facts.audioTracks, [
+                ...(op.tracks ?? []),
+                ...Object.keys(op.trackReductionDb ?? {}).map(Number),
+                ...(op.track === undefined || op.on === false ? [] : [op.track]),
+            ]);
+
             if (op.track !== undefined) {
-                return denoiseTrack(project, op);
+                return denoiseTrack(project, op, { audioTracks: facts.audioTracks });
             }
 
             const denoise = denoiseSchema.parse({

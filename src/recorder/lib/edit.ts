@@ -653,6 +653,15 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFac
         return { audioTracks: await audioTrackCount(project.source.video) };
     }
 
+    // A muted track the movie does not have mutes nothing; a probe that fails refuses nothing.
+    if (op.op === "mute" && op.muted !== false && existsSync(project.source.video)) {
+        const audioTracks = await audioTrackCount(project.source.video).catch((error: unknown) => {
+            log.debug({ error, video: project.source.video }, "no audio track count to check the muted track against");
+            return undefined;
+        });
+        return audioTracks === undefined ? {} : { audioTracks };
+    }
+
     if (op.op === "cutWords" || op.op === "cutFillers") {
         const fillerLists = op.op === "cutFillers" ? await configuredFillerLists() : undefined;
         return { transcript: readTranscriptSegments(project), ...(fillerLists ? { fillerLists } : {}) };

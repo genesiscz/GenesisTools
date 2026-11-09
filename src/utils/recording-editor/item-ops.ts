@@ -461,11 +461,18 @@ export function cursorPointAt(samples: readonly CursorSample[], ms: number): { x
 /**
  * One track's noise reduction, the editor's Audio tab rules: a track in or out of the cleaned tracks (every track is
  * no list, no track left is off), or a track's own strength in whole dB (with one track it is the base strength, and a
- * strength equal to the base is not written). Turning a track on turns the sound on.
+ * strength equal to the base is not written). Turning a track on turns the sound on. The movie's track count is the
+ * measured `audioTracks`, else the op's `trackCount`; with neither the op is refused, because a guessed count of 1
+ * kept every track cleaned when one was turned off.
  */
-export function denoiseTrack(project: EditProject, op: Op<"denoise">): EditProject {
+export function denoiseTrack(project: EditProject, op: Op<"denoise">, measured: { audioTracks?: number }): EditProject {
     const track = op.track ?? 0;
-    const count = Math.max(1, op.trackCount ?? 1);
+    const count = measured.audioTracks ?? op.trackCount;
+
+    if (count === undefined) {
+        throw new RangeError("a denoise op with a track needs the movie's track count (trackCount)");
+    }
+
     const settings = denoiseSchema.parse({ ...project.audio.denoise });
     const audio = { ...project.audio, include: op.on === false ? project.audio.include : true };
 
