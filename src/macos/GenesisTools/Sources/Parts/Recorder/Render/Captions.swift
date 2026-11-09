@@ -319,17 +319,44 @@ extension Looks {
     }
 
     /// The caption plate centred near the bottom (or the top) of the output, sized from its short side. Returns the
-    /// picture and the height the plate takes from its edge, so the keys overlay can sit beside it.
+    /// picture, the height the plate takes from its edge (so the keys overlay can sit beside it) and the plate's rect.
+    /// `avoid` is the camera bubble's square while it shows (Core Image space). A plate that would run under it wraps
+    /// short of it, one gap (0.015 of the short side) before its near edge; when that leaves less than 0.45 of the width
+    /// (a phone-portrait canvas, a custom bubble near the middle) the plate lifts above the bubble instead. check.ts
+    /// `captionLiftIssue` names the lift case.
     static func drawCaption(_ line: CaptionTrack.Line, track: CaptionTrack, settings: EditProject.Captions, on image: CIImage,
-                            size: CGSize, highlight: (characters: Int, color: NSColor)? = nil) -> (image: CIImage, used: CGFloat) {
+                            size: CGSize, highlight: (characters: Int, color: NSColor)? = nil,
+                            avoid: CGRect? = nil) -> (image: CIImage, used: CGFloat, plate: CGRect?) {
         let unit = min(size.width, size.height)
         let fontSize = max(8, (settings.size * unit).rounded())
-        guard let plate = track.image(for: line, fontSize: fontSize, maxWidth: size.width * 0.86, highlight: highlight) else { return (image, 0) }
+        guard var plate = track.image(for: line, fontSize: fontSize, maxWidth: size.width * 0.86, highlight: highlight) else { return (image, 0, nil) }
         let margin = unit * 0.05
-        let x = ((size.width - plate.extent.width) / 2).rounded()
-        let y = settings.position == .top ? size.height - margin - plate.extent.height : margin
-        let drawn = plate.transformed(by: CGAffineTransform(translationX: x, y: y.rounded())).composited(over: image)
-        return (drawn, margin + plate.extent.height)
+        let top = settings.position == .top
+        func placed(_ plate: CIImage) -> CGRect {
+            let y = top ? size.height - margin - plate.extent.height : margin
+            return CGRect(x: ((size.width - plate.extent.width) / 2).rounded(), y: y.rounded(),
+                          width: plate.extent.width, height: plate.extent.height)
+        }
+        var rect = placed(plate)
+        var lifted = false
+        if let avoid, rect.intersects(avoid) {
+            let gap = unit * 0.015
+            let half = avoid.midX >= size.width / 2 ? avoid.minX - gap - size.width / 2 : size.width / 2 - avoid.maxX - gap
+            let room = (2 * half).rounded(.down)
+            if room >= size.width * 0.45,
+               let narrow = track.image(for: line, fontSize: fontSize, maxWidth: room, highlight: highlight),
+               !placed(narrow).intersects(avoid) {
+                plate = narrow
+                rect = placed(narrow)
+            } else {
+                let y = top ? avoid.minY - gap - plate.extent.height : avoid.maxY + gap
+                rect.origin.y = min(max(0, y), size.height - plate.extent.height).rounded()
+                lifted = true
+            }
+        }
+        let drawn = plate.transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY)).composited(over: image)
+        let used = lifted ? (top ? size.height - rect.minY : rect.maxY) : margin + plate.extent.height
+        return (drawn, used, rect)
     }
 
     /// The shortcut pressed last, centred near its edge (above a caption on the same edge), fading out at its end.

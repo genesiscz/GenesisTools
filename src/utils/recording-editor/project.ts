@@ -239,7 +239,8 @@ export const frameSchema = z.object({
 /**
  * Ready frames for a phone recording: "phone-left" and "phone-right" put the phone against one side of a 16:9 canvas
  * with the other side (about three quarters of it) free for texts, and layout.scale above 1 makes the phone bigger;
- * "phone-portrait" fills a 9:16 canvas (Shorts, Reels) from the top and leaves its bottom eighth for captions. Each
+ * "phone-portrait" fills a 9:16 canvas (Shorts, Reels) from the top and leaves its bottom eighth for captions; a camera
+ * bubble in a bottom corner shares that band, and a caption that reaches it lifts above it (check() names this). Each
  * sets the aspect, the fit (contain: the whole phone), padding, corner radius and layout; the op's own fields still win.
  */
 export const FRAME_PRESETS = ["phone-left", "phone-right", "phone-portrait"] as const;

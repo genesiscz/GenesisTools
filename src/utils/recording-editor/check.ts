@@ -1,4 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { bubbleRect } from "./camera";
 import { isPictureFile } from "./overlays";
 import {
     applyOp,
@@ -221,6 +222,12 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                 action: { label: "Move After", ops: [{ op: "retime", id: over.id, at: after }] },
             });
         }
+    }
+
+    const lift = captionLiftIssue(project, canvas, facts);
+
+    if (lift) {
+        issues.push(lift);
     }
 
     const music = project.audio.music;
@@ -517,6 +524,55 @@ export function issueSummary(issues: readonly EditIssue[]): {
 // R6 9 rendered text boxes
 // canvasShape lives in project.ts, where the camera op reads it too; check.ts callers keep importing it from here.
 export { canvasShape };
+
+/**
+ * The camera bubble where a caption has to lift above it (Captions.swift `Looks.drawCaption` with `avoid`). A caption
+ * that would run under the bubble wraps short of it, one gap (0.015 of the short side) before its near edge, and nothing
+ * is covered; when that leaves under 0.45 of the width (a phone-portrait canvas, a custom bubble near the middle) the
+ * caption lifts above the bubble instead, which is the case named here. Units of the canvas's short side.
+ */
+function captionLiftIssue(project: EditProject, canvas: TextCanvas, facts: EditFacts): EditIssue | undefined {
+    const camera = project.camera;
+    const captions = project.captions;
+
+    if (!camera?.show || !captions?.show || !facts.hasTranscript) {
+        return undefined;
+    }
+
+    const unit = canvas.shortSidePx ?? DEFAULT_SHORT_SIDE_PX;
+    const font = Math.max(8, Math.round(captions.size * unit));
+    // One line of the caption's plate: the line and the plate's inset above and below (0.38 of the font each).
+    const plateHeight = (layoutText("Ag", font, unit * 10, "center").height + 2 * 0.38 * font) / unit;
+    const margin = 0.05;
+    const gap = 0.015;
+    const band =
+        captions.position === "top"
+            ? { top: margin, bottom: margin + plateHeight }
+            : { top: canvas.height - margin - plateHeight, bottom: canvas.height - margin };
+    const bubble = bubbleRect(camera, canvas);
+    const half = bubble.side / 2;
+
+    if (bubble.y + half <= band.top || bubble.y - half >= band.bottom) {
+        return undefined;
+    }
+
+    const centre = canvas.width / 2;
+    const room = bubble.x >= centre ? 2 * (bubble.x - half - gap - centre) : 2 * (centre - (bubble.x + half) - gap);
+
+    if (room >= canvas.width * 0.45) {
+        return undefined;
+    }
+
+    return {
+        severity: "check",
+        kind: "camera-lifts-captions",
+        item: "camera",
+        message:
+            "The camera bubble sits in the captions' band with too little room beside it, so a caption that reaches it lifts above the bubble",
+        fix: 'movie.camera({ corner: "topRight" })',
+        action: { label: "Move to Top Right", ops: [{ op: "camera", corner: "topRight" }] },
+    };
+}
 
 /**
  * The canvas's short side in pixels a text is laid out at when the caller names none; check() passes the export's own

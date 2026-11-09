@@ -983,8 +983,14 @@ struct EditRenderer {
             }
             var captionUsed: CGFloat = 0
             if let caption = look.caption {
+                // The camera bubble while it shows, in Core Image space: the caption wraps short of it or lifts above it.
+                let bubble = zoom.camera.flatMap { camera -> CGRect? in
+                    guard cameraFeed != nil, camera.shows(atSourceUs: TimelineMap.sourceTime(atOutput: outUs, in: project)) else { return nil }
+                    let rect = camera.rect(canvas: size)
+                    return CGRect(x: rect.minX, y: size.height - rect.maxY, width: rect.width, height: rect.height)
+                }
                 let drawn = Looks.drawCaption(caption.line, track: caption.track, settings: caption.settings, on: result, size: size,
-                                              highlight: caption.highlight)
+                                              highlight: caption.highlight, avoid: bubble)
                 result = drawn.image.cropped(to: CGRect(origin: .zero, size: size))
                 captionUsed = drawn.used
             }

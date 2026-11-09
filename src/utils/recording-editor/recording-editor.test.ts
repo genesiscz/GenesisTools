@@ -980,6 +980,52 @@ describe("edit project (edit.json)", () => {
         });
     });
 
+    describe("the camera bubble and the captions share the bottom band", () => {
+        const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const withCamera = (
+            camera: Partial<projectOps.EditProject["camera"]>,
+            aspect?: "9:16",
+            position: "bottom" | "top" = "bottom"
+        ): projectOps.EditProject => {
+            const whole = wholeProject(source);
+            return {
+                ...(aspect ? applyOp(whole, { op: "frame", aspect }) : whole),
+                captions: { show: true, size: 0.038, position },
+                camera: cameraBubbleSchema.parse({ file: "camera.mov", ...camera }),
+            };
+        };
+
+        test("a custom bubble near the middle of the caption band lifts the captions, with a fix to a top corner", () => {
+            const issue = checkProject(withCamera({ corner: "custom", x: 0.5, y: 0.9 }), facts).find(
+                (each) => each.kind === "camera-lifts-captions"
+            );
+            expect(issue?.severity).toBe("check");
+            expect(issue?.action?.ops).toEqual([{ op: "camera", corner: "topRight" }]);
+        });
+
+        test("the default bubble on a landscape canvas only narrows the captions, so check() says nothing", () => {
+            expect(checkProject(withCamera({}), facts).some((each) => each.kind === "camera-lifts-captions")).toBe(
+                false
+            );
+        });
+
+        test("the default bubble on a phone-portrait canvas lifts the captions", () => {
+            expect(
+                checkProject(withCamera({}, "9:16"), facts).some((each) => each.kind === "camera-lifts-captions")
+            ).toBe(true);
+        });
+
+        test("captions at the top, a hidden bubble or a bubble at the top give nothing", () => {
+            const middle = { corner: "custom" as const, x: 0.5, y: 0.9 };
+            const none = (project: projectOps.EditProject) =>
+                !checkProject(project, facts).some((each) => each.kind === "camera-lifts-captions");
+            expect(none(withCamera(middle, undefined, "top"))).toBe(true);
+            expect(none(withCamera({ ...middle, show: false }))).toBe(true);
+            expect(none(withCamera({ corner: "topRight" }))).toBe(true);
+        });
+    });
+
     describe("a caption fix is keyed the way its readers look it up", () => {
         const source = { video: "/movies/screen.mp4", durationUs: 20_000_000, width: 1920, height: 1080 };
         const segments = [
