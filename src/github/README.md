@@ -127,7 +127,10 @@ because GitHub plays it inline only when the URL stands alone in its paragraph.
 - Errors: 404 means no write access, 422 means GitHub refused the file (its message is printed), 429 means rate
   limited (the `Retry-After` seconds are printed). GitHub Enterprise Server is not supported.
 - Observed 2026-11-09: a fresh asset answers 404 to a request without a token and 302 (to a signed S3 URL) with one,
-  until something references it. Check the rendered PR or comment, not a logged-out `curl`.
+  until something references it. Two assets that public repositories already reference answered an anonymous
+  request with 302 the same day, so a referenced asset on a public repository is readable without a token. On a
+  private repository an anonymous request gets 404 either way. Check the rendered PR or comment, not a logged-out
+  `curl`.
 
 ### `pr`: a pull request
 
