@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
+import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -18,7 +19,15 @@ import {
     type SessionNote,
 } from "./listen-session";
 import { GivenAnswerAdapter } from "./listen-session-answer";
-import { askedSpotSec, heardClip, openQuestions, type QuestionItem, questionView, questionWarnings } from "./questions";
+import {
+    answerVocabulary,
+    askedSpotSec,
+    heardClip,
+    openQuestions,
+    type QuestionItem,
+    questionView,
+    questionWarnings,
+} from "./questions";
 
 const now = "2026-11-02T15:00:00.000Z";
 let stores = 0;
@@ -525,5 +534,43 @@ describe("listen --clip-out (MC22)", () => {
         expect(written[0]!.fromSec).toBeLessThan(spot);
         expect(written[1]).toMatchObject({ fromSec: 60, toSec: 61, padSec: listen.tone.leadSec + SPEAKER_PAD_SEC });
         expect(fx.read()).toEqual(record);
+    });
+});
+
+describe("the typed answer's names (answerVocabulary, R10)", () => {
+    test("the record's people keep their places, the directory adds the other people it knows, then the dictionary", async () => {
+        const store = new MeetingStore(new Storage(`meetings-vocabulary-${process.pid}`));
+        const here = await store.create(
+            {
+                title: "Harbor sync",
+                start: "2026-11-02T14:00:00.000Z",
+                createdBy: "new",
+                participants: [{ name: "Dana Example", self: true, from: [] }],
+                calendar: { from: "apple-calendar", attendees: ["Alex Example"] },
+            },
+            { command: "test", change: "fixture" }
+        );
+        await store.create(
+            {
+                title: "Crane review",
+                start: "2026-11-01T14:00:00.000Z",
+                createdBy: "new",
+                participants: [
+                    { name: "Blake Example", from: [] },
+                    { name: "Dana Exámple", from: [] },
+                ],
+            },
+            { command: "test", change: "fixture" }
+        );
+        const config = meetingsConfigSchema.parse({});
+        const known = await meetingPeopleNames({ store, config, meeting: here.id });
+
+        expect(answerVocabulary(here, ["ADA"], known)).toEqual([
+            "Dana Example",
+            "Alex Example",
+            "Blake Example",
+            "ADA",
+        ]);
+        expect(answerVocabulary(here, ["ADA"])).toEqual(["Dana Example", "Alex Example", "ADA"]);
     });
 });

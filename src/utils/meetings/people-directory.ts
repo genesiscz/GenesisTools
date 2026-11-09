@@ -849,3 +849,27 @@ export function peopleDirectory(options: {
 
     return new PeopleDirectory({ sources, book, off });
 }
+
+/**
+ * The names the directory knows, ranked for one meeting (its people first), from the meetings, the projects and the
+ * people book: the terminal's typed answers complete from them (R10). Contacts stays out, so `listen` never raises
+ * the Contacts dialog. A directory that cannot read answers no names and the reason in the log.
+ */
+export async function meetingPeopleNames(options: {
+    store: MeetingStore;
+    config: MeetingsConfig;
+    meeting: string;
+    limit?: number;
+}): Promise<string[]> {
+    try {
+        const known = await peopleDirectory({ store: options.store, config: options.config }).known("", {
+            meeting: options.meeting,
+            limit: options.limit ?? 200,
+            kinds: ["meetings", "projects", "own"],
+        });
+        return known.people.map((person) => person.name);
+    } catch (error) {
+        log.warn({ error, meeting: options.meeting }, "the people directory did not read; answers complete without it");
+        return [];
+    }
+}
