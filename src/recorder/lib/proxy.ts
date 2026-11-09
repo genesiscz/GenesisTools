@@ -1,13 +1,15 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { imageSize } from "@genesiscz/utils/macos/ocr-boxes";
 import { concatList } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { framesMovieEndUs, readFrameFolder, type SourceFrame } from "@genesiscz/utils/recording-editor/source";
-import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { audioFileDurationUs } from "@genesiscz/utils/recording-editor/voiceovers";
+import type { AudioSource } from "@genesiscz/utils/screen-recorder/control";
+import { type RecordingManifest, readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
@@ -129,6 +131,7 @@ export function frameSizesOf(
 export interface ProxyResult {
     path: string;
     frames: number;
+    /** The sound parts the movie mixes, each source once at each moment (`audioOncePerSource`). */
     audioPieces: number;
     /** The display of the whole movie, when one display is shown throughout. */
     displayId?: number;
@@ -394,6 +397,177 @@ function meetingAudioPieces(folder: string, startedMs: number): Array<{ path: st
         .filter((piece) => existsSync(piece.path));
 }
 
+/** A sound file the proxy can mix, placed `delayMs` after the recording's start. */
+export interface ProxyAudioPiece {
+    path: string;
+    delayMs: number;
+    /** What a frames recording's piece recorded; a meeting's pieces have none and play as they are. */
+    source?: AudioSource;
+    displayId?: number;
+    /** The file's length; absent when neither recording.json nor ffprobe knew it, and then the piece hides nothing. */
+    durationMs?: number;
+}
+
+/** What the proxy mixes of one piece: the whole file, or its `part` (ms of the file), placed at `delayMs`. */
+export interface ProxyAudioSegment {
+    path: string;
+    delayMs: number;
+    part?: { fromMs: number; toMs: number };
+}
+
+/**
+ * A part of a duplicate piece this short is the start and stop jitter of the captures of one run (30 ms in a recording
+ * of two displays), not sound the kept piece missed.
+ */
+const AUDIO_JITTER_MS = 50;
+
+/**
+ * The parts of the audio pieces that play each source once at each moment. Every display capture of a frames
+ * recording records the same sound, so the pieces of one source overlap: the longest keeps its whole span (then the
+ * earliest, then the lowest display id), and a shorter piece adds only what no piece before it covers, such as the
+ * run-on of a capture whose twin lost its display. Pieces of different sources (mic and system) and pieces in sequence
+ * all play. The choice does not follow the display plan, so a display switch remakes the proxy with the same sound.
+ */
+export function audioOncePerSource(pieces: readonly ProxyAudioPiece[]): ProxyAudioSegment[] {
+    const segments: ProxyAudioSegment[] = [];
+    const bySource = new Map<AudioSource, Array<ProxyAudioPiece & { durationMs: number }>>();
+
+    for (const piece of pieces) {
+        const { source, durationMs } = piece;
+
+        if (source === undefined || durationMs === undefined) {
+            segments.push({ path: piece.path, delayMs: piece.delayMs });
+            continue;
+        }
+
+        bySource.set(source, [...(bySource.get(source) ?? []), { ...piece, durationMs }]);
+    }
+
+    for (const same of bySource.values()) {
+        const covered: Array<[number, number]> = [];
+        const ranked = same.sort(
+            (a, b) => b.durationMs - a.durationMs || a.delayMs - b.delayMs || (a.displayId ?? 0) - (b.displayId ?? 0)
+        );
+
+        for (const piece of ranked) {
+            const fromMs = piece.delayMs;
+            const toMs = piece.delayMs + piece.durationMs;
+
+            for (const [partFrom, partTo] of uncoveredParts(fromMs, toMs, covered)) {
+                if (partFrom === fromMs && partTo === toMs) {
+                    segments.push({ path: piece.path, delayMs: fromMs });
+                } else if (partTo - partFrom >= AUDIO_JITTER_MS) {
+                    segments.push({
+                        path: piece.path,
+                        delayMs: partFrom,
+                        part: { fromMs: partFrom - fromMs, toMs: partTo - fromMs },
+                    });
+                }
+            }
+
+            covered.push([fromMs, toMs]);
+        }
+    }
+
+    return segments.sort((a, b) => a.delayMs - b.delayMs);
+}
+
+/** The parts of `[fromMs, toMs)` that no span of `covered` holds. */
+function uncoveredParts(
+    fromMs: number,
+    toMs: number,
+    covered: ReadonlyArray<readonly [number, number]>
+): Array<[number, number]> {
+    const parts: Array<[number, number]> = [];
+    let atMs = fromMs;
+
+    for (const [coverFrom, coverTo] of [...covered].sort((a, b) => a[0] - b[0])) {
+        if (coverFrom >= toMs) {
+            break;
+        }
+
+        if (coverFrom > atMs) {
+            parts.push([atMs, coverFrom]);
+        }
+
+        atMs = Math.max(atMs, coverTo);
+    }
+
+    if (atMs < toMs) {
+        parts.push([atMs, toMs]);
+    }
+
+    return parts;
+}
+
+const trackLengthSchema = z.object({ path: z.string(), durationMs: z.number().positive() });
+
+/** Each audio piece's length by file name, from recording.json's `settings.tracks`. */
+function trackLengths(manifest: RecordingManifest | undefined): Map<string, number> {
+    const tracks = manifest?.settings.tracks;
+    const lengths = new Map<string, number>();
+
+    for (const track of Array.isArray(tracks) ? tracks : []) {
+        const parsed = trackLengthSchema.safeParse(track);
+
+        if (parsed.success) {
+            lengths.set(basename(parsed.data.path), parsed.data.durationMs);
+        }
+    }
+
+    return lengths;
+}
+
+/** A piece's length by ffprobe, for a piece recording.json does not list; undefined when ffprobe cannot read it. */
+async function probedLengthMs(path: string): Promise<number | undefined> {
+    try {
+        return (await audioFileDurationUs(path)) / 1000;
+    } catch (err) {
+        log.warn({ err, path }, "audio piece of unknown length; it is mixed whole");
+        return undefined;
+    }
+}
+
+/** The audio pieces of a frames recording (`audio/`), each with its source, display and length. */
+async function libraryAudioPieces(
+    folder: string,
+    manifest: RecordingManifest | undefined,
+    startedMs: number
+): Promise<ProxyAudioPiece[]> {
+    const audioDir = join(folder, "audio");
+
+    if (!existsSync(audioDir) || !Number.isFinite(startedMs)) {
+        return [];
+    }
+
+    const lengths = trackLengths(manifest);
+    const named = readdirSync(audioDir).flatMap((name) => {
+        const match = AUDIO_PIECE.exec(name);
+        return match ? [{ name, match }] : [];
+    });
+    return Promise.all(
+        named.map(async ({ name, match }) => {
+            const path = join(audioDir, name);
+            const source: AudioSource = match[3] === "mic" ? "mic" : "system";
+            return {
+                path,
+                delayMs: Math.max(0, Number(match[1]) - startedMs),
+                source,
+                displayId: Number(match[2]),
+                durationMs: lengths.get(name) ?? (await probedLengthMs(path)),
+            };
+        })
+    );
+}
+
+/** The ffmpeg filter that places one segment (input `index + 1`) at its time, as `[a<index>]`. */
+function audioSegmentFilter(segment: ProxyAudioSegment, index: number): string {
+    const trim = segment.part
+        ? `atrim=start=${(segment.part.fromMs / 1000).toFixed(3)}:end=${(segment.part.toMs / 1000).toFixed(3)},asetpts=PTS-STARTPTS,`
+        : "";
+    return `[${index + 1}:a]${trim}adelay=${Math.round(segment.delayMs)}:all=1[a${index}]`;
+}
+
 /** The editor's proxy movie in a frames recording's folder. */
 export const PROXY_FILE = "proxy.mp4";
 
@@ -449,22 +623,11 @@ export async function makeProxy(folder: string, options: ProxyOptions = {}): Pro
         )
     );
     const startedMs = manifest ? Date.parse(manifest.startedAt) : Number.NaN;
-    const audioDir = join(folder, "audio");
-    const libraryPieces =
-        existsSync(audioDir) && Number.isFinite(startedMs)
-            ? readdirSync(audioDir)
-                  .map((name) => ({ name, match: AUDIO_PIECE.exec(name) }))
-                  .filter((piece) => piece.match !== null)
-                  .map((piece) => ({
-                      path: join(audioDir, piece.name),
-                      delayMs: Math.max(0, Number(piece.match?.[1]) - startedMs),
-                  }))
-                  .sort((a, b) => a.delayMs - b.delayMs)
-            : [];
-    const pieces =
-        libraryPieces.length > 0 || !Number.isFinite(startedMs)
-            ? libraryPieces
-            : meetingAudioPieces(folder, startedMs).sort((a, b) => a.delayMs - b.delayMs);
+    const libraryPieces = await libraryAudioPieces(folder, manifest, startedMs);
+    const audioFiles =
+        libraryPieces.length > 0 || !Number.isFinite(startedMs) ? libraryPieces : meetingAudioPieces(folder, startedMs);
+    // Every display capture of a frames recording records the same sound: each source plays once.
+    const pieces = audioOncePerSource(audioFiles);
     const output = join(folder, PROXY_FILE);
     const partial = join(folder, ".proxy.partial.mp4");
     const audioInputs = pieces.flatMap((piece) => ["-i", piece.path]);
@@ -472,7 +635,7 @@ export async function makeProxy(folder: string, options: ProxyOptions = {}): Pro
         ? [
               "-filter_complex",
               `[0:v]${videoFilter}[vout];` +
-                  `${pieces.map((piece, index) => `[${index + 1}:a]adelay=${Math.round(piece.delayMs)}:all=1[a${index}]`).join(";")};` +
+                  `${pieces.map(audioSegmentFilter).join(";")};` +
                   `${pieces.map((_, index) => `[a${index}]`).join("")}amix=inputs=${pieces.length}:normalize=0[aout]`,
               "-map",
               "[vout]",
@@ -513,7 +676,14 @@ export async function makeProxy(folder: string, options: ProxyOptions = {}): Pro
         partial,
     ];
     log.info(
-        { folder, frames: chosen.length, ranges: ranges.length, policy: plan.policy, audioPieces: pieces.length },
+        {
+            folder,
+            frames: chosen.length,
+            ranges: ranges.length,
+            policy: plan.policy,
+            audioFiles: audioFiles.length,
+            audioPieces: pieces.length,
+        },
         "making the proxy movie"
     );
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -8,7 +8,7 @@ import * as video from "@genesiscz/utils/video/process";
 import { createCanvas } from "@napi-rs/canvas";
 import { readUndoSteps } from "./edit";
 import { prepareFramesMovie, switchDisplay } from "./frames-movie";
-import { boxInFrame, boxInProxy, chosenPlan, framesForPlan, makeProxy, proxyCanvas } from "./proxy";
+import { audioOncePerSource, boxInFrame, boxInProxy, chosenPlan, framesForPlan, makeProxy, proxyCanvas } from "./proxy";
 import { findOnScreen } from "./screen-search";
 
 test("proxy retains valid audio before a truncated index row", async () => {
@@ -39,6 +39,165 @@ test("proxy retains valid audio before a truncated index row", async () => {
     } finally {
         encode.mockRestore();
     }
+});
+
+/**
+ * A frames recording of displays 1 and 2 whose captures each recorded the system sound: `tracks` are the pieces as
+ * recording.json lists them (start after the recording's start, length).
+ */
+function duplicateSoundFolder(tracks: Array<{ display: number; atMs: number; durationMs: number }>): {
+    folder: string;
+    files: string[];
+} {
+    const folder = mkdtempSync(join(tmpdir(), "proxy-sound-once-"));
+    const startedAt = "2026-11-05T10:00:00.000Z";
+    const startedMs = Date.parse(startedAt);
+    mkdirSync(join(folder, "audio"));
+    const files = tracks.map((track) => {
+        const file = join(folder, "audio", `${startedMs + track.atMs}-d${track.display}-audio-system.m4a`);
+        writeFileSync(file, "fixture");
+        return file;
+    });
+    writeFileSync(
+        join(folder, "recording.json"),
+        SafeJSON.stringify({
+            version: 1,
+            id: "fixture",
+            title: "Fixture",
+            startedAt,
+            endedAt: "2026-11-05T10:00:10.000Z",
+            frames: [
+                { file: "a.png", atMs: 0, displayId: 1 },
+                { file: "b.png", atMs: 0, displayId: 2 },
+            ],
+            displays: [
+                { id: 1, name: "one" },
+                { id: 2, name: "two" },
+            ],
+            settings: {
+                tracks: tracks.map((track, index) => ({
+                    source: "system",
+                    path: files[index],
+                    durationMs: track.durationMs,
+                    mutedSpans: [],
+                    displayId: track.display,
+                    startedAtMs: startedMs + track.atMs,
+                })),
+            },
+        })
+    );
+    writeFileSync(join(folder, "a.png"), createCanvas(64, 40).toBuffer("image/png"));
+    writeFileSync(join(folder, "b.png"), createCanvas(64, 40).toBuffer("image/png"));
+    return { folder, files };
+}
+
+describe("a frames recording plays each source's sound once, though every display capture recorded it", () => {
+    it("of two system pieces of displays 1 and 2 that start 0.2 s apart, one plays", () => {
+        expect(
+            audioOncePerSource([
+                { path: "d1.m4a", delayMs: 1000, source: "system", displayId: 1, durationMs: 3000 },
+                { path: "d2.m4a", delayMs: 1200, source: "system", displayId: 2, durationMs: 2800 },
+            ])
+        ).toEqual([{ path: "d1.m4a", delayMs: 1000 }]);
+    });
+
+    it("a mic piece and a system piece of one display both play, and so does a later piece after a gap", () => {
+        expect(
+            audioOncePerSource([
+                { path: "late.m4a", delayMs: 9000, source: "system", displayId: 1, durationMs: 1000 },
+                { path: "system.m4a", delayMs: 1000, source: "system", displayId: 1, durationMs: 3000 },
+                { path: "mic.m4a", delayMs: 1000, source: "mic", displayId: 1, durationMs: 3000 },
+            ])
+        ).toEqual([
+            { path: "system.m4a", delayMs: 1000 },
+            { path: "mic.m4a", delayMs: 1000 },
+            { path: "late.m4a", delayMs: 9000 },
+        ]);
+    });
+
+    it("a duplicate adds only the sound no kept piece holds, and a jitter sliver of it plays not at all", () => {
+        expect(
+            audioOncePerSource([
+                // Display 1 started 30 ms before display 2 (jitter); a later display 1 piece runs on after 4 s.
+                { path: "d1.m4a", delayMs: 970, source: "system", displayId: 1, durationMs: 2030 },
+                { path: "d2.m4a", delayMs: 1000, source: "system", displayId: 2, durationMs: 3000 },
+                { path: "d1-on.m4a", delayMs: 3500, source: "system", displayId: 1, durationMs: 2500 },
+            ])
+        ).toEqual([
+            { path: "d2.m4a", delayMs: 1000 },
+            { path: "d1-on.m4a", delayMs: 4000, part: { fromMs: 500, toMs: 2500 } },
+        ]);
+    });
+
+    it("a piece of unknown length, and a meeting's piece without a source, play whole and hide nothing", () => {
+        expect(
+            audioOncePerSource([
+                { path: "unknown.m4a", delayMs: 1000, source: "system", displayId: 2 },
+                { path: "d1.m4a", delayMs: 1000, source: "system", displayId: 1, durationMs: 3000 },
+                { path: "meeting.m4a", delayMs: 0 },
+            ])
+        ).toEqual([
+            { path: "meeting.m4a", delayMs: 0 },
+            { path: "unknown.m4a", delayMs: 1000 },
+            { path: "d1.m4a", delayMs: 1000 },
+        ]);
+    });
+
+    it("the proxy mixes one of two system pieces that start 0.2 s apart, and the later piece after a gap", async () => {
+        const { folder, files } = duplicateSoundFolder([
+            { display: 1, atMs: 1000, durationMs: 3000 },
+            { display: 2, atMs: 1200, durationMs: 2800 },
+            { display: 1, atMs: 6000, durationMs: 1000 },
+        ]);
+        const commands: string[][] = [];
+        const encode = spyOn(video, "runVideoCommand").mockImplementation(async (options) => {
+            if (options.command[0] === "ffprobe") {
+                throw new Error("recording.json names every piece's length; nothing is probed");
+            }
+
+            commands.push(options.command);
+            writeFileSync(join(folder, ".proxy.partial.mp4"), "fixture output");
+            return "";
+        });
+
+        try {
+            expect((await makeProxy(folder, { display: 1 })).audioPieces).toBe(2);
+        } finally {
+            encode.mockRestore();
+        }
+
+        const argv = commands[0] ?? [];
+        const graph = argv[argv.indexOf("-filter_complex") + 1] ?? "";
+        expect(graph).toContain("amix=inputs=2:");
+        expect(argv).toContain(files[0]);
+        expect(argv).not.toContain(files[1]);
+        expect(argv).toContain(files[2]);
+    });
+
+    it("the proxy plays the run-on of a duplicate from the kept piece's end", async () => {
+        const { folder, files } = duplicateSoundFolder([
+            { display: 1, atMs: 1000, durationMs: 3000 },
+            { display: 2, atMs: 3500, durationMs: 2500 },
+        ]);
+        const commands: string[][] = [];
+        const encode = spyOn(video, "runVideoCommand").mockImplementation(async (options) => {
+            commands.push(options.command);
+            writeFileSync(join(folder, ".proxy.partial.mp4"), "fixture output");
+            return "";
+        });
+
+        try {
+            expect((await makeProxy(folder, { display: 1 })).audioPieces).toBe(2);
+        } finally {
+            encode.mockRestore();
+        }
+
+        const argv = commands[0] ?? [];
+        expect(argv.filter((arg) => files.includes(arg))).toEqual(files);
+        expect(argv[argv.indexOf("-filter_complex") + 1]).toContain(
+            "[2:a]atrim=start=0.500:end=2.500,asetpts=PTS-STARTPTS,adelay=4000:all=1[a1]"
+        );
+    });
 });
 
 /** A frames recording of two displays of one width and two heights: display 1 at 64x40, display 2 at 64x36. */
