@@ -1001,7 +1001,18 @@ export class DecisionJournal {
         return Array.from(readLinesSync(path))
             .filter((line) => line.trim())
             .flatMap((line) => {
-                const parsed = journalEntrySchema.safeParse(SafeJSON.parse(line, { jsonl: true }));
+                let value: unknown;
+
+                try {
+                    value = SafeJSON.parse(line, { jsonl: true });
+                } catch (error) {
+                    // A torn line (a crash or a full disk during the append, a hand edit) loses only itself, so the
+                    // other entries still read and their tokens still revert.
+                    log.warn({ path, error }, "decision journal line is not JSON; skipped");
+                    return [];
+                }
+
+                const parsed = journalEntrySchema.safeParse(value);
 
                 if (!parsed.success) {
                     log.warn({ path, error: parsed.error.message }, "decision journal line does not parse; skipped");

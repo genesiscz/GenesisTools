@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingItem, MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -256,5 +256,30 @@ describe("decision journal", () => {
         expect(tokens(fx.journal.read(fx.meeting.id, { item: "i2" }))).toEqual([second.entry?.token]);
         expect(fx.journal.read(fx.meeting.id, { item: "i1" })[1]).toMatchObject({ revertedBy: undo.entry?.token });
         expect(fx.journal.read(fx.meeting.id, { limit: 1 })).toHaveLength(1);
+    });
+
+    // A torn line (a crash or a full disk during the append, a hand edit) is skipped, so the journal, every Undo by
+    // token and the Esc of a listen round still work for the meeting.
+    test("a line that is not JSON is skipped: read lists the others and their tokens still revert", async () => {
+        const fx = await fixture([term("i1", 10, { proposed: "wiki" }), term("i2", 20, { proposed: "jira" })]);
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i1"] },
+            actor: { kind: "cli" },
+        });
+        appendFileSync(fx.journal.path(fx.meeting.id), '{"token":"torn-line","at":"2026-11-09T18:0\n');
+        const second = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i2"] },
+            actor: { kind: "cli" },
+        });
+
+        expect(fx.journal.read(fx.meeting.id).map((entry): string | undefined => entry.token)).toEqual([
+            second.entry?.token,
+            first.entry?.token,
+        ]);
+        await fx.journal.revert({ meeting: fx.meeting.id, token: first.entry!.token, actor: person });
+        expect(fx.item("i1")).toMatchObject({ status: "suggested" });
+        expect(fx.item("i2")).toMatchObject({ status: "confirmed" });
     });
 });
