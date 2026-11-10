@@ -69,6 +69,9 @@ const TERM_SPAN_SEC = 4;
 /** A single time hears the rest of the line it falls in, at least `min` and at most `max` seconds. */
 const TIME_SPAN_SEC = { min: 4, max: 15 } as const;
 
+/** A voice's stretch shorter than this is one instant: a single time, or two times a rounding apart. */
+const INSTANT_SEC = 1;
+
 /** The frame on one display at a Moment's spot (R41): the screen as it was while those words were said. */
 export interface MomentFrame {
     /** Relative to the meeting folder (`frames/16-32-42-232-d4.jpg`). */
@@ -228,8 +231,10 @@ function questionSpan(record: MeetingRecord, question: QuestionItem, lines: Tran
     // A word question plays the spot of its own occurrence, so a word late in a long line is in the clip; a speaker
     // question plays only the asked voice, from the tone on.
     const occurrence = questionOccurrence(record, question);
-    const heard = (question.about === "speaker" ? undefined : heardClip(question, lines, occurrence)) ??
+    const asked = (question.about === "speaker" ? undefined : heardClip(question, lines, occurrence)) ??
         question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
+    const heard =
+        question.about === "speaker" ? { ...asked, toSec: voiceEnd(lines, asked.fromSec, asked.toSec) } : asked;
     return {
         ...heard,
         spotSec: askedSpotSec(question, lines, occurrence),
@@ -248,15 +253,28 @@ function refuseAfterSpeech(sec: number, end: number | undefined): void {
     }
 }
 
-/** A single time: the rest of the line it falls in, kept between the time span's bounds and inside the speech. */
-function timeSpan(lines: TranscriptLines, atSec: number, label: string): Span {
+/** Where a single time's stretch ends: the end of the line it falls in, between the time span's bounds, inside the speech. */
+function lineReachSec(lines: TranscriptLines, atSec: number): number {
     const end = speechEndSec(lines);
-    refuseAfterSpeech(atSec, end);
     const index = lineAt(lines, atSec);
     const lineEnd = index === undefined ? undefined : lines.end(index);
     const wanted = Math.min(Math.max(lineEnd ?? atSec, atSec + TIME_SPAN_SEC.min), atSec + TIME_SPAN_SEC.max);
-    const toSec = end === undefined ? wanted : Math.max(atSec, Math.min(wanted, end));
-    return { fromSec: atSec, toSec, spotSec: atSec, pad: "around", label };
+    return end === undefined ? wanted : Math.max(atSec, Math.min(wanted, end));
+}
+
+/** A single time: the rest of the line it falls in, kept between the time span's bounds and inside the speech. */
+function timeSpan(lines: TranscriptLines, atSec: number, label: string): Span {
+    refuseAfterSpeech(atSec, speechEndSec(lines));
+    return { fromSec: atSec, toSec: lineReachSec(lines, atSec), spotSec: atSec, pad: "around", label };
+}
+
+/**
+ * Where a voice's stretch ends. A stretch asked at one instant (a "who says this?" with one time, a range of one
+ * line with no known end) reaches the end of its line, as a single time does: its own 0 s played only the two pads
+ * of a voice, a 1.4 s clip nobody can name a speaker from.
+ */
+function voiceEnd(lines: TranscriptLines, fromSec: number, toSec: number): number {
+    return toSec - fromSec < INSTANT_SEC ? Math.max(toSec, lineReachSec(lines, fromSec)) : toSec;
 }
 
 function itemSpan(record: MeetingRecord, item: MeetingItem, lines: TranscriptLines): Span {
@@ -266,7 +284,11 @@ function itemSpan(record: MeetingRecord, item: MeetingItem, lines: TranscriptLin
         case "speaker-range": {
             // A range ends where its last line starts; the clip hears that line to its end.
             const lineEnd = item.evidence?.endSec;
-            const toSec = typeof lineEnd === "number" ? Math.max(item.toSec, lineEnd) : item.toSec;
+            const toSec = voiceEnd(
+                lines,
+                item.fromSec,
+                typeof lineEnd === "number" ? Math.max(item.toSec, lineEnd) : item.toSec
+            );
             return { fromSec: item.fromSec, toSec, spotSec: item.fromSec, pad: "voice", label: item.id };
         }
         case "label":
