@@ -515,6 +515,47 @@ describe("trash", () => {
         expect(listBatches(trashPaths)).toHaveLength(0);
     });
 
+    test("in a test process a path outside the test temp folder is refused before anything moves", () => {
+        // A missing path, so a broken refusal cannot move real data: it would fail later with another reason.
+        const outside = resolveTarget(join(import.meta.dir, "c41-no-such-fixture"), base);
+        const inside = resolveTarget(file(join(dir("test-process"), "fixture.txt")), base);
+        const refused: Array<[string, string]> = [];
+        const batch = moveToTrash(
+            [
+                { target: outside, rule: "test" },
+                { target: inside, rule: "test" },
+            ],
+            {
+                config,
+                caller: AGENT,
+                graceMinutes: 60,
+                paths: trashPaths,
+                onRefused: (request, reason) => refused.push([request.target.path, reason]),
+            }
+        );
+
+        expect(refused).toHaveLength(1);
+        expect(refused[0]?.[0]).toBe(outside.path);
+        expect(refused[0]?.[1]).toContain("test process");
+        expect(refused[0]?.[1]).toContain("os.tmpdir()");
+        expect(batch?.items.map((item) => item.original)).toEqual([inside.path]);
+        // Later tests count the suite's batches: put the fixture back.
+        expect(restoreBatch(batch?.id ?? "", { config, paths: trashPaths }).restored).toEqual([inside.path]);
+        expect(
+            readRmLedger().some(
+                (entry) => entry.action === "refuse" && entry.rule === "test-process" && entry.path === outside.path
+            )
+        ).toBe(true);
+        expect(() =>
+            moveToTrash([{ target: outside, rule: "test" }], {
+                config,
+                caller: AGENT,
+                graceMinutes: 60,
+                paths: trashPaths,
+            })
+        ).toThrow(/test process/);
+    });
+
     test("an unwritable trash refuses the affected path and continues with writable targets", () => {
         const blocked = resolveTarget(file(join(dir("unwritable-trash"), "blocked")), base);
         const normal = resolveTarget(file(join(dir("unwritable-trash"), "normal")), base);
