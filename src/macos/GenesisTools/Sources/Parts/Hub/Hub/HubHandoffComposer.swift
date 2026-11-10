@@ -132,12 +132,12 @@ enum HubHandoff {
     }
 
     static func decode(_ data: Data) throws -> HandoffDraftPayload {
-        try JSONDecoder().decode(HandoffDraftPayload.self, from: MonitorJSON.dataByDroppingPreamble(data))
+        try JSONDecoder().decode(HandoffDraftPayload.self, from: data)
     }
 
     /// Blocking: a full transcript read, seconds for a large session. Off the main thread.
     static func run(_ request: HandoffComposerRequest, range: HandoffRangeChoice, extra: [String] = []) throws -> HandoffDraftPayload {
-        try decode(ToolsCLIRunner.run(arguments(session: request.session, branch: request.branch, range: range, extra: extra)))
+        try decode(HubSource.bridge.json(arguments(session: request.session, branch: request.branch, range: range, extra: extra)))
     }
 }
 

@@ -171,7 +171,7 @@ struct RepoFacts: Codable, Equatable {
     /// Blocking: runs `tools`, so call it off the main thread only. A folder that is gone from disk (a deleted
     /// Copilot session-state checkout) is answered here: `tools hub repo` on one took 1.7 to 2.5 s under load
     /// (24 runs on 2026-10-10, inventory H20), to say what a `stat` says.
-    static func fetch(_ paths: [String], pr: Bool, run: ([String]) throws -> Data = ToolsCLIRunner.run) -> [RepoFacts] {
+    static func fetch(_ paths: [String], pr: Bool, run: ([String]) throws -> Data = { try HubSource.bridge.output($0) }) -> [RepoFacts] {
         let present = paths.filter { FileManager.default.fileExists(atPath: $0) }
         let missing = paths.filter { !present.contains($0) }.map(none)
         if !missing.isEmpty {

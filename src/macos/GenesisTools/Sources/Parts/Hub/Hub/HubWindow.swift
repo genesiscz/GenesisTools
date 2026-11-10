@@ -794,7 +794,7 @@ final class HubModel {
     var findBranchPR: @Sendable (_ root: String, _ branch: String) -> String? = { HubCommitLookup.branchPR(root: $0, branch: $1) }
     var readTranscript: (HubSession, Int) async throws -> TranscriptEnvelope = { try await HubSource.transcript($0, limit: $1) }
     var readDecisions: (String) throws -> SessionDecisionsEnvelope = {
-        try JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(["question", "inbox", "--session", $0, "--json"]))
+        try JSONDecoder().decode(SessionDecisionsEnvelope.self, from: HubSource.bridge.output(["question", "inbox", "--session", $0, "--json"]))
     }
     /// The session `select` last set up (review, decisions, folders).
     private var selectedSetUp: String?

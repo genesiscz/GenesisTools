@@ -416,7 +416,7 @@ final class HubTimelineModel: ObservableObject {
                 }
             }
             let result = Result { () -> TimelineEnvelope in
-                let data = try ToolsCLIRunner.run(args)
+                let data = try HubSource.bridge.output(args)
                 let envelope = try JSONDecoder().decode(TimelineEnvelope.self, from: data)
                 cache.writeData(data, key: key)
                 return envelope
@@ -503,7 +503,7 @@ final class HubTimelineModel: ObservableObject {
         let args = Self.arguments(interval: interval, before: cursor, limit: Self.pageSize, author: author, needsMe: needsMe, fresh: false)
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("timeline.older", "before \(cursor)")
-            let result = Result { try JSONDecoder().decode(TimelineEnvelope.self, from: ToolsCLIRunner.run(args)) }
+            let result = Result { try JSONDecoder().decode(TimelineEnvelope.self, from: HubSource.bridge.output(args)) }
             span.end((try? result.get()).map { "\($0.events.count) events" } ?? "failed")
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
