@@ -1,6 +1,7 @@
 import { GROK_STATIC_CATALOG } from "../grok/models-static";
 import { OPENAI_SUB_STATIC_CATALOG, type WhamModelRecord } from "../openai/sub-models-static";
 import type { Capability } from "../providers/capabilities";
+import { withCacheRateDefaults } from "./cache-rates";
 import type { CatalogEntry, CatalogSource, ModelFamily, ModelPricing, PricingRule } from "./types";
 
 /**
@@ -1246,6 +1247,7 @@ const JEV_ENTRIES: CatalogEntry[] = [
     jev({ id: "typesafe-ai/jev", provider: "jev-vercel", displayName: "Jev via AI Gateway" }),
 ];
 
+/** Every entry carries its provider family's cache-rate default (`cache-rates.ts`) where its price list has none. */
 export const STATIC_CATALOG: CatalogEntry[] = [
     ...ANTHROPIC_ENTRIES,
     ...XAI_ENTRIES,
@@ -1254,7 +1256,7 @@ export const STATIC_CATALOG: CatalogEntry[] = [
     ...GOOGLE_ENTRIES,
     ...GROQ_ENTRIES,
     ...JEV_ENTRIES,
-];
+].map((entry) => (entry.pricing ? { ...entry, pricing: withCacheRateDefaults(entry.pricing, entry.provider) } : entry));
 
 /**
  * Strip a trailing date (`-YYYYMMDD`) or `-latest` variant suffix so dated ids

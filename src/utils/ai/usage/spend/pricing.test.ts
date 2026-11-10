@@ -9,7 +9,8 @@ describe("pricing table", () => {
         expect(DEFAULT_PRICING["gpt-5"]).toEqual({
             input: 1.25,
             output: 10,
-            cacheWrite: 1.25 * 1.25,
+            // OpenAI lists no write rate for gpt-5; its family default bills a write at the input rate.
+            cacheWrite: 1.25,
             cacheRead: 0.125,
         });
         expect(DEFAULT_PRICING["claude-3-5-haiku"]).toEqual({
