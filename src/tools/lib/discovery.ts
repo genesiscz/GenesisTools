@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { NON_TOOL_FOLDERS } from "@genesiscz/utils/cli/tool-names";
 
 const INDEX_FILE_NAMES = ["index.ts", "index.tsx"];
 const SCRIPT_EXTENSIONS = [".ts", ".tsx"];
@@ -26,6 +27,10 @@ export function discoverTools(srcDir: string): ToolInfo[] {
         try {
             const stats = statSync(entryPath);
             if (stats.isDirectory()) {
+                if (NON_TOOL_FOLDERS.has(entry)) {
+                    continue;
+                }
+
                 const indexFile = INDEX_FILE_NAMES.find((f) => existsSync(join(entryPath, f)));
                 if (indexFile) {
                     tools.push({
