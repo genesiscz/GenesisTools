@@ -1003,6 +1003,25 @@ const OPENAI_ENTRIES: CatalogEntry[] = apiEntries(
     TOOL_CAPABLE
 );
 
+/**
+ * Gemini 3.8 Flash and 3.6 Flash share one price sheet: a launch price through 2026-12-31, the list price after it,
+ * and a Priority tier at 1.8x of each (ai.google.dev/gemini-api/docs/pricing, 2026-11-10). The list price is the
+ * base, so a call without a date is never given the launch discount.
+ */
+const GEMINI_FLASH_LIST = { inputPer1M: 1.5, outputPer1M: 7.5, cachedReadPer1M: 0.15 };
+const GEMINI_FLASH_LAUNCH = { inputPer1M: 0.75, outputPer1M: 3.75, cachedReadPer1M: 0.075 };
+const GEMINI_FLASH_PRIORITY = { inputPer1M: 2.7, outputPer1M: 13.5, cachedReadPer1M: 0.27 };
+const GEMINI_FLASH_PRIORITY_LAUNCH = { inputPer1M: 1.35, outputPer1M: 6.75, cachedReadPer1M: 0.135 };
+const GEMINI_FLASH_LAUNCH_ENDS = "2026-12-31";
+const GEMINI_FLASH_PRICING: ModelPricing = {
+    ...GEMINI_FLASH_LIST,
+    rules: [
+        { to: GEMINI_FLASH_LAUNCH_ENDS, ...GEMINI_FLASH_LAUNCH },
+        { serviceTier: "priority", ...GEMINI_FLASH_PRIORITY },
+        { serviceTier: "priority", to: GEMINI_FLASH_LAUNCH_ENDS, ...GEMINI_FLASH_PRIORITY_LAUNCH },
+    ],
+};
+
 /** Ids are the bare Gemini API names; LiteLLM keys them behind a `gemini/` route prefix. */
 const GOOGLE_ENTRIES: CatalogEntry[] = apiEntries(
     "google",
@@ -1018,7 +1037,17 @@ const GOOGLE_ENTRIES: CatalogEntry[] = apiEntries(
                 inputPer1M: 4,
                 outputPer1M: 20,
                 cachedReadPer1M: 0.2,
-                rules: [{ to: "2026-11-30", inputPer1M: 2, outputPer1M: 10, cachedReadPer1M: 0.1 }],
+                rules: [
+                    { to: "2026-11-30", inputPer1M: 2, outputPer1M: 10, cachedReadPer1M: 0.1 },
+                    { serviceTier: "priority", inputPer1M: 7.2, outputPer1M: 36, cachedReadPer1M: 0.36 },
+                    {
+                        serviceTier: "priority",
+                        to: "2026-11-30",
+                        inputPer1M: 3.6,
+                        outputPer1M: 18,
+                        cachedReadPer1M: 0.18,
+                    },
+                ],
             },
             vision: true,
         },
@@ -1027,12 +1056,7 @@ const GOOGLE_ENTRIES: CatalogEntry[] = apiEntries(
             displayName: "Gemini 3.8 Flash",
             contextWindow: 1_048_576,
             thinking: "optional",
-            pricing: {
-                inputPer1M: 1.5,
-                outputPer1M: 7.5,
-                cachedReadPer1M: 0.15,
-                rules: [{ to: "2026-12-31", inputPer1M: 0.75, outputPer1M: 3.75, cachedReadPer1M: 0.075 }],
-            },
+            pricing: GEMINI_FLASH_PRICING,
             vision: true,
         },
         {
@@ -1040,12 +1064,7 @@ const GOOGLE_ENTRIES: CatalogEntry[] = apiEntries(
             displayName: "Gemini 3.6 Flash",
             contextWindow: 1_048_576,
             thinking: "optional",
-            pricing: {
-                inputPer1M: 1.5,
-                outputPer1M: 7.5,
-                cachedReadPer1M: 0.15,
-                rules: [{ to: "2026-12-31", inputPer1M: 0.75, outputPer1M: 3.75, cachedReadPer1M: 0.075 }],
-            },
+            pricing: GEMINI_FLASH_PRICING,
             vision: true,
         },
         {
@@ -1053,7 +1072,12 @@ const GOOGLE_ENTRIES: CatalogEntry[] = apiEntries(
             displayName: "Gemini 3.5 Flash Lite",
             contextWindow: 1_048_576,
             thinking: "optional",
-            pricing: { inputPer1M: 0.3, outputPer1M: 2.5, cachedReadPer1M: 0.03 },
+            pricing: {
+                inputPer1M: 0.3,
+                outputPer1M: 2.5,
+                cachedReadPer1M: 0.03,
+                rules: [{ serviceTier: "priority", inputPer1M: 0.54, outputPer1M: 4.5, cachedReadPer1M: 0.05 }],
+            },
             vision: true,
         },
         // Off Google's pricing page since 3.6 Flash; the endpoint stays and serves 3.6 Flash.
@@ -1094,7 +1118,25 @@ const GOOGLE_ENTRIES: CatalogEntry[] = apiEntries(
             displayName: "Gemini 2.5 Pro",
             contextWindow: 1_048_576,
             thinking: "reasoning",
-            pricing: { inputPer1M: 1.25, outputPer1M: 10, cachedReadPer1M: 0.125 },
+            // From 2026-12-01 Google routes this id to Gemini 3.8 Flash and bills it at that model's rates
+            // (ai.google.dev/gemini-api/docs/deprecations, 2026-11-10). gemini-2.5-flash moves to 3.5 Flash-Lite
+            // on the same day, whose standard rates equal the ones it has here.
+            pricing: {
+                inputPer1M: 1.25,
+                outputPer1M: 10,
+                cachedReadPer1M: 0.125,
+                rules: [
+                    { from: "2026-12-01", ...GEMINI_FLASH_LIST },
+                    { from: "2026-12-01", to: GEMINI_FLASH_LAUNCH_ENDS, ...GEMINI_FLASH_LAUNCH },
+                    { serviceTier: "priority", from: "2026-12-01", ...GEMINI_FLASH_PRIORITY },
+                    {
+                        serviceTier: "priority",
+                        from: "2026-12-01",
+                        to: GEMINI_FLASH_LAUNCH_ENDS,
+                        ...GEMINI_FLASH_PRIORITY_LAUNCH,
+                    },
+                ],
+            },
             vision: true,
         },
         {

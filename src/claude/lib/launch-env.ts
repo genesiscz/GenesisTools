@@ -19,7 +19,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
  *     so `/model fable` and Fable inference are allowed. It does NOT add Fable
  *     to the picker list for first-party OAuth (Xf()/firstParty stays empty).
  *  2. ANTHROPIC_CUSTOM_MODEL_OPTION pushes an entry straight into the picker
- *     list, ungated by first-party, so "Fable 5.1" shows up in `/model` without
+ *     list, ungated by first-party, so the current Fable shows up in `/model` without
  *     the user typing it. `[1m]` selects the 1M-context Fable.
  */
 export const FABLE_MODEL_ID = resolveAnthropicSubModel("fable");

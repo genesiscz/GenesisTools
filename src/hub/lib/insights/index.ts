@@ -89,6 +89,7 @@ export function catalogPricer(agent: AgentId): CallPricer {
         const price = resolvePrice(entry, {
             ...(at && !Number.isNaN(at.getTime()) ? { at } : {}),
             contextTokens: call.input + call.cacheRead + call.cacheWrite,
+            serviceTier: call.serviceTier,
         });
         return costOf(
             { input: call.input, output: call.output, cacheWrite: call.cacheWrite, cacheRead: call.cacheRead },
