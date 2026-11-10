@@ -92,7 +92,10 @@ export interface PartImages {
     raw: Buffer;
     /** PNG, the same clip with the overlay; compose it with `painted` (image/stack.ts) for the final image. */
     annotated: Buffer;
-    /** Image-pixel areas the overlay drew on; outside them the final annotated image takes the raw pixels. */
+    /**
+     * Image-pixel areas the overlay drew on; outside them the composed image takes the raw pixels. That holds for the
+     * composed PNG (and a .png output, written as it is); a WebP output is lossy and re-encodes every pixel.
+     */
     painted: AnnotationRect[];
     /** The marks in image pixels with the label positions used: an annotate_image / control draw plan. */
     annotations: Annotation[];
@@ -579,6 +582,10 @@ function annotationOf(entry: PlacedMark, clip: DocBox, scale: number): Annotatio
         ? {
               text: entry.chip.spec.text,
               position: entry.chip.placed.position,
+              // the nudge (dx, dy) in image pixels: control draw adds it at the same spot, as placeLabel did here
+              ...(own?.offset
+                  ? { offset: { x: Math.round(own.offset.x * scale), y: Math.round(own.offset.y * scale) } }
+                  : {}),
               ...(own?.style ? { style: own.style } : {}),
               ...(own?.leader !== undefined ? { leader: own.leader } : {}),
           }

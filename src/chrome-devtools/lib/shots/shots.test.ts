@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CdpLike } from "@genesiscz/utils/chrome-devtools/cdp-like";
@@ -35,7 +35,7 @@ import { attach, type Page } from "../cdp";
 import { cdpLikeOf } from "../cdp-like-adapter";
 import { type HeadlessChrome, launchHeadlessChrome } from "../headless";
 import { loadShotBook, parseShotBook, selectShots } from "./book";
-import { cookiesFromCommand } from "./browsers";
+import { BROWSER_SOURCES, cookiesFromCommand } from "./browsers";
 import { imageFormatOf, loadWebPlan, shotFilesFor, takeQuickShot } from "./quick";
 import { rehearseShots, runShots } from "./run";
 
@@ -245,6 +245,12 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         expect(hidden).toEqual({ ok: false, source: "testid=hidden-thing", reason: "zero-size" });
     });
 
+    test("a css step scoped to a shadow host searches the host's own shadow root", async () => {
+        const [scoped] = await resolve(within(css("#host"), css("span")));
+
+        expect(box(scoped)).toEqual({ x: 700, y: 20, w: 60, h: 20, count: 1 });
+    });
+
     test("visibility:hidden keeps a box but is not boxed, alone or as one member of a union", async () => {
         const [invisible, member] = await resolve(id("invisible-thing"), union(id("panel"), id("invisible-thing")));
 
@@ -376,6 +382,25 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         expect(direct.inside).toBeGreaterThan(500);
         const composed = await composeOverlay(images);
         expect((await differences(composed, images.annotated, [])).outside).toBe(0);
+    }, 30_000);
+
+    test("a nudged label keeps its nudge in the exported marks, in image pixels", async () => {
+        const part = parseShotPart({
+            clip: { around: id("panel"), pad: 10, fit: "labels" },
+            marks: [{ target: id("usages-button"), at: "below", dx: 3, dy: 6, label: "posun" }],
+        });
+        const capture = await capturePart(cdp, part, SETUP);
+        if (!capture.ok) {
+            throw new Error(capture.problems.join("; "));
+        }
+
+        const [mark] = capture.images.annotations;
+        expect(capture.images.scale).toBe(1);
+        expect(mark.kind === "highlight" && mark.label).toMatchObject({
+            text: "posun",
+            position: "bottom-left",
+            offset: { x: 3, y: 6 },
+        });
     }, 30_000);
 
     test("a label with no free spot inside the clip fails the part and names the label", async () => {
@@ -756,6 +781,29 @@ describe.skipIf(!HAS_CHROME)("running a shot book in headless Chrome", () => {
             [`navigate http://127.0.0.1:${server.port}/slow: the page did not finish loading within 1000 ms`],
             [`navigate http://127.0.0.1:${refused}/x: net::ERR_CONNECTION_REFUSED`],
         ]);
+    }, 60_000);
+
+    test("a headless browser whose cookie import fails is closed, and its profile goes with it", async () => {
+        const profiles = () => readdirSync(tmpdir()).filter((name) => name.startsWith("gt-headless-chrome-"));
+        const before = new Set(profiles());
+        // Storage.setCookies refuses a field of the wrong type as invalid parameters
+        const bad = { name: "session", value: "x", domain: "127.0.0.1", path: "/", expires: "never" };
+        const outcome = await BROWSER_SOURCES.headless
+            .open(
+                { cookies: { from: "command", argv: ["echo", SafeJSON.stringify([bad], { strict: true })] } },
+                { base: `http://127.0.0.1:${server.port}` }
+            )
+            .then(
+                async (opened) => {
+                    // never leave a Chrome behind, also when this test fails
+                    await opened.close();
+                    return "opened";
+                },
+                (error: unknown) => (error instanceof Error ? error.message : String(error))
+            );
+
+        expect(outcome).not.toBe("opened");
+        expect(profiles().filter((name) => !before.has(name))).toEqual([]);
     }, 60_000);
 
     test("rehearse names a target that matches nothing, and writes nothing", async () => {

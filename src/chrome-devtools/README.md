@@ -302,7 +302,8 @@ throwaway profile and a loopback fixture (no model, no network). Measured 2026-0
 
 Boxes and labels drawn INTO the page (its own font, so Czech letters are right), photographed, and
 removed. Each shot is photographed twice, raw and annotated, and the two differ only under the
-overlay; a run writes the annotated image, and the raw one only when asked (`--raw`). Targets
+overlay (exactly in a `.png`; a `.webp` is lossy, so its compression touches every pixel); a run
+writes the annotated image, and the raw one only when asked (`--raw`). Targets
 are locator strings resolved when the shot runs, never pixels; a target that matches nothing, or a
 label with no free spot, fails the shot by name instead of drawing at 0,0.
 

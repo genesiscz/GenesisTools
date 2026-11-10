@@ -153,11 +153,17 @@ const headlessSource: ShotBrowserSource<"headless"> = {
         const cookies = await loginCookies(settings.cookies, context);
         const chrome = await launchHeadlessChrome(settings.binary ? { binary: settings.binary } : {});
         if (cookies.length > 0) {
-            const root = await browser(chrome.port);
+            // no ShotBrowser exists yet, so nobody else would close this Chrome and its profile on a failure here
             try {
-                await root.setCookies(cookies);
-            } finally {
-                root.close();
+                const root = await browser(chrome.port);
+                try {
+                    await root.setCookies(cookies);
+                } finally {
+                    root.close();
+                }
+            } catch (error) {
+                await chrome.close();
+                throw error;
             }
         }
 

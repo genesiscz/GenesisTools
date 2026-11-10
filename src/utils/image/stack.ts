@@ -8,7 +8,7 @@ import type { AnnotationRect } from "./annotation-plan";
 /**
  * The final annotated image: the raw screenshot everywhere, and the annotated screenshot only inside `painted` (the
  * frames, chips and leader lines). So the pair differs only under the overlay, also when the page changed a pixel
- * between the two screenshots.
+ * between the two screenshots. That holds for this PNG; encodeImage's WebP is lossy and re-encodes every pixel.
  */
 export async function composeOverlay(input: {
     raw: Buffer;

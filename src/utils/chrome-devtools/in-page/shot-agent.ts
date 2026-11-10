@@ -77,6 +77,11 @@ export function resolveShotLocators(arg: {
     const cssIn = (scope: Element | Document, selector: string): Element[] => {
         const found: Element[] = [];
         const roots: Array<Element | Document | ShadowRoot> = [scope];
+        // descendants() walks the scope's own shadow root but never returns the scope, so add that root here
+        if (scope instanceof Element && scope.shadowRoot) {
+            roots.push(scope.shadowRoot);
+        }
+
         for (const element of descendants(scope)) {
             if (element.shadowRoot) {
                 roots.push(element.shadowRoot);
@@ -181,8 +186,17 @@ export function resolveShotLocators(arg: {
                 return cssIn(scope, step.selector);
             case "text": {
                 const hits = descendants(scope).filter((element) => matches(textOf(element), step.match));
-                // the smallest elements: drop a hit that contains another hit
-                return hits.filter((element) => !hits.some((other) => other !== element && element.contains(other)));
+                // the smallest elements: drop a hit that contains another hit. One walk up from each hit marks its
+                // ancestors, and a walk stops at an ancestor already marked, so this is linear, not all pairs.
+                // parentElement stops at a shadow root, as contains() does.
+                const holdsHit = new Set<Element>();
+                for (const hit of hits) {
+                    for (let up = hit.parentElement; up && !holdsHit.has(up); up = up.parentElement) {
+                        holdsHit.add(up);
+                    }
+                }
+
+                return hits.filter((element) => !holdsHit.has(element));
             }
             case "role":
                 return descendants(scope).filter(
