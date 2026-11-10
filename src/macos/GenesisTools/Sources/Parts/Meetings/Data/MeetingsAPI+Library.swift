@@ -172,6 +172,53 @@ extension MeetingsAPI {
         }
     }
 
+    /// `projects.meetingPeople`: the people of the project's meetings who are not paired with it yet.
+    enum ProjectsMeetingPeople: MeetingsServiceMethod {
+        static let name = "projects.meetingPeople"
+
+        struct Params: Codable, Equatable { var project: String }
+
+        /// One person: in how many of the project's meetings, and the newest of them.
+        struct Person: Decodable, Equatable, Hashable, Identifiable {
+            struct Meeting: Decodable, Equatable, Hashable {
+                let id: String
+                let title: String
+                let start: String
+            }
+
+            let name: String
+            let email: String?
+            let meetings: Int
+            let last: Meeting
+            var id: String { email ?? name }
+            var label: String { email.map { "\(name) <\($0)>" } ?? name }
+        }
+
+        typealias Result = [Person]
+    }
+
+    /// `projects.pairFromMeetings`: people of the project's meetings paired with it, each with its source.
+    enum ProjectsPairFromMeetings: MeetingsServiceMethod {
+        static let name = "projects.pairFromMeetings"
+
+        struct Params: Codable, Equatable {
+            var project: String
+            /// nil pairs everyone `projects.meetingPeople` lists.
+            var people: [ProjectsUnpair.Person]?
+        }
+
+        struct Paired: Decodable, Equatable {
+            let name: String
+            let email: String?
+            let by: PairedBy
+        }
+
+        struct Result: Decodable, Equatable {
+            let project: String
+            let paired: [Paired]
+        }
+    }
+
     // MARK: Dictionary
 
     /// `dictionary.show`: the merged dictionary of a scope (the global one when `project` is nil), each entry with its

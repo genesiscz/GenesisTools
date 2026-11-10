@@ -9,8 +9,7 @@ extension MeetingsSettingsModel {
 
     func suggestions() async throws -> MeetingsAPI.ProjectsSuggestions.Result {
         if let task = suggestionsTask { return try await task.value }
-        guard let service else { throw AutocompleteFailure(Self.suggestionsUnavailable) }
-        let task = Task { try await service.call(MeetingsAPI.ProjectsSuggestions.self, .init()) }
+        let task = Task { try await callStartingService(MeetingsAPI.ProjectsSuggestions.self, .init()) }
         suggestionsTask = task
         do {
             return try await task.value

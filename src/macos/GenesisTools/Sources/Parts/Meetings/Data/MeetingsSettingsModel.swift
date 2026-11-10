@@ -27,8 +27,11 @@ final class MeetingsSettingsModel {
     private(set) var preview: Loadable<[MatchPreviewRow]> = .idle
     private(set) var dictionary: Loadable<DictionaryShow> = .idle
     private(set) var phraseResult: PhraseTest?
+    /// Per project, the people of its meetings not paired with it yet (`projects.meetingPeople`); read when its card
+    /// shows its people, and again after each settings read, keeping the rows on screen meanwhile.
+    var meetingPeople: [String: Loadable<[MeetingsAPI.ProjectsMeetingPeople.Person]>] = [:]
     /// Paths with a write in flight, so their control waits and a second change does not race the first.
-    private(set) var writing: Set<String> = []
+    internal(set) var writing: Set<String> = []
     var drafts: [String: MatchRulesDraft] = [:]
     /// The notices of the pages' actions, floating over the visible page.
     @ObservationIgnored let notices: NoticeStackModel
@@ -112,6 +115,8 @@ final class MeetingsSettingsModel {
                 for name in value.projectNames where !dirty.contains(name) {
                     drafts[name] = savedRules(name, in: value)
                 }
+                // A pairing made anywhere (here, the terminal, an answered question) changes who is left to pair.
+                for name in meetingPeople.keys { loadMeetingPeople(name) }
             } catch {
                 settings = .failed(asFailure(error), previous: settings.value)
             }

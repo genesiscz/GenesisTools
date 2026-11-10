@@ -5,6 +5,7 @@ import { testPhrase } from "../dictionary-test";
 import { matchPreview } from "../match-preview";
 import { projectLabels } from "../meeting-fields";
 import { removeProject, renameProject } from "../project-admin";
+import { pairFromMeetings, projectMeetingPeople } from "../project-people";
 import { projectSuggestions, type SuggestionReads } from "../project-suggestions";
 import { dictionaryShowRead } from "../window-reads";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
@@ -157,6 +158,34 @@ export async function suggestProjectValues(
         records: store.listBounded({ limit: 300 }).records,
         config: await configOf(deps).read(),
         reads: deps.suggestionReads?.() ?? defaultSuggestionReads(),
+    });
+}
+
+export async function meetingPeopleOf(
+    params: MeetingsParsedParams<"projects.meetingPeople">,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"projects.meetingPeople">> {
+    const config = await configOf(deps).read();
+
+    if (!config.projects[params.project]) {
+        throw refusal("failed", `No project ${params.project}.`);
+    }
+
+    return projectMeetingPeople({ records: store.list(), config, project: params.project });
+}
+
+export async function pairMeetingPeople(
+    params: MeetingsParsedParams<"projects.pairFromMeetings">,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"projects.pairFromMeetings">> {
+    return pairFromMeetings({
+        records: store.list(),
+        config: configOf(deps),
+        project: params.project,
+        ...(params.people ? { people: params.people } : {}),
+        now: deps.now?.() ?? new Date(),
     });
 }
 

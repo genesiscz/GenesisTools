@@ -39,6 +39,7 @@ const ALICE = { name: "Alice Novak", email: "alice@example.com" };
 const BOB = { name: "Bob Smith", email: "bob@example.com" };
 const ME = { name: "Owner Example", email: "owner@example.com", self: true };
 
+import { meetingPairingSource, projectMeetingPeople } from "./project-people";
 import { frequentTitleWords } from "./project-suggestions";
 
 function entry(
@@ -851,6 +852,7 @@ test("an inbox answer for a replaced question, or after the project was set mean
 });
 
 describe("the values the project rules offer, and the people of a project's meetings", () => {
+    const at = "2026-11-10T08:00:00.000Z";
     const meeting = (id: string, start: string, extra: Record<string, unknown>) =>
         meetingRecordSchema.parse({
             id,
@@ -861,6 +863,15 @@ describe("the values the project rules offer, and the people of a project's meet
             createdBy: "link",
             ...extra,
         });
+    const config = meetingsConfigSchema.parse({
+        projects: {
+            shop: {
+                match: {
+                    people: [{ name: "Bob Example", email: "bob@example.com", pairedBy: [{ kind: "manual", at }] }],
+                },
+            },
+        },
+    });
     const records = [
         meeting("m1", "2026-11-01T09:00:00.000Z", {
             participants: [{ name: "Owner Example", self: true }, { name: "Alice Example" }],
@@ -875,7 +886,8 @@ describe("the values the project rules offer, and the people of a project's meet
         }),
         meeting("m2", "2026-11-03T09:00:00.000Z", {
             participants: [{ name: "Alice Example" }],
-            speakers: { labels: { "Speaker 2": "Carol Example" } },
+            // The owner as a named speaker carries no self mark; the first meeting marks them.
+            speakers: { labels: { "Speaker 1": "Owner Example", "Speaker 2": "Carol Example" } },
         }),
         meetingRecordSchema.parse({
             id: "other",
@@ -887,6 +899,40 @@ describe("the values the project rules offer, and the people of a project's meet
             participants: [{ name: "Dan Example" }],
         }),
     ];
+
+    test("lists who is not paired yet, how often, and the last meeting; the owner and paired people are left out", () => {
+        expect(projectMeetingPeople({ records, config, project: "shop" })).toEqual([
+            {
+                name: "Alice Example",
+                email: "alice@example.com",
+                meetings: 2,
+                last: { id: "m2", title: "Sync m2", start: "2026-11-03T09:00:00.000Z" },
+            },
+            {
+                name: "Carol Example",
+                meetings: 1,
+                last: { id: "m2", title: "Sync m2", start: "2026-11-03T09:00:00.000Z" },
+            },
+        ]);
+    });
+
+    test("a person on the meeting's calendar entry is paired through it; anyone else by hand with the meeting named", () => {
+        const [first] = records;
+        expect(meetingPairingSource(first!, { name: "Alice Example" }, at)).toEqual({
+            kind: "calendar",
+            from: "apple-calendar",
+            entryId: "cal-1",
+            title: "Shop sync",
+            start: "2026-11-01T09:00:00.000Z",
+            meetingId: "m1",
+            at,
+        });
+        expect(meetingPairingSource(records[1]!, { name: "Carol Example" }, at)).toEqual({
+            kind: "manual",
+            at,
+            note: "from the meeting “Sync m2” on 2026-11-03",
+        });
+    });
 
     test("the frequent title words skip numbers, short words and the generic ones", () => {
         expect(frequentTitleWords(records)).toEqual(["Other"]);
