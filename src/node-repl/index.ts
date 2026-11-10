@@ -23,7 +23,7 @@ import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp, toolsetOverlap } fr
 
 handleReadmeFlag(import.meta.url);
 
-const MAX_OUTPUT_HELP = `the most characters a turn returns; longer output is cut with a note naming the file that holds all of it (0: no limit)`;
+const MAX_OUTPUT_HELP = `the most characters a turn returns (its text, and a failure's error and stack each); longer output is cut with a note naming the file that holds all of it (0: no limit)`;
 
 /** A turn's text on stdout, ended with a newline so the shell prompt starts on its own line (NR21). */
 function printTurnText(text: string): void {

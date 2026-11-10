@@ -103,6 +103,29 @@ describe("the output limit of a turn", () => {
         }
     });
 
+    // Round 2 of #745: the limit cut only the text, so a thrown 300,000 character message came back whole.
+    it("cuts a failed turn's error and stack the same way, and the failure stays a failure", async () => {
+        const engine = new ReplEngine({ defaultTimeoutMs: 10_000, maxOutputChars: 100 });
+        try {
+            const failed = await engine.run("throw new Error('z'.repeat(1000))");
+            expect(failed.ok).toBe(false);
+            const [error, errorNote] = (failed.error ?? "").split("\n… ");
+            expect(error).toBe("z".repeat(100));
+            expect(errorNote).toStartWith("[output cut at 100 of 1,000 characters; all of it is in ");
+            const errorPath = errorNote.match(/all of it is in (\S+)\. Read/)?.[1] ?? "";
+            expect(readFileSync(errorPath, "utf8")).toBe("z".repeat(1000));
+            const [stack, stackNote] = (failed.stack ?? "").split("\n… ");
+            expect(stack).toHaveLength(100);
+            const stackPath = stackNote.match(/all of it is in (\S+)\. Read/)?.[1] ?? "";
+            expect(readFileSync(stackPath, "utf8")).toContain(`Error: ${"z".repeat(1000)}`);
+            expect(resultMessage(failed)).toStartWith(`${stack}\n… [output cut at 100 of `);
+            const short = await engine.run("throw new Error('short')");
+            expect(short.error).toBe("short");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
     it("keeps text up to the limit whole, and a limit of 0 keeps everything", () => {
         const writeRest = () => {
             throw new Error("nothing should be written");

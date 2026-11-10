@@ -74,8 +74,8 @@ await presets.run("settings-demo", { pane: "Appearance" });
 await presets.remove("settings-demo");                 // { trash }
 ```
 
-`params` types are `string`, `number`, `boolean` and `json`; one without a default is required at every run, and an
-unknown name is refused before anything runs. `toolsets` defaults to the toolsets the script names (`movies.`,
+`params` types are `string`, `number`, `boolean` and `json`; one without a default is required at every run, a value
+or a default of another type is refused, and an unknown name is refused before anything runs. `toolsets` defaults to the toolsets the script names (`movies.`,
 `computer.`); a run in the REPL needs them loaded and says which `--toolset` to start with.
 
 ```bash

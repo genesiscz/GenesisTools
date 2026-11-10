@@ -197,7 +197,10 @@ export interface ReplEngineOptions {
     preloadTimeoutMs?: number;
     /** The budget of a recording's startup in the parent; `preloadTimeoutMs` when absent. */
     recordingStartupTimeoutMs?: number;
-    /** The most characters a turn's text returns (`DEFAULT_MAX_OUTPUT_CHARS`); the rest goes to a file. 0 is no limit. */
+    /**
+     * The most characters a turn's text returns (`DEFAULT_MAX_OUTPUT_CHARS`), and a failed turn's error and stack each;
+     * the rest goes to a file. 0 is no limit.
+     */
     maxOutputChars?: number;
     /**
      * How the caller gives a turn more time, added to a turn's timeout error: `run` names --timeout and --file, the MCP
@@ -348,9 +351,9 @@ export class ReplEngine {
     readonly recordingStartupTimeoutMs: number;
     readonly toolsets: readonly string[];
     readonly maxOutputChars: number;
-    /** Where cut turns keep their whole output; made at the first cut, kept after the engine stops. */
+    /** Where cut turns keep their whole text, error or stack; made at the first cut, kept after the engine stops. */
     private outputDir?: string;
-    private cutTurns = 0;
+    private cuts = 0;
     private readonly stderrTails = new WeakMap<ReplWorker, StderrTail>();
     /** What the last stop of the owned recordings left behind; reset() answers it. */
     private readonly stopNotes: string[] = [];
@@ -364,13 +367,34 @@ export class ReplEngine {
         this.maxOutputChars = options.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS;
     }
 
-    private writeWholeOutput(whole: string): string {
-        this.outputDir ??= mkdtempSync(join(tmpdir(), "node-repl-output-"));
-        this.cutTurns += 1;
-        const path = join(this.outputDir, `turn-${this.cutTurns}.txt`);
-        writeFileSync(path, whole);
-        logger.debug({ path, chars: whole.length, max: this.maxOutputChars }, "node-repl turn output cut");
-        return path;
+    /** One part of a turn cut at `maxOutputChars`; the file named in its note holds all of it. */
+    private capPart(value: string, part: "text" | "error" | "stack"): string {
+        return capOutput({
+            text: value,
+            max: this.maxOutputChars,
+            writeRest: (whole) => {
+                this.outputDir ??= mkdtempSync(join(tmpdir(), "node-repl-output-"));
+                this.cuts += 1;
+                const path = join(this.outputDir, `cut-${this.cuts}-${part}.txt`);
+                writeFileSync(path, whole);
+                logger.debug(
+                    { path, part, chars: whole.length, max: this.maxOutputChars },
+                    "node-repl turn output cut"
+                );
+                return path;
+            },
+        });
+    }
+
+    /**
+     * A failure's error and stack, each cut as the text is. Both callers print `stack ?? error`, and the limit cut only
+     * the text, so `throw new Error("x".repeat(300_000))` returned the whole message past a 20,000 character limit.
+     */
+    private capFailure(failure: { error?: string; stack?: string }): { error?: string; stack?: string } {
+        return {
+            ...(failure.error === undefined ? {} : { error: this.capPart(failure.error, "error") }),
+            ...(failure.stack === undefined ? {} : { stack: this.capPart(failure.stack, "stack") }),
+        };
     }
 
     /**
@@ -723,12 +747,14 @@ export class ReplEngine {
                 ok: false,
                 text: ready.text,
                 images: ready.images,
-                // Without toolsets the round trip only waits for the start, so its failure is the worker's own.
-                error:
-                    this.toolsets.length > 0
-                        ? `toolset preload failed: ${ready.error ?? "the worker exited"}`
-                        : (ready.error ?? "the worker exited before it started"),
-                stack: ready.stack,
+                ...this.capFailure({
+                    // Without toolsets the round trip only waits for the start, so its failure is the worker's own.
+                    error:
+                        this.toolsets.length > 0
+                            ? `toolset preload failed: ${ready.error ?? "the worker exited"}`
+                            : (ready.error ?? "the worker exited before it started"),
+                    stack: ready.stack,
+                }),
                 durationMs: Math.round(performance.now() - started),
             };
         }
@@ -757,12 +783,13 @@ export class ReplEngine {
             logger.debug({ error: answer.error, stack: fullStack }, "node-repl turn failed (every frame)");
         }
 
-        const text = capOutput({
-            text: note ? [note, answer.text].filter(Boolean).join("\n") : answer.text,
-            max: this.maxOutputChars,
-            writeRest: (whole) => this.writeWholeOutput(whole),
-        });
-        return { ...answer, text, durationMs: Math.round(performance.now() - turnStarted) };
+        const text = this.capPart(note ? [note, answer.text].filter(Boolean).join("\n") : answer.text, "text");
+        return {
+            ...answer,
+            text,
+            ...this.capFailure(answer),
+            durationMs: Math.round(performance.now() - turnStarted),
+        };
     }
 
     /** Same wall clock as a turn: a registration nobody answers must not hang the caller forever. */

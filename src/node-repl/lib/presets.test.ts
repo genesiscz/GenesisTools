@@ -147,6 +147,32 @@ describe("preset params", () => {
         );
     });
 
+    // Round 2 of #745: the type check ran only on a passed value, so a default of another type saved and then ran.
+    test("a default of another type is refused at save, and at run when an older preset.json holds one", () => {
+        const dir = root();
+        expect(() =>
+            savePreset({
+                name: "bad-default",
+                input: { script: "1", params: { count: { type: "number", default: "oops" } } },
+                knownToolsets: known,
+                root: dir,
+            })
+        ).toThrow('param count takes a number, but its default is "oops"');
+        expect(() =>
+            savePreset({
+                name: "bad-default",
+                input: { script: "1", params: { title: { default: 5 } } },
+                knownToolsets: known,
+                root: dir,
+            })
+        ).toThrow("param title takes a string, but its default is 5");
+        expect(existsSync(join(dir, "bad-default"))).toBe(false);
+
+        const older = { ...meta, params: { count: { type: "number" as const, default: "oops" } } };
+        expect(() => resolveParams(older, {})).toThrow('param count takes a number, but its default is "oops"');
+        expect(resolveParams(older, { count: 2 })).toEqual({ count: 2 });
+    });
+
     test("text from a command line is read as the param's type", () => {
         expect(coerceParam("count", meta.params.count, "4")).toBe(4);
         expect(coerceParam("loud", meta.params.loud, "yes")).toBe(true);
