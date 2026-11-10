@@ -8,6 +8,7 @@ import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
 import { CLOUD_PROVIDER_TYPES } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { AIConfig } from "../AIConfig";
+import { isTransientAiError } from "../core/retry";
 import { fromTranscriptionModel } from "../providers/transcription-adapter";
 import { assignSpeakers } from "../transcription/align-speakers";
 import { cleanRepetitions } from "../transcription/repetition-cleanup";
@@ -23,26 +24,6 @@ import { taskModelRef } from "./task-models";
 
 const MAX_CLOUD_BYTES = 24 * 1024 * 1024;
 const RETRY_DELAY = rateLimitAwareDelay();
-
-/** Don't retry permanent errors -- only transient/rate-limit failures are worth retrying */
-function shouldRetryTransient(error: unknown): boolean {
-    const msg = error instanceof Error ? error.message : String(error);
-
-    if (/\b(401|403|404|400)\b/.test(msg)) {
-        return false;
-    }
-
-    if (/\b(invalid.api.key|unauthorized|forbidden|model.not.found)\b/i.test(msg)) {
-        return false;
-    }
-
-    // Permanent capability/format mismatches — retrying just repeats the error.
-    if (/unsupported.model.version|does not support the format|unsupported.format/i.test(msg)) {
-        return false;
-    }
-
-    return true;
-}
 
 export class Transcriber {
     private provider: AITranscriptionProvider;
@@ -124,7 +105,7 @@ export class Transcriber {
         const result = await retry(() => this.provider.transcribe(audio, options), {
             maxAttempts: 1,
             getDelay: RETRY_DELAY,
-            shouldRetry: shouldRetryTransient,
+            shouldRetry: isTransientAiError,
             onRetry: (attempt, delay) => {
                 logger.warn(
                     { attempt, maxAttempts: 1, nextDelayMs: delay, audioBytes: audio.length },
