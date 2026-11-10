@@ -125,10 +125,35 @@ struct ItemsTab: View {
                 if let row = shown.first(where: { $0.id == id }), row.isOpen { detail.window?.player.precut(row.target, in: detail.id) }
             }
         }
+        // The notices float over the list's bottom (or top) edge. That edge's room is kept clear while they show, so a
+        // row the list keeps in view after a Skip or an answer stands above them, not under "Skipped Q2 · Undo". The
+        // rows do not move when a notice comes or goes: only how far the list scrolls to show a row changes.
+        .safeAreaInset(edge: noticeEdge, spacing: 0) { Color.clear.frame(height: noticeRoom) }
         .safeAreaInset(edge: .top, spacing: 0) {
             BulkConfirmBar(detail: detail, items: items, open: open,
                            applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
         }
+    }
+
+    /// The edge the window's notices float at.
+    private var noticeEdge: VerticalEdge {
+        detail.window?.noticePlace.alignment.vertical == .top ? .top : .bottom
+    }
+
+    /// The room the notices take at their edge, so a row kept in view stays clear of them. The stack does not tell its
+    /// height, so this counts its pills.
+    private var noticeRoom: CGFloat {
+        Self.noticeRoom(count: detail.notices.notices.count, limit: detail.notices.visibleLimit)
+    }
+
+    /// A pill with an Undo is about 60 pt (its words, then the Undo under them; 59 pt in a 900 pt window); the stack adds
+    /// 6 pt between pills and about 18 pt to the edge (its own padding and the overlay's). Folded notices add one
+    /// "+N more" chip.
+    static func noticeRoom(count: Int, limit: Int?) -> CGFloat {
+        guard count > 0 else { return 0 }
+        let shown = min(count, limit ?? count)
+        let chip: CGFloat = shown < count ? 28 : 0
+        return 18 + CGFloat(shown) * 60 + CGFloat(shown - 1) * 6 + chip
     }
 
     /// "430 rows wait for you", "1 row waits for you", or that nothing waits.

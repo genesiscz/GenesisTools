@@ -349,6 +349,14 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(ItemsTab.waitingWords(open: 0), "Nothing waits for you in this meeting")
     }
 
+    /// The list keeps a row it selects after a Skip or an answer clear of the notice that the Skip left at its edge.
+    func testTheListKeepsRoomForTheNoticesAtItsEdge() {
+        XCTAssertEqual(ItemsTab.noticeRoom(count: 0, limit: nil), 0, "no notice, no room: the list ends at the window's edge")
+        XCTAssertEqual(ItemsTab.noticeRoom(count: 1, limit: nil), 78)
+        XCTAssertEqual(ItemsTab.noticeRoom(count: 2, limit: nil), 144)
+        XCTAssertEqual(ItemsTab.noticeRoom(count: 5, limit: 2), 172, "folded notices take one chip, not a pill each")
+    }
+
     /// A transcript line at the row's own time, whose words the row already quotes, is the header's time button again.
     func testTheFromLineLeavesOutTheRowsOwnTime() throws {
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data("""

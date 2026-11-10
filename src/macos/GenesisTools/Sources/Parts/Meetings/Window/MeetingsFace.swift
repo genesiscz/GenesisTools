@@ -7,10 +7,11 @@ import SwiftUI
 //   its request to the running one and exits. `--muted` starts a window whose Moments play without sound (a check
 //   of the running window on a Mac that must stay quiet).
 // GenesisTools --meetings … --snapshot <png> [--width <pt>] [--height <pt>] [--play <target json>] [--place contacts]
-//                         [--side-panel] [--select <row id>] [--edit <row id>]
+//                         [--side-panel] [--select <row id>] [--edit <row id>] [--notice <text>]
 //   Draws the window off screen into a PNG once its data has loaded, then exits (verification without a screen).
 //   `--select` selects a review row of the Items tab (its number keys show) and `--edit` opens its editor, so a
-//   picture can show the states that a click or a key makes.
+//   picture can show the states that a click or a key makes. `--notice <text>` floats a notice with an Undo over the
+//   meeting, as an answer or a Skip leaves one.
 //   `--card <row id>` draws that row's pin card alone, and `--sheet history` (or `history:<row id>`) the history
 //   sheet alone: a popover and a sheet are windows of their own, which the window's picture does not hold.
 //   `--play '{"kind":"item","id":"i2"}'` (a Moment target as the engine writes it) starts that Moment of the meeting
@@ -48,6 +49,8 @@ struct MeetingsRequest {
     /// `--select <row id>` and `--edit <row id>`: a snapshot's selected review row, and the row whose editor is open.
     var select: String?
     var edit: String?
+    /// `--notice <text>`: a notice with an Undo, as an answer leaves one.
+    var notice: String?
     /// `--card <row id>` and `--sheet history[:<row id>]`: a snapshot of that part alone.
     var card: String?
     var sheet: String?
@@ -79,6 +82,7 @@ struct MeetingsRequest {
             case "--side-panel": request.sidePanel = true
             case "--select": request.select = value()
             case "--edit": request.edit = value()
+            case "--notice": request.notice = value()
             case "--card": request.card = value()
             case "--sheet": request.sheet = value()
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
@@ -298,6 +302,9 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                 } else if let id = request.select {
                     detail.selectedRow = id
                 }
+            }
+            if let text = request.notice, let detail = model.detail {
+                detail.notices.push(StackedNotice(text: text, actions: [.undo { _ in }]))
             }
             if let target = request.play {
                 guard let meeting = model.detail?.id else {
