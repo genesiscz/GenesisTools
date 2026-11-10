@@ -185,6 +185,32 @@ tools ai gate status                         # is the approval window reachable?
 - Without `--json` or `--print-token` the token is masked (12 characters of a token, 4 of an API key).
 - A denial exits 77 with its code and message.
 
+#### `ai gate auto-allow`: the vault key with no window for agent-started commands
+
+A `tools` command that reads the vault asks GenesisTools.app for the vault key, and the app shows a window that
+confirms with Touch ID. Commands on the auto-allow list skip that window when an agent starts them, and each pass is
+logged (event `auto-allowed` in `~/.genesis-tools/ai/gate/audit.jsonl`) and posts a notification.
+
+```bash
+tools ai gate auto-allow [--json]                  # the list, the agent apps, the notification switch (read-only)
+tools ai gate auto-allow add claude warmup         # let "tools claude warmup" through
+tools ai gate auto-allow remove claude warmup      # it asks in the window again
+tools ai gate auto-allow add-agent "Grok Bot"      # count an app's processes as an agent's
+tools ai gate auto-allow remove-agent "Grok Bot"
+tools ai gate auto-allow notify on|off             # the audit line is written either way
+tools ai gate auto-allow enable|disable            # disable: every command asks again; the list is kept
+```
+
+- Defaults: `claude warmup`, `claude usage`, `ai warmup`, `ai usage`; agent apps `Grok Bot`; notification on. The file
+  is `~/.genesis-tools/ai/gate/vault-auto-allow.json`; a missing file is the defaults, and a file that does not parse
+  turns the list off.
+- A request passes only when all of these hold: the script is `src/<tool>/index.ts` of the GenesisTools checkout the
+  app was built from (a worktree build counts as its main checkout); `<tool> <first argument>` is on the list; a Claude
+  Code session, a Claude, Codex or Grok CLI process, or a listed app started it; and the only variable that loads extra
+  code is `NODE_PATH` (Grok Bot, an Electron app, sets it in every shell it opens). Anything else gets the window.
+- Why: DECISION 57 c (2026-11-10). The command never prints the key; the window's job is to decide which program holds
+  the key, and for these commands that decision is made once, here.
+
 ### `ai usage`: quota across every provider
 
 One dashboard over every plugin that declares `accounts.usage`. The TUI is the default; `--json` and `--no-tui` never

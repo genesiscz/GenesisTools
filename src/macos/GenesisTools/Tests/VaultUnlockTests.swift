@@ -619,6 +619,80 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertNotNil(VaultWindowLock.acquire(path), "a closed window frees it")
         XCTAssertNotEqual(VaultWindowLock.path(for: "vault|/a|x.ts"), VaultWindowLock.path(for: "vault|/a|y.ts"))
     }
+
+    // MARK: - Auto-allow (DECISION 57 c)
+
+    private let grokBot: [(pid_t, String)] = [(30, "zsh null; }; COMMAND_EXIT_CODE=$?"), (20, "Grok Bot Helper"), (10, "Grok Bot")]
+
+    private func warmupCaller(script: String = "/repo/src/claude/index.ts", subcommand: String = "warmup",
+                              environment: [String] = ["NODE_PATH=/Applications/Grok Bot.app/Contents/Resources/app.asar/dist/deps"],
+                              ancestors: [(pid_t, String)]? = nil) -> VaultCaller {
+        caller(arguments: ["gt-claude", script, subcommand, "--all", "--json"], environment: environment,
+               ancestors: ancestors ?? grokBot)
+    }
+
+    func testAListedCommandThatGrokBotStartsPassesDespiteItsNodePath() {
+        let match = VaultAutoAllow.match(caller: warmupCaller(), session: VaultSessionInfo(),
+                                         settings: VaultAutoAllowSettings(), trustedRoot: "/repo")
+        XCTAssertEqual(match, VaultAutoAllowMatch(command: "claude warmup", agent: "Grok Bot"))
+    }
+
+    func testAClaudeCodeSessionCountsAsAnAgent() {
+        let match = VaultAutoAllow.match(caller: warmupCaller(subcommand: "usage", environment: [], ancestors: []),
+                                         session: VaultSessionInfo(sessionId: "1b4001ba-x", title: "fixes"),
+                                         settings: VaultAutoAllowSettings(), trustedRoot: "/repo")
+        XCTAssertEqual(match, VaultAutoAllowMatch(command: "claude usage", agent: "fixes (Claude Code)"))
+    }
+
+    func testEverythingElseStillGetsTheWindow() {
+        let settings = VaultAutoAllowSettings()
+        let session = VaultSessionInfo()
+        // not on the list
+        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(subcommand: "login"), session: session, settings: settings, trustedRoot: "/repo"))
+        // a script outside the checkout the app was built from, even with a tool's path shape
+        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(script: "/tmp/x/src/claude/index.ts"), session: session,
+                                          settings: settings, trustedRoot: "/repo"))
+        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(script: "/repo/src/claude/lib/x.ts"), session: session,
+                                          settings: settings, trustedRoot: "/repo"))
+        // started by a person in a terminal, not by an agent
+        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(ancestors: [(5, "zsh"), (4, "Terminal")]), session: session,
+                                          settings: settings, trustedRoot: "/repo"))
+        // another code-loading variable besides NODE_PATH
+        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(environment: ["NODE_PATH=/x", "DYLD_INSERT_LIBRARIES=/x.dylib"]),
+                                          session: session, settings: settings, trustedRoot: "/repo"))
+        // switched off, or no known checkout
+        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(), session: session, settings: .disabled, trustedRoot: "/repo"))
+        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(), session: session, settings: settings, trustedRoot: nil))
+    }
+
+    func testTheSettingsFileKeepsDefaultsForMissingKeysAndTurnsOffWhenItDoesNotDecode() throws {
+        let folder = NSTemporaryDirectory() + "vault-auto-allow-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = folder + "/vault-auto-allow.json"
+
+        XCTAssertEqual(VaultAutoAllowSettings.load(from: path), VaultAutoAllowSettings())
+        try #"{"version":1,"notify":false,"commands":["ai usage"]}"#.write(toFile: path, atomically: true, encoding: .utf8)
+        XCTAssertEqual(VaultAutoAllowSettings.load(from: path),
+                       VaultAutoAllowSettings(enabled: true, notify: false, commands: ["ai usage"], agentApps: ["Grok Bot"]))
+        try #"{"commands":"claude warmup"}"#.write(toFile: path, atomically: true, encoding: .utf8)
+        XCTAssertEqual(VaultAutoAllowSettings.load(from: path), .disabled)
+    }
+
+    func testAWorktreeBuildTrustsItsMainCheckout() throws {
+        let main = NSTemporaryDirectory() + "vault-main-\(UUID().uuidString)"
+        let worktree = NSTemporaryDirectory() + "vault-wt-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: main + "/.git/worktrees/wt", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: worktree, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(atPath: main)
+            try? FileManager.default.removeItem(atPath: worktree)
+        }
+        try "gitdir: \(main)/.git/worktrees/wt\n".write(toFile: worktree + "/.git", atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(VaultAutoAllow.mainCheckout(of: worktree), (main as NSString).standardizingPath)
+        XCTAssertEqual(VaultAutoAllow.mainCheckout(of: main), (main as NSString).standardizingPath)
+    }
 }
 
 /// The route approval card (Sources/Host/RouteApproval.swift) takes the keyboard when it appears, so a Return meant for

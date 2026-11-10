@@ -1,0 +1,90 @@
+/**
+ * Commands that get the vault key with no approval window when an agent starts them (Martin, DECISION 57 c,
+ * 2026-11-10: "No window at all for agent-started commands on a list (warmup, usage), with a log line and a
+ * notification each time"). GenesisTools.app reads this file (src/macos/GenesisTools/Sources/Host/VaultAutoAllow.swift)
+ * on every vault request; this side only writes it. A missing file means VAULT_AUTO_ALLOW_DEFAULTS, and the Swift side
+ * holds the same defaults: change both together.
+ */
+import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { gateDir } from "./grants";
+
+export interface VaultAutoAllowSettings {
+    version: 1;
+    enabled: boolean;
+    /** A notification for every auto-allow; the audit line is written either way. */
+    notify: boolean;
+    /** `<tool> <subcommand>` as typed after `tools`: "claude warmup". */
+    commands: string[];
+    /**
+     * Apps whose child processes count as an agent's, besides a Claude Code session and a Claude, Codex or Grok CLI
+     * process. Matched on the process name ("Grok Bot" also matches its "Grok Bot Helper").
+     */
+    agentApps: string[];
+}
+
+export const VAULT_AUTO_ALLOW_DEFAULTS: VaultAutoAllowSettings = {
+    version: 1,
+    enabled: true,
+    notify: true,
+    commands: ["claude warmup", "claude usage", "ai warmup", "ai usage"],
+    agentApps: ["Grok Bot"],
+};
+
+export function vaultAutoAllowPath(): string {
+    return join(gateDir(), "vault-auto-allow.json");
+}
+
+function isStringArray(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+/** `["claude", "warmup"]` → "claude warmup": the words of a command, single-spaced. */
+export function autoAllowCommand(words: readonly string[]): string {
+    return words
+        .flatMap((word) => word.trim().split(/\s+/))
+        .filter(Boolean)
+        .join(" ");
+}
+
+/**
+ * The settings on disk, a missing key taking its default. A file that is not a JSON object throws with its path: the
+ * app turns the feature off for such a file, so the CLI must not show the defaults as if they applied.
+ */
+export function loadVaultAutoAllow(path = vaultAutoAllowPath()): VaultAutoAllowSettings {
+    const read = readJsonFileForUpdateSync<Record<string, unknown>>(path, { accepts: isJsonObject });
+    if (read.state === "missing") {
+        return { ...VAULT_AUTO_ALLOW_DEFAULTS };
+    }
+
+    if (read.state !== "ok") {
+        throw new Error(`${path} is not a JSON object; the vault window asks for every command until it is fixed`);
+    }
+
+    const value = read.value;
+    return {
+        version: 1,
+        enabled: typeof value.enabled === "boolean" ? value.enabled : VAULT_AUTO_ALLOW_DEFAULTS.enabled,
+        notify: typeof value.notify === "boolean" ? value.notify : VAULT_AUTO_ALLOW_DEFAULTS.notify,
+        commands: isStringArray(value.commands) ? value.commands : [...VAULT_AUTO_ALLOW_DEFAULTS.commands],
+        agentApps: isStringArray(value.agentApps) ? value.agentApps : [...VAULT_AUTO_ALLOW_DEFAULTS.agentApps],
+    };
+}
+
+export function saveVaultAutoAllow(settings: VaultAutoAllowSettings, path = vaultAutoAllowPath()): void {
+    mkdirSync(dirname(path), { recursive: true });
+    atomicWriteFileSync(path, `${SafeJSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
+}
+
+/** Loads, applies `change`, saves, and returns the saved settings. */
+export function updateVaultAutoAllow(
+    change: (settings: VaultAutoAllowSettings) => VaultAutoAllowSettings,
+    path = vaultAutoAllowPath()
+): VaultAutoAllowSettings {
+    const next = change(loadVaultAutoAllow(path));
+    saveVaultAutoAllow(next, path);
+    return next;
+}

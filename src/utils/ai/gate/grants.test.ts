@@ -7,6 +7,13 @@ import { defaultRouterConfig, route } from "@genesiscz/utils/browser-router/rout
 import { env } from "@genesiscz/utils/env";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import {
+    autoAllowCommand,
+    loadVaultAutoAllow,
+    updateVaultAutoAllow,
+    VAULT_AUTO_ALLOW_DEFAULTS,
+    vaultAutoAllowPath,
+} from "./auto-allow";
+import {
     appendAudit,
     auditPath,
     findGrant,
@@ -449,5 +456,32 @@ describe("grants", () => {
         expect(last).toMatchObject({ gate: "ai-account", event: "denied", account: "alice", detail: "no" });
         expect(last.writer).toMatchObject({ pid: process.pid });
         expect(statSync(gatesAuditPath()).mode & 0o777).toBe(0o600);
+    });
+});
+
+describe("vault auto-allow settings", () => {
+    test("a missing file is the defaults: warmup and usage of claude and ai, Grok Bot, notify on", () => {
+        expect(loadVaultAutoAllow()).toEqual(VAULT_AUTO_ALLOW_DEFAULTS);
+        expect(VAULT_AUTO_ALLOW_DEFAULTS.commands).toEqual(["claude warmup", "claude usage", "ai warmup", "ai usage"]);
+    });
+
+    test("a missing key takes its default, and an update is saved for the app to read", () => {
+        mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
+        writeFileSync(vaultAutoAllowPath(), SafeJSON.stringify({ version: 1, notify: false, commands: ["ai usage"] }));
+        expect(loadVaultAutoAllow()).toMatchObject({ enabled: true, notify: false, commands: ["ai usage"] });
+
+        const saved = updateVaultAutoAllow((settings) => ({
+            ...settings,
+            commands: [...settings.commands, autoAllowCommand(["claude ", " warmup"])],
+        }));
+        expect(saved.commands).toEqual(["ai usage", "claude warmup"]);
+        expect(SafeJSON.parse(readFileSync(vaultAutoAllowPath(), "utf8"), { strict: true })).toEqual(saved);
+        expect(statSync(vaultAutoAllowPath()).mode & 0o777).toBe(0o600);
+    });
+
+    test("a file that is not a JSON object fails with its path instead of showing the defaults", () => {
+        mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
+        writeFileSync(vaultAutoAllowPath(), "[1, 2]");
+        expect(() => loadVaultAutoAllow()).toThrow(/vault-auto-allow\.json is not a JSON object/);
     });
 });

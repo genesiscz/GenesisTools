@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { GATE_ONLY_TAG } from "@genesiscz/utils/ai/config/selectors";
 import {
     auditPath,
+    autoAllowCommand,
     GATE_API_KEY_PROVIDERS,
     GATE_PROVIDERS,
     GateDeniedError,
@@ -9,10 +10,14 @@ import {
     isGateProvider,
     listGrants,
     listVaultGrants,
+    loadVaultAutoAllow,
     readAuditTail,
     requestAccountAccess,
     revokeGrants,
     revokeVaultGrants,
+    updateVaultAutoAllow,
+    type VaultAutoAllowSettings,
+    vaultAutoAllowPath,
     vaultGrantsPath,
 } from "@genesiscz/utils/ai/gate";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
@@ -230,6 +235,8 @@ export function registerGateCommands(program: Command): void {
             }
         });
 
+    registerAutoAllowCommands(gate);
+
     gate.command("status")
         .description("Is the approval window reachable? (read-only)")
         .action(() => {
@@ -240,4 +247,117 @@ export function registerGateCommands(program: Command): void {
             out.println(`${pc.dim("grants")} ${grantsPath()}`);
             out.println(`${pc.dim("audit ")} ${auditPath()}`);
         });
+}
+
+function printAutoAllow(settings: VaultAutoAllowSettings): void {
+    renderCliHeader(
+        "Vault key without a window",
+        settings.enabled ? pc.green("on") : pc.yellow("off: every command asks in the window")
+    );
+    out.println(
+        "  Commands on this list get the vault key with no window when an agent starts them; each one is logged."
+    );
+    renderCliSection("Commands");
+    for (const command of settings.commands) {
+        out.println(`  tools ${command}`);
+    }
+
+    renderCliSection("Agent apps (besides Claude Code, Codex and Grok sessions)");
+    for (const app of settings.agentApps) {
+        out.println(`  ${app}`);
+    }
+
+    renderCliSection("Notification");
+    out.println(`  ${settings.notify ? "on: one per auto-allow" : "off: the audit line only"}`);
+    renderCliSection("File");
+    out.println(`  ${pc.dim(vaultAutoAllowPath())}`);
+}
+
+function changeAutoAllow(change: (settings: VaultAutoAllowSettings) => VaultAutoAllowSettings): void {
+    printAutoAllow(updateVaultAutoAllow(change));
+}
+
+function registerAutoAllowCommands(gate: Command): void {
+    const autoAllow = gate
+        .command("auto-allow")
+        .description(
+            "Commands that get the vault key with no window when an agent starts them (default: claude and ai warmup and usage)"
+        )
+        .option("--json", "Machine-readable output")
+        .action((opts: { json?: boolean }) => {
+            const settings = loadVaultAutoAllow();
+            if (opts.json) {
+                out.result({ ...settings, path: vaultAutoAllowPath() });
+                return;
+            }
+
+            printAutoAllow(settings);
+        });
+
+    autoAllow
+        .command("add <command...>")
+        .description('Put a command on the list: `add claude warmup` lets "tools claude warmup" through')
+        .action((words: string[]) => {
+            const command = autoAllowCommand(words);
+            changeAutoAllow((settings) => ({
+                ...settings,
+                commands: settings.commands.includes(command) ? settings.commands : [...settings.commands, command],
+            }));
+        });
+
+    autoAllow
+        .command("remove <command...>")
+        .description("Take a command off the list; it asks in the window again")
+        .action((words: string[]) => {
+            const command = autoAllowCommand(words);
+            changeAutoAllow((settings) => ({
+                ...settings,
+                commands: settings.commands.filter((known) => known !== command),
+            }));
+        });
+
+    autoAllow
+        .command("add-agent <app>")
+        .description('Count the processes an app starts as an agent\'s (its process name, e.g. "Grok Bot")')
+        .action((app: string) => {
+            changeAutoAllow((settings) => ({
+                ...settings,
+                agentApps: settings.agentApps.includes(app) ? settings.agentApps : [...settings.agentApps, app],
+            }));
+        });
+
+    autoAllow
+        .command("remove-agent <app>")
+        .description("Stop counting an app's processes as an agent's")
+        .action((app: string) => {
+            changeAutoAllow((settings) => ({
+                ...settings,
+                agentApps: settings.agentApps.filter((known) => known !== app),
+            }));
+        });
+
+    autoAllow
+        .command("notify <state>")
+        .description(
+            "on or off: a notification for every auto-allow (on by default); the audit line is written either way"
+        )
+        .action((value: string) => {
+            if (value !== "on" && value !== "off") {
+                out.log.error(`Expected on or off, got "${value}".`);
+                process.exitCode = 1;
+                return;
+            }
+
+            changeAutoAllow((settings) => ({ ...settings, notify: value === "on" }));
+        });
+
+    autoAllow
+        .command("enable")
+        .description("Let the listed commands through again")
+        .action(() => changeAutoAllow((settings) => ({ ...settings, enabled: true })));
+
+    autoAllow
+        .command("disable")
+        .description("Ask in the window for every command again (the list is kept)")
+        .action(() => changeAutoAllow((settings) => ({ ...settings, enabled: false })));
 }
