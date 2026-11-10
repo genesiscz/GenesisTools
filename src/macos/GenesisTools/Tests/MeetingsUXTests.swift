@@ -338,7 +338,7 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(MeetingsWords.speakerSpan(stats.speakers[0]), "00:12 to 25:40", "MU8")
         XCTAssertNil(MeetingsWords.speakerSpan(stats.speakers[1]))
         XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 2"),
-                       ["May hold several people (weak sign)", "Silent while in the call, so the voice is under other labels"])
+                       ["May hold several people (weak evidence)", "Silent while in the call, so the voice is under other labels"])
         XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 1"), [])
     }
 
@@ -533,14 +533,14 @@ final class MeetingsUXTests: XCTestCase {
          {"kind":"a-future-kind","label":"Dan"}]
         """.utf8))
         func words(_ label: String) -> [String] { MeetingsWords.speakerHints(hints, for: label) }
-        XCTAssertEqual(words("Alice"), ["Silent from 06:15 to 30:00 while in the call, so the voice is under other labels (weak sign)"],
+        XCTAssertEqual(words("Alice"), ["Silent from 06:15 to 30:00 while in the call, so the voice is under other labels (weak evidence)"],
                        "R2-MU7: label-drift is the person's own label staying silent, not a switch partway")
-        XCTAssertEqual(words("Bob"), ["Speaks while not in the call, so 3 lines are someone else (strong sign)"])
-        XCTAssertEqual(words("Speaker 1"), ["Only you were in the call, so its 12 lines are you (strong sign)"])
-        XCTAssertEqual(words("Speaker 2"), ["Only Bob was in the call, so its 1 line is Bob (normal sign)"])
-        XCTAssertEqual(words("Carol"), ["Says goodbye and speaks again 2 times, so another voice may follow (normal sign)"])
-        XCTAssertEqual(words("Speaker 3"), ["One turn next to Speaker 4, maybe one voice split in two (weak sign)"])
-        XCTAssertEqual(words("Speaker 5"), ["May hold several people (normal sign)"])
+        XCTAssertEqual(words("Bob"), ["Speaks while not in the call, so 3 lines are someone else (strong evidence)"])
+        XCTAssertEqual(words("Speaker 1"), ["Only you were in the call, so its 12 lines are you (strong evidence)"])
+        XCTAssertEqual(words("Speaker 2"), ["Only Bob was in the call, so its 1 line is Bob"])
+        XCTAssertEqual(words("Carol"), ["Says goodbye and speaks again 2 times, so another voice may follow"])
+        XCTAssertEqual(words("Speaker 3"), ["One turn next to Speaker 4, maybe one voice split in two (weak evidence)"])
+        XCTAssertEqual(words("Speaker 5"), ["May hold several people"])
         XCTAssertEqual(words("Dan"), ["A future kind"], "a kind this build does not know still shows its name")
 
         // Each line carries the stretches its chips play or show; a silence's times are a chip, not plain text.
@@ -559,8 +559,8 @@ final class MeetingsUXTests: XCTestCase {
          {"kind":"label-drift","label":"Bob","strength":"normal","fromSec":10,"toSec":20}]
         """.utf8))
         let lines = MeetingsWords.speakerHintLines(hints, for: "Alice")
-        XCTAssertEqual(lines.map(\.text), ["Silent 3 times while in the call, so the voice is under other labels (normal sign)",
-                                           "May hold several people (weak sign)"],
+        XCTAssertEqual(lines.map(\.text), ["Silent 3 times while in the call, so the voice is under other labels",
+                                           "May hold several people (weak evidence)"],
                        "three sentences with the same words were a wall of text; the line takes the strongest of their signs")
         XCTAssertEqual(lines.map(\.sentence), ["Silent 3 times while in the call, so the voice is under other labels", "May hold several people"],
                        "the weight is not part of the sentence: it draws after it, quieter")
@@ -578,7 +578,7 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(lines[0].ranges.map(\.fromSec), [74, 3167, 4594])
         XCTAssertEqual(HintChip.chips(for: lines[0].ranges).chips.map(\.action), [.show, .show, .show], "a long silence zooms the timeline")
         XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Bob").map(\.text),
-                       ["Silent from 00:10 to 00:20 while in the call, so the voice is under other labels (normal sign)"])
+                       ["Silent from 00:10 to 00:20 while in the call, so the voice is under other labels"])
     }
 
     func testATitledNoteShowsItsText() throws {

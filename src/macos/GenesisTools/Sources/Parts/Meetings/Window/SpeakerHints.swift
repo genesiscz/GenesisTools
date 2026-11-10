@@ -8,9 +8,12 @@ struct SpeakerHintLine: Equatable, Identifiable {
     let strength: String?
     let ranges: [SpeakerHint.Range]
 
-    /// The sentence with its weight, as VoiceOver reads it: "May hold several people (weak sign)".
-    var text: String { sentence + (strength.map { " (\($0) sign)" } ?? "") }
-    var id: String { text }
+    /// The weight in words, for the two ends: "strong evidence", "weak evidence". A sign of normal weight says
+    /// nothing ("normal sign" was a word of the engine, and a reader asked what a sign is).
+    var weight: String? { strength == "strong" ? "strong evidence" : isWeak ? "weak evidence" : nil }
+    /// The sentence with its weight, as VoiceOver reads it: "May hold several people (weak evidence)".
+    var text: String { sentence + (weight.map { " (\($0))" } ?? "") }
+    var id: String { sentence + (strength ?? "") }
 
     /// A weak sign is a note, not a warning: it draws in the secondary colour, so a strong one stands out beside it.
     var isWeak: Bool { strength == "weak" }
@@ -30,7 +33,7 @@ struct SpeakerHints<Chips: View>: View {
                 // The weight after the sentence, quieter than it: in brackets and in the warning colour, every weak
                 // sign read as loud as a strong one.
                 Text(verbatim: hint.sentence)
-                    + Text(verbatim: hint.strength.map { "  \($0) sign" } ?? "").font(.system(size: 10.5)).foregroundColor(.secondary)
+                    + Text(verbatim: hint.weight.map { "  \($0)" } ?? "").font(.system(size: 10.5)).foregroundColor(.secondary)
             }
             .font(.system(size: 11.5))
             .foregroundStyle(hint.isWeak ? AnyShapeStyle(.secondary) : AnyShapeStyle(KitPalette.modified))
