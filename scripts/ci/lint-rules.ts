@@ -32,7 +32,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { findInFiles, Lang, type NapiConfig, parse, type SgNode } from "@ast-grep/napi";
 import { TERMINAL_ENV_KEYS, TERMINAL_ENV_PREFIXES } from "@genesiscz/utils/agent/identity/terminals";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -185,6 +185,35 @@ export function namesToolCommand(text: string, node: SgNode): boolean {
         TOOL_COMMAND_CALLEES.has(callee) &&
         first !== undefined &&
         first.range().start.index === node.range().start.index
+    );
+}
+
+const README_SPECIFIER = /\bfrom\s+["']([^"']+)["']\s*;?\s*$|^import\s+["']([^"']+)["']/;
+const README_ALIAS = /^@(?:genesiscz|app)\/utils\/readme(?:\.[jt]s)?$/;
+
+/**
+ * Does this import or re-export statement load src/utils/readme.ts at runtime? Type-only imports are erased, so they
+ * pass. A relative specifier is resolved against the importing file, so `../readme` from src/utils/cli counts too.
+ */
+export function staticallyImportsReadme(text: string, file: string): boolean {
+    if (/^(?:import|export)\s+type\s/.test(text)) {
+        return false;
+    }
+
+    const match = README_SPECIFIER.exec(text);
+    const specifier = match?.[1] ?? match?.[2];
+
+    if (!specifier) {
+        return false;
+    }
+
+    if (README_ALIAS.test(specifier)) {
+        return true;
+    }
+
+    return (
+        specifier.startsWith(".") &&
+        join(dirname(file), specifier).replace(/\.[jt]s$/, "") === join("src", "utils", "readme")
     );
 }
 
@@ -761,6 +790,20 @@ const RULES: Rule[] = [
         test: (_text, node) =>
             /^(?:resolvePrice|priceFor|priceForCandidates)$/.test(node.field("function")?.text() ?? ""),
         allowedIn: /(?:^|\/)src\/utils\/ai\/usage\/spend\/(?:pricing|priced-usage)\.ts$|\.test\.tsx?$/,
+    },
+    {
+        name: "no-static-readme-import",
+        severity: "error",
+        kinds: ["import_statement", "export_statement"],
+        matcher: {
+            rule: { any: [{ kind: "import_statement" }, { kind: "export_statement", has: { kind: "string" } }] },
+        },
+        message:
+            "A static import of @genesiscz/utils/readme loads the README renderer (cli-html and highlight.js, about 590 " +
+            "modules and 110 to 220 ms) into every start of the tool. runTool already answers --readme; an entry " +
+            "without runTool calls `await answerReadmeFlag(import.meta.dir)` from @genesiscz/utils/cli/readme-flag.",
+        test: (text, node) => staticallyImportsReadme(text, node.getRoot().filename()),
+        allowedIn: /(?:^|\/)src\/utils\/readme\.test\.ts$/,
     },
     {
         name: "no-transcript-format-outside-readers",
