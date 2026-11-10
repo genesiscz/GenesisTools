@@ -1,0 +1,233 @@
+{
+    "version": 1,
+    "state": {
+        "selectedKey": "local:codex:fixture-staged:",
+        "version": 1,
+        "revision": 1,
+        "preferences": {
+            "excludedKeys": [],
+            "projects": [],
+            "sessions": [],
+            "showChanges": false,
+            "showWidget": false,
+            "placement": "both",
+            "side": "right",
+            "topModules": [
+                "agents"
+            ],
+            "sideGroups": [
+                [
+                    "agents"
+                ],
+                [
+                    "capture",
+                    "shelf"
+                ],
+                [
+                    "focus",
+                    "voice",
+                    "tasks"
+                ]
+            ],
+            "sideLayout": "joined",
+            "sideStyle": "modular",
+            "joinedEdges": true,
+            "sidePosition": 0.5,
+            "topPosition": 0.5,
+            "hoverPreviews": true,
+            "glassEffect": true,
+            "panelBackground": "dark",
+            "previewQuestion": true,
+            "display": "",
+            "providers": [],
+            "quietSeconds": 15,
+            "voiceProvider": "xai",
+            "voiceLanguage": "",
+            "alertDecisions": true,
+            "alertAnswers": true,
+            "alertSound": "Glass",
+            "alertPopup": true,
+            "alertSummary": true,
+            "alertCompactAnswer": true,
+            "previewFilter": "needs-you",
+            "previewSort": "attention",
+            "alertAnswerSound": "same",
+            "alertFlashSeconds": 5,
+            "replyNames": "selected-or-newest",
+            "inboxComposer": "top",
+            "bubbleTooltip": "auto",
+            "railOrder": "list",
+            "decisionClick": "stage",
+            "decisionCommandSwaps": true,
+            "ownAnswerReturn": "stage",
+            "ownAnswerEmptyReturn": "send",
+            "dialogAnswer": "press",
+            "previewWidth": 324,
+            "stagedReminder": true,
+            "stagedOnLeave": "ask",
+            "sendCloseSeconds": 2.5,
+            "inboxGrouping": "session",
+            "inboxFilter": "all",
+            "overviewFilter": "all",
+            "overviewSummary": true,
+            "composerVoice": "ask",
+            "alertPopupSeconds": 7,
+            "alertPopupClickAway": false,
+            "alertPopupMany": "list",
+            "popupSendOpens": "stay",
+            "alertVolume": 100,
+            "autoDecisionPopup": true,
+            "autoDecisionSeconds": 5,
+            "autoDecisionSound": "Tink",
+            "noteSeconds": 6,
+            "openShortcutEnabled": true,
+            "openShortcut": {
+                "keyCode": 13,
+                "modifiers": 6400
+            },
+            "fileLinkClick": "genesis-markdown",
+            "decisionContext": "folded",
+            "decisionCode": "show",
+            "decisionProposal": "option"
+        },
+        "assets": {},
+        "drafts": {},
+        "outgoing": [],
+        "inboxRead": {}
+    },
+    "notifications": {
+        "unread": 0,
+        "needsAnswer": 1,
+        "complete": true,
+        "truncated": false,
+        "sessions": [
+            {
+                "key": "local:codex:fixture-staged:",
+                "unread": 0,
+                "needsAnswer": 1,
+                "latest": {
+                    "id": "decision:d1",
+                    "sourceId": "d1",
+                    "kind": "decision",
+                    "key": "local:codex:fixture-staged:",
+                    "at": 1767268680000,
+                    "needsAnswer": true,
+                    "number": 7,
+                    "title": "Keep it?",
+                    "options": [
+                        "keep",
+                        "drop"
+                    ],
+                    "recommended": "a",
+                    "revision": 1,
+                    "updatedAt": 1767268680000
+                },
+                "pendingItem": {
+                    "id": "decision:d1",
+                    "sourceId": "d1",
+                    "kind": "decision",
+                    "key": "local:codex:fixture-staged:",
+                    "at": 1767268680000,
+                    "needsAnswer": true,
+                    "number": 7,
+                    "title": "Keep it?",
+                    "options": [
+                        "keep",
+                        "drop"
+                    ],
+                    "recommended": "a",
+                    "revision": 1,
+                    "updatedAt": 1767268680000
+                },
+                "items": [
+                    {
+                        "id": "decision:d1",
+                        "sourceId": "d1",
+                        "kind": "decision",
+                        "key": "local:codex:fixture-staged:",
+                        "at": 1767268680000,
+                        "needsAnswer": true,
+                        "number": 7,
+                        "title": "Keep it?",
+                        "options": [
+                            "keep",
+                            "drop"
+                        ],
+                        "recommended": "a",
+                        "revision": 1,
+                        "updatedAt": 1767268680000
+                    }
+                ]
+            }
+        ],
+        "staged": [],
+        "pendingDecisionIDs": [
+            "d1"
+        ],
+        "answeredElsewhere": []
+    },
+    "activity": [],
+    "sessions": [
+        {
+            "key": "local:codex:fixture-staged:",
+            "target": {
+                "hostId": "local",
+                "provider": "codex",
+                "sessionId": "fixture-staged",
+                "sourceHome": "",
+                "cwd": "/fixture"
+            },
+            "title": "Staged fixture",
+            "project": "Fixture",
+            "activityAt": 1767268500000,
+            "status": "waiting",
+            "pinned": true,
+            "visible": true,
+            "hiddenByFilter": false,
+            "transcriptPath": "/fixture/transcripts/fixture-staged.jsonl",
+            "account": "work"
+        }
+    ],
+    "cards": [
+        {
+            "id": "decision:d1",
+            "kind": "decision",
+            "sourceContext": {
+                "sessionId": "fixture-staged",
+                "agent": "codex",
+                "project": "Fixture",
+                "cwd": "/fixture"
+            },
+            "sessionKey": "local:codex:fixture-staged:",
+            "sourceId": "d1",
+            "at": 1767268680000,
+            "title": "Keep it?",
+            "body": "",
+            "status": "open",
+            "number": 7,
+            "revision": 1,
+            "choices": [
+                {
+                    "id": "a",
+                    "title": "keep",
+                    "recommended": true
+                },
+                {
+                    "id": "b",
+                    "title": "drop",
+                    "recommended": false
+                }
+            ],
+            "decision": {
+                "recommended": "a"
+            },
+            "attachments": [],
+            "refs": [],
+            "read": true
+        }
+    ],
+    "manifests": {},
+    "changes": null,
+    "errors": [],
+    "selectedKey": "local:codex:fixture-staged:"
+}
