@@ -50,9 +50,10 @@ final class MeetingsContactsTests: XCTestCase {
                 try roundTrip(MeetingsAPI.PeopleAdd.Params.self, params, label)
                 if let result {
                     let added = try MeetingsService.decode(MeetingsAPI.PeopleAdd.Result.self, result)
-                    XCTAssertTrue(added.added)
-                    XCTAssertEqual(added.person.id, "email:robin@example.com")
-                    XCTAssertEqual(added.entry.note, "from the board")
+                    // Each example adds the person its request names (the fixture holds a second Robin since 57f8905bb4).
+                    XCTAssertTrue(added.added, label)
+                    XCTAssertEqual(added.person.id, "email:\(params["email"] as? String ?? "")", label)
+                    XCTAssertEqual(added.entry.note, params["note"] as? String, label)
                 }
             case MeetingsAPI.PeopleHide.name:
                 try roundTrip(MeetingsAPI.PeopleHide.Params.self, params, label)
@@ -174,6 +175,55 @@ final class MeetingsContactsTests: XCTestCase {
     }
 
     // MARK: Snapshots
+
+    /// F10: the command forms the window runs when no Meetings service answers, with the query after `--`.
+    func testThePeopleCommandsWithoutAService() {
+        XCTAssertEqual(PeopleCalls.knownArgs(.init(query: "-dana", meeting: "m1", atSec: 12.5, limit: 20, includeHidden: true)),
+                       ["people", "list", "--json", "--meeting", "m1", "--at", "12.5", "--limit", "20", "--hidden", "--", "-dana"])
+        XCTAssertEqual(PeopleCalls.knownArgs(.init(limit: 500)), ["people", "list", "--json", "--limit", "500"])
+        XCTAssertEqual(PeopleCalls.addArgs(.init(name: "Robin Example", email: "robin@example.com")),
+                       ["people", "add", "--json", "--email", "robin@example.com", "--", "Robin Example"])
+        XCTAssertEqual(PeopleCalls.hideArgs(.init(person: "name:jo example", hidden: false)),
+                       ["people", "hide", "--json", "--show", "--", "name:jo example"])
+        XCTAssertEqual(PeopleCalls.mergeArgs(.init(a: "email:a@example.com", b: "name:a example", name: "Alex Example"), make: true),
+                       ["people", "merge", "--json", "--name", "Alex Example", "--yes", "--", "email:a@example.com", "name:a example"])
+        XCTAssertEqual(PeopleCalls.mergeArgs(.init(a: "x", b: "y"), make: false), ["people", "merge", "--json", "--", "x", "y"])
+        XCTAssertEqual(PeopleCalls.unmergeArgs("t1"), ["people", "unmerge", "--json", "--", "t1"])
+        XCTAssertEqual(PeopleCalls.assignArgs(meeting: "m1", person: "Dana Example", email: nil,
+                                              stretch: .init(label: "Speaker 2", fromSec: 9, toSec: 21.5)),
+                       ["people", "assign", "--json", "--from", "9", "--to", "21.5", "--label", "Speaker 2", "--", "m1", "Dana Example"])
+    }
+
+    /// F10, R22: the speaker plan's mirror reads an assign's other stretches and a rename's warning.
+    func testTheSpeakerPlanReadsStretchesAndWarnings() throws {
+        let plan = try MeetingsService.decode(MeetingsAPI.PersonDecisionPlan.Result.self, [
+            "skipped": [], "warnings": ["S2 is named Alex Example already: S3 and S2 become one person"],
+            "reach": ["items": [], "dictionary": [],
+                      "stretches": [["label": "Speaker 2", "fromSec": 40, "toSec": 55, "lines": 3, "why": "present-set"]]],
+        ] as [String: Any])
+        XCTAssertEqual(plan.warnings?.first, "S2 is named Alex Example already: S3 and S2 become one person")
+        let stretch = try XCTUnwrap(plan.reach?.stretches?.first)
+        XCTAssertEqual(stretch.why, .presentSet)
+        XCTAssertEqual(AssignReachSheet.why(stretch), "3 lines, with the same people present")
+        let fixture = try examples("decision.plan").first { ($0["note"] as? String)?.contains("given to a person") == true }
+        let result = try XCTUnwrap((fixture?["reply"] as? [String: Any])?["result"])
+        XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.PersonDecisionPlan.Result.self, result).reach?.stretches, [])
+    }
+
+    /// F10, G-PPL-5: the Contacts view is a place of the window; the open meeting stays open for the way back.
+    func testContactsIsAPlaceThatKeepsTheOpenMeeting() throws {
+        let suite = "meetings.contacts.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        model.select("m1")
+        model.go(.contacts)
+        XCTAssertEqual(model.place, .contacts)
+        XCTAssertEqual(model.selectedMeetingID, "m1")
+        XCTAssertEqual(model.detail?.id, "m1")
+        XCTAssertTrue(model.visibleMeetings.isEmpty)
+        XCTAssertEqual(model.people.switches, PeopleSourceSwitches(), "no config read yet: both sources on")
+    }
 
     func testSnapshotsOfThePickerAndTheContactsView() throws {
         guard let folder = ProcessInfo.processInfo.environment["MEETINGS_PEOPLE_SHOTS"] else { return }

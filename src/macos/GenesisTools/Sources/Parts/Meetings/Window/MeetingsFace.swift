@@ -30,6 +30,8 @@ struct MeetingsRequest {
     var meeting: String?
     var tab: MeetingDetailModel.Tab?
     var focus = true
+    /// `--side-panel`: the settings side panel opens beside the meeting.
+    var sidePanel = false
     var snapshot: String?
     var width: CGFloat = 1280
     var height: CGFloat = 820
@@ -48,12 +50,14 @@ struct MeetingsRequest {
                 switch value() ?? "" {
                 case "needs": request.place = .needs
                 case "all": request.place = .all
+                case "contacts": request.place = .contacts
                 case let other where other.hasPrefix("project:"): request.place = .project(String(other.dropFirst(8)))
                 default: break
                 }
             case "--meeting": request.meeting = value()
             case "--tab": request.tab = value().flatMap(MeetingDetailModel.Tab.init(rawValue:))
             case "--no-focus", "--no-activate": request.focus = false
+            case "--side-panel": request.sidePanel = true
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
             case "--width": request.width = value().flatMap(Double.init).map { CGFloat($0) } ?? request.width
             case "--height": request.height = value().flatMap(Double.init).map { CGFloat($0) } ?? request.height
@@ -114,6 +118,7 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
 
     func apply(_ request: MeetingsRequest, to model: MeetingsWindowModel) {
         if let place = request.place { model.go(place) }
+        if request.sidePanel { model.sidePanelOpen = true }
         if let meeting = request.meeting {
             model.select(meeting, tab: request.tab)
         } else if let tab = request.tab {
@@ -190,6 +195,8 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
         NSApp.setActivationPolicy(.prohibited)
         Task {
             let model = MeetingsWindowModel()
+            // A picture with the panel open must not change what the real window opens with.
+            model.remembersPanel = false
             // The requested meeting is the selection before the list lands, so the list's first meeting is never read
             // for nothing; the request applies once the list is there, so a recording-only meeting opens on Screen.
             model.selectedMeetingID = request.meeting
@@ -214,6 +221,12 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     FileHandle.standardError.write(Data("meetings snapshot timed out loading detail \(detail.tab)\n".utf8))
                     exit(1)
                 }
+            }
+            if model.place == .contacts {
+                _ = await waitUntil(30) { model.people.known.value != nil || model.people.known.failure != nil }
+            }
+            if model.sidePanelOpen {
+                _ = await waitUntil(30) { model.settingsRaw != nil || model.settings.failure != nil }
             }
             let window = MeetingsWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
             window.orderInForSnapshot()

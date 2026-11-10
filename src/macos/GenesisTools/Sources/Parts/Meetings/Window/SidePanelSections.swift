@@ -117,6 +117,8 @@ enum SidePanelWords {
         "push": "Push", "replace": "Replace", "return": "Return",
         "noChoices": "Without choices",
         "bottom": "Bottom", "top": "Top",
+        "keepDraft": "Keep it", "commit": "Save it",
+        "noExactMatch": "No one has the name", "noResults": "No one matches",
     ]
 
     /// Choices whose words depend on the key ("always" of the typed answer is "On every question").
@@ -243,8 +245,33 @@ enum SidePanelCatalog {
             row(Panes.screenBesidePlayback, value: Panes.screenBesidePlayback.value(defaults)),
             row(Panes.transcriptPane, value: Panes.transcriptPane.value(defaults)),
         ])
-        return [playback, rows, notices, panes]
+        typealias People = MeetingsPreferences.People
+        let people = SidePanelSection(id: "people", title: "Speaker Names", rows: [
+            row(People.renameBlur, value: People.renameBlur.value(defaults)),
+            row(People.offerNew, value: People.offerNew.value(defaults)),
+        ])
+        return [playback, rows, notices, panes, people]
     }
+
+    /// The keys whose readers read a whole number (`integer(forKey:)`, `MeetingsWindowSetting<Int>`).
+    static let integerKeys: Set<String> = [
+        MeetingsPreferences.noticeSecondsKey, MeetingsPreferences.plainNoticeSecondsKey,
+        MeetingsPreferences.Notices.maxVisible.key, MeetingsPreferences.Playback.stackDepth.key,
+        MeetingsPreferences.Panes.hoverDelayMs.key,
+    ]
+
+    /// Writes a window row's value into `defaults` as the type its reader reads (the side panel and the Settings page).
+    static func write(_ value: SidePanelValue, key: String, to defaults: UserDefaults) {
+        switch value {
+        case .text(let raw): defaults.set(raw, forKey: key)
+        case .number(let number):
+            if integerKeys.contains(key) { defaults.set(Int(number.rounded()), forKey: key) } else { defaults.set(number, forKey: key) }
+        case .flag(let on): defaults.set(on, forKey: key)
+        }
+    }
+
+    /// An engine row's config path as segments (`global.playback.listen.padSec`).
+    static func segments(_ path: String) -> [String] { path.split(separator: ".").map(String.init) }
 
     // MARK: Engine rows
 

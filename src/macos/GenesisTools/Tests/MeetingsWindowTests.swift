@@ -171,9 +171,12 @@ final class MeetingsWindowTests: XCTestCase {
         let raw = try JSONDecoder().decode(JSONValue.self, from: Data(#"""
         {"languages":{"cs":{"ocr":["cs-CZ","en-US"]}},"global":{"capture":{"activeFps":1}}}
         """#.utf8))
-        XCTAssertEqual(MeetingsSettingsModel.expectArgs(["languages", "cs", "ocr"], in: raw), ["--expect", #"["cs-CZ","en-US"]"#])
-        XCTAssertEqual(MeetingsSettingsModel.expectArgs(["projects", "work", "export"], in: raw), ["--expect", "null"],
-                       "a key nobody set expects null")
+        XCTAssertEqual(MeetingsConfigWrite.set(["languages", "cs", "ocr"], .array([.string("cs-CZ")]), readFrom: raw).args,
+                       ["config", "set", #"["languages","cs","ocr"]"#, #"["cs-CZ"]"#, "--expect", #"["cs-CZ","en-US"]"#])
+        XCTAssertEqual(MeetingsConfigWrite.unset(["projects", "work", "export"], readFrom: raw).args,
+                       ["config", "unset", #"["projects","work","export"]"#, "--expect", "null"], "a key nobody set expects null")
+        XCTAssertEqual(MeetingsConfigWrite.set(["global", "capture", "activeFps"], .number(2), readFrom: nil).args,
+                       ["config", "set", #"["global","capture","activeFps"]"#, "2"], "nothing read: no check")
         let edits = MeetingsSettingsModel.ruleEdits(
             "work", draft: MatchRulesDraft(folders: ["Harbor"], calendars: ["Northwind"], titleWords: ["Weekly"]),
             saved: MatchRulesDraft(folders: [], calendars: ["Northwind"], titleWords: []), raw: raw)
@@ -181,7 +184,7 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(edits.first?["path"] as? String, #"["sources","wisprflow","match","work","folders"]"#)
         XCTAssertTrue(edits.first?["expect"] is NSNull)
         let patched = raw.setting(["global", "capture", "activeFps"], to: JSONValue(foundation: 2))
-        XCTAssertEqual(MeetingsSettingsModel.expectArgs(["global", "capture", "activeFps"], in: patched), ["--expect", "2"],
+        XCTAssertEqual(MeetingsConfigWrite.set(["global", "capture", "activeFps"], .number(1), readFrom: patched).args.suffix(2), ["--expect", "2"],
                        "the page's own write is the value its next write replaces")
         XCTAssertEqual(MeetingsCLI.code(fromStderr: "\u{1B}[31m✗ [config-stale] global.capture changed\u{1B}[0m\n"), "config-stale")
         XCTAssertEqual(MeetingsCLI.sentence(fromStderr: "✗ [config-stale] global.capture changed"), "Global.capture changed.")

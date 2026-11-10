@@ -3,7 +3,7 @@ import Foundation
 // MARK: - The people directory: the Swift mirror of its Meetings service methods (src/meetings/lib/service/api.ts,
 // src/utils/meetings/people-directory.ts). The protocol fixture holds a real request and reply of each, and
 // MeetingsContactsTests decodes them with these types. The person picker (R23, R44) and the Contacts view (R24) read
-// these values; nothing here calls the service.
+// these values; the calls are in MeetingDetailModel+People.swift (`PeopleCalls`).
 
 /// Where the directory knows a person from (`PERSON_SOURCE_KINDS`).
 enum PersonSourceKind: String, Codable, CaseIterable, Hashable {
@@ -298,6 +298,37 @@ extension MeetingsAPI {
         struct Params: Codable, Equatable { var token: String }
 
         struct Result: Decodable, Equatable { let merge: PeopleMergeRecord }
+    }
+
+    /// `decision.plan` as the speaker picker reads it: a rename's warning that another label holds the name (G-PPL-4),
+    /// and an `assign`'s other stretches of the same label (R22's speaker version). The window's own `DecisionPlan`
+    /// mirror (MeetingsAPI+Review.swift) reads the item reach; this one only these two members.
+    enum PersonDecisionPlan: MeetingsServiceMethod {
+        static let name = "decision.plan"
+        typealias Params = DecisionParams
+
+        struct Result: Decodable, Equatable {
+            struct Reach: Decodable, Equatable {
+                let stretches: [AssignStretch]?
+            }
+
+            let warnings: [String]?
+            let reach: Reach?
+        }
+    }
+
+    /// One more stretch an `assign` may reach (`AssignReachStretch`): the same label inside the hint range around it, or
+    /// in a section with the same people present. Never "sounds the same".
+    struct AssignStretch: Decodable, Equatable, Hashable, Identifiable {
+        enum Why: String, Decodable, Hashable { case hintRange = "hint-range", presentSet = "present-set" }
+
+        let label: String
+        let fromSec: Double
+        let toSec: Double
+        let lines: Int
+        let why: Why
+
+        var id: String { "\(label)|\(fromSec)|\(toSec)" }
     }
 
     /// The refusal of a people method that names several people: data `{ code, candidates }`.

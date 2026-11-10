@@ -228,6 +228,16 @@ extension MeetingsPreferences {
             title: "Moments kept below", detail: "How many Moments the player keeps to come back to.")
     }
 
+    /// A speaker's rename field and its person picker (F10).
+    enum People {
+        static let renameBlur = MeetingsWindowSetting(
+            key: "meetings.people.renameBlur", defaultValue: PersonNameBlur.keepDraft, choices: PersonNameBlur.allCases,
+            title: "A typed name left unsaved", detail: "Keep it: the field holds the name with Save. Save it: leaving the field saves it.")
+        static let offerNew = MeetingsWindowSetting(
+            key: "meetings.people.offerNew", defaultValue: PersonPickerAddRule.noExactMatch, choices: PersonPickerAddRule.allCases,
+            title: "Offer a new speaker", detail: "When no one has the typed name, or only when no one matches it at all.")
+    }
+
     /// The timeline and the panes (F9 reads them; the side panel shows them).
     enum Panes {
         enum TranscriptPane: String, CaseIterable { case auto, always, never }
