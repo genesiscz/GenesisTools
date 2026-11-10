@@ -111,18 +111,17 @@ enum WorktreeDiscovery {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", cwd] + args
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+        process.standardInput = FileHandle.nullDevice
+        // A `git` that does not end is a failed `git`: it had no limit, and one that hung held its thread for good.
+        guard let capture = try? process.runCapturing(timeout: HubGitLimit.seconds), capture.status == 0 else { return nil }
+        return String(decoding: capture.stdout, as: UTF8.self)
     }
+}
+
+/// The limit of one small `git` read of the hub (`rev-parse`, `worktree list`, `merge-base`, `log -1`): they take
+/// 13 to 40 ms, so 10 s without an end is a `git` that hangs.
+enum HubGitLimit {
+    static let seconds: TimeInterval = 10
 }
 
 // MARK: - Launching sessions in cmux

@@ -217,17 +217,10 @@ struct HubLocalCommits: Equatable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", repo, "--no-optional-locks"] + args
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+        process.standardInput = FileHandle.nullDevice
+        // A `git` that does not end is a failed `git`: it had no limit, and one that hung held its thread for good.
+        guard let capture = try? process.runCapturing(timeout: HubGitLimit.seconds), capture.status == 0 else { return nil }
+        return String(decoding: capture.stdout, as: UTF8.self)
     }
 }
 
