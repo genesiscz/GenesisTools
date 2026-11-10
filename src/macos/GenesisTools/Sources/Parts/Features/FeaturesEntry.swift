@@ -113,9 +113,14 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     /// server's own composite (`WindowSnapshot`), because `cacheDisplay` leaves Liquid Glass and everything it covers
     /// transparent.
     func snapshot(pageID: String?, to path: String, delay: Double) {
+        let args = CommandLine.arguments
+        // `--autocomplete-open <identifier>`: the field with that accessibility identifier opens its list through its
+        // model (no key event), and the picture holds the floating list's child window too.
+        if let flag = args.firstIndex(of: "--autocomplete-open"), args.indices.contains(flag + 1) {
+            AutocompleteLaunch.open(args[flag + 1])
+        }
         let window = prepareForSnapshot(pageID: pageID)
         // `--snapshot-height <pt>`: a taller window, so a long page (an open project card) fits one picture.
-        let args = CommandLine.arguments
         if let flag = args.firstIndex(of: "--snapshot-height"), args.indices.contains(flag + 1),
            let height = Double(args[flag + 1]) {
             window.setContentSize(NSSize(width: window.contentLayoutRect.width, height: height))

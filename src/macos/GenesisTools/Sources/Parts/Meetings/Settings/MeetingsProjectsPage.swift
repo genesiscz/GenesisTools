@@ -195,15 +195,21 @@ private struct ProjectCard: View {
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             TokenList(title: "Wispr folders", detail: "A Wispr Flow note in one of these folders is this project's.",
                       values: draft.folders, placeholder: "Add a folder",
-                      suggest: { try await model.wisprFolderValues() }) { values in model.editDraft(name) { $0.folders = values } }
+                      suggest: { try await model.wisprFolderValues() }, identifier: "meetings.project.\(name).wisprFolders") { values in
+                model.editDraft(name) { $0.folders = values }
+            }
             Divider()
             TokenList(title: "Calendar names", detail: "An overlapping entry in one of these calendars is this project's.",
                       values: draft.calendars, placeholder: "Add a calendar",
-                      suggest: { try await model.calendarValues() }) { values in model.editDraft(name) { $0.calendars = values } }
+                      suggest: { try await model.calendarValues() }, identifier: "meetings.project.\(name).calendars") { values in
+                model.editDraft(name) { $0.calendars = values }
+            }
             Divider()
             TokenList(title: "Title words", detail: "A meeting whose title holds one of these words is this project's.",
                       values: draft.titleWords, placeholder: "Add a word",
-                      suggest: { try await model.titleWordValues() }) { values in model.editDraft(name) { $0.titleWords = values } }
+                      suggest: { try await model.titleWordValues() }, identifier: "meetings.project.\(name).titleWords") { values in
+                model.editDraft(name) { $0.titleWords = values }
+            }
             if model.hasUnsavedRules(name) {
                 HStack {
                     Text("The preview above uses these rules; they are not saved yet.").font(.system(size: 11.5)).foregroundStyle(KitPalette.modified)
@@ -219,7 +225,7 @@ private struct ProjectCard: View {
             Divider()
             TokenList(title: "Labels", detail: "Labels a meeting of this project can carry, to group meetings finer.",
                       values: project?.labels ?? [], placeholder: "Add a label",
-                      suggest: { try await model.labelValues() }) { values in
+                      suggest: { try await model.labelValues() }, identifier: "meetings.project.\(name).labels") { values in
                 let old = project?.labels ?? []
                 model.changeLabels(name, add: values.filter { !old.contains($0) }, remove: old.filter { !values.contains($0) })
             }
@@ -570,6 +576,8 @@ struct TokenList: View {
     let values: [String]
     let placeholder: String
     var suggest: (@Sendable () async throws -> [AutocompleteValue])?
+    /// The field's accessibility identifier (`tools control act --by-identifier`, a snapshot's `--autocomplete-open`).
+    var identifier: String?
     let commit: ([String]) -> Void
     @State private var text = ""
 
@@ -591,7 +599,7 @@ struct TokenList: View {
         if let suggest {
             AutocompleteField(placeholder, text: $text, lazyItems: suggest, allowsFreeText: true,
                               hides: { item in values.contains { $0.caseInsensitiveCompare(item.title) == .orderedSame } },
-                              label: "\(title): \(placeholder.lowercased())") { choice in
+                              label: "\(title): \(placeholder.lowercased())", identifier: identifier) { choice in
                 add(choice.text)
             }
             .frame(maxWidth: 320)
