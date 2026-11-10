@@ -99,6 +99,26 @@ export class AzAuthError extends Error {
 }
 
 /**
+ * A non-2xx answer from Azure DevOps (`Api.send`, `Api.fetchBinary`). A caller reads `status` to tell a missing
+ * item (404) from a failure, instead of matching the message text.
+ */
+export class AdoHttpError extends Error {
+    readonly method: string;
+    readonly url: string;
+    readonly status: number;
+    readonly body: string;
+
+    constructor(input: { method: string; url: string; status: number; body: string }) {
+        super(`API Error ${input.status}: ${input.body}`);
+        this.name = "AdoHttpError";
+        this.method = input.method;
+        this.url = input.url;
+        this.status = input.status;
+        this.body = input.body;
+    }
+}
+
+/**
  * Build a working `az login` suggestion from auth-error stderr.
  *
  * Delegates to `azLoginSuggestionBlock` so the actual command strings live in
