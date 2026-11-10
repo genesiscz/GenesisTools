@@ -2,7 +2,9 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { connectChildStdio } from "./child-stdio";
 import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
 import { failedCallLevel, LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
 import {
@@ -340,6 +342,102 @@ describe("the outbox of a reader that stops reading", () => {
         expect(ended).toBe(1);
         expect(peer.closed).toBe(true);
         await expect(waiting).rejects.toThrow("stopped reading");
+    });
+});
+
+describe("a peer on a child's stdio", () => {
+    function childPipe() {
+        const written: string[] = [];
+        let stdout!: ReadableStreamDefaultController<Uint8Array>;
+        return {
+            written,
+            emit: (text: string) => stdout.enqueue(new TextEncoder().encode(text)),
+            end: () => stdout.close(),
+            child: {
+                stdin: { write: (chunk: string) => written.push(chunk) },
+                stdout: new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        stdout = controller;
+                    },
+                }),
+            },
+        };
+    }
+
+    test("the end of stdout rejects every waiting request with the exit reason", async () => {
+        const pipe = childPipe();
+        const exited = Promise.withResolvers<number>();
+        const { peer } = connectChildStdio({
+            child: { ...pipe.child, exited: exited.promise },
+            exitReason: (code) => `the agent exited with code ${code}`,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const first = peer.request("one", {}, { timeoutMs: 60_000 });
+        const second = peer.request("two", {}, { timeoutMs: 60_000 });
+
+        const outcomes = Promise.allSettled([first, second]);
+
+        pipe.end();
+        exited.resolve(3);
+
+        expect((await outcomes).map((outcome) => outcome.status === "rejected" && String(outcome.reason))).toEqual([
+            "Error: the agent exited with code 3",
+            "Error: the agent exited with code 3",
+        ]);
+        expect(peer.closed).toBe(true);
+    });
+
+    test("a last reply without a newline before the end of stdout still resolves its call", async () => {
+        const pipe = childPipe();
+        const { peer } = connectChildStdio({
+            child: pipe.child,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const answered = peer.request("one", {}, { timeoutMs: 60_000 });
+        const left = peer.request("two", {}, { timeoutMs: 60_000 });
+        const outcomes = Promise.allSettled([answered, left]);
+
+        pipe.emit('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}');
+        pipe.end();
+
+        const [first, second] = await outcomes;
+        expect(first).toEqual({ status: "fulfilled", value: { ok: true } });
+        expect(second.status === "rejected" && String(second.reason)).toBe("Error: agent closed its stdout");
+    });
+
+    test("a dialect without the jsonrpc field writes none and reads messages without it", async () => {
+        const pipe = childPipe();
+        const notifications: string[] = [];
+        const { peer, written } = connectChildStdio({
+            child: pipe.child,
+            dialect: { jsonrpcField: false, cancel: false, progress: false },
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            onNotification: ({ method }) => notifications.push(method),
+            handle: async ({ method }) => ({ answered: method }),
+        });
+        const reply = peer.request<{ ok: boolean }>("thread/read", { threadId: "t" });
+
+        pipe.emit('{"method":"turn/started","params":{}}\n{"id":"s-1","method":"approve","params":{}}\n');
+        pipe.emit('{"id":1,"result":{"ok":true}}\n');
+
+        expect(await reply).toEqual({ ok: true });
+        await Bun.sleep(0);
+        await written();
+        expect(notifications).toEqual(["turn/started"]);
+        expect(pipe.written.map((line) => SafeJSON.parse(line, { strict: true }))).toEqual([
+            { id: 1, method: "thread/read", params: { threadId: "t" } },
+            { id: "s-1", result: { answered: "approve" } },
+        ]);
+        expect(pipe.written.join("")).not.toContain("jsonrpc");
+        peer.close("done");
     });
 });
 
