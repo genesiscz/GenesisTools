@@ -3,14 +3,11 @@ import { runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { DEPTHS, ENGINE_NAMES, isDepth, isEngineName, listEngines, unknownEngineMessage } from "./lib/convert";
 import { isReadMode, READ_MODES, readPage } from "./lib/read";
-
-handleReadmeFlag(import.meta.url);
 
 const TOOL = "tools mcp-web-reader";
 

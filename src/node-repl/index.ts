@@ -4,7 +4,6 @@ import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import {
@@ -19,8 +18,6 @@ import {
 } from "./lib/engine";
 import { coerceParam, listPresets, readPreset, removePreset, resolveParams, savePreset } from "./lib/presets";
 import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp, toolsetOverlap } from "./lib/toolsets";
-
-handleReadmeFlag(import.meta.url);
 
 const MAX_OUTPUT_HELP = `the most characters a turn returns; longer output is cut with a note naming the file that holds all of it (0: no limit)`;
 

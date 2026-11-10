@@ -1,22 +1,23 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFailures, type ToolFailure } from "@genesiscz/utils/cli/failures/record";
 import { env } from "@genesiscz/utils/env";
 import { setConsoleLevel } from "@genesiscz/utils/logger";
+import { isPromptCancel, PromptCancelledError } from "@genesiscz/utils/prompts/cancel";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 import {
     addGlobalVerboseOption,
     applyVerbosityToEnv,
-    argvRequestsReadme,
     getArgvVerbosity,
     isVerbose,
     reportUnhandledToolError,
     runTool,
 } from "./commander";
 import { acceptJsonEverywhere, suggestOnlySafeCommands } from "./commander-hints";
+import { answerReadmeFlag, argvRequestsReadme } from "./readme-flag";
 
 const BOUNDARY_FIXTURE = join(import.meta.dir, "__fixtures__/run-tool-boundary.ts");
 
@@ -126,14 +127,6 @@ describe("runTool", () => {
     });
 });
 
-describe("readme loading", () => {
-    it("does not statically import @genesiscz/utils/readme (markdown + highlight.js)", () => {
-        const src = readFileSync(join(import.meta.dir, "commander.ts"), "utf8");
-        expect(src).not.toMatch(/from\s+["']@genesiscz\/utils\/readme["']/);
-        expect(src).toMatch(/import\(["']@genesiscz\/utils\/readme["']\)/);
-    });
-});
-
 describe("argvRequestsReadme", () => {
     it("detects --readme before subcommand parse", () => {
         expect(argvRequestsReadme(["--readme"])).toBe(true);
@@ -146,6 +139,12 @@ describe("argvRequestsReadme", () => {
         // used to print the task README instead of running bash.
         expect(argvRequestsReadme(["run", "--session", "x", "--", "bash", "--readme"])).toBe(false);
         expect(argvRequestsReadme(["run", "--", "npx", "tool", "--readme=foo"])).toBe(false);
+    });
+
+    it("answerReadmeFlag returns without loading the README when argv does not ask for it", async () => {
+        // A README request would print and exit this test process; reaching the expect proves it did not.
+        await answerReadmeFlag(import.meta.dir, ["run", "--", "bash", "--readme"]);
+        expect(true).toBe(true);
     });
 });
 
@@ -202,6 +201,17 @@ describe("runTool error boundary", () => {
         expect(run.failures[0].stack).toContain("Error: boom");
     });
 
+    it("treats a cancelled prompt as exit 0 with no ERROR line and no failure record", async () => {
+        for (const command of ["cancel", "legacy-cancel"]) {
+            const run = await runFixture(command);
+
+            expect(run.exitCode).toBe(0);
+            expect(run.stderr).not.toContain("ERROR:");
+            expect(run.stdout).toBe("");
+            expect(run.failures.filter((failure) => failure.kind === "error")).toEqual([]);
+        }
+    });
+
     it("leaves a Commander error to Commander's own exit path", async () => {
         const run = await runFixture("nope");
 
@@ -220,6 +230,24 @@ describe("runTool error boundary", () => {
         });
 
         await expect(runTool(program, { tool: "explicit" }, ["bun", "explicit", "boom"])).rejects.toThrow("boom");
+    });
+});
+
+describe("isPromptCancel", () => {
+    it("knows every form of a user cancel", () => {
+        const inquirer = new Error("User force closed the prompt with SIGINT");
+        inquirer.name = "ExitPromptError";
+
+        expect(isPromptCancel(new PromptCancelledError())).toBe(true);
+        expect(isPromptCancel(inquirer)).toBe(true);
+        expect(isPromptCancel(new Error("Cancelled"))).toBe(true);
+    });
+
+    it("leaves every other error to the error report", () => {
+        expect(isPromptCancel(new Error("boom"))).toBe(false);
+        expect(isPromptCancel(new Error("Cancelled by the server"))).toBe(false);
+        expect(isPromptCancel("Cancelled")).toBe(false);
+        expect(isPromptCancel(undefined)).toBe(false);
     });
 });
 

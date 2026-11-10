@@ -5,7 +5,6 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
@@ -30,9 +29,6 @@ interface WatchmanResponse {
     relative_path?: string;
     warning?: string;
 }
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
 
 const client = new watchman.Client();
 
