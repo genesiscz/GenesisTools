@@ -25,6 +25,7 @@ import {
 } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { Command } from "commander";
 
 const LONG =
@@ -429,20 +430,12 @@ describe("Executor bounded calls", () => {
         expect(performance.now() - started).toBeLessThan(3_000);
 
         const [child, grandchild] = readFileSync(pids, "utf8").trim().split(" ").map(Number);
-        const alive = (pid: number) => {
-            try {
-                process.kill(pid, 0);
-                return true;
-            } catch {
-                return false;
-            }
-        };
         // A killed process is reaped by its new parent (launchd) a moment after the group signal.
-        for (let wait = 0; wait < 20 && (alive(child) || alive(grandchild)); wait++) {
+        for (let wait = 0; wait < 20 && (isProcessAlive(child) || isProcessAlive(grandchild)); wait++) {
             await Bun.sleep(50);
         }
 
-        expect([alive(child), alive(grandchild)]).toEqual([false, false]);
+        expect([isProcessAlive(child), isProcessAlive(grandchild)]).toEqual([false, false]);
     });
 
     test("{ ms: 0, reason } sets no deadline, even under a short executor bound", async () => {
