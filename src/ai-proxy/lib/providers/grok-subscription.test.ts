@@ -449,6 +449,68 @@ describe("GrokSubscriptionProvider.messages /responses route (default)", () => {
         expect(res.status).toBe(200);
     });
 
+    it("retries on every rejection text the shared check knows, in any letter case", async () => {
+        const { provider, sent } = stubbedProvider((calls) =>
+            calls.length === 1
+                ? new Response(
+                      SafeJSON.stringify({ error: "INVALID_ENCRYPTED_CONTENT: could NOT DECRYPT reasoning" }),
+                      {
+                          status: 400,
+                          headers: { "content-type": "application/json" },
+                      }
+                  )
+                : new Response(envelope, { status: 200, headers: { "content-type": "application/json" } })
+        );
+        const body = SafeJSON.stringify({
+            model: "grok-4.6",
+            max_tokens: 100,
+            messages: [
+                { role: "user", content: "hi" },
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "thinking", thinking: "old reasoning", signature: "grokrs1:rs_x:STALEENC==" },
+                        { type: "text", text: "earlier answer" },
+                    ],
+                },
+                { role: "user", content: "again?" },
+            ],
+        });
+
+        const res = await provider.messages(
+            new Request("http://proxy/v1/messages", { method: "POST", body }),
+            "grok-4.6",
+            body
+        );
+
+        expect(sent).toHaveLength(2);
+        expect(res.status).toBe(200);
+    });
+
+    it("does not retry a decrypt rejection when the request replayed no reasoning items", async () => {
+        const { provider, sent } = stubbedProvider(
+            () =>
+                new Response(SafeJSON.stringify({ code: "invalid-argument", error: "Could not decrypt the content" }), {
+                    status: 400,
+                    headers: { "content-type": "application/json" },
+                })
+        );
+        const body = SafeJSON.stringify({
+            model: "grok-4.6",
+            max_tokens: 100,
+            messages: [{ role: "user", content: "hi" }],
+        });
+
+        const res = await provider.messages(
+            new Request("http://proxy/v1/messages", { method: "POST", body }),
+            "grok-4.6",
+            body
+        );
+
+        expect(sent).toHaveLength(1);
+        expect(res.status).toBe(400);
+    });
+
     it("does not retry on unrelated errors", async () => {
         const { provider, sent } = stubbedProvider(
             () =>
