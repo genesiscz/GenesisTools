@@ -754,6 +754,37 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             "Name a calendar entry"
         );
 
+        // The design review has Harbor and names Alex (a participant and a named speaker) and the owner: Alex is offered.
+        expect(await client.call("projects.meetingPeople", { project: "Harbor" })).toEqual([
+            {
+                name: "Alex Example",
+                meetings: 1,
+                last: { id: REVIEW.id, title: "Design review", start: "2026-11-03T09:00:00.000Z" },
+            },
+        ]);
+        expect((await failure(client.call("projects.meetingPeople", { project: "Nowhere" }))).message).toContain(
+            "No project Nowhere"
+        );
+        const paired = await client.call("projects.pairFromMeetings", { project: "Harbor" });
+        expect(paired).toEqual({
+            project: "Harbor",
+            paired: [
+                {
+                    name: "Alex Example",
+                    by: {
+                        kind: "manual",
+                        at: NOW.toISOString(),
+                        note: "from the meeting “Design review” on 2026-11-03",
+                    },
+                },
+            ],
+        });
+        expect((await config.read()).projects.Harbor?.match?.people.map((one) => one.name)).toEqual(["Alex Example"]);
+        expect(await client.call("projects.meetingPeople", { project: "Harbor" })).toEqual([]);
+        expect(await client.call("projects.unpair", { project: "Harbor", person: { name: "Alex Example" } })).toEqual({
+            removed: [{ project: "Harbor", name: "Alex Example", left: true }],
+        });
+
         const suggestions = await client.call("projects.suggestions", {});
         expect(suggestions.folders.wisprflow).toEqual({ values: ["Design", "Ops"], from: "source" });
         expect(suggestions.calendars).toEqual({ values: ["Home", "Work"] });
@@ -1421,6 +1452,18 @@ async function captureExamples(): Promise<Example[]> {
         "projects.suggestions",
         {},
         "The values the rule fields offer: each source's folders, the Calendar app's calendars, words and labels in use."
+    );
+    await ask(
+        window,
+        "projects.meetingPeople",
+        { project: "Atlas" },
+        "The people of the project's meetings not paired with it yet."
+    );
+    await ask(
+        window,
+        "projects.pairFromMeetings",
+        { project: "Atlas", people: [{ name: "Alex Example" }] },
+        "Pair one of them; a person not on a calendar entry is paired by hand, with the meeting in the note."
     );
     await ask(window, "projects.rename", { from: "Atlas", to: "Harbor" }, "Its settings, pairings and meetings.");
     await ask(

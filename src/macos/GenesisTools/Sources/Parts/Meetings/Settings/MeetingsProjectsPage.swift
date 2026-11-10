@@ -285,7 +285,8 @@ private struct PeopleList: View {
             Text("Paired people").font(.system(size: 13))
             Text("A later meeting with these people proposes this project.").font(.system(size: 11.5)).foregroundStyle(.secondary)
             if people.isEmpty {
-                Text("Nobody yet: an answered project question pairs the calendar entry's attendees.").font(.system(size: 12)).foregroundStyle(.tertiary)
+                Text("Nobody is paired yet. An answered project question pairs the calendar entry's attendees, and Pair below pairs the people of this project's meetings.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             ForEach(people) { person in
                 HStack(alignment: .firstTextBaseline) {
@@ -301,6 +302,7 @@ private struct PeopleList: View {
                     .instantTooltip("Remove this person, or every pairing one calendar entry made")
                 }
             }
+            FromMeetingsList(model: model, project: project)
         }
     }
 
@@ -315,6 +317,71 @@ private struct PeopleList: View {
             })
         }
         return items
+    }
+}
+
+/// The people of the project's meetings (calendar entry, attendance, named speakers) who are not paired with it yet:
+/// each with how many of its meetings name them and the newest one, and Pair; "Pair all N" pairs every one. Reading
+/// writes nothing; only a click pairs, and its notice has an Undo.
+private struct FromMeetingsList: View {
+    @Bindable var model: MeetingsSettingsModel
+    let project: String
+
+    var body: some View {
+        let state = model.meetingPeople[project]
+        let people = state?.value ?? []
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("In this project's meetings, not paired yet").font(.system(size: 12.5, weight: .medium))
+                Spacer()
+                if people.count > 1 {
+                    Button("Pair all \(people.count)") { model.pairFromMeetings(project, people: nil) }
+                        .buttonStyle(.bordered).nativeSettingsPointer()
+                        .disabled(model.isWriting("pair.\(project).*"))
+                        .instantTooltip("Pair every person below with \(project); Undo follows")
+                }
+            }
+            if let failure = state?.failure {
+                NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadMeetingPeople(project) }])
+            }
+            if state?.value == nil, state?.failure == nil {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Reading the people of its meetings…").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            } else if people.isEmpty, state?.failure == nil {
+                Text("Nobody else: everyone its meetings name is paired, or no meeting has this project yet.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            ForEach(people) { person in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: person.label).font(.system(size: 12.5)).lineLimit(1)
+                        Text(verbatim: Self.seen(person)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    LiveButton(tooltip: "Pair \(person.name) with \(project); Undo follows",
+                               enabled: !model.isWriting("pair.\(project).\(person.id)")) {
+                        model.pairFromMeetings(project, people: [person])
+                    } label: {
+                        Text("Pair").font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 3)
+                    }
+                }
+                .liveRow()
+                .accessibilityElement(children: .combine)
+                .accessibilityAction(named: "Pair \(person.name)") { model.pairFromMeetings(project, people: [person]) }
+            }
+        }
+        .padding(.top, 6)
+        .onAppear { model.ensureMeetingPeople(project) }
+    }
+
+    /// "In 3 meetings · last: Shop sync, 4 Nov 2026".
+    static func seen(_ person: MeetingsAPI.ProjectsMeetingPeople.Person) -> String {
+        let when = MeetingsFormat.date(person.last.start).map { $0.formatted(date: .abbreviated, time: .omitted) }
+        let title = person.last.title.isEmpty ? "Untitled meeting" : person.last.title
+        return "In \(Plural.count(person.meetings, "meeting")) · last: \([title, when].compactMap { $0 }.joined(separator: ", "))"
     }
 }
 

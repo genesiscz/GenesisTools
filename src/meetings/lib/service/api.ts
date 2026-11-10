@@ -21,8 +21,10 @@ import {
     configEditSchema,
     dictionaryShowSchema,
     matchPreviewRowSchema,
+    pairedFromMeetingsSchema,
     pairedPersonRefSchema,
     phraseTestSchema,
+    projectMeetingPersonSchema,
     projectRemovalSchema,
     projectRenameSchema,
     projectSuggestionsSchema,
@@ -912,6 +914,30 @@ const projectsSuggestions = defineMethod({
     effect: "read",
 });
 
+const projectsMeetingPeople = defineMethod({
+    name: "projects.meetingPeople",
+    params: z.object({ project: projectName }).strict(),
+    result: z.array(projectMeetingPersonSchema),
+    resultName: "{ name, email?, meetings, last }[]",
+    doc: "The people of the meetings that have the project (their calendar entry, attendance and named speakers) who are not paired with it yet, most frequent first. Reads only.",
+    effect: "read",
+});
+
+const projectsPairFromMeetings = defineMethod({
+    name: "projects.pairFromMeetings",
+    params: z
+        .object({
+            project: projectName,
+            /** Only these people; absent pairs every person `projects.meetingPeople` lists. */
+            people: z.array(pairedPersonRefSchema).optional(),
+        })
+        .strict(),
+    result: pairedFromMeetingsSchema,
+    resultName: "{ project, paired: { name, email?, by }[] }",
+    doc: "Pairs people of the project's meetings with the project. A person on a meeting's calendar entry is paired through that entry; anyone else by hand, with the meeting in the note. `projects.unpair` with the project and the person undoes one. An unknown project is refused.",
+    effect: "reversible",
+});
+
 /** A dictionary level: a project's, or the global one when absent. */
 const dictionaryProject = projectName.optional();
 
@@ -1016,6 +1042,8 @@ export const meetingsApi = defineApi({
         projectsUnpair,
         projectsPreview,
         projectsSuggestions,
+        projectsMeetingPeople,
+        projectsPairFromMeetings,
         dictionaryShow,
         dictionaryAdd,
         dictionaryRemove,

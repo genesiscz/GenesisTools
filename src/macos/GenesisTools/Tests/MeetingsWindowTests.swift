@@ -305,6 +305,16 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(ProjectCardSummary.line(projects["empty"], folders: 0), "no rules yet")
     }
 
+    func testAPairingFromTheMeetingsNamesWhoItPaired() throws {
+        let paired = try JSONDecoder().decode([MeetingsAPI.ProjectsPairFromMeetings.Paired].self, from: Data("""
+        [{"name":"Alice Example","email":"alice@example.com","by":{"kind":"calendar","entryId":"e1","title":"Sync","at":"2026-11-10T08:00:00.000Z"}},
+         {"name":"Carol Example","by":{"kind":"manual","at":"2026-11-10T08:00:00.000Z","note":"from the meeting “Sync” on 2026-11-03"}}]
+        """.utf8))
+        XCTAssertEqual(MeetingsSettingsModel.pairedNote(Array(paired.prefix(1)), project: "shop"), "Paired Alice Example with shop")
+        XCTAssertEqual(MeetingsSettingsModel.pairedNote(paired, project: "shop"), "Paired 2 people with shop")
+        XCTAssertEqual(MeetingsWords.pairedBy(paired[1].by), "by hand: from the meeting “Sync” on 2026-11-03")
+    }
+
     func testAProjectCardKeepsItsOpenStateAcrossARename() throws {
         let suite = "meetings.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
