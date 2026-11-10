@@ -1,3 +1,4 @@
+import { meetingsConfigSetCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { getDarwinKit } from "@genesiscz/utils/macos/darwinkit";
 import { describeResponsibleIdentity } from "@genesiscz/utils/macos/genesis-app";
 import type { PeopleQuery, PeopleSource, SourceAnswer, SourcePerson } from "./people-directory";
@@ -64,7 +65,7 @@ export class ContactsPeopleSource implements PeopleSource {
             const host = describeResponsibleIdentity();
             return {
                 state: "refused",
-                reason: `Contacts access is ${access.status} for ${host}. Turn it on in System Settings > Privacy & Security > Contacts, or turn the source off: tools meetings config set global.people.sources.contacts false`,
+                reason: `Contacts access is ${access.status} for ${host}. Turn it on in System Settings > Privacy & Security > Contacts, or turn the source off: ${meetingsConfigSetCommand()} global.people.sources.contacts false`,
             };
         }
 
