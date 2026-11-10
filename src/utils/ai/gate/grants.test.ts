@@ -8,6 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import {
     autoAllowCommand,
+    autoAllowDaemon,
     loadVaultAutoAllow,
     updateVaultAutoAllow,
     VAULT_AUTO_ALLOW_DEFAULTS,
@@ -477,6 +478,31 @@ describe("vault auto-allow settings", () => {
         expect(saved.commands).toEqual(["ai usage", "claude warmup"]);
         expect(SafeJSON.parse(readFileSync(vaultAutoAllowPath(), "utf8"), { strict: true })).toEqual(saved);
         expect(statSync(vaultAutoAllowPath()).mode & 0o777).toBe(0o600);
+    });
+
+    test("the daemons list has the usage and Codex daemons, and an entry is a script path under src/", () => {
+        expect(VAULT_AUTO_ALLOW_DEFAULTS.daemons).toEqual([
+            "src/ai/commands/usage/poll-daemon.ts",
+            "src/codex/daemon.ts",
+        ]);
+        expect(VAULT_AUTO_ALLOW_DEFAULTS.daemonNotifyHours).toBe(24);
+        expect(autoAllowDaemon(" ./src/shop/daemon.ts ")).toBe("src/shop/daemon.ts");
+
+        for (const bad of ["/repo/src/shop/daemon.ts", "src/../x/daemon.ts", "scripts/daemon.ts", "src/shop/daemon"]) {
+            expect(() => autoAllowDaemon(bad)).toThrow(/not a script path from the checkout's root/);
+        }
+
+        mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
+        writeFileSync(
+            vaultAutoAllowPath(),
+            SafeJSON.stringify({ version: 1, daemons: ["src/shop/daemon.ts"], daemonNotifyHours: -2 })
+        );
+        expect(loadVaultAutoAllow()).toMatchObject({ daemons: ["src/shop/daemon.ts"], daemonNotifyHours: 0 });
+        writeFileSync(vaultAutoAllowPath(), SafeJSON.stringify({ version: 1, daemonNotifyHours: "often" }));
+        expect(loadVaultAutoAllow()).toMatchObject({
+            daemons: VAULT_AUTO_ALLOW_DEFAULTS.daemons,
+            daemonNotifyHours: 24,
+        });
     });
 
     test("a file that is not a JSON object fails with its path instead of showing the defaults", () => {

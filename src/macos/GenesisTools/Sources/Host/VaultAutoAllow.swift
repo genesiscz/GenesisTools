@@ -8,6 +8,12 @@
 // GenesisTools checkout this app was built from, the command is on the list, an agent started it, and NODE_PATH is the
 // only variable that loads extra code. Anything else still gets the window. Every pass writes an audit line, and a
 // notification when `notify` is on.
+//
+// The file also lists GenesisTools' own background programs (`daemons`, decision 61 b of 2026-11-10: "A built-in list
+// of GenesisTools' own daemons of the installed checkout gets the key with no window, with an audit line and a
+// notification"). A daemon passes when its script is that file of the checkout this app was built from and bun itself
+// runs it; who started it does not count. It reads the key about once a minute, so its notification comes at most once
+// in `daemonNotifyHours`; the audit line is written for every pass.
 
 import Foundation
 import UserNotifications
@@ -17,15 +23,24 @@ struct VaultAutoAllowSettings: Decodable, Equatable {
     var notify = true
     var commands = ["claude warmup", "claude usage", "ai warmup", "ai usage"]
     var agentApps = ["Grok Bot"]
+    /// GenesisTools' own background programs, each as its script's path from the checkout's root.
+    var daemons = VaultAutoAllowSettings.ownDaemons
+    /// Hours between two notifications for one daemon; 0 is one for every pass.
+    var daemonNotifyHours = 24.0
 
-    static let disabled = VaultAutoAllowSettings(enabled: false, notify: false, commands: [], agentApps: [])
+    /// The usage daemon and the Codex daemon (src/utils/ai/gate/auto-allow.ts holds the same list).
+    static let ownDaemons = ["src/ai/commands/usage/poll-daemon.ts", "src/codex/daemon.ts"]
+    static let disabled = VaultAutoAllowSettings(enabled: false, notify: false, commands: [], agentApps: [], daemons: [])
 
     init(enabled: Bool = true, notify: Bool = true,
-         commands: [String] = ["claude warmup", "claude usage", "ai warmup", "ai usage"], agentApps: [String] = ["Grok Bot"]) {
+         commands: [String] = ["claude warmup", "claude usage", "ai warmup", "ai usage"], agentApps: [String] = ["Grok Bot"],
+         daemons: [String] = VaultAutoAllowSettings.ownDaemons, daemonNotifyHours: Double = 24) {
         self.enabled = enabled
         self.notify = notify
         self.commands = commands
         self.agentApps = agentApps
+        self.daemons = daemons
+        self.daemonNotifyHours = daemonNotifyHours
     }
 
     /// A key the file leaves out keeps its default, as on the TypeScript side.
@@ -36,9 +51,11 @@ struct VaultAutoAllowSettings: Decodable, Equatable {
         notify = try container.decodeIfPresent(Bool.self, forKey: .notify) ?? defaults.notify
         commands = try container.decodeIfPresent([String].self, forKey: .commands) ?? defaults.commands
         agentApps = try container.decodeIfPresent([String].self, forKey: .agentApps) ?? defaults.agentApps
+        daemons = try container.decodeIfPresent([String].self, forKey: .daemons) ?? defaults.daemons
+        daemonNotifyHours = max(0, try container.decodeIfPresent(Double.self, forKey: .daemonNotifyHours) ?? defaults.daemonNotifyHours)
     }
 
-    private enum CodingKeys: String, CodingKey { case enabled, notify, commands, agentApps }
+    private enum CodingKeys: String, CodingKey { case enabled, notify, commands, agentApps, daemons, daemonNotifyHours }
 
     static var path: String {
         (VaultGrants.directory as NSString).appendingPathComponent("vault-auto-allow.json")
@@ -79,6 +96,20 @@ enum VaultAutoAllow {
         guard settings.commands.contains(command),
               let agent = agent(caller: caller, session: session, apps: settings.agentApps) else { return nil }
         return VaultAutoAllowMatch(command: command, agent: agent)
+    }
+
+    /// The listed daemon a request is from: its script is that file of the checkout this app was built from, bun
+    /// itself runs it (by path, or as the same file under another name), and nothing loads extra code besides the
+    /// tolerated variable. Who started it does not count: the daemon runner is no agent.
+    static func daemon(caller: VaultCaller, settings: VaultAutoAllowSettings, trustedRoot: String?,
+                       runtime: (String) -> String = { VaultGrants.runtime(of: $0) }) -> String? {
+        guard settings.enabled, let trustedRoot, let script = caller.script, caller.args != nil,
+              let executable = caller.executable, runtime(executable) == "bun",
+              Set(caller.injected).isSubset(of: toleratedInjections) else { return nil }
+        let root = (trustedRoot as NSString).standardizingPath
+        return settings.daemons.first { entry in
+            entry.hasPrefix("src/") && !entry.contains("..") && "\(root)/\(entry)" == script
+        }
     }
 
     /// `<root>/src/<tool>/index.ts` (or `.tsx`) names `<tool>`; any other script names nothing.
@@ -127,10 +158,25 @@ enum VaultAutoAllow {
     /// One notification per pass, no sound and no arguments (a command line can carry private values). Waits at most
     /// 2 s for Notification Center, because the process ends right after it hands the key on.
     static func notify(_ match: VaultAutoAllowMatch) {
+        post(title: "Vault key given to “tools \(match.command)”",
+             body: "Started by \(match.agent). No window: the command is on the vault's auto-allow list (tools ai gate auto-allow).")
+    }
+
+    /// A daemon's notification, at most once in `everyHours`: it reads the key about once a minute. A stamp that
+    /// cannot be saved posts nothing, because one notification a minute is worse than none; the audit line names
+    /// every pass.
+    static func notifyDaemon(_ daemon: String, everyHours: Double, now: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)) {
+        guard VaultDaemonNotices.isDue(daemon, now: now, everyHours: everyHours, stamps: VaultDaemonNotices.load()),
+              VaultDaemonNotices.mark(daemon, now: now) else { return }
+        post(title: "Vault key given to GenesisTools' own “\((daemon as NSString).lastPathComponent)”",
+             body: "\(daemon) is on the vault's daemons list, so it gets the key with no window (tools ai gate auto-allow).")
+    }
+
+    private static func post(title: String, body: String) {
         guard NSClassFromString("XCTestCase") == nil, Bundle.main.bundlePath.hasSuffix(".app") else { return }
         let content = UNMutableNotificationContent()
-        content.title = "Vault key given to “tools \(match.command)”"
-        content.body = "Started by \(match.agent). No window: the command is on the vault's auto-allow list (tools ai gate auto-allow)."
+        content.title = title
+        content.body = body
         content.threadIdentifier = "vault.auto-allow"
         let done = DispatchSemaphore(value: 0)
         let request = UNNotificationRequest(identifier: "vault.auto-allow.\(UUID().uuidString)", content: content, trigger: nil)
@@ -139,5 +185,36 @@ enum VaultAutoAllow {
             done.signal()
         }
         if done.wait(timeout: .now() + 2) == .timedOut { logClick("vault.unlock auto-allow notification still pending after 2 s") }
+    }
+}
+
+/// When each daemon's notification was posted last (epoch milliseconds, by the daemon's path from the checkout).
+enum VaultDaemonNotices {
+    static var path: String {
+        (VaultGrants.directory as NSString).appendingPathComponent("vault-auto-allow-notified.json")
+    }
+
+    static func isDue(_ daemon: String, now: Int64, everyHours: Double, stamps: [String: Int64]) -> Bool {
+        guard let last = stamps[daemon] else { return true }
+        return Double(now - last) >= everyHours * 3_600_000
+    }
+
+    static func load(from path: String = path) -> [String: Int64] {
+        guard let data = FileManager.default.contents(atPath: path) else { return [:] }
+        return (try? JSONDecoder().decode([String: Int64].self, from: data)) ?? [:]
+    }
+
+    /// True when the stamp is on disk.
+    static func mark(_ daemon: String, now: Int64, in path: String = path) -> Bool {
+        var stamps = load(from: path)
+        stamps[daemon] = now
+        do {
+            try JSONEncoder().encode(stamps).write(to: URL(fileURLWithPath: path), options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+            return true
+        } catch {
+            logClick("vault.unlock auto-allow: the daemon notification stamp was not saved: \(error.localizedDescription)")
+            return false
+        }
     }
 }

@@ -3,6 +3,7 @@ import { GATE_ONLY_TAG } from "@genesiscz/utils/ai/config/selectors";
 import {
     auditPath,
     autoAllowCommand,
+    autoAllowDaemon,
     GATE_API_KEY_PROVIDERS,
     GATE_PROVIDERS,
     GateDeniedError,
@@ -267,8 +268,21 @@ function printAutoAllow(settings: VaultAutoAllowSettings): void {
         out.println(`  ${app}`);
     }
 
+    renderCliSection("GenesisTools' own daemons (whoever starts them; a script of the installed checkout, run by bun)");
+    for (const daemon of settings.daemons) {
+        out.println(`  ${daemon}`);
+    }
+
     renderCliSection("Notification");
     out.println(`  ${settings.notify ? "on: one per auto-allow" : "off: the audit line only"}`);
+    if (settings.notify) {
+        out.println(
+            settings.daemonNotifyHours > 0
+                ? `  a daemon: at most one in ${settings.daemonNotifyHours} h (it reads the key about once a minute)`
+                : "  a daemon: one for every pass"
+        );
+    }
+
     renderCliSection("File");
     out.println(`  ${pc.dim(vaultAutoAllowPath())}`);
 }
@@ -334,6 +348,47 @@ function registerAutoAllowCommands(gate: Command): void {
                 ...settings,
                 agentApps: settings.agentApps.filter((known) => known !== app),
             }));
+        });
+
+    autoAllow
+        .command("add-daemon <script>")
+        .description(
+            "Give a background program of the installed checkout the key with no window: its script's path from the checkout's root (src/codex/daemon.ts)"
+        )
+        .action((script: string) => {
+            const daemon = autoAllowDaemon(script);
+            changeAutoAllow((settings) => ({
+                ...settings,
+                daemons: settings.daemons.includes(daemon) ? settings.daemons : [...settings.daemons, daemon],
+            }));
+        });
+
+    autoAllow
+        .command("remove-daemon <script>")
+        .description("Take a background program off the list; it asks in the window again")
+        .action((script: string) => {
+            const daemon = autoAllowDaemon(script);
+            changeAutoAllow((settings) => ({
+                ...settings,
+                daemons: settings.daemons.filter((known) => known !== daemon),
+            }));
+        });
+
+    autoAllow
+        .command("daemon-notify <hours>")
+        .description(
+            "Hours between two notifications for one daemon (24 by default; 0 is one for every pass); the audit line is written for every pass"
+        )
+        .action((value: string) => {
+            const hours = Number(value);
+
+            if (!Number.isFinite(hours) || hours < 0 || value.trim() === "") {
+                out.log.error(`Expected a number of hours from 0 up, got "${value}".`);
+                process.exitCode = 1;
+                return;
+            }
+
+            changeAutoAllow((settings) => ({ ...settings, daemonNotifyHours: hours }));
         });
 
     autoAllow

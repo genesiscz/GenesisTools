@@ -4,6 +4,10 @@
  * notification each time"). GenesisTools.app reads this file (src/macos/GenesisTools/Sources/Host/VaultAutoAllow.swift)
  * on every vault request; this side only writes it. A missing file means VAULT_AUTO_ALLOW_DEFAULTS, and the Swift side
  * holds the same defaults: change both together.
+ *
+ * The file also lists GenesisTools' own background programs (`daemons`, decision 61 b of 2026-11-10: "A built-in list
+ * of GenesisTools' own daemons of the installed checkout gets the key with no window, with an audit line and a
+ * notification"). A daemon passes whoever starts it, when bun runs that script of the checkout the app was built from.
  */
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -24,6 +28,10 @@ export interface VaultAutoAllowSettings {
      * process. Matched on the process name ("Grok Bot" also matches its "Grok Bot Helper").
      */
     agentApps: string[];
+    /** GenesisTools' own background programs, each as its script's path from the checkout's root ("src/codex/daemon.ts"). */
+    daemons: string[];
+    /** Hours between two notifications for one daemon (it reads the key about once a minute); 0 is one for every pass. */
+    daemonNotifyHours: number;
 }
 
 export const VAULT_AUTO_ALLOW_DEFAULTS: VaultAutoAllowSettings = {
@@ -32,6 +40,8 @@ export const VAULT_AUTO_ALLOW_DEFAULTS: VaultAutoAllowSettings = {
     notify: true,
     commands: ["claude warmup", "claude usage", "ai warmup", "ai usage"],
     agentApps: ["Grok Bot"],
+    daemons: ["src/ai/commands/usage/poll-daemon.ts", "src/codex/daemon.ts"],
+    daemonNotifyHours: 24,
 };
 
 export function vaultAutoAllowPath(): string {
@@ -48,6 +58,20 @@ export function autoAllowCommand(words: readonly string[]): string {
         .flatMap((word) => word.trim().split(/\s+/))
         .filter(Boolean)
         .join(" ");
+}
+
+/**
+ * A daemon's entry as the app compares it: its script's path from the checkout's root, under `src/`. A path that
+ * leaves the checkout, or names no script under `src/`, throws: the app would never match it.
+ */
+export function autoAllowDaemon(script: string): string {
+    const entry = script.trim().replace(/^\.\//, "");
+
+    if (!entry.startsWith("src/") || entry.split("/").includes("..") || !/\.(ts|tsx|js|mjs|cjs)$/.test(entry)) {
+        throw new Error(`"${script}" is not a script path from the checkout's root; write it like src/codex/daemon.ts`);
+    }
+
+    return entry;
 }
 
 /**
@@ -71,6 +95,11 @@ export function loadVaultAutoAllow(path = vaultAutoAllowPath()): VaultAutoAllowS
         notify: typeof value.notify === "boolean" ? value.notify : VAULT_AUTO_ALLOW_DEFAULTS.notify,
         commands: isStringArray(value.commands) ? value.commands : [...VAULT_AUTO_ALLOW_DEFAULTS.commands],
         agentApps: isStringArray(value.agentApps) ? value.agentApps : [...VAULT_AUTO_ALLOW_DEFAULTS.agentApps],
+        daemons: isStringArray(value.daemons) ? value.daemons : [...VAULT_AUTO_ALLOW_DEFAULTS.daemons],
+        daemonNotifyHours:
+            typeof value.daemonNotifyHours === "number" && Number.isFinite(value.daemonNotifyHours)
+                ? Math.max(0, value.daemonNotifyHours)
+                : VAULT_AUTO_ALLOW_DEFAULTS.daemonNotifyHours,
     };
 }
 

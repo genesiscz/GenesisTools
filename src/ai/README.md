@@ -200,6 +200,9 @@ tools ai gate auto-allow add claude warmup         # let "tools claude warmup" t
 tools ai gate auto-allow remove claude warmup      # it asks in the window again
 tools ai gate auto-allow add-agent "Grok Bot"      # count an app's processes as an agent's
 tools ai gate auto-allow remove-agent "Grok Bot"
+tools ai gate auto-allow add-daemon src/codex/daemon.ts     # a background program of the checkout, whoever starts it
+tools ai gate auto-allow remove-daemon src/codex/daemon.ts  # it asks in the window again
+tools ai gate auto-allow daemon-notify 24          # hours between two notifications for one daemon; 0: every pass
 tools ai gate auto-allow notify on|off             # the audit line is written either way
 tools ai gate auto-allow enable|disable            # disable: every command asks again; the list is kept
 ```
@@ -211,6 +214,15 @@ tools ai gate auto-allow enable|disable            # disable: every command asks
   app was built from (a worktree build counts as its main checkout); `<tool> <first argument>` is on the list; a Claude
   Code session, a Claude, Codex or Grok CLI process, or a listed app started it; and the only variable that loads extra
   code is `NODE_PATH` (Grok Bot, an Electron app, sets it in every shell it opens). Anything else gets the window.
+- GenesisTools' own daemons are a second list in the same file (`daemons`, decision 61 b of 2026-11-10). Defaults: the
+  usage daemon `src/ai/commands/usage/poll-daemon.ts` and the Codex daemon `src/codex/daemon.ts`. A daemon passes
+  whoever starts it, when all of these hold: its script is that file of the checkout the app was built from; bun
+  itself runs it (`~/.bun/bin/bun`, a `gt-<tool>` launcher, or the same file under another name); and the only
+  variable that loads extra code is `NODE_PATH`. Every pass is logged (`auto-allowed`, detail `daemon: <script>`).
+  A daemon reads the key about once a minute, so its notification comes at most once in `daemonNotifyHours` (24).
+- A remembered approval ("Always for this program") is for the runtime and the script. Bun and every hard link of it
+  are one runtime: the kernel names a running hard link by the path that was looked up last, so a path compare asked
+  again for a program that was already approved (2026-11-10).
 - Why: DECISION 57 c (2026-11-10). The command never prints the key; the window's job is to decide which program holds
   the key, and for these commands that decision is made once, here.
 

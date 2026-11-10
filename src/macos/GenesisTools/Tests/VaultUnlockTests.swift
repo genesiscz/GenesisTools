@@ -696,6 +696,61 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(), session: session, settings: settings, trustedRoot: nil))
     }
 
+    func testAListedDaemonOfTheInstalledCheckoutPassesWhoeverStartsIt() {
+        let settings = VaultAutoAllowSettings()
+        let bun = "/Users/alice/.bun/bin/bun"
+        let usage = "/repo/src/ai/commands/usage/poll-daemon.ts"
+        let onlyBun: (String) -> String = { $0 == bun ? "bun" : $0 }
+        func from(_ executable: String = bun, script: String = usage, environment: [String] = []) -> VaultCaller {
+            caller(executable, arguments: ["bun", "run", script], environment: environment,
+                   ancestors: [(5, "gt-hub run"), (4, "GenesisTools bun")])
+        }
+
+        XCTAssertEqual(VaultAutoAllow.daemon(caller: from(), settings: settings, trustedRoot: "/repo", runtime: onlyBun),
+                       "src/ai/commands/usage/poll-daemon.ts", "no agent started it, and it passes")
+        XCTAssertEqual(VaultAutoAllow.daemon(caller: from(script: "/repo/src/codex/daemon.ts"), settings: settings,
+                                             trustedRoot: "/repo", runtime: onlyBun), "src/codex/daemon.ts")
+        XCTAssertNotNil(VaultAutoAllow.daemon(caller: from(environment: ["NODE_PATH=/x"]), settings: settings,
+                                              trustedRoot: "/repo", runtime: onlyBun), "the one tolerated variable")
+
+        XCTAssertNil(VaultAutoAllow.daemon(caller: from(script: "/repo/src/ai/index.ts"), settings: settings,
+                                           trustedRoot: "/repo", runtime: onlyBun), "a script that is not on the list")
+        XCTAssertNil(VaultAutoAllow.daemon(caller: from(script: "/tmp/x/src/ai/commands/usage/poll-daemon.ts"), settings: settings,
+                                           trustedRoot: "/repo", runtime: onlyBun), "the same path in another checkout")
+        XCTAssertNil(VaultAutoAllow.daemon(caller: from("/tmp/evil/bun"), settings: settings, trustedRoot: "/repo", runtime: onlyBun),
+                     "another binary runs the script")
+        XCTAssertNil(VaultAutoAllow.daemon(caller: from(environment: ["DYLD_INSERT_LIBRARIES=/x.dylib"]), settings: settings,
+                                           trustedRoot: "/repo", runtime: onlyBun), "extra code is loaded")
+        XCTAssertNil(VaultAutoAllow.daemon(caller: from(), settings: .disabled, trustedRoot: "/repo", runtime: onlyBun))
+        XCTAssertNil(VaultAutoAllow.daemon(caller: from(), settings: settings, trustedRoot: nil, runtime: onlyBun))
+        XCTAssertNil(VaultAutoAllow.daemon(caller: from(script: "/repo/src/codex/daemon.ts"),
+                                           settings: VaultAutoAllowSettings(daemons: ["src/../src/codex/daemon.ts", "/repo/src/codex/daemon.ts"]),
+                                           trustedRoot: "/repo", runtime: onlyBun), "an entry is a plain path under src/")
+    }
+
+    func testADaemonsNotificationComesOnceInItsHours() throws {
+        let hour: Int64 = 3_600_000
+        XCTAssertTrue(VaultDaemonNotices.isDue("src/codex/daemon.ts", now: 5 * hour, everyHours: 24, stamps: [:]))
+        XCTAssertFalse(VaultDaemonNotices.isDue("src/codex/daemon.ts", now: 5 * hour, everyHours: 24, stamps: ["src/codex/daemon.ts": hour]))
+        XCTAssertTrue(VaultDaemonNotices.isDue("src/codex/daemon.ts", now: 25 * hour, everyHours: 24, stamps: ["src/codex/daemon.ts": hour]))
+        XCTAssertTrue(VaultDaemonNotices.isDue("src/codex/daemon.ts", now: hour + 1, everyHours: 0, stamps: ["src/codex/daemon.ts": hour]),
+                      "0 hours is one for every pass")
+        XCTAssertTrue(VaultDaemonNotices.isDue("src/ai/commands/usage/poll-daemon.ts", now: 2 * hour, everyHours: 24,
+                                               stamps: ["src/codex/daemon.ts": hour]), "each daemon has its own stamp")
+
+        let folder = NSTemporaryDirectory() + "vault-daemon-notices-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = folder + "/vault-auto-allow-notified.json"
+        XCTAssertEqual(VaultDaemonNotices.load(from: path), [:])
+        XCTAssertTrue(VaultDaemonNotices.mark("src/codex/daemon.ts", now: hour, in: path))
+        XCTAssertTrue(VaultDaemonNotices.mark("src/ai/commands/usage/poll-daemon.ts", now: 2 * hour, in: path))
+        XCTAssertEqual(VaultDaemonNotices.load(from: path),
+                       ["src/codex/daemon.ts": hour, "src/ai/commands/usage/poll-daemon.ts": 2 * hour])
+        XCTAssertFalse(VaultDaemonNotices.mark("src/codex/daemon.ts", now: hour, in: folder + "/missing/stamp.json"),
+                       "a stamp that cannot be saved says so")
+    }
+
     func testTheSettingsFileKeepsDefaultsForMissingKeysAndTurnsOffWhenItDoesNotDecode() throws {
         let folder = NSTemporaryDirectory() + "vault-auto-allow-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
@@ -706,6 +761,9 @@ final class VaultUnlockTests: XCTestCase {
         try #"{"version":1,"notify":false,"commands":["ai usage"]}"#.write(toFile: path, atomically: true, encoding: .utf8)
         XCTAssertEqual(VaultAutoAllowSettings.load(from: path),
                        VaultAutoAllowSettings(enabled: true, notify: false, commands: ["ai usage"], agentApps: ["Grok Bot"]))
+        try #"{"daemons":["src/codex/daemon.ts"],"daemonNotifyHours":-3}"#.write(toFile: path, atomically: true, encoding: .utf8)
+        XCTAssertEqual(VaultAutoAllowSettings.load(from: path),
+                       VaultAutoAllowSettings(daemons: ["src/codex/daemon.ts"], daemonNotifyHours: 0))
         try #"{"commands":"claude warmup"}"#.write(toFile: path, atomically: true, encoding: .utf8)
         XCTAssertEqual(VaultAutoAllowSettings.load(from: path), .disabled)
     }
