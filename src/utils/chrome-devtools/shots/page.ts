@@ -327,100 +327,143 @@ interface PlacedMark {
  * inside the clip, fails the part with its name, and nothing is drawn. The overlay and the freeze style are removed
  * also when something throws.
  */
-export async function capturePart(
-    cdp: CdpLike,
-    part: ShotPart,
-    setup: PageSetup = DEFAULT_SETUP
-): Promise<PartCapture> {
+interface PartPlan {
+    clip: DocBox;
+    placed: PlacedMark[];
+    font: string;
+    notes: string[];
+}
+
+type Planned = { ok: true; plan: PartPlan } | { ok: false; problems: string[] };
+
+/** Everything before the screenshots: the page state, every locator, the clip and the spot of each label. */
+async function planPart(cdp: CdpLike, part: ShotPart, setup: PageSetup): Promise<Planned> {
     const problems = await prepare(cdp, part, setup);
     if (problems.length > 0) {
         return { ok: false, problems };
     }
 
-    try {
-        const [aroundHit, ...markHits] = await resolveLocators(cdp, [
-            part.clip.around,
-            ...part.marks.map((mark) => mark.target),
-        ]);
-        const misses = [
-            ...(aroundHit.ok ? [] : [`clip: ${describeMiss(aroundHit)}`]),
-            ...markHits.flatMap((hit, index) => (hit.ok ? [] : [`mark ${index}: ${describeMiss(hit)}`])),
+    const [aroundHit, ...markHits] = await resolveLocators(cdp, [
+        part.clip.around,
+        ...part.marks.map((mark) => mark.target),
+    ]);
+    const misses = [
+        ...(aroundHit.ok ? [] : [`clip: ${describeMiss(aroundHit)}`]),
+        ...markHits.flatMap((hit, index) => (hit.ok ? [] : [`mark ${index}: ${describeMiss(hit)}`])),
+    ];
+    if (!aroundHit.ok || misses.length > 0) {
+        return { ok: false, problems: misses };
+    }
+
+    const metrics = await callInPage(cdp, readShotPageMetrics, undefined);
+    let clip = clipOf(part, aroundHit.box, metrics);
+    // every hit is ok here (a miss returned above), so `boxes` lines up with `part.marks`
+    const boxes = markHits.flatMap((hit) => (hit.ok ? [grow(hit.box, FRAME_PAD)] : []));
+    const labelled = part.marks.flatMap((mark, index) => (mark.label?.text ? [{ mark, index }] : []));
+    const styles = labelled.map(({ mark }) => chipStyleOf(mark, presetOf(mark, setup)));
+    const sizes = await callInPage(cdp, measureShotChips, {
+        chips: labelled.map(({ mark }, i) => ({ text: mark.label?.text ?? "", style: styles[i] })),
+        font: metrics.font,
+    });
+    const page = { x: 0, y: 0, w: metrics.document.w, h: metrics.document.h };
+    const text = await textRects(cdp, part.clip.fitLabels ? page : clip);
+    const taken: DocBox[] = [];
+    const placed: PlacedMark[] = part.marks.map((mark, index) => ({
+        mark,
+        frame: frameOf(mark, boxes[index], presetOf(mark, setup)),
+    }));
+    const notes: string[] = [];
+
+    for (const [i, { mark, index }] of labelled.entries()) {
+        const own = boxes[index];
+        const others = boxes.filter((_, other) => other !== index);
+        const request: LabelRequest = {
+            rect: own,
+            size: sizes[i],
+            position: mark.label?.position ?? "top-left",
+            gap: LABEL_GAP,
+            offset: mark.label?.offset,
+            leader: mark.label?.leader,
+        };
+        const obstacles = [
+            ...text.filter(
+                (rect) =>
+                    !(
+                        rect.x >= own.x &&
+                        rect.y >= own.y &&
+                        rect.x + rect.w <= own.x + own.w &&
+                        rect.y + rect.h <= own.y + own.h
+                    )
+            ),
+            ...others,
+            ...taken,
         ];
-        if (!aroundHit.ok || misses.length > 0) {
-            return { ok: false, problems: misses };
+        const placement = placeLabel({ request, bounds: part.clip.fitLabels ? page : clip, obstacles });
+        if (!placement.ok) {
+            problems.push(
+                `mark ${index} label "${mark.label?.text.split("\n")[0]}": no free spot ${part.clip.fitLabels ? "on the page" : "inside the clip"} (tried ${placement.tried.join(", ")})`
+            );
+            continue;
         }
 
-        const metrics = await callInPage(cdp, readShotPageMetrics, undefined);
-        let clip = clipOf(part, aroundHit.box, metrics);
-        // every hit is ok here (a miss returned above), so `boxes` lines up with `part.marks`
-        const boxes = markHits.flatMap((hit) => (hit.ok ? [grow(hit.box, FRAME_PAD)] : []));
-        const labelled = part.marks.flatMap((mark, index) => (mark.label?.text ? [{ mark, index }] : []));
-        const styles = labelled.map(({ mark }) => chipStyleOf(mark, presetOf(mark, setup)));
-        const sizes = await callInPage(cdp, measureShotChips, {
-            chips: labelled.map(({ mark }, i) => ({ text: mark.label?.text ?? "", style: styles[i] })),
-            font: metrics.font,
-        });
-        const page = { x: 0, y: 0, w: metrics.document.w, h: metrics.document.h };
-        const text = await textRects(cdp, part.clip.fitLabels ? page : clip);
-        const taken: DocBox[] = [];
-        const placed: PlacedMark[] = part.marks.map((mark, index) => ({
-            mark,
-            frame: frameOf(mark, boxes[index], presetOf(mark, setup)),
-        }));
-        const notes: string[] = [];
-
-        for (const [i, { mark, index }] of labelled.entries()) {
-            const own = boxes[index];
-            const others = boxes.filter((_, other) => other !== index);
-            const request: LabelRequest = {
-                rect: own,
-                size: sizes[i],
-                position: mark.label?.position ?? "top-left",
-                gap: LABEL_GAP,
-                offset: mark.label?.offset,
-                leader: mark.label?.leader,
-            };
-            const obstacles = [
-                ...text.filter(
-                    (rect) =>
-                        !(
-                            rect.x >= own.x &&
-                            rect.y >= own.y &&
-                            rect.x + rect.w <= own.x + own.w &&
-                            rect.y + rect.h <= own.y + own.h
-                        )
-                ),
-                ...others,
-                ...taken,
-            ];
-            const placement = placeLabel({ request, bounds: part.clip.fitLabels ? page : clip, obstacles });
-            if (!placement.ok) {
-                problems.push(
-                    `mark ${index} label "${mark.label?.text.split("\n")[0]}": no free spot ${part.clip.fitLabels ? "on the page" : "inside the clip"} (tried ${placement.tried.join(", ")})`
-                );
-                continue;
-            }
-
-            if (placement.label.moved) {
-                notes.push(`mark ${index} label moved from ${request.position} to ${placement.label.position}`);
-            }
-
-            taken.push(placement.label.chip);
-            const { x, y } = placement.label.chip;
-            placed[index].chip = {
-                spec: { text: mark.label?.text ?? "", style: styles[i], at: { x, y } },
-                placed: placement.label,
-            };
+        if (placement.label.moved) {
+            notes.push(`mark ${index} label moved from ${request.position} to ${placement.label.position}`);
         }
 
-        if (problems.length > 0) {
-            return { ok: false, problems };
+        taken.push(placement.label.chip);
+        const { x, y } = placement.label.chip;
+        placed[index].chip = {
+            spec: { text: mark.label?.text ?? "", style: styles[i], at: { x, y } },
+            placed: placement.label,
+        };
+    }
+
+    if (problems.length > 0) {
+        return { ok: false, problems };
+    }
+
+    if (part.clip.fitLabels) {
+        clip = snap(intersect(unionOf([clip, ...taken.map((chip) => grow(chip, 4))]), page));
+    }
+
+    return { ok: true, plan: { clip, placed, font: metrics.font, notes } };
+}
+
+/** The overlay and the freeze style go also when the work throws. */
+async function cleared<T>(cdp: CdpLike, work: () => Promise<T>): Promise<T> {
+    try {
+        return await work();
+    } finally {
+        await callInPage(cdp, clearShotOverlay, { overlayId: SHOT_OVERLAY_ID, styleId: FREEZE_STYLE_ID }).catch(
+            () => undefined
+        );
+    }
+}
+
+/** A dry run: the page state, the locators and the labels, without a screenshot. Steps still click. */
+export async function rehearsePart(
+    cdp: CdpLike,
+    part: ShotPart,
+    setup: PageSetup = DEFAULT_SETUP
+): Promise<{ ok: true; notes: string[]; clip: DocBox } | { ok: false; problems: string[] }> {
+    return cleared(cdp, async () => {
+        const planned = await planPart(cdp, part, setup);
+        return planned.ok ? { ok: true, notes: planned.plan.notes, clip: planned.plan.clip } : planned;
+    });
+}
+
+export async function capturePart(
+    cdp: CdpLike,
+    part: ShotPart,
+    setup: PageSetup = DEFAULT_SETUP
+): Promise<PartCapture> {
+    return cleared(cdp, async () => {
+        const planned = await planPart(cdp, part, setup);
+        if (!planned.ok) {
+            return planned;
         }
 
-        if (part.clip.fitLabels) {
-            clip = snap(intersect(unionOf([clip, ...taken.map((chip) => grow(chip, 4))]), page));
-        }
-
+        const { clip, placed, font, notes } = planned.plan;
         const raw = await screenshot(cdp, clip, !part.clip.viewport);
         const leaders: ShotLeaderPaint[] = placed.flatMap((entry) =>
             entry.chip?.placed.leader ? [{ ...entry.chip.placed.leader, color: entry.chip.spec.style.bg }] : []
@@ -428,7 +471,7 @@ export async function capturePart(
         const chips = placed.flatMap((entry) => (entry.chip ? [entry.chip.spec] : []));
         const painted = await callInPage(cdp, paintShotOverlay, {
             overlayId: SHOT_OVERLAY_ID,
-            font: metrics.font,
+            font,
             frames: placed.map((entry) => entry.frame),
             chips,
             leaders,
@@ -461,11 +504,7 @@ export async function capturePart(
                 font: painted.font,
             },
         };
-    } finally {
-        await callInPage(cdp, clearShotOverlay, { overlayId: SHOT_OVERLAY_ID, styleId: FREEZE_STYLE_ID }).catch(
-            () => undefined
-        );
-    }
+    });
 }
 
 /** One mark as a pixel annotation of the final image, with the label where it was drawn. */
