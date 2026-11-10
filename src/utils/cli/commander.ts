@@ -138,6 +138,19 @@ export interface RunToolOpts {
      * real CLI run: process.argv is not touched.
      */
     rewriteArgs?: (args: string[]) => string[];
+    /**
+     * The tool's own words for an action error (a setup guide, a hidden secret, a shorter line). Return undefined to
+     * keep the default `ERROR: <message>` report. A formatter that throws falls back to the default report.
+     */
+    formatError?: (error: unknown) => ToolErrorReport | undefined;
+}
+
+/** What a tool's `formatError` prints instead of the default report. */
+export interface ToolErrorReport {
+    /** Printed to stderr as is: no "ERROR: " prefix is added. */
+    message: string;
+    /** Defaults to 1. */
+    exitCode?: number;
 }
 
 export interface RunToolResult {
@@ -195,6 +208,31 @@ export function reportUnhandledToolError(error: unknown): void {
     noteToolError(error);
     process.stderr.write(`ERROR: ${message}\n`);
     process.exitCode = 1;
+}
+
+/**
+ * The report for an action error: the tool's own `formatError` when it has one for this error, else the default
+ * `ERROR: <message>`. Either way the failure is recorded and the exit code is set; a cancel never reaches here.
+ */
+function reportToolError(error: unknown, formatError: RunToolOpts["formatError"]): void {
+    let report: ToolErrorReport | undefined;
+
+    try {
+        report = formatError?.(error);
+    } catch (formatterError) {
+        logger.debug({ err: formatterError }, "formatError threw; using the default report");
+        report = undefined;
+    }
+
+    if (!report) {
+        reportUnhandledToolError(error);
+        return;
+    }
+
+    logger.debug({ err: error }, "unhandled tool error");
+    noteToolError(error);
+    process.stderr.write(report.message.endsWith("\n") ? report.message : `${report.message}\n`);
+    process.exitCode = report.exitCode ?? 1;
 }
 
 /** `agents changes` for the action command of a run: the names from the root down, never argument values. */
@@ -308,7 +346,7 @@ export async function runTool(
         if (isPromptCancel(error)) {
             process.exitCode = 0;
         } else {
-            reportUnhandledToolError(error);
+            reportToolError(error, opts.formatError);
         }
     }
 

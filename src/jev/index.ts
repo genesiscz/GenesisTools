@@ -2,9 +2,11 @@
 
 import { addProviderOption } from "@genesiscz/utils/ai/evaluation/cli";
 import { registerConfig } from "@genesiscz/utils/ai/evaluation/config-cli";
-import { runTool } from "@genesiscz/utils/cli";
+import { runTool, type ToolErrorReport } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
+import pc from "picocolors";
+import { ZodError } from "zod";
 import { registerArena } from "./commands/arena";
 import { registerCompact } from "./commands/compact";
 import { registerControlLabCommands } from "./commands/control";
@@ -57,4 +59,22 @@ registerGrep(program);
 registerSpend(program);
 registerJevMcp(program);
 
-await runTool(program, { tool: "jev" });
+const ERROR_LINE_MAX_CHARS = 400;
+
+/** A Zod error as its issues, and only the first line of any message, cut at 400 characters (the rest is in the log). */
+function formatJevError(error: unknown): ToolErrorReport {
+    const message =
+        error instanceof ZodError
+            ? error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ")
+            : error instanceof Error
+              ? error.message
+              : "Jev command failed.";
+    const firstLine = message.split(/\r?\n/, 1)[0] ?? message;
+    const shown =
+        firstLine.length > ERROR_LINE_MAX_CHARS
+            ? `${firstLine.slice(0, ERROR_LINE_MAX_CHARS)}… (${message.length} chars; full text in the log)`
+            : firstLine;
+    return { message: `${pc.red("✗")} ${shown}`, exitCode: 1 };
+}
+
+await runTool(program, { tool: "jev", formatError: formatJevError });

@@ -1,7 +1,15 @@
 #!/usr/bin/env bun
 import { readFile, stat } from "node:fs/promises";
 import { login, logout, requireToken, status } from "@app/apify/lib/auth";
-import { ApifyClient, ApifyError, type PageOptions, parseInput, runCosts, sanitizeResult } from "@app/apify/lib/client";
+import {
+    ApifyClient,
+    ApifyError,
+    formatApifyError,
+    type PageOptions,
+    parseInput,
+    runCosts,
+    sanitizeResult,
+} from "@app/apify/lib/client";
 import { summarizeCosts } from "@app/apify/lib/costs";
 import { ApifyMcp, PUBLIC_TOOLS } from "@app/apify/lib/mcp";
 import { isInteractive, runTool } from "@genesiscz/utils/cli";
@@ -504,5 +512,5 @@ export function createApifyCommand(): Command {
 
 if (import.meta.main) {
     p.setBackend(clackBackend);
-    await runTool(createApifyCommand(), { tool: "apify" });
+    await runTool(createApifyCommand(), { tool: "apify", formatError: formatApifyError });
 }
