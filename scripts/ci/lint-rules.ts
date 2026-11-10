@@ -43,6 +43,7 @@ import {
     RAW_AGENT_ENV_RATCHET,
     RAW_TERMINAL_ENV_RATCHET,
 } from "./agent-context-ratchet";
+import { EXEC_DEADLINE_RATCHET } from "./exec-deadline-ratchet";
 import { HARNESS_GUARD_STRICT, strictViolations } from "./harness-guard";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
@@ -797,7 +798,91 @@ const AGENT_CONTEXT_OUT_OF_SCOPE = /^scripts\/(?:benchmarks|ci)\//;
 const AGENT_ENV_SCRUBBERS =
     /^src\/(?:utils\/bun\/preload-test-(?:sandbox|tmpdir)\.ts|claude\/lib\/worker\/worker\.ts|utils\/tmux\/sessions\.ts)$/;
 
+/** The receivers an `Executor` call is made on in this repo: `executor`, `git`, `g`, `exec`, `….executor`, `new Executor(…)`. */
+const EXECUTOR_RECEIVER = /(?:^|\.)(?:executor|git|g|exec)$|^new Executor\(/;
+
+/** The named children of a call's argument list, comments left out. */
+function callArguments(node: SgNode): SgNode[] {
+    return (
+        node
+            .field("arguments")
+            ?.children()
+            .filter((child) => child.isNamed() && child.kind() !== "comment") ?? []
+    );
+}
+
+/**
+ * Whether a member call `….exec(…)` / `….execOrThrow(…)` is an `Executor` call that names no timeout. Read from the
+ * syntax alone, checked on 2026-11-10 against the type checker over every such call in src/ and scripts/ (the same
+ * set, no other API matched): `execOrThrow` is only Executor's; `exec` is Executor's when its first argument is an
+ * array literal (RegExp and Database take a string), or any non-string value on an Executor receiver
+ * ({@link EXECUTOR_RECEIVER}). The options argument names a timeout when it is an object with a `timeout` key or a
+ * spread; an options value that is not an object literal is passed through from a caller and counts as naming one.
+ */
+export function execCallWithoutDeadline(node: SgNode): boolean {
+    const callee = node.field("function");
+    const method = callee?.field("property")?.text();
+
+    if (callee?.kind() !== "member_expression" || (method !== "exec" && method !== "execOrThrow")) {
+        return false;
+    }
+
+    const args = callArguments(node);
+    const first = args[0];
+    const receiver = callee.field("object")?.text() ?? "";
+
+    if (!first || ["string", "template_string", "regex"].includes(String(first.kind()))) {
+        return false;
+    }
+
+    if (method === "exec" && first.kind() !== "array" && !EXECUTOR_RECEIVER.test(receiver)) {
+        return false;
+    }
+
+    const options = args[method === "exec" ? 1 : 2];
+
+    if (!options) {
+        return true;
+    }
+
+    if (options.kind() !== "object") {
+        return false;
+    }
+
+    return !options
+        .children()
+        .some(
+            (entry) =>
+                entry.kind() === "spread_element" ||
+                (entry.kind() === "pair" && entry.field("key")?.text() === "timeout") ||
+                (entry.kind() === "shorthand_property_identifier" && entry.text() === "timeout")
+        );
+}
+
 const RULES: Rule[] = [
+    {
+        name: "no-exec-without-deadline",
+        severity: "error",
+        kinds: ["call_expression"],
+        matcher: {
+            rule: {
+                kind: "call_expression",
+                has: {
+                    field: "function",
+                    kind: "member_expression",
+                    has: { field: "property", regex: "^(?:exec|execOrThrow)$" },
+                },
+            },
+        },
+        message:
+            "An Executor call without a timeout runs under the 60 s default (DEFAULT_EXEC_TIMEOUT_MS). When its command " +
+            "can run longer by design, say why: timeout: { ms, reason }. scripts/ci/exec-deadline-ratchet.ts lists how " +
+            "many calls on the default each file may keep, and no file may join it.",
+        onlyIn: /^(?:src|scripts)\//,
+        allowedIn: /(?:^|\/)src\/utils\/cli\/executor\.ts$/,
+        allowedCounts: EXEC_DEADLINE_RATCHET,
+        test: (_text, node) => execCallWithoutDeadline(node),
+    },
     {
         ...STORAGE_ROOT_RULE,
         kinds: LITERAL_KINDS,
@@ -2117,6 +2202,50 @@ export function staleRatchetEntries(
     return stale;
 }
 
+/**
+ * The files a count ratchet lists with more than they have: each gets one finding, so the count is lowered in the change
+ * that removed a call (a count only goes down, and a stale one would let a new call in unseen). `scanned` is the file
+ * set the run looked at; a listed file outside it is judged only when it no longer exists.
+ */
+export function countRatchetShortfalls(
+    findings: Finding[],
+    scanned: ReadonlySet<string>,
+    counts: ReadonlyMap<string, ReadonlyMap<string, number>> = COUNT_RATCHETS
+): Finding[] {
+    const found = new Map<string, number>();
+
+    for (const finding of findings) {
+        const key = `${finding.rule}\0${finding.file}`;
+        found.set(key, (found.get(key) ?? 0) + 1);
+    }
+
+    const shortfalls: Finding[] = [];
+
+    for (const [rule, entries] of counts) {
+        for (const [file, allowed] of entries) {
+            if (!scanned.has(file) && existsSync(file)) {
+                continue;
+            }
+
+            const actual = found.get(`${rule}\0${file}`) ?? 0;
+
+            if (actual < allowed) {
+                shortfalls.push({
+                    file,
+                    line: 1,
+                    column: 1,
+                    rule,
+                    severity: "error",
+                    message: `The ratchet allows ${allowed} findings of ${rule} here and the file has ${actual}: lower its count to ${actual}.`,
+                    text: "",
+                });
+            }
+        }
+    }
+
+    return shortfalls;
+}
+
 /** The per-file counts of every rule that has them, by rule name. */
 const COUNT_RATCHETS: ReadonlyMap<string, ReadonlyMap<string, number>> = new Map(
     RULES.flatMap((rule) => (rule.allowedCounts ? [[rule.name, rule.allowedCounts] as const] : []))
@@ -2168,6 +2297,7 @@ export function withinCountRatchets(
  */
 const RATCHET_INPUTS = [
     "scripts/ci/agent-context-ratchet.ts",
+    "scripts/ci/exec-deadline-ratchet.ts",
     "scripts/ci/harness-ratchet.ts",
     "scripts/ci/model-facts-ratchet.ts",
     "scripts/ci/native-home-ratchet.ts",
@@ -2622,17 +2752,21 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
         sources.set(file, (await Bun.file(file).text()).split("\n"));
     }
 
-    return withinCountRatchets(
-        unfiltered.filter((finding) => {
-            const lines = sources.get(finding.file) ?? [];
+    const kept = unfiltered.filter((finding) => {
+        const lines = sources.get(finding.file) ?? [];
 
-            if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
-                return false;
-            }
+        if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
+            return false;
+        }
 
-            return !isSuppressed(lines, finding.line);
-        })
-    );
+        return !isSuppressed(lines, finding.line);
+    });
+
+    if (options.processToolOnly) {
+        return withinCountRatchets(kept);
+    }
+
+    return [...withinCountRatchets(kept), ...countRatchetShortfalls(kept, new Set(files))];
 }
 
 if (import.meta.main) {

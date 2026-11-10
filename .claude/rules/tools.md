@@ -91,6 +91,12 @@ Most tools follow these common patterns:
 
 **Process Execution**:
 
+-   **`Executor.exec` always has a deadline**: the call's `timeout`, else the Executor's, else
+    `DEFAULT_EXEC_TIMEOUT_MS` (60 s). On expiry the process group is killed, the call throws and a `deadline`
+    record goes into the failures log. A command that can run longer by design (a clone, a fetch, a rebase, a build)
+    says why: `timeout: { ms: 600_000, reason: "a fetch of every branch" }`; `{ ms: 0, reason }` is no deadline.
+    `scripts/ci/exec-deadline-ratchet.ts` lists the calls that still run on the default (lint `no-exec-without-deadline`);
+    a call leaves it only when it really needs its own bound.
 -   Use `Bun.spawn()` for executing external commands
 -   Handle stdout/stderr streams properly using `new Response(proc.stdout).text()`
 
