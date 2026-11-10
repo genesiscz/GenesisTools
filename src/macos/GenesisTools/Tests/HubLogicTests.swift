@@ -747,6 +747,41 @@ final class HubLogicTests: XCTestCase {
         }
     }
 
+    /// A push lands while the checkout looks up a link's commits (`pickLocalCommits`). The review stays (`moveHead`), so
+    /// the answer for the old head must set no scope or notice, and the link is pending again, to be asked against the
+    /// new head. A parent lookup of a link's range does not depend on the head, so it still answers.
+    @MainActor
+    func testAHeadMoveDropsALinkLookupAskedAgainstTheOldHeadAndAsksAgain() throws {
+        let (pr, model, _, pick) = try rewrittenFixture()
+        var applied: [String] = []
+
+        let old = model.beginLocalLookup(pick)
+        XCTAssertNil(model.pendingCommit, "pickLocalCommits clears the pick while git runs")
+        model.dropLocalLookup(movingTo: pr)
+        model.finishRangeLookup(old) { applied.append("old head") }
+        XCTAssertTrue(applied.isEmpty, "an answer for the old head sets no scope or notice")
+        XCTAssertEqual(model.pendingCommit, pick, "the link is asked again against the new head")
+
+        let parent = model.beginRangeLookup()
+        model.dropLocalLookup(movingTo: pr)
+        model.finishRangeLookup(parent) { applied.append("parent") }
+        XCTAssertEqual(applied, ["parent"], "a head move keeps a parent lookup")
+
+        model.showWholePR()
+        let other = PRCommitPick(ref: HubPRRef(project: "acme/other", number: 9), sha: "c3e3ad830", asked: Date())
+        let current = model.beginLocalLookup(other)
+        model.dropLocalLookup(movingTo: pr)
+        model.finishRangeLookup(current) { applied.append("other PR") }
+        XCTAssertEqual(applied, ["parent", "other PR"], "a head move of one PR drops no lookup of another")
+        XCTAssertNil(model.pendingCommit, "nor makes another PR's link pending")
+
+        let answered = model.beginLocalLookup(pick)
+        model.finishRangeLookup(answered) { applied.append("answered") }
+        model.dropLocalLookup(movingTo: pr)
+        XCTAssertEqual(applied.last, "answered")
+        XCTAssertNil(model.pendingCommit, "a lookup that answered is not asked again")
+    }
+
     /// The checkout's answer about a link's commits: a pick that went while a new review waited (a failed detail) still
     /// builds that review, and nothing acts for a PR the link does not name.
     func testALinkLookupBuildsADeferredReviewEvenAfterThePickWent() {

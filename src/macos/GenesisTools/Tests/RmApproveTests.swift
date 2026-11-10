@@ -245,6 +245,9 @@ final class RmApproveTests: XCTestCase {
 
         let rows = RmWindowContent.build(params, home: "/Users/someone", icons: false, markdownApp: false).items
         XCTAssertEqual(Set(rows.map(\.id)).count, 3)
+        // VoiceOver and an identifier-driven script tell the three checkboxes apart too.
+        XCTAssertEqual(Set(rows.map(\.tickLabel)).count, 3)
+        XCTAssertEqual(Set(rows.map { $0.tickIdentifier(in: "rm-approve") }).count, 3)
         let model = ApprovalDialogModel(title: "t", purpose: "p", symbol: "trash.fill", facts: [], details: [], warning: nil, footnote: "f",
                                         rememberChoices: [], rememberNote: nil, allowTitle: "a", deadline: nil, identifier: "rm-approve",
                                         items: rows, selectable: true)

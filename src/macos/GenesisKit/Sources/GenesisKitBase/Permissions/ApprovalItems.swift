@@ -117,6 +117,18 @@ public struct ApprovalItem: Identifiable {
     /// rows, ticked apart.
     public var id: String { location }
 
+    /// The checkbox as VoiceOver reads it: the name and where the object is now, so two rows of one name read apart (two
+    /// set-aside copies of one folder, or two files of one name in two folders). The name alone gave every copy the same
+    /// label (2026-11-10, PR #756 review).
+    public var tickLabel: String {
+        aside ? "Delete \(name), set aside at \((location as NSString).abbreviatingWithTildeInPath)" : "Delete \(name) in \(folder)"
+    }
+
+    /// The checkbox's accessibility identifier in the list `identifier` names: by the row's id, which no other row has.
+    public func tickIdentifier(in identifier: String) -> String {
+        "\(identifier)-tick-\(id)"
+    }
+
     public init(path: String, location: String? = nil, name: String, folder: String, size: String?, reason: String,
                 gone: Bool, aside: Bool = false, isFolder: Bool, opensInMarkdown: Bool = false, icon: NSImage? = nil,
                 git: ApprovalGitState? = nil, detail: String? = nil, alsoIn: [String] = [], notes: [ApprovalChip] = [],
@@ -274,8 +286,8 @@ struct ApprovalItemRow: View {
                     .labelsHidden()
                     .padding(.top, 8)
                     .help(selected.wrappedValue ? "Ticked: this one goes" : "Unticked: this one stays")
-                    .accessibilityLabel(Text("Delete \(item.name)"))
-                    .accessibilityIdentifier("\(identifier)-tick-\(item.name)")
+                    .accessibilityLabel(Text(verbatim: item.tickLabel))
+                    .accessibilityIdentifier(item.tickIdentifier(in: identifier))
             }
             icon
             VStack(alignment: .leading, spacing: 2) {
