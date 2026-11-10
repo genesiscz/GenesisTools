@@ -1,8 +1,16 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { HistoryDatabase } from "@genesiscz/utils/agent-sessions/database";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
+import type { ProcessTableRow } from "@genesiscz/utils/process/libproc-table";
 import type { PsRow } from "@genesiscz/utils/process/ps";
-import { openAgentSessionIds, type ProcsSources, readProcsReport, realProcsSources } from "./sources";
+import {
+    type KernelTableReaders,
+    kernelProcsTable,
+    openAgentSessionIds,
+    type ProcsSources,
+    readProcsReport,
+    realProcsSources,
+} from "./sources";
 import { refusal, type SignalOps, stopOrphans, stopTree } from "./stop";
 import { type BuildInput, buildProcsReport, LAUNCHD_UNKNOWN_REASON, type SessionLike } from "./tree";
 
@@ -412,6 +420,78 @@ test("only a live agent with an explicit session identity counts as open", async
     expect(await openAgentSessionIds(sources)).toEqual(new Set([S1]));
     // A `ps` bound (the one-session door) never replaces an injected table with a real `ps`.
     expect(await openAgentSessionIds(sources, { psTimeoutMs: 1 })).toEqual(new Set([S1]));
+});
+
+describe("kernelProcsTable", () => {
+    const START_MS = Date.parse("2026-09-26T17:00:00.731Z");
+    const kernelRow = (pid: number, extra: Partial<ProcessTableRow> = {}): ProcessTableRow => ({
+        pid,
+        ppid: 1,
+        pgid: pid,
+        uid: 501,
+        startMs: START_MS,
+        comm: "claude",
+        zombie: false,
+        state: "S",
+        tty: null,
+        ...extra,
+    });
+    const readers = (rows: ProcessTableRow[] | null): KernelTableReaders => ({
+        rows: () => rows,
+        command: (entry) => (entry.uid === 501 ? `${HOME}/.bun/bin/claude --resume ${S1}` : "/usr/sbin/cfprefsd"),
+        usage: (pid) => (pid === 20 ? { rssBytes: 300 * 1024 * 1024, running: true } : null),
+        cpuPercent: (pid) => (pid === 20 ? 12.5 : null),
+        userName: (uid) => (uid === 501 ? "alice" : null),
+    });
+
+    test("gives the rows of `ps -axo` without a `ps`: whole-second start, KB, the user's name, R while on a CPU", () => {
+        const table = kernelProcsTable(readers([kernelRow(0, { uid: 0 }), kernelRow(20), kernelRow(30, { uid: 0 })]));
+
+        expect(table).toEqual([
+            {
+                pid: 20,
+                ppid: 1,
+                user: "alice",
+                stat: "R",
+                cpu: 12.5,
+                rss: 300 * 1024,
+                // `ps -p` prints whole seconds, and a stop refuses a process whose start differs from the report's.
+                startTime: new Date("2026-09-26T17:00:00.000Z"),
+                command: `${HOME}/.bun/bin/claude --resume ${S1}`,
+            },
+            // Another user's process: the kernel withholds its usage, so it reads as 0, and its uid names it.
+            {
+                pid: 30,
+                ppid: 1,
+                user: "0",
+                stat: "S",
+                cpu: 0,
+                rss: 0,
+                startTime: new Date("2026-09-26T17:00:00.000Z"),
+                command: "/usr/sbin/cfprefsd",
+            },
+        ]);
+    });
+
+    test("never asks the kernel for a zombie's usage, and is null where the kernel table does not answer", () => {
+        const asked: number[] = [];
+        const base = readers([kernelRow(40, { zombie: true, state: "Z" })]);
+        const table = kernelProcsTable({
+            ...base,
+            usage: (pid) => {
+                asked.push(pid);
+                return null;
+            },
+            cpuPercent: (pid) => {
+                asked.push(pid);
+                return null;
+            },
+        });
+
+        expect(table?.map((entry) => [entry.pid, entry.stat, entry.cpu, entry.rss])).toEqual([[40, "Z", 0, 0]]);
+        expect(asked).toEqual([]);
+        expect(kernelProcsTable(readers(null))).toBeNull();
+    });
 });
 
 /** A process table in memory: signals are recorded, and each pid dies on the signals listed for it. */
