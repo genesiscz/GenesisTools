@@ -131,6 +131,12 @@ struct VaultCaller {
         return ((cwd as NSString).appendingPathComponent(raw) as NSString).standardizingPath
     }
 
+    /// The arguments after the script: `warmup --all --json` for `gt-claude …/src/claude/index.ts warmup --all --json`.
+    var scriptArguments: [String] {
+        guard let index = scriptIndex, let arguments = args?.arguments else { return [] }
+        return Array(arguments[(index + 1)...])
+    }
+
     static func isInterpreter(_ executable: String) -> Bool {
         let name = (executable as NSString).lastPathComponent.lowercased()
         return name.hasPrefix("gt-") || name.range(of:
@@ -777,6 +783,17 @@ func unlockVault(_ params: VaultUnlockParams) {
     guard let executable = caller.executable else {
         vaultAudit("denied", params: params, caller: caller, session: session, detail: "the caller's executable could not be read")
         vaultDeny("the caller's executable could not be read")
+    }
+
+    // Before the remembered grants, so a listed command always leaves its audit line and notification.
+    let autoAllow = VaultAutoAllowSettings.load()
+    if let match = VaultAutoAllow.match(caller: caller, session: session, settings: autoAllow,
+                                        trustedRoot: VaultAutoAllow.trustedRoot()) {
+        vaultAudit("auto-allowed", params: params, caller: caller, session: session,
+                   detail: "command: tools \(match.command); agent: \(match.agent)")
+        logClick("vault.unlock decision=allow auto-allow command=\(match.command) agent=\(match.agent)")
+        if autoAllow.notify { VaultAutoAllow.notify(match) }
+        emitVaultKey(remembered: false, params: params, caller: caller, session: session)
     }
 
     let tool = caller.toolName ?? params.tool

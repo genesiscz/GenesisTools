@@ -5,6 +5,15 @@ export {
     appApprover,
     REMEMBER_CHOICES_SECONDS,
 } from "./approve";
+export {
+    autoAllowCommand,
+    loadVaultAutoAllow,
+    saveVaultAutoAllow,
+    updateVaultAutoAllow,
+    VAULT_AUTO_ALLOW_DEFAULTS,
+    type VaultAutoAllowSettings,
+    vaultAutoAllowPath,
+} from "./auto-allow";
 export { clientKey, describeClient, executableOf, type ProcessLookup } from "./client-identity";
 export {
     appendAudit,
