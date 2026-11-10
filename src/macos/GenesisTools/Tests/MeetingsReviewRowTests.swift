@@ -176,6 +176,8 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "listen")), "you in the terminal")
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "agent", harness: "claude-code", session: "3f98b772-aaaa")),
                        "an agent (Claude Code, session 3f98b772)")
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "agent", harness: "grok")), "an agent (Grok)")
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "agent", harness: "other-agent")), "an agent (other-agent)")
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "rule", rule: "E2")), "rule E2")
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "unknown")), "someone, before the history existed")
         let confirm = try entry(token: "t1", action: #"{"kind":"confirm","items":["i2","i4"]}"#,

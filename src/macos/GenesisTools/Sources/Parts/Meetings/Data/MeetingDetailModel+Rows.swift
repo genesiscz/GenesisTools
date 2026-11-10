@@ -488,15 +488,12 @@ extension MeetingsWords {
         case "listen": return "you in the terminal"
         case "cli": return "you at the command line"
         case "agent":
-            let harness = actor.harness.map { harnessNames[$0] ?? $0 } ?? "an agent"
+            let harness = actor.harness.map { Harness(runtimeAgent: $0)?.label ?? $0 } ?? "an agent"
             return "an agent (\([harness, actor.session.map { "session \($0.prefix(8))" }].compactMap { $0 }.joined(separator: ", ")))"
         case "rule": return "rule \(actor.rule ?? "?")"
         default: return "someone, before the history existed"
         }
     }
-
-    /// The names a harness id reads as.
-    private static let harnessNames = ["claude-code": "Claude Code", "codex": "Codex", "grok": "Grok"]
 
     /// What one journal entry did, as a sentence after its actor: "confirmed i3", "answered Q2: JSON".
     static func entryAction(_ entry: JournalEntry) -> String {
