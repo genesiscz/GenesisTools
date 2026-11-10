@@ -66,9 +66,7 @@ struct MeetingsRootView: View {
                 }
             }
             .heightFromWindow()
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) { SidePanelToggle(model: model) }
-            }
+            .toolbar { SidePanelToolbar(model: model) }
         }
     }
 
@@ -108,12 +106,23 @@ struct MeetingsRootView: View {
             }
             .heightFromWindow()
             .toolbar {
-                if model.detail != nil {
-                    ToolbarItem(placement: .primaryAction) { SidePanelToggle(model: model) }
-                }
+                if model.detail != nil { SidePanelToolbar(model: model) }
             }
         }
         // ⌘1 Needs you, ⌘2 All meetings and ⌘R Reload are View menu items (MeetingsMenu), so they work wherever focus is.
+    }
+}
+
+/// The settings panel's switch at the toolbar's trailing end, above the panel it opens. Without the flexible space
+/// the toolbar put it at the leading edge of the detail column, between the list and the meeting.
+private struct SidePanelToolbar: ToolbarContent {
+    let model: MeetingsWindowModel
+
+    var body: some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.flexible)
+        }
+        ToolbarItem(placement: .primaryAction) { SidePanelToggle(model: model) }
     }
 }
 
@@ -399,7 +408,8 @@ struct MeetingBadgesView: View {
     var body: some View {
         let badges = meeting.badges
         if meeting.live { Badge("Recording", color: KitPalette.removed, symbol: "record.circle") }
-        if badges.noProject { Badge("No project", color: KitPalette.modified) }
+        // A list row only: under the header's badges the project picker says "No project" itself.
+        if badges.noProject, open == nil { Badge("No project", color: KitPalette.modified) }
         if badges.openQuestions > 0 {
             badge(Badge(Plural.count(badges.openQuestions, "question"), color: KitPalette.renamed, symbol: "ear"),
                   opens: .items, tooltip: "Answer them in Items")

@@ -57,7 +57,9 @@ enum PeopleDates {
 
     /// "3 Nov 2026".
     static func day(_ text: String?) -> String? {
-        date(text).map { $0.formatted(.dateTime.day().month(.abbreviated).year()) }
+        // The window's own date words ("9 Nov 2026"), as its lists write them: the Mac's region wrote "9. 11. 2026"
+        // here and "Thu 5 Nov" one pane to the left.
+        date(text).map { $0.formatted(.dateTime.day().month(.abbreviated).year().locale(Locale(identifier: "en_GB"))) }
     }
 
     /// Where a person was seen, one line: "4 meetings · last 3 Nov 2026 · Design, Ops".
@@ -87,7 +89,7 @@ struct MeetingsContactsView: View {
     var mergePlan: PeopleMergePlan?
     /// The merge just made, for its Undo line; nil hides the line.
     var lastMerge: PeopleMergeRecord?
-    /// "Add Person": a name and an optional address.
+    /// "Add person": a name and an optional address.
     let add: (String, String?) -> Void
     /// Hide (true) or show again (false).
     let setHidden: (KnownPerson, Bool) -> Void
@@ -160,7 +162,7 @@ struct MeetingsContactsView: View {
                 .font(.system(size: 12))
                 .instantTooltip("Also list the people you hid")
                 .accessibilityIdentifier("meetings.contacts.showHidden")
-            GhostButton("Add Person", symbol: "person.badge.plus", tooltip: "Add a person by hand",
+            GhostButton("Add person", symbol: "person.badge.plus", tooltip: "Add a person by hand",
                         identifier: "meetings.contacts.add") { adding = true }
         }
         .padding(.horizontal, 16)

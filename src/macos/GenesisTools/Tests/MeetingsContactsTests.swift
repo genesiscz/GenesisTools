@@ -154,6 +154,8 @@ final class MeetingsContactsTests: XCTestCase {
         let alex = Fixture.person("Alex Example", meetings: 4, lastSeen: "2026-11-03T09:00:00.000Z", projects: ["Design"])
         XCTAssertTrue(PeopleDates.seen(alex).hasPrefix("4 meetings · last "), PeopleDates.seen(alex))
         XCTAssertTrue(PeopleDates.seen(alex).hasSuffix(" · Design"))
+        // The window's own date words, whatever the Mac's region: a Czech region wrote "9. 11. 2026" here.
+        XCTAssertEqual(PeopleDates.day("2026-11-09T12:00:00Z"), "9 Nov 2026")
         XCTAssertEqual(PeopleDates.seen(Fixture.person("Kai", meetings: 0, sources: [.contacts])), "In Contacts, no meeting yet")
         let plan = Fixture.plan
         XCTAssertEqual(ContactsMergeSheet.title(plan), "Merge Alex Example and Robin Example?")
