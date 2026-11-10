@@ -34,7 +34,7 @@ const DEFAULT_MODS: ModsConfig = {
     cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
     tmpUsage: { enabled: false, minutes: 5 },
     agentsBand: { enabled: false, warnMinutes: 60 },
-    hooks: { tokens: false, dedupe: false },
+    hooks: { tokens: false, dedupe: false, metrics: true },
     log: { readings: false },
     sidebar: { hints: true, feedback: "line", focus: "command" },
     stall: { enabled: false, action: "button", minutes: 5 },
@@ -152,7 +152,11 @@ function mergeMods(stored: unknown, problems: string[]): ModsConfig {
                 24 * 60
             ),
         },
-        hooks: { tokens: boolOr(hooks.tokens, base.hooks.tokens), dedupe: boolOr(hooks.dedupe, base.hooks.dedupe) },
+        hooks: {
+            tokens: boolOr(hooks.tokens, base.hooks.tokens),
+            dedupe: boolOr(hooks.dedupe, base.hooks.dedupe),
+            metrics: boolOr(hooks.metrics, base.hooks.metrics),
+        },
         log: { readings: boolOr(log.readings, base.log.readings) },
         sidebar: {
             hints: boolOr(sidebar.hints, base.sidebar.hints),
@@ -281,7 +285,7 @@ export const MODS_HOOK_SECTION: HookConfigSection<ModsConfig> = {
         "mods.cacheBand.<enabled|warnMinutes|cautionMinutes|others>",
         "mods.tmpUsage.<enabled|minutes>",
         "mods.agentsBand.<enabled|warnMinutes>",
-        "mods.hooks.<tokens|dedupe>",
+        "mods.hooks.<tokens|dedupe|metrics>",
         "mods.sidebar.<hints|feedback|focus>",
         "mods.stall.<enabled|action|minutes>",
         "mods.log.<readings>",

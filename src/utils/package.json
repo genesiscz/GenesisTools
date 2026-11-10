@@ -373,6 +373,11 @@
             "types": "./math.ts",
             "default": "./math.ts"
         },
+        "./metrics": {
+            "bun": "./metrics/index.ts",
+            "types": "./metrics/index.ts",
+            "default": "./metrics/index.ts"
+        },
         "./network": {
             "bun": "./network.ts",
             "types": "./network.ts",
