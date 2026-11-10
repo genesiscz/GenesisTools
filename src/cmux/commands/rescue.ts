@@ -5,11 +5,11 @@ import { cleanRelaunchEnv, killApp } from "@app/cmux/lib/rescue";
 import { reportWaitingPrompts } from "@app/cmux/lib/restore";
 import { planInPlaceSettled, renderInPlaceStep, runInPlaceRestore } from "@app/cmux/lib/restore-in-place";
 import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
 import { out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -121,7 +121,7 @@ export async function runRescue(name: string, flags: RescueFlags, deps: RescueDe
             return;
         }
         const proceed = await withCancel(
-            p.confirm({ message: "Kill cmux and run the rescue now?", initialValue: false })
+            p.confirm({ message: "Kill cmux and run the rescue now?", initialValue: false, cancel: "back" })
         );
         if (!proceed) {
             p.cancel("Aborted — the offline profile stays saved.");
