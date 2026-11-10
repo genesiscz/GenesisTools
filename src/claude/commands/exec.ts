@@ -2,13 +2,14 @@ import { ensureOnboardingSkippedForOAuthToken, pinnedLaunchEnv } from "@app/clau
 import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import * as p from "@clack/prompts";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { LONG_TOKEN_MIN_LENGTH, probeLongLivedToken, type TokenVerdict } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
+import { resolveSecret } from "@genesiscz/utils/security";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -89,7 +90,7 @@ export function parseExecArgs(args: string[]): ExecArgs {
  * interactive picker uses and skip anything that cannot serve a turn. Falls back
  * to the first configured account when no usage data exists at all.
  */
-async function autoPick(eligible: AIAccountEntry[]): Promise<AIAccountEntry> {
+async function autoPick(eligible: AccountEntry[]): Promise<AccountEntry> {
     const cached = await peekSharedUsage().catch((error) => {
         logger.debug({ error }, "[exec] usage cache unavailable; falling back to the first account");
         return null;
@@ -109,9 +110,9 @@ async function autoPick(eligible: AIAccountEntry[]): Promise<AIAccountEntry> {
     return best ?? eligible[0];
 }
 
-async function resolveAccount(eligible: AIAccountEntry[], name: string | undefined): Promise<AIAccountEntry> {
+async function resolveAccount(eligible: AccountEntry[], name: string | undefined): Promise<AccountEntry> {
     if (name) {
-        const match = eligible.find((a) => a.name === name);
+        const match = eligible.find((a) => a.id === name) ?? eligible.find((a) => a.name === name);
 
         if (!match) {
             out.error(pc.red(`Account "${name}" has no long-lived token.`));
@@ -150,8 +151,9 @@ export async function execCommand(args: string[]): Promise<never> {
         process.exit(1);
     }
 
-    const config = await AIConfig.load();
-    const eligible = config.getAccountsByProvider("anthropic-sub").filter((a) => a.tokens.longLivedToken);
+    const store = await AiConfigStore.load();
+    // Presence of the token is metadata: picking an account reads no secret.
+    const eligible = store.accounts({ provider: "anthropic-sub" }).filter((a) => a.credentials.longLivedToken);
 
     if (eligible.length === 0) {
         out.error(pc.red("No accounts with a long-lived token."));
@@ -161,7 +163,8 @@ export async function execCommand(args: string[]): Promise<never> {
     }
 
     const account = await resolveAccount(eligible, name);
-    const token = account.tokens.longLivedToken!;
+    // Resolved here, where the launched command spends it.
+    const token = (await resolveSecret(account.credentials.longLivedToken)) ?? "";
 
     // A truncated token 401s and Claude Code SILENTLY falls back to the keychain
     // login — the exact wrong-account failure this command exists to prevent.

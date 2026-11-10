@@ -8,7 +8,7 @@ import { type RestoreSettings, type TuneAction, tuneOptions } from "@app/claude/
 import { loadSnapshot, snapshotCandidates } from "@app/claude/lib/cmux/snapshot";
 import type { LayoutMode, RestoreCandidate, RestorePlan } from "@app/claude/lib/cmux/types";
 import * as p from "@clack/prompts";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { resolveProjectFilter } from "@genesiscz/utils/claude";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -242,11 +242,11 @@ async function tuneAccounts(settings: RestoreSettings): Promise<RestoreSettings>
 /** Accounts `tools claude start <name>` can actually launch: those with a saved token. */
 async function launchableAccounts(): Promise<string[]> {
     try {
-        const config = await AIConfig.load();
+        const store = await AiConfigStore.load();
 
-        return config
-            .getAccountsByProvider("anthropic-sub")
-            .filter((account) => account.tokens?.longLivedToken)
+        return store
+            .accounts({ provider: "anthropic-sub" })
+            .filter((account) => account.credentials.longLivedToken)
             .map((account) => account.name);
     } catch (error) {
         logger.debug({ error }, "[claude-cmux] could not list accounts for the force-account menu");

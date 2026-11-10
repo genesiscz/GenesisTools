@@ -27,16 +27,18 @@ import { isAutoAccount, pickSmart, type SmartAlias, smartAliasOf } from "@app/cl
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
 import * as p from "@clack/prompts";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { accountFromPinJournal } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { keychainOwnerUuidOffline } from "@genesiscz/utils/claude/keychain";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import type { AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
+import { resolveSecret } from "@genesiscz/utils/security";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -284,7 +286,7 @@ async function resolveModel(spec: string): Promise<string> {
  * drawing anything was pure latency.
  */
 async function scoreTokenAccounts(
-    withToken: AIAccountEntry[],
+    withToken: AccountEntry[],
     modelId: string | undefined
 ): Promise<ScoredAccount[] | null> {
     const names = withToken.map((a) => a.name);
@@ -409,14 +411,38 @@ async function guardFableHeadroom(accountName: string, modelId: string | undefin
  * refuses before sending. Inference still bills the pinned account. So a
  * limit-dead keychain kills every session on the machine. Say so.
  */
-async function warnKeychainLimits(accountName: string, aiConfig: AIConfig, modelId: string | undefined): Promise<void> {
+/** The secondary login with its tokens resolved, for the keychain injection that spends them. */
+async function resolvedSecondary(account: AccountEntry | undefined): Promise<AISecondaryLogin | undefined> {
+    const secondary = account?.credentials.secondary;
+    if (!secondary) {
+        return undefined;
+    }
+
+    const { accessToken, refreshToken, ...rest } = secondary;
+    return {
+        ...rest,
+        accessToken: (await resolveSecret(accessToken)) ?? "",
+        refreshToken: (await resolveSecret(refreshToken)) ?? "",
+    };
+}
+
+async function warnKeychainLimits(
+    accountName: string,
+    store: AiConfigStore,
+    modelId: string | undefined
+): Promise<void> {
     const uuid = await keychainOwnerUuidOffline();
 
     if (!uuid) {
         return; // unmanaged or unknown login — nothing we can vouch for
     }
 
-    const owner = accountOwningKeychain(aiConfig.getAccountsByProvider("anthropic-sub"), uuid);
+    const owner = accountOwningKeychain(
+        store
+            .accounts({ provider: "anthropic-sub" })
+            .map((a) => ({ name: a.name, secondary: a.credentials.secondary })),
+        uuid
+    );
 
     if (!owner || owner === accountName) {
         return;
@@ -513,7 +539,7 @@ function scoredHint(account: ScoredAccount): string {
  */
 async function resolveSmartAlias(
     alias: SmartAlias,
-    withToken: AIAccountEntry[],
+    withToken: AccountEntry[],
     modelId: string | undefined
 ): Promise<string | null> {
     const scored = await scoreTokenAccounts(withToken, modelId);
@@ -546,7 +572,7 @@ async function resolveSmartAlias(
 }
 
 /** Plain alphabetical select — fallback when usage data is unavailable. */
-async function plainSelect(withToken: AIAccountEntry[], defaultName: string): Promise<string> {
+async function plainSelect(withToken: AccountEntry[], defaultName: string): Promise<string> {
     const picked = await p.select({
         message: "Launch Claude Code as which account?",
         initialValue: defaultName,
@@ -624,10 +650,10 @@ export function resumedSessionIdOf(passthrough: string[]): string | null {
 }
 
 async function pickAccount(
-    withToken: AIAccountEntry[],
+    withToken: AccountEntry[],
     opts: PickOptions,
     modelId: string | undefined,
-    aiConfig: AIConfig
+    store: AiConfigStore
 ): Promise<string> {
     if (withToken.length === 1 && !opts.pick && !opts.autopick) {
         return withToken[0].name;
@@ -694,7 +720,7 @@ async function pickAccount(
     }
 
     if (!scored) {
-        const defaultAccount = aiConfig.getDefaultAccount("claude");
+        const defaultAccount = store.defaultAccount("claude");
         const defaultName =
             defaultAccount && withToken.some((a) => a.name === defaultAccount.name)
                 ? defaultAccount.name
@@ -710,7 +736,7 @@ async function pickAccount(
     const picked = await tableSelectAccount({
         message: "Launch Claude Code as which account?",
         scored,
-        accountsByName: new Map(withToken.map((a) => [a.name, a])),
+        accountsByName: new Map(withToken.map((a) => [a.name, { label: a.label, secondary: a.credentials.secondary }])),
         paceScope: dashboardConfig?.paceScope,
     });
 
@@ -729,10 +755,10 @@ async function pickAccount(
  */
 async function resolveAccountName(
     nameArg: string,
-    withToken: AIAccountEntry[],
+    withToken: AccountEntry[],
     opts: StartOptions,
     modelId: string | undefined,
-    aiConfig: AIConfig
+    store: AiConfigStore
 ): Promise<string> {
     const needle = nameArg.toLowerCase();
     const exact = withToken.find((a) => a.name === nameArg || a.name.toLowerCase() === needle);
@@ -756,10 +782,10 @@ async function resolveAccountName(
             process.exit(1);
         }
 
-        return pickAccount(matches, opts, modelId, aiConfig);
+        return pickAccount(matches, opts, modelId, store);
     }
 
-    const hasEntry = aiConfig.getAccount(nameArg);
+    const hasEntry = store.accounts().some((a) => a.id === nameArg || a.name === nameArg);
     if (hasEntry && opts.keychain) {
         out.error(pc.red(`Account "${nameArg}" has no secondary login.`));
         out.printlnErr(pc.dim(`Save one with: ${pc.cyan(toolCommand("claude login-secondary", nameArg))}`));
@@ -949,10 +975,11 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         process.exit(2);
     }
 
-    const aiConfig = await AIConfig.load();
-    const withToken = aiConfig
-        .getAccountsByProvider("anthropic-sub")
-        .filter((a) => (opts.keychain ? Boolean(a.secondary) : Boolean(a.tokens.longLivedToken)));
+    const store = await AiConfigStore.load();
+    // Presence is metadata: choosing an account reads no secret; the chosen one's token is resolved at launch.
+    const withToken = store
+        .accounts({ provider: "anthropic-sub" })
+        .filter((a) => (opts.keychain ? Boolean(a.credentials.secondary) : Boolean(a.credentials.longLivedToken)));
 
     if (withToken.length === 0) {
         if (opts.keychain) {
@@ -1003,18 +1030,18 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     } else if (alias) {
         accountName =
             (await resolveSmartAlias(alias, withToken, modelId)) ??
-            (await pickAccount(withToken, pickOpts, modelId, aiConfig));
+            (await pickAccount(withToken, pickOpts, modelId, store));
     } else if (
         isAutoAccount(
             nameArg,
             withToken.map((a) => a.name)
         )
     ) {
-        accountName = await pickAccount(withToken, { ...pickOpts, autopick: true }, modelId, aiConfig);
+        accountName = await pickAccount(withToken, { ...pickOpts, autopick: true }, modelId, store);
     } else if (nameArg) {
-        accountName = await resolveAccountName(nameArg, withToken, opts, modelId, aiConfig);
+        accountName = await resolveAccountName(nameArg, withToken, opts, modelId, store);
     } else {
-        accountName = await pickAccount(withToken, pickOpts, modelId, aiConfig);
+        accountName = await pickAccount(withToken, pickOpts, modelId, store);
     }
 
     // Only an automatic pick is remembered: the probes of an auto instance must land where its threads do.
@@ -1023,11 +1050,19 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     }
 
     const account = withToken.find((a) => a.name === accountName)!;
+    // Resolved here, where the launch spends it: only the account that is launched.
+    const longLivedToken = opts.keychain ? undefined : await resolveSecret(account.credentials.longLivedToken);
+
+    if (!opts.keychain && !longLivedToken) {
+        out.error(pc.red(`The long-lived token of "${accountName}" could not be read from the vault.`));
+        await out.flush();
+        process.exit(1);
+    }
 
     await refuseIfWeeklyDead(accountName);
 
     if (!opts.keychain) {
-        await warnKeychainLimits(accountName, aiConfig, modelId);
+        await warnKeychainLimits(accountName, store, modelId);
     }
 
     const resume = await resolveResumeArgs(opts, passthrough);
@@ -1047,7 +1082,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     }
 
     if (opts.keychain) {
-        const { preSync, foreign } = await inspectKeychainBeforeInject(aiConfig);
+        const { preSync, foreign } = await inspectKeychainBeforeInject();
 
         if (preSync.status === "unreadable") {
             out.error(
@@ -1091,8 +1126,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         }
 
         // Re-read: the pre-inject sync may have refreshed this account's secondary tokens.
-        const fresh = aiConfig.getAccount(accountName);
-        const secondary = fresh?.secondary;
+        const secondary = await resolvedSecondary((await AiConfigStore.load()).account(account.id));
 
         if (!secondary) {
             out.error(pc.red(`Account "${accountName}" lost its secondary login — run login-secondary again.`));
@@ -1151,7 +1185,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         };
         delete launchEnv.CLAUDE_CODE_OAUTH_TOKEN;
     } else {
-        launchEnv = { ...process.env, ...pinnedLaunchEnv(account, account.tokens.longLivedToken!) };
+        launchEnv = { ...process.env, ...pinnedLaunchEnv(account, longLivedToken ?? "") };
     }
 
     // Claude Code's own Bash edit-diff renderer is otherwise gated by a per-account
@@ -1170,14 +1204,14 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     // --sdk skips it: an embedding app has no tmux teammates, and it probes often enough
     // that a killed probe would leave the token file behind.
     let teammateWrapperPath: string | undefined;
-    if (!opts.keychain && !opts.sdk && account.tokens.longLivedToken) {
+    if (!opts.keychain && !opts.sdk && longLivedToken) {
         try {
             sweepStaleTeammateWrappers();
             const installed = installTeammateWrapper({
                 claudeBin: resolveClaudeBinaryForTeammates(),
                 env: {
                     accountName: account.name,
-                    oauthToken: account.tokens.longLivedToken,
+                    oauthToken: longLivedToken,
                     subscriptionType: subscriptionTypeOf(account),
                     fableModel: FABLE_MODEL_ID,
                     customModelOption: FABLE_MODEL_OPTION,
@@ -1257,7 +1291,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
 
         if (opts.keychain) {
             try {
-                const result = await finishKeychainSession(aiConfig, injectedUuid, foreignBackupPath);
+                const result = await finishKeychainSession(injectedUuid, foreignBackupPath);
 
                 if (result.status === "synced") {
                     out.printlnErr(pc.dim(`Synced rotated keychain tokens back to "${result.account}".`));
