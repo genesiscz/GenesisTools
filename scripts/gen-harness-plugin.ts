@@ -15,7 +15,7 @@
  *   bun scripts/gen-harness-plugin.ts           # write the files
  *   bun scripts/gen-harness-plugin.ts --check   # exit 1, naming each file, when a committed file differs
  *
- * CI and the pre-push hook run `--check`, and `src/utils/harness/conformance.test.ts` fails on a stale file too. A
+ * CI and the pre-push hook run `--check`, and `scripts/ci/check-plugin-standalone.test.ts` fails on a stale file too. A
  * changed file is a plugin change: bump the plugin's version (`.claude/rules/plugins.md`).
  */
 
