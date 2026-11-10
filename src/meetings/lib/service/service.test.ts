@@ -252,6 +252,11 @@ const quietDeps: MeetingsHandlerDeps = {
         mkdirSync(dirname(path), { recursive: true });
         writeFileSync(path, "RIFF");
     },
+    // Invented folder and calendar lists, so a suggestion never reads Wispr Flow or the Calendar app of this Mac.
+    suggestionReads: () => ({
+        sourceFolders: async () => ["Design", "Ops"],
+        calendarNames: async () => ({ names: ["Work", "Home"] }),
+    }),
     // An address book with one invented contact, so a people answer never reads this Mac's Contacts.
     contacts: () =>
         new ContactsPeopleSource({
@@ -748,6 +753,12 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect((await failure(client.call("projects.unpair", { project: "Harbor" }))).message).toContain(
             "Name a calendar entry"
         );
+
+        const suggestions = await client.call("projects.suggestions", {});
+        expect(suggestions.folders.wisprflow).toEqual({ values: ["Design", "Ops"], from: "source" });
+        expect(suggestions.calendars).toEqual({ values: ["Home", "Work"] });
+        expect(suggestions.labels).toEqual(["Checkout"]);
+        expect(suggestions.titleWords).toEqual(["Design", "Retro", "review"]);
 
         expect((await failure(client.call("projects.remove", { name: "Harbor" }))).message).toContain(
             `1 meeting has the project Harbor: ${REVIEW.id}`
@@ -1404,6 +1415,12 @@ async function captureExamples(): Promise<Example[]> {
         "projects.unpair",
         { project: "Atlas", person: { name: "Alex Example", email: "alex@example.com" } },
         "One person from one project: nothing when they were not paired."
+    );
+    await ask(
+        window,
+        "projects.suggestions",
+        {},
+        "The values the rule fields offer: each source's folders, the Calendar app's calendars, words and labels in use."
     );
     await ask(window, "projects.rename", { from: "Atlas", to: "Harbor" }, "Its settings, pairings and meetings.");
     await ask(

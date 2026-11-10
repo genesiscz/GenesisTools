@@ -487,7 +487,10 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(record.id, Self.design)
         XCTAssertEqual(record.project, "Atlas")
         let revisions = try await MeetingDetailModel.revisionsRead(Self.design).run(service: service, command: command())
-        XCTAssertEqual(revisions.show, "32y96zb50zq92")
+        // The token hashes the record as the fixture's capture wrote it, so it changes when the fixture is captured again.
+        let captured = try XCTUnwrap(try MeetingsFixture.examples().first { $0["method"] as? String == "meeting.revisions" })
+        let expected = ((captured["reply"] as? [String: Any])?["result"] as? [String: Any])?["show"] as? String
+        XCTAssertEqual(revisions.show, try XCTUnwrap(expected))
         let transcript = try await MeetingDetailModel.transcriptRead(Self.design).run(service: service, command: command())
         XCTAssertEqual(transcript.entries.map(\.speaker), ["Dana Example", "Alex Example"])
 

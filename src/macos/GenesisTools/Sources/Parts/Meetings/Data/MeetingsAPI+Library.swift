@@ -143,6 +143,35 @@ extension MeetingsAPI {
         typealias Result = [MatchPreviewRow]
     }
 
+    /// `projects.suggestions`: the values the rule fields offer while they are typed. A list that could not be read
+    /// says why in its `reason`.
+    enum ProjectsSuggestions: MeetingsServiceMethod {
+        static let name = "projects.suggestions"
+
+        struct Params: Codable, Equatable {}
+
+        /// A list of values, and why it is partial when the read was not possible.
+        struct Values: Decodable, Equatable {
+            let values: [String]
+            let reason: String?
+        }
+
+        /// A source's folders: its own list (`from` "source"), or the folders its meetings sit in ("meetings").
+        struct Folders: Decodable, Equatable {
+            let values: [String]
+            let from: String
+            let reason: String?
+        }
+
+        struct Result: Decodable, Equatable {
+            /// By source id ("wisprflow").
+            let folders: [String: Folders]
+            let calendars: Values
+            let titleWords: [String]
+            let labels: [String]
+        }
+    }
+
     // MARK: Dictionary
 
     /// `dictionary.show`: the merged dictionary of a scope (the global one when `project` is nil), each entry with its

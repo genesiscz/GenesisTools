@@ -11,7 +11,7 @@ import {
     proposeProjects,
     reasonText,
 } from "@genesiscz/utils/meetings/proposals";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
@@ -38,6 +38,8 @@ import {
 const ALICE = { name: "Alice Novak", email: "alice@example.com" };
 const BOB = { name: "Bob Smith", email: "bob@example.com" };
 const ME = { name: "Owner Example", email: "owner@example.com", self: true };
+
+import { frequentTitleWords } from "./project-suggestions";
 
 function entry(
     fields: Partial<CalendarEntry> & Pick<CalendarEntry, "entryId" | "title" | "start" | "end">
@@ -846,4 +848,47 @@ test("an inbox answer for a replaced question, or after the project was set mean
     expect(late.stale).toBe(true);
     expect(store.read(setMeanwhile.id)?.project).toBe("side");
     expect((await config.read()).projects.work).toBeUndefined();
+});
+
+describe("the values the project rules offer, and the people of a project's meetings", () => {
+    const meeting = (id: string, start: string, extra: Record<string, unknown>) =>
+        meetingRecordSchema.parse({
+            id,
+            title: `Sync ${id}`,
+            project: "shop",
+            start,
+            createdAt: start,
+            createdBy: "link",
+            ...extra,
+        });
+    const records = [
+        meeting("m1", "2026-11-01T09:00:00.000Z", {
+            participants: [{ name: "Owner Example", self: true }, { name: "Alice Example" }],
+            calendar: {
+                from: "apple-calendar",
+                eventId: "cal-1",
+                title: "Shop sync",
+                start: "2026-11-01T09:00:00.000Z",
+                attendees: ["Alice Example", "Bob Example"],
+                people: [{ name: "Alice Example", email: "alice@example.com" }],
+            },
+        }),
+        meeting("m2", "2026-11-03T09:00:00.000Z", {
+            participants: [{ name: "Alice Example" }],
+            speakers: { labels: { "Speaker 2": "Carol Example" } },
+        }),
+        meetingRecordSchema.parse({
+            id: "other",
+            title: "Other",
+            project: "elsewhere",
+            start: "2026-11-04T09:00:00.000Z",
+            createdAt: "2026-11-04T09:00:00.000Z",
+            createdBy: "link",
+            participants: [{ name: "Dan Example" }],
+        }),
+    ];
+
+    test("the frequent title words skip numbers, short words and the generic ones", () => {
+        expect(frequentTitleWords(records)).toEqual(["Other"]);
+    });
 });

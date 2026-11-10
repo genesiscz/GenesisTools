@@ -5,6 +5,7 @@ import { testPhrase } from "../dictionary-test";
 import { matchPreview } from "../match-preview";
 import { projectLabels } from "../meeting-fields";
 import { removeProject, renameProject } from "../project-admin";
+import { projectSuggestions, type SuggestionReads } from "../project-suggestions";
 import { dictionaryShowRead } from "../window-reads";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
 import { type MeetingsHandlerDeps, refusal } from "./handlers";
@@ -122,6 +123,40 @@ export async function previewProjects(
         config: await configOf(deps).read(),
         ...(params.draft ? { draft: params.draft } : {}),
         limit,
+    });
+}
+
+/** The sources' own folder lists and the Calendar app's calendars, read without asking for a grant. */
+function defaultSuggestionReads(): SuggestionReads {
+    return {
+        sourceFolders: async (source) => (await (await import("../sources")).meetingSource(source)).folders(),
+        calendarNames: async () => {
+            if (process.platform !== "darwin") {
+                return { reason: "The Calendar app exists only on macOS" };
+            }
+
+            const { MacCalendar } = await import("@genesiscz/utils/macos/apple-calendar");
+            const auth = await MacCalendar.authorizationStatus();
+
+            if (auth.status !== "fullAccess") {
+                return {
+                    reason: `Calendar access is "${auth.status}", so only the calendars the meetings name are offered`,
+                };
+            }
+
+            return { names: (await MacCalendar.listCalendarsUnguarded()).map((calendar) => calendar.title) };
+        },
+    };
+}
+
+export async function suggestProjectValues(
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"projects.suggestions">> {
+    return projectSuggestions({
+        records: store.listBounded({ limit: 300 }).records,
+        config: await configOf(deps).read(),
+        reads: deps.suggestionReads?.() ?? defaultSuggestionReads(),
     });
 }
 
