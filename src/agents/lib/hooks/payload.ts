@@ -4,10 +4,7 @@ import { byHarness, isAccountProviderAlias, type PerHarness } from "@genesiscz/u
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { profiler } from "@genesiscz/utils/profile";
 import { HARNESS_NAMES, type HarnessName } from "./config";
-
-const prof = profiler.scope("agent-context");
 
 export interface HookPayload {
     event: string;
@@ -205,11 +202,13 @@ export function toolOutputText(payload: Pick<HookPayload, "toolResponse">): stri
         .join("\n");
 }
 
+/**
+ * The payload of one hook call. Not wrapped by the profiler: this file is in the import graph of every hook
+ * process, and the profiler's import (its config, so `Storage` and the process table) was 27 ms of CPU in each of
+ * them, for a line that said this parse takes 0.5 ms (measured 2026-11-10: a hook's start went from 72 ms to 45 ms
+ * of CPU without it). `scripts/benchmarks/agent-context/bench.ts` still times it in its own process.
+ */
 export function parseHookPayload(text: string): HookPayload | null {
-    return prof.measure("hooks.parseHookPayload", () => readHookPayload(text));
-}
-
-function readHookPayload(text: string): HookPayload | null {
     let raw: Record<string, unknown>;
 
     try {

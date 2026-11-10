@@ -2849,3 +2849,21 @@ it("classifies Copilot hook spellings as Copilot callers and leaves turn and par
         expect(parsed).not.toHaveProperty("parentAgentId");
     }
 });
+
+describe("what a hook process imports", () => {
+    // Regression test: the payload parser was wrapped by the profiler, whose import (its config, so `Storage`) was
+    // 27 ms of CPU in each hook process, before and after every Bash call (measured 2026-11-10).
+    it("keeps the profiler and its config out of the hooks that run on every tool call", async () => {
+        const bin = join(import.meta.dir, "..", "..", "bin");
+        const built = await Bun.build({
+            entrypoints: ["hook-pre.ts", "hook-diff-post.ts", "hook-guard.ts"].map((name) => join(bin, name)),
+            target: "bun",
+            metafile: true,
+            throw: false,
+        });
+        const files = Object.keys(built.metafile?.inputs ?? {});
+
+        expect(files.some((file) => file.endsWith("lib/hooks/payload.ts"))).toBe(true);
+        expect(files.filter((file) => /utils\/(?:profile|GenesisTools)\//.test(file))).toEqual([]);
+    });
+});
