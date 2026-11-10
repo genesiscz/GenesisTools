@@ -175,7 +175,7 @@ final class HubSessionInsightsTests: XCTestCase {
         let store = HubStuckStore()
         // Only the first check waits, so a second one started beside it shows in `asked` and cannot hang the test.
         store.check = { ids in
-            if asked.add(ids) == 1 { gate.wait() }
+            if asked.add(ids) == 1 { _ = gate.wait(timeout: .now() + 10) }
             return envelope
         }
         let first = Task { await store.refresh(["a"]) }
