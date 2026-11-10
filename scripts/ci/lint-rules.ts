@@ -245,6 +245,32 @@ const SSR_REACHABLE =
  */
 export const BARE_REQUIRE_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
+/** The retired v3 config facade and its projection, by module specifier (a relative or an aliased path). */
+const RETIRED_AI_CONFIG_MODULE = /["'](?:[^"']*\/)?(?:AIConfig|store-bridge|v3-adapter)(?:\.ts)?["']/;
+
+/**
+ * Files that still import the retired AIConfig facade or its projection (store-bridge, v3-adapter), 2026-11-10:
+ * only the three modules themselves and their four test files, which C23 deletes. Every consumer moved to
+ * AiConfigStore and account-ops. A ratchet: no file joins, and the list empties with the deletion.
+ */
+export const AI_CONFIG_IMPORT_RATCHET: ReadonlySet<string> = new Set<string>([
+    "src/utils/ai/AIConfig.ts",
+    "src/utils/ai/config/store-bridge.ts",
+    "src/utils/ai/__tests__/AIConfig.characterization.test.ts",
+    "src/utils/ai/__tests__/AIConfig.test.ts",
+    "src/utils/ai/config/store-bridge.test.ts",
+    "src/utils/ai/config/v3-adapter.test.ts",
+]);
+
+/** An import, a re-export or a dynamic `import()` of the retired AIConfig facade or its projection. */
+export function importsRetiredAiConfig(text: string, node: SgNode): boolean {
+    if (node.kind() === "call_expression" && node.field("function")?.text() !== "import") {
+        return false;
+    }
+
+    return RETIRED_AI_CONFIG_MODULE.test(text);
+}
+
 // ─── The ratchet rules of 2026-10-25 (❓ DECISION 22 b) ────────────────────────────────────────────────────────────────
 // no-transcript-format-outside-readers, no-hand-built-claude-home, no-hand-built-codex-grok-home,
 // no-model-id-literal-outside-catalog, no-model-price-table, no-effort-vocabulary-list, no-harness-name-branch,
@@ -785,6 +811,27 @@ const RULES: Rule[] = [
         onlyIn: /(?:^|\/)src\/utils\//,
         allowedIn: /\.test\.tsx?$|(?:^|\/)src\/utils\/test\//,
         allowedFiles: BARE_REQUIRE_RATCHET,
+    },
+    {
+        name: "no-aiconfig-import",
+        severity: "error",
+        kinds: ["import_statement", "export_statement", "call_expression"],
+        matcher: {
+            rule: {
+                any: [
+                    { kind: "import_statement" },
+                    { kind: "export_statement", has: { kind: "string" } },
+                    { kind: "call_expression", has: { field: "function", regex: "^import$" } },
+                ],
+            },
+        },
+        message:
+            "The AIConfig facade and its v3 projection (store-bridge, v3-adapter) are retired. Read accounts and " +
+            "defaults through AiConfigStore (@genesiscz/utils/ai/config/AiConfigStore), find an account by its id, and " +
+            "write through account-ops (addAccount, editAccount, patchAccount, storeRefreshedTokens). Resolve a secret " +
+            "with resolveSecret at the place it is spent (.claude/rules/ai.md).",
+        test: importsRetiredAiConfig,
+        allowedFiles: AI_CONFIG_IMPORT_RATCHET,
     },
     {
         name: "no-pricing-steps-outside-priced-usage",

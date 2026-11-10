@@ -16,6 +16,7 @@ import {
 } from "./agent-context-ratchet";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import {
+    AI_CONFIG_IMPORT_RATCHET,
     BARE_REQUIRE_RATCHET,
     changedFiles,
     checkSource,
@@ -1185,6 +1186,49 @@ describe("no-bare-require-in-utils", () => {
             });
 
             if (calls.length === 0) {
+                stale.push(file);
+            }
+        }
+
+        expect(stale).toEqual([]);
+    });
+});
+
+describe("no-aiconfig-import", () => {
+    const rule = "no-aiconfig-import";
+
+    test("flags a static, a type-only, a re-exported and a dynamic import of the retired facade and its projection", () => {
+        expect(rules('import { AIConfig } from "@genesiscz/utils/ai/AIConfig";', "src/x/a.ts")).toContain(rule);
+        expect(rules('import type { AIConfig } from "../AIConfig";', "src/utils/ai/x.ts")).toContain(rule);
+        expect(rules('export { AIConfig } from "./AIConfig";', "src/utils/ai/index.ts")).toContain(rule);
+        expect(rules('const m = await import("@genesiscz/utils/ai/AIConfig.ts");', "src/x/a.ts")).toContain(rule);
+        expect(rules('import { projectToV3 } from "./config/store-bridge";', "src/utils/ai/x.ts")).toContain(rule);
+        expect(rules('import { toV3Account } from "./v3-adapter";', "src/utils/ai/config/x.ts")).toContain(rule);
+    });
+
+    test("passes the store, account-ops and the v3 type names that outlive the facade", () => {
+        expect(
+            rules('import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";', "src/x/a.ts")
+        ).not.toContain(rule);
+        expect(
+            rules('import { patchAccount } from "@genesiscz/utils/ai/config/account-ops";', "src/x/a.ts")
+        ).not.toContain(rule);
+        expect(
+            rules('import type { AIConfigData } from "@genesiscz/utils/config/ai.types";', "src/x/a.ts")
+        ).not.toContain(rule);
+        expect(rules('const m = await import("./AiConfigStore");', "src/x/a.ts")).not.toContain(rule);
+    });
+
+    test("every ratchet entry still imports a retired module, so a deleted file leaves the list", async () => {
+        const stale: string[] = [];
+
+        // Checked under another path: the listed path itself is exempt from the rule.
+        for (const file of AI_CONFIG_IMPORT_RATCHET) {
+            const source = await Bun.file(file)
+                .text()
+                .catch(() => "");
+
+            if (!rules(source, "src/ratchet-probe.ts").includes(rule)) {
                 stale.push(file);
             }
         }
