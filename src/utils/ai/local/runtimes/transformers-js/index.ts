@@ -266,7 +266,7 @@ async function promptForHfToken(model: string): Promise<string | null> {
         return null;
     }
 
-    const p = await import("@clack/prompts");
+    const p = await import("@genesiscz/utils/prompts/p");
     const pc = (await import("picocolors")).default;
     const HF_TOKEN_URL = "https://huggingface.co/settings/tokens/new?tokenType=fineGrained";
 
@@ -282,6 +282,7 @@ async function promptForHfToken(model: string): Promise<string | null> {
     const openBrowser = await p.confirm({
         message: "Open HuggingFace token page in browser?",
         initialValue: true,
+        cancel: "back",
     });
 
     if (!p.isCancel(openBrowser) && openBrowser) {
@@ -301,6 +302,7 @@ async function promptForHfToken(model: string): Promise<string | null> {
                 return "HuggingFace tokens start with hf_";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(token)) {
