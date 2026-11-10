@@ -1,7 +1,3 @@
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-
-setupStorageSandbox();
-
 import { describe, expect, it } from "bun:test";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { stopSession } from "@app/task/lib/stop-session";

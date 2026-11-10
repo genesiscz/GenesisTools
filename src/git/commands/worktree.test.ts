@@ -5,9 +5,6 @@ import * as realClack from "@clack/prompts";
 import { type RepoConfig, repoConfigPaths, writeLocalRepoConfig } from "@genesiscz/utils/git";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-
-setupStorageSandbox();
 
 const CANCEL = Symbol("cancel");
 const answers: unknown[] = [];

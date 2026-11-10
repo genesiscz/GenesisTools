@@ -1,7 +1,3 @@
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-
-setupStorageSandbox();
-
 import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
