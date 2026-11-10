@@ -674,6 +674,7 @@ Properties:
 - `isPaused: Bool`: true during system sleep, quiet hours, a snooze, or while a muted app is in front.
 - `sleepingUntil: Date?`: when a snooze ends, or nil.
 - `hasInputPermission: Bool`: whether Input Monitoring is allowed.
+- `inputPermissionPane: PermissionKind?`: the System Settings pane that lists the key-press grant, nil while it is missing. It is `.accessibility` when the app is trusted for Accessibility, which lets it read key presses with no Input Monitoring row.
 - `statistics: ClickyStatistics`: the current statistics (read-only).
 - `statisticsLoadError: String?`: set when the saved history could not be decoded. Collection is then paused until the history is restored or reset.
 - `analytics: ClickyAnalyticsStore`: the store that the statistics views read.
@@ -698,7 +699,7 @@ Methods:
 - `func resetStatistics()`: starts a new history. If the old history was unreadable, a numbered recovery copy of it stays in the defaults.
 - `func setActivationNotifications(_ enabled: Bool)`: sets `preferences.notifications` and asks for permission if it was never requested.
 - `func requestNotifications()`, `func performNotificationAction() async` and `func refreshNotificationPermission() async`: ask for notification permission or open its System Settings page, and read the current permission.
-- `func openInputSettings()`: shows the permission dialog while Input Monitoring is missing, and opens its System Settings pane once it is allowed.
+- `func openInputSettings()`: shows the permission dialog while Input Monitoring is missing, and opens the System Settings pane that lists the grant (`inputPermissionPane`) once it is allowed.
 - `func excludeApplication()`: opens a panel to pick an app from `/Applications` and adds its bundle id to `preferences.excludedApplications`.
 
 ```swift
@@ -929,6 +930,7 @@ ScrollView {
 The protocol for the source of key events. The model uses the system listen-only event tap by default. Pass another conformance to `ClickyModel(inputMonitor:)` in tests and previews. All requirements are main-actor, and none has a default implementation.
 
 - `var hasPermission: Bool { get }`: whether Input Monitoring is allowed. Asking for it is the permission dialog's job, not this type's.
+- `var grantPane: PermissionKind? { get }`: the System Settings pane that lists the grant: `.accessibility` when Accessibility allows the key presses, `.inputMonitoring` otherwise, nil while it is missing.
 - `func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult`: starts delivering events to `handler`.
 - `func reenable()`: turns a running tap back on after macOS disabled it for a slow callback.
 - `func stop()`: stops delivering events.

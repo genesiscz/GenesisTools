@@ -59,9 +59,14 @@ final class ClickyTests: XCTestCase {
         var stops = 0
         var reenables = 0
         var handler: (@MainActor (CGEventType, CGEvent) -> Void)?
+        var throughAccessibility = false
         var hasPermission: Bool {
             permissionChecks += 1
             return granted
+        }
+        var grantPane: PermissionKind? {
+            guard hasPermission else { return nil }
+            return throughAccessibility ? .accessibility : .inputMonitoring
         }
 
         func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult {
@@ -813,6 +818,25 @@ final class ClickyTests: XCTestCase {
         monitor.lastNeed?.onGranted?()
         XCTAssertFalse(model.enabled, "the grant alone does not start key feedback; enabling it is the user's choice")
         XCTAssertEqual(monitor.starts, 0)
+    }
+
+    @MainActor
+    func testTheGrantNamesThePaneThatListsIt() {
+        let monitor = InputMonitorStub()
+        let (model, defaults, suite) = monitorFixture(monitor)
+        defer {
+            model.shutdown()
+            disposeIntegrationDefaults(defaults, suite: suite)
+        }
+        XCTAssertNil(model.inputPermissionPane)
+        XCTAssertEqual(ClickyModel.inputPermissionTitle(nil), "Input Monitoring is required")
+        monitor.granted = true
+        XCTAssertEqual(model.inputPermissionPane, .inputMonitoring)
+        XCTAssertEqual(ClickyModel.inputPermissionTitle(.inputMonitoring), "Input Monitoring is allowed")
+        // Accessibility lets the tap read keys with no Input Monitoring row, so the note points there.
+        monitor.throughAccessibility = true
+        XCTAssertEqual(model.inputPermissionPane, .accessibility)
+        XCTAssertEqual(ClickyModel.inputPermissionTitle(.accessibility), "Key presses are allowed through Accessibility")
     }
 
     @MainActor

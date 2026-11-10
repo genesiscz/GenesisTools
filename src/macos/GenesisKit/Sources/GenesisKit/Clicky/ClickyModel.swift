@@ -165,6 +165,17 @@ public final class ClickyModel: ObservableObject {
     }
 
     public var hasInputPermission: Bool { inputMonitor.hasPermission }
+    /// The System Settings pane that lists the key-press grant: Accessibility when that is what allows it.
+    public var inputPermissionPane: PermissionKind? { inputMonitor.grantPane }
+
+    /// Names the pane that lists the grant: Accessibility allows key presses too, and then Input Monitoring has no row.
+    public static func inputPermissionTitle(_ pane: PermissionKind?) -> String {
+        switch pane {
+        case nil: return "Input Monitoring is required"
+        case .accessibility: return "Key presses are allowed through Accessibility"
+        case .some(let pane): return "\(pane.title) is allowed"
+        }
+    }
 
     /// Whether key counts are recorded now, and if not, the first reason to fix.
     public var recordingStatus: ClickyRecordingStatus {
@@ -434,10 +445,11 @@ public final class ClickyModel: ObservableObject {
         }
     }
 
-    /// The permission dialog while Input Monitoring is missing; its System Settings pane once it is allowed.
+    /// The permission dialog while Input Monitoring is missing; the System Settings pane that lists the grant once it
+    /// is allowed.
     public func openInputSettings() {
-        if inputMonitor.hasPermission {
-            PermissionAccess.live.openSettings(.inputMonitoring)
+        if let pane = inputMonitor.grantPane {
+            PermissionAccess.live.openSettings(pane)
         } else {
             presentPermission(inputMonitoringNeed(activatesWhenGranted: false))
         }
