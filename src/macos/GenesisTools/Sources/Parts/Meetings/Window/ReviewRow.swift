@@ -296,6 +296,7 @@ private struct ChoiceButton: View {
     let action: () -> Void
 
     var body: some View {
+        // lint-rules-ignore: short list (a row's two to four answer choices; LiveButton reads the review row's liveness)
         LiveButton(tooltip: choice.hint ?? tooltip, enabled: enabled, pressable: true, action: action) {
             HStack(spacing: 5) {
                 if let number {

@@ -506,6 +506,7 @@ struct SidePanelRowView: View {
                 control
                     .disabled(!enabled)
                 if let playTone, let sound = SidePanelCatalog.sound(row.value, for: row) {
+                    // lint-rules-ignore: short list (the panel's settings rows, about thirty; only the tone row has it)
                     IconButton(systemName: "play.circle", tooltip: "Play the tone", size: 13) { playTone(sound) }
                         .accessibilityIdentifier("meetings.sidePanel.playTone")
                 }

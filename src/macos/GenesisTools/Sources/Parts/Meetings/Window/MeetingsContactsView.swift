@@ -366,6 +366,8 @@ struct ContactsPersonRow: View {
         .padding(.horizontal, 16)
         .frame(minHeight: 48)
         .contentShape(Rectangle())
+        // Up to 500 people: the actions menu and its tooltip exist only on the row under the pointer.
+        .liveRow()
         .background(hovering ? Color.primary.opacity(0.04) : .clear)
         .onHover { hovering = $0 }
         .contextMenu { actions }
