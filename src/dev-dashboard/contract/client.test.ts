@@ -105,37 +105,6 @@ describe("createDashboardClient", () => {
         expect(calls[3]?.body).toContain('"name":"x"');
     });
 
-    it("qa.subscribe forwards only QA entries from the multiplexed stream", () => {
-        const urls: string[] = [];
-        const source: EventSourceLike = { close: () => {}, onmessage: null, onopen: null, onerror: null };
-        const factory = (url: string): EventSourceLike => {
-            urls.push(url);
-
-            return source;
-        };
-        const fetchImpl = (async () => new Response("{}", { status: 200 })) as unknown as typeof fetch;
-        const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl, eventSourceFactory: factory });
-
-        const received: string[] = [];
-        const statuses: string[] = [];
-        const sub = client.qa.subscribe((entry) => received.push((entry as unknown as { id: string }).id), {
-            onOpen: () => statuses.push("open"),
-            onError: () => statuses.push("error"),
-        });
-
-        expect(urls[0]).toContain("/api/qa/stream");
-        source.onopen?.({});
-        source.onmessage?.({ data: '{"type":"qa","id":"tagged"}' });
-        source.onmessage?.({ data: '{"type":"pending","id":"form"}' });
-        source.onmessage?.({ data: '{"type":"handoff","id":"handoff"}' });
-        source.onmessage?.({ data: '{"type":"future-frame","id":"future"}' });
-        source.onmessage?.({ data: '{"id":"legacy"}' });
-        source.onerror?.(new Error("down"));
-        expect(received).toEqual(["tagged", "legacy"]);
-        expect(statuses).toEqual(["open", "error"]);
-        sub.close();
-    });
-
     it("live.subscribe opens one stream, forwards data frames and keeps the latest channel set across a reconnect", async () => {
         const urls: string[] = [];
         const source: EventSourceLike = { close: () => {}, onmessage: null, onopen: null, onerror: null };

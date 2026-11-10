@@ -2,7 +2,6 @@ import type {
     AttachTmuxResult,
     ClassifiedLogEntry,
     DashboardSendTarget,
-    EnrichedQaEntry,
     KillPortResult,
     PortsResult,
     ProcessSort,
@@ -37,7 +36,7 @@ import type {
     TtydListRes,
     WeatherRes,
 } from "@app/dev-dashboard/contract/endpoints";
-import { paths, QA_STREAM_PATH } from "@app/dev-dashboard/contract/endpoints";
+import { paths } from "@app/dev-dashboard/contract/endpoints";
 import type { LiveChannel, LiveDataFrame, LiveFrame, LiveSubscribeBody } from "@app/dev-dashboard/contract/live";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -86,12 +85,8 @@ export interface DashboardClientOptions {
     fetch: FetchLike;
     /** Returns the Authorization header value (e.g. "Basic …"), or undefined. */
     authHeader?: () => string | undefined;
-    /** Injected EventSource factory for the QA SSE stream (transport pick lives in the consumer). */
+    /** Injected EventSource factory for the live and build-log streams (transport pick lives in the consumer). */
     eventSourceFactory?: (url: string) => EventSourceLike;
-}
-
-export interface QaSubscription {
-    close(): void;
 }
 
 export interface BuildLogSubscription {
@@ -254,40 +249,6 @@ export function createDashboardClient(opts: DashboardClientOptions) {
             log: (q?: Parameters<typeof paths.qaLog>[0]) => get<QaLogRes>(paths.qaLog(q)),
             read: (ids: string[], unread = false) =>
                 post<{ ok: boolean; updated: number }>(paths.qaRead(), { ids, unread }),
-            subscribe: (
-                onEntry: (entry: EnrichedQaEntry) => void,
-                callbacks: { onOpen?: () => void; onError?: (error: unknown) => void } = {}
-            ): QaSubscription => {
-                if (!opts.eventSourceFactory) {
-                    throw new Error("eventSourceFactory required to subscribe to the QA stream");
-                }
-
-                const source = opts.eventSourceFactory(`${baseUrl}${QA_STREAM_PATH}`);
-                source.onopen = callbacks.onOpen ?? null;
-                source.onerror = callbacks.onError ?? null;
-                source.onmessage = (ev) => {
-                    try {
-                        const frame = SafeJSON.parse(ev.data, { strict: true }) as {
-                            type?: string;
-                        } & EnrichedQaEntry;
-
-                        // The stream also carries pending forms, handoffs, and may gain more frame
-                        // kinds. Only a tagged QA frame belongs in this callback. Untagged rows stay
-                        // supported for older agents that emitted the QA entry directly.
-                        if (frame.type !== undefined && frame.type !== "qa") {
-                            return;
-                        }
-
-                        const { type: _type, ...entry } = frame;
-                        onEntry(entry as EnrichedQaEntry);
-                    } catch {
-                        // A malformed data frame is non-actionable client-side and must not kill the
-                        // stream; keep-alive comment frames never reach onmessage. Skip and continue.
-                    }
-                };
-
-                return { close: () => source.close() };
-            },
         },
         live: {
             /**

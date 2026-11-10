@@ -228,7 +228,7 @@ describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
         expect(await t.reachable()).toBe(false);
     });
 
-    it("adapts encrypted relay SSE into the real client QA subscription", async () => {
+    it("adapts encrypted relay SSE into the real client live subscription", async () => {
         const agent = naclBoxCipher.keyPair();
         const device = naclBoxCipher.keyPair();
         let streamOptions: Parameters<NonNullable<Parameters<typeof createE2eTransport>[0]["streamSseImpl"]>>[0] | undefined;
@@ -248,13 +248,13 @@ describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
             },
         });
         const received: string[] = [];
-        const subscription = transport
-            .client()
-            .qa.subscribe((entry) => received.push((entry as unknown as { id: string }).id));
+        const subscription = transport.client().live.subscribe(["qa"], {
+            onFrame: (frame) => received.push((frame.payload as unknown as { id: string }).id),
+        });
         await Promise.resolve();
 
         const nonce = naclBoxCipher.randomNonce();
-        const plaintext = new TextEncoder().encode('{"type":"qa","id":"encrypted-row"}');
+        const plaintext = new TextEncoder().encode('{"v":1,"channel":"qa","type":"entry","payload":{"id":"encrypted-row"}}');
         const ciphertext = naclBoxCipher.seal({
             plaintext,
             nonce,
@@ -269,7 +269,7 @@ describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
         });
 
         streamOptions?.onEvent({ data: encryptedFrame });
-        streamOptions?.onEvent({ data: '{"type":"qa","id":"plaintext-leak"}' });
+        streamOptions?.onEvent({ data: '{"v":1,"channel":"qa","type":"entry","payload":{"id":"plaintext-leak"}}' });
         expect(received).toEqual(["encrypted-row"]);
 
         subscription.close();
