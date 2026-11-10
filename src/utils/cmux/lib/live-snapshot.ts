@@ -1,6 +1,6 @@
 import { type CmuxRunResult, type CmuxTimeoutOpt, runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { type CmuxHealthState, CmuxUnresponsiveError, ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
-import { type CmuxTree, type CmuxTreeRead, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
+import { type CmuxTreeRead, type ParsedCmuxTree, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -190,7 +190,7 @@ interface SnapshotDeps {
      */
     allWindows?: boolean;
     /** A tree the caller already read (`tree.ts` reads it first, as its gate); the snapshot then reads none. */
-    tree?: CmuxTree;
+    tree?: ParsedCmuxTree;
 }
 
 const SECRET_LINE_PATTERNS: RegExp[] = [

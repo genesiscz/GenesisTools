@@ -10,6 +10,8 @@ import {
     focusableRunning,
     readRunning,
     runningRowDisplay,
+    unknownRunningError,
+    warnUnknownRunning,
 } from "@genesiscz/utils/agent-sessions/select-resume";
 import {
     buildResumeTableOpts,
@@ -272,7 +274,8 @@ export type ClaudeResumeChoice =
  * marked live, and Enter on it focuses that tab: on 2026-11-03 a bare `--resume` showed "mac-bottleneck" like any
  * other row while it ran, and picking it opened a second process on the session. `running` is the scan
  * `focusableRunning` already narrowed to other tabs; a running session of this folder is offered even when the
- * listing's limit cut it off, because focusing it is the answer.
+ * listing's limit cut it off, because focusing it is the answer. `runningUnknown` says cmux did not answer: a lone
+ * candidate is then refused rather than resumed without asking, and the picker warns that it marks nothing.
  */
 export async function chooseClaudeResumeSession({
     candidates,
@@ -281,6 +284,7 @@ export async function chooseClaudeResumeSession({
     allProjects = false,
     cwd = process.cwd(),
     running = [],
+    runningUnknown = null,
     pick = tableSelect,
 }: {
     candidates: DisplaySession[];
@@ -289,6 +293,8 @@ export async function chooseClaudeResumeSession({
     allProjects?: boolean;
     cwd?: string;
     running?: RunningCmuxSession[];
+    /** Why it is unknown which sessions run (cmux did not answer), or null when the scan answered. */
+    runningUnknown?: string | null;
     /** The table picker. Only tests replace it. */
     pick?: <T>(opts: TableSelectOptions<T>) => Promise<T | null>;
 }): Promise<ClaudeResumeChoice> {
@@ -302,6 +308,10 @@ export async function chooseClaudeResumeSession({
     }
 
     if (candidates.length === 1 && offered.length === 0) {
+        if (runningUnknown) {
+            throw unknownRunningError("Claude", runningUnknown);
+        }
+
         const s = candidates[0];
         p.log.info(
             `${pc.bold(s.name)} ${pc.dim(s.sessionId.slice(0, 8))} ${pc.magenta(s.branch)} ${s.project ? pc.blue(displayProjectName(s)) : ""}`
@@ -317,6 +327,10 @@ export async function chooseClaudeResumeSession({
     }
 
     const message = "Select session to resume:";
+
+    if (runningUnknown) {
+        warnUnknownRunning(runningUnknown);
+    }
 
     if (offered.length === 0) {
         const result = await pick(buildSessionTableOpts(candidates, { message, query }));
@@ -504,13 +518,15 @@ export async function pickSessionForResume(
         throw error;
     }
 
+    const scan = await runningScan;
     const choice = await chooseClaudeResumeSession({
         candidates,
         query,
         interactive,
         allProjects: opts.allProjects,
         cwd: opts.cwd ?? process.cwd(),
-        running: focusableRunning((await runningScan) ?? []),
+        running: focusableRunning(scan?.sessions ?? []),
+        runningUnknown: scan?.unknown ?? null,
     });
 
     if (choice.action === "focus") {
