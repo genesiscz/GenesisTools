@@ -9,8 +9,8 @@ import {
     extractEmail,
     extractPlanType,
     readCodexAuthJson,
+    WHAM_BASE_URL,
 } from "../../../openai/codex-auth";
-import { OpenAISubResolver } from "../../../resolvers/OpenAISubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverCodexHomes } from "./discover";
@@ -22,12 +22,11 @@ import { codexUsage } from "./usage";
 /**
  * Codex (ChatGPT plan) subscription over the WHAM endpoint.
  *
- * Wraps the existing resolver: its per-request token resolution keeps a
- * long-running process following the Codex CLI's refreshes, which is exactly the
- * behaviour that must not change while storage moves under it.
+ * `bind` makes no network request: it neither lists models (the catalog answers
+ * "is this model known", and the picker asks `listModels`) nor reads a token. The
+ * token is read for each request, so a long-running process follows the Codex
+ * CLI's refreshes.
  */
-const resolver = new OpenAISubResolver();
-
 /**
  * The two plan-wide window slots the Codex app-server reports. Per-model pools
  * (`primary:codex_bengalfox`) follow in the order the account lists them.
@@ -52,13 +51,43 @@ export const openAiSubPlugin: ProviderPlugin = {
     },
 
     async bind(ctx: BindContext): Promise<ProviderBinding> {
-        const detected = await resolver.resolve(ctx.account.id, { noRefresh: ctx.probe });
+        const { CodexAccountBinding } = await import("../../../openai/account-binding");
+        const binding = await CodexAccountBinding.create(ctx.account.id, { allowRefresh: !ctx.probe });
+
+        // A diagnosis reads the stored tokens once, without a refresh, so `account test` still
+        // reports a dead credential. Real use reads them per request, where a refresh may run.
+        if (ctx.probe) {
+            await binding.tokens();
+        }
+
+        const { createOpenAI } = await import("@ai-sdk/openai");
+        const { fetchWhamResponse } = await import("../../../openai/wham-request");
+        // Per-request token resolve so a long-running process follows CLI /
+        // account refreshes instead of serving the token from bind time.
+        // WHAM requires SSE even for SDK doGenerate calls. The transport restores
+        // the requested response mode after applying the backend's request dialect.
+        const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+            signal?.throwIfAborted();
+            const fresh = await binding.tokens();
+            signal?.throwIfAborted();
+            const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+            headers.set("Authorization", `Bearer ${fresh.accessToken}`);
+            headers.set("ChatGPT-Account-Id", fresh.chatgptAccountId);
+
+            return fetchWhamResponse({ input, init: { ...init, headers }, ...(ctx.fetch ? { fetch: ctx.fetch } : {}) });
+        };
+        const provider = createOpenAI({
+            apiKey: "codex-sub-placeholder",
+            baseURL: WHAM_BASE_URL,
+            fetch: freshTokenFetch as typeof fetch,
+        });
 
         return {
             accountId: ctx.account.id,
             providerId: "openai-sub",
             billed: false,
-            language: (modelId: string) => getLanguageModel(detected.provider, modelId, "openai-sub"),
+            language: (modelId: string) => getLanguageModel(provider, modelId, "openai-sub"),
         };
     },
 
@@ -69,11 +98,18 @@ export const openAiSubPlugin: ProviderPlugin = {
      */
     async health(ctx: BindContext) {
         try {
-            await resolver.resolve(ctx.account.id, { noRefresh: true });
+            const { CodexAccountBinding } = await import("../../../openai/account-binding");
+            const binding = await CodexAccountBinding.create(ctx.account.id, { allowRefresh: false });
+            await binding.tokens();
             return { ok: true, detail: "codex subscription token resolved" };
         } catch (err) {
             return { ok: false, detail: err instanceof Error ? err.message : String(err) };
         }
+    },
+
+    async listModels(ctx: BindContext) {
+        const { listOpenAiSubModels } = await import("./models");
+        return listOpenAiSubModels(ctx.account);
     },
 
     accounts: {

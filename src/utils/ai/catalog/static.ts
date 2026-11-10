@@ -1,7 +1,7 @@
 import { GROK_STATIC_CATALOG } from "../grok/models-static";
-import { OPENAI_SUB_STATIC_CATALOG } from "../openai/sub-models-static";
+import { OPENAI_SUB_STATIC_CATALOG, type WhamModelRecord } from "../openai/sub-models-static";
 import type { Capability } from "../providers/capabilities";
-import type { CatalogEntry, ModelFamily, ModelPricing, PricingRule } from "./types";
+import type { CatalogEntry, CatalogSource, ModelFamily, ModelPricing, PricingRule } from "./types";
 
 /**
  * The hand-curated model list, for every provider.
@@ -514,17 +514,24 @@ const XAI_ENTRIES: CatalogEntry[] = XAI_IDS.map((id) => ({
  * (its records also carry visibility and modality fields this generic view has
  * no home for). Copying the seven ids here meant a refresh via
  * `fetchWhamModels()` updated one list and silently left this one behind.
+ *
+ * The openai-sub plugin's live model list maps its WHAM records through the same
+ * function, so the picker's live list and the catalog cannot describe one model twice.
  */
-const OPENAI_SUB_ENTRIES: CatalogEntry[] = OPENAI_SUB_STATIC_CATALOG.map((entry) => ({
-    id: entry.slug,
-    displayName: entry.displayName,
-    contextWindow: entry.contextWindow,
-    provider: "openai-sub",
-    capabilities: CHAT,
-    // ai-proxy advertises every WHAM record with `supportsTools: true`.
-    flags: { tools: true },
-    source: "static" as const,
-}));
+export function openAiSubCatalogEntry(record: WhamModelRecord, source: CatalogSource = "static"): CatalogEntry {
+    return {
+        id: record.slug,
+        displayName: record.displayName,
+        contextWindow: record.contextWindow,
+        provider: "openai-sub",
+        capabilities: CHAT,
+        // ai-proxy advertises every WHAM record with `supportsTools: true`.
+        flags: { tools: true },
+        source,
+    };
+}
+
+const OPENAI_SUB_ENTRIES: CatalogEntry[] = OPENAI_SUB_STATIC_CATALOG.map((record) => openAiSubCatalogEntry(record));
 
 /**
  * The API-key providers whose model facts used to live in ask's `KNOWN_MODELS`.

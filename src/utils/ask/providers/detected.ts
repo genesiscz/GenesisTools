@@ -2,8 +2,10 @@ import { byId } from "@genesiscz/utils/ai/catalog";
 import { discoverModels } from "@genesiscz/utils/ai/catalog/discover";
 import { catalogKeysFor, providerNameFor } from "@genesiscz/utils/ai/catalog/keys";
 import { pricingFor } from "@genesiscz/utils/ai/catalog/pricing";
+import type { CatalogEntry } from "@genesiscz/utils/ai/catalog/types";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { ResolvedBinding, ResolvedModel } from "@genesiscz/utils/ai/core/types";
-import type { ProviderBinding } from "@genesiscz/utils/ai/providers/plugin-types";
+import type { ProviderBinding, ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { toModelInfo } from "@genesiscz/utils/ai/resolvers/resolve-models";
 import type { AiSdkProvider, DetectedProvider, ModelInfo, ProviderChoice, ProviderConfig } from "../types";
 import { getProviderConfig } from "./compat";
@@ -67,30 +69,47 @@ function sdkFace(binding: ProviderBinding): AiSdkProvider {
     } as AiSdkProvider;
 }
 
+/** Chat entries as `ModelInfo`, priced through the catalog ladder and sorted by name; empty when none chats. */
+async function pricedChatModels(entries: CatalogEntry[], name: string): Promise<ModelInfo[]> {
+    const chat = entries.filter((entry) => entry.capabilities.has("chat") && !entry.flags?.hidden);
+    const models = await Promise.all(
+        chat.map(async (entry) => {
+            const info = toModelInfo(entry);
+            return { ...info, provider: name, pricing: (await pricingFor(name, entry.id)) ?? info.pricing };
+        })
+    );
+
+    models.sort((a, b) => a.name.localeCompare(b.name));
+    return models;
+}
+
 /** The chat models the catalog lists for a plugin, priced through the catalog ladder. */
 export async function modelsForProvider(pluginId: string): Promise<ModelInfo[]> {
     const name = providerNameFor(pluginId);
 
     for (const key of catalogKeysFor(pluginId)) {
-        const discovered = await discoverModels(key);
-        const entries = discovered.filter((entry) => entry.capabilities.has("chat") && !entry.flags?.hidden);
+        const models = await pricedChatModels(await discoverModels(key), name);
 
-        if (entries.length === 0) {
-            continue;
+        if (models.length > 0) {
+            return models;
         }
-
-        const models = await Promise.all(
-            entries.map(async (entry) => {
-                const info = toModelInfo(entry);
-                return { ...info, provider: name, pricing: (await pricingFor(name, entry.id)) ?? info.pricing };
-            })
-        );
-
-        models.sort((a, b) => a.name.localeCompare(b.name));
-        return models;
     }
 
     return [];
+}
+
+/**
+ * The chat models a picker offers for one account: the plugin's own live list when it has
+ * one (`listModels`), else the catalog's list for the plugin. `bind` never lists models, so
+ * this is the one place a picker pays for a live listing.
+ */
+export async function modelsForAccount(plugin: ProviderPlugin, account: AccountEntry): Promise<ModelInfo[]> {
+    if (!plugin.listModels) {
+        return modelsForProvider(account.provider);
+    }
+
+    const models = await pricedChatModels(await plugin.listModels({ account }), providerNameFor(account.provider));
+    return models.length > 0 ? models : modelsForProvider(account.provider);
 }
 
 /** A resolved model as `ModelInfo`, whether or not the catalog lists it. */
