@@ -20,6 +20,7 @@ import { userInfo } from "node:os";
 import { basename } from "node:path";
 import { libSystem } from "@genesiscz/utils/fs/native/libsystem";
 import { logger } from "@genesiscz/utils/logger";
+import { capture, captureSync } from "./capture";
 import { ownLineage } from "./cwd";
 import {
     listChildPids,
@@ -35,7 +36,7 @@ import {
 } from "./libproc-table";
 import { type LinuxProcess, listProcProcesses, readProcEnviron, readProcExe, readProcProcess } from "./linux-proc";
 import { darwinKernel, processPlatform } from "./os";
-import { captureSync, parseCpuTime } from "./ps";
+import { batchPsInfo, listPsTable, PS_COLUMNS_SPEC, type PsRow, parseCpuTime, parsePsLine } from "./ps";
 import { type CimProcess, listCimProcesses } from "./windows-cim";
 
 /** Every `ps` fallback gets a deadline: a blocked `ps` would otherwise stall the caller's thread for good. */
@@ -172,28 +173,67 @@ function fromCim(process: CimProcess, commands: boolean): ProcessEntry {
  * each kept line is the text after the pid.
  */
 function psLinesFor(pids: number[], columns: string, owners: number[] = []): Map<number, string> {
-    const lines = new Map<number, string>();
-
     if (pids.length === 0) {
-        return lines;
+        return new Map();
     }
 
-    const wanted = new Set(pids);
-    // `ps -u` takes login names; a uid with none (or the -2 that `nobody` is to `ps`) fails the whole call.
-    const users = owners.map((uid) => userName(uid));
-    const select =
-        pids.length === 1
-            ? ["-p", String(pids[0])]
-            : owners.length > 0 && !owners.includes(ownUid()) && users.every((name) => name !== null)
-              ? ["-u", users.join(",")]
-              : ["-A"];
+    const select = psSelect(pids, owners);
     let result = captureSync("ps", ["-o", columns, ...select], { timeoutMs: PS_DEADLINE_MS });
 
     if (select[0] === "-u" && result.status !== 0) {
         result = captureSync("ps", ["-o", columns, "-A"], { timeoutMs: PS_DEADLINE_MS });
     }
 
-    for (const line of result.stdout.split("\n")) {
+    return psLinesOf(result.stdout, pids);
+}
+
+/** {@link psLinesFor} without blocking the event loop, for a caller with a render loop or a server. */
+async function psLinesForAsync(
+    pids: number[],
+    columns: string,
+    owners: number[],
+    timeoutMs: number
+): Promise<Map<number, string>> {
+    if (pids.length === 0) {
+        return new Map();
+    }
+
+    const select = psSelect(pids, owners);
+
+    try {
+        let result = await capture("ps", ["-o", columns, ...select], { timeoutMs });
+
+        if (select[0] === "-u" && result.status !== 0 && !result.timedOut) {
+            result = await capture("ps", ["-o", columns, "-A"], { timeoutMs });
+        }
+
+        return psLinesOf(result.stdout, pids);
+    } catch (error) {
+        logger.warn({ error }, "ps could not be spawned; the rows the kernel withholds keep what the kernel read");
+        return new Map();
+    }
+}
+
+/** The `ps` selection for {@link psLinesFor}: `-p` for one pid, `-u` for other users only, else `-A`. */
+function psSelect(pids: number[], owners: number[]): string[] {
+    // `ps -u` takes login names; a uid with none (or the -2 that `nobody` is to `ps`) fails the whole call.
+    const users = owners.map((uid) => userName(uid));
+
+    if (pids.length === 1) {
+        return ["-p", String(pids[0])];
+    }
+
+    return owners.length > 0 && !owners.includes(ownUid()) && users.every((name) => name !== null)
+        ? ["-u", users.join(",")]
+        : ["-A"];
+}
+
+/** The lines of `stdout` whose pid is one of `pids`, each as the text after its pid. */
+function psLinesOf(stdout: string, pids: number[]): Map<number, string> {
+    const wanted = new Set(pids);
+    const lines = new Map<number, string>();
+
+    for (const line of stdout.split("\n")) {
         const match = line.match(/^\s*(\d+)\s+(.*)$/);
 
         if (match && wanted.has(Number(match[1]))) {
@@ -1031,6 +1071,103 @@ export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}):
     });
 }
 
+/**
+ * A row as `ps -o pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command=` prints it ({@link PsRow}), built from what the
+ * kernel, `/proc` or CIM answered. The start time keeps whole seconds, as `lstart` prints it, so a row read now and a
+ * table read earlier agree on it; `rss` is in kilobytes.
+ */
+function psRowOf(entry: ProcessWithUsage): PsRow {
+    return {
+        pid: entry.pid,
+        ppid: entry.ppid,
+        user: entry.uid === null ? "" : (userName(entry.uid) ?? String(entry.uid)),
+        stat: entry.usage?.running ? "R" : entry.state,
+        cpu: entry.cpuPercent ?? 0,
+        rss: Math.round((entry.usage?.rssBytes ?? 0) / 1024),
+        startTime: entry.startMs === null ? null : new Date(Math.floor(entry.startMs / 1000) * 1000),
+        command: entry.zombie ? zombieCommand(entry) : (entry.command ?? entry.name),
+    };
+}
+
+/**
+ * What `ps -o command=` prints for a zombie: `<defunct>` on macOS, `[comm] <defunct>` on Linux. A caller that matches
+ * a command line (peer delivery looks for `claude`) must not take a dead process for a live one.
+ */
+function zombieCommand(entry: ProcessWithUsage): string {
+    return processPlatform() === "darwin" ? "<defunct>" : `[${entry.name}] <defunct>`;
+}
+
+/** What only the setuid `ps` reads on macOS: another user's command line, CPU and memory. A zombie has none. */
+function withheld(entry: ProcessWithUsage): boolean {
+    return !entry.zombie && (entry.command === null || entry.usage === null);
+}
+
+/** The owners of `entries`, for `ps -u`; empty when one is unknown, which makes {@link psSelect} list every user. */
+function ownersOf(entries: ProcessWithUsage[]): number[] {
+    const uids = entries.flatMap((entry) => (entry.uid === null ? [] : [entry.uid]));
+    return uids.length === entries.length ? [...new Set(uids)] : [];
+}
+
+/** A kernel-side reader answers here (libproc, `/proc`, CIM); elsewhere `ps` answers everything, as it always did. */
+function kernelAnswers(): boolean {
+    const platform = processPlatform();
+    return platform === "linux" || platform === "win32" || darwinKernel();
+}
+
+/** A withheld entry's `ps` line as a row, or the kernel's own row when `ps` printed none for it. */
+function rowWith(entry: ProcessWithUsage, line: string | undefined): PsRow {
+    return (line === undefined ? null : parsePsLine(`${entry.pid} ${line}`)) ?? psRowOf(entry);
+}
+
+/**
+ * The rows `ps -p <pids> -o pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command=` printed, keyed by pid. The kernel
+ * answers for this user's processes (`/proc` and CIM for everyone's), so they cost no spawn; ONE `ps` reads the rows
+ * the kernel withholds (another user's command line and usage). Where no kernel reader works, one `ps` per batch of
+ * pids, as before. A pid that is gone is absent.
+ */
+export function readProcessRows(pids: number[]): Map<number, PsRow> {
+    if (pids.length === 0) {
+        return new Map();
+    }
+
+    if (!kernelAnswers()) {
+        return batchPsInfo(pids);
+    }
+
+    const entries = readProcessesWithUsage(pids, { cpuPercent: true });
+    const asked = entries.filter(withheld);
+    const lines = psLinesFor(
+        asked.map((entry) => entry.pid),
+        PS_COLUMNS_SPEC,
+        ownersOf(asked)
+    );
+
+    return new Map(entries.map((entry) => [entry.pid, rowWith(entry, lines.get(entry.pid))]));
+}
+
+/**
+ * Every process as `ps -axo pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command=` printed it: the kernel table for
+ * this user's processes, and ONE `ps` (bounded by `timeoutMs`) for the rows the kernel withholds. Where no kernel
+ * reader works, the one whole-table `ps`, as before. Empty when that `ps` cannot be reached (logged).
+ */
+export async function listProcessRows(options: { timeoutMs?: number } = {}): Promise<PsRow[]> {
+    if (!kernelAnswers()) {
+        return listPsTable(options);
+    }
+
+    // `ps -ax` has no row for the kernel (pid 0).
+    const entries = listProcessesWithUsage({ cpuPercent: true }).filter((entry) => entry.pid > 0);
+    const asked = entries.filter(withheld);
+    const lines = await psLinesForAsync(
+        asked.map((entry) => entry.pid),
+        PS_COLUMNS_SPEC,
+        ownersOf(asked),
+        options.timeoutMs ?? PS_DEADLINE_MS
+    );
+
+    return entries.map((entry) => rowWith(entry, lines.get(entry.pid)));
+}
+
 const userNames = new Map<number, string | null>();
 
 /** The login name of `uid`, as `ps -o user=` prints it; null when the system has none (Windows, an unknown uid). */
@@ -1088,3 +1225,19 @@ export function parsePasswd(body: string): Map<number, string> {
 }
 
 export { formatLstart, systemTimeZone } from "./process-basics";
+/**
+ * The `ps` and `lsof` helpers callers still need, reached through this module so that `ps.ts` stays private to the
+ * process folder (lint rule `no-process-tool-spawn`). The batch readers among them have no kernel reader yet.
+ */
+export {
+    batchCommandWithEnvironment,
+    batchExecutables,
+    batchOpenFileCounts,
+    collectProcessTree,
+    PS_BATCH_SIZE,
+    PS_COLUMNS_SPEC,
+    type PsListRow,
+    type PsRow,
+    parseCpuTime,
+    processBasename,
+} from "./ps";

@@ -5,7 +5,7 @@ import { StringDecoder } from "node:string_decoder";
 import { setTimeout as delay } from "node:timers/promises";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
-import { listPsRows } from "@genesiscz/utils/process/ps";
+import { listProcessRows } from "@genesiscz/utils/process/processes";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const log = logger.child({ component: "hub:dev-monitor" });
@@ -90,15 +90,21 @@ export function classifyProfileLine(
     };
 }
 
+/** A process a profile line names. */
+export interface NamedProcess {
+    pid: number;
+    command: string;
+}
+
 /** One process snapshot for a polling pass, only when a qualifying timer names a PID. */
 export async function classifyProfileLines({
     lines,
     options = DEFAULT_CLASSIFY,
-    readProcesses = listPsRows,
+    readProcesses = listProcessRows,
 }: {
     lines: string[];
     options?: ClassifyOptions;
-    readProcesses?: typeof listPsRows;
+    readProcesses?: (options?: { timeoutMs?: number }) => Promise<NamedProcess[]>;
 }): Promise<DevEvent[]> {
     const eligible = lines.filter((line) => classifyProfileLine(line, options) !== null);
 

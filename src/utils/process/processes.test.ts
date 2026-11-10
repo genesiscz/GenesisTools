@@ -16,9 +16,11 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
 import { skip } from "@genesiscz/utils/test/skip";
+import * as captureModule from "./capture";
 import * as kernel from "./libproc-table";
 import * as linux from "./linux-proc";
 import {
+    type LinuxProcess,
     listProcProcesses,
     parseNulList,
     parseProcNetTcp,
@@ -40,6 +42,7 @@ import {
     formatLstart,
     listProcesses,
     listProcessesWithUsage,
+    listProcessRows,
     parseFallbackPsTable,
     parsePasswd,
     processesOnTty,
@@ -50,11 +53,12 @@ import {
     readProcessEnvironment,
     readProcessEnvKeys,
     readProcessesWithUsage,
+    readProcessRows,
     readProcessUsages,
     signalProcessTree,
     userName,
 } from "./processes";
-import * as ps from "./ps";
+import { batchPsInfo, PS_COLUMNS_SPEC, parsePsLine } from "./ps";
 import {
     canReadSockets,
     listEstablishedTcp,
@@ -233,7 +237,7 @@ describe("bounded process hydration", () => {
 
     test("Windows shares one CIM query and does none for an empty request", () => {
         const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
-        const capture = spyOn(ps, "captureSync").mockReturnValue({
+        const capture = spyOn(captureModule, "captureSync").mockReturnValue({
             stdout: '[{"ProcessId":42,"Name":"node.exe","WorkingSetSize":4096},{"ProcessId":99,"Name":"unrelated.exe"}]',
             stderr: "",
             status: 0,
@@ -294,7 +298,7 @@ describe("review round 5", () => {
 
     test("Windows matches an image name without regard to case, as tasklist's lowercased answers did", () => {
         const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
-        const capture = spyOn(ps, "captureSync").mockReturnValue({
+        const capture = spyOn(captureModule, "captureSync").mockReturnValue({
             stdout: '[{"ProcessId":42,"ParentProcessId":4,"Name":"Opera.exe"},{"ProcessId":43,"ParentProcessId":4,"Name":"notepad.exe"}]',
             stderr: "",
             status: 0,
@@ -314,7 +318,7 @@ describe("review round 5", () => {
     test("every ps fallback carries a deadline, so a blocked ps cannot stall its caller for good", () => {
         const platform = spyOn(os, "processPlatform").mockReturnValue("darwin");
         const kernelOff = spyOn(os, "darwinKernel").mockReturnValue(false);
-        const capture = spyOn(ps, "captureSync").mockReturnValue({ stdout: "", stderr: "", status: 0 });
+        const capture = spyOn(captureModule, "captureSync").mockReturnValue({ stdout: "", stderr: "", status: 0 });
 
         try {
             listProcesses();
@@ -577,7 +581,7 @@ describe("windows CIM and netstat parsers", () => {
 describe("socket scan availability", () => {
     test("Windows failures and timeouts stay unknown, while a successful empty scan is empty", () => {
         const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
-        const capture = spyOn(ps, "captureSync");
+        const capture = spyOn(captureModule, "captureSync");
         try {
             for (const result of [
                 { stdout: "", stderr: "failed", status: 1 },
@@ -609,7 +613,7 @@ describe("socket scan availability", () => {
 
     test("lsof is bounded and distinguishes failure from no matches", () => {
         const platform = spyOn(os, "processPlatform").mockReturnValue("other");
-        const capture = spyOn(ps, "captureSync");
+        const capture = spyOn(captureModule, "captureSync");
         try {
             capture.mockReturnValue({ stdout: "", stderr: "", status: null, timedOut: true });
             expect(scanSockets()).toBeNull();
@@ -920,9 +924,9 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
     test.skipIf(process.platform !== "darwin")(
         "cost: a ps -u that refuses a user falls back to the whole table, so other users keep their usage and names",
         () => {
-            const real = ps.captureSync;
+            const real = captureModule.captureSync;
             const asked: string[][] = [];
-            const capture = spyOn(ps, "captureSync").mockImplementation((command, args, options) => {
+            const capture = spyOn(captureModule, "captureSync").mockImplementation((command, args, options) => {
                 asked.push([command, ...args]);
                 return args.includes("-u")
                     ? { stdout: "", stderr: "ps: No user named 'someone'\n", status: 1 }
@@ -1188,7 +1192,7 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
     });
 
     test("a listed name is the listing's own name where a per-row read would spawn a process", () => {
-        const capture = spyOn(ps, "captureSync");
+        const capture = spyOn(captureModule, "captureSync");
         const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
         const kernelOn = spyOn(os, "darwinKernel").mockReturnValue(false);
 
@@ -1389,4 +1393,276 @@ describe("readProcessEnvKeys falls back rather than inventing an account", () =>
         const environment = () => ({ SOMETHING_ELSE: "1", TMUX_PANE: "" });
         expect(readProcessEnvKeys(4242, ["TOOLS_CLAUDE_ACCOUNT", "TMUX_PANE"], environment)).toEqual({});
     });
+});
+
+/**
+ * The rows `ps -o pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command=` printed, which the task stop, the hub stop,
+ * the services stop, peer delivery and the gate read through `readProcessRows` and `listProcessRows` (C49). One
+ * contract, run against every adapter: the macOS kernel live, a Linux `/proc` fixture, and `ps` output fixtures where
+ * no kernel reader works. The stops compare a table row with a later `readProcessRows` row before they signal, so
+ * the two readers must agree on start time and command line.
+ */
+describe("the ps rows contract on every adapter", () => {
+    interface Adapter {
+        name: string;
+        /** Processes the adapter knows. */
+        pids: () => number[];
+        /** A pid it does not know. */
+        gone: number;
+        /** Arranges the adapter and returns its restore. */
+        install: () => () => void;
+    }
+
+    const linuxTable: LinuxProcess[] = [
+        {
+            pid: 4242,
+            ppid: 1,
+            pgid: 4242,
+            uid: 1000,
+            comm: "node",
+            argv: ["node", "server.js", "--port", "3000"],
+            state: "S",
+            tty: null,
+            startMs: 1_760_000_000_250,
+            cpuTimeMs: 50,
+            rssBytes: 4096 * 1024,
+            threads: 2,
+        },
+        {
+            pid: 4243,
+            ppid: 4242,
+            pgid: 4242,
+            uid: 1000,
+            comm: "esbuild",
+            argv: ["/opt/esbuild dir/esbuild", "--service"],
+            state: "R",
+            tty: "pts/2",
+            startMs: 1_760_000_100_999,
+            cpuTimeMs: 10,
+            rssBytes: 2048 * 1024,
+            threads: 1,
+        },
+    ];
+
+    const psTable = [
+        "    1     0 root             Ss     0.0  14096 Tue Oct 13 15:32:57 2026     /sbin/launchd",
+        " 4242     1 alice            S      1.5 123456 Tue Oct 13 15:40:01 2026     node server.js --port 3000",
+        " 4243  4242 alice            R+    12.0  65432 Tue Oct 13 15:41:02 2026     /opt/esbuild dir/esbuild --service",
+    ];
+
+    /** `ps -p a,b -o …` prints only the asked rows; `ps -axo …` prints them all. */
+    function psOutput(args: string[]): string {
+        const asked = args.indexOf("-p");
+        const wanted = asked === -1 ? null : new Set(args[asked + 1].split(",").map(Number));
+        return psTable.filter((line) => wanted === null || wanted.has(Number(line.trim().split(/\s+/)[0]))).join("\n");
+    }
+
+    const adapters: Adapter[] = [
+        {
+            name: "the Linux /proc fixture",
+            pids: () => [4242, 4243],
+            gone: 4299,
+            install: () => {
+                const spies = [
+                    spyOn(os, "processPlatform").mockReturnValue("linux"),
+                    spyOn(linux, "listProcProcesses").mockReturnValue(linuxTable),
+                    spyOn(linux, "readProcProcess").mockImplementation(
+                        (pid) => linuxTable.find((entry) => entry.pid === pid) ?? null
+                    ),
+                ];
+                return () => {
+                    for (const spy of spies) {
+                        spy.mockRestore();
+                    }
+                };
+            },
+        },
+        {
+            name: "ps output fixtures (no kernel reader)",
+            pids: () => [1, 4242, 4243],
+            gone: 4299,
+            install: () => {
+                const spies = [
+                    spyOn(os, "processPlatform").mockReturnValue("darwin"),
+                    spyOn(os, "darwinKernel").mockReturnValue(false),
+                    spyOn(captureModule, "captureSync").mockImplementation((command, args) =>
+                        command === "ps"
+                            ? { stdout: psOutput(args), stderr: "", status: 0 }
+                            : { stdout: "", stderr: "unexpected program", status: 1 }
+                    ),
+                    spyOn(captureModule, "capture").mockImplementation(async (command, args) =>
+                        command === "ps"
+                            ? { stdout: psOutput(args), stderr: "", status: 0 }
+                            : { stdout: "", stderr: "unexpected program", status: 1 }
+                    ),
+                ];
+                return () => {
+                    for (const spy of spies) {
+                        spy.mockRestore();
+                    }
+                };
+            },
+        },
+        ...(process.platform === "darwin"
+            ? [
+                  {
+                      name: "the macOS kernel, live",
+                      pids: () => [process.pid, process.ppid],
+                      gone: 99_999_999,
+                      install: () => () => {},
+                  },
+              ]
+            : []),
+    ];
+
+    for (const adapter of adapters) {
+        describe(adapter.name, () => {
+            test("readProcessRows answers each known pid as ps printed it and leaves a gone pid out", () => {
+                const restore = adapter.install();
+
+                try {
+                    const rows = readProcessRows([...adapter.pids(), adapter.gone]);
+                    expect([...rows.keys()].sort((a, b) => a - b)).toEqual(adapter.pids().sort((a, b) => a - b));
+
+                    for (const [pid, row] of rows) {
+                        expect(row.pid).toBe(pid);
+                        expect(Number.isInteger(row.ppid) && row.ppid >= 0).toBe(true);
+                        expect(row.user.length).toBeGreaterThan(0);
+                        expect(row.stat.length).toBeGreaterThan(0);
+                        expect(Number.isFinite(row.cpu) && row.cpu >= 0).toBe(true);
+                        expect(Number.isInteger(row.rss) && row.rss >= 0).toBe(true);
+                        // `lstart` prints whole seconds; the stops compare start times read at two moments.
+                        expect(row.startTime === null || row.startTime.getMilliseconds() === 0).toBe(true);
+                        expect(row.command.length).toBeGreaterThan(0);
+                    }
+
+                    expect(readProcessRows([]).size).toBe(0);
+                } finally {
+                    restore();
+                }
+            });
+
+            test("listProcessRows holds every known pid, no pid 0, and agrees with readProcessRows", async () => {
+                const restore = adapter.install();
+
+                try {
+                    const table = await listProcessRows();
+                    const byPid = new Map(table.map((row) => [row.pid, row]));
+                    const rows = readProcessRows(adapter.pids());
+
+                    expect(byPid.has(0)).toBe(false);
+                    expect(byPid.has(adapter.gone)).toBe(false);
+
+                    for (const pid of adapter.pids()) {
+                        const listed = byPid.get(pid);
+                        const read = rows.get(pid);
+                        expect({ pid, listed: listed !== undefined, read: read !== undefined }).toEqual({
+                            pid,
+                            listed: true,
+                            read: true,
+                        });
+                        expect({
+                            ppid: listed?.ppid,
+                            startTime: listed?.startTime?.toISOString(),
+                            command: listed?.command,
+                        }).toEqual({
+                            ppid: read?.ppid,
+                            startTime: read?.startTime?.toISOString(),
+                            command: read?.command,
+                        });
+                    }
+                } finally {
+                    restore();
+                }
+            });
+        });
+    }
+
+    test("Linux rows carry the /proc fields in ps units: kilobytes, whole seconds, the argv joined", () => {
+        const restore = adapters[0].install();
+
+        try {
+            const row = readProcessRows([4243]).get(4243);
+            expect(row).toMatchObject({
+                pid: 4243,
+                ppid: 4242,
+                stat: "R",
+                rss: 2048,
+                startTime: new Date(1_760_000_100_000),
+                command: "/opt/esbuild dir/esbuild --service",
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("without a kernel reader the rows are the ps lines, one ps per batch as before", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("darwin");
+        const kernelOff = spyOn(os, "darwinKernel").mockReturnValue(false);
+        const capture = spyOn(captureModule, "captureSync").mockImplementation((_command, args) => ({
+            stdout: psOutput(args),
+            stderr: "",
+            status: 0,
+        }));
+
+        try {
+            const rows = readProcessRows([4243, 1]);
+            expect(rows.get(4243)).toEqual(parsePsLine(psTable[2]) ?? undefined);
+            expect(rows.get(1)?.command).toBe("/sbin/launchd");
+            expect(capture.mock.calls.map(([command, args]) => [command, args])).toEqual([
+                ["ps", ["-p", "4243,1", "-o", PS_COLUMNS_SPEC]],
+            ]);
+        } finally {
+            capture.mockRestore();
+            kernelOff.mockRestore();
+            platform.mockRestore();
+        }
+    });
+
+    /**
+     * The same start second, up to the time zone: `bun test` runs in UTC while the `ps` child prints local time, and
+     * the old reader parsed that local text in this process's zone. In a tool both are the local zone.
+     */
+    function sameLstartSecond(now: Date | null | undefined, was: Date | null | undefined): boolean {
+        return !!now && !!was && Math.abs(now.getTime() - was.getTime()) % (15 * 60_000) === 0;
+    }
+
+    test.skipIf(process.platform !== "darwin")(
+        "macOS: this user's rows cost no ps, and match the old batched ps reader field for field",
+        () => {
+            const pids = [process.pid, process.ppid];
+            expect(
+                spawnedPrograms(() => readProcessRows(pids)).filter((program) => PROCESS_TOOLS.test(program))
+            ).toEqual([]);
+
+            const read = readProcessRows(pids);
+            const old = batchPsInfo(pids);
+
+            // Not the state: this process runs while the kernel is read and sleeps while `ps` reads it.
+            for (const pid of pids) {
+                const now = read.get(pid);
+                const was = old.get(pid);
+                expect({ pid, ppid: now?.ppid, user: now?.user, command: now?.command }).toEqual({
+                    pid,
+                    ppid: was?.ppid,
+                    user: was?.user,
+                    command: was?.command,
+                });
+                expect(sameLstartSecond(now?.startTime, was?.startTime)).toBe(true);
+            }
+        }
+    );
+
+    test.skipIf(process.platform !== "darwin")(
+        "macOS: another user's row comes from one ps and matches the old reader",
+        () => {
+            const commands = spawnedCommands(() => readProcessRows([1]));
+            expect(commands.filter((argv) => PROCESS_TOOLS.test(argv[0] ?? ""))).toHaveLength(1);
+
+            const now = readProcessRows([1]).get(1);
+            const was = batchPsInfo([1]).get(1);
+            expect({ user: now?.user, command: now?.command }).toEqual({ user: was?.user, command: was?.command });
+            expect(sameLstartSecond(now?.startTime, was?.startTime)).toBe(true);
+        }
+    );
 });

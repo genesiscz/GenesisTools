@@ -1,7 +1,7 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { capture } from "@genesiscz/utils/process/capture";
 import { listProcesses } from "@genesiscz/utils/process/processes";
-import { capture } from "@genesiscz/utils/process/ps";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";

@@ -1,6 +1,6 @@
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { logger } from "@genesiscz/utils/logger";
-import { batchPsInfo, collectProcessTree, listPsTable, type PsRow } from "@genesiscz/utils/process/ps";
+import { collectProcessTree, listProcessRows, type PsRow, readProcessRows } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { processStartMs, START_MS_TOLERANCE } from "@genesiscz/utils/process-identity";
 
@@ -40,12 +40,12 @@ function identityOf(row: PsRow | undefined): Identity | null {
 }
 
 /**
- * Splits `pids` by one batched `ps` read right before a signal loop: `same` still run the process the
+ * Splits `pids` by one read of the process rows right before a signal loop: `same` still run the process the
  * snapshot saw (start time and command line), `unverified` are alive but cannot be proven to (a reused
  * pid, an exec, an unreadable start time). Gone pids are in neither. Only `same` is ever signalled.
  */
 function verify(pids: number[], snapshot: Map<number, Identity>): { same: number[]; unverified: number[] } {
-    const live = batchPsInfo(pids);
+    const live = readProcessRows(pids);
     const same: number[] = [];
     const unverified: number[] = [];
 
@@ -102,8 +102,8 @@ export function signalPids(
 }
 
 /**
- * Poll until every pid in `pids` is gone or `deadline` passes, one batched `ps`
- * call per poll tick (never one `ps` per pid). Bounded `await Bun.sleep`, never
+ * Poll until every pid in `pids` is gone or `deadline` passes, one read of the
+ * process rows per poll tick (never one `ps` per pid). Bounded `await Bun.sleep`, never
  * `sleepSync` — a stop command blocking the event loop would freeze its own
  * Ctrl+C handling right while it is trying to kill something.
  */
@@ -111,7 +111,7 @@ async function waitForPidsToExit(pids: number[], deadline: number): Promise<numb
     let remaining = pids;
 
     while (remaining.length > 0 && Date.now() < deadline) {
-        const alive = batchPsInfo(remaining);
+        const alive = readProcessRows(remaining);
         remaining = remaining.filter((pid) => alive.has(pid));
 
         if (remaining.length === 0) {
@@ -156,7 +156,7 @@ export async function stopSession(
         return { status: "no-pid" };
     }
 
-    const rows = await (opts.readTable ?? listPsTable)();
+    const rows = await (opts.readTable ?? listProcessRows)();
     const byPid = new Map(rows.map((row) => [row.pid, row]));
 
     // The root must still be the recorded task after the await above: the same start-time reader and
