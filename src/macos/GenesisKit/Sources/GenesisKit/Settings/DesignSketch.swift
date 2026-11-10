@@ -3,7 +3,8 @@ import Foundation
 /// A redesign shown as real views before anyone picks it (hub UX wave 2, 2026-11-10). Each area of the hub that is being
 /// redesigned asks `DesignSketch.option("<area>")` and draws option "a" or "b" instead of its current view when the run
 /// was started with `--sketch <area>=<a|b>`; `--sketch` may repeat for several areas. Without the flag every area draws
-/// its current view.
+/// its current view. The areas ask from their own sketch views, which land with each redesign's commits; until an area
+/// asks, a `--sketch` pair for it changes nothing.
 ///
 /// The choice lives in the command line of one run and nothing is stored, so a snapshot run
 /// (`GenesisTools --hub … --snapshot out.png --sketch prDetail=a`, or `--features --page … --sketch …`) never changes the

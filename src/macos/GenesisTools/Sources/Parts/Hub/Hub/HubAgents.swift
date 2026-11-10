@@ -62,6 +62,12 @@ struct AgentNode: Codable, Equatable, Identifiable, Sendable {
 
     /// This node or one below it is running.
     var anyRunning: Bool { isRunning || nested.contains(where: \.anyRunning) }
+
+    /// The statuses of an agent that ended for good. `idle` is a teammate waiting for work, so it is not one.
+    static let endedStatuses: Set<String> = ["completed", "failed", "killed"]
+
+    /// This node and every node below it ended (completed, failed or killed).
+    var isFinished: Bool { Self.endedStatuses.contains(status) && nested.allSatisfy(\.isFinished) }
 }
 
 struct AgentParent: Codable, Equatable, Identifiable, Sendable {
@@ -141,6 +147,22 @@ enum AgentTree {
 
     static func mainKey(_ parent: String) -> String {
         key(parent: parent, child: mainChild)
+    }
+
+    /// Splits a parent's children into the rows that stay in sight and the finished ones that fold into one row.
+    /// Only a finished agent folds, so an idle teammate stays live; `stays` also keeps a running, recently active or
+    /// open one in sight.
+    static func foldFinished(_ children: [AgentNode], stays: (AgentNode) -> Bool) -> (live: [AgentNode], finished: [AgentNode]) {
+        var live: [AgentNode] = []
+        var finished: [AgentNode] = []
+        for child in children {
+            if child.isFinished, !stays(child) {
+                finished.append(child)
+            } else {
+                live.append(child)
+            }
+        }
+        return (live, finished)
     }
 
     static func split(_ key: String) -> (parent: String?, child: String)? {
@@ -1195,7 +1217,7 @@ struct AgentsListView: View {
         case .all: return true
         case .active: return node.anyRunning || agents.isActive(parent: parent, child: node.id)
         case .idle: return node.status == "idle"
-        case .off: return ["completed", "failed", "killed"].contains(node.status)
+        case .off: return AgentNode.endedStatuses.contains(node.status)
         }
     }
 
@@ -1235,11 +1257,10 @@ struct AgentsListView: View {
             guard open else { continue }
             rows.append(.main(parent))
             let limit = expandedAll.contains(parent.sessionId) ? Int.max : Self.shownPerParent
-            // Finished sub-agents fold into one row under the running ones; the open agent always stays in sight.
-            // Under the Off filter every row is a finished one, so nothing folds there.
+            // Finished sub-agents fold into one row under the live ones (an idle teammate is live); the open agent
+            // always stays in sight. Under the Off filter every row is a finished one, so nothing folds there.
             let folds = foldFinished && status != .off
-            let live = folds ? children.filter { stays($0, parent: parent.sessionId) } : children
-            let finished = folds ? children.filter { !stays($0, parent: parent.sessionId) } : []
+            let (live, finished) = AgentTree.foldFinished(children) { !folds || stays($0, parent: parent.sessionId) }
             let finishedOpen = expandedFinished.contains(parent.sessionId)
             var shown = 0
             for child in live {

@@ -1693,4 +1693,24 @@ final class HubLogicTests: XCTestCase {
         XCTAssertEqual(AgentNode(id: "w1", harness: "codex", kind: "worker", status: "done", lastAt: "").transcriptQuery, "w1")
         XCTAssertEqual(AgentNode(id: "w2", harness: "grok", kind: "worker", status: "done", lastAt: "").transcriptQuery, "w2")
     }
+
+    /// Only an agent that ended folds into the "finished agent" row: an idle teammate waits for work, so it stays in
+    /// sight under the Idle and All filters (eve on #764, 2026-11-10).
+    func testOnlyEndedAgentsFoldIntoTheFinishedRow() {
+        func node(_ id: String, _ status: String, kind: String = "subagent", children: [AgentNode]? = nil) -> AgentNode {
+            AgentNode(id: id, harness: "claude", kind: kind, status: status, lastAt: "", children: children)
+        }
+        let children = [
+            node("done", "completed"),
+            node("broke", "failed"),
+            node("stopped", "killed"),
+            node("waiting", "idle", kind: "teammate"),
+            node("parent", "completed", children: [node("helper", "idle", kind: "teammate")]),
+            node("open", "completed"),
+        ]
+        let split = AgentTree.foldFinished(children) { $0.id == "open" }
+        XCTAssertEqual(split.live.map(\.id), ["waiting", "parent", "open"])
+        XCTAssertEqual(split.finished.map(\.id), ["done", "broke", "stopped"])
+        XCTAssertTrue(AgentTree.foldFinished(children) { _ in true }.finished.isEmpty, "the fold off keeps every row")
+    }
 }
