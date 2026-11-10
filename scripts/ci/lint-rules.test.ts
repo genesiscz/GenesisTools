@@ -1268,6 +1268,19 @@ describe("no-transcript-format-outside-readers", () => {
         expect(rules('const role = "assistant";', "src/ask/lib/x.ts")).not.toContain(rule);
     });
 
+    test("flags the Claude change parse's raw-line probes outside the readers, not a bare API block type", () => {
+        expect(rules("const MARKERS = ['\"promptId\"', '\"tool_use\"'];", "src/hub/lib/x.ts")).toContain(rule);
+        expect(rules("const marker = '\"file-history-';", "src/hub/lib/x.ts")).toContain(rule);
+        expect(rules('const probe = `"promptId":"${turn}"`;', "src/agents/lib/changes/x.ts")).toContain(rule);
+        expect(
+            rules("const MARKERS = ['\"promptId\"', '\"file-history-'];", "src/utils/agent-sessions/readers/claude.ts")
+        ).not.toContain(rule);
+        expect(rules('if (block.type === "tool_use") {}', "src/ask/lib/x.ts")).not.toContain(rule);
+        expect(
+            rules('switch (msg.type) { case "file-history-snapshot": break; }', "src/utils/agents/x.ts")
+        ).not.toContain(rule);
+    });
+
     test("every ratchet entry still names the transcript format, so a migrated file leaves the list", async () => {
         const stale: string[] = [];
 
