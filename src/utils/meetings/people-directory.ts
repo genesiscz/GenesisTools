@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
+import { meetingsPeopleCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig } from "./config";
 import { nameKey, type PersonRef } from "./people";
@@ -667,7 +668,7 @@ export class PeopleDirectory {
         if (!removed) {
             throw new PeopleError(
                 "unknown-merge",
-                `No merge has the token ${token}. See them: tools meetings people --json`
+                `No merge has the token ${token}. See them: ${meetingsPeopleCommand()} --json`
             );
         }
 
@@ -725,7 +726,10 @@ export class PeopleDirectory {
         const candidates = found.map((identity) => personOf(identity, {}));
 
         if (candidates.length === 0) {
-            throw new PeopleError("unknown-person", `Nobody known is "${ref}". Search: tools meetings people <text>`);
+            throw new PeopleError(
+                "unknown-person",
+                `Nobody known is "${ref}". Search: ${meetingsPeopleCommand()} <text>`
+            );
         }
 
         throw new PeopleError(
