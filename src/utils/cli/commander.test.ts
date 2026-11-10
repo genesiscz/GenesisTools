@@ -17,6 +17,7 @@ import {
     runTool,
 } from "./commander";
 import { acceptJsonEverywhere, suggestOnlySafeCommands } from "./commander-hints";
+import type { LazyRegistrar } from "./lazy-registrars";
 import { answerReadmeFlag, argvRequestsReadme } from "./readme-flag";
 
 const BOUNDARY_FIXTURE = join(import.meta.dir, "__fixtures__/run-tool-boundary.ts");
@@ -124,6 +125,63 @@ describe("runTool", () => {
         expect(res.tool).toBe("d2");
         expect(prog.helpInformation()).not.toContain("--trace");
         expect(prog.helpInformation()).toContain("tool's own");
+    });
+});
+
+describe("runTool registrars", () => {
+    function table(loaded: string[]): LazyRegistrar[] {
+        return ["alpha", "beta"].map((name) => ({
+            names: name === "beta" ? ["beta", "b2"] : [name],
+            load: async () => {
+                loaded.push(name);
+
+                return (program: Command) => {
+                    program
+                        .command(name)
+                        .alias(name === "beta" ? "b2" : `${name}-alias`)
+                        .requiredOption("--need <value>", "a required flag")
+                        .action(() => {});
+                };
+            },
+        }));
+    }
+
+    it("registers only the tree argv names, and gives it the help passes of an eager tree", async () => {
+        const loaded: string[] = [];
+        const prog = new Command().name("lazy").exitOverride();
+
+        await runTool(prog, { tool: "lazy", registrars: table(loaded) }, ["bun", "lazy", "beta", "--need", "x"]);
+
+        expect(loaded).toEqual(["beta"]);
+        const beta = prog.commands.find((command) => command.name() === "beta");
+        expect(beta?.helpInformation()).toContain("(required)");
+    });
+
+    it("reads the argv after rewriteArgs", async () => {
+        const loaded: string[] = [];
+        const prog = new Command().name("lazy").exitOverride();
+
+        await runTool(
+            prog,
+            {
+                tool: "lazy",
+                registrars: table(loaded),
+                rewriteArgs: (args) => (args[0] === "a" ? ["alpha", ...args.slice(1)] : args),
+            },
+            ["bun", "lazy", "a", "--need", "x"]
+        );
+
+        expect(loaded).toEqual(["alpha"]);
+    });
+
+    it("registers every tree for an unknown name, so commander can suggest one", async () => {
+        const loaded: string[] = [];
+        const prog = new Command().name("lazy").exitOverride();
+
+        await expect(
+            runTool(prog, { tool: "lazy", registrars: table(loaded) }, ["bun", "lazy", "nope"])
+        ).rejects.toThrow();
+        expect(loaded).toEqual(["alpha", "beta"]);
     });
 });
 
