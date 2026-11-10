@@ -53,6 +53,19 @@ function edgeNote(dynamic: number, typeOnly: number): string {
     return parts.join(", ");
 }
 
+/** A rule with no breaking edge is kept only when every file was read: an unreadable file can hold the import. */
+function ruleStatus(report: AreaReport, broken: number): string {
+    if (broken > 0) {
+        return pc.red(`${broken} area edge(s) break it`);
+    }
+
+    if (report.failed.length > 0) {
+        return pc.yellow(`not proven: ${report.failed.length} file(s) could not be read or parsed`);
+    }
+
+    return pc.green("kept");
+}
+
 function renderText(report: AreaReport, rules: ForbidRule[], limit: number): string[] {
     const lines: string[] = [];
     const scanned = report.scanned;
@@ -117,11 +130,7 @@ function renderText(report: AreaReport, rules: ForbidRule[], limit: number): str
         const broken = report.violations.filter((violation) => violation.rule === rule.text);
 
         lines.push("");
-        lines.push(
-            `${pc.bold(pc.underline(`Forbidden: ${rule.text}`))} ${
-                broken.length === 0 ? pc.green("kept") : pc.red(`${broken.length} area edge(s) break it`)
-            }`
-        );
+        lines.push(`${pc.bold(pc.underline(`Forbidden: ${rule.text}`))} ${ruleStatus(report, broken.length)}`);
 
         for (const violation of broken) {
             lines.push(`  ${pc.red(`${violation.from} -> ${violation.to}`)}  ${violation.count}`);
@@ -201,7 +210,11 @@ function renderMarkdown(report: AreaReport, rules: ForbidRule[], limit: number):
         blocks.push({ h2: `Forbidden: ${rule.text}` });
 
         if (broken.length === 0) {
-            blocks.push("Kept: no edge breaks it.");
+            blocks.push(
+                report.failed.length === 0
+                    ? "Kept: no edge breaks it."
+                    : `Not proven: no scanned edge breaks it, but ${report.failed.length} file(s) could not be read or parsed.`
+            );
             continue;
         }
 
@@ -245,6 +258,7 @@ function compactOf(report: AreaReport): unknown {
             v.dynamic,
             v.sites.map((s) => [s.file, s.line, s.specifier, s.target, s.dynamic]),
         ]),
+        failed: report.failed,
     };
 }
 
@@ -259,6 +273,7 @@ function toonOf(report: AreaReport): unknown {
         violationSites: report.violations.flatMap((violation) =>
             violation.sites.map((site) => ({ rule: violation.rule, from: violation.from, to: violation.to, ...site }))
         ),
+        failed: report.failed,
     };
 }
 
@@ -279,6 +294,13 @@ async function runAreasCommand(paths: string[], options: AreasCliOptions): Promi
 
     for (const input of index.empty) {
         logger.error({ input }, "No TypeScript source found");
+        process.exitCode = 1;
+    }
+
+    // A file that could not be read may hold the only forbidden import, so the scan is incomplete:
+    // exit 1, or a CI guard reads "kept" over files it never saw.
+    for (const { file, error } of index.failed) {
+        logger.error({ file, error }, "Could not read or parse a file, so the scan is incomplete");
         process.exitCode = 1;
     }
 
@@ -308,6 +330,10 @@ async function runAreasCommand(paths: string[], options: AreasCliOptions): Promi
             `${report.mutual.length} mutual pair(s) · ${report.scanned.outside} import site(s) leave the scanned paths · ` +
             `${report.scanned.unresolved} unresolved`
     );
+
+    if (report.failed.length > 0) {
+        ui.raw(`${pc.red("●")} ${report.failed.length} file(s) could not be read or parsed; the scan is incomplete`);
+    }
 
     if (report.violations.length > 0) {
         ui.raw(`${pc.red("●")} ${report.violations.length} area edge(s) break a --forbid rule`);

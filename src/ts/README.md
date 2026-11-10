@@ -183,7 +183,9 @@ the **cross-area edges** heaviest first, and one block per `--forbid` rule.
   `src/utils/ai` but not `src/utilsX`, and a trailing `/` changes nothing. An edge that stays inside `<from>` is
   exempt, so `"src/utils->src"` lists every utils area importing a tool, with each site's `file:line`. When `<to>` is
   itself inside `<from>` (`"src/utils->src/utils/ai"`), the rule forbids exactly those edges and only the edges
-  inside `<to>` are exempt. The command exits 1 when a rule is broken, so it can guard CI.
+  inside `<to>` are exempt. The command exits 1 when a rule is broken, so it can guard CI. It also exits 1 when a
+  scanned file could not be read or parsed: that file can hold the forbidden import, so the rule reads `not proven`
+  instead of `kept`, and `--json` lists the files under `failed`.
 
 | Flag | Effect |
 |------|--------|
@@ -489,8 +491,10 @@ inside `<dir>`.
 
 The second table is the point: a module or package whose self time is at least `--min-ms` (default 20) in two or more
 entries, with how many entries pay it, the summed and the largest ms, and which entries. A package is one row
-(`pkg:<name>`) however many of its files are imported. That table shows a dependency whose cost leaks across many
-tools; one fix to it pays back in each of them.
+(`pkg:<name>`) however many of its files are imported, and a source file is one row per absolute path, so two
+projects' `src/config.ts` stay apart. A module whose import never settled is left out of both tables: its time is
+the deadline, not a measurement. That table shows a dependency whose cost leaks across many tools; one fix to it
+pays back in each of them.
 
 Entries are measured one after another by default, because parallel measurements slow each other down and inflate
 every number; `--concurrency <n>` trades that accuracy for time. `--runs`, `--timeout`, `--walk-packages` and

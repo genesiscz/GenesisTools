@@ -2095,6 +2095,10 @@ describe("the import index, areas and depth", () => {
         writeFileSync(join(dir, "listed.ts"), listed(""));
         writeFileSync(join(dir, "listed-more.ts"), listed("close(): void {}"));
         writeFileSync(join(dir, "listed-private.ts"), listed("private hidden(): void {}"));
+        writeFileSync(
+            join(dir, "alias.ts"),
+            "export function helper() {\n    return 1;\n}\nexport { helper as alias };"
+        );
 
         const loaded = await loadFiles([dir]);
         const local = createAreaGrouping({ roots: [dir], cwd: dir });
@@ -2111,12 +2115,13 @@ describe("the import index, areas and depth", () => {
         expect(row("listed.ts")).toMatchObject({ exports: 4, reexports: 1, exportedFunctions: 1, thinExports: 1 });
         expect(row("listed-more.ts")?.interfaceChars).toBeGreaterThan(row("listed.ts")?.interfaceChars ?? 0);
         expect(row("listed-private.ts")?.interfaceChars).toBe(row("listed.ts")?.interfaceChars);
+        expect(row("alias.ts")).toMatchObject({ exports: 2, reexports: 0, exportedFunctions: 2, thinExports: 2 });
     });
 
     function result(
         entry: string,
         coldMs: number,
-        modules: Array<[string, NodeKind, number, string?]>,
+        modules: Array<[string, NodeKind, number, string?, string?]>,
         timedOut = false
     ): AnalysisResult {
         return {
@@ -2125,8 +2130,8 @@ describe("the import index, areas and depth", () => {
             runs: 1,
             coldMs,
             sumSelfMs: 0,
-            modules: modules.map(([label, kind, selfMs, importError]) => ({
-                id: label,
+            modules: modules.map(([label, kind, selfMs, importError, id]) => ({
+                id: id ?? label,
                 label,
                 kind,
                 selfMs,
@@ -2151,9 +2156,11 @@ describe("the import index, areas and depth", () => {
         expect(startupEntryFor(at("app/web/page.ts"))).toBe(at("app/web/page.ts"));
         expect(startupEntryFor(at("app/empty"))).toBeUndefined();
         expect(toolEntriesIn(at("app"))).toEqual([at("app/tool/index.ts")]);
-        expect(moduleKey({ kind: "package", label: "pkg:@napi-rs/canvas/js-binding.js" })).toBe("pkg:@napi-rs/canvas");
-        expect(moduleKey({ kind: "package", label: "pkg:zod" })).toBe("pkg:zod");
-        expect(moduleKey({ kind: "file", label: "src/a.ts" })).toBe("src/a.ts");
+        expect(
+            moduleKey({ id: "/p/node_modules/x.js", kind: "package", label: "pkg:@napi-rs/canvas/js-binding.js" })
+        ).toBe("pkg:@napi-rs/canvas");
+        expect(moduleKey({ id: "/p/node_modules/zod.js", kind: "package", label: "pkg:zod" })).toBe("pkg:zod");
+        expect(moduleKey({ id: "/p/src/a.ts", kind: "file", label: "src/a.ts" })).toBe("/p/src/a.ts");
 
         const report = summarizeStartup(
             [
@@ -2213,5 +2220,39 @@ describe("the import index, areas and depth", () => {
         expect(report.entries[0].error).toBe("import failed: missing.ts: Cannot find module './nope' (and 1 more)");
         expect(report.entries.find((entry) => entry.entry === "cli")?.error).toBeUndefined();
         expect(report.entries[1]).toMatchObject({ timedOut: true, coldMs: 0 });
+    });
+
+    it("leaves a hung import out of the self-time tables and keys a source file by its absolute path", () => {
+        const hang = "hang: never settled";
+        const report = summarizeStartup(
+            [
+                {
+                    entry: "a",
+                    result: result("a", 5100, [
+                        ["heavy.ts", "file", 5000, hang],
+                        ["src/config.ts", "file", 30, undefined, "/one/src/config.ts"],
+                        ["lib/shared.ts", "file", 25, undefined, "/shared/lib/shared.ts"],
+                    ]),
+                },
+                {
+                    entry: "b",
+                    result: result("b", 5100, [
+                        ["heavy.ts", "file", 5000, hang],
+                        ["src/config.ts", "file", 40, undefined, "/two/src/config.ts"],
+                        ["../shared/lib/shared.ts", "file", 35, undefined, "/shared/lib/shared.ts"],
+                    ]),
+                },
+            ],
+            { minMs: 20, top: 3, runs: 1 }
+        );
+
+        expect(report.entries.flatMap((entry) => entry.top.map((cost) => cost.module))).not.toContain("heavy.ts");
+        expect(report.entries.find((entry) => entry.entry === "a")?.top).toEqual([
+            { module: "src/config.ts", selfMs: 30 },
+            { module: "lib/shared.ts", selfMs: 25 },
+        ]);
+        expect(report.recurring).toEqual([
+            { module: "lib/shared.ts", entries: 2, totalMs: 60, maxMs: 35, paidBy: ["a", "b"] },
+        ]);
     });
 });

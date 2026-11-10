@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -1091,11 +1091,60 @@ describe("tools ts areas and depth, run in process", () => {
         expect(areas.stdout).toBe("");
     });
 
-    test("depth refuses an unknown --by unit", async () => {
-        const result = await run(registerDepthCommands, ["depth", "src", "--by", "tree"]);
+    test("depth answers an unknown or a bare --by with the units and a filled command, and exits 1", async () => {
+        const tty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true, writable: true });
 
-        expect(result.error).toBeDefined();
-        expect(result.stderr).toContain("Allowed choices are folder, file");
+        try {
+            const unknown = await run(registerDepthCommands, ["depth", "src", "--by", "tree"]);
+
+            expect(unknown.stderr).toContain('--by does not accept "tree". Possible: folder, file');
+            expect(unknown.stderr).toContain("depth src --by folder");
+            expect(unknown.stdout).toBe("");
+            expect(process.exitCode).toBe(1);
+
+            process.exitCode = originalExitCode;
+            const bare = await run(registerDepthCommands, ["depth", "src", "--by"]);
+
+            expect(bare.error).toBeUndefined();
+            expect(bare.stderr).toContain("--by requires a value. Possible: folder, file");
+            expect(bare.stdout).toBe("");
+            expect(process.exitCode).toBe(1);
+        } finally {
+            Object.defineProperty(
+                process.stdin,
+                "isTTY",
+                tty ?? { value: undefined, configurable: true, writable: true }
+            );
+        }
+    });
+
+    test("areas exits 1 and reads a rule as not proven when a scanned file could not be read", async () => {
+        put("partial/lib/ok.ts", "export const ok = 1;\n");
+        put("partial/app/page.ts", "export const page = 1;\n");
+        symlinkSync(join(dir, "partial/nowhere.ts"), join(dir, "partial/lib/dead.ts"));
+
+        const result = await run(registerAreasCommands, [
+            "areas",
+            "partial",
+            "--forbid",
+            "partial/lib->partial/app",
+            "--json",
+        ]);
+        const report = SafeJSON.parse(result.stdout) as {
+            scanned: { failed: number };
+            violations: unknown[];
+            failed: { file: string; error: string }[];
+        };
+        const text = await run(registerAreasCommands, ["areas", "partial", "--forbid", "partial/lib->partial/app"]);
+
+        expect(report.violations).toEqual([]);
+        expect(report.scanned.failed).toBe(1);
+        expect(report.failed).toEqual([expect.objectContaining({ file: "partial/lib/dead.ts" })]);
+        expect(result.stderr).toContain("1 file(s) could not be read or parsed; the scan is incomplete");
+        expect(stripAnsi(text.stdout)).toContain("Forbidden: partial/lib->partial/app not proven: 1 file(s)");
+        expect(stripAnsi(text.stdout)).not.toContain("kept");
+        expect(process.exitCode).toBe(1);
     });
 });
 
