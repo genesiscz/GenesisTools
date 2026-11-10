@@ -256,33 +256,43 @@ private struct NativeSettingsSidebar: View {
                 .padding(.horizontal, 12).padding(.bottom, 12)
             // The list scrolls under the header with a visible scroller and room after the last row, so the last
             // page is never hidden behind a footer (it was: "Providers" sat half cut above one in a 760 pt window).
-            ScrollView {
-                Group {
-                    if searching {
-                        NativeSettingsSearchResults(
-                            query: query, store: store, search: search, open: open,
-                            clear: {
-                                query = ""
-                                searchFocused = true
-                            })
-                    } else {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(store.sections) { section in
-                                VStack(alignment: .leading, spacing: 1) {
-                                    if !section.title.isEmpty {
-                                        Text(section.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(
-                                            .secondary
-                                        )
-                                        .padding(.horizontal, 10).padding(.bottom, 4)
+            // The selected row is scrolled into view when the window opens on a page, when a search or a link picks
+            // one, and when a search ends: opened on Daemon or Usage charts, the list showed its top and no row
+            // looked selected (hub UX C59). A nil anchor scrolls the least, so a click on a visible row moves nothing.
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Group {
+                        if searching {
+                            NativeSettingsSearchResults(
+                                query: query, store: store, search: search, open: open,
+                                clear: {
+                                    query = ""
+                                    searchFocused = true
+                                })
+                        } else {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(store.sections) { section in
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        if !section.title.isEmpty {
+                                            Text(section.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(
+                                                .secondary
+                                            )
+                                            .padding(.horizontal, 10).padding(.bottom, 4)
+                                        }
+                                        ForEach(section.pages) { page in navigationRow(page) }
                                     }
-                                    ForEach(section.pages) { page in navigationRow(page) }
                                 }
                             }
                         }
-                    }
-                }.padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 16)
+                    }.padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 16)
+                }
+                .scrollIndicators(.automatic)
+                .onAppear { revealSelection(proxy, animated: false) }
+                .onChange(of: store.selectedPageID) { _, _ in revealSelection(proxy, animated: true) }
+                .onChange(of: searching) { _, now in
+                    if !now { revealSelection(proxy, animated: false) }
+                }
             }
-            .scrollIndicators(.automatic)
         }.frame(width: 238)
             .titlebarBackground(Color.white.opacity(0.025))
             // The hidden pages are drawn for a moment when the field takes the keyboard or a search starts, usually
@@ -331,5 +341,20 @@ private struct NativeSettingsSidebar: View {
             }
             .accessibilityIdentifier("settings.page.\(page.id)")
             .accessibilityAddTraits(selected ? .isSelected : [])
+            .id(Self.rowID(page.id))
+    }
+
+    private static func rowID(_ pageID: String) -> String { "settings.sidebar.\(pageID)" }
+
+    /// Brings the selected page's row into view after the list has laid out. Searching shows no rows to scroll to.
+    private func revealSelection(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard let id = store.selectedPageID, !searching else { return }
+        DispatchQueue.main.async {
+            if animated, !(systemStill || appearance.reduceMotion) {
+                withAnimation(.easeInOut(duration: 0.18)) { proxy.scrollTo(Self.rowID(id)) }
+            } else {
+                proxy.scrollTo(Self.rowID(id))
+            }
+        }
     }
 }
