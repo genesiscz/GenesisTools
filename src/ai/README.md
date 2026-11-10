@@ -160,8 +160,10 @@ tools ai gate revoke <tool>                        # forget remembered "Always" 
   checkout the app was built from (a worktree build counts as its main checkout); the first argument after the script
   is the subcommand (no option before it) and `<tool> <subcommand>` is on the list; a process named `claude`, `codex`
   or `grok`, or a process of a listed app, is among the caller's parent processes (a `CLAUDE_CODE_SESSION_ID` in the
-  environment only names the session); and the only variable that loads extra code is `NODE_PATH` (Grok Bot, an
-  Electron app, sets it in every shell it opens). Anything else gets the window.
+  environment proves nothing); and the only variable that loads extra code is `NODE_PATH` (Grok Bot, an Electron app,
+  sets it in every shell it opens). Anything else gets the window.
+- The notification and the audit line's `detail` name the agent as the listed app, or the CLI's executable name and
+  pid (`codex (pid 80)`), never with an argument: a CLI's first argument can be the prompt.
 - Why: DECISION 57 c (2026-11-10). The command never prints the key; the window's job is to decide which program holds
   the key, and for these commands that decision is made once, here.
 

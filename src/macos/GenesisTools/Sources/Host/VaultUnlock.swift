@@ -787,10 +787,8 @@ func unlockVault(_ params: VaultUnlockParams) {
 
     // Before the remembered grants, so a listed command always leaves its audit line and notification.
     let autoAllow = VaultAutoAllowSettings.load()
-    if let match = VaultAutoAllow.match(caller: caller, session: session, settings: autoAllow,
-                                        trustedRoot: VaultAutoAllow.trustedRoot()) {
-        vaultAudit("auto-allowed", params: params, caller: caller, session: session,
-                   detail: "command: tools \(match.command); agent: \(match.agent)")
+    if let match = VaultAutoAllow.match(caller: caller, settings: autoAllow, trustedRoot: VaultAutoAllow.trustedRoot()) {
+        vaultAudit("auto-allowed", params: params, caller: caller, session: session, detail: match.auditDetail)
         logClick("vault.unlock decision=allow auto-allow command=\(match.command) agent=\(match.agent)")
         if autoAllow.notify { VaultAutoAllow.notify(match) }
         emitVaultKey(remembered: false, params: params, caller: caller, session: session)

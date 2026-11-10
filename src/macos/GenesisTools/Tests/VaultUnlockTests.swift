@@ -634,10 +634,9 @@ final class VaultUnlockTests: XCTestCase {
     }
 
     /// The fixture home: `/Users/alice/.genesis-tools/bin/gt-claude` is a launcher there, so the runtime is Bun.
-    private func match(_ caller: VaultCaller, session: VaultSessionInfo = VaultSessionInfo(),
-                       settings: VaultAutoAllowSettings = VaultAutoAllowSettings(),
+    private func match(_ caller: VaultCaller, settings: VaultAutoAllowSettings = VaultAutoAllowSettings(),
                        trustedRoot: String? = "/repo") -> VaultAutoAllowMatch? {
-        VaultAutoAllow.match(caller: caller, session: session, settings: settings, trustedRoot: trustedRoot, home: "/Users/alice")
+        VaultAutoAllow.match(caller: caller, settings: settings, trustedRoot: trustedRoot, home: "/Users/alice")
     }
 
     func testAListedCommandThatGrokBotStartsPassesDespiteItsNodePath() {
@@ -646,16 +645,15 @@ final class VaultUnlockTests: XCTestCase {
                        VaultAutoAllowMatch(command: "claude warmup", agent: "Grok Bot"))
     }
 
-    func testAClaudeCodeSessionCountsAsAnAgentWhenItsClaudeProcessIsAnAncestor() {
-        let session = VaultSessionInfo(sessionId: "1b4001ba-x", title: "fixes")
-        XCTAssertEqual(match(warmupCaller(subcommand: "usage", environment: [], ancestors: [(9, "zsh -c"), (8, "claude")]),
-                             session: session),
-                       VaultAutoAllowMatch(command: "claude usage", agent: "fixes (Claude Code)"))
+    func testAClaudeCodeProcessAmongTheAncestorsCountsAsAnAgent() {
+        XCTAssertEqual(match(warmupCaller(subcommand: "usage", environment: ["CLAUDE_CODE_SESSION_ID=1b4001ba-x"],
+                                          ancestors: [(9, "zsh -c"), (8, "claude")])),
+                       VaultAutoAllowMatch(command: "claude usage", agent: "claude (pid 8)"))
     }
 
     func testACodexOrGrokCliProcessCountsAsAnAgentWithNoSession() {
         XCTAssertEqual(match(warmupCaller(environment: [], ancestors: [(81, "zsh -lc"), (80, "codex exec"), (70, "zsh")])),
-                       VaultAutoAllowMatch(command: "claude warmup", agent: "codex exec (pid 80)"))
+                       VaultAutoAllowMatch(command: "claude warmup", agent: "codex (pid 80)"))
         XCTAssertEqual(match(warmupCaller(environment: [], ancestors: [(61, "bash"), (60, "grok")])),
                        VaultAutoAllowMatch(command: "claude warmup", agent: "grok (pid 60)"))
     }
@@ -669,13 +667,26 @@ final class VaultUnlockTests: XCTestCase {
         // started by a person in a terminal, not by an agent
         XCTAssertNil(match(warmupCaller(ancestors: [(5, "zsh"), (4, "Terminal")])))
         // a session id in the environment alone: any process can set CLAUDE_CODE_SESSION_ID
-        XCTAssertNil(match(warmupCaller(environment: [], ancestors: [(5, "zsh"), (4, "Terminal")]),
-                           session: VaultSessionInfo(sessionId: "1b4001ba-x", title: "fixes")))
+        XCTAssertNil(match(warmupCaller(environment: ["CLAUDE_CODE_SESSION_ID=1b4001ba-x"], ancestors: [(5, "zsh"), (4, "Terminal")])))
         // another code-loading variable besides NODE_PATH
         XCTAssertNil(match(warmupCaller(environment: ["NODE_PATH=/x", "DYLD_INSERT_LIBRARIES=/x.dylib"])))
         // switched off, or no known checkout
         XCTAssertNil(match(warmupCaller(), settings: .disabled))
         XCTAssertNil(match(warmupCaller(), trustedRoot: nil))
+    }
+
+    /// A process label is its name and first argument, and a CLI's first argument can be the prompt. The notification
+    /// and the audit detail carry the executable's name and pid only.
+    func testAnAncestorsArgumentNeverReachesTheNotificationOrTheAuditLine() throws {
+        let secret = "sk-ant-api03-SECRETPROMPT"
+        for (name, pid) in [("claude", 8), ("codex", 80), ("grok", 60)] {
+            let found = try XCTUnwrap(match(warmupCaller(environment: [], ancestors: [(9, "zsh -c"), (pid_t(pid), "\(name) \(secret)")])))
+            XCTAssertEqual(found.agent, "\(name) (pid \(pid))")
+            let text = VaultAutoAllow.notificationText(found)
+            for shown in [text.title, text.body, found.auditDetail] {
+                XCTAssertFalse(shown.contains("SECRETPROMPT"), shown)
+            }
+        }
     }
 
     /// The script path is only an argument: another program can pass it, with a listed subcommand, and run nothing of it.
