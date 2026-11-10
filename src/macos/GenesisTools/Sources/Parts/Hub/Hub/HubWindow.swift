@@ -350,6 +350,10 @@ package func runHub(_ args: [String]) -> Never {
         defer: false
     )
     window.title = "Agents"
+    // Hub UX wave 2 (`--sketch transcript=a`): the window's centred title pushes every title bar row into the right
+    // half of the window; the option's subject header needs the row from the sidebar's edge
+    // (Sketches/TranscriptSketchHubA.swift), so the title is not drawn. The window keeps its name for the system.
+    if DesignSketch.option("transcript") == "a" { window.titleVisibility = .hidden }
     window.titlebarAppearsTransparent = true
     window.appearance = NSAppearance(named: .darkAqua)
     window.backgroundColor = ReviewPalette.background
