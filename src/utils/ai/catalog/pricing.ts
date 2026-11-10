@@ -6,6 +6,7 @@ import {
 } from "@genesiscz/utils/ask/usage-tokens";
 import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
+import { withCacheRateDefaults } from "./cache-rates";
 import { perTokenToPer1M } from "./decimal";
 import { liteLLMPricingFetcher } from "./litellm";
 import { byId } from "./static";
@@ -177,7 +178,11 @@ async function fetchLiteLlmPricing(provider: string, modelId: string): Promise<M
  * the wrong vendor's rate for the route actually being paid.
  */
 function scopedStaticPricing(provider: string, modelId: string): ModelPricing | undefined {
-    return byId(modelId, SAME_VENDOR_CATALOG[provider] ?? provider)?.pricing;
+    return byId(modelId, vendorOf(provider))?.pricing;
+}
+
+function vendorOf(provider: string): string {
+    return SAME_VENDOR_CATALOG[provider] ?? provider;
 }
 
 /** Providers that serve another catalog provider's own models: the Grok subscription is xAI itself. */
@@ -200,10 +205,14 @@ export async function pricingFor(provider: string, modelId: string): Promise<Mod
     // synthesized `${provider}/${modelId}` billed a direct Anthropic call at
     // OpenRouter's resale rate — the exact inverse of the invariant
     // `scopedStaticPricing` exists to hold.
-    const resolved =
-        scopedStaticPricing(provider, modelId) ??
-        (await fetchLiteLlmPricing(provider, modelId)) ??
-        (provider === "openrouter" ? await fetchOpenRouterPricing(modelId) : undefined);
+    // A feed price gets the same provider-family cache default a static entry carries, so a feed that omits the
+    // cache rates does not bill those tokens at 0 where the spend reports bill them at the family rate.
+    const curated = scopedStaticPricing(provider, modelId);
+    const fed = curated
+        ? undefined
+        : ((await fetchLiteLlmPricing(provider, modelId)) ??
+          (provider === "openrouter" ? await fetchOpenRouterPricing(modelId) : undefined));
+    const resolved = curated ?? (fed ? withCacheRateDefaults(fed, vendorOf(provider)) : undefined);
 
     if (resolved) {
         cache.set(key, { pricing: resolved, at: Date.now() });

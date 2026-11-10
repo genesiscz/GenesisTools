@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { costForCall } from "@genesiscz/utils/ai/catalog/pricing";
+import { toLanguageModelUsage } from "@genesiscz/utils/ask/usage-tokens";
 import { type CostEstimate, type PriceUsageOptions, priceUsage, priceUsageAs, type UsageToPrice } from "./priced-usage";
 import type { CostMode } from "./reports/types";
 import type { TokenTotals } from "./types";
@@ -287,5 +289,31 @@ describe("priceUsageAs", () => {
             basis: "unpriced",
             price: null,
         });
+    });
+});
+
+describe("a missing cache rate prices alike in both families", () => {
+    // gpt-5.5 lists no cache-write rate. `tools ask` prices a call through `costForCall` (llm-cost), the spend
+    // reports through `priceUsage`; both must read the same provider-family default off the catalog entry.
+    test("one gpt-5.5 call with cache writes costs one number through costForCall and priceUsage", async () => {
+        const totals = tokens(1_000_000, 1_000_000, 0, 1_000_000);
+        const viaAsk = await costForCall(
+            "openai",
+            "gpt-5.5",
+            toLanguageModelUsage({
+                inputTokens: totals.input,
+                outputTokens: totals.output,
+                cachedInputTokens: totals.cacheRead,
+                cacheWriteTokens: totals.cacheWrite,
+            })
+        );
+        const viaSpend = priceUsage(
+            { source: "codex", model: "gpt-5.5", at: "2026-11-10T10:00:00Z", tokens: totals },
+            { candidates: ["gpt-5.5"] }
+        );
+
+        expect(viaSpend.costUSD).toBe(viaAsk);
+        // $5 input + $0.50 cached read + $5 cache write (OpenAI bills a write at the plain input rate).
+        expect(viaAsk).toBeCloseTo(10.5, 10);
     });
 });
