@@ -57,7 +57,8 @@ struct ItemsTab: View {
                     ForEach(shown) { row in
                         ReviewRowView(row: row, detail: detail, player: detail.window?.player, selected: detail.selectedRow == row.id,
                                       editing: detail.editingRow == row.id, busy: detail.busyItems.contains(row.id),
-                                      meanwhile: detail.decidedMeanwhile[row.id], choiceKeys: choiceKeys == "on")
+                                      meanwhile: detail.decidedMeanwhile[row.id], choiceKeys: choiceKeys == "on",
+                                      held: detail.heldFolds.contains(row.id))
                             // G33: a row this window just answered keeps its open height until the reader scrolls, so
                             // the next row does not move up under the eye.
                             .frame(minHeight: detail.heldFolds.contains(row.id) ? layout.heights[row.id] : nil, alignment: .top)

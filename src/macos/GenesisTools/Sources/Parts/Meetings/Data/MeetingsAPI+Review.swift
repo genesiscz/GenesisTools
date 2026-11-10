@@ -45,6 +45,8 @@ struct DecisionAction: Codable, Equatable, Hashable {
     var question: String?
     var answer: String?
     var comment: String?
+    /// answer: "leave" keeps the questions that look alike open ("Only this question"); nil settles them.
+    var lookAlikes: String?
     /// rename: a diarization label and its name for this meeting.
     var label: String?
     var name: String?
@@ -596,6 +598,8 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     /// What the row's play button plays.
     let target: MomentTarget
     let decision: Decision?
+    /// What a decided row was decided as: a question's answer, a word's spelling, a range's speaker.
+    var answer: String? = nil
 
     var isOpen: Bool { status == "suggested" }
     var isQuestion: Bool { kind == "question" }

@@ -147,6 +147,23 @@ extension MeetingDetailModel {
         pendingReach = nil
     }
 
+    /// The questions among a planned decision's reach that an answer would settle the same way; the other items in
+    /// the reach are the ones the question itself decides.
+    func lookAlikes(of pending: PendingReach) -> [String] {
+        guard pending.action.kind == "answer" else { return [] }
+        let questions = Set((rows.value?.rows ?? []).filter(\.isQuestion).map(\.id))
+        return pending.reach.items.map(\.id).filter(questions.contains)
+    }
+
+    /// "Only this question" (R22): the answer goes to this question and what it decides; the questions that look
+    /// alike stay open for their own answers.
+    func applyOnlyThis(_ pending: PendingReach) {
+        pendingReach = nil
+        var action = pending.action
+        action.lookAlikes = "leave"
+        apply(pending.row, action, reason: pending.reason)
+    }
+
     private func apply(_ row: ReviewRow, _ action: DecisionAction, reason: String?) {
         guard !busyItems.contains(row.id) else { return }
         busyItems.insert(row.id)
@@ -163,7 +180,7 @@ extension MeetingDetailModel {
                 if let entry = refused?.entry { decidedMeanwhile[row.id] = entry }
                 notices.push(StackedNotice(
                     text: "\(row.label) was decided meanwhile by \(refused?.entry.map { MeetingsWords.actor($0.actor) } ?? "someone else")",
-                    detail: refused?.entry.map { MeetingsWords.entryAction($0) }, tone: .warning,
+                    detail: refused?.entry.map { MeetingsWords.entryAction($0, label: rowLabel) }, tone: .warning,
                     actions: [.init("Use mine instead", symbol: "arrow.uturn.forward") { [weak self] _ in self?.useMine(action, on: row) }]))
                 refreshAfterDecision()
             } catch {
@@ -200,10 +217,15 @@ extension MeetingDetailModel {
     /// decision adds its own notice (R31).
     @discardableResult
     func showDecided(_ entry: JournalEntry, row: ReviewRow?) -> StackedNotice.ID {
-        let text = MeetingsWords.entryAction(entry)
+        let text = MeetingsWords.entryAction(entry, label: rowLabel)
         let items = entry.touched.isEmpty ? nil : Array(entry.touched).sorted()
         return notices.push(StackedNotice(text: text.prefix(1).uppercased() + text.dropFirst(),
                                           actions: [.undo { [weak self] id in self?.revert(token: entry.token, items: items, replacing: id) }]))
+    }
+
+    /// How a notice or the history names an item: a question by the label its row shows ("Q9"), never by its item id.
+    func rowLabel(_ id: String) -> String {
+        rows.value?.rows.first { $0.id == id }?.label ?? id
     }
 
     /// Statuses from an entry's changes, at once: the row folds before the re-read brings its words (R16).
@@ -449,7 +471,8 @@ extension MeetingDetailModel {
         case "reopen":
             return ["reopen", meeting] + (action.items ?? []) + why + ["--json"]
         case "answer":
-            guard let question = action.question, let answer = action.answer else { return nil }
+            // The command settles the look-alikes; an answer that leaves them needs the service.
+            guard let question = action.question, let answer = action.answer, action.lookAlikes == nil else { return nil }
             return ["listen", meeting, "--item", question, "--answer", answer] + why + ["--json"]
         default:
             return nil
@@ -495,28 +518,32 @@ extension MeetingsWords {
         }
     }
 
-    /// What one journal entry did, as a sentence after its actor: "confirmed i3", "answered Q2: JSON".
-    static func entryAction(_ entry: JournalEntry) -> String {
+    /// What one journal entry did, as a sentence after its actor: "confirmed i3", "answered Q2: JSON". `label` names an
+    /// item as its row does (a question is "Q2", not its item id); without it the ids stand.
+    static func entryAction(_ entry: JournalEntry, label: (String) -> String = { $0 }) -> String {
         let action = entry.action
         let ids = entry.decided.isEmpty ? (action.items ?? entry.changes.map(\.id)) : entry.decided
         switch action.kind {
         case "add": return "added \(Plural.count(entry.changes.count, "finding"))"
-        case "revert": return entry.changes.isEmpty ? "undid a decision" : "undid the decision on \(list(entry.changes.map(\.id)))"
-        case "answer": return actionWords(action, items: ids, question: entry.question)
-        default: return actionWords(action, items: ids)
+        case "revert":
+            return entry.changes.isEmpty ? "undid a decision" : "undid the decision on \(list(entry.changes.map(\.id).map(label)))"
+        case "answer": return actionWords(action, items: ids, question: entry.question, label: label)
+        default: return actionWords(action, items: ids, label: label)
         }
     }
 
     /// What a decision does, before or after it is made: "confirm i3" reads "confirmed i3".
-    static func actionWords(_ action: DecisionAction, items ids: [String], question: String? = nil) -> String {
-        let items = list(ids)
+    static func actionWords(_ action: DecisionAction, items ids: [String], question: String? = nil,
+                            label: (String) -> String = { $0 }) -> String {
+        let items = list(ids.map(label))
+        let asked = (action.question ?? question).map(label) ?? "a question"
         switch action.kind {
         case "confirm": return "confirmed \(items)"
         case "reject": return "rejected \(items)"
-        case "respell": return "respelled \(action.item ?? items) to “\(action.text ?? "")”"
-        case "answer": return "answered \(action.question ?? question ?? "a question"): \(action.answer ?? "")"
-        case "skip": return "skipped \(action.question ?? "a question")"
-        case "split": return "split \(action.question ?? "a question") by voice"
+        case "respell": return "respelled \(action.item.map(label) ?? items) to “\(action.text ?? "")”"
+        case "answer": return "answered \(asked): \(action.answer ?? "")"
+        case "skip": return "skipped \(asked)"
+        case "split": return "split \(asked) by voice"
         case "rename":
             guard let label = action.label else { return "renamed a speaker" }
             return action.name == label ? "gave \(label) its own name back" : "renamed \(label) to \(action.name ?? "")"

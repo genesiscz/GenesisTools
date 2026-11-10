@@ -148,6 +148,59 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertNil(rows[1].choices[1].confidence)
     }
 
+    func testAQuestionFlowsAsWordsAroundItsTimesAndAFoldedQuestionShowsItsAnswer() throws {
+        let rows = try rows().rows
+        let pieces = [TextPiece(text: "Who asks 'Rename it?' ("), TextPiece(text: "20:10", target: .time(1210)),
+                      TextPiece(text: "; the answer at "), TextPiece(text: "20:16", target: .time(1216)), TextPiece(text: " is 'Sure'?")]
+        let flow = ReviewRowView.flow(pieces)
+        XCTAssertEqual(flow.map(\.piece.text),
+                       ["Who", "asks", "'Rename", "it?'", "(", "20:10", ";", "the", "answer", "at", "20:16", "is", "'Sure'?"],
+                       "the text between two times is its words, so a time sits inside its sentence")
+        XCTAssertEqual(flow.map(\.spaceAfter), [true, true, true, true, false, false, true, true, true, true, true, true, false],
+                       "a space is the trailing room of the item before it: no line starts with one, and \"(\" keeps its time")
+        XCTAssertEqual(flow[5].piece.target, .time(1210), "a time stays one piece and keeps its Moment")
+        XCTAssertEqual(ReviewRowView.units(flow).map { $0.map(\.piece.text).joined() },
+                       ["Who", "asks", "'Rename", "it?'", "(20:10;", "the", "answer", "at", "20:16", "is", "'Sure'?"],
+                       "a line breaks only at a space: the bracket keeps its time, and the time keeps its semicolon")
+
+        var answered = rows[0]
+        answered.status = "confirmed"
+        answered.answer = "Dana Example"
+        XCTAssertEqual(ReviewRowView.foldedText(answered), "20:00 Who speaks at 20:10", "a folded question reads as its time and what it asked")
+        XCTAssertEqual(ReviewRowView.foldedAnswer(answered), "Dana Example", "and its answer is its own text, which never truncates")
+        XCTAssertEqual(ReviewRowView.foldedText(rows[2]), "Speaker 3 00:12–00:30 → Alex Example")
+        XCTAssertNil(ReviewRowView.foldedAnswer(rows[2]), "a range's line already ends in its speaker")
+        XCTAssertEqual(ReviewRowView.reference(rows[2]), "Speaker range 00:12–00:30", "another row names it in words, not by its item id")
+
+        // A source line that the row already quotes shows its time only.
+        let quoting = TimelineFixture.questionRow
+        XCTAssertNil(ReviewRowView.sourceQuote("Can we rename working to staging before the…", in: quoting),
+                     "the row's said line holds these words: the same sentence twice was noise")
+        XCTAssertEqual(ReviewRowView.sourceQuote("We ship on Friday.", in: quoting), "We ship on Friday.")
+        XCTAssertNil(ReviewRowView.sourceQuote(nil, in: quoting))
+        XCTAssertEqual(ReviewRowView.sourceQuote("Who speaks?", in: rows[0]), "Who speaks?", "a row that quotes nothing keeps its source's words")
+    }
+
+    func testOnlyThisQuestionNeedsTheServiceAndKeepsItsWireKey() throws {
+        var only = DecisionAction.answer("q1", "Dana Example")
+        XCTAssertNotNil(MeetingDetailModel.commandArgs(meeting: "m", action: only, reason: nil))
+        only.lookAlikes = "leave"
+        XCTAssertNil(MeetingDetailModel.commandArgs(meeting: "m", action: only, reason: nil),
+                     "R22: the command always settles the look-alikes, so this answer waits for the service")
+        let wire = try XCTUnwrap(String(data: JSONEncoder().encode(only), encoding: .utf8))
+        XCTAssertTrue(wire.contains(#""lookAlikes":"leave""#), wire)
+    }
+
+    func testANoticeNamesAQuestionByItsLabel() throws {
+        let answer = try entry(token: "t1", action: #"{"kind":"answer","question":"q1","answer":"Dana Example"}"#, changes: [("q1", "suggested", "confirmed")])
+        XCTAssertEqual(MeetingsWords.entryAction(answer), "answered q1: Dana Example")
+        XCTAssertEqual(MeetingsWords.entryAction(answer, label: { $0 == "q1" ? "Q1" : $0 }), "answered Q1: Dana Example",
+                       "the notice and the history name the question as its row does")
+        let confirm = try entry(token: "t2", action: #"{"kind":"confirm","items":["q1","i2"]}"#,
+                                changes: [("q1", "suggested", "confirmed"), ("i2", "suggested", "confirmed")])
+        XCTAssertEqual(MeetingsWords.entryAction(confirm, label: { $0 == "q1" ? "Q1" : $0 }), "confirmed Q1 and i2")
+    }
+
     func testADraftDecidesByTheRowsEditKind() throws {
         let rows = try rows().rows
         XCTAssertEqual(MeetingDetailModel.draftDecision("  EMP ", on: rows[1]), .respell("i2", to: "EMP"), "a spelling is a respell")

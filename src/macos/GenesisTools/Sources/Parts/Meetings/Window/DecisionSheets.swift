@@ -46,6 +46,10 @@ struct ReachSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { detail.cancelReach() }.keyboardShortcut(.cancelAction)
+                if !detail.lookAlikes(of: pending).isEmpty {
+                    Button("Only this question") { detail.applyOnlyThis(pending) }
+                        .instantTooltip("Answer \(pending.row.label) and what it decides. The questions that look alike stay open.")
+                }
                 Button("Save") { detail.applyReach(pending, askAgain: askAgain) }.keyboardShortcut(.defaultAction)
             }
         }
@@ -119,7 +123,7 @@ private struct HistoryRow: View {
 
     private var sentence: String {
         let who = MeetingsWords.actor(entry.actor)
-        return who.prefix(1).uppercased() + who.dropFirst() + " " + MeetingsWords.entryAction(entry)
+        return who.prefix(1).uppercased() + who.dropFirst() + " " + MeetingsWords.entryAction(entry, label: detail.rowLabel)
     }
 }
 
