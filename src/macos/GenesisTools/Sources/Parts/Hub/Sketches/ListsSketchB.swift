@@ -282,6 +282,7 @@ extension ListsSketchB {
                         .equatable()
                 }
                 if sessions.count > Self.shown {
+                    // lint-rules-ignore: short list (at most Self.shown = 4 nested sessions and one "All" button)
                     Button {
                         showsAll = true
                     } label: {

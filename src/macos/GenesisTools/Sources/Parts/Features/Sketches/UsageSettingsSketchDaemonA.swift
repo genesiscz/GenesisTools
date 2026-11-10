@@ -109,6 +109,7 @@ private struct UsageSketchDaemonRowA: View {
                         .lineLimit(2)
                 }
                 Spacer(minLength: 8)
+                // lint-rules-ignore: short list (the daemon's registered tasks, a handful of rows)
                 Button(running ? "Running…" : "Run now") { runNow() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
