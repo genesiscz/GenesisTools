@@ -2738,6 +2738,10 @@ private struct SessionListView: View {
         let _ = RenderProbe.hit("sessions.list.body")
         let sections = sections
         VStack(spacing: 0) {
+            // Hub UX wave 2 (`--sketch transcript=b`): the modes in the title bar row; it takes no height here.
+            if DesignSketch.option("transcript") == "b" {
+                TranscriptSketchModeBar(model: model, inbox: model.inbox)
+            }
             // Back and forward sit in the band under the title bar, right above the mode switch:
             // the switch row has no room left in a narrow sidebar.
             // The palette and Settings sit here too (the glass switch when asked for): the modes need the whole row below.
@@ -2755,8 +2759,14 @@ private struct SessionListView: View {
             .padding(.horizontal, 12)
             .frame(height: 28)
             .padding(.vertical, 6)
-            HubModePicker(model: model, inbox: model.inbox)
-                .padding(.horizontal, 10)
+            // Hub UX wave 2 (`--sketch transcript=a|b`, Parts/Hub/Sketches/TranscriptSketchHub*.swift).
+            switch DesignSketch.option("transcript") {
+            case "a": TranscriptSketchModeList(model: model, inbox: model.inbox)
+            case "b": EmptyView() // the modes moved up into the title bar row (first view of this stack)
+            default:
+                HubModePicker(model: model, inbox: model.inbox)
+                    .padding(.horizontal, 10)
+            }
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundColor(ReviewPalette.dim)
                 TextField(filterPlaceholder, text: $model.filter)
@@ -3282,6 +3292,9 @@ struct SessionDetailView: View {
     private var header: some View {
         if let agent, let node = agent.node {
             agentHeader(agent, node: node)
+        } else if DesignSketch.option("transcript") == "a" {
+            // Hub UX wave 2: one subject header across every pane (Parts/Hub/Sketches/TranscriptSketchHubA.swift).
+            TranscriptSketchSubjectHeader(model: model, session: session) { paneToggles }
         } else {
             sessionHeader
         }

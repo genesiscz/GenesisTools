@@ -847,7 +847,8 @@ public struct SessionTranscriptList: View {
     /// 2026-10-01): its output is the file, which the reader already has.
     private func defaultOpen(_ row: TranscriptRow) -> Bool {
         switch row.kind {
-        case .tool(let line): return verbosity.opensTools && TranscriptToolKind.of(line.name) != .read
+        // `TranscriptSketch.opensToolsByDefault`: false only under `--sketch transcript=b` (Sketches/TranscriptSketchB.swift).
+        case .tool(let line): return verbosity.opensTools && TranscriptToolKind.of(line.name) != .read && TranscriptSketch.opensToolsByDefault
         case .thinking: return verbosity.opensThinking
         default: return false
         }
@@ -877,7 +878,8 @@ public struct SessionTranscriptList: View {
         let previousLast = visible.last?.rows.last?.id
         // The host's tool filter narrows the chips' result (`filters`).
         let filtered = TranscriptBus.onlyTool(toolFilter, in: document.filtered(chips, query: appliedQuery))
-        let sections = verbosity == .minimal ? TranscriptDocument.folded(filtered) : filtered
+        // `TranscriptSketch.foldsToolRuns`: true only under `--sketch transcript=a` (Sketches/TranscriptSketchA.swift).
+        let sections = verbosity == .minimal || TranscriptSketch.foldsToolRuns ? TranscriptDocument.folded(filtered) : filtered
         visible = sections
         noteArrivals(after: previousLast, intent: intent, documentChanged: documentChanged)
         let ids = sections.flatMap { $0.rows.filter(\.isPrompt).map(\.id) }
@@ -1162,6 +1164,15 @@ public struct TranscriptRowView: View, Equatable {
 
     public var body: some View {
         let _ = RenderProbe.hit("row.body")
+        // `--sketch transcript=a|b` draws a redesign option's row (Sketches/TranscriptSketch.swift); nil keeps this one.
+        if let sketch = TranscriptSketch.row(self) {
+            sketch
+        } else {
+            current
+        }
+    }
+
+    @ViewBuilder private var current: some View {
         switch row.kind {
         case .prompt(let text, let images):
             // A prompt with peer messages, task results or reminders shows each part.
