@@ -1,4 +1,3 @@
-import type { AIConfig } from "../AIConfig";
 import type { AIProvider, AIProviderType, AITask } from "../types";
 import { AICloudProvider } from "./AICloudProvider";
 import { AICoreMLProvider } from "./AICoreMLProvider";
@@ -79,8 +78,8 @@ export function getProvider(type: AIProviderType): AIProvider {
     return provider;
 }
 
-export async function getProviderForTask(task: AITask, config: AIConfig): Promise<AIProvider> {
-    const preferred = config.getTaskProvider(task);
+/** `preferred` is the task's configured provider; the fallback chain below applies when it cannot serve. */
+export async function getProviderForTask(task: AITask, preferred: AIProviderType): Promise<AIProvider> {
     // Route through the task-specific accessor first so per-task class splits work
     // (e.g. xai has separate AIXAITranscriptionProvider + AIXAITextToSpeechProvider —
     // getProvider returns only the TTS one).

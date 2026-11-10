@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { VaultKeyDeniedError } from "@genesiscz/utils/security/keyring/app-gate";
-import { AIConfig } from "../AIConfig";
 import { AiConfigStore } from "../config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "../config/schema";
 import { ModelResolutionError } from "../core/resolve";
@@ -95,7 +94,7 @@ afterEach(() => {
 
 describe("resolveForTask availability chain", () => {
     test("an unsupported explicit transcription provider fails before loading or changing defaults", async () => {
-        const load = spyOn(AIConfig, "load").mockImplementation(async () => {
+        const load = spyOn(AiConfigStore, "load").mockImplementation(async () => {
             throw new Error("Unexpected config access");
         });
         try {

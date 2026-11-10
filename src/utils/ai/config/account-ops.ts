@@ -657,6 +657,27 @@ export async function clearCredentials(
     });
 }
 
+/**
+ * Store an API key on the provider's first account, or create an account named `name` for it.
+ * For a provider with one shared key (a Hugging Face token pasted at a prompt): the caller
+ * has a key, not an account, and must not mint a second account on every paste.
+ */
+export async function setProviderApiKey(input: {
+    provider: string;
+    name: string;
+    apiKey: string;
+}): Promise<AccountEntry> {
+    const { registerBuiltInPlugins } = await import("../providers/plugins");
+    registerBuiltInPlugins();
+
+    const existing = (await AiConfigStore.load()).accounts({ provider: input.provider })[0];
+    if (existing) {
+        return editAccount(existing.id, { apiKey: input.apiKey });
+    }
+
+    return addAccount({ provider: input.provider, name: input.name, secrets: { apiKey: input.apiKey } });
+}
+
 /** Top-level fields a provider learns about an account after login: plan, identity, billing anchor. */
 export type AccountFieldsPatch = Partial<
     Pick<

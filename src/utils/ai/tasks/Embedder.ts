@@ -1,5 +1,5 @@
 import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
-import { AIConfig } from "../AIConfig";
+import { AiConfigStore } from "../config/AiConfigStore";
 import { isTransientAiError } from "../core/retry";
 import { findDescriptor } from "../local/descriptors";
 import { getProviderForTask } from "../providers";
@@ -17,8 +17,7 @@ export class Embedder {
     }
 
     static async create(options?: { provider?: string; model?: string; persist?: boolean }): Promise<Embedder> {
-        // An explicit provider needs the config only to persist the choice. Loading it decrypts every account's
-        // secrets, so a local embedder (Ollama) would raise the vault-key approval for a token it never uses.
+        // An explicit provider needs the config only to persist the choice, so it does not read it otherwise.
         if (options?.provider) {
             // User explicitly chose a provider — fail if unavailable, don't silently fall back
             const { getProvider } = await import("../providers/index");
@@ -51,24 +50,22 @@ export class Embedder {
             }
 
             if (options.persist) {
-                const config = await AIConfig.load();
-                await config.setTask("embed", {
-                    provider: options.provider as AIProviderType,
-                    model: options.model,
-                });
+                const store = await AiConfigStore.load();
+                await store.setTaskDefault("embed", { provider: options.provider, model: options.model });
             }
 
             return new Embedder(explicit as AIEmbeddingProvider, options.model);
         }
 
-        const config = await AIConfig.load();
-        const provider = await getProviderForTask("embed", config);
+        // A stored default counts only with a provider; without one the legacy default applies.
+        const stored = (await AiConfigStore.load()).data().defaults.task?.embed;
+        const taskConfig = stored?.provider ? stored : undefined;
+        const provider = await getProviderForTask("embed", (taskConfig?.provider ?? "darwinkit") as AIProviderType);
 
         if (!("embed" in provider)) {
             throw new Error(`Provider "${provider.type}" does not support embedding`);
         }
 
-        const taskConfig = config.getTask("embed");
         return new Embedder(provider as AIEmbeddingProvider, taskConfig?.model);
     }
 
