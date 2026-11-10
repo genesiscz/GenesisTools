@@ -34,7 +34,9 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { attach, type Page } from "../cdp";
 import { cdpLikeOf } from "../cdp-like-adapter";
 import { type HeadlessChrome, launchHeadlessChrome } from "../headless";
+import { loadShotBook, parseShotBook, selectShots } from "./book";
 import { imageFormatOf, loadWebPlan, shotFilesFor, takeQuickShot } from "./quick";
+import { rehearseShots, runShots } from "./run";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const HAS_CHROME = process.platform === "darwin" && existsSync(CHROME);
@@ -397,4 +399,181 @@ describe("the quick shot's output names", () => {
             marks: "/out/18-usages.1110.marks.json",
         });
     });
+});
+
+describe("a shot book", () => {
+    const BOOK = {
+        base: "http://127.0.0.1:1",
+        shots: [
+            {
+                id: "18",
+                stem: "18-usages",
+                marks: [{ target: "testid=usages-button", at: "below", label: "Kde je použitý" }],
+            },
+            {
+                id: "08",
+                stem: "08-names",
+                url: "/a",
+                marks: [{ target: "testid=title" }],
+                parts: [{ url: "/b", marks: [{ target: "testid=title" }] }],
+            },
+        ],
+    };
+
+    test("parses into shots with the script's defaults, and names the field of a mistake", () => {
+        const book = parseShotBook(BOOK, "book.json");
+
+        expect(book.use).toBe("headless");
+        expect(book.browser.headless.cookies).toEqual({ from: "browser" });
+        expect(book.setup).toMatchObject({
+            settleMs: 1500,
+            preset: "review-dashed",
+            viewport: { width: 1440, height: 900, scale: 1 },
+        });
+        expect(book.output).toEqual({ formats: ["webp"], quality: 85 });
+        expect(book.shots.map((shot) => [shot.id, shot.parts.length])).toEqual([
+            ["18", 1],
+            ["08", 2],
+        ]);
+        expect(selectShots(book, ["08-names"]).map((shot) => shot.id)).toEqual(["08"]);
+        expect(() => selectShots(book, ["99"])).toThrow(/no shot named 99 .*ids: 18, 08/);
+        expect(() => parseShotBook({ shots: [BOOK.shots[0], BOOK.shots[0]] }, "book.json")).toThrow(/used twice/);
+        expect(() => parseShotBook({ shots: [{ ...BOOK.shots[0], stem: "a b" }] }, "book.json")).toThrow(/stem "a b"/);
+        expect(() =>
+            parseShotBook({ shots: [{ id: "1", stem: "one", marks: [{ target: "tesid=x" }] }] }, "book.json")
+        ).toThrow(/locator "tesid=x": unknown step/);
+    });
+
+    test("a .ts book uses defineShots and the script's helpers, with no node_modules beside it", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "shot-book-"));
+        const path = join(dir, "proposal.shots.ts");
+        writeFileSync(
+            path,
+            [
+                'import { defineShots, id, nth, text, union, within } from "@genesis-tools/shots";',
+                'const section = (n: number) => nth(id("marketplace-admin-section-inner-paper"), n);',
+                "export default defineShots({",
+                '    base: "http://localhost:3000",',
+                "    shots: [{",
+                '        id: "19", stem: "19-ref-products-picker", url: "/administrace/marketplace/kategorie/x", ready: section(1),',
+                '        clip: { around: union(within(section(1), id("card")), text("Přidat kartu")), pad: [30, 30, 60, 30] },',
+                '        marks: [{ target: within(section(1), id("card")), at: "above", label: "CategoryData.sections[].products" }],',
+                "    }],",
+                "});",
+            ].join("\n")
+        );
+        const book = await loadShotBook(path, { base: "http://localhost:4000" });
+
+        expect(book.base).toBe("http://localhost:4000");
+        expect(book.shots[0].parts[0].ready?.source).toBe("testid=marketplace-admin-section-inner-paper >> nth=1");
+        expect(book.shots[0].parts[0].marks[0].label).toEqual({
+            text: "CategoryData.sections[].products",
+            position: "top-left",
+        });
+    });
+});
+
+describe.skipIf(!HAS_CHROME)("running a shot book in headless Chrome", () => {
+    const pages: Record<string, string> = {
+        "/a": '<h2 data-testid="title" style="margin:20px;font:24px Helvetica">Elektřina</h2>',
+        "/b": '<h2 data-testid="title" style="margin:20px;font:24px Helvetica">Servis vytápění</h2><p style="margin:20px">Popis produktu.</p>',
+    };
+    let server: ReturnType<typeof Bun.serve>;
+
+    beforeAll(() => {
+        server = Bun.serve({
+            port: 0,
+            fetch: (request) =>
+                new Response(
+                    `<!doctype html><html><body style="margin:0">${pages[new URL(request.url).pathname] ?? ""}</body></html>`,
+                    {
+                        headers: { "content-type": "text/html; charset=utf-8" },
+                    }
+                ),
+        });
+    });
+
+    afterAll(() => {
+        server?.stop(true);
+    });
+
+    function bookFor(marks: unknown[]) {
+        return parseShotBook(
+            {
+                base: `http://127.0.0.1:${server.port}`,
+                browser: { headless: { cookies: { from: "none" } } },
+                page: { settleMs: 0, readyTimeoutMs: 5_000 },
+                output: { formats: ["webp", "png"] },
+                shots: [
+                    {
+                        id: "08",
+                        stem: "08-names",
+                        url: "/a",
+                        ready: "testid=title",
+                        marks,
+                        parts: [{ url: "/b", ready: "testid=title", marks }],
+                    },
+                ],
+            },
+            "fixture-book.json"
+        );
+    }
+
+    test("run writes the script's file names, stacks the two pages and keeps the marks of both", async () => {
+        const out = mkdtempSync(join(tmpdir(), "shot-run-"));
+        const report = await runShots(bookFor([{ target: "testid=title", at: "right", label: "název" }]), {
+            tag: "1110",
+            out,
+        });
+        const result = report.results[0];
+        if (result.status !== "ok") {
+            throw new Error(result.problems.join("; "));
+        }
+
+        expect(result.files.map((file) => file.slice(out.length + 1))).toEqual([
+            "08-names.1110.webp",
+            "08-names.1110.original.webp",
+            "png/08-names.1110.png",
+            "png/08-names.1110.original.png",
+            ".shots/1110/08-names.marks.json",
+        ]);
+        const stacked = await loadImage(readFileSync(join(out, "png/08-names.1110.png")));
+        const raw = await loadImage(readFileSync(join(out, "png/08-names.1110.original.png")));
+        expect([stacked.width, stacked.height]).toEqual([raw.width, raw.height]);
+        const marks: unknown = SafeJSON.parse(readFileSync(join(out, ".shots/1110/08-names.marks.json"), "utf8"), {
+            strict: true,
+        });
+        const annotations =
+            marks && typeof marks === "object" && "annotations" in marks ? marks.annotations : undefined;
+        validateAnnotations(annotations);
+        const [first, second] = annotations;
+        // the second page's mark sits below the first page in the stacked image
+        expect(
+            first.kind === "highlight" &&
+                second.kind === "highlight" &&
+                typeof first.rect === "object" &&
+                typeof second.rect === "object" &&
+                second.rect.y > first.rect.y + first.rect.h
+        ).toBe(true);
+        expect(existsSync(report.manifest)).toBe(true);
+        expect(report.reproducible).toBe(true);
+    }, 60_000);
+
+    test("rehearse names a target that matches nothing, and writes nothing", async () => {
+        const results = await rehearseShots(bookFor([{ target: "testid=titel" }]), {});
+
+        expect(results).toEqual([
+            {
+                status: "failed",
+                id: "08",
+                stem: "08-names",
+                problems: [
+                    "part 0 clip: testid=titel matched nothing",
+                    "part 0 mark 0: testid=titel matched nothing",
+                    "part 1 clip: testid=titel matched nothing",
+                    "part 1 mark 0: testid=titel matched nothing",
+                ],
+            },
+        ]);
+    }, 60_000);
 });
