@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createCanvas, loadImage, type SKRSContext2D } from "@napi-rs/canvas";
-import type { Annotation } from "./annotation-plan";
-import { loadAnnotationPlanValue, renderAnnotationPlan } from "./render-plan";
+import type { Annotation, PresetName } from "./annotation-plan";
+import { loadAnnotationPlanValue } from "./plan-file";
+import { renderAnnotationPlan } from "./render-plan";
 
 const BASE = { r: 18, g: 52, b: 86 };
 
@@ -44,7 +45,7 @@ function near(actual: number, expected: number, tolerance = 8): boolean {
     return Math.abs(actual - expected) <= tolerance;
 }
 
-async function render(annotations: Annotation[], preset?: "review-red" | "callout-amber" | "redact") {
+async function render(annotations: Annotation[], preset?: PresetName) {
     return renderAnnotationPlan({ input: baseImage, annotations, preset });
 }
 
@@ -274,6 +275,109 @@ describe("renderAnnotationPlan", () => {
     test("zero-size shape rect throws", async () => {
         await expect(render([{ kind: "box", rect: { x: 10, y: 10, w: 0, h: 50 } }])).rejects.toThrow(/zero-size/);
     });
+
+    test("a shape's own preset overrides the plan's, so red and amber marks share one plan", async () => {
+        const result = await render([
+            { kind: "box", rect: { x: 40, y: 40, w: 100, h: 60 } },
+            { kind: "box", rect: { x: 200, y: 40, w: 100, h: 60 }, preset: "callout-amber" },
+        ]);
+        const { ctx } = await decode(result.png);
+        const [rr, rg] = px(ctx, 90, 40);
+        const [ar, ag, ab] = px(ctx, 250, 40);
+        expect(near(rr, 255) && near(rg, 90)).toBe(true);
+        expect(near(ar, 255) && near(ag, 176) && near(ab, 32)).toBe(true);
+    });
+
+    test("review-dashed strokes a dashed outline: red dashes with gaps of the page between them", async () => {
+        const result = await render([{ kind: "box", rect: { x: 40, y: 100, w: 200, h: 60 } }], "review-dashed");
+        const { ctx } = await decode(result.png);
+        let dash = 0;
+        let gap = 0;
+
+        for (let x = 50; x < 230; x += 1) {
+            const [r, g, b] = px(ctx, x, 100);
+
+            if (near(r, 255) && near(g, 77, 12)) {
+                dash += 1;
+            } else if (r === BASE.r && g === BASE.g && b === BASE.b) {
+                gap += 1;
+            }
+        }
+
+        expect(dash).toBeGreaterThan(40);
+        expect(gap).toBeGreaterThan(40);
+    });
+
+    test("a label with a line break is a taller chip", async () => {
+        const style = { bg: "#111111", fg: "#ffffff", fontSize: 20 };
+        const one = await decode((await render([{ kind: "label", at: { x: 50, y: 50 }, text: "one", style }])).png);
+        const two = await decode(
+            (await render([{ kind: "label", at: { x: 50, y: 50 }, text: "one\ntwo", style }])).png
+        );
+        // 32 px for one line, 26 px more for the second: y 100 is chip in the two-line label only
+        expect(px(one.ctx, 52, 100).slice(0, 3)).toEqual([BASE.r, BASE.g, BASE.b]);
+        expect(near(px(two.ctx, 52, 100)[0], 17)).toBe(true);
+    });
+
+    test("a right label stands off its shape and a leader line joins them", async () => {
+        const result = await render([
+            { kind: "highlight", rect: { x: 60, y: 120, w: 80, h: 40 }, label: { text: "x", position: "right" } },
+        ]);
+        const { ctx } = await decode(result.png);
+        // the leader crosses the 36 px between the shape's right edge (x 140) and the chip
+        const [r, g, b] = px(ctx, 158, 140);
+        expect(near(r, 255) && near(g, 90) && near(b, 95)).toBe(true);
+        expect(px(ctx, 158, 125).slice(0, 3)).toEqual([BASE.r, BASE.g, BASE.b]);
+    });
+
+    test("a label that would leave the image moves below its shape instead of covering it", async () => {
+        const result = await render([
+            { kind: "highlight", rect: { x: 40, y: 2, w: 200, h: 60 }, label: { text: "Build", position: "top-left" } },
+        ]);
+        const { ctx } = await decode(result.png);
+        // below the shape: y 62 + gap 6 = 68
+        const [r, g] = px(ctx, 44, 72);
+        expect(near(r, 255) && near(g, 90)).toBe(true);
+        expect(px(ctx, 50, 20)[0]).toBeLessThan(120);
+        expect(result.warnings).toEqual([]);
+    });
+
+    test("a second label at the same spot moves to the next free one", async () => {
+        const rect = { x: 100, y: 150, w: 150, h: 60 };
+        const result = await render([
+            { kind: "box", rect, label: { text: "first", style: { bg: "#00ff00" } } },
+            { kind: "box", rect, label: { text: "second", style: { bg: "#0000ff" } } },
+        ]);
+        const { ctx } = await decode(result.png);
+        const [, firstG] = px(ctx, 104, 110);
+        const [, , secondB] = px(ctx, 104, 220);
+        expect(near(firstG, 255)).toBe(true);
+        expect(near(secondB, 255)).toBe(true);
+    });
+
+    test("a label that fits nowhere is drawn clamped and named in a warning", async () => {
+        const result = await render([
+            {
+                kind: "box",
+                rect: { x: 40, y: 40, w: 100, h: 60 },
+                label: { text: "a label far wider than the whole picture", style: { fontSize: 60 } },
+            },
+        ]);
+        expect(result.warnings).toEqual([
+            'label "a label far wider than the whole picture" fits nowhere free in the image; drawn at top-left',
+        ]);
+    });
+
+    test("an unknown label position or shape preset throws with the valid list", async () => {
+        await expect(
+            render([
+                { kind: "box", rect: { x: 1, y: 1, w: 5, h: 5 }, label: { text: "x", position: "middle" } },
+            ] as unknown as Annotation[])
+        ).rejects.toThrow(/valid positions: top-left, top-right/);
+        await expect(
+            render([{ kind: "box", rect: { x: 1, y: 1, w: 5, h: 5 }, preset: "neon" }] as unknown as Annotation[])
+        ).rejects.toThrow(/valid presets: review-red/);
+    });
 });
 
 describe("loadAnnotationPlanValue", () => {
@@ -306,5 +410,38 @@ describe("loadAnnotationPlanValue", () => {
         await expect(
             loadAnnotationPlanValue(SafeJSON.stringify({ annotations: [{ kind: "grid" }], preset: "neon" }))
         ).rejects.toThrow(/valid presets/);
+    });
+
+    test("a .jsonc plan may carry comments and trailing commas", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "annotate-plan-"));
+        const planPath = join(dir, "plan.jsonc");
+        writeFileSync(
+            planPath,
+            '{\n  // the usages button\n  "preset": "review-dashed",\n  "annotations": [\n    { "kind": "box", "rect": { "x": 1, "y": 1, "w": 5, "h": 5 }, },\n  ],\n}\n'
+        );
+        const plan = await loadAnnotationPlanValue(planPath);
+        expect(plan.preset).toBe("review-dashed");
+        expect(plan.annotations).toHaveLength(1);
+    });
+
+    test("a .ts plan imports defineAnnotations from the module the loader serves", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "annotate-plan-"));
+        const planPath = join(dir, "plan.ts");
+        writeFileSync(
+            planPath,
+            [
+                'import { defineAnnotations } from "@genesis-tools/annotate";',
+                'const box = (x: number) => ({ kind: "box" as const, rect: { x, y: 1, w: 5, h: 5 } });',
+                'export default defineAnnotations({ preset: "info-blue", annotations: [box(1), box(20)] });',
+            ].join("\n")
+        );
+        // Bun's resolver caches a folder's entries at the first import from it, so both files exist before that
+        const empty = join(dir, "empty.ts");
+        writeFileSync(empty, "export const nothing = 1;\n");
+
+        const plan = await loadAnnotationPlanValue(planPath);
+        expect(plan.preset).toBe("info-blue");
+        expect(plan.annotations).toHaveLength(2);
+        await expect(loadAnnotationPlanValue(empty)).rejects.toThrow(/no default export/);
     });
 });
