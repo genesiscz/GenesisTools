@@ -115,7 +115,7 @@ count of the section.
 - [Charts](#charts) (15)
 - [Clicky](#clicky) (13)
 - [Cmux](#cmux) (6)
-- [Controls](#controls) (42)
+- [Controls](#controls) (43)
 - [Diff](#diff) (11)
 - [Disk](#disk) (10)
 - [Files](#files) (11)
@@ -1144,6 +1144,10 @@ IconButton(
     accent: KitPalette.renamed
 ) { openSettings() }
 ```
+
+#### `AutocompleteField` and `AutocompleteFolderField`
+
+`GenesisKitBase/Controls/`: a field that completes from `items`, `lazyItems` (read once) or `search` (per typed text, debounced), with the keyboard (Down, Up, Return, Tab, Escape), loading, no match and a failed read with Retry, drawn through `KitLook`; the folder field completes paths (`~`, `/`, hidden folders after a dot) and says when macOS keeps a folder from the app.
 
 #### `GhostButton`
 

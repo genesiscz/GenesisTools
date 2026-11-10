@@ -616,3 +616,112 @@ extension KitCatalog {
             ])
     }
 }
+
+// MARK: - Inputs
+
+/// A field drawn as a picture: the text is fixed, so the list shows what that text matches.
+private struct CatalogAutocomplete: View {
+    @State var text: String
+    let items: [AutocompleteValue]
+    var allowsFreeText = false
+    let preview: AutocompletePreview?
+
+    var body: some View {
+        AutocompleteField("Add a calendar", text: $text, items: items, allowsFreeText: allowsFreeText, preview: preview) { _ in }
+            .frame(width: 300)
+    }
+}
+
+/// A folder field drawn over a scratch folder the catalog makes, so the picture never shows this Mac's folders.
+private struct CatalogFolderField: View {
+    @State var text: String
+    let preview: AutocompletePreview?
+
+    static let home: String = {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("genesis-kit-catalog-home")
+        for name in ["Notes", "Notes/acme", "Notes/Meetings", "Projects", "Recordings", ".config"] {
+            try? FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        return root.path
+    }()
+
+    var body: some View {
+        AutocompleteFolderField(text: $text, home: Self.home, preview: preview) { _ in }
+            .frame(width: 300)
+    }
+}
+
+@MainActor
+extension KitCatalog {
+    static var autocomplete: CatalogEntry {
+        let calendars = ["Work", "Work · Team", "Home", "Holidays in Czechia", "Birthdays"].map { AutocompleteValue($0, symbol: "calendar") }
+        let people = [
+            AutocompleteValue("Alex Example", detail: "alex@example.com", symbol: "person"),
+            AutocompleteValue("Alice Example", detail: "4 meetings", symbol: "person"),
+        ]
+        return CatalogEntry(
+            id: "autocomplete", group: "Inputs", name: "Autocomplete field (AutocompleteField)",
+            summary: "A text field that completes from values the caller gives: a fixed list (items), a list read once when first needed (lazyItems), or a search per typed text (search). The list opens under the field while it has the keyboard; Down and Up move the mark, Return or Tab take it, Escape closes the list and then clears the field.",
+            source: "GenesisKitBase/Controls/AutocompleteField.swift", isNew: true,
+            critique: [
+                "Before it, every value list in the settings was a bare field: the reader typed a calendar or a folder name from memory and a typo matched nothing.",
+                "The list pushes the rows under the field down instead of floating over them, so it is never cut by a card's edge; it moves what is below it.",
+            ],
+            sections: [
+                CatalogSection("States", flow: .column, [
+                    CatalogVariant("The list open, the typed part marked", props: "items: calendars, text: \"wo\"") {
+                        CatalogAutocomplete(text: "wo", items: calendars, preview: AutocompletePreview())
+                    },
+                    CatalogVariant("A row marked by Down or the pointer", props: "marked: 1") {
+                        CatalogAutocomplete(text: "wo", items: calendars, preview: AutocompletePreview(marked: 1))
+                    },
+                    CatalogVariant("Pressed", props: "kitForcedInteraction: .pressed") {
+                        CatalogAutocomplete(text: "ho", items: calendars, preview: AutocompletePreview(marked: 0)).shown(.pressed)
+                    },
+                    CatalogVariant("No match, free text allowed", props: "allowsFreeText: true") {
+                        CatalogAutocomplete(text: "Standup", items: calendars, allowsFreeText: true, preview: AutocompletePreview())
+                    },
+                    CatalogVariant("A read that takes longer than 200 ms", props: "lazyItems, loading") {
+                        CatalogAutocomplete(text: "", items: [], preview: AutocompletePreview(loading: true))
+                    },
+                    CatalogVariant("A read that failed, with Retry", props: "failure") {
+                        CatalogAutocomplete(text: "", items: [], preview: AutocompletePreview(failure: "The Calendar app's calendars could not be read: access is denied."))
+                    },
+                    CatalogVariant("Closed: the system's rounded field", props: "no focus") {
+                        CatalogAutocomplete(text: "", items: calendars, preview: nil)
+                    },
+                ]),
+                CatalogSection("Props", flow: .column, [
+                    CatalogVariant("A detail line and a symbol per value", props: "AutocompleteValue(title, detail:, symbol:)") {
+                        CatalogAutocomplete(text: "al", items: people, preview: AutocompletePreview(marked: 0))
+                    },
+                ]),
+            ])
+    }
+
+    static var autocompleteFolder: CatalogEntry {
+        CatalogEntry(
+            id: "autocomplete-folder", group: "Inputs", name: "Folder field (AutocompleteFolderField)",
+            summary: "An AutocompleteField over the file system: ~ is the home folder, a typed / lists the next level, hidden folders show once the name starts with a dot. Tab fills the marked folder and opens its folders; Return takes it. A folder macOS keeps from the app says so in the list.",
+            source: "GenesisKitBase/Controls/AutocompleteFolderField.swift", isNew: true,
+            critique: [
+                "Before it, a folder was picked only in the system's folder panel, a window of its own for a path the reader often knows by heart.",
+            ],
+            sections: [
+                CatalogSection("States", flow: .column, [
+                    CatalogVariant("The home folder's folders", props: "text: \"~/\"") {
+                        CatalogFolderField(text: "~/", preview: AutocompletePreview())
+                    },
+                    CatalogVariant("One level down, a row marked", props: "text: \"~/Notes/\", marked: 0") {
+                        CatalogFolderField(text: "~/Notes/", preview: AutocompletePreview(marked: 0))
+                    },
+                    CatalogVariant("Hidden folders after a dot", props: "text: \"~/.\"") {
+                        CatalogFolderField(text: "~/.", preview: AutocompletePreview())
+                    },
+                    CatalogVariant("A folder macOS keeps from the app", props: "failure") {
+                        CatalogFolderField(text: "~/Documents/", preview: AutocompletePreview(failure: "macOS does not let this app read “Documents”. Allow it in System Settings → Privacy & Security, or pick the folder in a folder panel."))
+                    },
+                ]),
+            ])
+    }
+}
