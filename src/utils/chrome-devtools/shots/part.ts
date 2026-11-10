@@ -115,6 +115,11 @@ function isScriptSide(value: string): value is ScriptSide {
     return value in SCRIPT_SIDES;
 }
 
+/** A side in the script's words or a label position name. */
+export function isMarkSide(value: string): value is ScriptSide | LabelPosition {
+    return isScriptSide(value) || LABEL_POSITIONS.some((known) => known === value);
+}
+
 function sideOf(at: MarkInput["at"], path: string): LabelPosition | undefined {
     if (at === undefined) {
         return undefined;

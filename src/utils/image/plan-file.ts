@@ -20,32 +20,41 @@ export function defineAnnotations(plan: AnnotationPlanFile | Annotation[]): Anno
     return plan;
 }
 
-let annotateModuleServed = false;
+/** Modules a `.ts` plan may import, by name: their exports, served by the loader. */
+export type PlanModules = Record<string, Record<string, unknown>>;
 
-function serveAnnotateModule(): void {
-    if (annotateModuleServed) {
+const servedModules = new Set<string>();
+
+function serveModules(modules: PlanModules): void {
+    const fresh = Object.entries(modules).filter(([name]) => !servedModules.has(name));
+    if (fresh.length === 0) {
         return;
     }
 
-    annotateModuleServed = true;
+    for (const [name] of fresh) {
+        servedModules.add(name);
+    }
+
     Bun.plugin({
-        name: "genesis-tools-annotate",
+        name: `genesis-tools-plan-modules-${servedModules.size}`,
         setup(build) {
-            build.module(ANNOTATE_MODULE, () => ({ exports: { defineAnnotations }, loader: "object" }));
+            for (const [name, exports] of fresh) {
+                build.module(name, () => ({ exports, loader: "object" }));
+            }
         },
     });
 }
 
 const SCRIPT_PLAN = /\.m?ts$/i;
 
-async function readPlanFile(path: string): Promise<unknown> {
+async function readPlanFile(path: string, modules: PlanModules): Promise<unknown> {
     const file = Bun.file(path);
     if (!(await file.exists())) {
         throw new Error(`annotation plan not found: ${path} (pass inline JSON or a .json, .jsonc or .ts plan path)`);
     }
 
     if (SCRIPT_PLAN.test(path)) {
-        serveAnnotateModule();
+        serveModules({ [ANNOTATE_MODULE]: { defineAnnotations }, ...modules });
         const loaded: { default?: unknown } = await import(resolve(path));
         if (loaded.default === undefined) {
             throw new Error(`annotation plan ${path} has no default export (export default defineAnnotations({...}))`);
@@ -57,10 +66,19 @@ async function readPlanFile(path: string): Promise<unknown> {
     return SafeJSON.parse(await file.text());
 }
 
-export async function loadAnnotationPlanValue(value: string): Promise<AnnotationPlanFile> {
+/**
+ * A plan value as data, before any validation: inline JSON, or a `.json`, `.jsonc` or `.ts` file. `modules` adds
+ * modules a `.ts` file may import (the page-shot locator helpers).
+ */
+export async function readPlanValue(value: string, options: { modules?: PlanModules } = {}): Promise<unknown> {
     const trimmed = value.trim();
-    const parsed: unknown =
-        trimmed.startsWith("{") || trimmed.startsWith("[") ? SafeJSON.parse(trimmed) : await readPlanFile(trimmed);
+    return trimmed.startsWith("{") || trimmed.startsWith("[")
+        ? SafeJSON.parse(trimmed)
+        : await readPlanFile(trimmed, options.modules ?? {});
+}
+
+export async function loadAnnotationPlanValue(value: string): Promise<AnnotationPlanFile> {
+    const parsed = await readPlanValue(value);
 
     if (!parsed || typeof parsed !== "object") {
         throw new Error("invalid annotation plan: expected an object or an array of annotations");
