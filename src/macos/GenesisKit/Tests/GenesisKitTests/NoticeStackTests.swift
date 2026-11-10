@@ -66,6 +66,15 @@ final class NoticeStackTests: XCTestCase {
         XCTAssertEqual(NoticeStackModel.split(model.notices, max: model.visibleLimit).shown.count, 5, "no limit shows all")
     }
 
+    /// The "+N more" chip is a control: the shared hover (a brighter chip, the pointing hand), never a plain style that
+    /// shows neither (ux checklist, Affordance).
+    func testTheMoreChipHasTheSharedHover() {
+        let view = NoticeStackView(stack(ManualNoticeClock()))
+        let chip = String(describing: type(of: view.moreChip(2)))
+        XCTAssertTrue(chip.contains("GenHoverButtonStyle"), chip)
+        XCTAssertFalse(chip.contains("PlainButtonStyle"), chip)
+    }
+
     func testAPushUnderAWaitingNoticesIDEndsTheWait() {
         let clock = ManualNoticeClock()
         let model = stack(clock)

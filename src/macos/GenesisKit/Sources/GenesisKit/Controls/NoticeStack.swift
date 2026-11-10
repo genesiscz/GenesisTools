@@ -421,7 +421,7 @@ public struct NoticeStackView: View {
 
     /// "+N more": the older notices folded past `maxVisible`; a click shows them all until none is folded again.
     @ViewBuilder
-    private func moreChip(_ count: Int) -> some View {
+    func moreChip(_ count: Int) -> some View {
         if count > 0 {
             Button {
                 showsAll = true
@@ -431,7 +431,8 @@ public struct NoticeStackView: View {
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(.regularMaterial, in: Capsule())
             }
-            .buttonStyle(.plain)
+            // The shared hover: a brighter chip and the pointing hand (a plain style showed neither).
+            .buttonStyle(.genHoverPlain())
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityLabel("Show \(count) more \(count == 1 ? "notice" : "notices")")
             .accessibilityIdentifier("notice-stack-more")
