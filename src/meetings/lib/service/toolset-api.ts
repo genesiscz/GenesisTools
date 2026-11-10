@@ -88,7 +88,7 @@ export const itemsRows = defineMethod({
     result: z.unknown(),
     resultName: "{ meeting, rows: ReviewRow[], hidden }",
     effect: "read",
-    doc: 'The review rows, as `tools meetings rows --json` prints them: each item in the order listen asks, with its question as parts, its typed choices with confidence, its edit kind, sources, Moment and last decision. lowPriority: "show" keeps the open questions under the priority line.',
+    doc: `The review rows, as \`${toolCommand("meetings", "rows", "--json")}\` prints them: each item in the order listen asks, with its question as parts, its typed choices with confidence, its edit kind, sources, Moment and last decision. lowPriority: "show" keeps the open questions under the priority line.`,
 });
 export const add = defineMethod({
     name: "items.add",

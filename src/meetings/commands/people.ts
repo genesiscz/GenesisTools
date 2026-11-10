@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -420,7 +421,10 @@ export function registerPeopleCommand(program: Command): void {
     people
         .command("unassign")
         .argument("<meeting>", MEETING_REF)
-        .argument("<token>", "the assignment's token (assign prints it; tools meetings journal lists it)")
+        .argument(
+            "<token>",
+            `the assignment's token (assign prints it; ${toolCommand("meetings", "journal")} lists it)`
+        )
         .description("Undo an assignment")
         .option("--reason <text>", "why: kept in the decision journal")
         .option("--json", "print the revert as JSON")
