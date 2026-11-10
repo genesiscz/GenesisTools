@@ -11,7 +11,8 @@ import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
  * message right after a reply that asked exactly one decision. Letters closed one by one (`D14: a) b)`) are one set.
  * Two different answers, a letter the decision does not have, or `D14` named without an option is ambiguous: the hook
  * names those for the agent to record or leave. An answer that rules a letter out (`D14: a) b) not e)`) is clear, but
- * its words say more than its letters, so it goes to `forAgent`: no reader records it, the agent does.
+ * its words say more than its letters, so it goes to `forAgent`: no reader records it, the agent does. A later answer
+ * that repeats the letters without ruling one out keeps the earlier ruling.
  */
 
 /** An open decision as the finder needs it. */
@@ -427,13 +428,24 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
             continue;
         }
 
+        // A letter ruled out still stands when a later answer repeats the letters without it; two answers that rule
+        // out different letters disagree.
+        const ruling = hits.filter((hit) => hit.found.excluded);
+
+        if (new Set(ruling.map((hit) => [...(hit.found.excluded ?? "")].sort().join(""))).size > 1) {
+            ambiguous.push({ number: decision.number, reason: "several answers", evidence: last.evidence });
+            continue;
+        }
+
+        const chosen = ruling.at(-1) ?? last;
+
         // Ruling a letter out says more than the letters: the agent records it with its reading of the words.
-        (last.found.excluded ? forAgent : unambiguous).push({
+        (chosen.found.excluded ? forAgent : unambiguous).push({
             number: decision.number,
-            ...(last.found.option ? { option: last.found.option } : {}),
-            ...(last.found.excluded ? { excluded: last.found.excluded } : {}),
-            answer: last.found.answer,
-            evidence: last.evidence,
+            ...(chosen.found.option ? { option: chosen.found.option } : {}),
+            ...(chosen.found.excluded ? { excluded: chosen.found.excluded } : {}),
+            answer: chosen.found.answer,
+            evidence: chosen.evidence,
         });
     }
 

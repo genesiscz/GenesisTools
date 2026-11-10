@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HUB_SERVER_DOORS } from "@app/hub/server/doors";
 import { MEETINGS_DOORS, meetingsScreenTimelineDoor } from "@app/hub/server/doors/meetings";
 import { DoorUnsupported } from "@app/hub/server/doors/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as ocrBoxes from "@genesiscz/utils/macos/ocr-boxes";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { readCorrections } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
@@ -307,6 +308,73 @@ describe("screen timeline", () => {
         await expect(screenTimeline({ store: meetings, record: created, frame: "frames/nosuch.png" })).rejects.toThrow(
             `No frame "frames/nosuch.png" in ${created.id}`
         );
+    });
+
+    test("one frame turns into boxes only itself and its display's frame before it, and stops there", async () => {
+        const { meetings } = stores();
+        const created = await meetings.create(
+            { title: "Demo", start: "2026-11-05T08:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const folder = meetings.folder(created.id);
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        const canvas = createCanvas(400, 200);
+        canvas.getContext("2d").fillRect(0, 0, 400, 200);
+        const block = (text: string, y: number) => ({
+            text,
+            confidence: 1,
+            bounds: { x: 0.1, y, width: 0.5, height: 0.1 },
+        });
+        const row = (file: string, second: number, displayId: number, lines: string[]) => ({
+            file,
+            at: `2026-11-05T08:00:${String(second).padStart(2, "0")}.000Z`,
+            displayId,
+            text: lines.join("\n"),
+            blocks: lines.map((line, index) => block(line, 0.8 - index * 0.2)),
+        });
+        // Written out of time order, as two displays append: the timeline sorts by time.
+        const rows = [
+            row("frames/c-d1.png", 30, 1, ["Agenda", "Budget totals"]),
+            row("frames/a-d1.png", 10, 1, ["Agenda", "Item one"]),
+            row("frames/b-d2.png", 15, 2, ["Chat", "Hello"]),
+            row("frames/b-d1.png", 20, 1, ["Agenda", "Item two"]),
+            row("frames/d-d2.png", 25, 2, ["Chat", "Bye"]),
+            row("frames/e-d1.png", 40, 1, ["Agenda", "Item four"]),
+        ];
+
+        for (const one of rows) {
+            writeFileSync(join(folder, one.file), canvas.toBuffer("image/png"));
+        }
+
+        writeFileSync(join(folder, "ocr.jsonl"), `${rows.map((one) => SafeJSON.stringify(one)).join("\n")}\n`);
+        const whole = await screenTimeline({ store: meetings, record: created });
+        const boxes = spyOn(ocrBoxes, "frameBoxes");
+
+        try {
+            const one = await screenTimeline({ store: meetings, record: created, frame: "frames/c-d1.png" });
+
+            // b-d1 (the frame before it on display 1) and c-d1: not a-d1, display 2, or e-d1 after it.
+            expect(boxes).toHaveBeenCalledTimes(2);
+            expect(one.frames.map((frame) => frame.file)).toEqual(["frames/c-d1.png"]);
+            // The same changed lines as the whole timeline shows for it.
+            const inWhole = whole.frames.find((frame) => frame.file === "frames/c-d1.png");
+            expect(inWhole).toBeDefined();
+            expect(one.frames[0]?.changed).toEqual(inWhole?.changed ?? []);
+            expect(one.frames[0]?.changed.map((line) => line.text)).toEqual(["Budget totals"]);
+
+            boxes.mockClear();
+            const first = await screenTimeline({ store: meetings, record: created, frame: "frames/b-d2.png" });
+            expect(boxes).toHaveBeenCalledTimes(1);
+            expect(first.frames[0]?.changed.map((line) => line.text)).toEqual(["Chat", "Hello"]);
+
+            boxes.mockClear();
+            await expect(
+                screenTimeline({ store: meetings, record: created, frame: "frames/nosuch.png" })
+            ).rejects.toThrow(`No frame "frames/nosuch.png" in ${created.id}`);
+            expect(boxes).not.toHaveBeenCalled();
+        } finally {
+            boxes.mockRestore();
+        }
     });
 });
 

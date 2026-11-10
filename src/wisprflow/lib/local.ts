@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
+import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { CalendarPerson } from "@genesiscz/utils/meetings/calendar-entry";
@@ -401,54 +401,182 @@ interface UncheckedMarkerLine {
     epochMs?: unknown;
 }
 
-const markerCache = new Map<string, { key: string; marker: LiveMarker | null }>();
+/** What the last read of a live transcript left, so the next poll reads only what Wispr Flow appended since. */
+interface MarkerScan {
+    /** The file as it was read: a poll that finds it the same answers `marker` without a read. */
+    identity: FileIdentity;
+    /** Where the last complete line read ends (just after its newline). */
+    end: number;
+    /** The bytes just before `end`, at most `MARKER_TAIL_BYTES`: a file rewritten in place no longer holds them there. */
+    tail: Buffer;
+    /** The last marker of the complete lines before `end`. */
+    complete: LiveMarker | null;
+    /** What the poll answered: a marker on the unfinished last line, else `complete`. */
+    marker: LiveMarker | null;
+}
 
-/** The last `paused` / `resumed` marker of a meeting's live transcript, read again only when the file changed. */
+const markerScans = new Map<string, MarkerScan>();
+const MARKER_CHUNK_BYTES = 64 * 1024;
+const MARKER_TAIL_BYTES = 64;
+const NEWLINE = 0x0a;
+
+function markerOfLine(line: string, path: string): LiveMarker | null {
+    if (!line.includes('"marker"')) {
+        return null;
+    }
+
+    try {
+        const parsed = SafeJSON.parse(line, { strict: true }) as UncheckedMarkerLine;
+
+        if (typeof parsed.marker === "string" && typeof parsed.epochMs === "number") {
+            return { marker: parsed.marker, epochMs: parsed.epochMs };
+        }
+    } catch (err) {
+        log.debug({ err, path }, "a live transcript line with a marker is not JSON");
+    }
+
+    return null;
+}
+
+/** Bytes `start` to `end` of the open file (fewer when it ends sooner). */
+function readRange(fd: number, start: number, end: number): Buffer {
+    const buffer = Buffer.alloc(Math.max(0, end - start));
+    let done = 0;
+
+    while (done < buffer.length) {
+        const read = readSync(fd, buffer, done, buffer.length - done, start + done);
+
+        if (read === 0) {
+            break;
+        }
+
+        done += read;
+    }
+
+    return buffer.subarray(0, done);
+}
+
+/** Just after the last newline between `from` and `size`, read from the end; `from` when there is none. */
+function lastLineEnd(fd: number, from: number, size: number): number {
+    for (let position = size; position > from; ) {
+        const start = Math.max(from, position - MARKER_CHUNK_BYTES);
+        const at = readRange(fd, start, position).lastIndexOf(NEWLINE);
+
+        if (at >= 0) {
+            return start + at + 1;
+        }
+
+        position = start;
+    }
+
+    return from;
+}
+
+/**
+ * The last marker of the complete lines between `from` (a line start) and `end` (a line end), read backwards in
+ * chunks until one turns up, so a marker near the end costs one chunk however long the call ran.
+ */
+function lastMarkerBetween(fd: number, from: number, end: number, path: string): LiveMarker | null {
+    // The start of a line whose beginning lies in an earlier chunk.
+    let carry = Buffer.alloc(0);
+
+    for (let position = end; position > from; ) {
+        const start = Math.max(from, position - MARKER_CHUNK_BYTES);
+        const chunk = Buffer.concat([readRange(fd, start, position), carry]);
+        position = start;
+        // Above `from` a chunk can start inside a line: the bytes up to its first newline wait for the chunk before.
+        const cut = position > from ? chunk.indexOf(NEWLINE) + 1 : 0;
+
+        if (position > from && cut === 0) {
+            carry = chunk;
+            continue;
+        }
+
+        const lines = chunk.subarray(cut).toString("utf8").split("\n");
+
+        for (let index = lines.length - 1; index >= 0; index--) {
+            const marker = markerOfLine(lines[index] ?? "", path);
+
+            if (marker) {
+                return marker;
+            }
+        }
+
+        carry = chunk.subarray(0, cut);
+    }
+
+    return null;
+}
+
+/**
+ * Reads what changed since `scan`. An append keeps the inode and the bytes before the last line end, so only the new
+ * lines are read; a truncated, replaced or rewritten file is read again from its end backwards.
+ */
+function rescanMarkers(fd: number, identity: FileIdentity, path: string, scan: MarkerScan | undefined): MarkerScan {
+    const kept =
+        scan &&
+        scan.identity.ino === identity.ino &&
+        identity.size >= scan.end &&
+        readRange(fd, scan.end - scan.tail.length, scan.end).equals(scan.tail)
+            ? scan
+            : undefined;
+    const from = kept?.end ?? 0;
+    const end = lastLineEnd(fd, from, identity.size);
+    const complete = lastMarkerBetween(fd, from, end, path) ?? kept?.complete ?? null;
+    // The last line can still be unfinished; a whole JSON line without its newline counts, and is read again next time.
+    const unfinished = markerOfLine(readRange(fd, end, identity.size).toString("utf8"), path);
+
+    return {
+        identity,
+        end,
+        tail: readRange(fd, Math.max(0, end - MARKER_TAIL_BYTES), end),
+        complete,
+        marker: unfinished ?? complete,
+    };
+}
+
+/**
+ * The last `paused` / `resumed` marker of a meeting's live transcript. A poll reads nothing when the file did not
+ * change, and only the appended lines while Wispr Flow records (`MarkerScan`).
+ */
 export function lastLiveMarker(meetingId: string, dir = WISPR_DIR): LiveMarker | null {
     const path = join(dir, "meetings", meetingId, "live.ndjson");
     const identity = fileIdentity(path);
 
     if (!identity) {
+        markerScans.delete(path);
         return null;
     }
 
-    const key = `${identity.ino}:${identity.size}:${identity.mtimeMs}`;
-    const cached = markerCache.get(path);
+    const scan = markerScans.get(path);
 
-    if (cached?.key === key) {
-        return cached.marker;
+    if (
+        scan &&
+        scan.identity.ino === identity.ino &&
+        scan.identity.size === identity.size &&
+        scan.identity.mtimeMs === identity.mtimeMs
+    ) {
+        return scan.marker;
     }
 
-    let marker: LiveMarker | null = null;
-    let lines: string[];
+    let fd: number | undefined;
 
     // Wispr Flow writes the file while it records: it can go between the stat and the read. No marker, and nothing
-    // cached, so the next poll reads it again.
+    // kept, so the next poll reads it again.
     try {
-        lines = readFileSync(path, "utf8").split("\n");
+        fd = openSync(path, "r");
+        const next = rescanMarkers(fd, identity, path, scan);
+        markerScans.set(path, next);
+        return next.marker;
     } catch (err) {
+        markerScans.delete(path);
         log.warn({ err, path }, "the live transcript could not be read; no marker this time");
         return null;
-    }
-
-    for (let index = lines.length - 1; index >= 0 && !marker; index--) {
-        if (!lines[index].includes('"marker"')) {
-            continue;
-        }
-
-        try {
-            const line = SafeJSON.parse(lines[index], { strict: true }) as UncheckedMarkerLine;
-
-            if (typeof line.marker === "string" && typeof line.epochMs === "number") {
-                marker = { marker: line.marker, epochMs: line.epochMs };
-            }
-        } catch (err) {
-            log.debug({ err, path, index }, "a live transcript line with a marker is not JSON");
+    } finally {
+        if (fd !== undefined) {
+            closeSync(fd);
         }
     }
-
-    markerCache.set(path, { key, marker });
-    return marker;
 }
 
 /** The user's Wispr Flow dictionary: words the app was taught to spell. */

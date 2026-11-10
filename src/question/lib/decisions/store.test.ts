@@ -2193,6 +2193,44 @@ describe("chatAnswers", () => {
         expect(read("D46: b) not e)", false).forAgent).toEqual([["b", "e", "not e)"]]);
     });
 
+    test("keeps a ruled-out letter when a later answer repeats the letters without it", () => {
+        const six = ["a", "b", "c", "d", "e", "f"];
+        const read = (...answers: string[]) => {
+            const found = chatAnswers(
+                [
+                    entry("assistant", "❓ DECISION 46 — Which steps?", 1),
+                    ...answers.map((answer, index) => entry("user", answer, index + 2)),
+                ],
+                [{ number: 46, letters: six, several: true, askedAt: at(1) }]
+            );
+
+            return {
+                unambiguous: found.unambiguous.map((answer) => answer.option ?? null),
+                forAgent: found.forAgent.map((answer) => [
+                    answer.option ?? null,
+                    answer.excluded,
+                    answer.evidence.line,
+                ]),
+                ambiguous: found.ambiguous.map((item) => item.reason),
+            };
+        };
+
+        // The repeat agrees on the letters, so the answer stands, and so does `not e)`: the agent records it, never the hook.
+        expect(read("D46: a) b) not e)", "D46: a) b)")).toEqual({
+            unambiguous: [],
+            forAgent: [["ab", "e", 2]],
+            ambiguous: [],
+        });
+        expect(read("D46: a) b)", "D46: a) b) not e)").forAgent).toEqual([["ab", "e", 3]]);
+        // Two answers ruling out different letters disagree.
+        expect(read("D46: a) b) not e)", "D46: a) b) not d)")).toEqual({
+            unambiguous: [],
+            forAgent: [],
+            ambiguous: ["several answers"],
+        });
+        expect(read("D46: a) b) not e)", "D46: a) b) not e)").forAgent).toEqual([["ab", "e", 3]]);
+    });
+
     test("reads a word as words on a decision that takes one letter, never as a set of its letters", () => {
         const five = ["a", "b", "c", "d", "e"];
         const answerTo = (text: string) =>
