@@ -825,7 +825,7 @@ public struct LiveWidgetView: View {
 
     /// The cards `filter` shows (`WidgetModel.filteredOut`).
     static func filtered(_ cards: [WidgetCard], by filter: String) -> [WidgetCard] {
-        cards.filter { !WidgetModel.filteredOut(kind: $0.kind, by: filter) }
+        cards.filter { !WidgetModel.filteredOut(kind: $0.kind.rawValue, by: filter) }
     }
 
     /// A composer message lands under the list, and the list follows it. An answer sent from a card leaves the list
@@ -866,11 +866,11 @@ public struct LiveWidgetView: View {
         case "decision":
             if let replacement = card.supersededBy { return "Decision · Superseded by " + WidgetWords.decision(replacement.number) }
             if let option = card.option, !option.isEmpty, ["acknowledged", "implemented", "sent", "answered"].contains(card.status) {
-                return "Decision · Answered \(option) · " + statusPhrase(card.status, kind: card.kind)
+                return "Decision · Answered \(option) · " + statusPhrase(card.status, kind: card.kind.rawValue)
             }
-            return "Decision · " + statusPhrase(card.status, kind: card.kind)
-        case "form": return "Question · " + statusPhrase(card.status, kind: card.kind)
-        default: return sentenceCase(card.kind) + " · " + statusPhrase(card.status, kind: card.kind)
+            return "Decision · " + statusPhrase(card.status, kind: card.kind.rawValue)
+        case "form": return "Question · " + statusPhrase(card.status, kind: card.kind.rawValue)
+        default: return sentenceCase(card.kind.rawValue) + " · " + statusPhrase(card.status, kind: card.kind.rawValue)
         }
     }
 
@@ -1562,7 +1562,7 @@ struct WidgetInboxCardRow: View, Equatable {
             Circle()
                 .fill(waiting ? Color.orange : (staged || !card.read ? SessionPalette.blue : Color.clear))
                 .frame(width: 7, height: 7).padding(.top, 5)
-            Image(systemName: LiveWidgetView.kindSymbol(card.kind)).font(.system(size: 11))
+            Image(systemName: LiveWidgetView.kindSymbol(card.kind.rawValue)).font(.system(size: 11))
                 .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 // A one-question form's title is its prompt, which the open card does not repeat: open, it

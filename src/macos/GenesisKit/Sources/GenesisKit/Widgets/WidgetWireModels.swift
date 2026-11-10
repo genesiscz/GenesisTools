@@ -159,11 +159,57 @@ public struct WidgetReference: Codable, Equatable, Sendable {
     public var type: String
     public var value: String
 }
+/// A card's kind as the hub writes it: the `WidgetCard["kind"]` union in src/hub/lib/widget/snapshot.ts. A kind this
+/// build does not know decodes to `unknown` with its text, so one new hub kind does not fail the whole snapshot; the
+/// golden snapshot tests (`WidgetGoldenSnapshotTests`) fail on it instead. A string literal makes a kind, so
+/// `card.kind == "decision"` reads as before.
+public enum WidgetCardKind: Codable, Hashable, Sendable, ExpressibleByStringLiteral, CustomStringConvertible {
+    case decision, dialog, todo, form, answer, result
+    case unknown(String)
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "decision": self = .decision
+        case "dialog": self = .dialog
+        case "todo": self = .todo
+        case "form": self = .form
+        case "answer": self = .answer
+        case "result": self = .result
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    public init(stringLiteral value: String) { self.init(rawValue: value) }
+
+    public init(from decoder: Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    /// The kind's text on the wire.
+    public var rawValue: String {
+        switch self {
+        case .decision: return "decision"
+        case .dialog: return "dialog"
+        case .todo: return "todo"
+        case .form: return "form"
+        case .answer: return "answer"
+        case .result: return "result"
+        case .unknown(let value): return value
+        }
+    }
+
+    public var description: String { rawValue }
+}
 public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
     public var sourceContext: WidgetSourceContext? = nil
     public var transcriptAnchor: WidgetTranscriptAnchor? = nil
     public var id: String
-    public var kind: String
+    public var kind: WidgetCardKind
     public var sessionKey: String
     public var sourceId: String
     public var at: Double
@@ -475,7 +521,7 @@ public struct WidgetReplyTo: Codable, Equatable, Sendable {
 
     public init(card: WidgetCard) {
         id = card.sourceId
-        kind = card.kind
+        kind = card.kind.rawValue
         number = card.kind == "decision" ? card.number : nil
         let title = Self.line(card.title)
         self.title = title.isEmpty ? nil : title
