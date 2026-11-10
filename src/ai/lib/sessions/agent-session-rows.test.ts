@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CODEX_CACHE_TTL_MS, computeCacheStatus, GROK_CACHE_TTL_MS } from "@app/claude/lib/usage/session-rows";
+import { computeCacheStatus } from "@app/claude/lib/usage/session-rows";
 import {
     claudeHistoryReader,
     codexHistoryReader,
@@ -17,6 +17,8 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { t3SessionThreads } from "@genesiscz/utils/t3code/session-threads";
 import { type AgentSessionRow, cmuxLocationForRow, listAgentSessionRows, withT3Hosts } from "./agent-session-rows";
+import { CODEX_CACHE_TTL_MS } from "./row-listers/codex";
+import { GROK_CACHE_TTL_MS } from "./row-listers/grok";
 
 /**
  * The contract this file pins is the ROW SHAPE, because a reader outside this repo (the
@@ -154,6 +156,25 @@ test("a grok row reports the 30-minute warning clock", () => {
     expect(row.cacheTtlSec).toBe(600);
     expect(row.cacheLifetimeSec).toBe(1800);
     expect("contextTokens" in row).toBe(false);
+});
+
+test("codex 30m ttl cools at 20m idle and dies at 30m", () => {
+    const now = 1_700_000_000_000;
+    const minute = 60 * 1000;
+    const ttl = CODEX_CACHE_TTL_MS;
+    expect(computeCacheStatus(now - (20 * minute - 1), now, ttl).status).toBe("HOT");
+    expect(computeCacheStatus(now - 20 * minute, now, ttl).status).toBe("COOLING");
+    expect(computeCacheStatus(now - 25 * minute, now, ttl).status).toBe("CRITICAL");
+    expect(computeCacheStatus(now - 30 * minute, now, ttl).status).toBe("COLD");
+    expect(computeCacheStatus(now - 20 * minute, now, ttl).ttlSec).toBe(600);
+});
+
+test("grok uses the same 30m warning clock as codex", () => {
+    const now = 1_700_000_000_000;
+    const minute = 60 * 1000;
+    expect(GROK_CACHE_TTL_MS).toBe(CODEX_CACHE_TTL_MS);
+    expect(computeCacheStatus(now - 20 * minute, now, GROK_CACHE_TTL_MS).status).toBe("COOLING");
+    expect(computeCacheStatus(now - 30 * minute, now, GROK_CACHE_TTL_MS).status).toBe("COLD");
 });
 
 test("a codex row's account is nullable, because Codex itself records none", () => {
