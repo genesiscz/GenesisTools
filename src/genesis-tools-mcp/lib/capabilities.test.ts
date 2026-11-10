@@ -248,7 +248,8 @@ describe("the tool group table", () => {
         const readme = await Bun.file(join(import.meta.dir, "..", "README.md")).text();
 
         for (const row of TOOL_GROUPS) {
-            expect(readme).toMatch(new RegExp(`^- \`${row.id}\``, "m"));
+            // A bullet in the rewritten README, a table row in the older one.
+            expect(readme).toMatch(new RegExp(`^(?:- |\\| )\`${row.id}\``, "m"));
         }
     });
 });
