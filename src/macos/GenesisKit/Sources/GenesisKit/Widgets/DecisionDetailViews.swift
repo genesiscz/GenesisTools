@@ -11,8 +11,9 @@ import SwiftUI
 public struct DecisionContextSection: View {
     /// The widget's fold: about eight lines of 12 pt text.
     public static let foldHeight: CGFloat = 150
-    /// The hub card's fold: two lines, so a card shows its question and options first (hub UX council, 2026-11-09).
-    public static let twoLines: CGFloat = 40
+    /// The hub card's fold: five lines of the context's prose. Two lines (hub UX council, 2026-11-09) left the reasoning
+    /// shorter than the code under it, "upside down" (Martin, 2026-11-10, annotation 2394).
+    public static let fiveLines: CGFloat = 96
 
     let markdown: String
     /// Open in full from the start (the widget's Decision context setting); Show less still folds it.
@@ -174,6 +175,9 @@ public struct DecisionCodeSection: View {
 struct DecisionExcerpt: View {
     let ref: DecisionRef
     let root: String?
+    /// The reader opened every line of the excerpt; folded, it shows the five lines around the cited one.
+    @State private var allLines = false
+    @GenReduceMotion private var reduceMotion
     /// The panel find's key of the path (`ref:<index>`), as the hub's ⌘F lists it.
     let field: String
     /// The card around it is live; the excerpt is a row of the card's list, so it takes the card's liveness.
@@ -219,18 +223,45 @@ struct DecisionExcerpt: View {
                 }
             }
             if let excerpt = ref.excerpt, !excerpt.isEmpty {
+                let start = ref.startLine ?? ref.line ?? 1
+                let window = Self.window(excerpt, start: start, focus: ref.line, open: allLines)
                 CodeBlockText(
-                    block: CodeBlockBuilder.numbered(excerpt, start: ref.startLine ?? ref.line ?? 1,
+                    block: CodeBlockBuilder.numbered(window.text, start: window.start,
                                                      language: SyntaxLanguage.forPath(ref.path), focus: ref.line),
                     limit: nil,
-                    cacheKey: "inbox-\(ref.path):\(ref.line ?? 0)"
+                    cacheKey: "inbox-\(ref.path):\(ref.line ?? 0):\(window.start)-\(window.count)"
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // The code reads as a block by its rule and its monospaced lines, not by a filled box (P8).
                 .leadingRule(Color.white.opacity(0.12))
+                if window.total > Self.foldedLines {
+                    LiveButton(tooltip: nil, pressable: true) {
+                        let opening = !allLines
+                        GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { allLines = opening }
+                    } label: {
+                        Text(allLines ? "Show \(Self.foldedLines) lines" : "Show all \(window.total) lines")
+                    }
+                    .font(.system(size: 10.5))
+                    .foregroundColor(KitPalette.renamed)
+                    .accessibilityValue(allLines ? "Expanded" : "Collapsed")
+                }
             }
         }
         .liveRow(selected: cardLive)
+    }
+
+    /// An excerpt shows this many lines until the reader opens it (Martin, 2026-11-10: "the code 5 lines but expandable").
+    static let foldedLines = 5
+
+    /// The lines an excerpt shows: all of them when `open`, else `foldedLines` around the cited line (the first ones
+    /// without one), with the file line number of the first.
+    static func window(_ excerpt: String, start: Int, focus: Int?, open: Bool) -> (text: String, start: Int, count: Int, total: Int) {
+        let lines = excerpt.components(separatedBy: "\n")
+        guard !open, lines.count > foldedLines else { return (excerpt, start, lines.count, lines.count) }
+        let cited = focus.map { $0 - start } ?? 0
+        let first = min(max(0, cited - foldedLines / 2), lines.count - foldedLines)
+        let shown = lines[first..<(first + foldedLines)].joined(separator: "\n")
+        return (shown, start + first, foldedLines, lines.count)
     }
 
     private func open() {

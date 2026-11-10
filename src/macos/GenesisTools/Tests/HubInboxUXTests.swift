@@ -366,28 +366,48 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertTrue(closed.contains("Your answer"), closed)
     }
 
-    /// The card's Context folds to two lines with Show more by default; a decision quoted inside it (hub UX council,
+    /// The card's Context folds to five lines with Show more by default; a decision quoted inside it (hub UX council,
     /// 2026-11-09: Decision 12's context repeated Decision 11 with its own a) b) c)) is drawn as a blockquote whose
     /// title says Quoted, opened in full here through the Inbox setting.
     @MainActor
-    func testTheContextFoldsToTwoLinesAndAQuotedDecisionReadsAsAQuote() throws {
+    func testTheContextFoldsToFiveLinesAndAQuotedDecisionReadsAsAQuote() throws {
         HubDefaults.isolate()
         defer { HubDefaults.store.removeObject(forKey: HubInboxCards.contextOpenKey) }
         // Both cards are drawn before any text is read, so both PNGs exist even when text recognition fails.
-        let foldedRep = try Self.render(card: try Self.decision(Self.contextFixture(status: "waiting")), name: "extra-4-context-folded")
+        let foldedRep = try Self.render(card: try Self.decision(Self.contextFixture(status: "waiting")), name: "extra-6-context-folded")
         let quoting = #"""
         {"number": 12, "title": "Comment on the issue with the new evidence?", "prompt": "Post a short comment?",
          "context": "I posted both questions to your widget inbox.\n\n❓ **DECISION 11**: How should T3 show the plan and email?\nClaude Code reports them only for a stored login.\n\n- **a)** A T3 change only you would use.\n- **b)** A GenesisTools change.\n- **c)** Leave it as Authenticated.\n\nPlease answer these, not the earlier ones.",
          "choices": [{"id": "a", "label": "Yes, post it."}, {"id": "b", "label": "No, the existing reports are enough."}]}
         """#
         HubDefaults.store.set(true, forKey: HubInboxCards.contextOpenKey)
-        let quotedRep = try Self.render(card: try Self.decision(quoting), name: "extra-4-quoted-decision")
+        let quotedRep = try Self.render(card: try Self.decision(quoting), name: "extra-6-quoted-decision")
         let folded = try Self.drawnText(foldedRep)
         XCTAssertTrue(folded.contains("Show more"), folded)
         XCTAssertFalse(folded.contains("types the command in a terminal"), "folded: the last line is hidden: \(folded)")
+        XCTAssertTrue(folded.contains("is stopped before the dialog opens"), "five lines: the second paragraph shows: \(folded)")
+        XCTAssertTrue(folded.contains("Show all 11 lines"), "the excerpt folds to five lines with its own button: \(folded)")
+        XCTAssertFalse(folded.contains("severity"), "line 15 of the excerpt is folded away: \(folded)")
         let quoted = try Self.drawnText(quotedRep)
         XCTAssertTrue(quoted.contains("Quoted"), quoted)
         XCTAssertTrue(quoted.contains("Please answer these"), "the prose after the quote is outside it: \(quoted)")
+    }
+
+    /// A fenced block inside the Context (a root cause with its code) shows five lines and its own Show all, apart from
+    /// the Context's Show more (Martin, 2026-11-10, annotation 2394: "the code 5 lines but expandable").
+    @MainActor
+    func testACodeBlockInTheContextShowsFiveLinesWithItsOwnButton() throws {
+        HubDefaults.isolate()
+        defer { HubDefaults.store.removeObject(forKey: HubInboxCards.contextOpenKey) }
+        HubDefaults.store.set(true, forKey: HubInboxCards.contextOpenKey)
+        let code = (1...12).map { "const step\($0) = run(\($0));" }.joined(separator: "\n")
+        let context = "The hook stops the command before the dialog opens.\n\n**Root cause**\n\n```ts\n\(code)\n```\n\nThe rest of the reasoning goes here."
+        let rep = try Self.render(card: try Self.decision(Self.contextFixture(status: "waiting", context: context)), name: "extra-6-context-code")
+        let text = try Self.drawnText(rep)
+        XCTAssertTrue(text.contains("step5"), text)
+        XCTAssertFalse(text.contains("step6"), "the block folds after five lines: \(text)")
+        XCTAssertTrue(text.contains("Show all 12 lines"), text)
+        XCTAssertTrue(text.contains("The rest of the reasoning"), "the prose after the block shows: \(text)")
     }
 
     /// Decision 31 of 2026-11-01 as the loader sends it now (`fromRecord`): the options carry the words the agent wrote
@@ -501,7 +521,7 @@ final class HubInboxUXTests: XCTestCase {
     /// The decision of the 2026-11-01 screenshot with invented paths and answer: a long context, one cited file with
     /// its lines, a proposal, three options with a recommended one. `status` "sent" adds the pick, an answer of its own
     /// and a delivery.
-    static func contextFixture(status: String) -> String {
+    static func contextFixture(status: String, context override: String? = nil) -> String {
         let excerpt = [
             #"import { commandTokenIndex, commandWord, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";"#,
             "",
@@ -528,7 +548,7 @@ final class HubInboxUXTests: XCTestCase {
         var fields: [String: Any] = [
             "number": 1, "status": status, "title": "May an agent start `tools rm approve <id>` to open the approval dialog?",
             "prompt": "May an agent start `tools rm approve <id>` to open the approval dialog?",
-            "context": context, "confidence": "high", "recommended": "a",
+            "context": override ?? context, "confidence": "high", "recommended": "a",
             "proposal": "a): it matches both of your instructions. The dialog stays the only approval path.",
             "choices": [
                 ["id": "a", "label": "allow at 1 GB or more", "recommended": true],
