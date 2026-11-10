@@ -342,7 +342,8 @@ struct LoadablePane<Value: Equatable, Content: View>: View {
     var body: some View {
         if let noSource, state.failure?.code == NoTranscriptSource.code {
             EmptyState(symbol: "waveform.slash", text: "This meeting has no \(noSource.what)",
-                       detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Linking its Wispr Flow meeting brings both.",
+                       // The window has no link action, so the text names the command: it said only that linking helps.
+                       detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Its Wispr Flow meeting brings both. Link it in a terminal:\ntools meetings link <meeting> wisprflow:<id>",
                        actionTitle: noSource.showScreen == nil ? nil : "Show the screen recording", action: noSource.showScreen)
         } else {
             pane

@@ -207,7 +207,7 @@ extension MeetingsPreferences {
 
         static let view = MeetingsWindowSetting(
             key: "meetings.playback.view", defaultValue: View.moment, choices: View.allCases,
-            title: "Player view", detail: "Moment plays a row's clip; Meeting plays the whole recording.")
+            title: "Player view", detail: "What a click on a time plays: its Moment (a short clip), or the meeting on from there. The timeline opens on the same.")
         static let speed = MeetingsWindowSetting(
             key: "meetings.playback.speed", defaultValue: 1.0, choices: [0.75, 1, 1.25, 1.5, 2],
             title: "Speed", detail: "How fast a Moment plays.")
