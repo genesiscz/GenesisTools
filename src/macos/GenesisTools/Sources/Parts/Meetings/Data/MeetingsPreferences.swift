@@ -300,8 +300,10 @@ extension MeetingsPreferences {
         static let transcriptPane = MeetingsWindowSetting(
             key: "meetings.items.transcriptPane", defaultValue: TranscriptPane.auto, choices: TranscriptPane.allCases,
             title: "Transcript beside the rows", detail: "Auto shows it when the window is wide enough.")
+        /// 700, not the first pick of 560: 560 is the window's smallest height (`MeetingsFace.minimumSize`), so the dock
+        /// never folded at any size, and at 600 pt the full dock (about 330 pt) left about 90 pt of rows.
         static let collapseHeight = MeetingsWindowSetting(
-            key: "meetings.timeline.collapseHeight", defaultValue: 560, choices: [0, 480, 560, 700],
+            key: "meetings.timeline.collapseHeight", defaultValue: 700, choices: [0, 480, 560, 700],
             title: "Fold the dock below", detail: "A window lower than this shows the dock as one line, so the rows keep the room.")
         static let screenHeight = MeetingsWindowSetting(
             key: "meetings.screen.height", defaultValue: 150, choices: [100, 150, 200],

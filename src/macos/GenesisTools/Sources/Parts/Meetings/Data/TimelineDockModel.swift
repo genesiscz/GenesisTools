@@ -198,6 +198,19 @@ final class TimelineDockModel {
         return frames[found ?? 0]
     }
 
+    /// How far the shown frame is from `second` when the capture does not cover that time: positive when `frame` is
+    /// the capture's last frame and `second` is more than `limit` after it (the capture ended earlier), negative when
+    /// it is the first frame and `second` is more than `limit` before it. Nil inside the capture, where an older frame
+    /// means the screen did not change. The pane then says that its picture is from another time.
+    static func apart(_ frame: MeetingsAPI.MeetingScreen.Frame, in screen: MeetingsAPI.MeetingScreen.Result, at second: Double,
+                      display: Int?, limit: Double = 30) -> Double? {
+        let frames = display.map { id in screen.frames.filter { $0.displayId == id } } ?? screen.frames
+        let gap = second - frame.meetingSec
+        if frame == frames.last, gap > limit { return gap }
+        if frame == frames.first, gap < -limit { return gap }
+        return nil
+    }
+
     /// The display the pane shows by itself (G-SCR-1): the one with the Moment's OCR hit, else the one most frames show.
     static func autoDisplay(screen: MeetingsAPI.MeetingScreen.Result, moment: Moment?) -> Int? {
         if let hit = moment?.screen?.first(where: { $0.hit != nil }), let id = hit.displayId { return id }

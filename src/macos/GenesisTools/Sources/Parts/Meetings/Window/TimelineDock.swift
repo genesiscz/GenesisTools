@@ -62,7 +62,13 @@ struct TimelineDock: View {
                                            card: { id in card(id, rows: rows, meeting: meeting) }))
                 .task(id: meeting) {
                     dock.prepare(meeting)
-                    if window?.detail?.id != meeting { dock.prepareRows(meeting) }
+                    if let detail = window?.detail, detail.id == meeting {
+                        // The pins are the open meeting's rows, which its Items tab reads. A meeting that opened on
+                        // another tab has none yet, and its timeline showed no pin until the reader visited Items.
+                        if case .idle = detail.rows { detail.loadRows() }
+                    } else {
+                        dock.prepareRows(meeting)
+                    }
                 }
                 .task(id: ZoomRead(meeting: meeting, view: view)) {
                     dock.ensureZoomPeaks(meeting, view: view, durationSec: duration)
@@ -200,7 +206,9 @@ private struct DockScreen: View {
         let display = chosen ?? TimelineDockModel.autoDisplay(screen: screen, moment: moment)
         let at = dock.screenFollows ? (position() ?? moment?.spotSec ?? 0) : (held ?? position() ?? 0)
         let frame = TimelineDockModel.frame(in: screen, at: at, display: display)
-        ScreenBesidePlayback(recorded: true, image: image, atSec: frame?.meetingSec, hit: hit(for: frame),
+        ScreenBesidePlayback(recorded: true, image: image, atSec: frame?.meetingSec,
+                             apartSec: frame.flatMap { TimelineDockModel.apart($0, in: screen, at: at, display: display) },
+                             hit: hit(for: frame),
                              displays: screen.displays.compactMap { display in
                                  display.id.map { ScreenDisplayChoice(id: $0, name: display.name ?? "Display \($0)", frames: display.frames) }
                              },
