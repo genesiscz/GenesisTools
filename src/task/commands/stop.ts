@@ -1,10 +1,10 @@
 import { getPortDetails } from "@app/port/lib/scanner";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { stopSession } from "@app/task/lib/stop-session";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
 import { out } from "@genesiscz/utils/logger";
 import { collectProcessTree, listProcessRows } from "@genesiscz/utils/process/processes";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
 const DEFAULT_TIMEOUT_SECONDS = 5;
@@ -129,6 +129,7 @@ export function registerStopCommand(program: Command): void {
 
                     const confirmed = await p.confirm({
                         message: `Stop ${running.length} running session(s)? (${running.join(", ")})`,
+                        cancel: "back",
                     });
 
                     if (p.isCancel(confirmed) || !confirmed) {
@@ -185,6 +186,7 @@ export function registerStopCommand(program: Command): void {
                 const picked = await p.select({
                     message: "Select session to stop",
                     options: names.map((n) => ({ value: n, label: n })),
+                    cancel: "back",
                 });
 
                 if (p.isCancel(picked)) {
