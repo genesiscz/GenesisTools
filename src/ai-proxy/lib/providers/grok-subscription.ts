@@ -36,6 +36,7 @@ import {
     grokResponsesToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
 import { hoistSystemMessages } from "@app/ai-proxy/lib/translators/formats/anthropic/hoist-system-messages";
+import { isReasoningReplayRejection } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope";
 import {
     repairAnthropicSseIndices,
     type ToolMatcher,
@@ -300,22 +301,26 @@ export class GrokSubscriptionProvider implements ProxyProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
+            const replayed = Array.isArray(responsesBody.input)
+                ? responsesBody.input.filter((item) => isObject(item) && item.type === "reasoning")
+                : [];
 
             // A signature packed by a different conversation (or truncated by
             // the client) fails decryption for the WHOLE request. Replaying
             // once without reasoning items loses continuity for one turn
-            // instead of failing it.
-            if (response.status === 400 && errorText.includes("Could not decrypt")) {
-                logger.warn({ model }, "ai-proxy: grok rejected replayed reasoning — retrying without reasoning items");
-                response = await send(SafeJSON.stringify(stripReasoningInput(responsesBody)));
-
-                if (!response.ok) {
-                    return toAnthropicErrorResponse(response);
-                }
-            } else {
+            // instead of failing it; with no reasoning items replayed, a retry
+            // would send the same request again.
+            if (replayed.length === 0 || !isReasoningReplayRejection(response.status, errorText)) {
                 return toAnthropicErrorResponse(
                     new Response(errorText, { status: response.status, headers: response.headers })
                 );
+            }
+
+            logger.warn({ model }, "ai-proxy: grok rejected replayed reasoning — retrying without reasoning items");
+            response = await send(SafeJSON.stringify(stripReasoningInput(responsesBody)));
+
+            if (!response.ok) {
+                return toAnthropicErrorResponse(response);
             }
         }
 
