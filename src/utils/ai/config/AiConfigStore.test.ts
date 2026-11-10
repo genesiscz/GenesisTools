@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { AiConfigStore, adaptOlderConfig } from "./AiConfigStore";
+import { AiConfigStore, adaptOlderConfig, defaultAccountName } from "./AiConfigStore";
 import { _clearExternalRefScanners, registerExternalRefScanner } from "./refs";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "./schema";
 
@@ -462,5 +462,42 @@ describe("AiConfigStore validation", () => {
         const store = await AiConfigStore.load();
         expect(store.accounts()).toEqual([]);
         expect(store.data().version).toBe(CONFIG_VERSION);
+    });
+});
+
+describe("defaultAccountName reads the default without the vault", () => {
+    function namedAccount(provider: string): AccountEntry {
+        return {
+            id: `acc_${provider}`,
+            name: "work",
+            provider,
+            enabled: true,
+            billing: { mode: "subscription" },
+            credentials: {},
+            useEnvApiKey: false,
+        };
+    }
+
+    function configOf(providers: string[]): AiConfigData {
+        return { version: CONFIG_VERSION, accounts: providers.map(namedAccount), defaults: {} };
+    }
+
+    test("it names the default account by task, by app, then the first account", () => {
+        const config = configOf(["anthropic-sub", "openai-sub"]);
+        config.accounts[1].name = "personal";
+        config.defaults.account = { claude: "@account/acc_openai-sub" };
+        config.defaults.app = { fixture: { chat: { model: "@account/acc_openai-sub:fixture-model" } } };
+
+        expect(defaultAccountName(config, "claude")).toBe("personal");
+        expect(defaultAccountName(config, "fixture")).toBe("personal");
+        expect(defaultAccountName(config, "ask")).toBe("work");
+    });
+
+    test("a default naming a removed account falls back to the first account, and no accounts is none", () => {
+        const config = configOf(["anthropic-sub"]);
+        config.defaults.account = { claude: "@account/acc_gone" };
+
+        expect(defaultAccountName(config, "claude")).toBe("work");
+        expect(defaultAccountName(configOf([]), "claude")).toBeUndefined();
     });
 });

@@ -1,6 +1,5 @@
 export type { AIConfigData, AppConfig, AppDefaults, ProviderConfig } from "@genesiscz/utils/config/ai.types";
 export { AIAccount } from "./AIAccount";
-export { AIConfig } from "./AIConfig";
 export type { AIAccountEntry, AIAccountTokens, AIProvider } from "./account-types";
 export type { EmbeddingProviderOption, EmbeddingSelection } from "./embedding-selection";
 export {
