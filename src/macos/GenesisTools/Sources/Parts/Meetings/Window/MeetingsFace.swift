@@ -5,8 +5,10 @@ import SwiftUI
 //   The Meetings window: meetings by day with what each needs, one meeting with its transcript, screen, items,
 //   speakers and context, the meetings that need you, and each project. One per login session: a later launch hands
 //   its request to the running one and exits.
-// GenesisTools --meetings … --snapshot <png> [--width <pt>] [--height <pt>]
+// GenesisTools --meetings … --snapshot <png> [--width <pt>] [--height <pt>] [--play <target json>]
 //   Draws the window off screen into a PNG once its data has loaded, then exits (verification without a screen).
+//   `--play '{"kind":"item","id":"i2"}'` (a Moment target as the engine writes it) starts that Moment of the meeting
+//   without sound first, so the picture shows the dock, the timeline and the playing row.
 
 private let meetingsInstance = SingleInstance(
     name: "meetings",
@@ -33,6 +35,8 @@ struct MeetingsRequest {
     /// `--side-panel`: the settings side panel opens beside the meeting.
     var sidePanel = false
     var snapshot: String?
+    /// `--play <target json>`: the Moment a snapshot starts, silently, before the picture.
+    var play: MomentTarget?
     var width: CGFloat = 1280
     var height: CGFloat = 820
 
@@ -59,6 +63,7 @@ struct MeetingsRequest {
             case "--no-focus", "--no-activate": request.focus = false
             case "--side-panel": request.sidePanel = true
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
+            case "--play": request.play = value().flatMap { try? JSONDecoder().decode(MomentTarget.self, from: Data($0.utf8)) }
             case "--width": request.width = value().flatMap(Double.init).map { CGFloat($0) } ?? request.width
             case "--height": request.height = value().flatMap(Double.init).map { CGFloat($0) } ?? request.height
             default: break
@@ -197,6 +202,8 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             let model = MeetingsWindowModel()
             // A picture with the panel open must not change what the real window opens with.
             model.remembersPanel = false
+            // A picture of a playing Moment (`--play`) makes no sound.
+            model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
             // The requested meeting is the selection before the list lands, so the list's first meeting is never read
             // for nothing; the request applies once the list is there, so a recording-only meeting opens on Screen.
             model.selectedMeetingID = request.meeting
@@ -224,6 +231,21 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             }
             if model.place == .contacts {
                 _ = await waitUntil(30) { model.people.known.value != nil || model.people.known.failure != nil }
+            }
+            if let target = request.play {
+                guard let meeting = model.detail?.id else {
+                    FileHandle.standardError.write(Data("meetings snapshot: --play needs --meeting\n".utf8))
+                    exit(1)
+                }
+                model.player.play(target, in: meeting, from: .row)
+                guard await waitUntil(60, { model.player.phase == .playing || model.player.isFailed }) else {
+                    FileHandle.standardError.write(Data("meetings snapshot timed out cutting the Moment\n".utf8))
+                    exit(1)
+                }
+                // A failed cut is pictured too (its pill is part of what the dock shows); stderr names it.
+                if case .failed(let failure) = model.player.phase {
+                    FileHandle.standardError.write(Data("meetings snapshot: the Moment did not play: \(failure.sentence)\n".utf8))
+                }
             }
             if model.sidePanelOpen {
                 _ = await waitUntil(30) { model.settingsRaw != nil || model.settings.failure != nil }

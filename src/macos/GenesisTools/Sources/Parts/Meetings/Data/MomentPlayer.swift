@@ -58,9 +58,11 @@ final class AVMomentSound: NSObject, MomentSound, AVAudioPlayerDelegate {
     private let player: AVAudioPlayer
     var onEnd: (@MainActor () -> Void)?
 
-    init(url: URL) throws {
+    /// `muted`: the sound plays at volume 0 (a `--snapshot --play` picture of a playing Moment makes no sound).
+    init(url: URL, muted: Bool = false) throws {
         player = try AVAudioPlayer(contentsOf: url)
         super.init()
+        if muted { player.volume = 0 }
         player.enableRate = true
         player.delegate = self
         player.prepareToPlay()
@@ -72,6 +74,7 @@ final class AVMomentSound: NSObject, MomentSound, AVAudioPlayerDelegate {
     }
 
     var duration: TimeInterval { player.duration }
+    var volume: Float { player.volume }
     var rate: Float {
         get { player.rate }
         set { player.rate = newValue }

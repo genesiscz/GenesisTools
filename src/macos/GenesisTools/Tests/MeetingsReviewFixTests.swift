@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import SwiftUI
 import XCTest
@@ -260,6 +261,32 @@ final class MeetingsReviewFixTests: XCTestCase {
         if let scroll = view as? NSScrollView { return scroll }
         for child in view.subviews { if let found = scrollView(in: child) { return found } }
         return nil
+    }
+
+    // MARK: Finding 12: a snapshot can show a playing Moment
+
+    func testASnapshotRequestCarriesTheMomentToPlay() {
+        let request = MeetingsRequest.parse(["--meeting", "m1", "--play", #"{"kind":"time","atSec":309}"#, "--snapshot", "/tmp/x.png"])
+        XCTAssertEqual(request.play, .time(309))
+        XCTAssertEqual(request.meeting, "m1")
+        XCTAssertEqual(request.snapshot, "/tmp/x.png", "the flag after --play still reads")
+        XCTAssertEqual(MeetingsRequest.parse(["--play", #"{"kind":"item","id":"i2"}"#]).play, .item("i2"))
+        XCTAssertNil(MeetingsRequest.parse(["--play", "309"]).play, "a target is the engine's JSON")
+        XCTAssertNil(MeetingsRequest.parse([]).play)
+    }
+
+    func testASnapshotsMomentPlaysSilently() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("meetings-silent-\(UUID().uuidString).caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_600))
+            buffer.frameLength = 1_600
+            try file.write(from: buffer)
+        }
+        XCTAssertEqual(try AVMomentSound(url: url, muted: true).volume, 0, "the picture's Moment makes no sound")
+        XCTAssertEqual(try AVMomentSound(url: url).volume, 1, "the window's Moments keep their sound")
     }
 
     // MARK: Finding 3: a stored 0 is a value when the setting offers it
