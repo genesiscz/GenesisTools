@@ -296,7 +296,7 @@ function registerAutoAllowCommands(gate: Command): void {
 
     autoAllow
         .command("add <command...>")
-        .description('Put a command on the list: `add claude warmup` lets "tools claude warmup" through')
+        .description(`Put a command on the list: \`add claude warmup\` lets "${toolCommand("claude warmup")}" through`)
         .action((words: string[]) => {
             const command = autoAllowCommand(words);
             changeAutoAllow((settings) => ({
