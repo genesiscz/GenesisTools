@@ -8,7 +8,6 @@ import type {
     PasswordOpts,
     SearchOpts,
     SelectOpts,
-    SelectValue,
     Spinner,
     TextOpts,
     TypedConfirmOpts,
@@ -20,15 +19,17 @@ export interface PromptBackend {
     cancel(msg: string): void;
     note(content: string, title?: string): void;
 
-    text(opts: TextOpts): Promise<string>;
-    confirm(opts: ConfirmOpts): Promise<boolean>;
-    typedConfirm(opts: TypedConfirmOpts): Promise<boolean>;
-    select(opts: SelectOpts): Promise<SelectValue>;
-    multiselect(opts: MultiSelectOpts): Promise<SelectValue[]>;
-    password(opts: PasswordOpts): Promise<string>;
-    search<T>(opts: SearchOpts<T>): Promise<T>;
-    editor(opts: EditorOpts): Promise<string>;
-    number(opts: NumberOpts): Promise<number>;
+    // A backend answers a cancelled prompt with `promptCancelSymbol` and never ends the process itself: the facade
+    // (p/index.ts) applies the call's `cancel` outcome, so "exit" and "back" mean the same on every backend.
+    text(opts: TextOpts): Promise<string | symbol>;
+    confirm(opts: ConfirmOpts): Promise<boolean | symbol>;
+    typedConfirm(opts: TypedConfirmOpts): Promise<boolean | symbol>;
+    select<V>(opts: SelectOpts<V>): Promise<V | symbol>;
+    multiselect<V>(opts: MultiSelectOpts<V>): Promise<V[] | symbol>;
+    password(opts: PasswordOpts): Promise<string | symbol>;
+    search<T>(opts: SearchOpts<T>): Promise<T | symbol>;
+    editor(opts: EditorOpts): Promise<string | symbol>;
+    number(opts: NumberOpts): Promise<number | symbol>;
 
     spinner(): Spinner;
     log: Log;

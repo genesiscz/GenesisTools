@@ -1,6 +1,6 @@
 // biome-ignore-all lint/plugin: This file IS the backend test — it legitimately calls inquirerBackend.X directly and mocks @inquirer/prompts. The no-direct-prompt-backend and no-mock-module-prompts plugins target callers, not the backend's own tests.
 
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 // Track calls for assertions
 type CallRecord = { fn: string; args: unknown[] };
@@ -10,17 +10,31 @@ function resetCalls() {
     calls.splice(0, calls.length);
 }
 
+/** While true, every mocked prompt throws ExitPromptError, which is how inquirer reports Ctrl-C. */
+let cancelPrompts = false;
+
+function exitIfCancelled(): void {
+    if (cancelPrompts) {
+        const err = new Error("User force closed the prompt with SIGINT");
+        err.name = "ExitPromptError";
+        throw err;
+    }
+}
+
 // Mock @inquirer/prompts BEFORE importing the backend
 mock.module("@inquirer/prompts", () => ({
     input: async (a: unknown) => {
+        exitIfCancelled();
         calls.push({ fn: "input", args: [a] });
         return "answer";
     },
     confirm: async (a: unknown) => {
+        exitIfCancelled();
         calls.push({ fn: "confirm", args: [a] });
         return true;
     },
     select: async (a: unknown) => {
+        exitIfCancelled();
         calls.push({ fn: "select", args: [a] });
         return "x";
     },
@@ -50,6 +64,9 @@ mock.module("@genesiscz/utils/cli/is-interactive", () => ({
     isInteractive: () => true,
 }));
 
+import { PromptCancelledError, promptCancelSymbol } from "@genesiscz/utils/prompts/cancel";
+import { getBackend, setBackend } from "../backend";
+import * as p from "../index";
 import { inquirerBackend } from "../inquirer-backend";
 
 describe("inquirerBackend", () => {
@@ -265,48 +282,39 @@ describe("inquirerBackend", () => {
         });
     });
 
-    describe("ExitPromptError → process.exit(0)", () => {
-        it("calls process.exit(0) when inquirer throws ExitPromptError", async () => {
-            const originalExit = process.exit;
-            let exitCode: number | undefined;
-            process.exit = ((code: number) => {
-                exitCode = code;
-                throw new Error("process.exit called");
-            }) as typeof process.exit;
+    // inquirer reports a cancel by throwing ExitPromptError. The backend answers with the facade's cancel symbol and
+    // the facade applies the call's outcome; it used to call process.exit(0) itself, which no test could observe.
+    describe("cancel (ExitPromptError)", () => {
+        const original = getBackend();
 
-            mock.module("@inquirer/prompts", () => ({
-                input: async () => {
-                    const err = new Error("User force closed the prompt");
-                    err.name = "ExitPromptError";
-                    throw err;
-                },
-                confirm: async () => true,
-                select: async () => "x",
-                checkbox: async () => [],
-                password: async () => "",
-                search: async () => "",
-                editor: async () => "",
-                number: async () => 0,
-            }));
+        beforeEach(() => {
+            cancelPrompts = true;
+            setBackend(inquirerBackend);
+        });
 
-            // We need to re-import after mock change — but since Bun caches modules,
-            // test the exitOnCancel logic directly via a fresh import
-            // For now, verify the error name matching logic would trigger exit
+        afterEach(() => {
+            cancelPrompts = false;
+            setBackend(original);
+        });
 
-            try {
-                const cancelErr = new Error("cancelled");
-                cancelErr.name = "ExitPromptError";
-                // Simulate what exitOnCancel does
-                if (cancelErr instanceof Error && cancelErr.name === "ExitPromptError") {
-                    process.exit(0);
-                }
-            } catch {
-                // Expected - our mock throws instead of actually exiting
-            } finally {
-                process.exit = originalExit;
-            }
+        it("the backend answers with the facade's cancel symbol", async () => {
+            expect(await inquirerBackend.text({ message: "t" })).toBe(promptCancelSymbol);
+            expect(await inquirerBackend.select({ message: "s", options: [{ value: "x", label: "X" }] })).toBe(
+                promptCancelSymbol
+            );
+        });
 
-            expect(exitCode).toBe(0);
+        it('cancel: "back" hands the symbol to the caller', async () => {
+            expect(p.isCancel(await p.text({ message: "t", cancel: "back" }))).toBe(true);
+            expect(p.isCancel(await p.confirm({ message: "c", cancel: "back" }))).toBe(true);
+            expect(p.isCancel(await p.typedConfirm({ message: "tc", phrase: "yes", cancel: "back" }))).toBe(true);
+        });
+
+        it("the default exit throws PromptCancelledError inside a test", async () => {
+            await expect(p.text({ message: "t" })).rejects.toBeInstanceOf(PromptCancelledError);
+            await expect(p.select({ message: "s", options: [{ value: "x", label: "X" }] })).rejects.toBeInstanceOf(
+                PromptCancelledError
+            );
         });
     });
 });

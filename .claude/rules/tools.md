@@ -61,7 +61,7 @@ Most tools follow these common patterns:
 **Interactive User Experience**:
 
 -   Two prompt libraries available: `@inquirer/prompts` (legacy) and `@clack/prompts` (preferred for new tools)
--   **Prompts go through the `p` facade** (`p.text`, `p.select`, `p.multiselect`, `p.password`, … from `@genesiscz/utils/prompts/p`). Set the backend once at the tool's entry point with `p.setBackend`; never call `inquirerBackend.*` or `clackBackend.*` in tool code, so cancel handling stays the same on both backends.
+-   **Prompts go through the `p` facade** (`p.text`, `p.select`, `p.multiselect`, `p.password`, … from `@genesiscz/utils/prompts/p`). Set the backend once at the tool's entry point with `p.setBackend`; never call `inquirerBackend.*` or `clackBackend.*` in tool code, so cancel handling stays the same on both backends. A cancel (Escape, Ctrl-C) ends the process with code 0 by default; a call whose caller handles the cancel passes `cancel: "back"` and gets the cancel symbol back (`if (p.isCancel(answer)) { … }`). Lint `no-raw-clack-import` refuses `@clack/prompts` outside `src/utils/prompts/`; a clack function the facade lacks becomes a pass-through there. Tests answer a cancel with `CANCEL_ANSWER` from `p/__tests__/test-backend.ts`.
 -   **Non-TTY guard**: Always check `isInteractive()` (from `@genesiscz/utils/cli`) before showing prompts. When non-interactive, either error with `suggestCommand()` showing required CLI flags, or use a sensible default:
 
     ```typescript

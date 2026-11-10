@@ -1,38 +1,52 @@
 export type SelectValue = string | number | boolean;
 
-export interface SelectOption {
-    value: SelectValue;
+/**
+ * What a prompt does when the user cancels it (Escape, Ctrl-C). "exit", the default, prints the cancel message and
+ * ends the process with exit code 0. "back" returns the cancel symbol in place of an answer, so the caller's own
+ * `p.isCancel(answer)` branch decides (go back to a menu, return, throw).
+ */
+export type CancelOutcome = "exit" | "back";
+
+export interface CancelOpts {
+    cancel?: CancelOutcome;
+}
+
+/** A choice of select and multiselect. Its value may be any value (clack and inquirer hand the same reference back). */
+export interface SelectOption<V = SelectValue> {
+    value: V;
     label: string;
     hint?: string;
 }
 
-export interface ConfirmOpts {
+export interface ConfirmOpts extends CancelOpts {
     message: string;
     initialValue?: boolean;
     danger?: boolean;
 }
 
-export interface TextOpts {
+export interface TextOpts extends CancelOpts {
     message: string;
     placeholder?: string;
     initialValue?: string;
+    /** The answer when the user submits an empty line (clack's defaultValue; inquirer's default). */
+    defaultValue?: string;
     validate?: (value: string) => string | undefined;
 }
 
-export interface SelectOpts {
+export interface SelectOpts<V = SelectValue> extends CancelOpts {
     message: string;
-    options: SelectOption[];
-    initialValue?: SelectValue;
+    options: SelectOption<V>[];
+    initialValue?: V;
 }
 
-export interface MultiSelectOpts {
+export interface MultiSelectOpts<V = SelectValue> extends CancelOpts {
     message: string;
-    options: SelectOption[];
+    options: SelectOption<V>[];
     required?: boolean;
-    initialValues?: SelectValue[];
+    initialValues?: V[];
 }
 
-export interface TypedConfirmOpts {
+export interface TypedConfirmOpts extends CancelOpts {
     message: string;
     phrase: string;
     caseSensitive?: boolean;
@@ -54,25 +68,25 @@ export interface Log {
     message(msg: string | string[]): void; // clack's real log.message (~25 sites); array → joined
 }
 
-export interface PasswordOpts {
+export interface PasswordOpts extends CancelOpts {
     message: string;
     validate?: (value: string) => string | undefined; // matches TextOpts.validate convention
 }
 
-export interface SearchOpts<T = unknown> {
+export interface SearchOpts<T = unknown> extends CancelOpts {
     message: string;
     options: (input: string) => Promise<{ value: T; label: string; hint?: string }[]>;
     /** Optional page size for backends that paginate (e.g. inquirer's search). */
     pageSize?: number;
 }
 
-export interface EditorOpts {
+export interface EditorOpts extends CancelOpts {
     message: string;
     initialValue?: string;
     postfix?: string; // file extension hint (e.g. ".md")
 }
 
-export interface NumberOpts {
+export interface NumberOpts extends CancelOpts {
     message: string;
     initialValue?: number;
     min?: number;
