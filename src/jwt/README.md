@@ -11,9 +11,11 @@ mental epoch conversion. It does not verify the signature.
 ```bash
 tools jwt --clipboard                   # decode the token you just copied (safest for a live token)
 pbpaste | tools jwt                     # the same, through stdin
-tools jwt <token>                      # pass the token as an argument
-tools jwt --json <token>                # the raw decoded { header, payload } as JSON
-tools jwt --json <token> | tools json   # shrink the decoded token for an agent (TOON or compact JSON)
+# an invented token (sub alice, expires 2030) for the next three commands
+TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbGljZSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjoxODkzNDU2MDAwfQ.aW52ZW50ZWQtc2lnbmF0dXJl'
+tools jwt "$TOKEN"                      # pass the token as an argument
+tools jwt --json "$TOKEN"               # the raw decoded { header, payload } as JSON
+tools jwt --json "$TOKEN" | tools json  # shrink the decoded token for an agent (TOON or compact JSON)
 ```
 
 ## Usage

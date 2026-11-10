@@ -124,7 +124,7 @@ the first two; `DevDashboard/cloud/web/src/lib/server/env.ts` reads the rest:
 | Variable                   | Default                 | What                                          |
 |----------------------------|-------------------------|-----------------------------------------------|
 | `DD_CLOUD_PORT`            | `7251`                  | Listen port. Set it with `-p`, not the shell. |
-| `DD_CLOUD_BIND_HOST`       | `127.0.0.1`             | `0.0.0.0` opens the app to the LAN.           |
+| `DD_CLOUD_BIND_HOST`       | `127.0.0.1`             | Keep loopback. See the LAN warning below.     |
 | `DD_CLOUD_APP_URL`         | `http://localhost:7251` | Base URL for auth and Stripe redirects.       |
 | `DD_CLOUD_DATABASE_URL`    | `./data/cloud.db`       | SQLite file, relative to the web folder.      |
 | `DD_CLOUD_DATABASE_DRIVER` | `sqlite`                | `postgres` is not wired yet (see below).      |
@@ -136,8 +136,11 @@ The full list, with `.env.example`, is in the [app's README](../../DevDashboard/
 
 Which environment the app sees depends on how it starts:
 
-- A background start (`tools dev-dashboard-cloud`, `up`, `restart`) passes on your shell's environment. To open the app
-  to the LAN: `DD_CLOUD_BIND_HOST=0.0.0.0 tools dev-dashboard-cloud`.
+- A background start (`tools dev-dashboard-cloud`, `up`, `restart`) passes on your shell's environment.
+- ⚠️ Do not open the dev server to the LAN with `DD_CLOUD_BIND_HOST=0.0.0.0`. It speaks plain HTTP, so passwords and
+  session cookies cross the network unencrypted. Without `DD_CLOUD_AUTH_SECRET` it also signs sessions with the
+  public development fallback, so anyone who reads the repository can forge a session. To reach the app from another
+  device, set a unique `DD_CLOUD_AUTH_SECRET`, keep the server on `127.0.0.1`, and put a TLS tunnel in front of it.
 - ❗ `DD_CLOUD_PORT` is the exception. The bare command replaces a shell value with its `-p` value (default 7251), so
   `DD_CLOUD_PORT=7300 tools dev-dashboard-cloud` still starts on 7251. With `up` or `restart`, the shell value does reach
   the app, which then listens on 7300 while the tool waits on 7251: it warns `Readiness check failed ... Started

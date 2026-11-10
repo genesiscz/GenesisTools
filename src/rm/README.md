@@ -2,7 +2,8 @@
 
 Safe delete for agents and people. It never deletes in place: each path is renamed into a trash folder (instant on
 one volume), and a background drainer deletes the trash after a grace period, so `tools rm restore` can undo a
-mistake. A table of rules decides each path. Build output, the session's own scratch and files, small temp files and
+mistake. Preset folders (`node_modules`, `dist` and other build output) have a grace of 0 minutes by default, so the
+drainer can delete them before you restore; pass `--keep 2h` when you may want one back. A table of rules decides each path. Build output, the session's own scratch and files, small temp files and
 trusted folders go without asking. Anything else becomes a request that the user confirms with a command an agent
 cannot run.
 

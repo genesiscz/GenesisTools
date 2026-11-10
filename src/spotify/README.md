@@ -315,6 +315,10 @@ tools spotify enrich --profile me
 tools spotify history-merge --profile me
 ```
 
+⚠️ `build` reads `sp_library_raw.json` first when it exists, and overwrites `spotify_library.jsonl` with it. A raw
+file left from an earlier manual harvest therefore replaces the library that `harvest --auto` just wrote, and
+`enrich` then works on the old library. Move the raw file out of the data folder before `build`.
+
 - `doctor [--json]` reads only. It prints the fix for each gap instead of applying it.
 - `harvest --auto` writes `spotify_library.jsonl` into the profile's data folder. Its flags
   are `-p`, `--out <path>`, `--browser-url <url>` and `--json`. Without `--auto`, `harvest`
@@ -325,7 +329,8 @@ tools spotify history-merge --profile me
   (40) sets how many picks of each method to fetch, and `--refresh` fetches catalogued
   artists again.
 - `build [-p] [--since <date>] [--json]` converts `sp_library_raw.json` into
-  `spotify_library.jsonl` and writes `artists.json`. Tracks saved since `--since` are crawled
+  `spotify_library.jsonl` when the raw file exists (it overwrites the JSONL), else reads the
+  JSONL as it is, and writes `artists.json`. Tracks saved since `--since` are crawled
   first.
 - `enrich [source] [-p] [--limit <n>]` takes `musicbrainz` (`mb`), `lastfm` (`lf`) or `both`
   (the default), then merges the tags onto the tracks.

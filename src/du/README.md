@@ -82,7 +82,9 @@ tools du clonesize ~ --depth 2 --diff mon.json           # per folder: grown, sh
 | `--diff <file>` | Compare against a saved scan and print the per-directory delta |
 
 - **`--freeable` is the delete-decision number.** Allocated size tells you how much space a tree occupies. Private
-  size tells you how much you would get back by deleting it, because shared blocks stay alive for the other clone.
+  size is the least you get back by deleting it, because shared blocks stay alive for the other clone. It is a lower
+  bound, not an exact figure: blocks that two files inside the tree share only with each other count in neither
+  file's private size, yet deleting both frees them.
 - **Point it at the PARENT of several worktrees** to see how much they share. Deleting a worktree frees only its
   unique blocks: blocks it shares with the main checkout's `node_modules` stay. So the du-reported size of a
   worktree is an upper bound, usually far above what is freed. When you scan one side of a clone pair, the JSON

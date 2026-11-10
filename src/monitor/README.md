@@ -103,7 +103,11 @@ tools monitor run                    # check, record, move incidents, deliver fe
 tools monitor run 3
 ```
 
-`check` is safe from a cron job or an agent: it only reads. `run` is what the scheduler does. Both exit 2 when a
+`check` writes nothing to Monitor's own records and notifies nobody, but it runs every probe for real. A `command`
+watcher's command runs in full, and a command that keeps its own state can change it during `check`: the
+`tools domains watch refresh --items` watcher saves the new domain statuses, so a change that `check` sees is gone
+before the next `run` and is never recorded or delivered. While such a watcher is enabled, give `check` the id of
+the one watcher you want to probe, and leave the stateful one to `run`. `run` is what the scheduler does. Both exit 2 when a
 probed watcher is down, and both run at most 8 checks at the same time.
 
 ### Notifications
@@ -393,7 +397,8 @@ tools monitor doctor --json                 # always exits 0; .lines[].level == 
 - Exit codes: `check` and `run` exit 2 when a watcher is down; `doctor` exits 1 when the server is down, and only
   without `--json`; `watch`
   exits 1 when it cannot reach the server; a validation error (an unknown id, a bad target, a bad duration) exits 1.
-- Prefer `check` for a question ("is it up?"). Use `run` only when you mean to record and notify.
+- Prefer `check` for a question ("is it up?"). Use `run` only when you mean to record and notify. A `command`
+  watcher's command still runs during `check`, with whatever effects it has (see [Checking now](#checking-now)).
 - `tools hub watching` lists every Monitor watcher beside the other watches on the Mac, and
   `tools hub watching mute monitor <id>` mutes one.
 

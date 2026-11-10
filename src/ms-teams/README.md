@@ -363,8 +363,9 @@ There is no config file and no account setup: the tool reads the Teams profile o
 - **A chat shows in `conversations` but Teams lost it.** The store keeps what it saw. Ask the live Teams store with
   `repair probe "<title>"`.
 - **`repair probe` finds nothing.** It is a raw byte search of the LevelDB files, in UTF-8 and UTF-16LE, and it is
-  case-sensitive. LevelDB can compress what it stores, so a miss does not prove the chat is gone. The proof is
-  `sync --force`, then `conversations --topic "<title>"`.
+  case-sensitive. LevelDB can compress what it stores, so a miss does not prove the chat is gone. Search for the
+  chat in the Teams app itself. `sync --force` and `conversations --topic "<title>"` cannot prove it, because the
+  store keeps every chat it saw before, also after Teams lost it.
 - **"ABORT: New Teams is still running".** Run `tools ms-teams repair quit` first. The Core Audio driver
   `MSTeamsAudioDevice.driver` contains "MSTeams" too, but it is not the app: `repair quit` ignores it, and you must not
   kill it. If Teams stays up after 20 seconds, quit it from the Dock.

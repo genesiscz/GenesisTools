@@ -76,10 +76,11 @@ any model is configured. With `--backend grok` or `claude-code` it still needs a
 | `--hedge-after <secs>` | `0` (off) | Re-issue an extractor call that runs longer |
 | `--json` | | Machine-readable output |
 
-Pipe a bounded selection in rather than mining the whole corpus:
+Pipe a bounded selection in rather than mining the whole corpus. `xargs -0` passes each path as one argument, so a
+path with a space survives:
 
 ```bash
-tools learn-from-fable mine --session $(tools learn-from-fable select --limit 5)
+tools learn-from-fable select --limit 5 | tr '\n' '\0' | xargs -0 tools learn-from-fable mine --session
 ```
 
 ### Scoring and voting
@@ -401,9 +402,10 @@ Environment variables:
   mined, so `--model` alone moves on to the next unmined sessions. For side-by-side episodes, pass the paths:
 
   ```bash
-  tools learn-from-fable mine \
-      --model work/claude-sub/opus \
-      --session $(tools learn-from-fable list --all --json --limit 50 | jq -r '.sessions[] | select(.mined) | .path')
+  tools learn-from-fable list --all --json --limit 50 \
+      | jq -r '.sessions[] | select(.mined) | .path' \
+      | tr '\n' '\0' \
+      | xargs -0 tools learn-from-fable mine --model work/claude-sub/opus --session
   ```
 
 - **`filter` fails with "every episode failed on infrastructure".** The proxy is down: `tools ai-proxy up`.

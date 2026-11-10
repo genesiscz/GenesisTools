@@ -359,9 +359,12 @@ The API (PHP has the same methods as static calls on `LlmLog`):
 
 ```ts
 // #region @dbg
-dbg.dump('token', token, { h: 'H1' });
+dbg.dump('cart', cart, { h: 'H1' });
 // #endregion @dbg
 ```
+
+⚠️ Never log a token, password, cookie or other secret. The session log is a plain file, and the dashboard server
+has no authentication and answers requests from any browser origin, so a web page you open can read what you logged.
 
 Wrap every debug line, the import too, in its own `// #region @dbg` and `// #endregion @dbg` pair. `cleanup` finds
 only lines inside these markers. A bare `dbg.info(...)` stays in the code and can be committed by accident.

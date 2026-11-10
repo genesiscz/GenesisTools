@@ -299,9 +299,11 @@ out.println(formatComparison(cmp));
 - `monitorLoopStalls({ tickMs? })` starts a timer (every 10 ms by default) and returns a monitor. `stop()` returns
   `{ windowMs, ticks, maxStallMs, p99StallMs, stallsOver(thresholdMs) }`. The timer is unref'd, so a monitor you forget
   to stop never holds the process open, and `stop()` is safe to call twice.
-- `signalVerified(pid, expected, signal)` sends a signal only while the pid still runs the expected command line (a
-  string or a predicate). A pid the kernel gave to another process in between is skipped and reported, never
-  signalled. `stillRuns(pid, expected)` is the same check for a wait loop.
+- `signalVerified(pid, expected, signal)` sends a signal only when the pid runs the expected command line (a string
+  or a predicate) at the moment it checks. A pid the kernel gave to another process before that check is skipped and
+  reported. The check and the signal are two separate calls, so this is best effort: a pid reused between them, or a
+  replacement that runs the same command line, can still be signalled. `stillRuns(pid, expected)` is the same check
+  for a wait loop.
 - Both counters restore what they patched in a `finally`, so a throwing `fn` leaves `Bun.spawn` and `node:fs` as they
   were, and the error goes on to the caller.
 

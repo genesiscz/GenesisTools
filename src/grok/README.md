@@ -272,8 +272,9 @@ parses the stream, compares the worktree, books the cost and prints the turn.
   `tools grok sessions` lists every worker, and two runs that share a `--name` share one record whatever their home.
   Keep one home for the whole session: grok keys sessions by cwd inside it.
 - **Project config still loads.** `CLAUDE.md` and a `.grok/` directory in the target repo (MCP servers, hooks,
-  permission rules) load as usual. `GROK_HOME` redirects user state only. Point `--cwd` at a scratch folder or a
-  worktree when that is not what you want.
+  permission rules) load as usual. `GROK_HOME` redirects user state only. When that is not what you want, point `--cwd`
+  at a scratch folder with no `CLAUDE.md` and no `.grok/`. A worktree of the same repository is not enough: it checks
+  out the tracked `CLAUDE.md` and `.grok/` too, so check it for both before you use it.
 - **Session bookkeeping.** The session uuid and cwd live in `<name>.meta.json`. `steer` resumes with the identical
   `--cwd` automatically, because grok keys sessions by cwd. When turn 1 died before grok created the session, the
   next steer starts it again under the same id.

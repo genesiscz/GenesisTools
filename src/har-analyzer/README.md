@@ -2,7 +2,9 @@
 
 Read a HAR (HTTP Archive) file from the browser's Network tab without dumping it: a dashboard, filtered entry
 tables, one entry at a time, error and security scans, and a redactor that removes passwords, tokens, cookies and
-emails before the file leaves your machine. It is built for people and agents who debug API calls, auth flows and
+emails before the file leaves your machine. Redaction does not prove a file safe to share: base64 bodies are not
+scanned, and the self-check repeats the same rules, so read the warnings it lists and review those bodies first.
+It is built for people and agents who debug API calls, auth flows and
 slow pages. A reference system prints a large body once and only a short preview after that, so a long session does
 not pay for the same payload twice.
 
