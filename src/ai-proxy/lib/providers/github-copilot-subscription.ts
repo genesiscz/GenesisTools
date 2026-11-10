@@ -1,6 +1,6 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/providers/account-paths";
-import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
+import { exchange } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { prepareCopilotRequest } from "@app/ai-proxy/lib/translators/providers/github-copilot/prepare-request";
@@ -16,7 +16,29 @@ import {
     summarizeCopilotUsage,
     toProxyId,
 } from "@genesiscz/utils/ai/github-copilot";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+
+/** An expired Copilot login is the host's to fix: say so in the error envelope instead of a bare fetch failure. */
+function copilotAuthExpiredResponse(err: unknown, account: string): Response | undefined {
+    if (!(err instanceof CopilotAuthExpiredError)) {
+        return undefined;
+    }
+
+    logger.warn({ account, authPath: err.authPath }, "ai-proxy: github-copilot login expired; answering 502");
+
+    return new Response(
+        SafeJSON.stringify({
+            error: {
+                message: `Upstream GitHub Copilot auth expired or invalid — the ai-proxy host must refresh its login. ${err.message}`,
+                type: "upstream_auth_error",
+                code: "github_copilot_auth_expired",
+            },
+        }),
+        { status: 502, headers: { "Content-Type": "application/json" } }
+    );
+}
+
 export class GithubCopilotSubscriptionProvider implements ProxyProvider {
     readonly id = "github-copilot-subscription";
     readonly accountFingerprint: string;
@@ -94,58 +116,30 @@ export class GithubCopilotSubscriptionProvider implements ProxyProvider {
         };
     }
 
-    private async forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
-        const started = performance.now();
-
-        try {
-            const upstreamBody = rewriteBodyModel(bodyText, upstreamModel);
-
-            const upstream = await this.client.fetch(path, {
-                method: "POST",
-                body: upstreamBody,
-                signal: req.signal,
-                headers: {
-                    Accept: req.headers.get("Accept") ?? "application/json",
+    /**
+     * The client's own fetch carries the Copilot session and its one refresh on 401; the exchange adds the log,
+     * the relay and the 499 for a client that hung up, which used to be logged here as an upstream error.
+     */
+    private forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
+        return exchange({
+            fetch: (input, init) => this.client.fetch(String(input), init),
+            request: {
+                url: path,
+                init: {
+                    method: "POST",
+                    body: rewriteBodyModel(bodyText, upstreamModel),
+                    headers: { Accept: req.headers.get("Accept") ?? "application/json" },
                 },
-            });
-
-            const elapsedMs = Math.round(performance.now() - started);
-
-            if (!upstream.ok) {
-                logger.warn(
-                    {
-                        account: this.account.name,
-                        upstreamModel,
-                        path,
-                        status: upstream.status,
-                        elapsedMs,
-                    },
-                    "ai-proxy: github-copilot upstream request failed"
-                );
-            } else {
-                logger.debug(
-                    {
-                        account: this.account.name,
-                        upstreamModel,
-                        path,
-                        status: upstream.status,
-                        elapsedMs,
-                    },
-                    "ai-proxy: github-copilot upstream request ok"
-                );
-            }
-
-            return new Response(upstream.body, {
-                status: upstream.status,
-                headers: relayHeaders(upstream),
-            });
-        } catch (err) {
-            if (err instanceof CopilotAuthExpiredError) {
-                throw err;
-            }
-
-            logger.error({ err, account: this.account.name, path }, "ai-proxy: github-copilot upstream error");
-            throw err;
-        }
+            },
+            signal: req.signal,
+            log: {
+                provider: "github-copilot",
+                account: this.account.name,
+                route: path,
+                fields: { upstreamModel },
+            },
+            mapThrown: (err) => copilotAuthExpiredResponse(err, this.account.name),
+            failureCode: "github_copilot_fetch_failed",
+        });
     }
 }
