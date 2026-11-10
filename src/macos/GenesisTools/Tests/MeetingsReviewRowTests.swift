@@ -365,6 +365,20 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertFalse(ItemsTab.ruleAbove(row, first: "q1", held: true), "a row that keeps its place after an answer does not move by a line")
     }
 
+    /// A sentence names a suggestion by what it is and where; its id is the terminal's handle.
+    func testASentenceNamesARowInWords() throws {
+        let rows = try rows().rows
+        let names = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, MeetingsWords.rowName($0)) })
+        XCTAssertEqual(names["q1"], "Q1", "a question keeps its label")
+        XCTAssertEqual(names["i2"], "the word at 05:09")
+        XCTAssertEqual(names["i3"], "the speaker range at 00:12–00:30")
+        let confirm = try entry(token: "t1", action: #"{"kind":"confirm","items":["i2","i3"]}"#,
+                                changes: [("i2", "suggested", "confirmed"), ("i3", "suggested", "confirmed")])
+        XCTAssertEqual(MeetingsWords.entryAction(confirm, label: { names[$0] ?? $0 }),
+                       "confirmed the word at 05:09 and the speaker range at 00:12–00:30", "it read: confirmed i2 and i3")
+        XCTAssertEqual(MeetingDetailModel.sentenceStart("the word at 05:09"), "The word at 05:09")
+    }
+
     func testASpeakerRangeDoesNotSayItsTwoNamesTwice() {
         XCTAssertTrue(ReviewRowView.whoRepeatsTitle("Speaker 2 → Alice Example", title: "Speaker 2 01:12 → Alice Example", when: "01:12"),
                       "the title holds both names: the who line under it said them again")

@@ -70,7 +70,7 @@ struct HistorySheetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(history.item.map { "History of \(detail.rowLabel($0))" } ?? "History of this meeting").font(.system(size: 15, weight: .semibold))
+                Text(history.item.map { "History of \(detail.rowName($0))" } ?? "History of this meeting").font(.system(size: 15, weight: .semibold))
                 Spacer()
                 Button("Done") { detail.history = nil }.keyboardShortcut(.defaultAction)
             }
@@ -125,7 +125,7 @@ private struct HistoryRow: View {
 
     private var sentence: String {
         let who = MeetingsWords.actor(entry.actor)
-        return who.prefix(1).uppercased() + who.dropFirst() + " " + MeetingsWords.entryAction(entry, label: detail.rowLabel)
+        return who.prefix(1).uppercased() + who.dropFirst() + " " + MeetingsWords.entryAction(entry, label: detail.rowName)
     }
 }
 

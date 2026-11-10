@@ -496,7 +496,7 @@ final class MeetingsWindowModel {
         let open = detail.flatMap { $0.id == meeting ? $0 : nil }
         let text = Self.decisionNotice(entry, items: next.items.count, decisions: next.tokens.count,
                                        meetingTitle: meeting == selectedMeetingID ? nil : self.meeting(meeting)?.displayTitle ?? meeting,
-                                       label: { open?.rowLabel($0) ?? $0 })
+                                       label: { open?.rowName($0) ?? $0 })
         let tokens = next.tokens
         let notice = StackedNotice(id: next.notice, text: text, detail: entry.reason.map { "Why: \($0)" },
                                    actions: [.undo { [weak self] id in self?.revert(tokens, in: meeting, replacing: id) }])
