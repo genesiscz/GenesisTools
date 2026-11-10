@@ -1497,7 +1497,7 @@
           },
           "delaySec": 2,
           "repeatGapSec": 1,
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sw7cHR/gt-test-home-u13Hno/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-2cbjglxhf21nv.wav"
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-GPTOQd/gt-test-home-UUAW2q/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-3m3y3kfbaczdv.wav"
         }
       }
     },
@@ -1517,7 +1517,7 @@
         "jsonrpc": "2.0",
         "id": 21,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sw7cHR/mtg-audio-KGXOwO/upload.ogg",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-GPTOQd/mtg-audio-NFyoQy/upload.ogg",
           "tracks": 1,
           "channels": 2,
           "durationSec": 45
@@ -1569,7 +1569,7 @@
         "jsonrpc": "2.0",
         "id": 23,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sw7cHR/gt-test-home-u13Hno/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-GPTOQd/gt-test-home-UUAW2q/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
           "sound": {
             "hz": 880,
             "sec": 0.15,
@@ -1596,7 +1596,7 @@
         "jsonrpc": "2.0",
         "id": 24,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sw7cHR/gt-test-home-u13Hno/.genesis-tools/meetings-cache/tones/tone-a2ihri6ep544.wav",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-GPTOQd/gt-test-home-UUAW2q/.genesis-tools/meetings-cache/tones/tone-a2ihri6ep544.wav",
           "sound": {
             "hz": 2000,
             "sec": 0.03,
@@ -1855,6 +1855,13 @@
                   "turns": 1
                 }
               ],
+              "talk": [
+                {
+                  "fromSec": 2,
+                  "toSec": 6.800000000000001,
+                  "turns": 1
+                }
+              ],
               "leaves": [],
               "firstSec": 2,
               "lastSec": 6.800000000000001
@@ -1868,6 +1875,13 @@
               "words": 6,
               "spokenSec": 2.4000000000000004,
               "spans": [
+                {
+                  "fromSec": 9,
+                  "toSec": 11.4,
+                  "turns": 1
+                }
+              ],
+              "talk": [
                 {
                   "fromSec": 9,
                   "toSec": 11.4,
@@ -1973,7 +1987,7 @@
         "jsonrpc": "2.0",
         "id": 30,
         "result": {
-          "generatedAt": "2026-11-10T04:27:44.871Z",
+          "generatedAt": "2026-11-10T06:25:32.828Z",
           "days": 3650,
           "applyAbove": 0.5,
           "meetings": [
@@ -2053,7 +2067,7 @@
         "jsonrpc": "2.0",
         "id": 31,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sw7cHR/gt-test-home-u13Hno/.genesis-tools/meetings/config.json",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-GPTOQd/gt-test-home-UUAW2q/.genesis-tools/meetings/config.json",
           "value": 30
         }
       }
@@ -3555,7 +3569,7 @@
           "unassigned": [
             "2026-11-03-1000-design-review"
           ],
-          "backup": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sw7cHR/gt-test-home-u13Hno/.genesis-tools/backups/meetings/2026-11-03-1000-project-Harbor.json"
+          "backup": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-GPTOQd/gt-test-home-UUAW2q/.genesis-tools/backups/meetings/2026-11-03-1000-project-Harbor.json"
         }
       }
     },

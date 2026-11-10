@@ -186,6 +186,12 @@ export interface SpeakerStat {
     firstSec?: number;
     lastSec?: number;
     spans: SpeakerSpan[];
+    /**
+     * Each turn by itself, from its first word to the end of its last line: when the label talks. `spans` join turns
+     * up to `gapSec` apart, which says when the label was there; a lane drawn from them shows two people who take
+     * turns as both talking the whole time.
+     */
+    talk: SpeakerSpan[];
     /** Leave phrases followed by more speech under this label: a boundary between two voices. */
     leaves: SpeakerLeave[];
 }
@@ -368,6 +374,7 @@ export function speakerStats(
                 words: 0,
                 spokenSec: 0,
                 spans: [],
+                talk: [],
                 leaves: [],
             };
             byLabel.set(entry.speaker, stat);
@@ -462,6 +469,7 @@ export function speakerStats(
             continue;
         }
 
+        stat.talk.push({ fromSec: run.fromSec, toSec: run.toSec, turns: 1 });
         const span = stat.spans.at(-1);
 
         if (span && run.fromSec - span.toSec < gapSec) {

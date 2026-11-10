@@ -42,6 +42,22 @@ describe("speakerStats", () => {
         ]);
     });
 
+    test("talk holds each turn by itself: spans join turns up to two minutes apart, which says who was there, not who talks", () => {
+        const stats = speakerStats(meeting);
+        const talk = (label: string) => stats.speakers.find((s) => s.label === label)!.talk;
+
+        expect(talk("Alice Example").map((s) => s.fromSec)).toEqual([0, 20, 25, 600]);
+        expect(talk("Bob Example").map((s) => s.fromSec)).toEqual([10, 40]);
+        expect(talk("Alice Example").every((s) => s.toSec > s.fromSec && s.turns === 1)).toBe(true);
+        // Alice's first turn ends before Bob speaks: on a lane the two do not talk at once.
+        expect(talk("Alice Example")[0]!.toSec).toBeLessThanOrEqual(10);
+        expect(
+            speakerStats(meeting.map((entry) => ({ ...entry, startSec: undefined }))).speakers.every(
+                (s) => s.talk.length === 0
+            )
+        ).toBe(true);
+    });
+
     test("hints at a label that is several people and at a lone label next to another", () => {
         const { hints } = speakerStats(meeting);
 

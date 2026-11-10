@@ -457,6 +457,32 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(HintChip(fromSec: 724, toSec: 751, lines: 3, action: .play, present: []).rangeText, "12:04 to 12:31")
     }
 
+    /// Two people who take turns: the lanes draw the turns. From the spans (turns up to two minutes apart joined)
+    /// each drew as one bar over the whole meeting.
+    func testALaneDrawsTheTurnsNotTheJoinedSpans() throws {
+        let speaker = try JSONDecoder().decode(MeetingsAPI.MeetingSpeakers.Speaker.self, from: Data("""
+        {"label":"Alice","origin":"call","turns":3,"lines":3,"words":30,"spokenSec":12,"firstSec":0,"lastSec":40,
+         "spans":[{"fromSec":0,"toSec":42,"turns":3}],
+         "talk":[{"fromSec":0,"toSec":5,"turns":1},{"fromSec":26,"toSec":31,"turns":1},{"fromSec":40,"toSec":42,"turns":1}]}
+        """.utf8))
+        XCTAssertEqual(speaker.talkSpans.count, 3)
+        let blocks = TalkTimeLayout.blocks(speaker.talkSpans, durationSec: 43, width: 430)
+        XCTAssertEqual(blocks.map(\.x), [0, 260, 400], "three blocks where the label talks, with the pauses between them")
+        XCTAssertEqual(TalkTimeLayout.blocks(speaker.spans, durationSec: 43, width: 430).count, 1, "the cause: one span over the meeting")
+        let old = try JSONDecoder().decode(MeetingsAPI.MeetingSpeakers.Speaker.self, from: Data("""
+        {"label":"Bob","origin":"call","turns":1,"lines":1,"words":3,"spokenSec":2,"spans":[{"fromSec":0,"toSec":2,"turns":1}]}
+        """.utf8))
+        XCTAssertEqual(old.talkSpans, old.spans, "a service that does not send the turns still draws its spans")
+    }
+
+    func testAJoinedBlockDrawsItsTurnTicksApart() {
+        let dense = TalkTimeBlock(fromSec: 0, toSec: 100, x: 10, width: 40, spans: 9, ticks: [11, 12, 14, 17, 20, 24, 30, 44, 48])
+        XCTAssertEqual(TalkTimeLayout.shownTicks(dense), [17, 24, 30, 44],
+                       "a tick every point or two read as a barcode: ticks keep 6 pt from each other and from the block's ends")
+        let few = TalkTimeBlock(fromSec: 0, toSec: 100, x: 0, width: 100, spans: 3, ticks: [30, 60])
+        XCTAssertEqual(TalkTimeLayout.shownTicks(few), [30, 60])
+    }
+
     func testAProjectListsOnlyTheRulesItHas() {
         XCTAssertTrue(ProjectSummary.rules(folders: [], calendars: [], words: [], labels: []).isEmpty,
                       "four lines that each said none told nothing: a project without a rule says so in one sentence")

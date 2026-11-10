@@ -442,6 +442,8 @@ const meetingSpeakers = defineMethod({
                 firstSec: z.number().optional(),
                 lastSec: z.number().optional(),
                 spans: z.array(speakerSpanSchema),
+                /** Each turn by itself (what the talk-time lanes draw); `spans` join turns up to `gapSec` apart. */
+                talk: z.array(speakerSpanSchema),
                 leaves: z.array(z.custom<SpeakerLeave>((value) => typeof value === "object" && value !== null)),
             })
         ),

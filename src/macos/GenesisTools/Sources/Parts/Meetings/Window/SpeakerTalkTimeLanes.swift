@@ -63,6 +63,18 @@ enum TalkTimeLayout {
         }
     }
 
+    /// The turn ticks a joined block draws: each at least `gap` points from the tick before it and from the block's
+    /// ends. A block that joins hundreds of short turns drew a tick every point or two, which read as a barcode.
+    static func shownTicks(_ block: TalkTimeBlock, gap: CGFloat = 6) -> [CGFloat] {
+        var shown: [CGFloat] = []
+        var last = block.x
+        for tick in block.ticks where tick - last >= gap && block.x + block.width - tick >= gap {
+            shown.append(tick)
+            last = tick
+        }
+        return shown
+    }
+
     /// The room a banner with a label takes ("? Q12" in bold 10.5 pt with its padding, and a gap).
     static let bannerWidth: CGFloat = 46
 
@@ -166,7 +178,7 @@ struct SpeakerTalkTimeLanes: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(accessibilityText(speaker))
                     .accessibilityAction(named: "Play the first stretch") {
-                        if let first = speaker.spans.first { playSpan(first.fromSec, first.toSec) }
+                        if let first = speaker.talkSpans.first { playSpan(first.fromSec, first.toSec) }
                     }
                 }
                 row(name: EmptyView()) { _ in ruler.frameProbe("meetings.lanes.ruler") } share: { EmptyView() }
@@ -205,7 +217,9 @@ struct SpeakerTalkTimeLanes: View {
     }
 
     private func lane(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker, width: CGFloat) -> some View {
-        let blocks = TalkTimeLayout.blocks(speaker.spans, durationSec: durationSec, width: width)
+        // The turns, not the spans: a span joins turns up to two minutes apart, so two people who took turns for
+        // 43 seconds each drew as one bar over the whole meeting.
+        let blocks = TalkTimeLayout.blocks(speaker.talkSpans, durationSec: durationSec, width: width)
         let selected = speaker.label == selectedLabel
         let active = activeRange
         return Canvas { context, size in
@@ -216,7 +230,7 @@ struct SpeakerTalkTimeLanes: View {
                 let isActive = active.map { $0.overlaps(block.fromSec...block.toSec) } ?? false
                 let color: Color = isActive ? .accentColor : Color.secondary.opacity(selected ? 0.75 : 0.5)
                 context.fill(Path(roundedRect: rect, cornerRadius: 2.5), with: .color(color))
-                for tick in block.ticks {
+                for tick in TalkTimeLayout.shownTicks(block) {
                     let line = Path(CGRect(x: tick, y: rect.minY + 1.5, width: 1, height: rect.height - 3))
                     context.fill(line, with: .color(Color(nsColor: .windowBackgroundColor).opacity(0.7)))
                 }
@@ -309,6 +323,6 @@ struct SpeakerTalkTimeLanes: View {
     }
 
     private func accessibilityText(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker) -> String {
-        "\(displayName(speaker)), \(shareText(speaker, full: true)), \(Plural.count(speaker.turns, "turn")), \(Plural.count(speaker.spans.count, "stretch", "stretches"))"
+        "\(displayName(speaker)), \(shareText(speaker, full: true)), \(Plural.count(speaker.turns, "turn")), \(Plural.count(speaker.talkSpans.count, "stretch", "stretches"))"
     }
 }
