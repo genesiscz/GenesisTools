@@ -8,7 +8,7 @@ import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types"
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { tryProviderPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { getProviderConfigs } from "@genesiscz/utils/ask/providers/compat";
-import { modelsForProvider, providerNameFor, toDetectedProvider } from "@genesiscz/utils/ask/providers/detected";
+import { modelsForAccount, providerNameFor, toDetectedProvider } from "@genesiscz/utils/ask/providers/detected";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
@@ -152,7 +152,7 @@ export class ProviderManager {
 
         try {
             const binding = await plugin.bind({ account });
-            const models = await modelsForProvider(account.provider);
+            const models = await modelsForAccount(plugin, account);
             const detected = toDetectedProvider({
                 binding,
                 pluginId: account.provider,
@@ -261,7 +261,7 @@ export class ProviderManager {
                 binding,
                 pluginId: account.provider,
                 account: { id: account.id, name: account.name, ...(account.label ? { label: account.label } : {}) },
-                models: await modelsForProvider(account.provider),
+                models: await modelsForAccount(plugin, account),
             });
         } catch (err) {
             logger.warn(`Failed to create subscription provider for "${accountName}": ${err}`);
