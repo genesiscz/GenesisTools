@@ -15,7 +15,13 @@ import { dirname, join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { cameraMoviePath } from "@genesiscz/utils/recording-editor/camera";
-import { applyOp, readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import {
+    applyOp,
+    editOpSchema,
+    readProject,
+    wholeProject,
+    writeProject,
+} from "@genesiscz/utils/recording-editor/project";
 import type { RpcProgress } from "@genesiscz/utils/rpc/peer";
 import { type RpcNotification, RpcSocketClient, type RpcSocketClientOptions } from "@genesiscz/utils/rpc/socket-client";
 import {
@@ -44,7 +50,7 @@ import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS, editorWindowKeyOf, shortRecordingId } from "./library";
 import { chaptersOfPart } from "./moments";
 import { applyEdit, callerParams, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
-import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
+import { editorGolden, helloMethods, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
 import * as serviceClient from "./service-client";
 import { hostCloseEditor, hostStill, ServiceConnectionLost, ServiceHost, withServiceClient } from "./service-client";
@@ -1851,6 +1857,92 @@ describe("the window's REPL methods on the service", () => {
         await expect(agent.call<{ fixed: string[] }>("movie.fix", { recording: path })).resolves.toMatchObject({
             fixed: [expect.stringContaining("Step")],
         });
+    });
+});
+
+describe("the movie method of every edit op", () => {
+    const window =
+        "the editor window's EditOpDiff writes it from a change made in the window, and a REPL caller sends it through apply()";
+    /** Ops whose movie method has another name, because the name says what the call does. */
+    const RENAMED: Record<string, string> = { cursorSmooth: "smoothCursor", autoSpeed: "speedBadge" };
+    /** Ops with no movie method, each with why. */
+    const NO_METHOD: Record<string, string> = {
+        audio: `Whether the export plays the recording's sound: ${window}.`,
+        exportSettings: `The export's saved codec, height and output: ${window}; export() takes them per call.`,
+        lanes: `The whole lane list at once: ${window}; addLane, removeLane and moveLane change one lane.`,
+        setZoom: `Changes a zoom by its id: ${window}, and check() offers it as a fix in its action ops.`,
+        setRedaction: `Changes a hidden part by its id: ${window}, and check() offers it as a fix in its action ops.`,
+        setText: `Changes a text by its id: ${window}, and check() offers it as a fix in its action ops.`,
+        setShape: `Changes a shape by its id: ${window}.`,
+        trim: `Moves one clip's edge on the timeline: ${window}; cut and keep work on source time.`,
+        deleteClip: `Deletes one clip of the timeline: ${window}; cut works on source time.`,
+        clipSpeed: `Plays one clip of the timeline faster: ${window}; speed works on source time.`,
+        removeClickCircles: `Takes back annotateClicks' circles: ${window}.`,
+        renameLane: `Names a lane: ${window}.`,
+    };
+    /** Ops whose movie method takes more fields than the op: the extra fields, and why. */
+    const EXTRA_FIELDS: Record<string, { fields: string[]; why: string }> = {
+        cutWords: {
+            fields: ["dryRun"],
+            why: "dryRun lists the cuts and saves nothing, so it is never part of a saved op.",
+        },
+        cutFillers: {
+            fields: ["dryRun"],
+            why: "dryRun lists the cuts and saves nothing, so it is never part of a saved op.",
+        },
+    };
+    /** Ops whose movie method of the same name is another action, and why. */
+    const OTHER_ACTION: Record<string, string> = {
+        duplicate:
+            "movie.duplicate copies the whole recording into a new library recording; the op copies one item of the edit by its id, which a REPL caller sends through apply().",
+    };
+    const jsonOf = (schema: z.ZodType) => z.toJSONSchema(schema, { io: "input", unrepresentable: "any" });
+
+    test("every op tag has a REPL method and a service method with the op's params, apart from the named ones", () => {
+        const methods = moviesApi.handles.find((handle) => handle.name === "Movie")?.methods ?? [];
+        // The service answers movie.<name> with these same descriptors (service.ts), and hello lists each one.
+        const served = new Set(helloMethods());
+        const variants = new Map<string, z.ZodObject>(
+            editOpSchema.options.map((variant) => [variant.shape.op.value, variant])
+        );
+        const tags = [...variants.keys()];
+        const named = [RENAMED, NO_METHOD, EXTRA_FIELDS, OTHER_ACTION].flatMap((list) => Object.keys(list));
+        expect(named.filter((tag) => !tags.includes(tag))).toEqual([]);
+        expect(new Set(named).size).toBe(named.length);
+        const problems: string[] = [];
+
+        for (const [tag, variant] of variants) {
+            const name = RENAMED[tag] ?? tag;
+            const method = methods.find((each) => each.name === name);
+
+            if (tag in NO_METHOD) {
+                if (method) {
+                    problems.push(`${tag}: has a method now, so it leaves NO_METHOD`);
+                }
+                continue;
+            }
+
+            if (method?.effect !== "reversible" || !served.has(`movie.${name}`)) {
+                problems.push(`${tag}: no reversible movie.${name} on the REPL and the service`);
+                continue;
+            }
+
+            const extra = EXTRA_FIELDS[tag]?.fields ?? [];
+            const taken = jsonOf(method.params);
+            const properties = Object.entries(taken.properties ?? {}).filter(([field]) => !extra.includes(field));
+            const withoutExtra = extra.length ? { ...taken, properties: Object.fromEntries(properties) } : taken;
+            const same = SafeJSON.stringify(withoutExtra) === SafeJSON.stringify(jsonOf(variant.omit({ op: true })));
+
+            if (tag in OTHER_ACTION ? same : !same) {
+                problems.push(
+                    tag in OTHER_ACTION
+                        ? `${tag}: movie.${name} takes the op's params now, so it leaves OTHER_ACTION`
+                        : `${tag}: movie.${name} takes other params than the op${extra.length ? ` beside ${extra.join(", ")}` : ""}`
+                );
+            }
+        }
+
+        expect(problems).toEqual([]);
     });
 });
 
