@@ -132,8 +132,8 @@ public enum HubActivityRows {
 
 /// The PR overview beside a PR's diff. Both faces read and write the keys through `@AppStorage`.
 public enum HubPROverview {
-    /// The description opens in full; off (the default), it opens on its first paragraph with Show description,
-    /// so the old waves and notes do not push the commits and checks out of sight (hub UX council, 2026-11-09).
+    /// The description opens in full; off (the default), a description taller than 60% of the overview column's
+    /// visible height folds there with Show description (hub UX council 2026-11-09, Martin 2026-11-10).
     public static let descriptionWholeKey = "hub.prs.descriptionWhole"
     /// The PRs whose description the reader opened or closed by hand, newest last, one id per line.
     public static let descriptionChoicesKey = "hub.prs.descriptionChoices"
