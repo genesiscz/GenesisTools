@@ -20,17 +20,11 @@ import {
 } from "@genesiscz/utils/recording-editor/check";
 import { audioTrackCount } from "@genesiscz/utils/recording-editor/denoise";
 import { MOVIE_EVENT_KINDS, type MovieEventKind, type Tap, tapSchema } from "@genesiscz/utils/recording-editor/events";
-import { TRANSITION_KINDS } from "@genesiscz/utils/recording-editor/fx";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { arrowTail } from "@genesiscz/utils/recording-editor/item-ops";
 import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
 import { transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
-import {
-    CAPTION_KINDS,
-    CHAPTER_PLACES,
-    cardsLeadUs,
-    TEXT_ANIMATIONS,
-} from "@genesiscz/utils/recording-editor/overlays";
+import { cardsLeadUs, TEXT_ANIMATIONS } from "@genesiscz/utils/recording-editor/overlays";
 import {
     outputTimeSchema,
     sourceTimeSchema,
@@ -38,16 +32,8 @@ import {
     timeSchema,
     timeToUs,
 } from "@genesiscz/utils/recording-editor/plan";
+import { type FractionBox, HIDE_UNITS } from "@genesiscz/utils/recording-editor/private-data";
 import {
-    type FractionBox,
-    HIDE_UNITS,
-    PRIVATE_KINDS,
-    PRIVATE_STYLES,
-} from "@genesiscz/utils/recording-editor/private-data";
-import {
-    BACKGROUND_KINDS,
-    CANVAS_ASPECTS,
-    cameraOpSchema,
     captionAt,
     describeProject,
     EDIT_CLOCKS,
@@ -57,27 +43,17 @@ import {
     type EditZoom,
     editOpSchema,
     effectsOnSourceTime,
-    FRAME_ALIGNS,
-    FRAME_PRESETS,
     findInTranscript,
-    hexColor,
     hidingOf,
     markerTitleOps,
     outputDurationUs,
     outputTimeOf,
-    RANGE_ACTIONS,
-    REDACTION_STYLES,
     replaceWordsInLines,
     SHAPE_APPEARS,
-    SHAPE_KINDS,
-    SPOTLIGHT_CUTOUTS,
     shortcutsOf,
     snappedRedactionSpans,
     sourceTimeOf,
     spokenLineAt,
-    TEXT_ALIGNS,
-    TEXT_MAX_CHARS,
-    TEXT_STYLES,
     type TranscriptLine,
     transcriptCachePath,
     transcriptLines,
@@ -86,9 +62,8 @@ import {
     zoomShownAt,
 } from "@genesiscz/utils/recording-editor/project";
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
-import { type CutMatch, FILLER_LEVELS, type FillerLevel } from "@genesiscz/utils/recording-editor/transcript-cuts";
+import type { CutMatch, FillerLevel } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { VOICEOVER_CARDS, type VoiceoverCard } from "@genesiscz/utils/recording-editor/voiceovers";
-import { SPEED_BADGE_POSITIONS } from "@genesiscz/utils/recording-editor/waits";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-recorder/library";
@@ -251,6 +226,28 @@ const boxParamSchema = z
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
     defineMethod({ name, params, positional, result: z.unknown(), resultName: editResult, doc, effect: "reversible" });
 
+const editOpVariants = new Map<string, z.ZodObject>(
+    editOpSchema.options.map((variant) => [variant.shape.op.value, variant])
+);
+
+/**
+ * The params of a movie method named after an edit op: the op's `editOpSchema` variant without the tag, so a field
+ * the op gains is a field the REPL, MCP and the recorder service take. A method keeps only its doc, its positional
+ * names and a named override (`cutWords`' dryRun); service.test.ts names every op whose method differs on purpose.
+ */
+function opParams(tag: EditOp["op"]): z.ZodObject {
+    const variant = editOpVariants.get(tag);
+
+    if (!variant) {
+        throw new Error(`no edit op "${tag}" in editOpSchema`);
+    }
+
+    return variant.omit({ op: true });
+}
+
+/** The method of a plain edit op: `edit()` with the op's own params. */
+const opEdit = (tag: EditOp["op"], doc: string, positional?: string[]) => edit(tag, opParams(tag), doc, positional);
+
 const movieMethods = [
     defineMethod({
         name: "info",
@@ -278,114 +275,35 @@ const movieMethods = [
         doc: "Runs every fix check() offers (each issue's action.ops: remove what never shows, move an edit marker a cut hides to the nearest kept moment, lengthen what is too short to read, move a text off another) in one save and one undo() step. Issues with no fix (a missing transcript or music file) stay; check() again lists them. An issue its action did not remove is reported as no change, never as fixed.",
         effect: "reversible",
     }),
-    edit("split", z.object({ at: sourceTimeSchema }).strict(), "Splits the clip at a source time.", ["at"]),
-    edit("cut", z.object(range).strict(), "Removes a source range from the movie.", ["from", "to"]),
-    edit("keep", z.object(range).strict(), "Keeps only a source range (trims both ends).", ["from", "to"]),
-    edit(
-        "speed",
-        z.object({ ...range, factor: z.number().min(0.25).max(16) }).strict(),
-        "Plays a source range faster (2) or slower (0.5).",
-        ["from", "to", "factor"]
-    ),
-    edit(
+    opEdit("split", "Splits the clip at a source time.", ["at"]),
+    opEdit("cut", "Removes a source range from the movie.", ["from", "to"]),
+    opEdit("keep", "Keeps only a source range (trims both ends).", ["from", "to"]),
+    opEdit("speed", "Plays a source range faster (2) or slower (0.5).", ["from", "to", "factor"]),
+    opEdit(
         "zoom",
-        zoomSchema,
         'Zooms over a source range: scale 1–4, focus {x,y} 0..1 from the top left, or follow: true for the cursor (a picture zoom only). target "canvas" zooms the whole framed export instead of the picture inside it (focus is then 0..1 of the canvas, and it holds that focus: the cursor moves inside the picture, so follow with target "canvas" is refused). A canvas zoom shows 1/scale of the width and the height of the canvas, and the view stays inside the canvas: a focus nearer an edge than 0.5 / scale moves in to that distance (scale 2.5 at x 0.15 is shown at x 0.2). So a whole portrait phone never fills a 16:9 frame; to make the phone bigger beside its texts, use frame({ layout: { scale } }). On a phone-left frame, zoom({ from, to, scale: 4, focus: { x: 0.14, y: 0.5 }, target: "canvas" }) keeps its focus and moves in on the phone. A canvas zoom may overlap a picture zoom; texts, captions and keys stay where they are. easeInMs / easeOutMs (450 each when absent) set how long it grows and shrinks, in the movie as it plays (a sped-up part does not shorten them; the part of an ease that falls in a cut is not seen); an ease in as long as the zoom is a slow push over a still screen. Two zooms that play closer than one ease out and one ease in, a cut between them included, glide from one to the other.'
     ),
-    edit("unzoom", z.object({ id: z.string() }).strict(), "Removes a zoom by its id.", ["id"]),
-    edit(
+    opEdit("unzoom", "Removes a zoom by its id.", ["id"]),
+    opEdit(
         "redact",
-        z
-            .object({
-                from: sourceTimeSchema,
-                to: sourceTimeSchema,
-                rect: z
-                    .object({
-                        x: z.number().min(0).max(1),
-                        y: z.number().min(0).max(1),
-                        width: z.number().min(0.005).max(1),
-                        height: z.number().min(0.005).max(1),
-                    })
-                    .strict(),
-                style: z.enum(REDACTION_STYLES).optional(),
-                label: z.string().max(60).optional(),
-                follow: z.boolean().optional(),
-                dim: z.number().min(0.2).max(0.95).optional(),
-                cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
-                lane: z.string().optional(),
-                // R5 5 redaction edges
-                cell: z.number().min(2).max(256).optional(),
-                // R8 4 keyframes
-                track: z
-                    .array(
-                        z
-                            .object({
-                                at: sourceTimeSchema,
-                                x: z.number().min(0).max(1),
-                                y: z.number().min(0).max(1),
-                                width: z.number().positive().max(1),
-                                height: z.number().positive().max(1),
-                            })
-                            .strict()
-                    )
-                    .min(2)
-                    .optional(),
-            })
-            .strict(),
         'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black" | "spotlight" (the rectangle stays sharp and the rest of the picture dims, to point at something), label (what it hides, "API token"), follow: true (it moves with the drawn cursor, centred on it; rect gives its size). dim (0.2 to 0.95, 0.5 when absent) and cutout ("rounded" when absent, "rect" or "circle") are for style "spotlight" only, as in spotlight(); cell is for style "pixelate" only; such an option with another style is refused. track [{ at, x, y, width, height }] (2 or more keys, source seconds) moves it straight from key to key and holds before the first and after the last (the fixOps of verifyHidden use it). It moves with a zoom. The result lists redactions with their ids. Edges: blur, pixelate and black never fade; they cover fully from the first frame of `from` to the last frame of `to`. The export keeps a part on while a frame from its time stays on screen (a screen recording writes no frame while nothing moves), draws a part that ends up to 250 ms before a cut up to the cut (and one that starts up to 250 ms after a cut from it), and joins two parts with a gap up to 250 ms (redactionJoins({ snapMs }) changes it, 0 turns it off); check() names every such hole and every part under 0.15 s. cell (pixelate only): a block\'s side in source pixels, 2 to 256 (default 1.8 % of the height, about 19 px at 1080p; a cell under about half the text\'s height leaves the text readable: 6 px blocks left a 48 px heading legible on a test movie, so keep cells at least as large as the default for anything private, and smaller only for a soft look over non-private parts).'
     ),
-    edit(
+    opEdit(
         "unredact",
-        z.object({ id: z.string() }).strict(),
         "Removes a redaction by its id. A part hideText() or hidePrivate() made is forgotten as hidden too, so the same hide adds it again; unhide({ text }) takes back a whole hide at once.",
         ["id"]
     ),
-    edit(
+    opEdit(
         "text",
-        z
-            .object({
-                from: sourceTimeSchema,
-                to: sourceTimeSchema,
-                text: z.string().trim().min(1).max(TEXT_MAX_CHARS),
-                x: z.number().min(0).max(1).optional(),
-                y: z.number().min(0).max(1).optional(),
-                size: z.number().min(0.02).max(0.15).optional(),
-                style: z.enum(TEXT_STYLES).optional(),
-                lane: z.string().optional(),
-                // R4 6 animated texts
-                animate: z
-                    .object({ kind: z.enum(TEXT_ANIMATIONS), ms: z.number().int().min(100).max(5000).optional() })
-                    .strict()
-                    .optional(),
-                // R5 10 multi-line texts
-                block: z
-                    .object({
-                        width: z.number().min(0.15).max(0.95).optional(),
-                        align: z.enum(TEXT_ALIGNS).optional(),
-                    })
-                    .strict()
-                    .optional(),
-            })
-            .strict(),
         'animate { kind: "typewriter" | "slideUp" | "fade", ms (600) } is how it comes in (a fade by default). Puts a line of text over the picture from `from` to `to` (source seconds or "m:ss"): a title or a step\'s name. x, y is its centre (the centre of its block, below) as 0...1 of the CANVAS from the top left (0.5, 0.12, top middle, by default), so it stays put through a zoom; size is the text height as a fraction of the short side (0.055); style "plate" (white on a dark plate, default) | "plain" (white with a shadow). It fades in and out. The result lists texts with their ids. Several lines: "\\n" starts a new line (text: "Step 1\\nOpen the inbox"), and a line longer than the block wraps; the whole text is drawn, up to 500 characters (a longer one is refused, never cut). block { width: 0.15–0.95 of the canvas width (0.8), align: "left" | "center" | "right" } is the box the text sits in, centred on x: its lines wrap at its width, and align lines them up and places the text in the box by what shows of it: a "plate" text\'s plate, a "plain" text\'s letters (it draws no plate). "left" puts that left edge at the block\'s left edge (x - width / 2), "right" puts its right edge at the block\'s right edge (x + width / 2), and "center" (the default) centres the text on x; the plate, or a plain text\'s letters, stays inside the canvas. So texts with the same x, block and style line up whatever their lengths and sizes: with block: { width: 0.35, align: "left" } beside a phone (frame({ preset: "phone-left" }), x 0.62), a title and its subtitle both start at 0.445 of the width. info().texts[].lines counts the lines it was written with.'
     ),
-    edit("untext", z.object({ id: z.string() }).strict(), "Removes a text by its id.", ["id"]),
-    edit(
+    opEdit("untext", "Removes a text by its id.", ["id"]),
+    opEdit(
         "retime",
-        z
-            .object({
-                id: z.string(),
-                at: sourceTimeSchema.optional(),
-                by: z.number().optional(),
-                from: sourceTimeSchema.optional(),
-                to: sourceTimeSchema.optional(),
-            })
-            .strict(),
         'Moves or trims a zoom, hidden part, text or shape by its id (info() lists them). To MOVE it with its length kept: `at` (its new start) or `by` (seconds, negative is earlier). To TRIM it: `from` and/or `to` set a new start or end, so `from` alone makes it longer or shorter. Source seconds or "m:ss". A zoom meets only zooms of its own target (a canvas zoom may overlap a picture zoom): moved onto one, it goes past it with its length kept and a warning says where, or it is refused when no room is left after it; trimmed into one, it stops at it. retime({ id: "z1", at: 1 }), retime({ id: "t1", by: 2 }), retime({ id: "s1", to: 9 }).'
     ),
-    edit(
+    opEdit(
         "fixLine",
-        z.object({ from: sourceTimeSchema, text: z.string().max(300) }).strict(),
         'Corrects the transcript line spoken at `from` (any source time inside it, e.g. a line\'s from from transcript() or find()): text is the right words ("" hides the line). Kept in the edit, so captions, transcript(), find() and movies.search() read the fixed words, and a new transcription keeps them.',
         ["from", "text"]
     ),
@@ -414,15 +332,9 @@ const movieMethods = [
         "Corrects many transcript lines at once, saved once and undone with one undo(): [{ at, text }] where at is any source time inside the line (a line's from from transcript()). Use it to polish a whole transcript: read transcript(), then send only the lines whose words change. A time where nobody speaks is refused with the nearest lines, and nothing is saved.",
         ["fixes"]
     ),
-    edit(
-        "unfixLine",
-        z.object({ from: sourceTimeSchema }).strict(),
-        "Drops the correction of the line that starts at `from`.",
-        ["from"]
-    ),
-    edit(
+    opEdit("unfixLine", "Drops the correction of the line that starts at `from`.", ["from"]),
+    opEdit(
         "autoZoom",
-        z.object({ scale: z.number().min(1).max(4).optional() }).strict(),
         'One zoom per group of recorded clicks (the groups clickGroups() lists), following the cursor; its zooms carry origin "auto" and a later run replaces only those, keeping every zoom you made (follow and canvas zooms too); a picture zoom you made blocks a group, a canvas zoom does not; throws when there are no clicks.'
     ),
     edit(
@@ -441,29 +353,15 @@ const movieMethods = [
             .strict(),
         "Puts each marker's label on screen as a step title that plays for `seconds` (2.5) of the finished movie (a cut or a speed-up after the marker moves its end later in source time; it ends by the next marker's title), \"1. Open the settings\" (numbered: false drops the number), at the top middle (y 0...1 of the canvas, 0.12): one text per marker in the kept movie, saved once, one undo(). A marker that has a text already is left alone, so running it again adds nothing. Throws when there is no marker."
     ),
-    edit(
+    opEdit(
         "annotateClicks",
-        z
-            .object({
-                from: sourceTimeSchema.optional(),
-                to: sourceTimeSchema.optional(),
-                kind: z.enum(SHAPE_KINDS).optional(),
-                seconds: z.number().min(0.3).max(10).optional(),
-                color: z
-                    .string()
-                    .regex(/^#[0-9a-fA-F]{6}$/)
-                    .optional(),
-                appear: z.enum(SHAPE_APPEARS).optional(),
-            })
-            .strict(),
         'Marks every recorded click from `from` to `to` (source seconds; the whole recording by default) with a shape for `seconds` (1.2): kind "circle" (default) round the point, "box", or "arrow" pointing at it. A double click is one mark; a click that already has a mark of that kind is left alone, so running it again adds nothing. One undo takes them all back. Throws when the range has no clicks.'
     ),
-    edit("volume", z.object({ volume: z.number().min(0).max(2) }).strict(), "Sets the volume, 0 to 2.", ["volume"]),
-    edit(
+    opEdit("volume", "Sets the volume, 0 to 2.", ["volume"]),
+    opEdit(
         "mute",
-        z.object({ track: z.number().int().nonnegative() }).strict(),
-        "Mutes an audio track (0 is the first). A track the movie does not have is refused (a frames recording has one track, 0, with the mic and the system sound mixed), and so is a movie whose video has no audio track.",
-        ["track"]
+        "Mutes an audio track (0 is the first). A track the movie does not have is refused (a frames recording has one track, 0, with the mic and the system sound mixed), and so is a movie whose video has no audio track. muted: false unmutes it, as unmute(track) does.",
+        ["track", "muted"]
     ),
     edit("unmute", z.object({ track: z.number().int().nonnegative() }).strict(), "Unmutes an audio track.", ["track"]),
     edit("apply", z.object({ ops: z.array(editOpSchema).min(1) }).strict(), "Several ops at once, saved once.", [
@@ -476,25 +374,9 @@ const movieMethods = [
             toolCommand("recorder apply") +
             ' (kept in <edit>.undo.json, so it works across runs; 30 steps); undo({ all: true }) goes back through every saved step. The result names the ops it took back (undone: ["text"]) and stepsLeft, how many more undo() calls there are. The revision number still rises: an undo is a new save of the older content. Refused when the editor window changed it since: undo that with ⌘Z there.'
     ),
-    edit(
+    opEdit(
         "shape",
-        z
-            .object({
-                from: sourceTimeSchema,
-                to: sourceTimeSchema,
-                kind: z.enum(SHAPE_KINDS),
-                start: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
-                end: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
-                color: z
-                    .string()
-                    .regex(/^#[0-9a-fA-F]{6}$/)
-                    .optional(),
-                width: z.number().min(0.002).max(0.03).optional(),
-                appear: z.enum(SHAPE_APPEARS).optional(),
-                lane: z.string().optional(),
-            })
-            .strict(),
-        'Draws an "arrow", a "box" or a "circle" over the SOURCE picture from `from` to `to` (source seconds), so it moves with a zoom: an arrow from start { x, y } to its head at end (where it points), a box or circle between the two corners; 0...1 of the picture from its top left. color "#RRGGBB" (red #FF3B30), width 0.002 to 0.03 of the short side (0.006). It draws itself on and fades out; appear "fade" fades it in instead and "none" shows it at once. unshape(id) removes it.'
+        'Draws an "arrow", a "box" or a "circle" over the SOURCE picture from `from` to `to` (source seconds), so it moves with a zoom: an arrow from start { x, y } to its head at end (where it points), a box or circle between the two corners; 0...1 of the picture from its top left. Without start and end, at { x, y } is the point it marks (an arrow points at it, a box or circle goes round it; absent: the pointer at `from`, else the middle). color "#RRGGBB" (red #FF3B30), width 0.002 to 0.03 of the short side (0.006). It draws itself on and fades out; appear "fade" fades it in instead and "none" shows it at once. unshape(id) removes it.'
     ),
     edit(
         "arrow",
@@ -516,226 +398,91 @@ const movieMethods = [
             .strict(),
         'An arrow pointing at `at` (0...1 of the source picture, e.g. a button you found in a still) from `from` to `to`; its tail is `tail`, or 12 % of the picture away towards the centre; appear "draw" (default: it draws itself on), "fade" or "none". The same as shape with kind "arrow".'
     ),
-    edit("unshape", z.object({ id: z.string() }).strict(), "Removes the arrow, box or circle with this id.", ["id"]),
-    edit(
+    opEdit("unshape", "Removes the arrow, box or circle with this id.", ["id"]),
+    opEdit(
         "music",
-        z
-            .object({
-                file: z.string().optional(),
-                volume: z.number().min(0).max(1).optional(),
-                duck: z.number().min(0).max(1).optional(),
-                fadeMs: z.number().int().min(0).max(10_000).optional(),
-                startMs: z.number().int().min(0).optional(),
-                loop: z.boolean().optional(),
-                enabled: z.boolean().optional(),
-            })
-            .strict(),
         "Music under the movie: file (an mp3, m4a, wav… path; needed the first time), from startMs into the file (0), looped to the movie's length (loop: false plays it once), volume 0 to 1 (0.25), fading in and out over fadeMs (1500). While a transcript line plays it drops by duck (0.6 = to 40 %), so speech stays clear; without transcript() nothing ducks (audio.music.ducks in the result says which). While ducking() is set its dB alone decides the drop: a new duck is saved for ducking({ enabled: false }) and a warning says it does nothing until then. enabled: false removes it."
     ),
-    edit(
+    opEdit(
         "spotlight",
-        z
-            .object({
-                from: sourceTimeSchema,
-                to: sourceTimeSchema,
-                rect: z
-                    .object({
-                        x: z.number().min(0).max(1),
-                        y: z.number().min(0).max(1),
-                        width: z.number().min(0.005).max(1),
-                        height: z.number().min(0.005).max(1),
-                    })
-                    .strict(),
-                label: z.string().max(60).optional(),
-                follow: z.boolean().optional(),
-                dim: z.number().min(0.2).max(0.95).optional(),
-                cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
-                lane: z.string().optional(),
-                // R5 5 redaction edges
-                fadeMs: z.number().int().min(0).max(2000).optional(),
-                // R8 11
-                dimAround: z.number().min(0).max(0.5).optional(),
-            })
-            .strict(),
         'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer); dim 0.2 to 0.95 is how much black covers the rest (0.5, so the rest stays readable; 0.7 is a strong dim), dimAround 0 to 0.5 (a share of the shorter side of the picture) makes the dim rise softly from the lit shape to full at that distance, so the frame around it stays readable (0.1 is a good start; absent is a sharp edge), cutout "rounded" (default), "rect" or "circle" its lit shape (a circle is the ellipse inside rect, so give a square rect in pixels for a round one). The dim fades in after `from` and out before `to` over fadeMs (200, at most a third of its length, linear); fadeMs: 0 is a hard cut. The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
     ),
-    edit(
+    opEdit(
         "addLane",
-        z
-            .object({
-                kinds: z.array(z.enum(EFFECT_KINDS)).min(1).optional(),
-                name: z.string().max(40).optional(),
-                id: z.string().min(1).max(40).optional(),
-            })
-            .strict(),
         `Adds an effect lane under the others on the editor's timeline: kinds is what it holds (${EFFECT_KINDS.join(", ")}; absent holds every kind), name its label. info().lanes lists the lanes top to bottom with the ids of their items; zoom, redact, spotlight, text and shape take lane: <id> to put the new item there. A speed lane shows the clips played at another speed.`
     ),
-    edit(
+    opEdit(
         "removeLane",
-        z.object({ id: z.string() }).strict(),
         "Removes an effect lane; its items move to the next lane that holds their kind. The last lane that holds zooms is refused.",
         ["id"]
     ),
-    edit(
-        "moveLane",
-        z.object({ id: z.string(), to: z.number().int().min(0) }).strict(),
-        "Moves an effect lane to a place in the list (0 is the top); every item stays on its lane.",
-        ["id", "to"]
-    ),
-    edit(
+    opEdit("moveLane", "Moves an effect lane to a place in the list (0 is the top); every item stays on its lane.", [
+        "id",
+        "to",
+    ]),
+    opEdit(
         "moveToLane",
-        z.object({ id: z.string(), lane: z.string() }).strict(),
         "Puts a zoom, hidden part, spotlight, text or shape (by its id) on another effect lane that holds its kind.",
         ["id", "lane"]
     ),
-    edit(
+    opEdit(
         "range",
-        z
-            .object({
-                from: outputTimeSchema,
-                to: outputTimeSchema,
-                action: z.enum(RANGE_ACTIONS),
-                factor: z.number().min(0.25).max(16).optional(),
-                scale: z.number().min(1).max(4).optional(),
-                text: z.string().trim().min(1).max(200).optional(),
-                lane: z.string().optional(),
-            })
-            .strict(),
         'Does what the editor\'s range popover does over `from`..`to` in OUTPUT seconds or "m:ss" (what plays, as the ruler shows it, so after cuts and speed changes): action "cut", "speed" (factor, 2), "zoom" (scale), "hide" or "spotlight" (the middle of the picture; redact and spotlight take a rect), or "text" (text, "Title"), or "marker" (a marker at from, named text or "Marker <n>"). lane puts the new item on an effect lane. Export such a part with export({ from, to }).'
     ),
-    edit(
+    opEdit(
         "marker",
-        z.object({ at: sourceTimeSchema, label: z.string().trim().min(1).max(80).optional() }).strict(),
         'A marker in the edit at `at` (SOURCE seconds or "m:ss"), named label or "Marker <n>": the marks lane, step titles and chapters show it beside the recording\'s own markers; markers() lists it with its id.',
         ["at", "label"]
     ),
-    edit(
+    opEdit(
         "unmarker",
-        z.object({ id: z.string() }).strict(),
         "Removes a marker set while editing, by the id markers() gives it; the recording's own markers stay.",
         ["id"]
     ),
-    edit(
+    opEdit(
         "reset",
-        z.object({}).strict(),
         "Starts over: the whole movie with default audio and export. Everything else goes too: cuts, zooms, texts, hidden parts, music, voiceovers, cards, frame, markers of the edit; undo() takes a reset back."
     ),
-    edit(
+    opEdit(
         "clicks",
-        z
-            .object({
-                highlight: z.boolean().optional(),
-                color: hexColor.optional(),
-                radius: z.number().min(0.005).max(0.2).optional(),
-                durationMs: z.number().int().min(100).max(3000).optional(),
-                sound: z.boolean().optional(),
-            })
-            .strict(),
         'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the recorded picture\'s height, 0.03; drawn on the picture before the zoom and the frame, so it zooms and frames with it), durationMs (450); sound: true adds a soft tick at each click to the sound (off by default). It draws the clicks; clickGroups() reads them.'
     ),
-    edit(
+    opEdit(
         "keys",
-        z
-            .object({
-                show: z.boolean().optional(),
-                size: z.number().min(0.02).max(0.12).optional(),
-                position: z.enum(["bottom", "top"]).optional(),
-                durationMs: z.number().int().min(300).max(5000).optional(),
-            })
-            .strict(),
         'Draws the ⌘/⌃ shortcuts the recording kept as they were pressed: show, size (0.05 of the short side), position "bottom" | "top", durationMs (1200, of the movie as it plays; a press inside a cut shows nothing). Throws when the recording kept none.'
     ),
-    edit(
+    opEdit(
         "captions",
-        z
-            .object({
-                show: z.boolean().optional(),
-                size: z.number().min(0.02).max(0.1).optional(),
-                position: z.enum(["bottom", "top"]).optional(),
-            })
-            .strict(),
         'Draws the spoken lines over the picture from the cached transcript (call transcript() first): show, size (text height, a fraction of the short side, 0.038), position "bottom" | "top". Captions follow every cut.'
     ),
-    edit(
+    opEdit(
         "cursor",
-        z
-            .object({
-                show: z.boolean().optional(),
-                size: z.number().min(0.5).max(3).optional(),
-                smoothing: z.number().min(0).max(1).optional(),
-                hideAfterMs: z.number().int().min(0).max(30_000).optional(),
-            })
-            .strict(),
         "The cursor the editor draws (a movie recorded without the system cursor; info() shows cursor: null otherwise): show, size (times the recorded size, 1), smoothing (0 raw path, 1 smoothest, 0.5), hideAfterMs (fade out after standing still this long of the movie as it plays, 0 never). It still sits on every click."
     ),
-    edit(
+    opEdit(
         "motion",
-        z.object({ blur: z.number().min(0).max(1).optional() }).strict(),
         "How the picture moves through a zoom: blur 0 (every frame sharp) to 1 smears it along a pan or a change of scale, as a camera shutter would; 0.5 when never set. A still zoom is never blurred."
     ),
-    edit(
+    opEdit(
         "camera",
-        cameraOpSchema.omit({ op: true }),
         'The camera bubble (a recording made with the camera on has one from its camera.json; info() shows camera): corner "bottomRight" | "bottomLeft" | "topRight" | "topLeft", or x and y (the centre, 0–1, makes it "custom"; one of them alone keeps the other where the bubble is drawn now); size (its side over the canvas\'s short side, 0.08–0.6, 0.24); shape "circle" | "rounded" | "square"; mirror; show; offsetMs (camera time = source time - offsetMs); file for an edit without one; enabled: false removes it.'
     ),
-    edit(
+    opEdit(
         "cameraHide",
-        z.object(range).strict(),
-        "Hides the camera bubble from `from` to `to` (SOURCE seconds, so it moves with a cut). Each call adds a hidden part of its own: parts that touch stay separate items, and the bubble stays hidden across the join.",
-        ["from", "to"]
+        "Hides the camera bubble from `from` to `to` (SOURCE seconds, so it moves with a cut). Each call adds a hidden part of its own: parts that touch stay separate items, and the bubble stays hidden across the join. lane: the effect lane to put it on (an id from info().lanes; absent: the first that holds camera parts).",
+        ["from", "to", "lane"]
     ),
-    edit(
+    opEdit(
         "cameraShow",
-        z.object(range).strict(),
-        "Shows the camera bubble again from `from` to `to`: hidden parts lose that stretch.",
-        ["from", "to"]
+        "Shows the camera bubble again from `from` to `to`: hidden parts lose that stretch. cameraShow({ id }) deletes one hidden part by its id instead.",
+        ["from", "to", "id"]
     ),
-    edit(
+    opEdit(
         "frame",
-        z
-            .object({
-                enabled: z.boolean().optional(),
-                aspect: z.enum(CANVAS_ASPECTS).optional(),
-                fit: z.enum(["contain", "cover"]).optional(),
-                background: z
-                    .object({
-                        kind: z.enum(BACKGROUND_KINDS).optional(),
-                        colors: z.array(hexColor).min(1).max(2).optional(),
-                        image: z.string().min(1).optional(),
-                        blur: z.number().min(0).max(1).optional(),
-                    })
-                    .strict()
-                    .optional(),
-                padding: z.number().min(0).max(0.3).optional(),
-                cornerRadius: z.number().min(0).max(0.1).optional(),
-                shadow: z.boolean().optional(),
-                // R5 4 frame layouts
-                layout: z
-                    .object({
-                        align: z.enum(FRAME_ALIGNS).optional(),
-                        scale: z.number().min(0.5).max(3).optional(),
-                        // R7 9 phone layouts
-                        focus: z
-                            .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
-                            .strict()
-                            .optional(),
-                    })
-                    .strict()
-                    .optional(),
-                preset: z.enum(FRAME_PRESETS).optional(),
-            })
-            .strict(),
         'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill the room inside the padding, following the cursor; padding 0 for edge to edge), padding (0.06 of the canvas\'s short side), cornerRadius (0.012 of the canvas\'s short side), shadow, background { kind: "gradient" | "color" | "image" | "none", colors, image (a picture file; kind image), blur (0–1) }; enabled: false removes it. layout { align: "center" | "left" | "right" | "top" | "bottom", scale: 0.5–3 } places the picture against one edge (inside the padding) and sizes it. Above 1 the picture grows inside the padding and is cropped to it, and layout.focus { x, y } (0..1 of the picture from its top left, the centre by default) picks the part that stays in view: a whole phone is at most about 0.27 of a 16:9 width, so layout { scale: 1.5, focus: { x: 0.5, y: 1 } } makes it about 0.36 wide and keeps its bottom (a tab bar) in view while a third of its top is out. preset sets aspect, fit (contain, the whole phone), padding, corner radius and layout for a phone recording, and the call\'s own fields win: "phone-left" / "phone-right" (16:9, the whole phone against one side, about 0.24 to 0.27 of the width, the rest free for texts at x 0.62 or 0.38), "phone-portrait" (9:16, the phone from the top with the bottom eighth free for captions, for Shorts). Example: frame({ preset: "phone-left", layout: { scale: 1.1 } }), then text({ from, to, text: "Line one\\nLine two", x: 0.64 }).'
     ),
-    edit(
+    opEdit(
         "removeIdle",
-        z
-            .object({
-                minSeconds: z.number().min(0.5).max(600).optional(),
-                keepSeconds: z.number().min(0).max(5).optional(),
-                speed: z.number().min(2).max(16).optional(),
-            })
-            .strict(),
         "Cuts every stretch where the picture does not change AND nothing is heard for minSeconds (default 2), keeping keepSeconds (0.3) at each end; a still picture under speech stays. speed (2–16) plays those stretches that much faster instead of cutting them. The result adds removed: [[from, to], …] in source seconds."
     ),
     defineMethod({
@@ -755,18 +502,10 @@ const movieMethods = [
     }),
     defineMethod({
         name: "cutWords",
-        params: z
-            .object({
-                at: sourceTimeSchema,
-                words: z.string().min(1),
-                occurrence: z.number().int().min(1).optional(),
-                padMs: z.number().int().min(0).max(500).optional(),
-                dryRun: z.boolean().optional(),
-            })
-            .strict(),
+        params: opParams("cutWords").extend({ dryRun: z.boolean().optional() }),
         result: z.unknown(),
         resultName: "{ …info() } | { from, to, text, line, estimated, plays }[] (dryRun)",
-        doc: "Cuts words out of the transcript line spoken at `at` (any source time inside it, a line's from from transcript() or find()): words \"you know\" cuts every place the line says them, occurrence: 2 only the second place (the editor's word pick does this). A word's time comes from the provider's word times, else it is estimated from where its letters sit in the line (estimated: true; check with still() or sheet()). dryRun: true lists the cuts and saves nothing. One undo() puts it back.",
+        doc: "Cuts words out of the transcript line spoken at `at` (any source time inside it, a line's from from transcript() or find()): words \"you know\" cuts every place the line says them, occurrence: 2 only the second place (the editor's word pick does this). A word's time comes from the provider's word times, else it is estimated from where its letters sit in the line (estimated: true; check with still() or sheet()). from and to (both or neither, source seconds as lineWords() times them) pick that place of the words whatever its count is now, and are refused when the line no longer says them there. dryRun: true lists the cuts and saves nothing. One undo() puts it back.",
         effect: "reversible",
     }),
     defineMethod({
@@ -779,35 +518,18 @@ const movieMethods = [
     }),
     defineMethod({
         name: "cutFillers",
-        params: z
-            .object({
-                language: z.string().min(2).max(8).optional(),
-                level: z.enum(FILLER_LEVELS).optional(),
-                words: z.array(z.string().min(1)).optional(),
-                padMs: z.number().int().min(0).max(500).optional(),
-                dryRun: z.boolean().optional(),
-            })
-            .strict(),
+        params: opParams("cutFillers").extend({ dryRun: z.boolean().optional() }),
         result: z.unknown(),
         resultName: "{ …info() } | { from, to, text, line, estimated, plays }[] (dryRun)",
         doc: 'Cuts every filler of the transcript in one step: language "cs", "sk" or "en" (absent: all of them), level "sounds" (default: ehm, hm, um, uh, éé) or "all" (also the fillers that are real words: jako, jakože, like, so check with dryRun first), or your own words. A run of fillers is one cut, padMs (40) off its edges. dryRun: true lists what it would cut. One undo() puts it all back.',
         effect: "reversible",
     }),
-    edit(
+    opEdit(
         "denoise",
-        z
-            .object({
-                enabled: z.boolean().optional(),
-                reductionDb: z.number().min(1).max(40).optional(),
-                tracks: z.array(z.number().int().nonnegative()).optional(),
-                trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),
-            })
-            .strict(),
-        "Turns the room and fan noise of the sound down on export (ffmpeg afftdn): reductionDb 12 by default (8 is gentle, 20+ starts to blur words), on every audio track or only tracks (0 is the first; a screen recording's microphone is its last); trackReductionDb { 1: 20 } gives a track (here the second) its own strength (merged with earlier ones). The export renders from a cleaned copy of the movie, made once per setting under .denoise/ beside it. enabled: false takes it away. A track the movie does not have is refused (a frames recording has one track, 0, with the mic and the system sound mixed), and so is a movie whose video has no audio track."
+        "Turns the room and fan noise of the sound down on export (ffmpeg afftdn): reductionDb 12 by default (8 is gentle, 20+ starts to blur words), on every audio track or only tracks (0 is the first; a screen recording's microphone is its last); trackReductionDb { 1: 20 } gives a track (here the second) its own strength (merged with earlier ones). The export renders from a cleaned copy of the movie, made once per setting under .denoise/ beside it. enabled: false takes it away. A track the movie does not have is refused (a frames recording has one track, 0, with the mic and the system sound mixed), and so is a movie whose video has no audio track. One track, as the editor's Audio tab changes it: track with on (in or out of the cleaned tracks) or with reductionDb (its own strength); trackCount is the count used only when the movie cannot be measured. method is \"afftdn\", the only one."
     ),
-    edit(
+    opEdit(
         "normalize",
-        z.object({ targetLufs: z.number().min(-30).max(-8).optional() }).strict(),
         "Measures the loudness of what the export plays of the recording's own sound (EBU R128: the kept clips at their speed, the unmuted tracks mixed, the cleaned copy when denoise is on) and sets the volume so it plays at targetLufs (default -16, speech on the web; -14 music). Music and voiceovers keep their own volume. Normalize again after cutting. The volume tops out at 200 % (+6 dB). The result adds loudness: { measuredLufs, volume }."
     ),
     defineMethod({
@@ -1137,21 +859,11 @@ const movieMethods = [
         reaches: ["user"],
     }),
     // R4 voiceover clips
-    edit(
+    opEdit(
         "voiceover",
-        z
-            .object({
-                at: sourceTimeSchema.optional(),
-                card: z.enum(VOICEOVER_CARDS).optional(),
-                file: z.string().min(1).optional(),
-                volume: z.number().min(0).max(2).optional(),
-                label: z.string().max(200).optional(),
-                id: z.string().optional(),
-            })
-            .strict(),
         'Plays a sound file (mp3, wav, aiff, m4a) from SOURCE time `at` (seconds or "m:ss") at its own speed, mixed into the preview and the export: a narration. volume 0 to 2 (1), label names it ("Intro"). With id (from info().voiceovers) it changes that clip instead: a new at moves it, a new file replaces it. The music drops under it (ducking()). unvoiceover(id) removes it. card: "intro" or "end" plays it over that card instead, `at` counting from the first frame of the card ({ card: "intro", at: 0.4, file }); an intro line may run on into the movie. A card line whose card is gone or ends before its at still takes a volume, label or file change; check() says it does not play. info().voiceovers lists each with plays (its OUTPUT second, null when its start is cut or it is on a card) and exportPlays (its second in the exported file).'
     ),
-    edit("unvoiceover", z.object({ id: z.string() }).strict(), "Removes a voiceover clip by its id.", ["id"]),
+    opEdit("unvoiceover", "Removes a voiceover clip by its id.", ["id"]),
     defineMethod({
         name: "say",
         params: z
@@ -1172,141 +884,45 @@ const movieMethods = [
         effect: "reversible",
     }),
     // R4 8 music ducking
-    edit(
+    opEdit(
         "ducking",
-        z
-            .object({
-                db: z.number().min(0).max(40).optional(),
-                fadeMs: z.number().int().min(0).max(5000).optional(),
-                transcript: z.boolean().optional(),
-                voiceovers: z.boolean().optional(),
-                enabled: z.boolean().optional(),
-            })
-            .strict(),
         "How far the music drops while someone speaks: db quieter (12), reached over fadeMs (300), under the transcript's lines (transcript, true) and under the voiceover clips (voiceovers, true). Without it the music's older duck share applies (to both). enabled: false removes it."
     ),
     // R4 6 animated captions
-    edit(
+    opEdit(
         "captionsStyle",
-        z
-            .object({
-                kind: z.enum(CAPTION_KINDS).optional(),
-                color: hexColor.optional(),
-                enabled: z.boolean().optional(),
-            })
-            .strict(),
         'How the captions animate: kind "karaoke" (the default once set) colours each word as it is said, in color ("#FFD60A"), from the transcript\'s word times (cut-words uses the same; estimated from the letters when the transcription has none); "line" shows each line at once. Captions themselves are captions({ show: true }). enabled: false goes back to plain lines.'
     ),
     // R4 10 progress bar and chapter strip
-    edit(
+    opEdit(
         "progress",
-        z
-            .object({
-                show: z.boolean().optional(),
-                color: hexColor.optional(),
-                height: z.number().min(0.002).max(0.03).optional(),
-                chapters: z.boolean().optional(),
-                chapterMs: z.number().int().min(500).max(10_000).optional(),
-                chapterPlace: z.enum(CHAPTER_PLACES).optional(),
-                enabled: z.boolean().optional(),
-            })
-            .strict(),
         'A thin bar along the bottom edge of the canvas (preview and export) showing how much has played, in color ("#FFFFFF"), height a share of the short side (0.008), divided at the markers (the recording\'s and the edit\'s, markers()) as the MP4\'s chapters are: a marker under 1 s after the one kept before it adds no divider and the earlier name stays, and a first marker under 1 s starts the first chapter at 0 with no divider; with chapters (true) each chapter\'s label shows for chapterMs (2000) when it starts, at chapterPlace: "auto" (default) puts it in the frame\'s free area (the padding, or the free side of a phone preset: below the phone with phone-portrait, on the free side with phone-left/right), never over the movie, and at the bottom left above the bar without a frame; "topLeft" | "topRight" | "bottomLeft" | "bottomRight" pin it to that corner of the canvas. show: false hides it and keeps the settings; enabled: false removes it.'
     ),
     // R4 9 intro and end cards
-    edit(
+    opEdit(
         "introCard",
-        z
-            .object({
-                title: z.string().trim().min(1).max(120).optional(),
-                subtitle: z.string().max(200).optional(),
-                /** A picture file; "" removes the logo. */
-                logo: z.string().optional(),
-                date: z.string().max(60).optional(),
-                seconds: z.number().min(0.5).max(15).optional(),
-                /** false removes the card. */
-                enabled: z.boolean().optional(),
-            })
-            .strict(),
         'A title card the export plays BEFORE the movie for seconds (3): title (needed the first time), subtitle, logo (a picture file; "" removes it) and date (any text), on the frame\'s background (frame(); a gradient without one). The preview plays the movie alone; still({ card: "intro" }) is not a thing: export() shows it. A part export (from/to) leaves the cards out. Subtitles and chapters written with the export move by its length. enabled: false removes it.'
     ),
-    edit(
+    opEdit(
         "endCard",
-        z
-            .object({
-                text: z.string().trim().min(1).max(200).optional(),
-                link: z.string().max(300).optional(),
-                qr: z.boolean().optional(),
-                seconds: z.number().min(0.5).max(15).optional(),
-                /** false removes the card. */
-                enabled: z.boolean().optional(),
-            })
-            .strict(),
         "A card the export plays AFTER the movie for seconds (3): text (needed the first time), a link under it and, with qr: true, a QR code of the link, on the frame's background. enabled: false removes it."
     ),
     // Round 4 fx-render: transitions at cuts, the magnifier lens, the 3D tilt (src/utils/recording-editor/fx.ts).
-    edit(
+    opEdit(
         "transition",
-        z
-            .object({
-                kind: z.enum([...TRANSITION_KINDS, "default"]).optional(),
-                ms: z.number().int().min(50).max(2000).optional(),
-                clip: z.string().optional(),
-            })
-            .strict(),
         'The transition at the joins of two clips (a cut; a split alone joins nothing): kind "none" (a hard cut, the default), "crossfade", "zoom" (zooms through) or "blur" (a blurred wipe), ms its whole length centred on the join (300), but each half plays inside at most half of its neighbouring clip, so a short clip shortens it: info().transitions.joins[].playsMs is the length that plays, and shortened: true marks such a join. Without clip it sets the edit-wide default; with clip (the id of the clip that starts at the join, from info().transitions.joins) only that join, and kind "default" gives it the default back. Every duration stays: the transition blends each side with a still of the other.'
     ),
-    edit(
+    opEdit(
         "lens",
-        z
-            .object({
-                from: sourceTimeSchema,
-                to: sourceTimeSchema,
-                radius: z.number().min(0.04).max(0.4).optional(),
-                magnification: z.number().min(1.5).max(4).optional(),
-                follow: z.boolean().optional(),
-                at: z
-                    .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
-                    .strict()
-                    .optional(),
-                ring: z.string().optional(),
-            })
-            .strict(),
-        'A round magnifier lens from `from` to `to` (SOURCE seconds): radius (a fraction of the picture\'s short side, 0.12), magnification 1.5 to 4 (2), ring "#RRGGBB" (white). It follows the cursor (a movie without a cursor track holds the middle) unless `at` { x, y } (0 to 1 of the source picture) or follow: false. A ring and a soft shadow; the rest of the picture stays visible. info().lenses lists them with their ids.'
+        'A round magnifier lens from `from` to `to` (SOURCE seconds): radius (a fraction of the picture\'s short side, 0.12), magnification 1.5 to 4 (2), ring "#RRGGBB" (white). It follows the cursor (a movie without a cursor track holds the middle) unless `at` { x, y } (0 to 1 of the source picture) or follow: false. A ring and a soft shadow; the rest of the picture stays visible. info().lenses lists them with their ids; id names a new lens (absent: one is made).'
     ),
-    edit(
+    opEdit(
         "setLens",
-        z
-            .object({
-                id: z.string(),
-                from: sourceTimeSchema.optional(),
-                to: sourceTimeSchema.optional(),
-                radius: z.number().min(0.04).max(0.4).optional(),
-                magnification: z.number().min(1.5).max(4).optional(),
-                follow: z.boolean().optional(),
-                at: z
-                    .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
-                    .strict()
-                    .optional(),
-                ring: z.string().optional(),
-            })
-            .strict(),
         "Changes a lens by its id: its range, radius, magnification, ring, or where it stays (`at` stops it following the cursor unless follow: true)."
     ),
-    edit("unlens", z.object({ id: z.string() }).strict(), "Removes a lens by its id.", ["id"]),
-    edit(
+    opEdit("unlens", "Removes a lens by its id.", ["id"]),
+    opEdit(
         "tilt",
-        z
-            .object({
-                enabled: z.boolean().optional(),
-                strength: z.number().min(0).max(1).optional(),
-                drift: z.boolean().optional(),
-                tiltIn: z.boolean().optional(),
-                tiltOut: z.boolean().optional(),
-                inMs: z.number().int().min(100).max(5000).optional(),
-                outMs: z.number().int().min(100).max(5000).optional(),
-            })
-            .strict(),
         "The 3D tilt camera: a slight perspective tilt of the framed picture and its shadow (strength 0 to 1, 0.5), drifting slowly (drift, on), tilting in over the first inMs (1200) and out over the last outMs (1200). Best with a frame (frame()); without one the picture tilts over black. enabled: false removes it."
     ),
     // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups.
@@ -1325,18 +941,8 @@ const movieMethods = [
         doc: 'The private data on the screen: emails, tokens and keys, phone numbers, IBANs and card numbers (and names you pass) in the text of its frames, read with Vision on this Mac (a movie: one frame a second, then five a second around each hit\'s edges and while it moves; cached once per movie content, so a copy of the movie reuses it; the first scan of a long movie takes minutes). One hit per value while it shows, at source seconds (plays: the OUTPUT seconds of its first kept moment, null when no part of it plays), tracked through a scroll (moves: true; its hidden part follows the text). masked shows only the first and last two characters. exclude: areas never searched and left visible (a toast); excludeFixed: true finds what stays still while the content scrolls and leaves it visible. hidePrivate({ ids }) hides them; kind is "email" | "token" | "phone" | "iban" | "card" | "name".',
         effect: "read",
     }),
-    edit(
+    opEdit(
         "hidePrivate",
-        z
-            .object({
-                ids: z.array(z.string()).optional(),
-                kinds: z.array(z.enum([...PRIVATE_KINDS, "name"])).optional(),
-                style: z.enum(PRIVATE_STYLES).optional(),
-                names: z.array(z.string().trim().min(2).max(120)).max(50).optional(),
-                exclude: z.array(boxParamSchema).max(20).optional(),
-                excludeFixed: z.boolean().optional(),
-            })
-            .strict(),
         'Hides the private data privateData() lists (pass the same names, exclude and excludeFixed): one blurred part per hit that starts and ends when the value shows and follows it through a scroll or a slide (style "pixelate" or "black" instead); hiding in the answer says how sure it is, as for hideText(). ids picks hits (absent: all), kinds picks kinds; a hit hidden before is skipped. Check the result with verifyHidden({ private: true }). One undo() puts it back.'
     ),
     defineMethod({
@@ -1361,23 +967,8 @@ const movieMethods = [
         doc: 'Every place a text (without case) or a pattern (a regular expression) shows on the screen, tracked as privateData() tracks a hit: what hideText() will hide, so you never guess coordinates or seconds. from/to (source seconds) keep the places that show between them, as hideText() takes them, and read only that part of the screen (1 s more each side) when the whole movie was not read yet, so a short range takes seconds, not a whole-movie scan. texts and patterns (arrays) look for several in one scan of the screen, each its own hit. Each OCR line (a run of text Vision reads on one baseline; a column far away is its own line) is matched on its own: ^ and $ anchor to that line, the match ignores case, a space OCR reads next to . @ _ - is dropped first, and a literal text also matches with spaces OCR adds or drops between its letters. unit: "line" covers the whole OCR line of a match (a name and the number beside it); "match" (the default) only the matched words. A pattern knows every script (the u and i flags): \\w and \\b take Czech and other letters, \\p{L} is any letter, \\p{Lu} a capital; a text or pattern no screen text matches is named in warnings (absent when each matched): read them, a silent miss hides nothing. Example: const { hits, warnings } = await movie.findText({ texts: ["Alice Example"] }).',
         effect: "read",
     }),
-    edit(
+    opEdit(
         "hideText",
-        z
-            .object({
-                text: z.string().trim().min(1).max(200).optional(),
-                pattern: z.string().min(1).max(200).optional(),
-                texts: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
-                patterns: z.array(z.string().min(1).max(200)).max(50).optional(),
-                from: sourceTimeSchema.optional(),
-                to: sourceTimeSchema.optional(),
-                style: z.enum(PRIVATE_STYLES).optional(),
-                exclude: z.array(boxParamSchema).max(20).optional(),
-                excludeFixed: z.boolean().optional(),
-                label: z.string().max(60).optional(),
-                unit: z.enum(HIDE_UNITS).optional(),
-            })
-            .strict(),
         'Hides every place a text or a pattern shows (between from and to, source seconds; absent: all; a range reads only that part of the screen): one hidden part per place, found by OCR, that starts and ends when the text shows and follows it through a scroll or a slide frame by frame (the content\'s measured motion, also where OCR cannot read the blurred text). Where a moving text cannot be followed, the band it may cross is hidden for that time instead. unit: "line" hides the whole OCR line of each match (how a pattern matches: findText()); texts and patterns (arrays) hide several in one scan. hiding in the answer says how sure it is: parts, moving { parts, seconds, minKeysPerSecond } and uncertain [{ from, to }] (source seconds of the bands; check() lists them too). exclude and excludeFixed leave a toast or a tab bar over it visible. Refused when the screen never shows it. Check with verifyHidden({ text }).'
     ),
     defineMethod({
@@ -1409,14 +1000,7 @@ const movieMethods = [
     }),
     edit(
         "smoothCursor",
-        z
-            .object({
-                enabled: z.boolean().optional(),
-                strength: z.number().min(0).max(1).optional(),
-                jitterPx: z.number().min(0).max(20).optional(),
-                idleFadeSeconds: z.number().min(0).max(30).optional(),
-            })
-            .strict(),
+        opParams("cursorSmooth"),
         "The smooth cursor (a movie with a drawn cursor): the path follows an averaged curve, strength 0 to 1 (0.6; 1 averages over ±400 ms), moves under jitterPx points (3) are dropped, and the cursor fades after idleFadeSeconds (2; 0 keeps it) without a move, of the movie as it plays. The cursor still sits exactly on each click. enabled: false turns it off (the cursor's own smoothing applies again)."
     ),
     defineMethod({
@@ -1432,26 +1016,13 @@ const movieMethods = [
         doc: "The typing and waiting stretches: where only a small part of the picture changes (at most maxArea of it per quarter second, 0.06: typing, a spinner, a progress bar) or nothing does, for at least minSeconds (4), inside the kept parts at normal speed and away from clicks, cursor moves and speech. Each has a proposed speed (4x to 8x, longer is faster), the seconds it saves and the region that changed. The picture is compared once per movie and cached by its content, so a copy of the movie reuses it. speedUpWaits({ ids }) applies them.",
         effect: "read",
     }),
-    edit(
+    opEdit(
         "speedUpWaits",
-        z
-            .object({
-                ids: z.array(z.string()).optional(),
-                minSeconds: z.number().min(1).max(600).optional(),
-                maxArea: z.number().min(0).max(0.5).optional(),
-                speed: z.number().min(1.5).max(16).optional(),
-            })
-            .strict(),
         'Speeds up the stretches waits() lists, each at its proposed speed (or at speed), and turns on the "⏩ 6x" badge over them. ids picks stretches (absent: all; the same minSeconds and maxArea as the list). One undo() puts it back.'
     ),
     edit(
         "speedBadge",
-        z
-            .object({
-                badge: z.boolean().optional(),
-                position: z.enum(SPEED_BADGE_POSITIONS).optional(),
-            })
-            .strict(),
+        opParams("autoSpeed"),
         'The "⏩ 6x" badge drawn while a part plays at 1.5x or faster: badge false hides it, position "top-right" (default), "top-left", "bottom-right" or "bottom-left".'
     ),
     defineMethod({
@@ -1494,23 +1065,14 @@ const movieMethods = [
         effect: "read",
     }),
     // R5 5 redaction edges
-    edit(
+    opEdit(
         "redactionJoins",
-        z.object({ snapMs: z.number().int().min(0).max(2000) }).strict(),
         "How the export closes small holes around the hiding parts (blur, pixelate, black): a part that ends up to snapMs (250) before a cut is drawn to the cut, one that starts up to snapMs after a cut is drawn from it, and two parts with a gap up to snapMs meet. snapMs: 0 draws every part exactly as placed. Whatever it says, a part stays on while a frame from its time stays on screen. info().redactionJoins reads it.",
         ["snapMs"]
     ),
     // R6 6 unhide
-    edit(
+    opEdit(
         "unhide",
-        z
-            .object({
-                text: z.string().trim().min(1).max(200).optional(),
-                pattern: z.string().min(1).max(200).optional(),
-                ids: z.array(z.string()).min(1).max(500).optional(),
-                all: z.boolean().optional(),
-            })
-            .strict(),
         "Takes back what hideText() or hidePrivate() hid and forgets it, so the same hide runs again: { text } or { pattern } removes every part a request with that text or pattern made (info().redactions[].hide.request says which), { ids } removes parts by their id or by the hit id (findText, privateData), { all: true } every part a hide made. Hand-drawn redact() parts and spotlights stay. unredact(id) removes one part and forgets it too. One undo() puts them back."
     ),
 ];
@@ -2233,9 +1795,12 @@ export class Movie {
         return this.change([{ op: "volume", volume }]);
     }
 
-    async mute(track: number) {
-        await this.requireSound("mute");
-        return this.change([{ op: "mute", track, muted: true }]);
+    async mute(track: number, muted = true) {
+        if (muted) {
+            await this.requireSound("mute");
+        }
+
+        return this.change([{ op: "mute", track, muted }]);
     }
 
     /** Throws `silentMovieReason` for a movie whose video has no audio track; a probe that fails refuses nothing. */
@@ -2288,12 +1853,19 @@ export class Movie {
         return this.change([{ op: "camera", ...options }]);
     }
 
-    async cameraHide(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
-        return this.change([{ op: "cameraHide", from, to }]);
+    async cameraHide(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>, lane?: string) {
+        return this.change([{ op: "cameraHide", from, to, ...(lane === undefined ? {} : { lane }) }]);
     }
 
-    async cameraShow(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
-        return this.change([{ op: "cameraShow", from, to }]);
+    async cameraShow(from?: z.infer<typeof timeSchema>, to?: z.infer<typeof timeSchema>, id?: string) {
+        return this.change([
+            {
+                op: "cameraShow",
+                ...(from === undefined ? {} : { from }),
+                ...(to === undefined ? {} : { to }),
+                ...(id === undefined ? {} : { id }),
+            },
+        ]);
     }
 
     async frame(options: Omit<Extract<EditOp, { op: "frame" }>, "op"> = {}) {
@@ -2364,7 +1936,7 @@ export class Movie {
         ]);
     }
 
-    async cutWords(options: { at: TimeValue; words: string; occurrence?: number; padMs?: number; dryRun?: boolean }) {
+    async cutWords(options: Omit<Extract<EditOp, { op: "cutWords" }>, "op"> & { dryRun?: boolean }) {
         const { dryRun, ...rest } = options;
         const op = { op: "cutWords" as const, ...rest };
         return dryRun ? cutsOut(await previewTranscriptCuts(this.recording, op)) : this.change([op]);
@@ -2382,14 +1954,7 @@ export class Movie {
         return dryRun ? cutsOut(await previewTranscriptCuts(this.recording, op)) : this.change([op]);
     }
 
-    async denoise(
-        options: {
-            enabled?: boolean;
-            reductionDb?: number;
-            tracks?: number[];
-            trackReductionDb?: Record<string, number>;
-        } = {}
-    ) {
+    async denoise(options: Omit<Extract<EditOp, { op: "denoise" }>, "op"> = {}) {
         if (options.enabled !== false) {
             await this.requireSound("clean");
         }
