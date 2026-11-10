@@ -206,6 +206,7 @@ async function pickRecording(): Promise<string | undefined> {
             label: row.title,
             hint: `${row.startedAt.slice(0, 16).replace("T", " ")}${row.edited ? " · edited" : ""}`,
         })),
+        cancel: "back",
     });
 
     return p.isCancel(picked) ? undefined : rows.find((row) => row.folder === picked)?.folder;
@@ -237,6 +238,7 @@ async function settleFramesEnumFlags(flags: StartFlags): Promise<boolean> {
             const picked = await p.select({
                 message: `${flag}`,
                 options: values.map((one) => ({ value: one, label: one })),
+                cancel: "back",
             });
 
             if (p.isCancel(picked)) {
