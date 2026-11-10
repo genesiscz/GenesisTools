@@ -67,7 +67,10 @@ export interface HubAgentsOptions {
 
 /** The process table changes slowly next to the hub's refresh bursts, so a burst shares one read. */
 const OPEN_SESSIONS_REUSE_MS = 3_000;
-let openSessionsMemo: { at: number; ids: Set<string> } | undefined;
+/** A read is kept for this many times its own length, so a slow process table is asked less often. */
+const OPEN_SESSIONS_PACE = 10;
+/** The longest a slow read is kept: a new session shows as not open for at most this long. */
+const OPEN_SESSIONS_REUSE_MAX_MS = 60_000;
 
 /**
  * `--session` asks about one parent, and its `open` flag is not worth a long wait: on 2026-11-02 a stalled `ps` held
@@ -76,18 +79,51 @@ let openSessionsMemo: { at: number; ids: Set<string> } | undefined;
  */
 const SESSION_PS_TIMEOUT_MS = 3_000;
 
-async function recentOpenSessionIds(psTimeoutMs?: number): Promise<Set<string>> {
-    const now = Date.now();
+/**
+ * One reader of the open sessions for the whole process. Callers that ask while a read with their timeout runs get
+ * that read, and a finished read is kept for `OPEN_SESSIONS_REUSE_MS`, or for ten times its own length when that is
+ * longer (at most a minute).
+ *
+ * On 2026-11-10, at a load average of 550, the hub server's refreshes each started a `ps` of their own: five reports
+ * ended in one second after 6 to 192 s, 244 `ps` were killed at their timeout in six hours, and a read that took
+ * longer than the reuse window was stale the moment it ended, so the next refresh started another.
+ */
+export function openSessionsReader(
+    read: (psTimeoutMs?: number) => Promise<Set<string>>,
+    clock: () => number = Date.now
+): (psTimeoutMs?: number) => Promise<Set<string>> {
+    let memo: { until: number; ids: Set<string> } | undefined;
+    const running = new Map<number | undefined, Promise<Set<string>>>();
 
-    if (openSessionsMemo && now - openSessionsMemo.at < OPEN_SESSIONS_REUSE_MS) {
-        return openSessionsMemo.ids;
-    }
+    return (psTimeoutMs) => {
+        if (memo && clock() < memo.until) {
+            return Promise.resolve(memo.ids);
+        }
 
-    const ids = await openAgentSessionIds(undefined, { psTimeoutMs });
-    openSessionsMemo = { at: now, ids };
+        const shared = running.get(psTimeoutMs);
 
-    return ids;
+        if (shared) {
+            return shared;
+        }
+
+        const startedAt = clock();
+        const started = read(psTimeoutMs)
+            .then((ids) => {
+                const paced = Math.min((clock() - startedAt) * OPEN_SESSIONS_PACE, OPEN_SESSIONS_REUSE_MAX_MS);
+                memo = { until: startedAt + Math.max(OPEN_SESSIONS_REUSE_MS, paced), ids };
+
+                return ids;
+            })
+            .finally(() => {
+                running.delete(psTimeoutMs);
+            });
+        running.set(psTimeoutMs, started);
+
+        return started;
+    };
 }
+
+const recentOpenSessionIds = openSessionsReader((psTimeoutMs) => openAgentSessionIds(undefined, { psTimeoutMs }));
 
 /** A failed process listing leaves every parent to its transcript clock: nothing is marked open. */
 async function readOpenSessions(options: HubAgentsOptions): Promise<Set<string>> {

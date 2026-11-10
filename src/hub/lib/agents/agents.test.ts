@@ -16,7 +16,7 @@ import { hubArgs, hubUrl } from "../open";
 import { commitFlagsProblem, isHubCommitSha } from "../pr-ref";
 import * as codexAgents from "./codex-agents";
 import { agentCounts } from "./counts";
-import { freshMtime, hubAgents, parentsOfRecentAgents } from "./index";
+import { freshMtime, hubAgents, openSessionsReader, parentsOfRecentAgents } from "./index";
 import { agentMail, readAgentMail } from "./mail";
 import { readParent } from "./parent";
 import { unreadInbox } from "./team";
@@ -843,6 +843,94 @@ test("hub roster forwards diagnostic and intentional-refresh modes to every cata
         codex.mockRestore();
         workers.mockRestore();
     }
+});
+
+describe("the process's one reader of the open sessions", () => {
+    function slowTable() {
+        let now = 0;
+        const reads: { timeout: number | undefined; finish: (ids: string[]) => void; fail: () => void }[] = [];
+        const reader = openSessionsReader(
+            (timeout) =>
+                new Promise((resolve, reject) => {
+                    reads.push({
+                        timeout,
+                        finish: (ids) => resolve(new Set(ids)),
+                        fail: () => reject(new Error("ps failed")),
+                    });
+                }),
+            () => now
+        );
+
+        return {
+            reader,
+            reads,
+            at: (ms: number) => {
+                now = ms;
+            },
+        };
+    }
+
+    // Regression test: on 2026-11-10 every refresh of the hub server started its own `ps` while one still ran.
+    test("callers that ask during a read share it, and a short read is kept for three seconds", async () => {
+        const { reader, reads, at } = slowTable();
+        const [first, second] = [reader(), reader()];
+        at(100);
+        reads[0].finish(["a"]);
+
+        expect([...(await first)]).toEqual(["a"]);
+        expect(await second).toBe(await first);
+        expect(reads).toHaveLength(1);
+
+        at(2_999);
+        expect(await reader()).toBe(await first);
+        at(3_000);
+        void reader();
+        expect(reads).toHaveLength(2);
+    });
+
+    test("a read that took long is kept ten times its length, and at most a minute", async () => {
+        const slow = slowTable();
+        const two = slow.reader();
+        slow.at(2_000);
+        slow.reads[0].finish(["a"]);
+        await two;
+        slow.at(19_999);
+        await slow.reader();
+        expect(slow.reads).toHaveLength(1);
+        slow.at(20_000);
+        void slow.reader();
+        expect(slow.reads).toHaveLength(2);
+
+        const stalled = slowTable();
+        const ten = stalled.reader();
+        stalled.at(10_000);
+        stalled.reads[0].finish([]);
+        await ten;
+        stalled.at(59_999);
+        await stalled.reader();
+        expect(stalled.reads).toHaveLength(1);
+        stalled.at(60_000);
+        void stalled.reader();
+        expect(stalled.reads).toHaveLength(2);
+    });
+
+    test("a one-session read keeps its own short timeout, and a failed read is asked again", async () => {
+        const { reader, reads } = slowTable();
+        const whole = reader();
+        const one = reader(3_000);
+
+        expect(reads.map((read) => read.timeout)).toEqual([undefined, 3_000]);
+
+        // Settled outcomes, taken before the reads fail: `expect().rejects` on a pending promise never returns here.
+        const outcomes = Promise.allSettled([whole, one]);
+        reads[0].fail();
+        reads[1].fail();
+
+        expect((await outcomes).map((outcome) => outcome.status)).toEqual(["rejected", "rejected"]);
+
+        void reader();
+        expect(reads).toHaveLength(3);
+    });
 });
 
 describe("a session an open agent process holds", () => {
