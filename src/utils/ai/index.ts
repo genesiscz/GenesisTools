@@ -1,30 +1,7 @@
 export type { AIConfigData, AppConfig, AppDefaults, ProviderConfig } from "@genesiscz/utils/config/ai.types";
 export { AIAccount } from "./AIAccount";
-export type { AIAccountEntry, AIAccountTokens, AIProvider } from "./account-types";
-export type { AccountResolver } from "./resolvers";
-export { ensureResolversInitialized, getResolver, registerResolver, resetResolvers } from "./resolvers";
-
-import { Embedder } from "./tasks/Embedder";
-import { ai } from "./tasks/facade";
-import { Summarizer } from "./tasks/Summarizer";
-import type { SpeakOptions } from "./tasks/Synthesizer";
-import { Synthesizer } from "./tasks/Synthesizer";
-import { Transcriber } from "./tasks/Transcriber";
-import { Translator } from "./tasks/Translator";
-import { TranscriptionManager } from "./transcription/TranscriptionManager";
-import type {
-    EmbeddingResult,
-    EmbedOptions,
-    SummarizationResult,
-    SummarizeOptions,
-    TranscribeOptions,
-    TranscriptionResult,
-    TranslateOptions,
-    TranslationResult,
-    TTSResult,
-} from "./types";
-
 export { AIConfig } from "./AIConfig";
+export type { AIAccountEntry, AIAccountTokens, AIProvider } from "./account-types";
 export type { EmbeddingProviderOption, EmbeddingSelection } from "./embedding-selection";
 export {
     discoverEmbeddingProviders,
@@ -49,59 +26,12 @@ export {
     taskPrefix as getTaskPrefix,
 } from "./local/descriptors";
 export { ModelManager } from "./ModelManager";
+export type { AccountResolver } from "./resolvers";
+export { ensureResolversInitialized, getResolver, registerResolver, resetResolvers } from "./resolvers";
 export { Embedder } from "./tasks/Embedder";
-export { ai, type TaskCommonOptions } from "./tasks/facade";
-export { Summarizer } from "./tasks/Summarizer";
+export { ai, type TaskCommonOptions, type TextTaskOptions } from "./tasks/facade";
 export type { ProviderSelector, SpeakOptions, VoicesByProvider } from "./tasks/Synthesizer";
 export { Synthesizer } from "./tasks/Synthesizer";
 export { Transcriber } from "./tasks/Transcriber";
-export { Translator } from "./tasks/Translator";
 export { TranscriptionManager, transcriptionManager } from "./transcription/TranscriptionManager";
 export * from "./types";
-
-/**
- * @deprecated Use `ai.*` (`./tasks/facade`). Every member here forwards to it.
- *
- * The two objects differ in exactly one place: `AI.embed` takes one string and
- * returns one result, while `ai.embed` is batch-first. That arity change is why
- * this alias still exists rather than being a re-export — it keeps the ~20 call
- * sites that embed a single string compiling until they are moved.
- */
-export const AI = {
-    Embedder,
-    Synthesizer,
-    Transcriber,
-    Translator,
-    Summarizer,
-    TranscriptionManager,
-
-    async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
-        const [result] = await ai.embed([text], options);
-
-        if (!result) {
-            throw new Error("Embedding provider returned no vector");
-        }
-
-        return result;
-    },
-
-    async translate(text: string, options: TranslateOptions): Promise<TranslationResult> {
-        return ai.translate(text, options);
-    },
-
-    async summarize(text: string, options?: SummarizeOptions): Promise<SummarizationResult> {
-        return ai.summarize(text, options);
-    },
-
-    async speak(text: string, options?: SpeakOptions): Promise<void> {
-        return ai.speak(text, options);
-    },
-
-    async synthesize(text: string, options?: SpeakOptions): Promise<TTSResult> {
-        return ai.synthesize(text, options);
-    },
-
-    async transcribe(audio: Buffer | string, options?: TranscribeOptions): Promise<TranscriptionResult> {
-        return ai.transcribe(audio, options);
-    },
-};

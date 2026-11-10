@@ -35,8 +35,8 @@ tools ai image "a red bicycle in the rain" -o bike.png
 ```
 
 - `translate [text]`: `--to <lang>` (required), `--from <lang>` (detected when omitted),
-  `--provider local-hf|cloud|darwinkit`, `-c, --clipboard` (copy the result).
-- `summarize [file]`: `--max-length <n>`, `--provider`, `-c, --clipboard`. The file `-` reads stdin. With no file
+  `--provider <id>`, `--model <id>`, `-c, --clipboard` (copy the result).
+- `summarize [file]`: `--max-length <n>`, `--provider <id>`, `--model <id>`, `-c, --clipboard`. The file `-` reads stdin. With no file
   it reads piped stdin, or the clipboard when stdin is a terminal.
 - `classify [text]`: `--categories <list>` (required, comma-separated, at least two; fewer exits 1), `--provider`.
 - `image <prompt>`: `-o, --output <path>` (required), `--model <id>`.
@@ -46,10 +46,13 @@ tools ai image "a red bicycle in the rain" -o bike.png
 - `classify` uses the macOS classification helper (semantic similarity against your categories).
 - `image` defaults to `stabilityai/stable-diffusion-xl-base-1.0` and installs `@huggingface/inference` on first use.
 
-⚠️ **`summarize` and `classify` register `--provider`, but ignore it.** `summarize` calls
-`AI.summarize(input, { maxLength })` and `classify` calls `classifyText(input, categories)`; neither receives the flag
-(`src/ai/index.ts:167` and `:288`). Passing it silently gets you the default implementation, so do not rely on it to
-steer either verb. `translate` does honour `--provider`.
+- `translate` and `summarize` call the AI task facade (`ai.translate`, `ai.summarize`). `--provider` and `--model`
+  choose for that call only and are never saved; a lone `--provider` uses that provider's default model for the task.
+  Change the saved default with `tools ai config default set <task> <model-ref>`. A transient failure is retried up
+  to three times.
+
+⚠️ **`classify` registers `--provider`, but ignores it.** It calls `classifyText(input, categories)`, which does not
+receive the flag. Passing it silently gets you the default implementation.
 
 ### Local models
 
