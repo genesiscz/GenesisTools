@@ -14,35 +14,54 @@ struct MeetingsProjectsPage: View {
             NativeSettingsCard("Ask each time", subtitle: "A meeting with no project after its sources link gets one question in the decision inbox, with ranked proposals.") {
                 NativeSettingsToggle("Ask about each meeting without a project", identifier: "meetings.assign.ask",
                                      isOn: Binding(get: { assign.ask }, set: { model.set(["global", "assign", "ask"], $0) }))
+                    .nativeSettingsIcon("questionmark.bubble", tint: KitHue.ask.ink)
                 Divider()
+                // Each number carries its unit in its field, so a row's sentence says only what the number decides.
+                let slack = assign.calendarSlackMin
+                let lookbehind = assign.calendarLookbehindHours ?? MeetingsSettings.Global.Assign.defaultCalendarLookbehindHours
                 Group {
-                    NativeSettingsRow("Look back", detail: "The watcher asks about meetings that started this many hours ago or later.") {
+                    Text("Questions").kicker()
+                    NativeSettingsRow("Look back", detail: "Only a meeting that started within this time gets a question.") {
                         NativeSettingsNumberPicker("Look back (hours)", range: 1..<337, identifier: "meetings.assign.lookback",
+                                                   suffix: .counted("hour"),
                                                    value: Binding(get: { assign.lookbackHours }, set: { model.set(["global", "assign", "lookbackHours"], $0) }))
                     }
-                    NativeSettingsPicker("Most proposals", detail: "How many ranked projects one question lists.",
-                                         identifier: "meetings.assign.maxProposals",
-                                         options: Array(Set([3, 5, 8, 10, assign.maxProposals])).sorted().map { NativeSettingsOption($0, "\($0)") },
-                                         selection: Binding(get: { assign.maxProposals }, set: { model.set(["global", "assign", "maxProposals"], $0) }))
-                    NativeSettingsRow("Calendar slack", detail: "Minutes before or after the meeting a calendar entry may start and still count as its entry.") {
-                        NativeSettingsNumberPicker("Calendar slack (minutes)", range: 0..<121, identifier: "meetings.assign.slack",
-                                                   value: Binding(get: { assign.calendarSlackMin }, set: { model.set(["global", "assign", "calendarSlackMin"], $0) }))
+                    .nativeSettingsIcon("clock.arrow.circlepath")
+                    NativeSettingsRow("Most proposals", detail: "The ranked projects one question lists.") {
+                        NativeSettingsNumberPicker("Most proposals (projects)", range: 1..<21, identifier: "meetings.assign.maxProposals",
+                                                   suffix: .counted("project"),
+                                                   value: Binding(get: { assign.maxProposals }, set: { model.set(["global", "assign", "maxProposals"], $0) }))
                     }
-                    NativeSettingsRow("Calendar look-behind", detail: "Hours before the meeting a calendar entry may start and still be looked up; never less than the slack.") {
-                        NativeSettingsNumberPicker("Calendar look-behind (hours)", range: 0..<49, identifier: "meetings.assign.calendarLookbehind",
-                                                   value: Binding(get: { assign.calendarLookbehindHours ?? MeetingsSettings.Global.Assign.defaultCalendarLookbehindHours },
-                                                                  set: { model.set(["global", "assign", "calendarLookbehindHours"], $0) }))
-                    }
-                    NativeSettingsRow("Wait for a folder", detail: "Days a meeting waits for you to move it into a Wispr folder; then the folder question ends.") {
+                    .nativeSettingsIcon("list.number")
+                    NativeSettingsRow("Wait for a folder", detail: "The folder question ends when a meeting is in no Wispr folder by then.") {
                         NativeSettingsNumberPicker("Wait for a folder (days)", range: 1..<366, identifier: "meetings.assign.folderWait",
+                                                   suffix: .counted("day"),
                                                    value: Binding(get: { assign.folderWaitDays ?? MeetingsSettings.Global.Assign.defaultFolderWaitDays },
                                                                   set: { model.set(["global", "assign", "folderWaitDays"], $0) }))
                     }
-                    NativeSettingsRow("Retry a failed question", detail: "Minutes before a question whose post failed is posted again, so a broken inbox is not hit on every look.") {
+                    .nativeSettingsIcon("folder.badge.questionmark")
+                    NativeSettingsRow("Retry a failed question", detail: "A question whose post failed is posted again after this time.") {
                         NativeSettingsNumberPicker("Retry a failed question (minutes)", range: 1..<1441, identifier: "meetings.assign.retryFailed",
+                                                   suffix: .text("min"),
                                                    value: Binding(get: { assign.retryFailedMin ?? MeetingsSettings.Global.Assign.defaultRetryFailedMin },
                                                                   set: { model.set(["global", "assign", "retryFailedMin"], $0) }))
                     }
+                    .nativeSettingsIcon("arrow.clockwise")
+                    Divider()
+                    Text("Calendar match").kicker()
+                    MeetingsCalendarMatchDiagram(slackMin: slack, lookbehindHours: lookbehind)
+                    NativeSettingsRow("Calendar slack", detail: "An entry that starts this close to the meeting's start counts as its entry.") {
+                        NativeSettingsNumberPicker("Calendar slack (minutes)", range: 0..<121, identifier: "meetings.assign.slack",
+                                                   prefix: .text("±"), suffix: .text("min"),
+                                                   value: Binding(get: { slack }, set: { model.set(["global", "assign", "calendarSlackMin"], $0) }))
+                    }
+                    .nativeSettingsIcon("arrow.left.and.right", tint: KitHue.play.ink)
+                    NativeSettingsRow("Calendar look-behind", detail: "How far before the meeting the calendar is read. Never less than the slack.") {
+                        NativeSettingsNumberPicker("Calendar look-behind (hours)", range: 0..<49, identifier: "meetings.assign.calendarLookbehind",
+                                                   suffix: .counted("hour"),
+                                                   value: Binding(get: { lookbehind }, set: { model.set(["global", "assign", "calendarLookbehindHours"], $0) }))
+                    }
+                    .nativeSettingsIcon("calendar.badge.clock", tint: KitHue.play.ink)
                 }
                 .disabled(!assign.ask)
                 if !assign.ask {
