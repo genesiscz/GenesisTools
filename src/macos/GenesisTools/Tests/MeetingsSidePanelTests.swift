@@ -130,6 +130,16 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertTrue(defaults.bool(forKey: MeetingsWindowModel.sidePanelOpenKey), "a snapshot run keeps the saved state")
     }
 
+    /// G53: at the 900 pt minimum the three columns left the meeting about 120 pt beside the panel, so the list steps
+    /// aside while the panel is open in a window narrower than sidebar, list, meeting and panel.
+    func testTheListStepsAsideForThePanelInANarrowWindow() {
+        XCTAssertTrue(MeetingsRootView.panelHidesList(width: 900, panelOpen: true))
+        XCTAssertTrue(MeetingsRootView.panelHidesList(width: 1319, panelOpen: true))
+        XCTAssertFalse(MeetingsRootView.panelHidesList(width: 1320, panelOpen: true))
+        XCTAssertFalse(MeetingsRootView.panelHidesList(width: 900, panelOpen: false))
+        XCTAssertFalse(MeetingsRootView.panelHidesList(width: 0, panelOpen: true), "before the first layout: three columns")
+    }
+
     /// F8: a config write names the value it replaces, the same on the service and the command (decision 13).
     func testAnEngineWriteNamesTheValueItReplaces() {
         let raw = JSONValue.object(["global": .object(["playback": .object(["listen": .object(["padSec": .number(3)])])])])
