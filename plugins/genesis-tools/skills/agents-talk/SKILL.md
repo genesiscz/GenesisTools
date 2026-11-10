@@ -42,9 +42,10 @@ Measured in one real team session: 12 to 33 minutes for working teammates, 0 to 
 
 - **The cap is 30 minutes, whatever you ask for.** Measured on 2026-10-13: `timeout_ms: 3600000` answered "Monitor started ... expires in 30m". Pass `timeout_ms: 1800000` and expect the expiry notice ("Monitor expired after 30m ...") every 30 minutes for as long as you are on the bus.
 - **When the expiry notice arrives, your NEXT tool call is the re-arm**: the same `Monitor` call with the exact same command and `timeout_ms: 1800000`. Not after the current step, not at the end of the turn, not "when mail is expected". Mail queued in between is not lost (the cursor holds it); it reaches you only after the re-arm.
-- **Every peer sees your lapse.** The killed login posts `agent_left` with `reason: "signal"` to everyone, and your re-arm posts `agent_joined`. A lapse is therefore never silent; a missing re-arm is.
-- **The lead (or observer) watches for it.** On `agent_left` `reason: "signal"` for a peer, start a 60-second clock. If no `agent_joined` for that peer arrives within 60 s, nudge it once through its own channel: a payload-free `SendMessage` for a Claude teammate ("Your bus Monitor expired. Re-arm it now with the same command."), `tools codex steer` or `tools grok steer` for a worker, `tools claude message <session>` for a separate Claude session. Then record the nudge; do not loop on it. **Skip the check** for a peer that finished on purpose: its `agent_left` carries `reason: "leave"` and a `note`, or its last message says it is done.
-- **🛑 Finishing is not lapsing: say so on the bus.** When an agent stops listening for good, its LAST bus action, before it stops its Monitor, is `tools agents leave --agent-name <me> --session <id> --note "done: <one-line status and the report path>"`. Peers then get one `agent_left` with `reason: "leave"` and the note, and the killed Monitor afterwards posts nothing more (an agent that already left is not announced twice). Stopping the Monitor without it looks exactly like a 30-minute lapse (`reason: "signal"`) and draws a needless nudge (observed 2026-10-13: a tester that had just reported DONE).
+- **A re-arm is silent; a missing one is announced.** The killed login posts no leave: the agent stays on the bus for 90 s, and a re-arm inside that time posts nothing. When no new login comes within 90 s, the bus posts one `agent_left` with `reason: "lapsed"`, which main receives. (Before 2026-11-10 every expiry posted a `signal` leave and a join to every peer, and 28% of the child turns in one swarm woke only on those.)
+- **The lead (or observer) watches for it.** On `agent_left` with `reason: "lapsed"` for a peer, nudge it once through its own channel: a payload-free `SendMessage` for a Claude teammate ("Your bus Monitor expired. Re-arm it now with the same command."), `tools codex steer` or `tools grok steer` for a worker, `tools claude message <session>` for a separate Claude session. Then record the nudge; do not loop on it. A peer that finished on purpose sends `reason: "leave"` with a `note` instead, and needs no nudge.
+- **🛑 Finishing is not lapsing: say so on the bus.** When an agent stops listening for good, its LAST bus action, before it stops its Monitor, is `tools agents leave --agent-name <me> --session <id> --note "done: <one-line status and the report path>"`. Peers then get one `agent_left` with `reason: "leave"` and the note, and the killed Monitor afterwards posts nothing more (an agent that already left is not announced twice). Stopping the Monitor without it looks exactly like a failed re-arm: 90 s later the lead gets `reason: "lapsed"` and sends a needless nudge (observed 2026-10-13: a tester that had just reported DONE).
+- **🛑 Wait for a long job in the background, never in a foreground loop.** Start a test suite or a build with `run_in_background: true` and act on its completion notice. A foreground wait (`until grep -q done log; do sleep 5; done`) holds every bus event, the Monitor expiry notice too, until the loop ends. Observed 2026-11-08: a runner's expiry notice was queued at 16:04:37 and reached it only at 16:05:04, when the lead's steer ended its loop.
 - A `tools codex spawn` worker has no Monitor and no expiry: its daemon's bridge holds the bus for it.
 
 Choose the communication channel before starting receivers. **Codex subagents communicating while they work must use the nonblocking native path below when available.** Do not start a CLI inbox for this path. Use `tools agents` when agents on different hosts or CLI workers need a shared bus. If the user explicitly requires the bus, use a real monitor for asynchronous delivery; without one, explain the capability gap rather than quietly substituting blocking `--once`. No MCP server is required.
@@ -110,16 +111,28 @@ A standalone stream with nobody consuming its terminal output can advance its cu
 
 <!-- added 2026-10-08 19:25: a peer could not tell whether anyone still read its mail -->
 
-The bus announces presence by itself, and every other agent receives it (a `--once` receiver wakes on it, and `--kinds message` does not hide it):
+<!-- updated 2026-11-10: presence goes to main by default, a re-arm is silent, a failed one is `lapsed` -->
 
-- `agent_joined` (`present: [...]`): an agent's first login, or its first after leaving. Later `--once` cycles are not joins.
-- `agent_left` (`reason`, `remaining: [...]`): a stream login ended, a login was killed (a harness monitor expiring kills it), a `--once --timeout` receiver expired with no mail, or a dead login was reaped.
+The bus announces presence by itself. **The login's `--presence` mode decides who receives it:**
 
-So a lapsed listener is announced without anyone remembering to. When you stop on purpose, say why in the same event:
+- `none`, the default for every agent that is not main: no join or leave events.
+- `changes`, the default for main: joins and real departures.
+- `all`, the default for everyone in a `--debug` session: every join and leave.
+
+`--kinds` filters presence like any other type: `--kinds message` hides it, `--kinds message,agent_left` keeps the leaves.
+
+- `agent_joined` (`present: [...]`): an agent's first login, or its first after a leave or a lapse. A Monitor re-arm and later `--once` cycles are not joins.
+- `agent_left` (`reason`, `remaining: [...]`): `leave` (the agent ran `tools agents leave`, with its note), `lapsed` (its login was killed or timed out, or died, and no new login came within 90 s), `ended` (a stream login stopped on its own), `cap` (a `--once` receiver waited the whole cap).
+
+An agent without presence events still learns that a peer is away when it matters: `tools agents message` adds `not_listening` and a `note` to its result when a recipient is re-arming, has left, or never logged in. The message is stored and delivered at the recipient's next login.
+
+**🛑 A presence event needs no reply.** If your login receives one (you asked for it with `--presence`), act on it only when it changes your work, for example the peer you wait for lapsed. Never write a sentence about a join or a leave: in T3 the last sentence of every child turn goes to the lead as a notice, and on 2026-11-08 38 of the 61 notices a lead received were a child saying that a peer joined or left.
+
+When you stop on purpose, say why in the same event:
 
     tools agents leave --agent-name <me> --session <s> --note "<one-line status>"
 
-Starting the receiver again is a new `agent_joined`; it needs no message.
+Starting the receiver again after a leave or a lapse is a new `agent_joined`; it needs no message.
 
 ## The target is not on the bus: message its session directly
 
@@ -189,7 +202,8 @@ tools agents login --agent-main --agent-name lead --format monitor
 # Each event is a headline line, then its JSON line. The first is the ready
 # event ("ready: lead is listening (stream, main) · session <id>"), then feed
 # events ("message: reviewer → lead: …"). --format json prints the JSON lines only.
-# Optional: --kinds message to hide lifecycle and keep only hops.
+# Main receives joins and real departures (--presence changes, the default for
+# main); a failed Monitor re-arm shows as "left: <name> (lapsed …)".
 
 # 2. Spawn each subagent (via the Agent tool with run_in_background:true).
 #    Include in their prompt: "Right after you start, run: tools agents login --agent-name <name>"
@@ -215,7 +229,7 @@ tools agents login --agent-name lead --kinds message,error,approval_request
 tools agents login --agent-name lead --filter '.op=="approval_request"'
 
 # Enable verbose lifecycle visibility for ALL peers (default: only main sees
-# stream-mode join/leave + real-failure logout; other peers see nothing):
+# joins and real departures; other peers see none):
 tools agents login --agent-main --agent-name lead --debug
 ```
 
@@ -256,7 +270,7 @@ Measured 2026-09-30 23:10 to 2026-10-01 00:05 on Claude Code 2.1.280 with in-pro
 
 **Protocol for a Claude Code team:**
 
-1. Every teammate brief starts with: load `Monitor` (ToolSearch `select:Monitor`), start it with `timeout_ms: 1800000` on `tools agents login --agent-name <name> --format monitor --kinds message --session <id>`, re-arm it with the same command as the very next tool call after every 30-minute expiry notice (mandatory, no exceptions), and answer mail with `tools agents message --from <name> --reply <message_id> --session <id>`.
+1. Every teammate brief starts with: load `Monitor` (ToolSearch `select:Monitor`), start it with `timeout_ms: 1800000` on `tools agents login --agent-name <name> --format monitor --kinds message --session <id>`, re-arm it with the same command as the very next tool call after every 30-minute expiry notice (mandatory, no exceptions), and answer mail with `tools agents message --from <name> --reply <message_id> --session <id>`. It also says: wait for a long job with `run_in_background: true`, never with a foreground sleep loop, and never write a sentence about a peer joining or leaving.
 2. The lead sends every payload on the bus: `tools agents message --from lead --to <name> --body '...' --session <id>`. The payload never goes in `SendMessage`, so a busy teammate does not get it twice.
 3. If `ListAgents` shows the teammate `idle`, also send a nudge with no payload that forces a tool call, for example: `SendMessage(to: "<name>", "agents-mail waiting. Run one Bash call now (true), then handle your bus mail.")`. When unsure, send it anyway: a nudge to a busy teammate only costs one short extra turn after its current one.
 4. The lead's own receiver is a `Monitor` on `tools agents login --agent-main --agent-name lead --format monitor --hide-worker-steps --session <id>`. Do not filter this stream with `grep`: in `monitor` format an event is two lines, and a grep that drops the JSON line keeps its headline.
@@ -341,7 +355,8 @@ With `--format json`, each stdout line is one JSON event. With the default piped
 |---|---|
 | `ready` | stdout-only (not in the feed). Login attached; mailbox is live. Printed even with `--kinds`. |
 | `message` | someone sent a message. A reply is a `message` with `in_reply_to` set (empty `body` = pure ack). **Main sees every swarm message except its own.** Non-main agents see only mail to them, plus broadcasts. |
-| `logged_in` / `logged_out` | a peer joined or left. Main agents see stream-mode joins/leaves by default; non-main peers see nothing unless the swarm was started with `--debug`. `--once`-mode polling churn is always hidden. |
+| `agent_joined` / `agent_left` | an agent came onto the bus or left it (see "Joining and leaving"). Main receives them by default (`--presence changes`); other agents only with `--presence` or in a `--debug` session. |
+| `logged_in` / `logged_out` | one login started or ended (a Monitor re-arm is one of each). Main sees only a failed logout that is no re-arm by default; everyone sees all of them in a `--debug` session. `--once` polling churn is always hidden. |
 
 **You never see your own sends.** The CLI filters out events where `from_agent_id == your id` before they reach your stream — no echo-prevention logic needed on your end.
 
@@ -403,6 +418,7 @@ Every host publishes a session id and subagent shells inherit it: Claude Code `$
 | `tools agents message --from X --to Y --body-file <path>` | Long/multi-section body — write it to a file first (avoids shell-quoting breaks from embedded `'`/`` ` ``/`$(...)` truncating `--body`) |
 | `tools agents request --from X --to Y --body '...'` | Send and block until a correlated reply arrives |
 | `tools agents login --agent-name X --kinds message,error` | Receiver-side event/body-kind filter |
+| `tools agents login --agent-name X --presence changes` | Also receive joins and real departures (an agent that is not main gets none by default) |
 | `tools agents login --agent-name X --filter '.op=="approval_request"'` | Receiver-side structured-body filter |
 | `tools agents discover` | List all agents in session |
 | `tools agents listen` | Human-facing color-formatted feed follower (sees everything) |

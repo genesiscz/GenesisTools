@@ -21,7 +21,8 @@ export function formatEventPretty(event: FeedEvent): string {
     }
 
     if (event.type === "logged_out") {
-        return `${time} ${seq} ${tag} ${chalk.cyan(event.agent_id)} reason=${event.reason}`;
+        const grace = event.rearm_until ? ` rearm_until=${event.rearm_until}` : "";
+        return `${time} ${seq} ${tag} ${chalk.cyan(event.agent_id)} reason=${event.reason}${grace}`;
     }
 
     if (event.type === "agent_joined") {
@@ -31,7 +32,7 @@ export function formatEventPretty(event: FeedEvent): string {
 
     if (event.type === "agent_left") {
         const remaining = event.remaining.length > 0 ? event.remaining.join(", ") : "nobody";
-        const note = event.note ? `: ${event.note}` : "";
+        const note = event.note ? `: ${event.note}` : event.lapsed_since ? ` since=${event.lapsed_since}` : "";
         return `${time} ${seq} ${tag} ${chalk.bold(event.agent_name)} reason=${event.reason}${note} · remaining: ${remaining}`;
     }
 

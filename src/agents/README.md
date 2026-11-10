@@ -69,6 +69,7 @@ tools agents login --agent-name lead --kinds message,error     # receiver-side v
 tools agents login --agent-name lead --hide-worker-steps       # drop a Codex worker's per-step "item" events
 tools agents login --agent-name lead --exclude-kinds item,turn_started
 tools agents login --agent-name lead --filter '.op=="approval_request"'
+tools agents login --agent-name lead --presence all           # which joins and leaves to receive: none (default for a non-main agent), changes (default for main), all
 tools agents leave --agent-name X --note "done"
 tools agents message --from X --to Y --body '...'
 tools agents message --from X --body '...'                     # broadcast (no --to)
@@ -97,6 +98,7 @@ tools agents listen                                            # colored followe
 | `--exclude-kinds <csv>` | Never emit these. Wins over `--kinds`. |
 | `--hide-worker-steps` | Hide a `tools codex spawn` worker's `item` events; keep its mail, approvals, turn events. |
 | `--filter <expr>` | Filter structured bodies, for example `.op=="approval_request"`. |
+| `--presence <mode>` | Which joins and leaves to receive: `none`, `changes` or `all` (see [Who sees what](#who-sees-what)). |
 | `--session <id>` | Override [session resolution](#session-resolution). |
 
 Other flags: `message` has `--meta <json>` and `--private` (stored, not enforced). `listen` has `--session`,
@@ -270,15 +272,34 @@ The **main** agent's login stream is the swarm inbox: it receives every `message
 Monitor on `tools agents login --agent-main` sees peer-to-peer hops too. Other agents see only mail addressed to them,
 plus broadcasts. `--observer` sees everything and sends nothing.
 
-**Joining.** `{"type":"agent_joined","agent_name":…,"present":[…]}` reaches every other agent when an agent comes onto
-the bus (its first login, or its first after leaving). A `--once` receiver's later cycles are not joins, so presence
-costs one event at each end and nothing per message.
+**Who receives presence.** A login's `--presence` mode decides which joins and leaves it gets: `none` for an agent
+that is not main (in the 2026-11-08 swarm, 28% of the child turns woke only on a peer's join or leave), `changes`
+for main (joins and real departures; it hides the `signal` and `timeout` leaves an older version wrote), `all` for
+everyone in a `--debug` session. An explicit `--presence` wins. `--kinds` filters presence like any other type:
+`--kinds message` hides it, `--kinds message,agent_left` keeps the leaves. An agent never receives presence from
+before it registered.
 
-**Leaving.** `{"type":"agent_left","agent_name":…,"reason":…,"remaining":[…]}` reaches every other agent (it wakes a
-`--once` receiver) when an agent runs `leave`, when a stream login ends, when any login is killed by a signal, when a
-`--once --timeout` receiver expires with no mail, and when a dead login is reaped. A `--once` cycle that ends on mail
-is not leaving. `remaining` names the agents that logged in and have not left since. Joins and leaves pass any
-`--kinds` filter, and an agent never receives presence from before it registered.
+**Joining.** `{"type":"agent_joined","agent_name":…,"present":[…]}` is written when an agent comes onto the bus (its
+first login, or its first after a leave or a lapse). A `--once` receiver's later cycles and a Monitor re-arm are not
+joins, so presence costs one event at each end and nothing per message or per re-arm.
+
+**Re-arming.** A login that ends by a signal (a harness Monitor expires after 30 minutes and kills it), by a
+`--once --timeout`, or as a reaped dead login writes `logged_out` with `login_id` and `rearm_until` (90 s later) and
+no leave. The agent stays on the bus, and its next login inside the grace is silent. When no new login came by
+`rearm_until`, one `agent_left` with `reason: "lapsed"` and `lapsed_since` is written. Every watching login checks
+for a due lapse every 5 s, and every `login`, `message` and `listen` checks once; the decision is made under the feed
+lock, so a lapse is written once.
+
+**Leaving.** `{"type":"agent_left","agent_name":…,"reason":…,"remaining":[…]}` is written when an agent runs `leave`
+(`leave`, with its `--note`), when a re-arm lapses (`lapsed`), when a stream login stops on its own (`ended`), and
+when a `--once` receiver waited the whole cap (`cap`). A `--once` cycle that ends on mail is not leaving. `remaining`
+names the agents that logged in and have not left since. Feeds from before 2026-11-10 also hold `signal`, `timeout`
+and `dead_pid` leaves.
+
+**Send receipt.** `message` adds `not_listening` (`[{agent_id, name, state, since, reason}]`, state `rearming`,
+`left` or `never_logged_in`) and a one-sentence `note` to its JSON result when a named recipient will not read the
+message now. The message is stored either way and is delivered at the recipient's next login. This is how an agent
+without presence events learns that its peer is away.
 
 ### Output formats
 
