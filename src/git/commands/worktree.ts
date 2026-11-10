@@ -306,7 +306,12 @@ async function runInit(options: WorktreeOptions): Promise<number> {
     const addArgs = options.create
         ? ["worktree", "add", "-b", branch, target, options.base ?? "HEAD"]
         : ["worktree", "add", target, branch];
-    const added = await git.executor.exec(addArgs);
+    const added = await git.executor.exec(addArgs, {
+        timeout: {
+            ms: 600_000,
+            reason: "a new worktree checks out the whole tree and runs the post-checkout hook, which installs",
+        },
+    });
 
     if (!added.success) {
         out.log.error(`git worktree add failed: ${added.stderr.trim()}`);

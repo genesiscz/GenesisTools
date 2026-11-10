@@ -8,14 +8,13 @@
  * reads the call only.
  */
 export const EXEC_DEADLINE_RATCHET: ReadonlyMap<string, number> = new Map<string, number>([
-    ["src/automate/lib/steps/git.ts", 6],
+    ["src/automate/lib/steps/git.ts", 5],
     ["src/codex/lib/review/prepare.ts", 3],
     ["src/git/commands/commits.ts", 2],
     ["src/git/commands/configure-authors.ts", 1],
     ["src/git/commands/configure-workitem-patterns.ts", 2],
     ["src/git/commands/merged.ts", 1],
     ["src/git/commands/rename-commits.ts", 29],
-    ["src/git/commands/worktree.ts", 1],
     ["src/git/lib/branch-attribution.ts", 2],
     ["src/git/lib/cascade/execute.ts", 10],
     ["src/git/lib/merged/prune.ts", 3],
@@ -33,6 +32,6 @@ export const EXEC_DEADLINE_RATCHET: ReadonlyMap<string, number> = new Map<string
     ["src/utils/git/repo-config.ts", 3],
     ["src/utils/git/repo-facts.ts", 3],
     ["src/utils/git/worktree-backup.ts", 1],
-    ["src/utils/git/worktree.ts", 8],
+    ["src/utils/git/worktree.ts", 7],
     ["src/utils/github/url-parser.ts", 1],
 ]);
