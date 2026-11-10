@@ -42,11 +42,13 @@ struct MeetingDetailView: View {
             VStack(spacing: 0) {
                 header
                 Divider()
+                // The notices float inside the dock's inset too: put on the padded view, a bottom stack sat under the
+                // playing dock, and an answer's Undo was never seen while the next row played.
                 tabContent
+                    .noticeStack(detail.notices, alignment: window.noticePlace.alignment)
                     .safeAreaPadding(.bottom, dockInset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .frameProbe("meetings.detail.content")
-                    .noticeStack(detail.notices, alignment: window.noticePlace.alignment)
             }
             .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.narrowWidth }) { narrow = $0 }
             if let pane = trailingPane {

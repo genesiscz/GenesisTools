@@ -320,6 +320,38 @@ extension MeetingsTimelineTests {
         }
     }
 
+    /// A bottom notice stack floats above the playing dock. Put on the pane before the dock's inset, it sat under the
+    /// dock, so the Undo of an answer was never seen while the next row played (live check, 2026-11-10).
+    func testABottomNoticeFloatsAboveThePlayingDock() async throws {
+        let (defaults, name) = try suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let window = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        window.player = makePlayer(defaults)
+        window.receive(try JSONDecoder().decode(MeetingsOverview.self, from: MeetingsUXTests.overviewJSON()))
+        window.select("a")
+        let detail = try XCTUnwrap(window.detail)
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        let host = MeetingsWindow.makeWindow(model: window, size: NSSize(width: 1100, height: 700))
+        host.alphaValue = 0
+        host.ignoresMouseEvents = true
+        host.orderFrontRegardless()
+        defer { host.orderOut(nil); host.close() }
+
+        window.player.play(.time(100), in: "a", from: .row)
+        try await until("the Moment plays") { window.player.phase == .playing }
+        let items = try JSONDecoder().decode([MeetingItem].self, from: MeetingsUXTests.itemsJSON())
+        detail.showDecided(items[0], confirm: true, token: "t-1")
+        try await until("the dock and the stack are drawn") {
+            (FrameProbe.frames["meetings.dock"]?.height ?? 0) > 40 && FrameProbe.frames["notice-stack"] != nil
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let dock = try XCTUnwrap(FrameProbe.frames["meetings.dock"])
+        let stack = try XCTUnwrap(FrameProbe.frames["notice-stack"])
+        XCTAssertLessThanOrEqual(stack.maxY, dock.minY + 1, "the stack sits above the dock: \(stack) over \(dock)")
+    }
+
     private func makePlayer(_ defaults: UserDefaults, timeline: TimelineDockModel? = nil) -> MomentPlayer {
         let engine = MomentPlayer.Engine(
             cut: { params in

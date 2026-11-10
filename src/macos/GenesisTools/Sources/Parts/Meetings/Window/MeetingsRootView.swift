@@ -35,6 +35,7 @@ struct MeetingsRootView: View {
                                       window: model)
                 }
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { dockHeight = $0 }
+                .frameProbe("meetings.dock")
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.player.isActive)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
