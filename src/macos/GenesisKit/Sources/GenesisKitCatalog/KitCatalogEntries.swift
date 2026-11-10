@@ -70,6 +70,64 @@ extension KitCatalog {
             ])
     }
 
+    static var people: CatalogEntry {
+        let names = ["Mira Holt", "Jonas Petr", "Alex Rowan", "Dana Weiss", "Ivo Marek", "Lena Fox", "Sam Ortiz", "Nora Kim"]
+        func initials(_ name: String) -> String {
+            name.split(separator: " ").compactMap(\.first).map(String.init).joined()
+        }
+        func avatar(_ name: String, among: [String], size: CGFloat = 26) -> some View {
+            Text(verbatim: initials(name)).font(.system(size: size * 0.42, weight: .bold)).foregroundStyle(.white)
+                .frame(width: size, height: size)
+                .background(Circle().fill(KitPersonColor.color(for: name, among: among).gradient))
+        }
+        return CatalogEntry(
+            id: "people", group: "Foundations", name: "Colours of people (KitPersonColor)",
+            summary: "A colour for a person: the same for a name every time, and without a meaning. None of them is the play blue, so a person's colour is never read as \"this plays\". Among the speakers of one meeting no two share a colour while the palette lasts.",
+            source: "GenesisKitBase/Style/KitHue.swift", isNew: true,
+            critique: [
+                "Today three views colour a person in three ways: UserAvatar has six pastel tints, the person picker eight system colours, and the transcript's avatar is grey on purpose.",
+                "A colour by hash alone lets two of four speakers share one in about six meetings of ten.",
+            ],
+            looks: [.classic],
+            sections: [
+                CatalogSection("The palette", [
+                    CatalogVariant("Eight colours, each under white initials", props: "KitPersonColor.palette") {
+                        HStack(spacing: 8) {
+                            ForEach(Array(KitPersonColor.palette.enumerated()), id: \.offset) { index, color in
+                                Text(verbatim: "\(index + 1)").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                                    .frame(width: 26, height: 26).background(Circle().fill(color.gradient))
+                            }
+                        }
+                    },
+                ]),
+                CatalogSection("Among the speakers of one meeting", flow: .column, [
+                    CatalogVariant("Eight speakers, eight colours", props: "KitPersonColor.color(for: name, among: names)") {
+                        HStack(spacing: 14) {
+                            ForEach(names, id: \.self) { name in
+                                HStack(spacing: 6) {
+                                    avatar(name, among: names)
+                                    Text(verbatim: name.split(separator: " ").first.map(String.init) ?? name)
+                                        .font(.system(size: 12)).foregroundStyle(.white)
+                                }
+                            }
+                        }
+                    },
+                    CatalogVariant("By the name alone: two of these four share a colour when their hashes meet", props: "KitPersonColor.color(for: name)") {
+                        HStack(spacing: 14) {
+                            ForEach(Array(names.prefix(4)), id: \.self) { name in
+                                avatar(name, among: [])
+                            }
+                        }
+                    },
+                ]),
+                CatalogSection("Sizes", [
+                    CatalogVariant("22 pt, a lane", props: "size: 22") { avatar("Mira Holt", among: names, size: 22) },
+                    CatalogVariant("26 pt, a transcript block", props: "size: 26") { avatar("Mira Holt", among: names) },
+                    CatalogVariant("36 pt, a person's card", props: "size: 36") { avatar("Mira Holt", among: names, size: 36) },
+                ]),
+            ])
+    }
+
     // MARK: Navigation
 
     static var tabs: CatalogEntry {
@@ -113,6 +171,10 @@ extension KitCatalog {
                     },
                     CatalogVariant("Pressed") {
                         GenSegmentedTabs("Tabs", items: scope, selection: .constant("clip"), minSegmentWidth: 56).shown(.pressed)
+                    },
+                    CatalogVariant("Two segments are off", props: "Item(..., isEnabled: false)") {
+                        GenSegmentedTabs("Tabs", items: [.init("clip", "Clip", isEnabled: false), .init("context", "Context", isEnabled: false), .init("meeting", "Meeting")],
+                                         selection: .constant("meeting"), minSegmentWidth: 56)
                     },
                 ]),
                 CatalogSection("Glyphs, counts and hues", flow: .column, [
@@ -249,6 +311,12 @@ extension KitCatalog {
                     CatalogVariant("Over the width of a column", props: "fullWidth: true") {
                         KitButton("Open in the hub", symbol: "arrow.up.forward.app", trailingSymbol: "chevron.right", kind: .ghost, fullWidth: true) {}
                             .frame(width: 230)
+                    },
+                    CatalogVariant("One width for two words", props: "minWidth: 84") {
+                        HStack(spacing: 8) {
+                            KitButton("Pause", symbol: "pause.fill", kind: .primary, hue: .play, minWidth: 84) {}
+                            KitButton("Play", symbol: "play.fill", kind: .primary, hue: .play, minWidth: 84) {}
+                        }
                     },
                 ]),
                 CatalogSection("Together: the controls of a player and the end of a row", flow: .column, [
