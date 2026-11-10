@@ -155,6 +155,9 @@ struct TranscriptBlocksPane: View {
             clip: { target, length in
                 detail.window?.player.play(target, in: detail.id, from: .selection, lengthSec: length)
             },
+            playAll: { target in
+                detail.window?.player.play(target, in: detail.id, from: .selection)
+            },
             close: { clearSelection() }))
     }
 

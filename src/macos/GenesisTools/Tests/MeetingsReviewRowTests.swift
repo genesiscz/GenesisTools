@@ -121,6 +121,18 @@ final class MeetingsReviewRowTests: XCTestCase {
         return try JSONDecoder().decode(JournalEntry.self, from: Data(json.utf8))
     }
 
+    func testTheKindFilterShowsOneKindAndHoldsOnlyWhileBothKindsWait() throws {
+        let rows = try rows().rows
+        XCTAssertEqual(ItemsFilter.all.rows(rows).map(\.id), ["q1", "i2", "i3"])
+        XCTAssertEqual(ItemsFilter.questions.rows(rows).map(\.id), ["q1"])
+        XCTAssertEqual(ItemsFilter.suggestions.rows(rows).map(\.id), ["i2", "i3"])
+        XCTAssertEqual(ItemsFilter.effective(.questions, open: 2, questions: 1), .questions)
+        XCTAssertEqual(ItemsFilter.effective(.questions, open: 1, questions: 0), .all, "the last question is answered: the suggestions show")
+        XCTAssertEqual(ItemsFilter.effective(.suggestions, open: 2, questions: 2), .all, "only questions wait: they show")
+        XCTAssertEqual(SelectionPopover.started("", with: "Fix the speaker"), "Fix the speaker: ")
+        XCTAssertEqual(SelectionPopover.started("Fix the speaker: it is Mira", with: "Make this a question"), "Make this a question: it is Mira")
+    }
+
     func testRowsKeepTheEnginesOrderOrGoByTimeAndDecidedRowsFoldOrLeave() throws {
         let rows = try rows().rows
         XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .priority, decided: .inPlace).map(\.id), ["q1", "i2", "i3"],

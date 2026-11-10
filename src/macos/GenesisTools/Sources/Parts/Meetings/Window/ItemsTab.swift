@@ -7,9 +7,34 @@ import SwiftUI
 /// The keyboard reaches every row (G11): Up and Down select, Return edits or confirms (`meetings.rows.returnKey`), a
 /// second Return in the editor saves (R11), 1 to 9 pick a choice (`meetings.rows.choiceKeys`, G23), Delete picks
 /// "none of these", Esc closes the editor, else clears the selection.
+/// Which review rows the Items list shows: all of them, or one kind.
+enum ItemsFilter: String, CaseIterable {
+    case all, questions, suggestions
+
+    func rows(_ rows: [ReviewRow]) -> [ReviewRow] {
+        switch self {
+        case .all: rows
+        case .questions: rows.filter(\.isQuestion)
+        case .suggestions: rows.filter { !$0.isQuestion }
+        }
+    }
+
+    /// The filter that applies. It holds only while both kinds wait, which is also when its control shows: with one
+    /// kind left every row shows, so the list is never empty with no way back.
+    static func effective(_ filter: ItemsFilter, open: Int, questions: Int) -> ItemsFilter {
+        offered(open: open, questions: questions) ? filter : .all
+    }
+
+    static func offered(open: Int, questions: Int) -> Bool {
+        questions > 0 && open > questions
+    }
+}
+
 struct ItemsTab: View {
     @Bindable var detail: MeetingDetailModel
     @FocusState private var focused: Bool
+    /// The kind of rows shown; a meeting opens on all of them.
+    @State private var filter = ItemsFilter.all
     @AppStorage(MeetingsPreferences.Rows.order.key) private var order = MeetingsPreferences.Rows.order.defaultValue.rawValue
     @AppStorage(MeetingsPreferences.Rows.decided.key) private var decided = MeetingsPreferences.Rows.decided.defaultValue.rawValue
     @AppStorage(MeetingsPreferences.Rows.choiceKeys.key) private var choiceKeys = MeetingsPreferences.Rows.choiceKeys.defaultValue.rawValue
@@ -33,11 +58,17 @@ struct ItemsTab: View {
     }
 
     private func list(_ rows: ReviewRows) -> some View {
-        let shown = MeetingDetailModel.visibleRows(rows.rows, order: MeetingsPreferences.Rows.Order(rawValue: order) ?? .priority,
+        let open = rows.rows.filter(\.isOpen).count
+        let questions = rows.rows.filter { $0.isOpen && $0.isQuestion }.count
+        let kind = ItemsFilter.effective(filter, open: open, questions: questions)
+        // The row whose Moment is on top of the player: it carries the play hue on its leading edge.
+        let top = detail.window?.player.top
+        let playing = top?.meeting == detail.id ? top?.target : nil
+        let visible = MeetingDetailModel.visibleRows(rows.rows, order: MeetingsPreferences.Rows.Order(rawValue: order) ?? .priority,
                                                    decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace,
                                                    keeping: detail.heldFolds)
+        let shown = kind.rows(visible)
         let ids = shown.map(\.id)
-        let open = rows.rows.filter(\.isOpen).count
         let items = detail.record.value?.items ?? []
         // The bar above the list says how many rows wait when it shows; the list's own title says it when it does not.
         let barShows = BulkConfirmBar.shows(items)
@@ -71,6 +102,12 @@ struct ItemsTab: View {
                             .padding(.horizontal, 10)
                             .background(RoundedRectangle(cornerRadius: 6)
                                 .fill(detail.selectedRow == row.id ? Color.accentColor.opacity(focused ? 0.22 : 0.12) : .clear))
+                            .overlay(alignment: .leading) {
+                                if playing == row.target {
+                                    Capsule().fill(KitHue.play.ink).frame(width: 3).padding(.vertical, 6)
+                                        .accessibilityHidden(true)
+                                }
+                            }
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 detail.selectedRow = row.id
@@ -130,7 +167,7 @@ struct ItemsTab: View {
         // rows do not move when a notice comes or goes: only how far the list scrolls to show a row changes.
         .safeAreaInset(edge: noticeEdge, spacing: 0) { Color.clear.frame(height: noticeRoom) }
         .safeAreaInset(edge: .top, spacing: 0) {
-            BulkConfirmBar(detail: detail, items: items, open: open,
+            BulkConfirmBar(detail: detail, items: items, open: open, questions: questions, filter: $filter,
                            applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
         }
     }
@@ -282,6 +319,10 @@ private struct BulkConfirmBar: View {
     let items: [MeetingItem]
     /// The review rows that wait (questions and suggestions).
     let open: Int
+    /// The questions among them.
+    let questions: Int
+    /// The kind of rows the list shows.
+    @Binding var filter: ItemsFilter
     /// The config's apply line (`assign.applyAbove`), the default threshold.
     let applyAbove: Double
 
@@ -295,14 +336,29 @@ private struct BulkConfirmBar: View {
             let atLine = MeetingDetailModel.confirmable(items, atOrAbove: applyAbove).count
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
-                    ViewThatFits(in: .horizontal) {
-                        words(compact: false, atLine: atLine)
-                        words(compact: true, atLine: atLine)
+                    if ItemsFilter.offered(open: open, questions: questions) {
+                        // Both kinds wait: the counts are the filter. Without room for the counts the titles stay.
+                        ViewThatFits(in: .horizontal) {
+                            kinds(counts: true)
+                            kinds(counts: false)
+                            // The narrowest column: the three titles share what the menu leaves.
+                            kinds(counts: false, fills: true)
+                        }
+                        // First in line for the row's width: as one of three equal shares it was offered a third
+                        // of the row and gave up its counts in a wide column.
+                        .layoutPriority(1)
+                        .instantTooltip(ItemsTab.barWords(open: open, atLine: atLine, line: pct(applyAbove), compact: false))
+                    } else {
+                        ViewThatFits(in: .horizontal) {
+                            words(compact: false, atLine: atLine)
+                            words(compact: true, atLine: atLine)
+                        }
+                        .accessibilityAddTraits(.isHeader)
                     }
-                    .accessibilityAddTraits(.isHeader)
                     Spacer(minLength: 8)
                     MenuButton(items: { menu() }) {
-                        Label("Confirm all…", systemImage: "checkmark.circle").font(.system(size: 12))
+                        // Its own width always: beside the filter it was squeezed to one letter per line.
+                        Label("Confirm all…", systemImage: "checkmark.circle").font(.system(size: 12)).fixedSize()
                     }
                     .disabled(detail.isBusy("confirm.all"))
                     .instantTooltip("Confirm every suggestion at or above a confidence, with one Undo")
@@ -316,6 +372,15 @@ private struct BulkConfirmBar: View {
     }
 
     private func pct(_ value: Double) -> String { MeetingsWords.confidence(value) ?? "" }
+
+    /// All, Questions, Suggestions: each with the rows that wait, a question in the ask hue.
+    private func kinds(counts: Bool, fills: Bool = false) -> some View {
+        GenSegmentedTabs("Rows shown", items: [
+            GenSegmentedTabs.Item(ItemsFilter.all, "All", count: counts ? open : nil),
+            GenSegmentedTabs.Item(ItemsFilter.questions, "Questions", count: counts ? questions : nil, hue: .ask),
+            GenSegmentedTabs.Item(ItemsFilter.suggestions, "Suggestions", count: counts ? open - questions : nil, hue: .care),
+        ], selection: $filter, minSegmentWidth: 0, identifier: "meetings.items.filter", fillsWidth: fills, size: .small)
+    }
 
     private func words(compact: Bool, atLine: Int) -> some View {
         Text(verbatim: ItemsTab.barWords(open: open, atLine: atLine, line: pct(applyAbove), compact: compact))

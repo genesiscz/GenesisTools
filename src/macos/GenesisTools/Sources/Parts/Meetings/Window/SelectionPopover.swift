@@ -46,7 +46,12 @@ struct SelectionPopover: View {
     let stage: (TranscriptSelection, String) -> Void
     /// Plays a Moment of the selection: the target and the length (G62).
     let clip: (MomentTarget, Double) -> Void
+    /// Plays the whole selection, from its first line to the end of its last; nil hides "Play selection".
+    var playAll: ((MomentTarget) -> Void)? = nil
     var close: () -> Void = {}
+
+    /// Words that start a comment of a usual kind: a click writes them, the reader types the rest.
+    static let starters = ["Fix the speaker", "Make this a question", "Add to glossary"]
 
     @State private var commenting = false
     @State private var text = ""
@@ -87,6 +92,24 @@ struct SelectionPopover: View {
             .padding(.horizontal, 6).frame(minHeight: 24)
             .instantTooltip("Play \(MeetingsFormat.seconds(clipLengthSec)) from \(MeetingsFormat.clock(selection.fromSec))")
             .accessibilityLabel("Clip \(MeetingsFormat.seconds(clipLengthSec)) from \(MeetingsFormat.clock(selection.fromSec))")
+            if let playAll {
+                Button { playAll(selection.target) } label: {
+                    Label("Play selection", systemImage: "play.fill")
+                }
+                .buttonStyle(.genHoverPlain())
+                .padding(.horizontal, 6).frame(minHeight: 24)
+                .instantTooltip("Play \(selection.rangeText), every selected line to its end")
+            }
+            Divider().frame(height: 16)
+            Button {
+                Clipboard.copy(selection.quote, what: "the selected lines")
+                close()
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(.genHoverPlain())
+            .padding(.horizontal, 6).frame(minHeight: 24)
+            .instantTooltip("Copy the words of \(selection.rangeText)")
         }
         .font(.system(size: 12.5))
     }
@@ -97,6 +120,14 @@ struct SelectionPopover: View {
                 Badge(selection.rangeText, color: .purple, look: .tone, monospaced: true)
                 Text(verbatim: "“\(selection.quote)”")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            }
+            WrapLayout(spacing: 6, lineSpacing: 6) {
+                ForEach(Self.starters, id: \.self) { starter in
+                    KitButton(starter, size: .small, tooltip: "Start the comment with “\(starter):”") {
+                        text = Self.started(text, with: starter)
+                        fieldFocused = true
+                    }
+                }
             }
             TextField("Comment for the listening agent", text: $text, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
@@ -119,6 +150,15 @@ struct SelectionPopover: View {
     }
 
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// The comment with `starter` before it. Another starter that stood there is replaced, so two clicks do not stack.
+    static func started(_ text: String, with starter: String) -> String {
+        var rest = text
+        for other in starters where rest.hasPrefix("\(other): ") {
+            rest = String(rest.dropFirst(other.count + 2))
+        }
+        return "\(starter): \(rest)"
+    }
 
     private func submit() {
         guard !trimmed.isEmpty else { return }
