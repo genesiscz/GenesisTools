@@ -145,7 +145,9 @@ struct TranscriptSketchSubjectHeader<Trailing: View>: View {
                 if let notice = model.headerNotice {
                     NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
                 }
+                // The pane buttons keep their titles: the forecast gives way first, then the title (middle truncation).
                 trailing
+                    .layoutPriority(2)
                 IconButton(systemName: "doc.richtext", tooltip: "Copy as Markdown (json2md): session, changes, decisions, recent turns") {
                     Task { @MainActor in model.headerNotice = HubNotice(guessing: await model.exportSession(session)) }
                 }
