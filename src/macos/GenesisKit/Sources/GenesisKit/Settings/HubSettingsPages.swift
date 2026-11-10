@@ -261,6 +261,8 @@ private struct HubPaneSettings: View {
                     detail: "Off: Glass stays in View → Glass (⌘⇧G), the command palette and Appearance.",
                     identifier: "hub.chrome.glassButton", isOn: $glassButton)
             }
+            // `hub.panes#lists` opens the page at this card: its PR row settings sit far below the fold.
+            .nativeSettingsAnchor("lists")
             Text("The panes in the hub show the same controls. Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
