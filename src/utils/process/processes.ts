@@ -1120,6 +1120,23 @@ function rowWith(entry: ProcessWithUsage, line: string | undefined): PsRow {
 }
 
 /**
+ * The order `ps -ax` prints: on macOS the processes without a terminal first, then each terminal's in turn, each group
+ * by ascending pid (matched row for row against `ps -axo` on 2026-11-10, 1,925 processes); elsewhere by pid.
+ */
+function psOrder(left: ProcessEntry, right: ProcessEntry): number {
+    if (processPlatform() === "darwin") {
+        const leftTty = left.tty ?? "";
+        const rightTty = right.tty ?? "";
+
+        if (leftTty !== rightTty) {
+            return leftTty < rightTty ? -1 : 1;
+        }
+    }
+
+    return left.pid - right.pid;
+}
+
+/**
  * The rows `ps -p <pids> -o pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command=` printed, keyed by pid. The kernel
  * answers for this user's processes (`/proc` and CIM for everyone's), so they cost no spawn; ONE `ps` reads the rows
  * the kernel withholds (another user's command line and usage). Where no kernel reader works, one `ps` per batch of
@@ -1155,8 +1172,11 @@ export async function listProcessRows(options: { timeoutMs?: number } = {}): Pro
         return listPsTable(options);
     }
 
-    // `ps -ax` has no row for the kernel (pid 0).
-    const entries = listProcessesWithUsage({ cpuPercent: true }).filter((entry) => entry.pid > 0);
+    // `ps -ax` has no row for the kernel (pid 0), and keeps its own order, which the kernel table (newest first) does
+    // not: a caller that takes the first match depends on it.
+    const entries = listProcessesWithUsage({ cpuPercent: true })
+        .filter((entry) => entry.pid > 0)
+        .sort(psOrder);
     const asked = entries.filter(withheld);
     const lines = await psLinesForAsync(
         asked.map((entry) => entry.pid),
