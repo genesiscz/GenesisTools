@@ -170,7 +170,8 @@ private struct MeetingsContactsPane: View {
         VStack(spacing: 0) {
             if let failure = people.known.failure {
                 NoticePill(text: "The people did not load: \(failure.sentence)", more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { people.load() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { people.load() },
+                                   failure.detailsFix { people.load() }])
                     .padding(10)
             }
             MeetingsContactsView(
@@ -281,7 +282,8 @@ private struct MeetingsListPane: View {
                 // A failed config read is not an empty project: the summary shows only data that was read.
                 if let unread = MeetingsUnread.of([(.projectSettings, model.settings.failure)]).first {
                     NoticePill(text: unread.text, more: unread.failure.detail, tone: .error,
-                               fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadSettings() }])
+                               fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadSettings() },
+                                       unread.failure.detailsFix { model.loadSettings() }])
                         .padding(10)
                 }
                 if let settings = model.settings.value {
@@ -291,7 +293,8 @@ private struct MeetingsListPane: View {
             }
             if let failure = model.overview.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadOverview() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadOverview() },
+                                   failure.detailsFix { model.loadOverview() }])
                     .padding(10)
             }
             content

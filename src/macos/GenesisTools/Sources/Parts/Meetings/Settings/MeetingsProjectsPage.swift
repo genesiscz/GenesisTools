@@ -374,7 +374,8 @@ private struct FromMeetingsList: View {
             }
             if let failure = state?.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadMeetingPeople(project) }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadMeetingPeople(project) },
+                                   failure.detailsFix { model.loadMeetingPeople(project) }])
             }
             if state?.value == nil, state?.failure == nil {
                 HStack(spacing: 8) {
@@ -428,7 +429,8 @@ private struct WouldMatchCard: View {
         NativeSettingsCard("Would match", subtitle: "The last 20 meetings against the rules below, while you edit them.") {
             if let failure = model.preview.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadPreview() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadPreview() },
+                                   failure.detailsFix { model.loadPreview() }])
             }
             if let rows = model.preview.value {
                 if rows.isEmpty {
@@ -756,7 +758,8 @@ struct MeetingsDictionaryPage: View {
             NativeSettingsCard("Entries", subtitle: entriesSubtitle) {
                 if let failure = model.dictionary.failure {
                     NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                               fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadDictionary() }])
+                               fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadDictionary() },
+                                   failure.detailsFix { model.loadDictionary() }])
                 }
                 let entries = model.dictionary.value?.entries ?? []
                 if entries.isEmpty, model.dictionary.value != nil {

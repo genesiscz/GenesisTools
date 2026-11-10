@@ -156,7 +156,12 @@ private struct FrameViewer: View {
                 .instantTooltip("Box only the lines that changed since this display's earlier frame, or every line the OCR read")
                 if shown == .all, case .loading = lines { ProgressView().controlSize(.small) }
                 if shown == .all, case .failed(let failure, _) = lines {
-                    Text(verbatim: failure.sentence).font(.system(size: 11)).foregroundStyle(.red).lineLimit(1)
+                    Text(verbatim: failure.sentence).font(.system(size: 11)).foregroundStyle(KitHue.danger.ink).lineLimit(1)
+                        .help(failure.sentence)
+                    IconButton(systemName: "doc.text.magnifyingglass", tooltip: "Details of this failure", size: 10) {
+                        FailureReporter.shared.showDetails(failure.report(outcome: "The frame's text did not load",
+                                                                          action: "Box every line the OCR read"))
+                    }
                 }
                 Spacer()
                 Button("Show in Finder") { PathOpener.reveal(frame.path) }.buttonStyle(.genHoverPlain())

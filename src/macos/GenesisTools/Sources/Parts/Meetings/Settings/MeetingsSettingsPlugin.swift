@@ -94,7 +94,8 @@ struct MeetingsSettingsFrame<Content: View>: View {
         VStack(alignment: .leading, spacing: 18) {
             if let failure = model.settings.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.load(reads) }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.load(reads) },
+                                   failure.detailsFix { model.load(reads) }])
             }
             if let settings = model.settings.value {
                 content(settings)
@@ -358,7 +359,8 @@ struct MeetingsWindowPage: View {
                 }
         } else if let failure = model.settings.failure {
             NoticePill(text: "The clip and tone settings did not load: \(failure.sentence)", more: failure.detail, tone: .error,
-                       fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadSettings() }])
+                       fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadSettings() },
+                                   failure.detailsFix { model.loadSettings() }])
         } else {
             NativeSettingsCard("Clip and Tone") {
                 HStack(spacing: 8) {

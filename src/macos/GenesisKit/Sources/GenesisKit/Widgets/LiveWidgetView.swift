@@ -158,7 +158,8 @@ public struct LiveWidgetView: View {
                 // One sentence; the raw text (a process's stderr) only behind Details.
                 // Reconnect restarts the widget's link to the hub: the one next step every failed call has.
                 NoticePill(text: error, more: model.errorDetail, tone: .error,
-                           fixes: [.button("Reconnect", symbol: "arrow.clockwise") { model.error = nil; model.start() }]) {
+                           fixes: [.button("Reconnect", symbol: "arrow.clockwise") { model.error = nil; model.start() }]
+                               + (model.errorReport.map { [NoticeFix.details($0)] } ?? [])) {
                     model.error = nil
                 }
                     .accessibilityIdentifier("widget.error")

@@ -171,15 +171,13 @@ final class RecorderNoticePanel {
 
     var isVisible: Bool { panel.isVisible }
 
-    /// Where "Draft an issue" posts. `recorder.debug.issueDryRun` (a test switch, off) makes the post a dry run.
-    static let issueRepo = "genesiscz/GenesisTools"
-
+    /// Where "Draft an issue" posts: the kit's one issue target (`FailureReporter`). `recorder.debug.issueDryRun` (a
+    /// test switch, off) makes the post a dry run.
     func show(_ report: FailureReport, retry: (@MainActor () -> Void)?, defaults: UserDefaults = .standard) {
-        let poster = ToolsIssuePoster(dryRun: defaults.bool(forKey: "recorder.debug.issueDryRun"))
         var report = report
         report.area = report.area ?? "recorder"
         panel.show(report, options: RecorderFailureStyle.noticeOptions(defaults), retry: retry,
-                   issue: FailureNoticeIssueTarget(repo: Self.issueRepo, poster: poster),
+                   issue: FailureReporter.defaultIssueTarget(defaults: defaults, dryRunKey: "recorder.debug.issueDryRun"),
                    environment: { await FailureEnvironment.load() })
     }
 

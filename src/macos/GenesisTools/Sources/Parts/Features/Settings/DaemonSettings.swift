@@ -189,8 +189,14 @@ final class DaemonSettingsStore: ObservableObject {
     @Published private(set) var runningNow: Set<String> = []
     @Published private(set) var savingTasks: Set<String> = []
     @Published private(set) var outputs: [String: DaemonRunOutput] = [:]
-    @Published var message: String?
+    @Published var message: String? {
+        didSet { if message != oldValue { messageReport = nil } }
+    }
     @Published var messageIsError = false
+    /// The failed action behind `message`, for the notice's Details (class B).
+    @Published private(set) var messageReport: FailureReport?
+    /// The tasks or their stats did not load: the page shows it with Try again (class A).
+    @Published private(set) var loadFailure: FailureReport?
     /// Bumped by every write; a load that started before a write does not replace the tasks the write returned.
     private var writeGeneration = 0
     private var loadGeneration = 0
@@ -199,10 +205,13 @@ final class DaemonSettingsStore: ObservableObject {
 
     /// A `tools` process per call: the hub's resident server has no door for `daemon`, so this is what the hub's
     /// runner did too, without needing the hub part.
-    private nonisolated static func cli(_ args: [String], timeout: TimeInterval = 60) async -> Result<Data, Error> {
+    private nonisolated static func cli(_ args: [String], timeout: TimeInterval = 60,
+                                        ledger: ToolsCallLedger = ToolsCallLedger()) async -> Result<Data, Error> {
         do {
-            let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()).run(
-                subcommand: args.first ?? "", args: Array(args.dropFirst()), timeoutSeconds: Int(timeout.rounded(.up)))
+            let result = try await ledger.record {
+                try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()).run(
+                    subcommand: args.first ?? "", args: Array(args.dropFirst()), timeoutSeconds: Int(timeout.rounded(.up)))
+            }
             guard result.exitCode == 0 else {
                 let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
                 throw DaemonSettingsError(text: Self.errorText(stdout: result.stdout, stderr: stderr, status: result.exitCode))
@@ -231,37 +240,51 @@ final class DaemonSettingsStore: ObservableObject {
         let writesAtStart = writeGeneration
         loading = true
         Task {
-            async let statusResult = Self.cli(["daemon", "status", "--json"])
-            async let statsResult = Self.cli(["daemon", "stats", "--json"], timeout: 90)
+            let statusLedger = ToolsCallLedger()
+            let statsLedger = ToolsCallLedger()
+            async let statusResult = Self.cli(["daemon", "status", "--json"], ledger: statusLedger)
+            async let statsResult = Self.cli(["daemon", "stats", "--json"], timeout: 90, ledger: statsLedger)
             let (statusData, statsData) = await (statusResult, statsResult)
             guard generation == loadGeneration else { return }
             loading = false
+            var failure: FailureReport?
             switch statusData {
             case .success(let data):
                 do {
                     let decoded = try JSONDecoder().decode(DaemonStatusPayload.self, from: data)
                     if writesAtStart == writeGeneration { status = decoded }
                 } catch {
-                    show("Reading tools daemon status --json failed: \(error)", error: true)
+                    failure = .unexpected("tools daemon status --json printed what the page cannot read: \(error)",
+                                          outcome: "The daemon's tasks did not load", action: "Open Settings, Background", area: "daemon")
                 }
             case .failure(let error):
-                show("\(error)", error: true)
+                failure = .toolsCall(error, outcome: "The daemon's tasks did not load", action: "Open Settings, Background",
+                                     call: statusLedger.failed, argv: ["daemon", "status", "--json"], area: "daemon")
             }
             switch statsData {
             case .success(let data):
                 do {
                     stats = try JSONDecoder().decode(DaemonStatsPayload.self, from: data)
                 } catch {
-                    show("Reading tools daemon stats --json failed: \(error)", error: true)
+                    failure = failure ?? .unexpected("tools daemon stats --json printed what the page cannot read: \(error)",
+                                                     outcome: "The daemon's run history did not load", action: "Open Settings, Background",
+                                                     area: "daemon")
                 }
             case .failure(let error):
-                show("\(error)", error: true)
+                failure = failure ?? .toolsCall(error, outcome: "The daemon's run history did not load", action: "Open Settings, Background",
+                                                call: statsLedger.failed, argv: ["daemon", "stats", "--json"], area: "daemon")
+            }
+            if let failure {
+                failure.deliver({ [weak self] in self?.loadFailure = $0 },
+                                isCurrent: { [weak self] in self?.loadFailure == $0 && self?.loadGeneration == generation })
+            } else {
+                loadFailure = nil
             }
         }
     }
 
     /// The first load has ended, with the tasks or with the error it shows; a snapshot of the page waits for it.
-    var settled: Bool { !loading && (status != nil || message != nil) }
+    var settled: Bool { !loading && (status != nil || message != nil || loadFailure != nil) }
 
     func stats(for task: String) -> DaemonTaskStats? {
         stats?.tasks.first { $0.task == task }
@@ -300,7 +323,8 @@ final class DaemonSettingsStore: ObservableObject {
                     status?.tasks[index] = before
                 }
                 onFailure?()
-                show("\(task.name): \(error)", error: true)
+                showFailure(.toolsCall(error, outcome: "\(task.name) was not saved", action: "Change a daemon task's setting",
+                                       argv: ["daemon", "config", "set", task.name] + flags + ["--json"], area: "daemon"))
             }
         }
         pendingWrites[task.name] = (id, work)
@@ -318,7 +342,8 @@ final class DaemonSettingsStore: ObservableObject {
             case .success:
                 show("\(task.name) finished.", error: false)
             case .failure(let error):
-                show("\(task.name): \(error)", error: true)
+                showFailure(.toolsCall(error, outcome: "\(task.name) did not run", action: "Run a daemon task now",
+                                       argv: ["daemon", "run", task.name, "--json"], area: "daemon"))
             }
             load()
         }
@@ -335,7 +360,9 @@ final class DaemonSettingsStore: ObservableObject {
                     show("Reading run \(run.runId) failed: \(error)", error: true)
                 }
             case .failure(let error):
-                show("Run \(run.runId): \(error)", error: true)
+                showFailure(.toolsCall(error, outcome: "The output of run \(run.runId) did not load", action: "Open a daemon run's output",
+                                       argv: ["daemon", "stats", "--view", "run", "--run", run.runId, "--task", run.task, "--json"],
+                                       area: "daemon"))
             }
         }
     }
@@ -343,6 +370,13 @@ final class DaemonSettingsStore: ObservableObject {
     private func show(_ text: String, error: Bool) {
         message = text
         messageIsError = error
+    }
+
+    /// A failed action: its headline in the notice, the report behind its Details.
+    private func showFailure(_ report: FailureReport) {
+        show(report.headline, error: true)
+        let shown = report.headline
+        report.deliver({ [weak self] in self?.messageReport = $0 }, isCurrent: { [weak self] _ in self?.message == shown })
     }
 }
 
@@ -381,8 +415,12 @@ struct DaemonSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             overview
+            if let failure = store.loadFailure {
+                FailureInline(failure, form: .compact, identifier: "daemon.failure") { store.load() }
+            }
             if let message = store.message {
-                NoticePill(text: message, isError: store.messageIsError) { store.message = nil }
+                NoticePill(text: message, isError: store.messageIsError,
+                           fixes: store.messageReport.map { [NoticeFix.details($0)] } ?? []) { store.message = nil }
             }
             if let status = store.status {
                 ForEach(status.tasks) { task in

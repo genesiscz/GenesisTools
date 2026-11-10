@@ -54,7 +54,8 @@ struct MeetingsPlayerBar: View {
             CuttingLine(since: since, name: name, cancel: { player.cancelCut() })
                 .padding(.horizontal, 16).padding(.top, 8)
         case .failed(let failure):
-            NoticePill(text: failure.sentence, more: failure.detail, tone: .error, dismiss: { player.dismissFailure() })
+            NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
+                       fixes: [failure.detailsFix()], dismiss: { player.dismissFailure() })
                 .padding(.horizontal, 16).padding(.top, 6)
         default:
             EmptyView()

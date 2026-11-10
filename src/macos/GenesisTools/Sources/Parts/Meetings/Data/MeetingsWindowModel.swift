@@ -6,11 +6,35 @@ extension StackedNotice {
     /// A failed meetings command as a notice on the pane that ran it: the CLI's sentence, its own text behind Details,
     /// and Retry when running it again can help. An error stays until it is closed or retried. A source that can fail
     /// again and again (a test run per keystroke) passes one `id`, so its next failure replaces the last.
+    /// "Details" opens the failure window (the error, its output, Copy context for agents, Report a bug).
+    @MainActor
     static func meetingsFailure(_ error: Error, id: StackedNotice.ID = StackedNotice.ID(),
                                 retry: (@MainActor () -> Void)? = nil) -> StackedNotice {
         let failure = error as? MeetingsCLI.Failure
-        return StackedNotice(id: id, text: failure?.sentence ?? "The meetings command failed.", more: failure?.detail ?? "\(error)",
-                             tone: .error, actions: retry.map { [.retry($0)] } ?? [])
+        let text = failure?.sentence ?? "The meetings command failed."
+        let more = failure?.detail ?? "\(error)"
+        var report = FailureReport.unexpected(more, outcome: "A Meetings action failed", action: "Use the Meetings window",
+                                              title: "Meetings action failed", area: "meetings")
+        report.headline = FailureLog.sentence(text) ?? text
+        let actions: [StackedNotice.Action] = (retry.map { [.retry($0)] } ?? []) + [.details(report, retry: retry)]
+        return StackedNotice(id: id, text: text, more: more, tone: .error, actions: actions)
+    }
+}
+
+extension MeetingsCLI.Failure {
+    /// The failure window's report: the CLI's sentence as the headline, its own text as the log. Made at the click,
+    /// so no view body reads the app's build facts from disk.
+    @MainActor
+    func report(outcome: String = "A Meetings read failed", action: String = "Use the Meetings window") -> FailureReport {
+        var report = FailureReport.unexpected(detail, outcome: outcome, action: action, title: outcome, area: "meetings")
+        report.headline = FailureLog.sentence(sentence) ?? sentence
+        return report
+    }
+
+    /// "Details" on a notice pill: the failure window on this failure, with Try again.
+    @MainActor
+    func detailsFix(retry: (@MainActor () -> Void)? = nil) -> NoticeFix {
+        .button("Details", symbol: "doc.text.magnifyingglass") { FailureReporter.shared.showDetails(report(), retry: retry) }
     }
 }
 

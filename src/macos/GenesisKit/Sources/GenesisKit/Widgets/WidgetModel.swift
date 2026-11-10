@@ -201,11 +201,15 @@ public final class WidgetModel: ObservableObject {
         didSet {
             guard error != oldValue else { return }
             errorDetail = nil
+            errorReport = nil
             if let error { GenAnnounce.post(error, priority: .high) }
         }
     }
     /// The raw text behind `error` (a process's stderr), shown only behind a "Details" disclosure.
     @Published public var errorDetail: String?
+    /// `error` as a report for the failure window ("Details": the error, the calls of the minute before, Report a bug),
+    /// set by `report(_:)`; a sentence set through `fail` alone has none.
+    @Published public var errorReport: FailureReport?
     @Published public var drafts: [String: WidgetDraft] = [:]
     /// The watch worker exited on its own. The snapshot is stale and nothing dispatches queued messages until
     /// `start()` runs again, so the view keeps a Reconnect action visible even after the error is dismissed.
@@ -3454,6 +3458,12 @@ public final class WidgetModel: ObservableObject {
         let words = WidgetErrorText.words(for: error)
         fail(words.text, detail: words.detail)
         PerfLog.mark("widget.error \(error.localizedDescription)")
+        let shown = words.text
+        var report = FailureReport.toolsCall(error, outcome: "The widget's last action failed", action: "Use the widget",
+                                             title: "Widget failed", area: "widget")
+        report.headline = FailureLog.sentence(words.text) ?? words.text
+        report.log = words.detail ?? "\(error)"
+        report.deliver({ [weak self] in self?.errorReport = $0 }, isCurrent: { [weak self] _ in self?.error == shown })
     }
 }
 

@@ -131,13 +131,16 @@ struct MeetingDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if let failure = detail.record.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.reloadRecord() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.reloadRecord() },
+                                   failure.detailsFix { detail.reloadRecord() }])
             }
             // The picker lists the proposals and the known projects; a failed read of either says so here, so a short
             // list is never mistaken for the whole one.
             ForEach(MeetingsUnread.of([(.proposals, detail.proposals.failure), (.projects, window.settings.failure)]), id: \.source) { unread in
                 NoticePill(text: unread.text, more: unread.failure.detail, tone: .error,
                            fixes: [.button("Retry", symbol: "arrow.clockwise") {
+                               if unread.source == .proposals { detail.loadProposals() } else { window.loadSettings() }
+                           }, unread.failure.detailsFix {
                                if unread.source == .proposals { detail.loadProposals() } else { window.loadSettings() }
                            }])
             }
@@ -361,7 +364,7 @@ struct LoadablePane<Value: Equatable, Content: View>: View {
         VStack(spacing: 0) {
             if let failure = state.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise", perform: retry)])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise", perform: retry), failure.detailsFix(retry: retry)])
                     .padding(12)
             }
             if let value = state.value {

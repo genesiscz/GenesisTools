@@ -79,7 +79,8 @@ struct HistorySheetView: View {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 120)
             case .failed(let failure, _):
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.openHistory(item: history.item) }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.openHistory(item: history.item) },
+                                   failure.detailsFix { detail.openHistory(item: history.item) }])
             case .loaded(let entries):
                 if entries.isEmpty {
                     EmptyState(symbol: "clock", text: "Nothing decided yet", detail: "Each confirm, answer and Undo is kept here with who made it.")
