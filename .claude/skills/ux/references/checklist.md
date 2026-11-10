@@ -195,7 +195,11 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
 - Anything the user waits on shows an error, a reason or a Cancel within about 10 s, not at a 30 s or 120 s process
   timeout.
 - A success note fades after a few seconds (the hub's `NoticePill` is the model): at least 2 s, about 1 s plus 50 ms
-  per word. A new note replaces the old one. An error stays until it is closed.
+  per word. An error stays until it is closed.
+- Notes stack, they do not replace each other: a new note joins GenesisKit `NoticeStack` beside the older ones, each
+  with its own Undo and its own time (two quick answers keep two Undo buttons). Only a note about the same thing (a
+  retry of one failure, a burst of one actor's decisions) takes the old note's place, by its id. Past the visible limit
+  the older notes fold into "+N more".
 - A success never gets a modal alert; a modal is for a decision or a failure the user must act on.
 - The first frame of a window or panel uses the saved setting (size, look, tab), never a default that snaps to the
   saved one.
