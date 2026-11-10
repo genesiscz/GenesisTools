@@ -747,6 +747,20 @@ final class HubLogicTests: XCTestCase {
         }
     }
 
+    /// The checkout's answer about a link's commits: a pick that went while a new review waited (a failed detail) still
+    /// builds that review, and nothing acts for a PR the link does not name.
+    func testALinkLookupBuildsADeferredReviewEvenAfterThePickWent() {
+        let follow = { (pending: Bool, names: Bool, deferred: Bool, onScreen: Bool) in
+            PRsModel.linkLookupFollowUp(pickStillPending: pending, linkNamesSelected: names, reviewDeferred: deferred, reviewOnScreen: onScreen)
+        }
+        XCTAssertEqual(follow(false, true, true, false), .buildReview, "detailFailed cleared the pick while the review was deferred")
+        XCTAssertEqual(follow(false, true, false, true), .nothing, "the pick went and the review is already on screen")
+        XCTAssertEqual(follow(true, true, false, true), .pickCommit)
+        XCTAssertEqual(follow(true, true, true, false), .buildReview)
+        XCTAssertEqual(follow(false, false, true, false), .nothing, "another PR is on screen")
+        XCTAssertEqual(follow(true, false, false, false), .nothing)
+    }
+
     /// A link's one commit, read from the checkout before the forge lists it, opens on that commit.
     @MainActor
     func testALinkCommitFromTheCheckoutOpensOnTheCommit() throws {

@@ -705,7 +705,7 @@ async function pickAndDecide(ctx: RunContext): Promise<void> {
                 message: "Which requests?",
                 options: views.map((view) => ({
                     value: view.request.id,
-                    label: renderPickerRow(view, now, columns),
+                    label: renderPickerRow({ view, now, columns }),
                     hint: askerHint(view.request.caller),
                 })),
                 required: false,

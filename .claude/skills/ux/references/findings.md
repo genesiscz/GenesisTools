@@ -17,8 +17,9 @@ checklist.md or motion.md as well.
 - 2026-11-09 13:13 — **The recorder's failure note: a title cut at "{", and the whole log as a 340 pt column of raw text
   (Martin: "it should probably somehow nicely show me the error log ... the size should be also whole different").**
   - *The title was "The recording stopped at once (exit 1): {."* `ToolsRunner.problem` trimmed every line before it
-    looked for `error:`, so the indented field `    error: {` of a WARN entry won over the real `error: …` line below
-    it. Reproduced with the old function on the real start log (it returns `{`). Fix: only lines at column 0 can be
+    looked for `error:`, so the indented field `error: {` (four spaces in) of a WARN entry won over the real
+    `error: …` line below it. Reproduced with the old function on the real start log (it returns `{`). Fix: only
+    lines at column 0 can be
     the problem line, and the headline is now `FailureLog.headline` (GenesisKit), which reads the log as entries and
     fields. Rule: a CLI's pretty log nests fields under an entry; never search it line by line after trimming.
   - *The details were the raw output in a fixed 340 pt column, about 1,400 pt tall, with nothing to act on.* Raw

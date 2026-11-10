@@ -1256,6 +1256,10 @@ final class ReviewModel: ObservableObject {
                     if !results.isEmpty {
                         self.lastLoaded = Date()
                         self.apply(results)
+                        for refused in self.largeAsks.answer(results, readWith: fullFiles) {
+                            HubPerf.log("review.showLarge \(refused.fileID) failed: \(refused.reason)")
+                            self.renderer.largeFileFailed(id: refused.fileID, reason: refused.reason)
+                        }
                     }
                 }
                 if self.reloadAgain {
@@ -1667,6 +1671,8 @@ final class ReviewModel: ObservableObject {
     private(set) var branchTarget: String?
     /// Files skipped for their size that the reader asked to see anyway, repository-relative, per root folder.
     private var fullFiles: [String: Set<String>] = [:]
+    /// Those asks until a load answers them: a failed load tells the page, so its button does not stay on "Loading…".
+    private var largeAsks = ReviewLargeAsks()
 
     /// Sets `branchTarget` from a branch name; reloads when it changes the base in use.
     func useBranchTarget(_ branch: String?) {
@@ -2132,8 +2138,13 @@ final class ReviewModel: ObservableObject {
             MainActor.assumeIsolated { PRRefMenu.open(url, model: self) }
         case .showLargeFile(let id):
             // The reader asked for a file skipped for its size: read it up to GitWorkingTreeSource.maxShownBytes.
-            guard let found = locate(fileID: id) else { return }
+            guard let found = locate(fileID: id) else {
+                HubPerf.log("review.showLarge unknown file \(id)")
+                renderer.largeFileFailed(id: id, reason: "the file is no longer in this diff")
+                return
+            }
             fullFiles[found.root.folder, default: []].insert(found.file.path)
+            largeAsks.add(fileID: id, path: found.file.path, folder: found.root.folder)
             HubPerf.log("review.showLarge \(found.file.path)")
             reload()
         case .focusFile(let id):
@@ -4302,6 +4313,41 @@ enum ReviewSnapshot {
 }
 
 /// The review's folder is gone from disk (deleted checkout or session folder).
+/// Large files the reader asked to see whole (`DiffRendererEvent.showLargeFile`) whose load has not answered, per
+/// root folder. Only a load that read the root with the asked path allowed (`readWith`, its `fullFiles`) answers an
+/// ask, so a load that started before the ask never ends it. A failed load refuses its asks; a successful one brought
+/// the file, and the page ends the ask when the file arrives.
+struct ReviewLargeAsks {
+    struct Refused: Equatable {
+        let fileID: String
+        let reason: String
+    }
+
+    /// Root folder, then file id, then repository-relative path.
+    private var waiting: [String: [String: String]] = [:]
+
+    mutating func add(fileID: String, path: String, folder: String) {
+        waiting[folder, default: [:]][fileID] = path
+    }
+
+    /// Ends the asks these results answer and returns the refused ones, with their load's error, by file id.
+    mutating func answer(_ results: [String: Result<GitWorkingTreeSource.Snapshot, Error>], readWith: [String: Set<String>]) -> [Refused] {
+        var refused: [Refused] = []
+        for (folder, result) in results {
+            guard var asks = waiting[folder] else { continue }
+            let allowed = readWith[folder] ?? []
+            for (fileID, path) in asks where allowed.contains(path) {
+                asks[fileID] = nil
+                if case .failure(let error) = result {
+                    refused.append(Refused(fileID: fileID, reason: "\(error)"))
+                }
+            }
+            waiting[folder] = asks.isEmpty ? nil : asks
+        }
+        return refused.sorted { $0.fileID < $1.fileID }
+    }
+}
+
 struct MissingReviewFolder: Error, CustomStringConvertible {
     let path: String
     var description: String { "This folder no longer exists: \(path)" }

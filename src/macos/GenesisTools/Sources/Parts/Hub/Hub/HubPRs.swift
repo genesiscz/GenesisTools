@@ -884,13 +884,31 @@ final class PRsModel: ObservableObject {
             } else {
                 span.end("not in this checkout's PR line; the forge decides")
             }
-            guard pendingCommit == pending, let shown = selected, pending.ref.matches(shown) else { return }
-            if reviewPRID == shown.id, let review, review.home.path == repo {
-                pickPendingCommit()
-            } else {
-                showDiff(shown)
+            guard let shown = selected else { return }
+            switch Self.linkLookupFollowUp(pickStillPending: pendingCommit == pending, linkNamesSelected: pending.ref.matches(shown),
+                                           reviewDeferred: deferredReview == shown.id,
+                                           reviewOnScreen: reviewPRID == shown.id && review?.home.path == repo) {
+            case .nothing: return
+            case .pickCommit: pickPendingCommit()
+            case .buildReview: showDiff(shown)
             }
         }
+    }
+
+    /// What the checkout's answer about a link's commits does once it lands (`lookUpLinkLocally`).
+    enum LinkLookupFollowUp: Equatable {
+        case nothing, pickCommit, buildReview
+    }
+
+    /// The answer acts only while the link names the PR on screen. A pick still pending selects its commit in the review on
+    /// screen, or builds the review. A pick that went meanwhile (a failed detail, `detailFailed`) still builds a review
+    /// that `showReview` deferred for this answer: without it the PR showed its overview and no diff until a list
+    /// reload (2026-11-10, PR #756 review).
+    nonisolated static func linkLookupFollowUp(pickStillPending: Bool, linkNamesSelected: Bool, reviewDeferred: Bool,
+                                               reviewOnScreen: Bool) -> LinkLookupFollowUp {
+        guard linkNamesSelected else { return .nothing }
+        guard pickStillPending else { return reviewDeferred ? .buildReview : .nothing }
+        return reviewOnScreen ? .pickCommit : .buildReview
     }
 
     /// The diff of a link's commits read from the checkout: one commit; or a range from the commit before its first one
