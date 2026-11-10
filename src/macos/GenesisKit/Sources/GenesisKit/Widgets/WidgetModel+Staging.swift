@@ -82,6 +82,22 @@ extension WidgetModel {
         return true
     }
 
+    /// A Send of `card` while its own answer field holds words or media: the words become its staged note and go with
+    /// the staged pick, and the field empties only once the hub has the note (`sendDecisionNow`); media cannot be staged,
+    /// so it goes with the pick and the words through the durable outbox, as a click with media does. False when the
+    /// field is empty, so the staged pick and note go as they are.
+    func sendOwnAnswerWithStage(_ card: WidgetCard) -> Bool {
+        let typed = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard card.kind == "decision", card.needsAnswer, !typed.isEmpty || !draft.assetIds.isEmpty else { return false }
+        PerfLog.mark("widget.send-staged own answer goes with \(card.sourceId)")
+        guard draft.assetIds.isEmpty else {
+            submit(choice: stagedOption(card.sourceId, stored: card.draftOption), answering: true)
+            return true
+        }
+        sendDecisionNow(card, option: nil, note: typed)
+        return true
+    }
+
     /// The pick a card shows as staged: the one staged here a moment ago, else the snapshot's.
     public func stagedOption(_ sourceId: String, stored: String?) -> String? {
         if let pending = pendingStage[sourceId] { return pending.isEmpty ? nil : pending }
@@ -428,6 +444,15 @@ extension WidgetModel {
     /// `known`: items the caller holds whose pick was staged here a moment ago, before a snapshot listed them; the
     /// send waits for that stage (`afterMutations`), so a Send now right after the click sends it.
     public func sendStaged(_ ids: [String], thenClose: Bool = false, known: [WidgetInboxItem] = []) {
+        // Words typed in the own answer field of a decision being sent go with its staged pick, as Return there sends
+        // them. Send sent the ticked set alone, and the words left with the field when the card closed (2026-11-10: a
+        // 957-character note on a decision that takes several options).
+        if let card = ownAnswerCard, ids.contains(card.sourceId), !sendingDecisionIDs.contains(card.sourceId),
+           sendOwnAnswerWithStage(card) {
+            let rest = ids.filter { $0 != card.sourceId }
+            if !rest.isEmpty { sendStaged(rest, thenClose: thenClose, known: known) }
+            return
+        }
         var chosen = stagedItems.filter { ids.contains($0.sourceId) }
         for item in known where ids.contains(item.sourceId) && !chosen.contains(where: { $0.sourceId == item.sourceId })
             && (stagedOption(item.sourceId, stored: item.draftOption) != nil || item.draft != nil) {
