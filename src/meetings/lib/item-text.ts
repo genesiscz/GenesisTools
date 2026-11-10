@@ -9,7 +9,12 @@ function span(fromSec: number, toSec: number): string {
     return from === to ? from : `${from}–${to}`;
 }
 
-export function itemWhat(item: MeetingItem): string {
+/**
+ * One line for an item. `width`: the column it must fit; a term's quote is shortened inside its quotes so the source
+ * stays visible (`items` cuts the cell at 90 characters, which cut the source off a long quote). Other text is cut by
+ * the caller.
+ */
+export function itemWhat(item: MeetingItem, options: { width?: number } = {}): string {
     if (item.kind === "speaker-range") {
         const who = item.speaker ?? `? (${item.candidates?.join(", ") || "unknown"})`;
         return `${item.label} ${span(item.fromSec, item.toSec)} → ${who}`;
@@ -30,17 +35,27 @@ export function itemWhat(item: MeetingItem): string {
     }
 
     const occurrences = typeof item.evidence?.occurrences === "number" ? ` ×${item.evidence.occurrences}` : "";
-    return `${item.heard} → ${termAnswer(item)}${occurrences}`;
+    const head = `${item.heard} → `;
+    const room = options.width === undefined ? undefined : options.width - head.length - occurrences.length;
+    return `${head}${termAnswer(item, room)}${occurrences}`;
 }
 
-/** A term's right spelling; else the document line its words read aloud; else what they mean; "?" when none is known. */
-function termAnswer(item: Extract<MeetingItem, { kind: "term" }>): string {
+/**
+ * A term's right spelling; else the document line its words read aloud; else what they mean; "?" when none is known.
+ * `room`: the characters the answer may take; only a quote is shortened to it, and its source always stays.
+ */
+function termAnswer(item: Extract<MeetingItem, { kind: "term" }>, room?: number): string {
     if (item.proposed) {
         return item.proposed;
     }
 
     if (item.quote) {
-        return `"${item.quote.text}" (quote from ${item.quote.source})`;
+        const source = ` (quote from ${item.quote.source})`;
+        const text = item.quote.text;
+        // The two quote marks and at least one character of the quote stay.
+        const fits = room === undefined ? text.length : Math.max(1, room - source.length - 2);
+        const shown = text.length <= fits ? text : `${text.slice(0, Math.max(0, fits - 1))}…`;
+        return `"${shown}"${source}`;
     }
 
     if (item.meaning) {

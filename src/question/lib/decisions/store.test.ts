@@ -2611,6 +2611,31 @@ describe("chat answers read from where the last read stopped", () => {
         ).toEqual([]);
         expect(reads).toHaveLength(2);
     });
+
+    test("the backfill reports an answer that rules a letter out for the agent and never records it, even with apply", async () => {
+        const { file, events } = scratch();
+        const [row] = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ prompt: "Which step?", options: ["lint", "test", "build"] }],
+        });
+        const later = new Date(Date.parse(row.createdTs ?? "") + 60_000).toISOString();
+        const read = async () => ({
+            found: true,
+            issues: [],
+            entries: [
+                { line: -1, role: "user" as const, text: "D1 b) not c)", paths: [], commits: [], timestamp: later },
+            ],
+        });
+        const transcript = { kind: "claude", path: "/fixture/abc.jsonl" };
+
+        const applied = await backfillChatAnswers({ session: "abc", file, events, apply: true, transcript, read });
+        expect(applied).toMatchObject({
+            unambiguous: [],
+            forAgent: [{ number: 1, option: "b", excluded: "c" }],
+            recorded: [],
+        });
+        expect(readDecisions(file)[0]).toMatchObject({ id: row.id, state: "open" });
+    });
 });
 
 describe("a revision and a staged pick (F12)", () => {

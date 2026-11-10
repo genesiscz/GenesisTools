@@ -706,4 +706,17 @@ describe("lastLiveMarker", () => {
         expect(local.lastLiveMarker("m1", dir)).toEqual({ marker: "paused", epochMs: 9000 });
         expect(local.lastLiveMarker("missing", dir)).toBeNull();
     });
+
+    test("a live transcript that stats but cannot be read is no marker, not a throw, and is read again next time", () => {
+        const dir = mkdtempSync(join(tmpdir(), "wispr-markers-"));
+        // A folder where the file belongs: statSync succeeds, readFileSync fails (EISDIR), like a file gone mid-read.
+        const path = join(dir, "meetings", "m2", "live.ndjson");
+        mkdirSync(path, { recursive: true });
+
+        expect(local.lastLiveMarker("m2", dir)).toBeNull();
+
+        rmSync(path, { recursive: true });
+        writeFileSync(path, SafeJSON.stringify({ id: "r", marker: "resumed", epochMs: 7000 }));
+        expect(local.lastLiveMarker("m2", dir)).toEqual({ marker: "resumed", epochMs: 7000 });
+    });
 });

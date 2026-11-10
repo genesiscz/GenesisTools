@@ -115,7 +115,10 @@ const captureSchema = z.object({
             region: z.enum(OCR_REGIONS).default("frame"),
             /** Whole-frame reads or overlapping region tiles without language correction. */
             read: z.enum(OCR_READS).default("tiles"),
-            /** The longest side of one tile in frame pixels: smaller tiles read smaller text and cost more CPU. */
+            /**
+             * The longest side of one grid cell in frame pixels, before each tile's 3% overlap past its inner edges:
+             * smaller cells read smaller text and cost more CPU.
+             */
             tilePx: z.number().int().min(256).max(8192).default(DEFAULT_OCR_TILE_PX),
         })
         .prefault({}),

@@ -544,6 +544,7 @@ interface ScreenOptions {
 
 async function timeline(store: MeetingStore, record: MeetingRecord, opts: ScreenOptions): Promise<void> {
     try {
+        // A --frame the timeline does not hold throws, so it exits 1 with the way to list the frames.
         const view = await screenTimeline({ store, record, all: opts.all === true, frame: opts.frame });
 
         if (opts.json) {
@@ -554,7 +555,8 @@ async function timeline(store: MeetingStore, record: MeetingRecord, opts: Screen
         for (const frame of view.frames) {
             out.println(`${formatClock(frame.meetingSec)}  d${frame.displayId ?? "?"}  ${frame.file}`);
 
-            for (const line of frame.changed) {
+            // --frame and --all add every line of the frame; text mode prints those, as --json does.
+            for (const line of frame.lines ?? frame.changed) {
                 out.println(`    ${line.text}`);
             }
         }

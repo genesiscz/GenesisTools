@@ -124,6 +124,10 @@ function plistString(plist: string, key: string): string | null {
     });
 
     if (run.exitCode !== 0) {
+        logger.debug(
+            { plist, key, exitCode: run.exitCode, stderr: run.stderr.toString().trim() },
+            "default-browser: plutil could not read the key"
+        );
         return null;
     }
 

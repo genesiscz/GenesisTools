@@ -420,7 +420,16 @@ export function lastLiveMarker(meetingId: string, dir = WISPR_DIR): LiveMarker |
     }
 
     let marker: LiveMarker | null = null;
-    const lines = readFileSync(path, "utf8").split("\n");
+    let lines: string[];
+
+    // Wispr Flow writes the file while it records: it can go between the stat and the read. No marker, and nothing
+    // cached, so the next poll reads it again.
+    try {
+        lines = readFileSync(path, "utf8").split("\n");
+    } catch (err) {
+        log.warn({ err, path }, "the live transcript could not be read; no marker this time");
+        return null;
+    }
 
     for (let index = lines.length - 1; index >= 0 && !marker; index--) {
         if (!lines[index].includes('"marker"')) {

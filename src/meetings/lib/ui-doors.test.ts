@@ -300,6 +300,13 @@ describe("screen timeline", () => {
             ["Item two"],
         ]);
         expect(view.frames[1]).toMatchObject({ meetingSec: 20, width: 400, height: 200, lineCount: 2 });
+
+        // One frame by its file carries every line; a file the timeline does not hold is an error, not an empty view.
+        const one = await screenTimeline({ store: meetings, record: created, frame: rows[1]!.file });
+        expect(one.frames.map((frame) => frame.lines?.map((line) => line.text))).toEqual([["Agenda", "Item two"]]);
+        await expect(screenTimeline({ store: meetings, record: created, frame: "frames/nosuch.png" })).rejects.toThrow(
+            `No frame "frames/nosuch.png" in ${created.id}`
+        );
     });
 });
 

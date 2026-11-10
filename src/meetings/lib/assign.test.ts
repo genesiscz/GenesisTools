@@ -263,6 +263,93 @@ describe("calendar candidates with the meeting's people", () => {
             "short",
         ]);
     });
+
+    test("a name without letters, or an unmarked copy of the user, is no shared person; a part of a name keeps the entry", () => {
+        const start = "2026-11-09T13:00:00.000Z";
+        const end = "2026-11-09T14:00:00.000Z";
+        const entries = [
+            entry({
+                entryId: "noise",
+                title: "Time reports",
+                start,
+                end,
+                people: [{ name: "---" }, { name: "Owner Example" }, { name: "Dana Example" }],
+            }),
+            entry({ entryId: "partly", title: "Sync", start, end, people: [BOB, ME] }),
+            entry({ entryId: "exact", title: "Planning", start, end, people: [ALICE, ME] }),
+        ];
+        // The user once marked and once not (participants and attendance), and a name with no letters.
+        const people = [
+            { name: "Owner Example", self: true },
+            { name: "Owner Example" },
+            { name: "(QT)" },
+            { name: "Bob" },
+            { name: "Alice Novak" },
+        ];
+
+        expect(
+            calendarCandidates({ entries, start, end, slackMin: 15, people }).map((c) => [
+                c.entry.entryId,
+                c.sharedPeople,
+            ])
+        ).toEqual([
+            ["exact", 1],
+            ["partly", 0],
+        ]);
+    });
+});
+
+describe("viewProposals with the meeting's people", () => {
+    test("participants and attendance filter the calendar; a partly matching name still pairs the entry's people and labels", async () => {
+        const start = "2026-11-04T14:00:00.000Z";
+        const entries = [
+            entry({
+                entryId: "sync",
+                title: "Offers 2.0 sync",
+                start,
+                end: "2026-11-04T14:30:00.000Z",
+                people: [BOB, ME],
+            }),
+            entry({
+                entryId: "reports",
+                title: "Time reports",
+                start: "2026-11-04T14:10:00.000Z",
+                end: "2026-11-04T14:25:00.000Z",
+                people: [{ name: "Dana Example" }, { name: "Owner Example" }, { name: "---" }],
+            }),
+        ];
+        const { store, config, deps, create } = setup({ entries });
+        await config.addProject("offers");
+        await config.setProjectLabels("offers", { add: ["Offers 2.0"] });
+        await config.pairPeople({
+            project: "offers",
+            people: [BOB],
+            by: { kind: "manual", at: "2026-11-01T10:00:00.000Z" },
+        });
+        const meeting = await create("Weekly", start, {
+            participants: [
+                { name: "Bob", from: [] },
+                { name: "Owner Example", self: true, from: [] },
+            ],
+            attendance: {
+                from: "teams",
+                people: [
+                    { name: "Owner Example", fromSec: 0, toSec: 1800 },
+                    { name: "(QT)", fromSec: 0, toSec: 1800 },
+                ],
+            },
+        });
+
+        const view = await viewProposals(store, meeting, deps);
+
+        expect(view.proposals.calendars.map((c) => [c.entry.entryId, c.sharedPeople])).toEqual([["sync", 0]]);
+        expect(view.proposals.projects.find((p) => p.project === "offers")?.reasons.map(reasonText)).toEqual([
+            '1 of 1 people of "Offers 2.0 sync" paired: Bob Smith',
+        ]);
+        expect(view.proposals.labels).toEqual([
+            { project: "offers", label: "Offers 2.0", reason: '"Offers 2.0" is in the title' },
+        ]);
+    });
 });
 
 describe("ask each time", () => {

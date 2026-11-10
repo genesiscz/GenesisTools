@@ -73,6 +73,9 @@ const STATUS_COLOR: Record<MeetingItem["status"], (text: string) => string> = {
     rejected: pc.dim,
 };
 
+/** The WHAT column's width: a longer item is cut, but a quote keeps its source (`itemWhat`). */
+const WHAT_WIDTH = 90;
+
 function printItems(record: MeetingRecord, items: MeetingItem[]): void {
     const table = createBoxTable(["ID", "Q", "KIND", "STATUS", "CONF", "WHAT", "RULES"]);
 
@@ -83,7 +86,7 @@ function printItems(record: MeetingRecord, items: MeetingItem[]): void {
             item.kind,
             STATUS_COLOR[item.status](item.status),
             item.confidence === undefined ? "—" : `${Math.round(item.confidence * 100)} %`,
-            truncateDisplay(itemWhat(item), 90),
+            truncateDisplay(itemWhat(item, { width: WHAT_WIDTH }), WHAT_WIDTH),
             item.rules.join(", "),
         ]);
     }

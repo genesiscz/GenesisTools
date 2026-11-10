@@ -67,9 +67,9 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `dictionary test "<phrase>" [--project <name>] [--json]` | The phrase after the dictionary, with each entry that fired and the words close to a term; reads only |
 | `overview [--days 14] [--json]` | The recent meetings by day with their badges (no project, open questions, unclear speakers, recording only, transcript only, suggestions at or above `global.suggest.applyAbove`) and the meetings that wait for you; the Meetings window reads it |
 | `projects preview [--draft <json>] [--limit 20] [--json]` | Which project each recent meeting matches by the saved rules, and with a draft (`{"work":{"titleWords":["sync"],"calendars":[],"folders":{"wisprflow":[]}}}`); reads only |
-| `screen <meeting> --timeline [--all] [--json]` | Every frame in time order with the OCR lines that changed since the display's earlier frame, in frame pixels |
-| `screen <meeting> --timeline --frame <file> [--json]` | One frame of that timeline (its file as the timeline names it), with its changed lines and every line |
-| `record cost [--json]` | The CPU each capture choice costs: 268.6 ms per kept frame (the meetings-ocr bench) and the newest recording's frame rate |
+| `screen <meeting> --timeline [--all] [--json]` | Every frame in time order with the OCR lines that changed since the display's earlier frame, in frame pixels; `--all` adds every line of each frame, and the text output then lists those |
+| `screen <meeting> --timeline --frame <file> [--json]` | One frame of that timeline (its file as the timeline names it), with its changed lines and every line; a file the timeline does not hold exits 1 |
+| `record cost [--json]` | The CPU each capture choice costs: 368.6 ms per kept frame (the meetings-ocr bench) and the newest recording's frame rate |
 | `export <meeting> [--to <folder>] [--dry-run] [--if-edited beside\|refuse\|replace] [--json]` | The polished transcript (md, play links, dictionary, confirmed items) as `<folder>/<meeting id>.md`; the folder is `projects.<p>.export.folder` unless `--to` names one; the same meeting again replaces its file. When the note holds edits that the last export did not write, `--if-edited` decides (default `global.export.ifEdited`, `beside`): `beside` writes the new note as `<meeting id>.export-<local time>.md` next to it, `refuse` writes nothing and exits 1 with `[export-edited]`, `replace` overwrites the edits |
 | `window [meeting] [--place needs\|all\|<project>] [--tab transcript\|screen\|items\|speakers\|context] [--no-focus] [--no-build]` | Open the Meetings window of GenesisTools.app (the `meetings` app part); Settings → Meetings holds its pages. When the installed app lacks the Meetings part, the command builds it first; `--no-build` fails instead and says how to build it |
 | `config show [path] [--json]` (alias `config get`), `config set <path> <json>`, `config unset <path>`, `config edit '[{"path": …, "value": …, "expect": …}, {"path": …, "unset": true}]'` | Read and write one setting; the path is dotted (`global.capture.activeFps`) or a JSON array of keys (`["projects","a.b","labels"]`); a write that would make the config invalid writes nothing. A path that names no setting (`global.capture.activFps`) is refused by `show` and `set` with the closest setting; `unset` still removes such a key. `config edit` makes several changes in one write: all of them, or none when one is refused |
@@ -152,9 +152,9 @@ each capture and each display switch is always read whole.
 
 `capture.ocr.read` selects `frame` or `tiles` (default) for a full-frame read, including the first frame and display switches.
 `frame` keeps the existing whole-image read with language correction. `tiles` reads the original image through Vision
-regions, with language correction off: a grid whose tiles are at most `capture.ocr.tilePx` (default 960) frame pixels
-on their longest side, top row first, so a 2880 px frame is read as 3×2. Each tile extends 3% of the image past its
-inner edges. A line read twice, or a seam tile's cut piece of a line another tile read whole, is kept once (the whole
+regions, with language correction off: a grid whose cells are at most `capture.ocr.tilePx` (default 960) frame pixels
+on their longest side, top row first, so a 2880 px frame is read as 3×2. Each tile is its cell plus 3% of the image past
+each inner edge, so a tile can be larger than `tilePx` (the middle tile of a 2880 px frame is 1133 px wide). A line read twice, or a seam tile's cut piece of a line another tile read whole, is kept once (the whole
 line); block bounds stay in full-image coordinates. On 12 kept frames of three displays (2026-11-09) the 3×2 grid read
 86% of the words any grid read, against 80% for the two strips and 42% for one region, at about 400 ms CPU per frame
 against 180 ms; a smaller `tilePx` reads smaller text and costs more CPU (720: 88%, 440 ms). No tile crop files are made. The existing vertical-crop fallback for images
@@ -252,9 +252,10 @@ as an open question is.
   the microphone is ignored for that stretch.
 - R20, swapped labels: in 5 min windows of a calibrated recording, the user's label sits on the call's channel (median
   microphone share 0.3 or less) while one platform-named label sits on the microphone (0.7 or more) for 10 min or
-  more, and the two read the other way elsewhere in the call. The recorder swapped their names there: the other
-  label's lines are the user's and the user's label's lines are the other person's, one item each over the stretch
-  (0.5 plus half the gap of the two medians, at most 0.9). R18 and the per-line rules leave those lines alone.
+  more (from the first swapped line's start to the last one's end, within 30 s), and the two read the other way
+  elsewhere in the call. The recorder swapped their names there: the other label's lines are the user's and the user's
+  label's lines are the other person's, one item each over the stretch (0.5 plus half the gap of the two medians, at
+  most 0.9). R16 (arrivals), R18 and the per-line rules leave those lines alone.
 - `join`: a word cut between two lines ("dot" + "áhnu"), or one sentence cut between two whole words: a `joined`
   value with a space ("jsem zvědavej") keeps the space.
 - `term` from the word check (rule `unknown-word`, 30 %): a word no dictionary layer knows. It proposes nothing (the

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { changedLines, frameBoxes, imageSize, type OcrBox } from "@genesiscz/utils/macos/ocr-boxes";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -38,7 +39,7 @@ export interface ScreenTimeline {
  * Every frame of a meeting's screen recording in time order, each with the OCR lines that changed since the same
  * display's earlier frame. A frame's size is read once per display (every frame of one display has its size). Reads
  * only. `all` adds every line of each frame. `frame` keeps only the frame with that file (its changed lines still
- * compare with the display's earlier frame) and adds its every line.
+ * compare with the display's earlier frame) and adds its every line; a `frame` it does not hold throws.
  */
 export async function screenTimeline(options: {
     store: MeetingStore;
@@ -94,6 +95,13 @@ export async function screenTimeline(options: {
             changed,
             ...(options.all || options.frame ? { lines: boxes } : {}),
         });
+    }
+
+    // A frame the timeline does not hold is an error, not an empty answer: the window would show no text and no reason.
+    if (options.frame && frames.length === 0) {
+        throw new Error(
+            `No frame "${options.frame}" in ${record.id}. List the frames: ${toolCommand("meetings", "screen", record.id, "--timeline")}`
+        );
     }
 
     const names = new Map((record.recording?.displays ?? []).map((display) => [display.id, display.name]));

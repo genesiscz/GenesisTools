@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { z } from "zod";
 import { prepareFindings } from "./add-findings";
 import { findingSchema } from "./findings";
+import { composedMeeting } from "./sources";
 import { checkAnchors, correctTranscript, ledgerEntryFor, outcomeText } from "./transcript-corrections";
 
 function line(speaker: string, startSec: number, text: string): TranscriptEntry {
@@ -60,6 +62,31 @@ describe("the corrections pipeline", () => {
         expect(decomposed).not.toBe(composed);
         expect(result.speakers.filter((speaker) => speaker.name === composed)).toEqual([{ name: composed, lines: 2 }]);
         expect(result.entries.every((entry) => entry.speaker === entry.speaker.normalize("NFC"))).toBe(true);
+    });
+
+    test("a source label in decomposed form matches the composed label the CLI stores, once the source composes it", () => {
+        const label = "Zoë Example";
+        const source: SourceMeeting = {
+            sourceMeetingId: "w1",
+            title: "Planning",
+            start: "2026-11-02T15:00:00.000Z",
+            participants: [{ name: label.normalize("NFD"), from: ["wisprflow"] }],
+            speakers: [{ speakerId: 1, name: label.normalize("NFD"), origin: "platform" }],
+            transcript: [line(label.normalize("NFD"), 0, "Ahoj."), line(label.normalize("NFD"), 10, "Jak se máš?")],
+            folders: [],
+        };
+        const record = meetingRecordSchema.parse({
+            ...base,
+            items: [item({ id: "i1", kind: "speaker-range", label, fromSec: 0, toSec: 10, speaker: "Carol Example" })],
+        });
+        const correct = (meeting: SourceMeeting) =>
+            correctTranscript({ record, transcript: meeting.transcript, config, format: "md", dictionary: false });
+        const composed = composedMeeting(source);
+
+        expect(correct(source).outcomes).toContainEqual(expect.objectContaining({ item: "i1", status: "not-found" }));
+        expect(correct(composed).entries.map((entry) => entry.speaker)).toEqual(["Carol Example", "Carol Example"]);
+        expect(composed.speakers[0]?.name).toBe(label);
+        expect(composed.participants[0]?.name).toBe(label);
     });
 
     test("gives an outcome per item: applied to its lines, not found, or shadowed by another item", () => {
