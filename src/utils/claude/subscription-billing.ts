@@ -35,8 +35,9 @@ const BILLING_SALT = "59cf53e54c78";
  * 2.1.280 or newer is required" (`claude_code_version_too_old`), while Sonnet 5 and Haiku
  * still passed. A replay with 2.1.280 and the same salt returned 200, so the salt is not
  * per-version. Bump this when a new model demands it; keep it at or below the installed CLI.
+ * On 2026-11-10 Fable 5.2 answered the same error naming 2.1.290 (installed CLI: 2.1.318).
  */
-export const CC_VERSION = "2.1.280";
+export const CC_VERSION = "2.1.290";
 
 /** System prompt line required by subscription OAuth API. */
 export const SUBSCRIPTION_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude.";
