@@ -600,27 +600,7 @@ await registerRequestedTrees({
 });
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "ai" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-
-        // An aborted prompt is not a failure. `tools claude login` has always
-        // exited 0 quietly on Ctrl-C, and the login flows now throw the same
-        // `Cancelled` through this entrypoint, so `tools ai accounts login`
-        // reported the abort as `error: Cancelled` with exit 1 (gap/cli).
-        if (message.includes("ExitPromptError") || message === "Cancelled") {
-            await out.flush();
-            process.exit(0);
-        }
-
-        p.log.error(message);
-        // Drain before exiting: `out.*` and clack both write fire-and-forget, so
-        // exiting in the same tick can tear the pipe down with the diagnostic
-        // still queued and leave the user an empty exit 1 (PR #360 review t12).
-        await out.flush();
-        process.exit(1);
-    }
+    await runTool(program, { tool: "ai" });
 }
 
 try {

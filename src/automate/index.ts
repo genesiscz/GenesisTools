@@ -10,7 +10,6 @@ import { registerShowCommand } from "@app/automate/commands/show.ts";
 import { registerStepCommands } from "@app/automate/commands/steps.ts";
 import { registerTaskCommand } from "@app/automate/commands/task.ts";
 import { ensureStorage } from "@app/automate/lib/storage.ts";
-import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -53,13 +52,7 @@ async function main(): Promise<void> {
         return;
     }
 
-    try {
-        await runTool(program, { tool: "automate" });
-    } catch (error) {
-        logger.error({ error }, "Automate command failed");
-        p.log.error(error instanceof Error ? error.message : String(error));
-        process.exit(1);
-    }
+    await runTool(program, { tool: "automate" });
 }
 
 main().catch((err) => {

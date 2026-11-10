@@ -540,20 +540,7 @@ enhanceHelp(program);
 
 // Main function
 async function main() {
-    try {
-        await runTool(program, { tool: "mcp-manager" });
-    } catch (error: unknown) {
-        const opts = program.opts();
-        if (error instanceof Error) {
-            logger.error(`✖ Error: ${error.message}`);
-            if (opts.verbose) {
-                logger.error(error.stack);
-            }
-        } else {
-            logger.error(`✖ Error: ${error}`);
-        }
-        process.exit(1);
-    }
+    await runTool(program, { tool: "mcp-manager" });
 }
 
 // Run the tool

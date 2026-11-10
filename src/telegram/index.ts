@@ -1,5 +1,4 @@
 import { runTool } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";
 import { registerContactsCommand } from "./commands/contacts";
@@ -20,7 +19,4 @@ registerContactsCommand(program);
 registerHistoryCommand(program);
 registerWatchCommand(program);
 
-await runTool(program, { tool: "telegram" }).catch((err) => {
-    out.error(err);
-    process.exit(1);
-});
+await runTool(program, { tool: "telegram" });

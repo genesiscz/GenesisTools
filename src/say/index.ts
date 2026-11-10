@@ -934,13 +934,7 @@ async function printVoiceList(filter?: SayProvider): Promise<void> {
 }
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "say" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        out.error(message);
-        process.exit(1);
-    }
+    await runTool(program, { tool: "say" });
 }
 
 // Top-level await keeps the event loop alive for the full synth path.

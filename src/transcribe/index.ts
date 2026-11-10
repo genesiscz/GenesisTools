@@ -616,13 +616,7 @@ async function listAvailableTranscribeProviders(): Promise<string[]> {
 }
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "transcribe" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        out.error(message);
-        process.exit(1);
-    }
+    await runTool(program, { tool: "transcribe" });
 }
 
 // Guarded: this file is imported by transcribe.test.ts for its pure formatters.

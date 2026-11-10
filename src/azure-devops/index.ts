@@ -22,7 +22,6 @@
  *   tools azure-devops testplan <list|show|search|create|update|delete|suite|points|outcome|case> [options]
  */
 
-import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
 import { azLoginSuggestionBlock } from "@app/azure-devops/lib/az-cli.utils";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -297,27 +296,7 @@ Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-de
 }
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "azure-devops" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-
-        if (isSslError(message)) {
-            exitWithSslGuide(error);
-        }
-
-        if (isAuthError(message)) {
-            exitWithAuthGuide(error);
-        }
-
-        logger.error(message);
-
-        if (error instanceof Error && error.stack) {
-            logger.debug(error.stack);
-        }
-
-        process.exit(1);
-    }
+    await runTool(program, { tool: "azure-devops" });
 }
 
 main().catch((err) => {

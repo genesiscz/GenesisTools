@@ -189,17 +189,7 @@ async function main(): Promise<void> {
 
     const program = buildProgram();
 
-    try {
-        await runTool(program, { tool: "darwinkit" });
-    } catch (error) {
-        if (process.stdout.isTTY) {
-            p.log.error(error instanceof Error ? error.message : String(error));
-        } else {
-            out.error(error instanceof Error ? error.message : String(error));
-        }
-
-        process.exit(1);
-    }
+    await runTool(program, { tool: "darwinkit" });
 }
 
 try {

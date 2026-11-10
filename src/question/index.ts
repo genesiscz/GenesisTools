@@ -16,7 +16,4 @@ if (process.argv.slice(2).length === 0) {
     process.exit(0);
 }
 
-await runTool(program, { tool: "question" }).catch((err) => {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
-});
+await runTool(program, { tool: "question" });

@@ -22,7 +22,6 @@ import { registerPresetsCommand } from "@app/tmux/commands/presets";
 import { registerSessionCommand } from "@app/tmux/commands/session";
 import { registerSessionsCommand } from "@app/tmux/commands/sessions";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 const program = new Command();
@@ -42,7 +41,4 @@ registerPresetsCommand(program);
 
 enhanceHelp(program);
 
-await runTool(program, { tool: "tmux" }).catch((error) => {
-    out.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-});
+await runTool(program, { tool: "tmux" });
