@@ -26,27 +26,16 @@ struct SpeakerRow<Chips: View>: View {
     }
 
     var body: some View {
-        Group {
+        // The play button stands before the name it plays. At the row's trailing end it was a window's width from the
+        // name, and in a narrow column it sat with the field under the last sign.
+        HStack(alignment: .top, spacing: 8) {
+            playButton.frame(width: Self.playWidth, height: 17)
             if stacked {
-                VStack(alignment: .leading, spacing: 6) {
-                    labels.frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(spacing: 8) {
-                        playButton
-                        field.frame(maxWidth: 260)
-                    }
-                }
+                labels(fieldUnderNumbers: true).frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                // Top aligned: beside a label with three signs the play button and the field sat at the middle of
-                // the block, far from the name they belong to.
-                HStack(alignment: .top, spacing: 12) {
-                    labels
-                    Spacer()
-                    HStack(spacing: 12) {
-                        playButton
-                        field.frame(width: 220)
-                    }
-                    .frame(height: Self.nameBlockHeight)
-                }
+                labels(fieldUnderNumbers: false)
+                Spacer()
+                field.frame(width: 220).frame(height: Self.nameBlockHeight)
             }
         }
         .padding(.vertical, 3)
@@ -54,14 +43,17 @@ struct SpeakerRow<Chips: View>: View {
 
     /// The height of the name and the numbers under it, which the play button and the field centre on.
     static var nameBlockHeight: CGFloat { 32 }
+    /// The play button's column: a label that cannot play keeps it, so every name starts on one line.
+    static var playWidth: CGFloat { 20 }
 
-    private var labels: some View {
+    private func labels(fieldUnderNumbers: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(verbatim: speaker.label).font(.system(size: 13, weight: .medium))
             Text(verbatim: [Plural.count(speaker.turns, "turn"), MeetingsFormat.length(speaker.spokenSec).map { "\($0) spoken" },
                             speaker.words.map { Plural.count($0, "word") }, MeetingsWords.speakerSpan(speaker),
                             MeetingsWords.origin(speaker.origin)].compactMap { $0 }.joined(separator: " · "))
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
+            if fieldUnderNumbers { field.frame(maxWidth: 260).padding(.vertical, 4) }
             SpeakerHints(hints: hints, chips: chips)
         }
         .frameProbe("meetings.speaker.labels")
@@ -71,6 +63,8 @@ struct SpeakerRow<Chips: View>: View {
     private var playButton: some View {
         if let play, let first = speaker.firstSec {
             IconButton(systemName: "play.fill", tooltip: "Play \(speaker.label) from the first line, at \(MeetingsFormat.clock(first))", action: play)
+        } else {
+            Color.clear
         }
     }
 

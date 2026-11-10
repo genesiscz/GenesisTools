@@ -232,7 +232,8 @@ struct SpeakerTalkTimeLanes: View {
                 context.fill(Path(roundedRect: rect, cornerRadius: 2.5), with: .color(color))
                 for tick in TalkTimeLayout.shownTicks(block) {
                     let line = Path(CGRect(x: tick, y: rect.minY + 1.5, width: 1, height: rect.height - 3))
-                    context.fill(line, with: .color(Color(nsColor: .windowBackgroundColor).opacity(0.7)))
+                    // Quiet: at 0.7 the ticks of a long meeting drew over the turns they divide.
+                    context.fill(line, with: .color(Color(nsColor: .windowBackgroundColor).opacity(0.4)))
                 }
             }
         }
