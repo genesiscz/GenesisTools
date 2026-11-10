@@ -1,10 +1,11 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { parseCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-changes";
 import { findCodexRollout, isCodexRolloutPath } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
+import { changeLogPath } from "@genesiscz/utils/agents/change-log";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -55,6 +56,7 @@ function jsonl(lines: Line[]): string {
 function row(turn: string, path: string, seconds: number, extra: Partial<LoggedChange> = {}): LoggedChange {
     return {
         ts: at(seconds),
+        provider: "claude",
         session: "fixture-session",
         turn,
         tool: "Bash",
@@ -636,6 +638,20 @@ describe("computeSessionChanges", () => {
 
         expect(logOnly.files.map((file) => [file.path, file.confidence])).toEqual([[`${REPO}/src/a.ts`, "low"]]);
         expect(logOnly.turns[0]?.excluded.map((item) => item.reason)).toEqual(["temp-dir"]);
+    });
+
+    it("loadSessionChanges reads the session's change log itself when the caller passes no rows", () => {
+        const sessionId = `log-reader-${process.pid}`;
+        const file = changeLogPath(sessionId);
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, `${jsonl([{ ...row("p1", `${REPO}/src/made.ts`, 1), session: sessionId }])}\n`);
+
+        const loaded = loadSessionChanges({ sessionId, home: HOME, tempDirs: [TEMP], repoRoot });
+        const passed = loadSessionChanges({ sessionId, home: HOME, tempDirs: [TEMP], repoRoot, log: [] });
+
+        expect(loaded.transcriptPath).toBeNull();
+        expect(loaded.files.map((item) => [item.path, item.via])).toEqual([[`${REPO}/src/made.ts`, "bash"]]);
+        expect(passed.files).toEqual([]);
     });
 
     it("never reports an unknown after-state as a deleted file", () => {
