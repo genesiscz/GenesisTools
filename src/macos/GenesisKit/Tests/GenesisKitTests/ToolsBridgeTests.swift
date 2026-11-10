@@ -196,7 +196,7 @@ final class ToolsBridgeTests: XCTestCase {
                 )
                 XCTFail("an inherited pipe must not produce partial success")
             } catch let error as ToolsBridgeError {
-                XCTAssertEqual(error, .timeout(seconds: 1))
+                XCTAssertEqual(error, .timeout(seconds: 1, command: ToolsBridgeError.command(["-c", "/bin/sleep 2 \(redirect) & printf held"])))
             }
             XCTAssertLessThan(Date().timeIntervalSince(started), 1.8)
         }
@@ -511,6 +511,10 @@ final class ToolsClientTests: XCTestCase {
         XCTAssertEqual(read.exitCode, 2)
         XCTAssertFalse(read.named)
         XCTAssertEqual(failure(status: 3).message, "tools hub pr fetch exited 3")
+        XCTAssertEqual(failure(stdout: "No agents found for that session.\n", status: 1).message,
+                       "tools hub pr fetch exited 1: No agents found for that session.", "an empty stderr leaves the reason to stdout")
+        XCTAssertEqual(failure(stdout: "ignored\n", stderr: "boom\n", status: 1).message, "tools hub pr fetch exited 1: boom",
+                       "stderr wins when it says something")
         let indented = failure(stderr: "    error: {\n      \"x\": 1\n    }\n", status: 1)
         XCTAssertFalse(indented.named, "an indented error: is a field of a log entry, not Commander's line")
     }
@@ -546,7 +550,19 @@ final class ToolsClientTests: XCTestCase {
                        "LANG", "LC_ALL", "TMPDIR", "GITLAB_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GENESIS_TOOLS_HOME",
                        "GENESIS_HUB_SERVER", "PROFILE", "PROFILE_TO_STDERR"]
         for key in allowed { XCTAssertTrue(ToolsBridge.allowsEnvironmentKey(key), key) }
+        // The names the hub's calls had before they moved onto the list (whole environment until 2026-11-10).
+        let fromTheWholeEnvironment = [
+            "GITHUB_PERSONAL_ACCESS_TOKEN", "TOOLS_SKIP_AUTOINSTALL", "TOOLS_AUTOINSTALL", "GENESIS_TOOLS_NO_EXEC",
+            "GENESIS_TOOLS_MASTER_KEY", "XDG_CONFIG_HOME", "GITLAB_PROJECT", "T3CODE_HOME", "LC_TIME", "GENESIS_TOOLS_APP_HOME",
+            "CODEBUFF_DATA_DIR", "KIMI_DATA_DIR", "OPENCLAW_DIR", "HERMES_HOME", "GOOSE_PATH_ROOT",
+        ]
+        for key in fromTheWholeEnvironment { XCTAssertTrue(ToolsBridge.allowsEnvironmentKey(key), key) }
         for key in ["AWS_SECRET_ACCESS_KEY", "DATABASE_URL", "OPENAI_API_KEY", "GITHUBX", "GIT", "XGIT_DIR"] {
+            XCTAssertFalse(ToolsBridge.allowsEnvironmentKey(key), key)
+        }
+        // A repository location from a git hook's environment would point every child's git at that repository.
+        for key in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE"] {
             XCTAssertFalse(ToolsBridge.allowsEnvironmentKey(key), key)
         }
         let scrubbed = ToolsBridge.scrubbedEnvironment(from: ["GIT_SSH_COMMAND": "ssh -i k", "GH_TOKEN": "t", "LEAK": "x"])
@@ -561,6 +577,12 @@ final class ToolsClientTests: XCTestCase {
         let script = #"printf '%s|%s|%s|%s' "$PROFILE" "$PROFILE_TO_STDERR" "${NOT_ALLOWED:-none}" "${GENESIS_TOOLS_TRACE_ID:+traced}""#
         let out = try bridge.output(["-c", script, "probe"])
         XCTAssertEqual(String(decoding: out, as: UTF8.self), "hub-pr|0|none|traced")
+
+        let git = ToolsBridge(binaryPath: "/bin/sh", server: nil, childEnvironment: { _ in
+            ["GIT_AUTHOR_NAME": "Alice", "GIT_DIR": "/fixture/hook-repo/.git"]
+        })
+        let gitOut = try git.output(["-c", #"printf '%s|%s' "$GIT_AUTHOR_NAME" "${GIT_DIR:-none}""#])
+        XCTAssertEqual(String(decoding: gitOut, as: UTF8.self), "Alice|none", "a child gets git's settings, never a hook's repository")
     }
 
     func testAFakeServerAnswersFirstAndAnArgvWithoutADoorRunsTheProcess() throws {
@@ -609,9 +631,19 @@ final class ToolsClientTests: XCTestCase {
     func testAProcessThatOutlivesTheLimitIsKilled() {
         let started = Date()
         XCTAssertThrowsError(try ToolsBridge(binaryPath: "/bin/sleep", server: nil).capture(["30"], timeout: 1)) { error in
-            XCTAssertEqual(error as? ToolsBridgeError, .timeout(seconds: 1))
+            XCTAssertEqual(error as? ToolsBridgeError, .timeout(seconds: 1, command: "tools 30"))
+            XCTAssertEqual("\(error)", "tools 30 did not finish within 1 s", "the text names the call and its limit")
         }
         XCTAssertLessThan(Date().timeIntervalSince(started), 6)
+    }
+
+    /// `Int(0.5)` is 0: a half-second limit ran nothing and failed at once. It rounds up to 1 s.
+    func testAFractionalLimitRoundsUpToAWholeSecond() throws {
+        XCTAssertEqual(ToolsBridge.limitSeconds(0.5), 1)
+        XCTAssertEqual(ToolsBridge.limitSeconds(0), 1)
+        XCTAssertEqual(ToolsBridge.limitSeconds(1.2), 2)
+        let capture = try ToolsBridge(binaryPath: "/bin/sh", server: nil).capture(["-c", "printf ran"], timeout: 0.5)
+        XCTAssertEqual(String(decoding: capture.stdout, as: UTF8.self), "ran")
     }
 
     /// The sandbox-home case: a face on `GENESIS_TOOLS_HOME` or a worktree's `GENESIS_TOOLS_BIN` never asks the

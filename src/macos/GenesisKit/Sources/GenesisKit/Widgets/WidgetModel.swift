@@ -2646,7 +2646,7 @@ public final class WidgetModel: ObservableObject {
                 _ = try await self.call(value, timeoutSeconds: timeoutSeconds)
                 completed?()
                 if self.settingsOnly { self.refreshSettings() }
-            } catch ToolsBridgeError.timeout(let seconds) where unanswered != nil {
+            } catch ToolsBridgeError.timeout(let seconds, _) where unanswered != nil {
                 PerfLog.mark("widget.error tools call exceeded \(seconds)s; the input is kept")
                 unanswered?(seconds)
             } catch {
