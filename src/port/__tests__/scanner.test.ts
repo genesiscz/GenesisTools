@@ -1,10 +1,11 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { userInfo } from "node:os";
+import * as captureModule from "@genesiscz/utils/process/capture";
+import * as cwdModule from "@genesiscz/utils/process/cwd";
 import * as linux from "@genesiscz/utils/process/linux-proc";
 import * as os from "@genesiscz/utils/process/os";
 import * as files from "@genesiscz/utils/process/process-files";
 import * as processes from "@genesiscz/utils/process/processes";
-import * as ps from "@genesiscz/utils/process/ps";
 import * as sockets from "@genesiscz/utils/process/sockets";
 import {
     getAllProcesses,
@@ -90,7 +91,7 @@ describe("port owner hydration", () => {
             threads: 2,
         }));
         const openFiles = spyOn(files, "listOpenFiles").mockReturnValue([]);
-        const cwd = spyOn(ps, "batchCwd").mockReturnValue(new Map());
+        const cwd = spyOn(cwdModule, "batchCwd").mockReturnValue(new Map());
         const user = spyOn(processes, "userName").mockReturnValue("fixture-user");
         const socket: sockets.SocketEntry = {
             pid: 42,
@@ -186,7 +187,7 @@ describe("Linux port scan network tables", () => {
         const udp = spyOn(linux, "readProcUdp").mockReturnValue([]);
         const cwdRead = spyOn(linux, "readProcCwd").mockReturnValue(null);
         const exeRead = spyOn(linux, "readProcExe").mockReturnValue(null);
-        const cwd = spyOn(ps, "batchCwd").mockReturnValue(new Map());
+        const cwd = spyOn(cwdModule, "batchCwd").mockReturnValue(new Map());
         const user = spyOn(processes, "userName").mockReturnValue("fixture-user");
 
         try {
@@ -207,8 +208,8 @@ describe("Linux port scan network tables", () => {
 describe("Windows port scan batching", () => {
     it("queries CIM once per scan even with multiple sockets for each owner", () => {
         const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
-        const cwd = spyOn(ps, "batchCwd").mockReturnValue(new Map());
-        const capture = spyOn(ps, "captureSync").mockImplementation((command) => ({
+        const cwd = spyOn(cwdModule, "batchCwd").mockReturnValue(new Map());
+        const capture = spyOn(captureModule, "captureSync").mockImplementation((command) => ({
             status: 0,
             stderr: "",
             stdout:
@@ -240,8 +241,8 @@ describe("Windows port scan batching", () => {
 
     it("lists every port one process listens on, and a port once however many sockets hold it", () => {
         const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
-        const cwd = spyOn(ps, "batchCwd").mockReturnValue(new Map());
-        const capture = spyOn(ps, "captureSync").mockImplementation((command) => ({
+        const cwd = spyOn(cwdModule, "batchCwd").mockReturnValue(new Map());
+        const capture = spyOn(captureModule, "captureSync").mockImplementation((command) => ({
             status: 0,
             stderr: "",
             stdout:

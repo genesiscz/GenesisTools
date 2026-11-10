@@ -18,8 +18,7 @@ import { createGit, type DetectedBase, detectBase, loadRepoConfig } from "@genes
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { ownLineage, readProcessCwd } from "@genesiscz/utils/process/cwd";
-import { listProcesses } from "@genesiscz/utils/process/processes";
-import { processBasename } from "@genesiscz/utils/process/ps";
+import { listProcesses, processBasename } from "@genesiscz/utils/process/processes";
 import { Storage } from "@genesiscz/utils/storage";
 import { escapeShellArg } from "@genesiscz/utils/string";
 

@@ -7,7 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { runsAgent } from "@genesiscz/utils/process/classify";
 import { commandOfRow, listProcessTable } from "@genesiscz/utils/process/libproc-table";
-import { listPsTable, processBasename } from "@genesiscz/utils/process/ps";
+import { listProcessRows, processBasename } from "@genesiscz/utils/process/processes";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 import {
     listTmuxClients,
@@ -62,13 +62,14 @@ const ANCESTRY_LIMIT = 64;
 /**
  * pid, parent and command line of every process. From the kernel table where it answers (about 15 ms of CPU, where
  * `ps -axo` cost 68 ms): this user's commands exactly as `ps` prints them, another user's as its executable path,
- * which is all a tmux server or an agent of this user is matched against. Else one `ps -axo`.
+ * which is all a tmux server or an agent of this user is matched against. Else the process layer's rows (`/proc` on
+ * Linux, one `ps -axo` where no kernel reader works).
  */
 export async function listHostProcesses(): Promise<HostProcess[]> {
     const table = listProcessTable();
 
     if (table === null) {
-        return listPsTable();
+        return listProcessRows();
     }
 
     // `ps -ax` has no row for the kernel (pid 0).

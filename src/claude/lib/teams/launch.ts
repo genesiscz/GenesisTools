@@ -6,7 +6,7 @@ import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { capture } from "@genesiscz/utils/process/ps";
+import { capture } from "@genesiscz/utils/process/capture";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { insideTmux } from "@genesiscz/utils/tmux/inside";

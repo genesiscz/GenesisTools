@@ -11,7 +11,7 @@ import {
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
-import { captureSync } from "@genesiscz/utils/process/ps";
+import { captureSync } from "@genesiscz/utils/process/capture";
 import { readLiveService } from "@genesiscz/utils/screen-recorder/service-link";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 

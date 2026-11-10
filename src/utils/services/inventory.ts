@@ -1,8 +1,8 @@
 import { logger } from "@genesiscz/utils/logger";
+import { captureSync } from "@genesiscz/utils/process/capture";
 import { classifyCommand } from "@genesiscz/utils/process/classify";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
-import { listProcessesWithUsage, userName } from "@genesiscz/utils/process/processes";
-import { captureSync, type PsRow } from "@genesiscz/utils/process/ps";
+import { listProcessesWithUsage, type PsRow, userName } from "@genesiscz/utils/process/processes";
 import { listListeningTcp } from "@genesiscz/utils/process/sockets";
 import { listPortRegistry, type RegistryEntry } from "@genesiscz/utils/ui/dashboards";
 

@@ -7,21 +7,21 @@
  * component, next to a top-level `parseArgs` and `render()`, so importing the
  * module started a TUI and there was nothing to measure.
  *
- * The cost of one cycle is fixed and small: ONE `ps` call for every process on
- * the machine, plus one `lsof` call per 60 pids that are actually due an
+ * The cost of one cycle is fixed and small: ONE read of the process table (the
+ * kernel's, plus one `ps` for the rows of other users), plus one `lsof` call per 60 pids that are actually due an
  * open-files refresh. Nothing here runs through a shell.
  */
 
+import { chunk } from "@genesiscz/utils/array";
 import { logger } from "@genesiscz/utils/logger";
 import { listOpenFiles as processOpenFiles } from "@genesiscz/utils/process/process-files";
 import {
     batchOpenFileCounts as batchOpenFileCountsRaw,
-    chunk,
-    listPsRows,
+    listProcessRows,
     PS_BATCH_SIZE,
     type PsListRow,
     processBasename,
-} from "@genesiscz/utils/process/ps";
+} from "@genesiscz/utils/process/processes";
 
 const { log } = logger.scoped("macos-resources");
 
@@ -266,19 +266,24 @@ export function applyOpenFileCounts(
     return { processes: updated, lastFilesUpdate };
 }
 
-/** Every process on the machine that survives `filter`, sorted. ONE `ps` call. */
+/** Every process on the machine that survives `filter`, sorted. ONE read of the process table. */
 export async function listProcesses(input: {
     filter: string;
     sortBy: SortBy;
     previous?: readonly ProcessInfo[];
 }): Promise<{ processes: ProcessInfo[]; timing: CommandTiming }> {
     const startedAt = Date.now();
-    const rows = await listPsRows({ timeoutMs: PS_TIMEOUT_MS });
+    const rows: PsListRow[] = (await listProcessRows({ timeoutMs: PS_TIMEOUT_MS })).map((row) => ({
+        pid: row.pid,
+        cpu: row.cpu,
+        rssKb: row.rss,
+        command: row.command,
+    }));
     const processes = toProcessInfos(rows, { filter: input.filter, previous: input.previous ?? [] });
 
     return {
         processes: sortProcesses(processes, input.sortBy),
-        timing: { command: `ps -axo (${rows.length} rows)`, durationMs: Date.now() - startedAt, at: new Date() },
+        timing: { command: `process table (${rows.length} rows)`, durationMs: Date.now() - startedAt, at: new Date() },
     };
 }
 

@@ -4,7 +4,7 @@ import { stopSession } from "@app/task/lib/stop-session";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
 import { out } from "@genesiscz/utils/logger";
-import { collectProcessTree, listPsTable } from "@genesiscz/utils/process/ps";
+import { collectProcessTree, listProcessRows } from "@genesiscz/utils/process/processes";
 import type { Command } from "commander";
 
 const DEFAULT_TIMEOUT_SECONDS = 5;
@@ -23,7 +23,7 @@ async function findSessionNameByPort(port: number): Promise<string | null> {
 
     const store = new TaskSessionStore();
     const names = await store.listSessionNames();
-    const rows = await listPsTable();
+    const rows = await listProcessRows();
 
     for (const name of names) {
         const meta = await store.reconcileSessionState(name);

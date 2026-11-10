@@ -6,8 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
 import { darwinKernel, processPlatform } from "@genesiscz/utils/process/os";
-import { readProcess } from "@genesiscz/utils/process/processes";
-import { listPsRows } from "@genesiscz/utils/process/ps";
+import { listProcessRows, readProcess } from "@genesiscz/utils/process/processes";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const log = logger.child({ component: "hub:dev-monitor" });
@@ -105,7 +104,7 @@ export interface NamedProcess {
  */
 async function readNamedProcesses(pids: number[]): Promise<NamedProcess[]> {
     if (processPlatform() === "darwin" && !darwinKernel()) {
-        return listPsRows({ timeoutMs: 1000 });
+        return listProcessRows({ timeoutMs: 1000 });
     }
 
     return pids.flatMap((pid) => {

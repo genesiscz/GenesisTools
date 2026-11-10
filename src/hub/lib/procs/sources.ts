@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { logger } from "@genesiscz/utils/logger";
+import { capture } from "@genesiscz/utils/process/capture";
 import { ownLineage, readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { parseLaunchctlList } from "@genesiscz/utils/process/launchctl";
 import {
@@ -11,8 +12,7 @@ import {
     readCpuPercent,
     readProcessUsage,
 } from "@genesiscz/utils/process/libproc-table";
-import { userName } from "@genesiscz/utils/process/processes";
-import { capture, listPsTable, type PsRow } from "@genesiscz/utils/process/ps";
+import { listProcessRows, type PsRow, userName } from "@genesiscz/utils/process/processes";
 import { readTopEnergy } from "@genesiscz/utils/process/top";
 import { buildProcsReport, type ProcsReport, type SessionLike } from "./tree";
 
@@ -104,9 +104,9 @@ export function kernelProcsTable(readers: KernelTableReaders = kernelReaders): P
     return table;
 }
 
-/** The kernel table where it answers, else one `ps` bounded by `psTimeoutMs`. */
+/** The kernel table where it answers, else the process layer's rows (one `ps` bounded by `psTimeoutMs` at most). */
 async function readTable(psTimeoutMs: number): Promise<PsRow[]> {
-    return kernelProcsTable() ?? listPsTable({ timeoutMs: psTimeoutMs });
+    return kernelProcsTable() ?? listProcessRows({ timeoutMs: psTimeoutMs });
 }
 
 export const realProcsSources: ProcsSources = {
