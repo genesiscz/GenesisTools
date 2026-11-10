@@ -62,6 +62,12 @@ enum PeopleDates {
         date(text).map { $0.formatted(.dateTime.day().month(.abbreviated).year().locale(Locale(identifier: "en_GB"))) }
     }
 
+    /// The sources a row names as chips. "Meetings" is left out for a person the row counts meetings for: the chip
+    /// stood on every row and said what the line under the name already says.
+    static func sourceChips(_ person: KnownPerson) -> [PersonSourceKind] {
+        person.sources.filter { $0 != .meetings || person.meetings == 0 }
+    }
+
     /// Where a person was seen, one line: "4 meetings · last 3 Nov 2026 · Design, Ops".
     static func seen(_ person: KnownPerson) -> String {
         var parts: [String] = []
@@ -358,7 +364,7 @@ struct ContactsPersonRow: View {
             }
             Spacer(minLength: 8)
             HStack(spacing: 4) {
-                ForEach(person.sources, id: \.self) { source in
+                ForEach(PeopleDates.sourceChips(person), id: \.self) { source in
                     Badge(source.title, look: .tag)
                 }
             }

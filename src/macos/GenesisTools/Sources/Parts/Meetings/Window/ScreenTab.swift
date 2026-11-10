@@ -81,6 +81,10 @@ struct FrameRow: View, Equatable {
         a.frame == b.frame && a.displayName == b.displayName && a.showAll == b.showAll && a.stacked == b.stacked
     }
 
+    /// The lines a row lists before "N more lines…": with its header about as tall as the picture beside it (a
+    /// 220 pt thumbnail of a 16:10 screen is 138 pt). At 14 lines each row was two pictures tall, most of it menu words.
+    static let shownLines = 6
+
     var body: some View {
         let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
                              : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
@@ -99,12 +103,12 @@ struct FrameRow: View, Equatable {
                         .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1).layoutPriority(1)
                 }
                 let lines = showAll ? (frame.lines ?? frame.changed) : frame.changed
-                ForEach(Array(lines.prefix(14).enumerated()), id: \.offset) { _, line in
+                ForEach(Array(lines.prefix(Self.shownLines).enumerated()), id: \.offset) { _, line in
                     Text(verbatim: line.text).font(.system(size: 12)).lineLimit(1).textSelection(.enabled)
                 }
-                if lines.count > 14 {
+                if lines.count > Self.shownLines {
                     LiveButton(tooltip: "Show the frame large, with every line boxed", action: open) {
-                        Text(verbatim: "\(lines.count - 14) more lines…").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(verbatim: "\(lines.count - Self.shownLines) more lines…").font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
             }

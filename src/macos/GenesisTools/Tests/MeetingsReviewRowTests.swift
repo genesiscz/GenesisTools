@@ -24,6 +24,10 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertNil(MeetingDetailView.trailingPane(tab: .items, width: 2000, setting: .never, sidePanelOpen: false))
         XCTAssertEqual(MeetingDetailView.trailingPane(tab: .screen, width: 400, setting: .never, sidePanelOpen: true), .settings,
                        "the open side panel replaces the pane on every tab")
+        XCTAssertNil(MeetingDetailView.trailingPane(tab: .items, width: 2000, setting: .always, sidePanelOpen: false, hasTranscript: false),
+                     "a meeting without a transcript has nothing for the pane: it was a second empty state beside No items yet")
+        XCTAssertEqual(MeetingDetailView.trailingPane(tab: .items, width: 2000, setting: .auto, sidePanelOpen: true, hasTranscript: false),
+                       .settings, "the settings panel does not need a transcript")
     }
 
     // MARK: Window settings

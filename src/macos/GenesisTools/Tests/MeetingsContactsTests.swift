@@ -156,6 +156,9 @@ final class MeetingsContactsTests: XCTestCase {
         XCTAssertTrue(PeopleDates.seen(alex).hasSuffix(" · Design"))
         // The window's own date words, whatever the Mac's region: a Czech region wrote "9. 11. 2026" here.
         XCTAssertEqual(PeopleDates.day("2026-11-09T12:00:00Z"), "9 Nov 2026")
+        // "Meetings" stood on every row beside "4 meetings": a row names only the sources its line does not.
+        XCTAssertEqual(PeopleDates.sourceChips(Fixture.person("Alex", meetings: 4, sources: [.meetings, .contacts])), [.contacts])
+        XCTAssertEqual(PeopleDates.sourceChips(Fixture.person("Kai", meetings: 0, sources: [.meetings])), [.meetings])
         XCTAssertEqual(PeopleDates.seen(Fixture.person("Kai", meetings: 0, sources: [.contacts])), "In Contacts, no meeting yet")
         let plan = Fixture.plan
         XCTAssertEqual(ContactsMergeSheet.title(plan), "Merge Alex Example and Robin Example?")

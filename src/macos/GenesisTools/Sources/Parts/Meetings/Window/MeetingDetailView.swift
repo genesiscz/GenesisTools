@@ -27,9 +27,11 @@ struct MeetingDetailView: View {
     static let transcriptPaneMinWidth: CGFloat = 820
 
     static func trailingPane(tab: MeetingDetailModel.Tab, width: CGFloat, setting: MeetingsPreferences.Panes.TranscriptPane,
-                             sidePanelOpen: Bool) -> TrailingPane? {
+                             sidePanelOpen: Bool, hasTranscript: Bool = true) -> TrailingPane? {
         if sidePanelOpen { return .settings }
-        guard tab == .items else { return nil }
+        // A meeting without a transcript has nothing for the pane: beside "No items yet" it was a second empty state
+        // that said the same thing at another height.
+        guard tab == .items, hasTranscript else { return nil }
         switch setting {
         case .always: return .transcript
         case .never: return nil
@@ -70,7 +72,7 @@ struct MeetingDetailView: View {
     private var trailingPane: TrailingPane? {
         Self.trailingPane(tab: detail.tab, width: width,
                           setting: MeetingsPreferences.Panes.TranscriptPane(rawValue: transcriptPaneSetting) ?? .auto,
-                          sidePanelOpen: window.sidePanelOpen)
+                          sidePanelOpen: window.sidePanelOpen, hasTranscript: window.meeting(detail.id)?.hasTranscript ?? true)
     }
 
     @ViewBuilder
