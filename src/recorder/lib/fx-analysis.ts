@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -20,7 +20,7 @@ import {
     nearestEvent,
     type Tap,
 } from "@genesiscz/utils/recording-editor/events";
-import { gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
+import { gridRead, readGridPictures } from "@genesiscz/utils/recording-editor/frame-grid";
 import {
     MOTION_FPS,
     MOVING_SHARE,
@@ -72,7 +72,6 @@ import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library"
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { probeVideo } from "@genesiscz/utils/video/probe";
-import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { exportAs, exportProgressPrinter, openProject, readTranscriptSegments } from "./edit";
 import { boxInProxy, proxyCanvas, readDisplayPlan } from "./proxy";
@@ -257,12 +256,6 @@ export function exportFrameCache(movie: string): FrameCache & { flush(): void } 
     };
 }
 
-/**
- * The most frame pictures one ocrVideo read writes before they are read and removed: a few hundred MB of 1080p PNG at
- * most, also when every frame of a stretch is read (a whole run of neighbouring frames is split too).
- */
-export const OCR_FRAMES_PER_READ = 120;
-
 export async function ocrVideo(options: {
     video: string;
     fromUs?: number;
@@ -275,7 +268,6 @@ export async function ocrVideo(options: {
 }): Promise<ScreenTextFrame[]> {
     const fromUs = options.fromUs ?? 0;
     const stepUs = 1_000_000 / options.fps;
-    const folder = mkdtempSync(join(tmpdir(), "gt-screen-text-"));
     // R8 2: the frame the editor shows at each time, picked by its own presentation time; an input seek or ffmpeg's
     // own clock put a simulator recording's frames up to 2 s off.
     const plan = gridRead({
@@ -283,72 +275,48 @@ export async function ocrVideo(options: {
         fromUs,
         toUs: Math.max(fromUs + 50_000, options.toUs),
         fps: options.fps,
-        framesPerRead: OCR_FRAMES_PER_READ,
     });
+    const folder = mkdtempSync(join(tmpdir(), "gt-screen-text-"));
 
     try {
         const frames: ScreenTextFrame[] = [];
         let previousDigest = "";
         let previousLines: ScreenTextFrame["lines"] = [];
-        let written = 0;
         let index = 0;
-        let missing = false;
 
-        // CLI-F9: one read's frame pictures at a time are on disk (OCR_FRAMES_PER_READ at most): they are read and
-        // removed before the next read writes its own, so a long export never needs GBs of temp space at once. The
-        // slots take the frames in order.
-        for (const read of plan.reads) {
-            if (missing) {
-                break;
-            }
-
-            await runVideoCommand({
-                command: [
-                    "ffmpeg",
-                    "-nostdin",
-                    "-v",
-                    "error",
-                    ...read.args,
-                    "-start_number",
-                    String(written),
-                    join(folder, "%06d.png"),
-                ],
-                timeoutMs: 20 * 60_000,
-            });
-            written += read.frames;
-            const files = new Set(readdirSync(folder).filter((file) => file.endsWith(".png")));
-
-            for (; index < plan.slots.length && plan.slots[index].frame < written; index++) {
-                const slot = plan.slots[index];
-                const file = `${String(slot.frame).padStart(6, "0")}.png`;
-
-                if (!files.has(file)) {
-                    missing = true;
-                    break;
-                }
-
-                const path = join(folder, file);
-                const digest = createHash("sha1").update(readFileSync(path)).digest("hex");
-                const atUs = slot.atUs;
-
+        // CLI-F9: the frames come one at a time from one decoder per read (readGridPictures), and only the picture Vision
+        // reads is on disk, removed after the read: a long export never needs GBs of temp space, and a dense stretch is
+        // decoded once. The slots take the frames in order.
+        for await (const picture of readGridPictures(plan, { video: options.video, timeoutMs: 20 * 60_000 })) {
+            for (; index < plan.slots.length && plan.slots[index].frame === picture.frame; index++) {
+                const atUs = plan.slots[index].atUs;
+                const digest = createHash("sha1").update(picture.png).digest("hex");
                 const known = options.cache?.get(atUs);
 
                 if (known) {
                     previousLines = known;
                     previousDigest = digest;
                 } else if (digest !== previousDigest) {
-                    // R6 4: one Vision read at a time on this Mac, retried once with a longer deadline.
-                    const ocr = await recognizeTextBoxesQueued(path, {
-                        fastFallback: false,
-                        what: `the frame at ${(atUs / 1_000_000).toFixed(2)} s of ${basename(options.video)}`,
-                    });
-                    previousLines = ocr.lines.map((line) => ({
-                        text: line.text,
-                        x: line.x / ocr.width,
-                        y: line.y / ocr.height,
-                        width: line.width / ocr.width,
-                        height: line.height / ocr.height,
-                    }));
+                    const path = join(folder, `${String(picture.frame).padStart(6, "0")}.png`);
+                    writeFileSync(path, picture.png);
+
+                    try {
+                        // R6 4: one Vision read at a time on this Mac, retried once with a longer deadline.
+                        const ocr = await recognizeTextBoxesQueued(path, {
+                            fastFallback: false,
+                            what: `the frame at ${(atUs / 1_000_000).toFixed(2)} s of ${basename(options.video)}`,
+                        });
+                        previousLines = ocr.lines.map((line) => ({
+                            text: line.text,
+                            x: line.x / ocr.width,
+                            y: line.y / ocr.height,
+                            width: line.width / ocr.width,
+                            height: line.height / ocr.height,
+                        }));
+                    } finally {
+                        rmSync(path, { force: true });
+                    }
+
                     previousDigest = digest;
                     options.cache?.set(atUs, previousLines);
                 } else {
@@ -357,10 +325,6 @@ export async function ocrVideo(options: {
 
                 frames.push({ atUs, untilUs: Math.min(options.toUs, Math.round(atUs + stepUs)), lines: previousLines });
                 options.onFrame?.(index + 1, plan.slots.length);
-            }
-
-            for (const file of files) {
-                rmSync(join(folder, file), { force: true });
             }
         }
 

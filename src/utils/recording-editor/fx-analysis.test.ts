@@ -247,6 +247,19 @@ describe("tracked text, exclusions and events", () => {
         expect(
             privateMatcher(["Ann A", "Annabelle Johnson"])("Annabelle Johnson").map((match) => [match.start, match.end])
         ).toEqual([[0, 17]]);
+        // Two names joined into one span that holds an email: the email stays an email, and the rest of the span is
+        // still hidden as a name, on either side of it.
+        const spans = (names: string[], line: string) =>
+            privateMatcher(names)(line).map((match) => [match.kind, match.start, match.end, match.value]);
+        expect(spans(["alice@example.com Smith", "Smith Jones"], "alice@example.com Smith Jones")).toEqual([
+            ["email", 0, 17, "alice@example.com"],
+            ["name", 18, 29, "smithjones"],
+        ]);
+        expect(spans(["Jane alice@example.com", "alice@example.com Doe"], "Jane alice@example.com Doe")).toEqual([
+            ["name", 0, 4, "jane"],
+            ["email", 5, 22, "alice@example.com"],
+            ["name", 23, 26, "doe"],
+        ]);
         // It scrolls up 0.1 of the picture per 0.2 s sample, then rests.
         const frames = [
             frame(0, []),

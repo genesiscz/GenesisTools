@@ -1222,6 +1222,38 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(slow, facts).filter((found) => found.kind === "too-short")).toEqual([]);
     });
 
+    // Regression test: review of PR 748, round 2. Lengthen walked the clips one after the other, while the check counts
+    // every clip that plays the text: over two clips of the same second it offered 0.5 s, which then played 1 s.
+    test("Lengthen reaches 1.5 s of played time over clips that repeat or reorder the source", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const lengthenedOver = (clips: Array<{ id: string; fromUs: number; toUs: number }>) => {
+            const project = applyOp(editProjectSchema.parse({ ...wholeProject(source), clips }), {
+                op: "text",
+                from: 0,
+                to: 0.1,
+                text: "Saved",
+            });
+            const [issue] = checkProject(project, facts).filter((found) => found.kind === "too-short");
+            const lengthened = (issue?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
+            const tooShort = checkProject(lengthened, facts).filter((found) => found.kind === "too-short");
+            return { span: [lengthened.texts?.[0]?.startUs, lengthened.texts?.[0]?.endUs], tooShort };
+        };
+        // The same second twice: 0 to 0.75 s plays 1.5 s.
+        expect(
+            lengthenedOver([
+                { id: "c1", fromUs: 0, toUs: 1_000_000 },
+                { id: "c2", fromUs: 0, toUs: 1_000_000 },
+            ])
+        ).toEqual({ span: [0, 750_000], tooShort: [] });
+        // Source 2 to 3 s plays before 0 to 1 s: 0 to 2.5 s plays 1 s and 0.5 s.
+        expect(
+            lengthenedOver([
+                { id: "c1", fromUs: 2_000_000, toUs: 3_000_000 },
+                { id: "c2", fromUs: 0, toUs: 1_000_000 },
+            ])
+        ).toEqual({ span: [0, 2_500_000], tooShort: [] });
+    });
+
     // Regression test: unified review 2026-11-08 ED-voiceover-false-in-cut.
     test("a voiceover at a cut's start plays, so check does not report it as in the cut", () => {
         const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };

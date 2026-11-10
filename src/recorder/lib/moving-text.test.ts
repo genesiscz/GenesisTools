@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { withSpawnCounter } from "@app/benchmark/lib/spawn-counter";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { movieContentKey } from "@genesiscz/utils/recording-editor/analysis-cache";
-import { framePresentationUs, gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
+import { framePresentationUs, gridRead, readGridPictures } from "@genesiscz/utils/recording-editor/frame-grid";
 import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
 import {
     applyOp,
@@ -21,7 +22,6 @@ import {
     exportFrameCache,
     exportRangeOf,
     findText,
-    OCR_FRAMES_PER_READ,
     ocrVideo,
     scanOf,
     sourceScanOf,
@@ -271,7 +271,9 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         expect(edit.warnings).toEqual(expect.arrayContaining(miss));
     }, 120_000);
 
-    test("ocrVideo keeps one read's frame pictures on disk at a time, not the whole range's (review CLI-F9)", async () => {
+    // Review CLI-F9, and review of PR 748 round 2: capping a read's frames split a dense stretch into reads that each
+    // decoded the movie from its start again. A read streams its pictures instead, so one decoder reads it once.
+    test("ocrVideo streams one read's pictures through one decoder and keeps at most one on disk (review CLI-F9)", async () => {
         const folder = mkdtempSync(join(tmpdir(), "gt-ocr-stream-"));
         const movie = join(folder, "stream.mp4");
         await runVideoCommand({
@@ -283,53 +285,52 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
                 "-f",
                 "lavfi",
                 "-i",
-                "testsrc=s=160x120:r=10:d=8",
+                "testsrc=s=160x120:r=10:d=13",
                 "-pix_fmt",
                 "yuv420p",
                 movie,
             ],
         });
-        // 5 a second of a 10 fps movie is every other frame: 40 runs of one frame, so two reads (32 and 8 frames).
         const lines = [{ text: "Orla Fictive", x: 0.1, y: 0.1, width: 0.3, height: 0.05 }];
         const cache = { get: () => lines, set: () => undefined };
         const before = new Set(readdirSync(tmpdir()));
         const onDisk: number[] = [];
-        const frames = await ocrVideo({
-            video: movie,
-            toUs: 8_000_000,
-            fps: 5,
-            cache,
-            onFrame: () => {
-                const folders = readdirSync(tmpdir()).filter(
-                    (name) => name.startsWith("gt-screen-text-") && !before.has(name)
-                );
-                onDisk.push(folders.reduce((all, name) => all + readdirSync(join(tmpdir(), name)).length, 0));
-            },
-        });
-        expect(frames).toHaveLength(40);
-        expect(onDisk).toHaveLength(40);
-        expect(Math.max(...onDisk)).toBeLessThanOrEqual(32);
+        const countOnDisk = () => {
+            const folders = readdirSync(tmpdir()).filter(
+                (name) => name.startsWith("gt-screen-text-") && !before.has(name)
+            );
+            onDisk.push(folders.reduce((all, name) => all + readdirSync(join(tmpdir(), name)).length, 0));
+        };
+        const ffmpegRuns = (spawns: Array<{ cmd: string[] }>) => spawns.filter(({ cmd }) => cmd[0] === "ffmpeg").length;
+        // 5 a second of a 10 fps movie is every other frame: 65 runs of one frame, three reads of 32, 32 and 1 terms.
+        const sparse = await withSpawnCounter(() =>
+            ocrVideo({ video: movie, toUs: 13_000_000, fps: 5, cache, onFrame: countOnDisk })
+        );
+        expect(sparse.result).toHaveLength(65);
+        expect(ffmpegRuns(sparse.spawns)).toBe(3);
+        expect(onDisk).toHaveLength(65);
+        expect(Math.max(...onDisk)).toBeLessThanOrEqual(1);
 
-        // Every frame of the movie is one run of 80 neighbouring frames, one term: the frame cap splits it as well.
-        const every = gridRead({ video: movie, fromUs: 0, toUs: 8_000_000, fps: 10, framesPerRead: 30 });
-        expect(every.reads.map((read) => read.frames)).toEqual([30, 30, 20]);
-        expect(every.reads.map((read) => read.args.at(-1))).toEqual(["30", "30", "20"]);
-        expect(every.slots.map((slot) => slot.frame)).toEqual([...Array(80).keys()]);
+        // Every frame of the movie is one run of 130 neighbouring frames: one term, one read, one decoder.
+        const every = gridRead({ video: movie, fromUs: 0, toUs: 13_000_000, fps: 10 });
+        expect(every.reads.map((read) => [read.frames, ...read.args.slice(-2)])).toEqual([[130, "-frames:v", "130"]]);
+        expect(every.slots.map((slot) => slot.frame)).toEqual([...Array(130).keys()]);
+        const pictures: number[] = [];
+
+        for await (const picture of readGridPictures(every, { video: movie, timeoutMs: 60_000 })) {
+            expect([...picture.png.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+            expect(new TextDecoder().decode(picture.png.subarray(-8, -4))).toBe("IEND");
+            pictures.push(picture.frame);
+        }
+
+        expect(pictures).toEqual([...Array(130).keys()]);
         onDisk.length = 0;
-        const all = await ocrVideo({
-            video: movie,
-            toUs: 8_000_000,
-            fps: 10,
-            cache,
-            onFrame: () => {
-                const folders = readdirSync(tmpdir()).filter(
-                    (name) => name.startsWith("gt-screen-text-") && !before.has(name)
-                );
-                onDisk.push(folders.reduce((sum, name) => sum + readdirSync(join(tmpdir(), name)).length, 0));
-            },
-        });
-        expect(all).toHaveLength(80);
-        expect(Math.max(...onDisk)).toBeLessThanOrEqual(OCR_FRAMES_PER_READ);
+        const dense = await withSpawnCounter(() =>
+            ocrVideo({ video: movie, toUs: 13_000_000, fps: 10, cache, onFrame: countOnDisk })
+        );
+        expect(dense.result).toHaveLength(130);
+        expect(ffmpegRuns(dense.spawns)).toBe(1);
+        expect(Math.max(...onDisk)).toBeLessThanOrEqual(1);
     }, 60_000);
 
     test("verifyHidden with from and to reads the source of that range only (review CLI-F7)", async () => {

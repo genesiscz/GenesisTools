@@ -73,8 +73,8 @@ export interface GridRead {
  * Reads `fromUs` to `toUs` (editor time) `fps` times a second, with `extra` filters after the selection (scale,
  * format). Output frame `slots[k].frame` is what the editor shows at `slots[k].atUs`; a time inside a gap of the
  * recording shares the frame before it. It decodes from the start (about a twentieth of the stretch's end on this Mac),
- * and each read stops at its own last frame. `framesPerRead` caps the frames one read writes, a run of neighbouring
- * frames included, so a caller that keeps a read's pictures on disk keeps at most that many.
+ * and each read stops at its own last frame. A run of neighbouring frames is one term, so a dense stretch is one read
+ * through one decoder: readGridPictures streams it, so its size never sets how many pictures exist at once.
  */
 export function gridRead(options: {
     video: string;
@@ -82,7 +82,6 @@ export function gridRead(options: {
     toUs: number;
     fps: number;
     extra?: string;
-    framesPerRead?: number;
 }): GridRead {
     // A rate of 0, a negative one or NaN never advances the grid below and would fill memory with slots.
     if (!Number.isFinite(options.fps) || options.fps <= 0) {
@@ -121,10 +120,10 @@ export function gridRead(options: {
     }
 
     const reads: GridRead["reads"] = [];
-    const framesPerRead = Math.max(1, Math.floor(options.framesPerRead ?? Number.POSITIVE_INFINITY));
-    let part: Array<[number, number]> = [];
-    let frames = 0;
-    const flush = () => {
+
+    for (let at = 0; at < Math.max(1, runs.length); at += TERMS_PER_READ) {
+        const part = runs.slice(at, at + TERMS_PER_READ);
+        const frames = part.reduce((all, [a, b]) => all + b - a + 1, 0);
         const select = part.map(([a, b]) => (a === b ? `eq(n\\,${a})` : `between(n\\,${a}\\,${b})`)).join("+") || "0";
         reads.push({
             args: [
@@ -141,25 +140,6 @@ export function gridRead(options: {
             ],
             frames,
         });
-        part = [];
-        frames = 0;
-    };
-
-    for (const [a, b] of runs) {
-        for (let start = a; start <= b; ) {
-            const end = Math.min(b, start + (framesPerRead - frames) - 1);
-            part.push([start, end]);
-            frames += end - start + 1;
-            start = end + 1;
-
-            if (part.length === TERMS_PER_READ || frames >= framesPerRead) {
-                flush();
-            }
-        }
-    }
-
-    if (part.length > 0 || reads.length === 0) {
-        flush();
     }
 
     return { reads, slots };
@@ -215,4 +195,138 @@ export async function readGridGray(
     }
 
     return out;
+}
+
+/** One picture of a plan's reads: the ordinal of its output frame (what `slots[k].frame` names) and its PNG bytes. */
+export interface GridPicture {
+    frame: number;
+    png: Uint8Array;
+}
+
+/**
+ * Runs a plan's reads as PNG pictures and yields them one at a time, in frame order. ffmpeg writes into a pipe and
+ * waits while the caller works on a picture, so a read of any length holds about a pipe's worth of pictures at once,
+ * and a dense stretch is decoded once. Splitting it into reads of a few frames each made every read decode the movie
+ * from its start again. `timeoutMs` bounds each wait for ffmpeg, never the caller's own work. A read that ends short of
+ * its frames ends the stream, as the later slots no longer line up.
+ */
+export async function* readGridPictures(
+    plan: GridRead,
+    options: { video: string; timeoutMs: number }
+): AsyncGenerator<GridPicture> {
+    let first = 0;
+
+    for (const read of plan.reads) {
+        const command = ["ffmpeg", "-nostdin", "-v", "error", ...read.args, "-f", "image2pipe", "-c:v", "png", "-"];
+        const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+        const stderr = new Response(child.stderr).text();
+        const reader = child.stdout.getReader();
+        const pictures = pngSplitter();
+        let stalled = false;
+        let count = 0;
+
+        try {
+            for (;;) {
+                const timer = setTimeout(() => {
+                    stalled = true;
+                    child.kill();
+                }, options.timeoutMs);
+                const chunk = await reader.read().finally(() => clearTimeout(timer));
+
+                if (chunk.done) {
+                    break;
+                }
+
+                for (const png of pictures.push(chunk.value)) {
+                    yield { frame: first + count, png };
+                    count++;
+                }
+            }
+
+            const status = await child.exited;
+
+            if (stalled) {
+                throw new Error(`ffmpeg gave no picture of ${options.video} for ${options.timeoutMs} ms`);
+            }
+
+            if (status !== 0) {
+                throw new Error(
+                    `ffmpeg could not read ${options.video} (exit ${status}): ${(await stderr).trim().slice(-500)}`
+                );
+            }
+
+            if (pictures.pending() > 0) {
+                throw new Error(`ffmpeg's pictures of ${options.video} ended inside a picture`);
+            }
+        } finally {
+            reader.releaseLock();
+
+            if (child.exitCode === null) {
+                child.kill();
+            }
+        }
+
+        if (count < read.frames) {
+            log.warn({ video: options.video, frames: count, planned: read.frames }, "a grid read ended short");
+            return;
+        }
+
+        first += read.frames;
+    }
+}
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/**
+ * Splits a stream of PNG files written back to back (ffmpeg's image2pipe) into whole files: each ends with its IEND
+ * chunk. `push` gives the files a chunk completes; `pending` is the bytes of a file not complete yet.
+ */
+function pngSplitter(): { push(chunk: Uint8Array): Uint8Array[]; pending(): number } {
+    let buffer = new Uint8Array(1 << 20);
+    let size = 0;
+    // Where the next chunk header of the file at the buffer's start begins (after its 8-byte signature).
+    let at = PNG_SIGNATURE.length;
+    return {
+        push(chunk) {
+            if (size + chunk.length > buffer.length) {
+                const grown = new Uint8Array(Math.max(buffer.length * 2, size + chunk.length));
+                grown.set(buffer.subarray(0, size));
+                buffer = grown;
+            }
+
+            buffer.set(chunk, size);
+            size += chunk.length;
+            const files: Uint8Array[] = [];
+
+            for (;;) {
+                if (size >= PNG_SIGNATURE.length && PNG_SIGNATURE.some((byte, index) => buffer[index] !== byte)) {
+                    throw new Error("ffmpeg's picture stream is not PNG");
+                }
+
+                if (at + 8 > size) {
+                    break;
+                }
+
+                const length = new DataView(buffer.buffer, buffer.byteOffset + at, 4).getUint32(0);
+                const end = at + 12 + length;
+
+                if (end > size) {
+                    break;
+                }
+
+                const type = String.fromCharCode(...buffer.subarray(at + 4, at + 8));
+                at = end;
+
+                if (type === "IEND") {
+                    files.push(buffer.slice(0, end));
+                    buffer.copyWithin(0, end, size);
+                    size -= end;
+                    at = PNG_SIGNATURE.length;
+                }
+            }
+
+            return files;
+        },
+        pending: () => size,
+    };
 }

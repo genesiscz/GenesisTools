@@ -469,7 +469,19 @@ function playedUs(project: EditProject, startUs: number, endUs: number): number 
     );
 }
 
-/** The source time where `playUs` of output has played from `startUs` on, through the clips at their speeds. */
+/**
+ * The source times where a clip starts or ends, in order: between two of them playedUs grows at one rate, so the
+ * lengthening below solves it one stretch at a time.
+ */
+function clipEdgesOf(project: EditProject): number[] {
+    return [...new Set(project.clips.flatMap((clip) => [clip.fromUs, clip.toUs]))].sort((a, b) => a - b);
+}
+
+/**
+ * The source time where `startUs`..that time has played `playUs` of output, by playedUs's own measure: every clip that
+ * plays a piece of it counts, so clips that repeat or reorder the source give what the check then measures. Walking the
+ * clips one after the other ended a text over two 1x clips of the same second at 0.5 s, and it then played 1 s.
+ */
 function sourceAfterPlayed({
     project,
     startUs,
@@ -480,23 +492,23 @@ function sourceAfterPlayed({
     playUs: number;
 }): number {
     let leftUs = playUs;
+    let atUs = startUs;
 
-    for (const clip of project.clips) {
-        const fromUs = Math.max(clip.fromUs, startUs);
-        const speed = clip.speed || 1;
-        const availableUs = Math.max(0, clip.toUs - fromUs) / speed;
+    for (const edgeUs of clipEdgesOf(project).filter((us) => us > startUs)) {
+        const stretchUs = playedUs(project, atUs, edgeUs);
 
-        if (availableUs >= leftUs) {
-            return Math.min(project.source.durationUs, Math.round(fromUs + leftUs * speed));
+        if (stretchUs > 0 && stretchUs >= leftUs) {
+            return Math.min(project.source.durationUs, Math.round(atUs + (leftUs * (edgeUs - atUs)) / stretchUs));
         }
 
-        leftUs -= availableUs;
+        leftUs -= stretchUs;
+        atUs = edgeUs;
     }
 
     return project.source.durationUs;
 }
 
-/** The source time from which `playUs` of output plays up to `endUs`, through the clips at their speeds. */
+/** The source time from which that time..`endUs` plays `playUs` of output, by playedUs's own measure, as above. */
 function sourceBeforePlayed({
     project,
     endUs,
@@ -507,17 +519,19 @@ function sourceBeforePlayed({
     playUs: number;
 }): number {
     let leftUs = playUs;
+    let atUs = endUs;
 
-    for (const clip of [...project.clips].reverse()) {
-        const toUs = Math.min(clip.toUs, endUs);
-        const speed = clip.speed || 1;
-        const availableUs = Math.max(0, toUs - clip.fromUs) / speed;
+    for (const edgeUs of clipEdgesOf(project)
+        .filter((us) => us < endUs)
+        .reverse()) {
+        const stretchUs = playedUs(project, edgeUs, atUs);
 
-        if (availableUs >= leftUs) {
-            return Math.max(0, Math.round(toUs - leftUs * speed));
+        if (stretchUs > 0 && stretchUs >= leftUs) {
+            return Math.max(0, Math.round(atUs - (leftUs * (atUs - edgeUs)) / stretchUs));
         }
 
-        leftUs -= availableUs;
+        leftUs -= stretchUs;
+        atUs = edgeUs;
     }
 
     return 0;
