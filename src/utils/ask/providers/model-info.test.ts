@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { byId, byProvider, type CatalogEntry } from "../catalog";
-import { toModelInfo } from "./resolve-models";
+import { byId, byProvider, type CatalogEntry } from "@genesiscz/utils/ai/catalog";
+import { toModelInfo } from "./model-info";
 
 function entry(id: string): CatalogEntry {
     const found = byId(id);
@@ -69,10 +69,10 @@ describe("toModelInfo", () => {
 
     /**
      * The regression this phase exists to prevent. `KNOWN_MODELS` listed five
-     * Anthropic models topping out at Opus 4.6, so every resolver-backed picker
-     * hid the current generation. Resolvers now read the catalog.
+     * Anthropic models topping out at Opus 4.6, so every picker hid the current
+     * generation. Pickers now read the catalog.
      */
-    test("the Anthropic list resolvers read reaches the current generation", () => {
+    test("the Anthropic list pickers read reaches the current generation", () => {
         const ids = byProvider("anthropic").map((model) => model.id);
 
         expect(ids).toContain("claude-opus-5");

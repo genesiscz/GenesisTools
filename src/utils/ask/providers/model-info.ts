@@ -1,13 +1,5 @@
-import { getProviderConfigs } from "@genesiscz/utils/ask/providers/compat";
-import type { ModelInfo, ProviderConfig } from "@genesiscz/utils/ask/types";
-import { logger } from "@genesiscz/utils/logger";
-import { byProvider, type CatalogEntry, inputModalitiesFor } from "../catalog";
-import { pricingFor } from "../catalog/pricing";
-
-interface ResolvedModels {
-    models: ModelInfo[];
-    config: ProviderConfig;
-}
+import { type CatalogEntry, inputModalitiesFor } from "@genesiscz/utils/ai/catalog";
+import type { ModelInfo } from "../types";
 
 const CATEGORY_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
     { pattern: /mini/i, category: "mini" },
@@ -69,32 +61,4 @@ export function toModelInfo(entry: CatalogEntry): ModelInfo {
         category: entry.family ?? inferCategory(entry.id),
         pricing: entry.pricing,
     };
-}
-
-/**
- * Fetch models and pricing for a known provider.
- * Shared by all API-key and subscription resolvers to avoid duplication.
- */
-export async function resolveModelsWithPricing(providerName: string): Promise<ResolvedModels> {
-    const config = getProviderConfigs().find((c) => c.name === providerName);
-
-    if (!config) {
-        throw new Error(`${providerName} provider config missing from PROVIDER_CONFIGS`);
-    }
-
-    const entries = byProvider(providerName);
-
-    if (entries.length === 0) {
-        logger.debug({ provider: providerName }, "no static catalog entries — resolver returns an empty model list");
-        return { models: [], config };
-    }
-
-    const models: ModelInfo[] = await Promise.all(
-        entries.map(async (entry) => {
-            const info = toModelInfo(entry);
-            return { ...info, pricing: (await pricingFor(providerName, entry.id)) || info.pricing };
-        })
-    );
-
-    return { models, config };
 }
