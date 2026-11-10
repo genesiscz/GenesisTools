@@ -500,6 +500,19 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(lines.map(\.text), ["Silent 3 times while in the call, so the voice is under other labels (normal sign)",
                                            "May hold several people (weak sign)"],
                        "three sentences with the same words were a wall of text; the line takes the strongest of their signs")
+        XCTAssertEqual(lines.map(\.sentence), ["Silent 3 times while in the call, so the voice is under other labels", "May hold several people"],
+                       "the weight is not part of the sentence: it draws after it, quieter")
+        XCTAssertEqual(lines.map(\.isWeak), [false, true], "a weak sign draws as a note, so a stronger one stands out")
+        XCTAssertEqual(lines.map(\.symbol), ["exclamationmark.triangle", "info.circle"])
+        XCTAssertEqual(SpeakerHintLine(sentence: "Speaks while not in the call", strength: "strong", ranges: []).symbol,
+                       "exclamationmark.triangle.fill")
+        let mixed = try JSONDecoder().decode([SpeakerHint].self, from: Data("""
+        [{"kind":"leave-then-continues","label":"Alice","strength":"weak","leaves":[{"atSec":10}]},
+         {"kind":"several-people","label":"Alice","strength":"normal"},
+         {"kind":"absent-speaker","label":"Alice","strength":"strong","ranges":[{"lines":2,"fromSec":5,"toSec":9}]}]
+        """.utf8))
+        XCTAssertEqual(MeetingsWords.speakerHintLines(mixed, for: "Alice").map(\.strength), ["strong", "normal", "weak"],
+                       "the strongest sign stands first; a weak note stood above the warning it sat with")
         XCTAssertEqual(lines[0].ranges.map(\.fromSec), [74, 3167, 4594])
         XCTAssertEqual(HintChip.chips(for: lines[0].ranges).chips.map(\.action), [.show, .show, .show], "a long silence zooms the timeline")
         XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Bob").map(\.text),

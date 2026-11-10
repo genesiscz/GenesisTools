@@ -36,16 +36,24 @@ struct SpeakerRow<Chips: View>: View {
                     }
                 }
             } else {
-                HStack(spacing: 12) {
+                // Top aligned: beside a label with three signs the play button and the field sat at the middle of
+                // the block, far from the name they belong to.
+                HStack(alignment: .top, spacing: 12) {
                     labels
                     Spacer()
-                    playButton
-                    field.frame(width: 220)
+                    HStack(spacing: 12) {
+                        playButton
+                        field.frame(width: 220)
+                    }
+                    .frame(height: Self.nameBlockHeight)
                 }
             }
         }
         .padding(.vertical, 3)
     }
+
+    /// The height of the name and the numbers under it, which the play button and the field centre on.
+    static var nameBlockHeight: CGFloat { 32 }
 
     private var labels: some View {
         VStack(alignment: .leading, spacing: 2) {

@@ -80,7 +80,7 @@ struct SpeakerHintChips: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: chip.action == .play ? "play.fill" : "arrow.up.left.and.arrow.down.right")
+                Image(systemName: chip.action == .play ? "play.fill" : "plus.magnifyingglass")
                     .font(.system(size: 9))
                 if chip.action == .show { Text("Show") }
                 Text(verbatim: chip.rangeText).font(.system(size: 11, design: .monospaced))

@@ -928,13 +928,14 @@ extension MeetingsWords {
                 let strength = levels.first { level in silences.contains { $0.strength == level } }
                 let sentence = silences.count == 1 ? hintSentence(hint)
                     : "Silent \(silences.count) times while in the call, so the voice is under other labels"
-                lines.append(SpeakerHintLine(text: sentence + (strength.map { " (\($0) sign)" } ?? ""), ranges: ranges))
+                lines.append(SpeakerHintLine(sentence: sentence, strength: strength, ranges: ranges))
             } else {
-                lines.append(SpeakerHintLine(text: hintSentence(hint) + (hint.strength.map { " (\($0) sign)" } ?? ""),
-                                             ranges: hint.ranges ?? []))
+                lines.append(SpeakerHintLine(sentence: hintSentence(hint), strength: hint.strength, ranges: hint.ranges ?? []))
             }
         }
-        return lines
+        // The strongest sign first, each weight in the engine's order: a weak note stood above the warning it sat with.
+        let weight = { (line: SpeakerHintLine) in ["strong", "normal", "weak"].firstIndex(of: line.strength ?? "") ?? 3 }
+        return lines.enumerated().sorted { (weight($0.element), $0.offset) < (weight($1.element), $1.offset) }.map(\.element)
     }
 
     /// What one sign means for the label it sits under. A kind this build does not know shows its name.
