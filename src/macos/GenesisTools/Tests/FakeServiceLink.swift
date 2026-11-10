@@ -213,6 +213,37 @@ enum FakeRules {
             if let corner = (op["corner"] as? String).flatMap(EditProject.CameraCorner.init(rawValue:)) { camera.corner = corner }
             if let size = op["size"] as? Double { camera.size = size }
             next.camera = camera
+        // Round 4 fx-render: the edit-wide transition, the tilt and the lenses.
+        case "transition":
+            var settings = next.transitions ?? EditProject.Transitions()
+            if let kind = (op["kind"] as? String).flatMap(EditProject.TransitionKind.init(rawValue:)) { settings.default.kind = kind }
+            if let ms = op["ms"] as? Int { settings.default.ms = ms }
+            next.transitions = settings
+        case "tilt":
+            if op["enabled"] as? Bool == false {
+                next.tilt = nil
+                break
+            }
+            var tilt = next.tilt ?? EditProject.Tilt()
+            if let strength = op["strength"] as? Double { tilt.strength = strength }
+            if let drift = op["drift"] as? Bool { tilt.drift = drift }
+            if let tiltIn = op["tiltIn"] as? Bool { tilt.tiltIn = tiltIn }
+            if let tiltOut = op["tiltOut"] as? Bool { tilt.tiltOut = tiltOut }
+            next.tilt = tilt
+        case "lens":
+            var settings = next.lens ?? EditProject.Lens()
+            settings.items.append(EditProject.LensItem(id: "l\(settings.items.count + 1)", startUs: us(op["from"]), endUs: us(op["to"]),
+                                                       follow: op["follow"] as? Bool ?? true))
+            next.lens = settings
+        case "setLens":
+            guard var settings = next.lens, let index = settings.items.firstIndex(where: { $0.id == id }) else { throw FakeServiceLink.Refusal() }
+            if let magnification = op["magnification"] as? Double { settings.items[index].magnification = magnification }
+            if let radius = op["radius"] as? Double { settings.items[index].radius = radius }
+            if let follow = op["follow"] as? Bool { settings.items[index].follow = follow }
+            next.lens = settings
+        case "unlens":
+            next.lens?.items.removeAll { $0.id == id }
+            if next.lens?.items.isEmpty == true { next.lens = nil }
         default:
             throw FakeServiceLink.Refusal()
         }

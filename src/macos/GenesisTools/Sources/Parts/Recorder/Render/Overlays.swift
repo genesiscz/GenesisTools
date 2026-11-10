@@ -19,6 +19,7 @@ enum TextMotion {
         let progress = min(1, max(0, Double(sinceUs) / Double(max(1, animate.ms) * 1000)))
         switch animate.kind {
         case .fade:
+            // The fade is the text's opacity envelope, over `animate.ms` (ZoomState.textFadeInUs), not a second one here.
             return full
         case .typewriter:
             return State(characters: Int((Double(note.text.count) * progress).rounded(.up)), opacity: 1, drop: 0)

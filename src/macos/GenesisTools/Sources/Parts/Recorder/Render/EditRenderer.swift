@@ -54,7 +54,8 @@ final class ZoomState: @unchecked Sendable {
         lock.unlock()
     }
 
-    private func redactions(for project: EditProject) -> [EditProject.Redaction] {
+    /// The hidden parts as drawn for `project` (RedactionEdges).
+    func redactions(for project: EditProject) -> [EditProject.Redaction] {
         lock.lock()
         let cached = drawnRedactions
         let frames = sourceFrames
@@ -275,12 +276,20 @@ final class ZoomState: @unchecked Sendable {
     /// How long a text of `lengthUs` fades in and out: 0.2 s, less for a short one.
     static func textFadeUs(lengthUs: Int64) -> Int64 { min(200_000, max(1, lengthUs / 3)) }
 
-    /// The texts showing at a source time, each fading in and out over `textFadeUs`.
+    /// How long a text fades in: `animate: { kind: "fade", ms }` names its way in (TextAnimate); every other text
+    /// fades in over `textFadeUs`, as it fades out.
+    static func textFadeInUs(_ note: EditProject.TextNote) -> Int64 {
+        if let animate = note.animate, animate.kind == .fade { return max(1, Int64(animate.ms) * 1000) }
+        return textFadeUs(lengthUs: note.endUs - note.startUs)
+    }
+
+    /// The texts showing at a source time, each fading in over `textFadeInUs` and out over `textFadeUs`.
     static func texts(atSourceUs us: Int64, project: EditProject) -> [(note: EditProject.TextNote, opacity: Double)] {
         (project.texts ?? []).compactMap { note in
             guard us >= note.startUs, us < note.endUs else { return nil }
-            let fade = Double(textFadeUs(lengthUs: note.endUs - note.startUs))
-            let opacity = min(1, Double(us - note.startUs) / fade, Double(note.endUs - us) / fade)
+            let fadeIn = Double(textFadeInUs(note))
+            let fadeOut = Double(textFadeUs(lengthUs: note.endUs - note.startUs))
+            let opacity = min(1, Double(us - note.startUs) / fadeIn, Double(note.endUs - us) / fadeOut)
             return (note, max(0, opacity))
         }
     }
@@ -693,10 +702,12 @@ struct EditRenderer {
         guard natural.width.isFinite, natural.height.isFinite, natural.width >= 1, natural.height >= 1 else {
             throw RenderError.badComposition("the movie's picture is \(natural.width)×\(natural.height)")
         }
-        // R5 5 redaction edges: a hidden part stays on while a frame from its time stays on screen.
-        if project.redactions?.isEmpty == false, (try? await video.load(.canProvideSampleCursors)) == true {
-            zoom.setSourceFrames(SourceFrames(track: video, durationUs: project.source.durationUs))
-        }
+        // R5 5 redaction edges: a hidden part stays on while a frame from its time stays on screen. Every movie that
+        // can give its frame times gets them, with or without hidden parts: a part added later reaches the preview by
+        // `ZoomState.update` alone (no rebuild), and it must still cover the frame that stays on screen after its end.
+        // SourceFrames reads nothing until a hidden part asks.
+        let readsFrames = (try? await video.load(.canProvideSampleCursors)) == true
+        zoom.setSourceFrames(readsFrames ? SourceFrames(track: video, durationUs: project.source.durationUs) : nil)
         let composition = AVMutableComposition()
         guard let videoOut = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw RenderError.emptyEdit

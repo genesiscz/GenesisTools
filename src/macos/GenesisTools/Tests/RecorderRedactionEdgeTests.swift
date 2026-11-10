@@ -138,6 +138,24 @@ final class RecorderRedactionEdgeTests: XCTestCase {
         XCTAssertTrue(frames.contains { $0.values[2] < 40 }, "the 10 ms box drew")
     }
 
+    /// The preview of an edit that hid nothing yet: a part added after it was built reaches it by `ZoomState.update`
+    /// alone (no rebuild), and must still end at the next source frame. Before, the frame times were read only for an
+    /// edit that already hid something, so this part ended at 4.0 s and the frame at 3.95 s showed until 4.10 s.
+    func testAPartAddedAfterThePreviewWasBuiltStillCoversTheFrameThatStays() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("redaction-late-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie)
+        let plain = project(movie: movie)
+        let zoom = ZoomState(project: plain, cursor: nil)
+        _ = try await EditRenderer.render(project: plain, asset: AVURLAsset(url: movie), zoom: zoom, maxHeight: 180)
+        var edit = plain
+        edit.redactions = [box("before", Self.before, from: 2_000_000, to: 4_000_000)]
+        zoom.update(edit)
+        XCTAssertEqual(zoom.redactions(for: edit).first?.endUs, 4_100_000, "the frame at 3.95 s stays on screen until 4.10 s")
+    }
+
     /// The joins without a movie: snapMs moves an end to the cut and closes a short gap; 0 leaves both.
     func testSnapClosesShortHolesAtCutsAndBetweenPartsAndZeroLeavesThem() {
         var project = EditProject.whole(video: "/movies/demo.mp4", durationUs: 10_000_000, width: 320, height: 180, cursor: nil, recording: nil)
