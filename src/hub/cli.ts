@@ -16,35 +16,8 @@ import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { profiler } from "@genesiscz/utils/profile";
 import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import { Command } from "commander";
-import { registerAgentsCommand } from "./commands/agents";
-import { registerApprovalsCommand } from "./commands/approvals";
-import { registerBoardCommand } from "./commands/board";
-import { registerBriefCommand } from "./commands/brief";
 import { registerCheckLogCommand } from "./commands/checks";
-import { registerConfigCommands } from "./commands/config";
-import { registerDevCommands } from "./commands/dev";
-import { registerDigestCommand } from "./commands/digest";
-import { registerForecastCommand } from "./commands/forecast";
-import { registerGatesCommand } from "./commands/gates";
-import { registerGlanceCommand } from "./commands/glance";
-import { registerInsightsCommands } from "./commands/insights";
-import { registerLaunchCommand } from "./commands/launch";
-import { registerLinkCommand } from "./commands/link";
-import { registerMemosCommand } from "./commands/memos";
-import { registerNavCommands } from "./commands/nav";
-import { registerNotifyCommands } from "./commands/notify";
-import { registerPingCommand } from "./commands/ping";
-import { registerProcsCommand } from "./commands/procs";
-import { registerPromptsCommand } from "./commands/prompts";
 import { registerReadinessCommand } from "./commands/readiness";
-import { registerRulesCommand } from "./commands/rules";
-import { registerSearchCommand } from "./commands/search";
-import { registerSnapCommand } from "./commands/snap";
-import { registerTimesheetCommand } from "./commands/timesheet";
-import { registerTriageCommand } from "./commands/triage";
-import { registerVaultCommand } from "./commands/vault";
-import { registerWakeCommand } from "./commands/wake";
-import { registerWatchingCommand } from "./commands/watching";
 import { fixThreads, realFixThreadsDeps } from "./lib/fix-threads";
 import { HUB_MODES, HUB_TABS, HUB_USAGE_SECTIONS, hubPrintUrl, openHub } from "./lib/open";
 import {
@@ -91,8 +64,7 @@ import {
     type TimelineKind,
 } from "./lib/timeline";
 import { TIMELINE_DETAIL_KINDS, type TimelineDetailKind, timelineDetail } from "./lib/timeline-detail";
-import { registerWorktreesCommand } from "./lib/worktrees-command";
-import { registerServeCommand } from "./server/command";
+import { HUB_REGISTRARS } from "./registrars";
 
 function isPrListState(value: unknown): value is PrListState {
     return typeof value === "string" && (PR_LIST_STATES as readonly string[]).includes(value);
@@ -1444,36 +1416,7 @@ pr.command("publish")
         }
     );
 
-registerWorktreesCommand(program);
 registerCheckLogCommand(pr);
 registerReadinessCommand(pr);
-registerNotifyCommands(program);
-registerConfigCommands(program);
-registerSearchCommand(program);
-registerDigestCommand(program);
-registerForecastCommand(program);
-registerRulesCommand(program);
-registerNavCommands(program);
-registerLinkCommand(program);
-registerInsightsCommands(program);
-registerProcsCommand(program);
-registerBoardCommand(program);
-registerTriageCommand(program);
-registerGatesCommand(program);
-registerApprovalsCommand(program);
-registerGlanceCommand(program);
-registerPingCommand(program);
-registerLaunchCommand(program);
-registerWatchingCommand(program);
-registerBriefCommand(program);
-registerWakeCommand(program);
-registerTimesheetCommand(program);
-registerVaultCommand(program);
-registerMemosCommand(program);
-registerSnapCommand(program);
-registerPromptsCommand(program);
-registerAgentsCommand(program);
-registerServeCommand(program);
-registerDevCommands(program);
 
-await runTool(program, { tool: "hub" });
+await runTool(program, { tool: "hub", registrars: HUB_REGISTRARS });
