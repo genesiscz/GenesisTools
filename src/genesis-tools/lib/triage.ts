@@ -22,6 +22,16 @@ export interface TriageProcess {
     rssMb: number;
 }
 
+/** A failed run, or (kind `deadline`) a child command of a run that outlived its Executor bound. */
+export interface TriageFailure {
+    at: string;
+    command: string;
+    exit: number | null;
+    message: string | null;
+    /** Set for a `deadline` record only: it has no exit, the run went on. */
+    kind?: "deadline";
+}
+
 export interface TriageReport {
     at: string;
     /** How long the whole gather took. */
@@ -35,7 +45,7 @@ export interface TriageReport {
         | { state: "busy" | "absent" }
     >;
     faces: TriagePart<Array<{ face: string; pid: number; startedAt: string | null }>>;
-    failures: TriagePart<Array<{ at: string; command: string; exit: number | null; message: string | null }>>;
+    failures: TriagePart<Array<TriageFailure>>;
     slowCalls: TriagePart<string[]>;
     crashes: TriagePart<Array<{ process: string; at: string; path: string }>>;
     disk: TriagePart<{ freeGb: number; totalGb: number }>;
@@ -56,10 +66,7 @@ export interface TriageSources {
         startMs: number | null;
     }>;
     hubServer: () => Promise<TriageReport["hubServer"] extends TriagePart<infer T> ? T : never>;
-    failures: (
-        since: Date,
-        until: Date
-    ) => Array<{ at: string; command: string; exit: number | null; message: string | null }>;
+    failures: (since: Date, until: Date) => Array<TriageFailure>;
     perfLogTail: () => string[];
     crashes: (since: Date, until: Date) => Array<{ process: string; at: string; path: string }>;
     disk: () => { freeGb: number; totalGb: number };
@@ -263,7 +270,7 @@ export function triageMarkdown(report: TriageReport): string {
         lines.push(`- **Failed commands, last 30 min:**`);
         for (const failure of report.failures.value) {
             lines.push(
-                `    - ${clock(failure.at, zone)} \`tools ${failure.command}\` exit ${failure.exit ?? "?"}${failure.message ? `: ${failure.message.slice(0, 160)}` : ""}`
+                `    - ${clock(failure.at, zone)} \`tools ${failure.command}\` ${failure.kind === "deadline" ? "command deadline" : `exit ${failure.exit ?? "?"}`}${failure.message ? `: ${failure.message.slice(0, 160)}` : ""}`
             );
         }
     } else if (!report.failures.ok) {
@@ -360,6 +367,8 @@ export function realTriageSources(): TriageSources {
                     command: failure.command ?? failure.tool,
                     exit: failure.exitCode,
                     message: failure.message,
+                    // Kept on purpose: a child killed at its deadline just before is what a bug report needs.
+                    ...(failure.kind === "deadline" ? { kind: "deadline" as const } : {}),
                 }))
                 .reverse(),
         perfLogTail: () => {

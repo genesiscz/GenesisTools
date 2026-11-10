@@ -16,8 +16,10 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
  * - `exit`: a non-zero exit with none of the above (the tool printed its own message and exited 1).
  * - `interrupt`: Ctrl-C or SIGTERM (130 / 143); often a harness timeout rather than a bug. The `tools` wrapper also
  *   writes it for a spawned tool a signal killed (launcher.ts), and `crash` for one that died of a fault signal.
+ * - `deadline`: a command the tool ran through `Executor` outlived its bound and was killed (deadline.ts). It is not
+ *   the end of the run (`fatal: false`): the tool may catch the error and go on. `child` names the command.
  */
-export const FAILURE_KINDS = ["usage", "error", "crash", "exit", "interrupt"] as const;
+export const FAILURE_KINDS = ["usage", "error", "crash", "exit", "interrupt", "deadline"] as const;
 export type FailureKind = (typeof FAILURE_KINDS)[number];
 
 /**
@@ -68,6 +70,42 @@ export interface ToolFailure {
     caller: FailureCaller | null;
     /** The `tools` wrapper's id for a run it spawned (run-id.ts); absent when the wrapper exec'd into the tool. */
     runId?: string;
+}
+
+/** The child command a `deadline` record is about. */
+export interface DeadlineChild {
+    /** Its argv, credentials hidden. */
+    command: string[];
+    cwd: string;
+    timeoutMs: number;
+    /** True when the call and its Executor named no bound and the default applied. */
+    defaulted: boolean;
+    /** The reason the call or its Executor gave with the bound; null for a bare number or the default. */
+    reason: string | null;
+}
+
+/**
+ * What executor.ts hands deadline.ts on an expiry. Declared here, beside the record, because executor.ts must not name
+ * deadline.ts at all: that module is loaded only in the expiry branch.
+ */
+export interface DeadlineExpiry {
+    child: DeadlineChild;
+    /** The sentence the call throws. */
+    message: string;
+    /** How long the child ran before it was killed. */
+    durationMs: number;
+    /** The stack of the `exec` call, taken before the spawn, so it names the call site and not the timer. */
+    stack: string | null;
+}
+
+/**
+ * The fields only some kinds write. They are declared apart from the interface above on purpose: the app launcher
+ * writes every field of that block (LauncherFailures.swift, pinned by LauncherFailuresTests), and it never writes a
+ * `deadline` record.
+ */
+export interface ToolFailure {
+    /** Only on a `deadline` record. */
+    child?: DeadlineChild;
 }
 
 export function failuresDir(): string {
