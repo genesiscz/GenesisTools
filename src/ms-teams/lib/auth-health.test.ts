@@ -161,6 +161,11 @@ describe("readAuthHealth", () => {
 
                 chmodSync(root, 0o000);
                 expect(readAuthHealth(root).verdict).toBe("unreadable");
+                // A parent that cannot be searched: existsSync(child) answers false, and it must still read as
+                // unreadable (Full Disk Access advice), never as a missing log.
+                expect(readAuthHealth(join(root, "logs")).verdict).toBe("unreadable");
+                chmodSync(root, 0o700);
+                expect(readAuthHealth(join(root, "absent")).verdict).toBe("no-log");
             } finally {
                 chmodSync(root, 0o700);
                 chmodSync(locked, 0o700);

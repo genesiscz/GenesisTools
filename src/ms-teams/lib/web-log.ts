@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -20,18 +20,22 @@ export type WebLogRootState = "missing" | "unreadable" | "readable";
 
 /**
  * Whether the log folder exists and can be listed. Without Full Disk Access, macOS privacy makes an existing folder
- * unreadable, and that must not read as "no log". Read-only.
+ * unreadable, and that must not read as "no log". The folder is listed directly, never checked with `existsSync`
+ * first: a parent folder that cannot be searched makes `existsSync` answer false, so a denied path read as missing.
+ * Only ENOENT and ENOTDIR mean missing. Read-only.
  */
 export function webLogRootState(root: string): WebLogRootState {
-    if (!existsSync(root)) {
-        return "missing";
-    }
-
     try {
         readdirSync(root);
         return "readable";
     } catch (err) {
-        log.debug({ err, root }, "[ms-teams] the web-client log directory exists but cannot be listed");
+        const code = err instanceof Error && "code" in err ? err.code : undefined;
+
+        if (code === "ENOENT" || code === "ENOTDIR") {
+            return "missing";
+        }
+
+        log.debug({ err, root }, "[ms-teams] the web-client log directory cannot be listed");
         return "unreadable";
     }
 }
@@ -42,8 +46,10 @@ export function webLogRootState(root: string): WebLogRootState {
  * or cannot be read is skipped; this never throws.
  */
 export function* readWebLogFiles(root: string): Generator<WebLogFile> {
-    if (!existsSync(root)) {
-        log.debug({ root }, "[ms-teams] no web-client log directory");
+    const state = webLogRootState(root);
+
+    if (state !== "readable") {
+        log.debug({ root, state }, "[ms-teams] no readable web-client log directory");
         return;
     }
 
