@@ -497,6 +497,105 @@ describe("rows --json: the review rows (F3)", () => {
         ]);
     });
 
+    test("speaker choices carry the range's typed candidate scores (G31): highest first, none without a score", async () => {
+        const { reviewRow, speakerAnswerScores } = await import("./review-rows");
+        const scored = (id: string, fromSec: number, scores: Array<[string, number]>) => ({
+            id,
+            kind: "speaker-range",
+            status: "suggested",
+            label: "Speaker 2",
+            fromSec,
+            toSec: fromSec + 30,
+            speaker: "Alice Example",
+            candidates: ["Alice Example", "Bob Example", "Dan Example"],
+            confidence: 0.6,
+            suggestedAt: at,
+            rules: ["E1", "E3"],
+            evidence: {
+                candidateScores: scores.map(([speaker, confidence]) => ({
+                    speaker,
+                    confidence,
+                    lines: 3,
+                    evidence: [{ kind: "voice", rule: "E3", lines: 2 }],
+                })),
+            },
+        });
+        const asking = (id: string, decides: string[]) =>
+            question(id, {
+                about: "speaker",
+                fromSec: 120,
+                toSec: 180,
+                question: 'Who speaks under "Speaker 2" from 02:00 to 03:00?',
+                choices: ["Alice Example", "Bob Example", "Dan Example", "Eve Example"],
+                decides,
+                priority: 0.9,
+            });
+        const withScores = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                scored("i1", 120, [
+                    ["Alice Example", 0.6],
+                    ["Dan Example", 0.1],
+                    ["Bob Example", 0.25],
+                ]),
+                // A later answer raised Alice to 0.9: the others keep their proportions in the 0.1 she leaves.
+                {
+                    ...scored("i2", 150, [
+                        ["Alice Example", 0.6],
+                        ["Bob Example", 0.32],
+                        ["Dan Example", 0.08],
+                    ]),
+                    confidence: 0.9,
+                },
+                // Eve has a score in one range only: a cluster question shows her none.
+                scored("i3", 160, [
+                    ["Alice Example", 0.6],
+                    ["Eve Example", 0.2],
+                    ["Bob Example", 0.1],
+                    ["Dan Example", 0.05],
+                ]),
+                asking("i4", ["i1"]),
+                asking("i5", ["i1", "i2"]),
+                asking("i6", ["i1", "i3"]),
+            ],
+        });
+        const view = (index: number) =>
+            reviewRow(withScores, withScores.items[index]!).choices.map((choice) => [
+                choice.role,
+                choice.value,
+                choice.confidence,
+            ]);
+
+        expect(view(3).slice(0, 4)).toEqual([
+            ["suggested", "Alice Example", 0.6],
+            ["candidate", "Bob Example", 0.25],
+            ["candidate", "Dan Example", 0.1],
+            ["candidate", "Eve Example", undefined],
+        ]);
+        // Bob: min(0.25, 0.32 × 0.1 / 0.4 = 0.08); Dan: min(0.1, 0.08 × 0.1 / 0.4 = 0.02).
+        expect(view(4).slice(1, 3)).toEqual([
+            ["candidate", "Bob Example", 0.08],
+            ["candidate", "Dan Example", 0.02],
+        ]);
+        expect(view(5).find((choice) => choice[1] === "Eve Example")).toEqual(["candidate", "Eve Example", undefined]);
+        expect(view(0).slice(0, 3)).toEqual([
+            ["suggested", "Alice Example", 0.6],
+            ["candidate", "Bob Example", 0.25],
+            ["candidate", "Dan Example", 0.1],
+        ]);
+        const asked = withScores.items.find((item) => item.id === "i4");
+
+        if (asked?.kind !== "question") {
+            throw new Error("the fixture has no question i4");
+        }
+
+        expect([...speakerAnswerScores(withScores, asked)]).toEqual([
+            ["Alice Example", 0.6],
+            ["Bob Example", 0.25],
+            ["Dan Example", 0.1],
+        ]);
+    });
+
     test("an item row: its choices act on it, its reason is pieces and sources, and a decision names who made it", async () => {
         const { reviewRow } = await import("./review-rows");
         const term = reviewRow(record, record.items[0]!);
