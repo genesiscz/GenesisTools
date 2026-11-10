@@ -333,13 +333,20 @@ struct ReviewRowView: View {
     /// The folded line's text. A question reads as its time and what it asked (its answer follows as its own text); any
     /// other row reads as `items` prints it, which already ends in what it was decided as.
     static func foldedText(_ row: ReviewRow) -> String {
-        guard row.isQuestion else { return row.what }
-        let asked = row.parts.compactMap { part -> String? in
-            if case .asks(let pieces) = part { return pieces.map(\.text).joined() }
-            return nil
-        }.first
-        guard let asked else { return row.what }
+        guard row.isQuestion, let asked = asked(row) else { return row.what }
         return [row.whenText, asked].compactMap { $0 }.joined(separator: " ")
+    }
+
+    /// What a question asks, as one string.
+    static func asked(_ row: ReviewRow) -> String? {
+        for part in row.parts { if case .asks(let pieces) = part { return pieces.map(\.text).joined() } }
+        return nil
+    }
+
+    /// A row's title where its time and its answer stand beside it (the pin's card): what a question asks, else the
+    /// one-line text. The one-line text of a question starts with its time and ends in its answer.
+    static func title(_ row: ReviewRow) -> String {
+        row.isQuestion ? asked(row) ?? row.what : row.what
     }
 
     /// The answer a folded question shows after its text; nil for a row whose text already carries it.

@@ -18,7 +18,7 @@ struct PinCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            Text(verbatim: row.what)
+            Text(verbatim: ReviewRowView.title(row))
                 .font(.system(size: 14, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(Array(row.parts.enumerated()), id: \.offset) { _, part in
@@ -26,8 +26,11 @@ struct PinCard: View {
             }
             if !row.choices.isEmpty { choices }
             if !shownSources.isEmpty { sources }
-            if let decision = row.decision {
-                Text(verbatim: "\(decision.action.capitalized) by \(decision.by)\(decision.reason.map { ": \($0)" } ?? "")")
+            if row.decision != nil {
+                // The row's own words ("Confirmed by you: …"), with what it was decided as: the journal's action name
+                // ("Answer by you") was the data talking.
+                Text(verbatim: [ReviewRowView.foldedAnswer(row).map { "→ \($0)" }, ReviewRowView.decidedWords(row)]
+                    .compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -42,7 +45,7 @@ struct PinCard: View {
     private var header: some View {
         HStack(spacing: 8) {
             Badge(row.label, color: row.isQuestion ? .purple : .accentColor, monospaced: true)
-            Text(verbatim: row.kind.capitalized).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(verbatim: ReviewRowView.kindWord(row.kind)).font(.system(size: 11)).foregroundStyle(.secondary)
             if let time = whenText {
                 Text(verbatim: time).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             }

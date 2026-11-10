@@ -207,7 +207,7 @@ extension MeetingDetailModel {
         showDecided(entry, row: row)
         if !result.skipped.isEmpty {
             notices.push(StackedNotice(text: "\(Plural.count(result.skipped.count, "item")) left as \(result.skipped.count == 1 ? "it was" : "they were")",
-                                       more: result.skipped.map { "\($0.id): \($0.reason)" }.joined(separator: "\n"), tone: .warning))
+                                       more: result.skipped.map { "\(rowLabel($0.id)): \($0.reason)" }.joined(separator: "\n"), tone: .warning))
         }
         refreshAfterDecision()
         autoplayNext(after: row)

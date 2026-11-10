@@ -21,7 +21,7 @@ struct ReachSheet: View {
                         ForEach(pending.reach.items, id: \.id) { item in
                             HStack(spacing: 8) {
                                 if let player = detail.window?.player {
-                                    MomentButton(player: player, meeting: detail.id, target: .item(item.id), label: item.id, source: .speakerChip)
+                                    MomentButton(player: player, meeting: detail.id, target: .item(item.id), label: detail.rowLabel(item.id), source: .speakerChip)
                                 }
                                 Text(verbatim: detail.rows.value?.rows.first { $0.id == item.id }?.what ?? item.id)
                                     .font(.system(size: 12.5)).lineLimit(2)
@@ -68,7 +68,7 @@ struct HistorySheetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(history.item.map { "History of \($0)" } ?? "History of this meeting").font(.system(size: 15, weight: .semibold))
+                Text(history.item.map { "History of \(detail.rowLabel($0))" } ?? "History of this meeting").font(.system(size: 15, weight: .semibold))
                 Spacer()
                 Button("Done") { detail.history = nil }.keyboardShortcut(.defaultAction)
             }

@@ -146,7 +146,8 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(StagedCommentsBar.receiverText([]), "Nobody listens on this meeting")
         let agent = CommentListener(pid: 4211, at: "2026-11-09T14:32:00Z",
                                     actor: DecisionActor(kind: "listen", harness: "claude-code", session: "7f3a92"))
-        XCTAssertEqual(StagedCommentsBar.receiverText([agent]), "claude-code agent, session 7f3a, pid 4211")
+        XCTAssertEqual(StagedCommentsBar.receiverText([agent]), "Claude Code agent, session 7f3a, pid 4211",
+                       "the harness by its name, as every other line names it")
     }
 
     func testSnapshotSelectionPopoverAndStagedComments() throws {

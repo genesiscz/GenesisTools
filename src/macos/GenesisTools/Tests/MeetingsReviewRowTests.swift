@@ -168,6 +168,8 @@ final class MeetingsReviewRowTests: XCTestCase {
         answered.answer = "Dana Example"
         XCTAssertEqual(ReviewRowView.foldedText(answered), "20:00 Who speaks at 20:10", "a folded question reads as its time and what it asked")
         XCTAssertEqual(ReviewRowView.foldedAnswer(answered), "Dana Example", "and its answer is its own text, which never truncates")
+        XCTAssertEqual(ReviewRowView.title(answered), "Who speaks at 20:10", "the pin's card titles a question by what it asks")
+        XCTAssertEqual(ReviewRowView.title(rows[1]), "OMP → EMP")
         XCTAssertEqual(ReviewRowView.foldedText(rows[2]), "Speaker 3 00:12–00:30 → Alex Example")
         XCTAssertNil(ReviewRowView.foldedAnswer(rows[2]), "a range's line already ends in its speaker")
         XCTAssertEqual(ReviewRowView.reference(rows[2]), "Speaker range 00:12–00:30", "another row names it in words, not by its item id")
