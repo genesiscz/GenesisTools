@@ -1,6 +1,6 @@
 import { loadTelegramConfig, saveTelegramConfig } from "@app/telegram-bot/lib/config";
 import { WEBHOOK_ALLOWED_UPDATES } from "@app/telegram-bot/lib/webhook/settings";
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import { Api } from "grammy";
 
@@ -16,6 +16,7 @@ export function registerConfigureCommand(program: Command): void {
                 p.log.info(`Already configured: @${existing.botUsername ?? "bot"} (chat ${existing.chats.commands})`);
                 const overwrite = await p.confirm({
                     message: "Are you sure you want to overwrite the current configuration?",
+                    cancel: "back",
                 });
                 if (p.isCancel(overwrite) || !overwrite) {
                     p.outro("Keeping existing configuration.");
@@ -38,6 +39,7 @@ export function registerConfigureCommand(program: Command): void {
                         return "Invalid token format (expected: 123456:ABC...)";
                     }
                 },
+                cancel: "back",
             });
             if (p.isCancel(token)) {
                 return;

@@ -1,6 +1,6 @@
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { execTool } from "@genesiscz/utils/cli/tools";
+import * as p from "@genesiscz/utils/prompts/p";
 import { stripAnsi, truncateForTelegram } from "@genesiscz/utils/telegram-bot/lib/formatting";
 import type { Bot } from "grammy";
 

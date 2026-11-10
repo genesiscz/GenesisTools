@@ -11,10 +11,10 @@ import {
     WebhookSettingsError,
 } from "@app/telegram-bot/lib/webhook/settings";
 import { applyTunnelChange, planTunnelChange, readTunnelConfig } from "@app/telegram-bot/lib/webhook/tunnel";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { captureSync } from "@genesiscz/utils/process/capture";
+import * as p from "@genesiscz/utils/prompts/p";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
 import type { Command } from "commander";
