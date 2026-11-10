@@ -4288,8 +4288,11 @@ private struct FileRow: View, Equatable {
 /// takes it only from a container that is no longer in a window.
 private struct RendererHost: NSViewRepresentable {
     let renderer: DiffRenderer
+    /// The page's scroll bar follows Settings → Hub → Appearance → Scroll bars.
+    @AppStorage(GenScrollBarStyle.key) private var scrollBars = GenScrollBarStyle.genesis.rawValue
 
     func makeNSView(context: Context) -> RendererContainer {
+        renderer.setScrollBars(GenScrollBarStyle(stored: scrollBars))
         let container = RendererContainer()
         container.renderer = renderer
         if renderer.view.window == nil { container.claim() }
@@ -4297,6 +4300,7 @@ private struct RendererHost: NSViewRepresentable {
     }
 
     func updateNSView(_ container: RendererContainer, context: Context) {
+        renderer.setScrollBars(GenScrollBarStyle(stored: scrollBars))
         container.renderer = renderer
         if renderer.view.superview !== container, container.window != nil, renderer.view.window == nil {
             container.claim()
