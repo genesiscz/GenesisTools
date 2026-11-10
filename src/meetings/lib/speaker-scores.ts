@@ -507,8 +507,8 @@ export function speakerChoiceScores(
     for (const score of perRange[0]!) {
         const values = perRange.map((scores) => scores.find((one) => sameName(one.speaker, score.speaker))?.confidence);
 
-        if (values.every((value) => value !== undefined)) {
-            result.set(score.speaker, Math.min(...(values as number[])));
+        if (values.every((value): value is number => value !== undefined)) {
+            result.set(score.speaker, Math.min(...values));
         }
     }
 

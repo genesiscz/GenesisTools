@@ -383,7 +383,6 @@ function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoi
     ];
 }
 
-/** When an item is: a span or a time on the transcript clock, with its Moment. */
 /**
  * The confidence of each answer of a speaker question as its row shows it (R49, G31): `listen` prints it beside the
  * name. Empty for other questions and for answers without a score.
@@ -403,6 +402,7 @@ export function speakerAnswerScores(record: MeetingRecord, question: QuestionIte
     );
 }
 
+/** When an item is: a span or a time on the transcript clock, with its Moment. */
 function whenPart(item: MeetingItem): Extract<RowPart, { kind: "when" }> {
     const target = { kind: "item" as const, id: item.id };
 
