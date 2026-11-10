@@ -50,8 +50,8 @@ describe("the locator grammar", () => {
         expect(union(id("a"), [id("b"), id("c")])).toEqual(["testid=a", "testid=b", "testid=c"]);
         expect(within(nth(id("section"), 1), id("card"))).toBe("testid=section >> nth=1 >> testid=card");
         expect(hasText(id("row"), "Šablona")).toBe("testid=row >> has-text=Šablona");
-        expect(role("heading", { name: "Elektřina" })).toBe('role=heading[name="Elektřina"]');
-        expect(role("heading", { name: "Elektřina", exact: true })).toBe('role=heading[name="Elektřina"s]');
+        expect(role("heading", { name: "Zahrada" })).toBe('role=heading[name="Zahrada"]');
+        expect(role("heading", { name: "Zahrada", exact: true })).toBe('role=heading[name="Zahrada"s]');
         // built from a string: Bun prints a regex literal's non-ASCII letters as escapes, which match the same
         const named = "^Název";
         expect(label(new RegExp(named))).toBe("label=/^Název/");
@@ -98,7 +98,7 @@ describe("the locator grammar", () => {
         expect(() => parseLocator("nth=1 >> testid=x")).toThrow(/cannot come first/);
         expect(() => parseLocator("text=/(/")).toThrow(/bad regular expression/);
         expect(() => parseLocator([])).toThrow(/empty union/);
-        expect(() => parseLocator("role=heading[name=Elektřina]")).toThrow(/quoted/);
+        expect(() => parseLocator("role=heading[name=Zahrada]")).toThrow(/quoted/);
     });
 });
 
@@ -107,12 +107,12 @@ body { margin: 0; font: 16px Helvetica, Arial, sans-serif; }
 .abs { position: absolute; margin: 0; }
 </style></head><body>
 <div data-testid="panel" class="abs" style="left:20px;top:20px;width:300px;height:200px">
-  <h2 class="abs" style="left:10px;top:10px;font-size:20px">Elektřina SPOT</h2>
+  <h2 class="abs" style="left:10px;top:10px;font-size:20px">Zahrada SPOT</h2>
   <button data-testid="usages-button" class="abs" style="left:10px;top:150px;width:120px;height:30px">Kde je použitý</button>
 </div>
-<div data-testid="row-1" class="row abs" style="left:400px;top:20px;width:200px;height:40px">Šablona leadu · <span data-testid="remove">Vyjmout</span></div>
+<div data-testid="row-1" class="row abs" style="left:400px;top:20px;width:200px;height:40px">Šablona dopisu · <span data-testid="remove">Vyjmout</span></div>
 <div data-testid="row-2" class="row abs" style="left:400px;top:80px;width:200px;height:40px">Jiný dokument · <span data-testid="remove">Vyjmout</span></div>
-<div role="dialog" class="abs" style="left:20px;top:300px;width:300px;height:120px"><ul style="margin:0;padding:0;list-style:none"><li>UsageDto: typ</li><li>verze</li></ul></div>
+<div role="dialog" class="abs" style="left:20px;top:300px;width:300px;height:120px"><ul style="margin:0;padding:0;list-style:none"><li>ItemDto: typ</li><li>verze</li></ul></div>
 <label for="name" class="abs" style="left:400px;top:300px">Název *</label>
 <input id="name" class="abs" style="left:400px;top:330px;width:200px;height:24px">
 <div data-testid="hidden-thing" style="display:none">skryté</div>
@@ -172,9 +172,9 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         const [exact, contains, regex, heading, exactHeading, dialog, items, field, row] = await resolve(
             text("Kde je použitý"),
             text("POUŽITÝ", false),
-            text(/^Elektřina/),
-            role("heading", { name: "elektřina" }),
-            role("heading", { name: "Elektřina", exact: true }),
+            text(/^Zahrada/),
+            role("heading", { name: "zahrada" }),
+            role("heading", { name: "Zahrada", exact: true }),
             role("dialog"),
             within(role("dialog"), css("li")),
             label(/^Název/),
@@ -185,7 +185,7 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         expect(box(contains)).toEqual(box(exact));
         expect(regex?.ok && regex.box.x).toBe(30);
         expect(heading?.ok && heading.count).toBe(1);
-        expect(exactHeading).toEqual({ ok: false, source: 'role=heading[name="Elektřina"s]', reason: "none" });
+        expect(exactHeading).toEqual({ ok: false, source: 'role=heading[name="Zahrada"s]', reason: "none" });
         expect(box(dialog)).toEqual({ x: 20, y: 300, w: 300, h: 120, count: 1 });
         expect(items?.ok && items.count).toBe(2);
         expect(field?.ok && [field.box.x, field.box.y]).toEqual([400, 330]);
@@ -451,13 +451,13 @@ describe("a shot book", () => {
             path,
             [
                 'import { defineShots, id, nth, text, union, within } from "@genesis-tools/shots";',
-                'const section = (n: number) => nth(id("marketplace-admin-section-inner-paper"), n);',
+                'const section = (n: number) => nth(id("admin-section-inner-paper"), n);',
                 "export default defineShots({",
                 '    base: "http://localhost:3000",',
                 "    shots: [{",
-                '        id: "19", stem: "19-ref-products-picker", url: "/administrace/marketplace/kategorie/x", ready: section(1),',
-                '        clip: { around: union(within(section(1), id("card")), text("Přidat kartu")), pad: [30, 30, 60, 30] },',
-                '        marks: [{ target: within(section(1), id("card")), at: "above", label: "CategoryData.sections[].products" }],',
+                '        id: "19", stem: "19-section-items", url: "/admin/categories/x", ready: section(1),',
+                '        clip: { around: union(within(section(1), id("card")), text("Přidat položku")), pad: [30, 30, 60, 30] },',
+                '        marks: [{ target: within(section(1), id("card")), at: "above", label: "Section.items: references" }],',
                 "    }],",
                 "});",
             ].join("\n")
@@ -465,9 +465,9 @@ describe("a shot book", () => {
         const book = await loadShotBook(path, { base: "http://localhost:4000" });
 
         expect(book.base).toBe("http://localhost:4000");
-        expect(book.shots[0].parts[0].ready?.source).toBe("testid=marketplace-admin-section-inner-paper >> nth=1");
+        expect(book.shots[0].parts[0].ready?.source).toBe("testid=admin-section-inner-paper >> nth=1");
         expect(book.shots[0].parts[0].marks[0].label).toEqual({
-            text: "CategoryData.sections[].products",
+            text: "Section.items: references",
             position: "top-left",
         });
     });
@@ -475,8 +475,8 @@ describe("a shot book", () => {
 
 describe.skipIf(!HAS_CHROME)("running a shot book in headless Chrome", () => {
     const pages: Record<string, string> = {
-        "/a": '<h2 data-testid="title" style="margin:20px;font:24px Helvetica">Elektřina</h2>',
-        "/b": '<h2 data-testid="title" style="margin:20px;font:24px Helvetica">Servis vytápění</h2><p style="margin:20px">Popis produktu.</p>',
+        "/a": '<h2 data-testid="title" style="margin:20px;font:24px Helvetica">Zahrada</h2>',
+        "/b": '<h2 data-testid="title" style="margin:20px;font:24px Helvetica">Servis kol</h2><p style="margin:20px">Popis produktu.</p>',
     };
     let server: ReturnType<typeof Bun.serve>;
 

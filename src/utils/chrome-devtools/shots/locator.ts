@@ -7,7 +7,7 @@
  *   testid=x         elements whose data-testid is x (`testid^=` prefix, `testid~=` contains)
  *   css=selector     CSS, through open shadow roots
  *   text=Exact       the smallest elements whose whole text is "Exact" (`text~=` contains, any case; `text=/re/i`)
- *   role=dialog      by ARIA role, implicit roles included; `role=heading[name="Elektřina"]` (contains, any case),
+ *   role=dialog      by ARIA role, implicit roles included; `role=heading[name="Zahrada"]` (contains, any case),
  *                    `[name="x"s]` exact, `[name=/re/]`
  *   label=/^Název/   form controls by their label, aria-label or aria-labelledby (`label~=` contains)
  *   has-text=x       keeps the found elements whose text contains x (a filter)

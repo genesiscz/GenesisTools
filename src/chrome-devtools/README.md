@@ -298,6 +298,51 @@ throwaway profile and a loopback fixture (no model, no network). Measured 2026-0
 2000-link page reads in 11.8 ms median over 10 reads; a click that changes nothing settles at the
 300 ms cap; `back` from a back-forward-cache page returns in 5 to 11 ms.
 
+## Annotated page shots (`shot --mark`, `shots`)
+
+Boxes and labels drawn INTO the page (its own font, so Czech letters are right), photographed, and
+removed: each shot is a raw image and an annotated one that differ only under the overlay. Targets
+are locator strings resolved when the shot runs, never pixels; a target that matches nothing, or a
+label with no free spot, fails the shot by name instead of drawing at 0,0.
+
+```bash
+# One quick shot of the tab you look at: annotated, raw (.original) and the marks in image pixels.
+tools chrome-devtools shot ~/shots/usages.webp \
+    --mark testid=usages-button \
+    --label "Kde je použitý" \
+    --at below
+# The same from a plan: items with a target mark the page, items with a rect draw in image pixels.
+tools chrome-devtools shot ~/shots/usages.png --annotate plan.jsonc
+# A shot book: list it, check it (no browser), rehearse it (no images), run it.
+tools chrome-devtools shots list scripts/proposal.shots.ts
+tools chrome-devtools shots check scripts/proposal.shots.ts
+tools chrome-devtools shots rehearse scripts/proposal.shots.ts --only 18,08
+tools chrome-devtools shots run scripts/proposal.shots.ts --tag 1110 --out wiki/images
+```
+
+| Command | What it does |
+|---|---|
+| `shot [path] --mark <loc> [--label <t>] [--at <side>] [--clip <loc>] [--pad <px>] [--annotate <plan>] [--preset <name>]` | Marks on the current tab; `.png` or `.webp`; refuses any other output name |
+| `shots run <book> [--only ids] [--out dir] [--tag t] [--base url] [--browser headless\|attach] [--port n] [--json]` | Every shot: `<stem>.<tag>.webp`, `<stem>.<tag>.original.webp`, PNGs under `png/` when the book asks, marks and the run report under `.shots/<tag>/` |
+| `shots list <book> [--only ids] [--json]` | id, stem, parts, first URL, note; no browser |
+| `shots check <book>` | Parses every locator, mark and part; no browser, changes nothing |
+| `shots rehearse <book> [--only ids]` | Visits every part, runs its steps, resolves every locator and places every label; no image |
+
+Locators: `testid=x` (`testid^=` prefix), `css=…`, `text=Exact` (`text~=` contains, `text=/re/`),
+`role=dialog`, `role=heading[name="Zahrada"]`, `label=/^Název/`, chained with ` >> `
+(`has-text=…`, `nth=1`); an array is a union whose every member must match. A `.ts` book is
+`export default defineShots({...})` with `id`, `css`, `text`, `union`, `nth`, `within`, `hasText`,
+`role` and `label` imported from `@genesis-tools/shots`; the loader serves that module, so the
+book's folder needs no `node_modules`. A mark also takes the first shot script's words (`at:
+"below"`, `dx`, `dy`, `color: "amber"`, `quiet`). Labels go to the requested side, else the next
+side that covers no page text and no other label inside the clip (`clip.fit: "labels"` grows the
+clip instead). Browsers: `headless` (default; a fresh Chrome, login cookies copied in memory from
+your running browser for the book's base URL only, or from `browser.headless.cookies: { from:
+"command", argv }`), or `attach` (your running browser, a new background tab). The marks file is
+an annotation plan: `tools control draw <image> --annotate <marks.json>` redraws it. Code:
+`src/utils/chrome-devtools/shots/` (vendored: locators, the in-page agent, `capturePart`) and
+`lib/shots/` (book, browsers, runner, quick shot).
+
 ## Do not
 
 - Do not pipe `record`, `follow`, or `trace` to `head`/`tail` — they are long-running and
