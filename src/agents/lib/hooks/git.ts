@@ -190,3 +190,67 @@ export function untrackedFilesIn(root: string, dir: string, limit: number): stri
 
     return names.filter((name) => name.length > 0).slice(0, cap);
 }
+
+/** A directory git would read as a pattern or as pathspec magic, not as a plain prefix: listed by itself. */
+const PATHSPEC_SPECIAL = /[*?[\\]|^:/;
+/** Directories per listing: the argv stays far under the kernel's limit. */
+const DIRS_PER_LISTING = 64;
+
+/**
+ * `untrackedFilesIn` for several wholly-untracked directories of one root, with one git process for
+ * all of them instead of one each. A checkout with 47 untracked directories started 47 `git ls-files`
+ * in the post phase of every Bash call, and 47 more in the pre phase of a call that edits (measured
+ * 2026-11-10 in a notes vault: 98 git processes for one call, about 7.5 ms of CPU each).
+ *
+ * The answer per directory is the one `untrackedFilesIn` gives. The whole batch gets the buffer ONE
+ * directory may fill, so the work stays bounded; a batch that outgrows it, or that git refuses, is
+ * listed again one directory at a time, with each directory's own bound and its own diagnosis.
+ */
+export function untrackedFilesInEach(
+    root: string,
+    dirs: readonly string[],
+    limit: number
+): Map<string, string[] | null> {
+    const cap = Math.max(0, limit);
+    const listed = new Map<string, string[] | null>();
+    const together = [...new Set(dirs)].filter((dir) => dir.endsWith("/") && !PATHSPEC_SPECIAL.test(dir));
+
+    for (let start = 0; start < together.length; start += DIRS_PER_LISTING) {
+        const batch = together.slice(start, start + DIRS_PER_LISTING);
+
+        if (batch.length < 2) {
+            continue;
+        }
+
+        const run = spawnSync("git", ["-C", root, "ls-files", "--others", "--exclude-standard", "-z", "--", ...batch], {
+            encoding: "utf8",
+            maxBuffer: Math.min(MAX_BUFFER, Math.max(65_536, (cap + 1) * BYTES_PER_LISTED_NAME)),
+        });
+
+        if (run.error || run.status !== 0 || typeof run.stdout !== "string") {
+            continue;
+        }
+
+        for (const dir of batch) {
+            listed.set(dir, []);
+        }
+
+        for (const name of run.stdout.split("\0")) {
+            // A wholly-untracked directory never holds another one, so at most one prefix fits.
+            const dir = name.length > 0 ? batch.find((prefix) => name.startsWith(prefix)) : undefined;
+            const names = dir === undefined ? undefined : listed.get(dir);
+
+            if (names && names.length < cap) {
+                names.push(name);
+            }
+        }
+    }
+
+    for (const dir of dirs) {
+        if (!listed.has(dir)) {
+            listed.set(dir, untrackedFilesIn(root, dir, limit));
+        }
+    }
+
+    return listed;
+}

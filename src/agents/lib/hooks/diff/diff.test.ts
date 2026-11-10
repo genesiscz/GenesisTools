@@ -39,7 +39,7 @@ import {
     readDiffLog,
     readMessage,
 } from "../diff-log";
-import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
+import { isDeleted, statusEntries, untrackedFilesIn, untrackedFilesInEach } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import { type HookPayload, parseHookPayload } from "../payload";
 import { readOnlyCommand, recordTouches } from "./attribution";
@@ -3684,6 +3684,64 @@ describe("listing a wide untracked directory", () => {
 
     it("says null, not empty, when git cannot list at all", () => {
         expect(untrackedFilesIn(join(wide, "not-a-repo-at-all"), "many/", 5)).toBeNull();
+    });
+
+    describe("several untracked directories", () => {
+        const small = ["few/", "other dir/", "third/"];
+
+        beforeAll(() => {
+            writeFileSync(join(wide, ".gitignore"), "*.log\n");
+
+            for (const name of ["few/a.txt", "few/deep/b.txt", "few/ignored.log", "other dir/c.txt", "pat[x]/d.txt"]) {
+                mkdirSync(dirname(join(wide, name)), { recursive: true });
+                writeFileSync(join(wide, name), "");
+            }
+
+            for (let index = 0; index < 8; index += 1) {
+                mkdirSync(join(wide, "third"), { recursive: true });
+                writeFileSync(join(wide, "third", `t-${index}.txt`), "");
+            }
+        });
+
+        it("lists them with one git process, each with the answer of its own listing", async () => {
+            const each = await withSpawnCounter(async () => untrackedFilesInEach(wide, small, 5));
+
+            expect(each.count).toBe(1);
+            expect(each.result.get("few/")).toEqual(["few/a.txt", "few/deep/b.txt"]);
+            expect(each.result.get("third/")).toHaveLength(5);
+
+            for (const dir of small) {
+                expect(each.result.get(dir)).toEqual(untrackedFilesIn(wide, dir, 5));
+            }
+        });
+
+        it("lists a directory git would read as a pattern by itself", async () => {
+            const each = await withSpawnCounter(async () => untrackedFilesInEach(wide, [...small, "pat[x]/"], 5));
+
+            expect(each.count).toBe(2);
+            expect(each.result.get("pat[x]/")).toEqual(untrackedFilesIn(wide, "pat[x]/", 5));
+            expect(each.result.get("few/")).toEqual(["few/a.txt", "few/deep/b.txt"]);
+        });
+
+        it("falls back to one listing each when the batch outgrows one directory's buffer", async () => {
+            const dirs = ["many/", ...small];
+            const each = await withSpawnCounter(async () => untrackedFilesInEach(wide, dirs, 5));
+
+            // The batch, then each of the four by itself.
+            expect(each.count).toBe(5);
+
+            for (const dir of dirs) {
+                expect(each.result.get(dir)).toEqual(untrackedFilesIn(wide, dir, 5));
+            }
+        });
+
+        it("says null for every directory when git cannot list at all, and starts nothing for none", async () => {
+            const broken = untrackedFilesInEach(join(wide, "not-a-repo-at-all"), small, 5);
+            const none = await withSpawnCounter(async () => untrackedFilesInEach(wide, [], 5));
+
+            expect([...broken.values()]).toEqual([null, null, null]);
+            expect(none.count).toBe(0);
+        });
     });
 });
 
