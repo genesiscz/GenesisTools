@@ -137,16 +137,19 @@ export const ANNOTATION_PRESETS = {
         labelChip: { bg: "#111111", fg: "#ffffff", fontSize: 24 },
         blurStrength: 24,
     },
-    /** The look of the annotated web shots (a 3 px dashed outline, no wash, a small chip): page-sized, not 4K. */
+    /**
+     * The look of the annotated web shots (a 3 px dashed outline, no wash, a small chip): page-sized, not 4K. The
+     * chip is a darker red than the outline: white on #ff4d4f is 3.3:1, under the 4.5:1 that 14 px text needs.
+     */
     "review-dashed": {
         shape: { stroke: "#ff4d4f", strokeWidth: 3, radius: 8, fill: "", dash: [9, 6] },
-        labelChip: { bg: "#ff4d4f", fg: "#ffffff", fontSize: 14 },
+        labelChip: { bg: "#d32f2f", fg: "#ffffff", fontSize: 14 },
         blurStrength: 12,
     },
-    /** The amber twin of review-dashed. White on amber keeps the web shots' existing look. */
+    /** The amber twin of review-dashed, with callout-amber's dark text: white on amber is 1.9:1. */
     "callout-amber-dashed": {
         shape: { stroke: "#ffb020", strokeWidth: 3, radius: 8, fill: "", dash: [9, 6] },
-        labelChip: { bg: "#ffb020", fg: "#ffffff", fontSize: 14 },
+        labelChip: { bg: "#ffb020", fg: "#111111", fontSize: 14 },
         blurStrength: 12,
     },
     "info-blue": {

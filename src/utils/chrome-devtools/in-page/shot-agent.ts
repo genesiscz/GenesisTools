@@ -18,8 +18,8 @@ export type WireResolution =
 
 /**
  * Resolves each locator to the union box of what it matches. A chain that matches nothing fails its locator with
- * the chain named (`member`), and matches that are all hidden or empty fail as `zero-size`: nothing is ever boxed at
- * 0,0.
+ * the chain named (`member`), and a chain whose matches are all hidden (display:none, visibility:hidden) or empty
+ * fails as `zero-size`, also named: nothing is ever boxed at 0,0, and nothing absent from the image is boxed.
  */
 export function resolveShotLocators(arg: {
     locators: Locator[];
@@ -231,34 +231,41 @@ export function resolveShotLocators(arg: {
         return current.filter((element): element is Element => element instanceof Element);
     };
 
+    // a box is not enough: visibility:hidden keeps its box but paints nothing (the computed value is inherited,
+    // so a hidden ancestor counts, and a child set back to visible is shown)
+    const shown = (element: Element): boolean => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility === "visible";
+    };
+
     return arg.locators.map((locator): WireResolution => {
         const elements: Element[] = [];
         for (const chain of locator.chains) {
             const found = resolveChain(chain.steps);
+            const member = locator.chains.length > 1 ? { member: chain.source } : {};
             if (found.length === 0) {
-                return locator.chains.length > 1
-                    ? { ok: false, source: locator.source, reason: "none", member: chain.source }
-                    : { ok: false, source: locator.source, reason: "none" };
+                return { ok: false, source: locator.source, reason: "none", ...member };
             }
 
-            elements.push(...found);
+            // every member of a union must show something, or the box would mark content the image lacks
+            const visible = found.filter(shown);
+            if (visible.length === 0) {
+                return { ok: false, source: locator.source, reason: "zero-size", ...member };
+            }
+
+            elements.push(...visible);
         }
 
+        const hits = unique(elements);
         if (arg.act) {
-            const target = elements[0];
+            const target = hits[0];
             target.scrollIntoView({ block: "center", inline: "nearest" });
             if (arg.act === "click" && target instanceof HTMLElement) {
                 target.click();
             }
         }
 
-        const rects = unique(elements)
-            .map((element) => element.getBoundingClientRect())
-            .filter((rect) => rect.width > 0 && rect.height > 0);
-        if (rects.length === 0) {
-            return { ok: false, source: locator.source, reason: "zero-size" };
-        }
-
+        const rects = hits.map((element) => element.getBoundingClientRect());
         const left = Math.min(...rects.map((rect) => rect.left));
         const top = Math.min(...rects.map((rect) => rect.top));
         const right = Math.max(...rects.map((rect) => rect.right));
@@ -267,7 +274,7 @@ export function resolveShotLocators(arg: {
         return {
             ok: true,
             source: locator.source,
-            count: unique(elements).length,
+            count: hits.length,
             box: { x: left + scrollX, y: top + scrollY, w: right - left, h: bottom - top },
         };
     });

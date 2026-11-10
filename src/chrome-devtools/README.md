@@ -344,7 +344,9 @@ defaults to `{ formats: ["webp"], raw: false, webp: { maxWidth: 1200, quality: 6
 `maxWidth: 0` keeps the full width. The marks file is an annotation plan in the raw image's pixels:
 `tools control draw <raw.png> --annotate <marks.json>` redraws it onto the raw image. Code:
 `src/utils/chrome-devtools/shots/` (vendored: locators, the in-page agent, `capturePart`) and
-`lib/shots/` (book, browsers, runner, quick shot).
+`lib/shots/` (book, browsers, runner, quick shot). A vendored copy of `shots/` also needs these
+files of `src/utils/`: `image/annotation-plan.ts`, `image/mark-layout.ts`, `image/dimensions.ts`
+and its `image/detect-format.ts`, and `json.ts` (`SafeJSON`, which needs the `comment-json` package).
 
 ## Do not
 

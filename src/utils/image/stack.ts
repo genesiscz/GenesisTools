@@ -70,7 +70,7 @@ export async function encodeImage(png: Buffer, format: "png" | "webp", options: 
     const image = await loadImage(png);
     const maxWidth = options.maxWidth ?? 0;
     const scale = maxWidth > 0 && image.width > maxWidth ? maxWidth / image.width : 1;
-    const width = Math.round(image.width * scale);
+    const width = Math.max(1, Math.round(image.width * scale));
     const height = Math.max(1, Math.round(image.height * scale));
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext("2d");

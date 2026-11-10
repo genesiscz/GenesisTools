@@ -94,6 +94,8 @@ async function shootOne(tab: ShotTab, book: ShotBook, shot: Shot, options: RunOp
     const notes: string[] = [];
     let offset = 0;
     const setup = tab.shared ? { ...book.setup, viewport: undefined } : book.setup;
+    // the raw images are kept, stacked and encoded only when they are written
+    const keepRaw = options.raw ?? book.output.raw;
 
     for (const [index, part] of shot.parts.entries()) {
         const capture = await capturePart(tab.cdp, part, setup);
@@ -107,14 +109,16 @@ async function shootOne(tab: ShotTab, book: ShotBook, shot: Shot, options: RunOp
             };
         }
 
-        raws.push(capture.images.raw);
+        if (keepRaw) {
+            raws.push(capture.images.raw);
+        }
+
         finals.push(await composeOverlay(capture.images));
         annotations.push(...shifted(capture.images.annotations, offset));
         notes.push(...capture.notes.map((note) => `${where}${note}`));
         offset += capture.images.height;
     }
 
-    const raw = await stackImages(raws);
     const annotated = await stackImages(finals);
     const name = `${shot.stem}.${options.tag}`;
     const files: string[] = [];
@@ -124,9 +128,9 @@ async function shootOne(tab: ShotTab, book: ShotBook, shot: Shot, options: RunOp
         files.push(path);
     }
 
-    if (options.raw ?? book.output.raw) {
+    if (keepRaw) {
         const path = join(options.out, "png", `${name}.original.png`);
-        await writeAtomic(path, raw);
+        await writeAtomic(path, await stackImages(raws));
         files.push(path);
     }
 

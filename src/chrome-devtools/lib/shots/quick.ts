@@ -161,7 +161,9 @@ export async function takeQuickShot(input: {
     }
 
     const preset = input.plan.preset ?? DEFAULT_SETUP.preset;
-    const part = parseShotPart({ clip: input.plan.clip, marks: input.plan.marks });
+    // a plan of pixel items only (a control draw plan) marks nothing on the page: it draws on the visible viewport
+    const clip = input.plan.clip ?? (input.plan.marks.length === 0 ? { viewport: true, pad: 0 } : undefined);
+    const part = parseShotPart({ clip, marks: input.plan.marks });
     const capture = await capturePart(input.cdp, part, { ...DEFAULT_SETUP, settleMs: 0, preset, ...input.setup });
     if (!capture.ok) {
         return capture;

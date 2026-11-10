@@ -129,14 +129,19 @@ async function act(cdp: CdpLike, locator: Locator, action: "click" | "scroll"): 
     return resolution;
 }
 
-async function untilLoaded(cdp: CdpLike, timeoutMs: number): Promise<void> {
+/** True once the document is past "loading"; false when `timeoutMs` ran out first. */
+async function untilLoaded(cdp: CdpLike, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
+    for (;;) {
         if ((await evaluateExpression(cdp, "document.readyState").catch(() => "loading")) !== "loading") {
-            return;
+            return true;
         }
 
-        await sleep(POLL_MS);
+        if (Date.now() >= deadline) {
+            return false;
+        }
+
+        await sleep(Math.min(POLL_MS, Math.max(0, deadline - Date.now())));
     }
 }
 
@@ -165,11 +170,16 @@ function snap(box: DocBox): DocBox {
     return { x, y, w: Math.ceil(box.x + box.w) - x, h: Math.ceil(box.y + box.h) - y };
 }
 
-function clipOf(part: ShotPart, around: DocBox, metrics: ShotPageMetrics): DocBox {
+/** The part's crop; with no `around` (a part with no marks and `clip.viewport`), the whole viewport. */
+function clipOf(part: ShotPart, around: DocBox | undefined, metrics: ShotPageMetrics): DocBox {
     const [top, right, bottom, left] = part.clip.pad;
     const page = part.clip.viewport
         ? { x: metrics.scrollX, y: metrics.scrollY, w: metrics.viewport.w, h: metrics.viewport.h }
         : { x: 0, y: 0, w: metrics.document.w, h: metrics.document.h };
+    if (!around) {
+        return snap(page);
+    }
+
     const padded = { x: around.x - left, y: around.y - top, w: around.w + left + right, h: around.h + top + bottom };
     const wide = part.clip.wide ? { ...padded, x: page.x, w: page.w } : padded;
 
@@ -200,9 +210,48 @@ function frameOf(mark: Mark, box: DocBox, preset: AnnotationPreset): ShotFramePa
     };
 }
 
+/** Half the width of an ellipse with radii `rx`, `ry` at `dy` from its center; 0 at or past its top and bottom. */
+function ellipseHalfWidth(rx: number, ry: number, dy: number): number {
+    if (rx <= 0 || ry <= 0 || dy >= ry) {
+        return 0;
+    }
+
+    return rx * Math.sqrt(1 - (dy / ry) ** 2);
+}
+
 /**
- * The areas a frame draws on: its four stroke bands plus its corners (a rounded corner's stroke curves in past the
- * straight bands), or the whole box when it is filled.
+ * The stroke ring of an ellipse frame, as horizontal strips one band high. Each strip spans from the outer edge at
+ * the strip's row nearest the center to the inner edge at its row farthest from it, so every stroke pixel is inside.
+ */
+function ellipseArea(frame: ShotFramePaint, band: number): DocBox[] {
+    const { x, y, w, h } = grow(frame.box, 1);
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const inner = { rx: w / 2 - band, ry: h / 2 - band };
+    const strips: DocBox[] = [];
+    for (let top = y; top < y + h; top += band) {
+        const bottom = Math.min(top + band, y + h);
+        const near = top <= cy && cy <= bottom ? 0 : Math.min(Math.abs(top - cy), Math.abs(bottom - cy));
+        const far = Math.max(Math.abs(top - cy), Math.abs(bottom - cy));
+        const outer = ellipseHalfWidth(w / 2, h / 2, near);
+        const hole = ellipseHalfWidth(inner.rx, inner.ry, far);
+        if (hole <= 0) {
+            strips.push({ x: cx - outer, y: top, w: 2 * outer, h: bottom - top });
+            continue;
+        }
+
+        strips.push(
+            { x: cx - outer, y: top, w: outer - hole, h: bottom - top },
+            { x: cx + hole, y: top, w: outer - hole, h: bottom - top }
+        );
+    }
+
+    return strips;
+}
+
+/**
+ * The areas a frame draws on: for a rectangle its four stroke bands plus its corners (a rounded corner's stroke
+ * curves in past the straight bands), for an ellipse its stroke ring, or the whole box when it is filled.
  */
 function frameArea(frame: ShotFramePaint): DocBox[] {
     if (frame.fill) {
@@ -214,6 +263,10 @@ function frameArea(frame: ShotFramePaint): DocBox[] {
     }
 
     const band = frame.strokeWidth + 2;
+    if (frame.shape === "ellipse") {
+        return ellipseArea(frame, band);
+    }
+
     const corner = Math.min(Math.ceil(frame.radius + frame.strokeWidth) + 2, frame.box.w / 2, frame.box.h / 2);
     const { x, y, w, h } = grow(frame.box, 1);
     return [
@@ -277,8 +330,19 @@ async function prepare(cdp: CdpLike, part: ShotPart, setup: PageSetup): Promise<
 
     if (part.url !== undefined) {
         const url = setup.base ? new URL(part.url, setup.base).toString() : part.url;
-        await cdp.send("Page.navigate", { url });
-        await untilLoaded(cdp, setup.readyTimeoutMs);
+        // a failed navigation resolves with errorText (net::ERR_CONNECTION_REFUSED), it does not reject
+        const reply = await cdp.send("Page.navigate", { url });
+        const errorText =
+            reply && typeof reply === "object" && "errorText" in reply && typeof reply.errorText === "string"
+                ? reply.errorText
+                : "";
+        if (errorText) {
+            return [`navigate ${url}: ${errorText}`];
+        }
+
+        if (!(await untilLoaded(cdp, setup.readyTimeoutMs))) {
+            return [`navigate ${url}: the page did not finish loading within ${setup.readyTimeoutMs} ms`];
+        }
     }
 
     if (part.ready) {
@@ -343,20 +407,20 @@ async function planPart(cdp: CdpLike, part: ShotPart, setup: PageSetup): Promise
         return { ok: false, problems };
     }
 
-    const [aroundHit, ...markHits] = await resolveLocators(cdp, [
-        part.clip.around,
-        ...part.marks.map((mark) => mark.target),
-    ]);
+    const around = part.clip.around;
+    const hits = await resolveLocators(cdp, [...(around ? [around] : []), ...part.marks.map((mark) => mark.target)]);
+    const aroundHit = around ? hits[0] : undefined;
+    const markHits = around ? hits.slice(1) : hits;
     const misses = [
-        ...(aroundHit.ok ? [] : [`clip: ${describeMiss(aroundHit)}`]),
+        ...(aroundHit && !aroundHit.ok ? [`clip: ${describeMiss(aroundHit)}`] : []),
         ...markHits.flatMap((hit, index) => (hit.ok ? [] : [`mark ${index}: ${describeMiss(hit)}`])),
     ];
-    if (!aroundHit.ok || misses.length > 0) {
+    if (misses.length > 0) {
         return { ok: false, problems: misses };
     }
 
     const metrics = await callInPage(cdp, readShotPageMetrics, undefined);
-    let clip = clipOf(part, aroundHit.box, metrics);
+    let clip = clipOf(part, aroundHit?.ok ? aroundHit.box : undefined, metrics);
     // every hit is ok here (a miss returned above), so `boxes` lines up with `part.marks`
     const boxes = markHits.flatMap((hit) => (hit.ok ? [grow(hit.box, FRAME_PAD)] : []));
     const labelled = part.marks.flatMap((mark, index) => (mark.label?.text ? [{ mark, index }] : []));

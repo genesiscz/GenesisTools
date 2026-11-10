@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createCanvas, loadImage, type SKRSContext2D } from "@napi-rs/canvas";
-import type { Annotation, PresetName } from "./annotation-plan";
+import { ANNOTATION_PRESETS, type Annotation, type PresetName } from "./annotation-plan";
 import { loadAnnotationPlanValue } from "./plan-file";
 import { renderAnnotationPlan } from "./render-plan";
 
@@ -286,6 +286,27 @@ describe("renderAnnotationPlan", () => {
         const [ar, ag, ab] = px(ctx, 250, 40);
         expect(near(rr, 255) && near(rg, 90)).toBe(true);
         expect(near(ar, 255) && near(ag, 176) && near(ab, 32)).toBe(true);
+    });
+
+    test("every preset's label chip has readable text: 4.5:1, or 3:1 for bold text of 18.66 px and more", () => {
+        const luminance = (hex: string): number => {
+            const [r, g, b] = [1, 3, 5].map((at) => {
+                const channel = Number.parseInt(hex.slice(at, at + 2), 16) / 255;
+                return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+            });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        const contrast = (a: string, b: string): number => {
+            const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+            return (light + 0.05) / (dark + 0.05);
+        };
+        const unreadable = Object.entries(ANNOTATION_PRESETS).flatMap(([name, preset]) => {
+            const { bg, fg, fontSize } = preset.labelChip;
+            const ratio = contrast(bg, fg);
+            return ratio < (fontSize >= 18.66 ? 3 : 4.5) ? [`${name} ${fg} on ${bg}: ${ratio.toFixed(2)}`] : [];
+        });
+
+        expect(unreadable).toEqual([]);
     });
 
     test("review-dashed strokes a dashed outline: red dashes with gaps of the page between them", async () => {
