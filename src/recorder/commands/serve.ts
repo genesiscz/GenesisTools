@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -102,7 +103,8 @@ async function serve(flags: ServeFlags): Promise<void> {
             async (signal) => {
                 const start = await startRecorderService({
                     idleMs: flags.idle === false ? 0 : undefined,
-                    sourceRoot: new URL("../../", import.meta.url).pathname,
+                    // fileURLToPath, not `.pathname`: a checkout path with a space would stay `%20` and match no loaded module.
+                    sourceRoot: fileURLToPath(new URL("../../", import.meta.url)),
                 });
 
                 if (start.status === "running") {
