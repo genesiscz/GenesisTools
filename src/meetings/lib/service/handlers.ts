@@ -225,6 +225,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "moment.plan": async (params) => (await moments()).planMomentCall(params, storeOf(), deps),
         "moment.clip": async (params, context) => (await moments()).clipMomentCall(params, context, storeOf(), deps),
         "tone.preview": async (params) => (await moments()).previewTone(params, deps),
+        "tone.presets": async () => (await moments()).listTonePresets(),
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
         "meeting.speakers": async (params) => (await reads()).readSpeakers(params, storeOf(), deps),
         "meeting.screen": async (params) => (await reads()).readScreen(params, storeOf()),

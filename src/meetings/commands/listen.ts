@@ -6,6 +6,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import {
     LISTEN_PLAYERS,
+    type ListenPads,
+    listenPads,
     type MeetingsConfig,
     MeetingsConfigStore,
     resolveDictionary,
@@ -22,7 +24,13 @@ import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } fro
 import { clipPlayer, cutClip, playClip } from "../lib/audio";
 import { MeetingComments } from "../lib/comments";
 import { callerActor } from "../lib/decision-journal";
-import { type ListenSettings, questionClip, writeQuestionClips } from "../lib/listen-clips";
+import {
+    type ClipSettings,
+    clipSettings,
+    type ListenSettings,
+    questionClip,
+    writeQuestionClips,
+} from "../lib/listen-clips";
 import {
     type AskedQuestion,
     type ListenAdapter,
@@ -55,16 +63,19 @@ const SPLIT = "\u0000split";
 const DEFAULT_SUBSCRIBE_MINUTES = 120;
 const SAID_MAX_CHARS = 240;
 
-/** The first `listen` asks how much audio to hear around a range and keeps the answer. */
-async function padSeconds(config: MeetingsConfigStore): Promise<number | undefined> {
-    const saved = (await config.read()).global.playback.listen.padSec;
+/**
+ * The first `listen` asks how much audio to hear around a range and keeps the answer on both sides; each side is its
+ * own setting afterwards (`playback.listen.padBeforeSec`, `padAfterSec`).
+ */
+async function askedPads(config: MeetingsConfigStore): Promise<ListenPads | undefined> {
+    const saved = listenPads((await config.read()).global.playback.listen);
 
-    if (saved !== undefined) {
+    if (saved) {
         return saved;
     }
 
     const picked = await clack.select({
-        message: "How much audio around each question? (saved as playback.listen.padSec)",
+        message: "How much audio around each question? (saved as playback.listen.padBeforeSec and padAfterSec)",
         options: PAD_CHOICES.map((sec) => ({ value: sec, label: `${sec} seconds` })),
     });
 
@@ -72,8 +83,9 @@ async function padSeconds(config: MeetingsConfigStore): Promise<number | undefin
         return undefined;
     }
 
-    await config.setListenPad(Number(picked));
-    return Number(picked);
+    const pads = { beforeSec: Number(picked), afterSec: Number(picked) };
+    await config.setListenPads(pads);
+    return pads;
 }
 
 /**
@@ -331,13 +343,13 @@ async function clipsOut(options: {
     const { store, meeting } = options;
     const listen = (await new MeetingsConfigStore().read()).global.playback.listen;
     const opened = OpenedMeeting.of(store, meeting);
+    // A file needs no prompt: the saved pads, else the smaller choice the first listen offers.
+    const pads = listenPads(listen) ?? { beforeSec: PAD_CHOICES[0], afterSec: PAD_CHOICES[0] };
     const written = await writeQuestionClips({
         record: meeting,
         questions: options.questions,
         transcript: new TranscriptLines((await opened.meeting()).transcript),
-        listen,
-        // A file needs no prompt: the saved pad, else the smaller choice the first listen offers.
-        padSec: listen.padSec ?? PAD_CHOICES[0],
+        ...(await clipSettings(listen, pads)),
         audioPath: await opened.audioPath(),
         dir: resolve(options.dir),
     });
@@ -363,8 +375,8 @@ class TerminalAdapter implements ListenAdapter {
             player: (typeof LISTEN_PLAYERS)[number];
             vocabulary: string[];
             transcript: TranscriptLines;
-            padSec: number;
             listen: ListenSettings;
+            clips: ClipSettings;
         }
     ) {}
 
@@ -376,7 +388,7 @@ class TerminalAdapter implements ListenAdapter {
         await cutClip({
             audioPath: this.deps.audioPath,
             outPath: clip,
-            ...questionClip({ record: asked.record, question, transcript, listen, padSec: this.deps.padSec }),
+            ...questionClip({ record: asked.record, question, transcript, ...this.deps.clips }),
         });
         const part = asked.part ? ` · part ${asked.part.n}/${asked.part.of}` : "";
         const priority = view.priority === undefined ? "" : ` · priority ${view.priority}`;
@@ -500,9 +512,9 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
             return undefined;
         }
 
-        const padSec = await padSeconds(new MeetingsConfigStore());
+        const pads = await askedPads(new MeetingsConfigStore());
 
-        if (padSec === undefined) {
+        if (pads === undefined) {
             return undefined;
         }
 
@@ -526,8 +538,8 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
                 await meetingPeopleNames({ store, config: settings, meeting: meeting.id })
             ),
             transcript: new TranscriptLines((await opened.meeting()).transcript),
-            padSec,
             listen,
+            clips: await clipSettings(listen, pads),
         });
         return { adapter, budget: listen.roundCap, actor: { kind: "listen" } };
     },
@@ -690,7 +702,7 @@ export function registerListenCommand(program: Command): void {
         )
         .option(
             "--json",
-            "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, toneAtSec }]; with --answer: print the decision journal entry"
+            "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, padAfterSec?, toneAtSec }]; with --answer: print the decision journal entry"
         )
         .action(listen);
 }

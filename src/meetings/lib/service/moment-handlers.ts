@@ -1,25 +1,39 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, TONE_PRESET_NAMES, TONE_PRESETS } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { cutTone, probeAudio } from "../audio";
 import { clipMoment, MomentError, openMoment } from "../moment";
 import type { MomentStateCode } from "../moment-schema";
 import { OpenedMeeting } from "../opened-meeting";
+import { resolveToneSound } from "../tone-sound";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
 import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
 
 /**
- * The Meetings service's Moment methods (`moment.plan`, `moment.clip`, `tone.preview`, `meeting.audio`): the Moment
- * engine behind the service. Loaded by handlers.ts only when a call plays.
+ * The Meetings service's Moment methods (`moment.plan`, `moment.clip`, `tone.preview`, `tone.presets`,
+ * `meeting.audio`): the Moment engine behind the service. Loaded by handlers.ts only when a call plays.
  */
 
 const { log } = logger.scoped("meetings-service");
 
 function openedOf(store: MeetingStore, record: MeetingRecord, deps: MeetingsHandlerDeps): OpenedMeeting {
     return OpenedMeeting.of(store, record, deps.linkedSource?.(record));
+}
+
+/** The members `moment.plan` and `moment.clip` pass on to the engine as they came. */
+function momentOptions(params: MeetingsParsedParams<"moment.plan">, deps: MeetingsHandlerDeps) {
+    return {
+        ...(params.padSec === undefined ? {} : { padSec: params.padSec }),
+        ...(params.padAfterSec === undefined ? {} : { padAfterSec: params.padAfterSec }),
+        ...(params.toneSound === undefined ? {} : { toneSound: params.toneSound }),
+        ...(params.lengthSec === undefined ? {} : { lengthSec: params.lengthSec }),
+        ...(params.screen === undefined ? {} : { screen: params.screen }),
+        ...(deps.probe ? { probeTone: deps.probe } : {}),
+    };
 }
 
 /** Why a Moment cannot play now, or nothing: the recording is not final, ffmpeg is missing, no source keeps the audio. */
@@ -64,9 +78,7 @@ export async function planMomentCall(
             record,
             target: params.target,
             opened,
-            ...(params.padSec === undefined ? {} : { padSec: params.padSec }),
-            ...(params.lengthSec === undefined ? {} : { lengthSec: params.lengthSec }),
-            ...(params.screen === undefined ? {} : { screen: params.screen }),
+            ...momentOptions(params, deps),
         });
     } catch (error) {
         if (error instanceof MomentError) {
@@ -100,9 +112,7 @@ export async function clipMomentCall(
             record,
             target: params.target,
             opened,
-            ...(params.padSec === undefined ? {} : { padSec: params.padSec }),
-            ...(params.lengthSec === undefined ? {} : { lengthSec: params.lengthSec }),
-            ...(params.screen === undefined ? {} : { screen: params.screen }),
+            ...momentOptions(params, deps),
             ...(deps.cut ? { cut: deps.cut } : {}),
             ...(deps.probe ? { probe: deps.probe } : {}),
             control: {
@@ -129,13 +139,20 @@ export async function previewTone(
     deps: MeetingsHandlerDeps
 ): Promise<MeetingsResult<"tone.preview">> {
     const config = params.sound ? undefined : await (deps.config ?? (() => new MeetingsConfigStore().read()))();
-    const sound = params.sound ?? config?.global.playback.listen.tone.sound;
+    const setting = params.sound ?? config?.global.playback.listen.tone.sound;
 
-    if (!sound) {
+    if (!setting) {
         throw refusal("failed", "no tone sound to preview");
     }
 
-    const key = Bun.hash(`${sound.hz}:${sound.sec}:${sound.volume}`).toString(36);
+    const sound = await resolveToneSound(setting, { probe: deps.probe ?? probeAudio });
+    // A sine keeps the key it had before sound files; a file's key holds its version, so an edited file is made again.
+    const version = sound.file ? (({ mtimeMs, size }) => [mtimeMs, size])(statSync(sound.file)) : [];
+    const key = Bun.hash(
+        sound.file
+            ? SafeJSON.stringify([sound.file, sound.sec, sound.volume, ...version])
+            : `${sound.hz}:${sound.sec}:${sound.volume}`
+    ).toString(36);
     const path = join(toolDataDir("meetings-cache", "tones"), `tone-${key}.wav`);
 
     if (!existsSync(path)) {
@@ -143,7 +160,19 @@ export async function previewTone(
         log.debug({ path, sound }, "tone preview made");
     }
 
-    return { path, sound: { hz: sound.hz, sec: sound.sec, volume: sound.volume } };
+    return { path, sound };
+}
+
+/** `tone.presets`: every named tone, with whether this Mac has a file preset's sound. */
+export function listTonePresets(): MeetingsResult<"tone.presets"> {
+    return {
+        presets: TONE_PRESET_NAMES.map((name) => {
+            const { label, volume, sound } = TONE_PRESETS[name];
+            return sound.kind === "file"
+                ? { name, label, kind: "file", volume, file: sound.path, available: existsSync(sound.path) }
+                : { name, label, kind: "sine", volume, hz: sound.hz, sec: sound.sec, available: true };
+        }),
+    };
 }
 
 export async function readMeetingAudio(

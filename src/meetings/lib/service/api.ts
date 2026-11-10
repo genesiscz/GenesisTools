@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { TONE_PRESET_NAMES, toneSoundSettingSchema } from "@genesiscz/utils/meetings/config";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
 import {
     type KnownPeople,
@@ -27,7 +28,13 @@ import {
     unpairedSchema,
 } from "../library-schema";
 import { matchDraftSchema } from "../match-preview";
-import { MOMENT_ERROR_CODES, MOMENT_STATE_CODES, momentSchema, momentTargetSchema } from "../moment-schema";
+import {
+    MOMENT_ERROR_CODES,
+    MOMENT_STATE_CODES,
+    momentSchema,
+    momentTargetSchema,
+    toneSoundSchema,
+} from "../moment-schema";
 import type { MeetingsOverview } from "../overview";
 import { reviewRowsSchema } from "../review-row-schema";
 
@@ -304,8 +311,15 @@ const momentParams = z
     .object({
         meeting: meetingRef,
         target: momentTargetSchema,
-        /** Seconds of audio around an item, a range or a selection; `playback.listen.padSec` when absent. */
+        /**
+         * Seconds of audio before an item, a range or a selection, and after it unless `padAfterSec` is given;
+         * `playback.listen.padBeforeSec` and `padAfterSec` when absent.
+         */
         padSec: z.number().min(0).max(60).optional(),
+        /** Seconds of audio after it. */
+        padAfterSec: z.number().min(0).max(60).optional(),
+        /** This tone instead of `playback.listen.tone.sound`: a sine, a preset or a sound file (`play --tone`). */
+        toneSound: toneSoundSettingSchema.optional(),
         /** False skips the screen frames at the spot. */
         screen: z.boolean().optional(),
         /** At most this long from the span's start (the window's "Clip 5s" on a selection: 5); the pad stays. */
@@ -341,19 +355,42 @@ const tonePreview = defineMethod({
     name: "tone.preview",
     params: z
         .object({
-            /** The sound to hear; the meetings config's `playback.listen.tone.sound` when absent. */
-            sound: z
-                .object({
-                    hz: z.number().min(50).max(8000),
-                    sec: z.number().min(0.02).max(2),
-                    volume: z.number().min(0).max(1),
-                })
-                .optional(),
+            /**
+             * The sound to hear: a sine `{ hz, sec, volume }`, a preset `{ preset, volume }` or a sound file
+             * `{ file, volume }`; the meetings config's `playback.listen.tone.sound` when absent.
+             */
+            sound: toneSoundSettingSchema.optional(),
         })
         .strict(),
-    result: z.object({ path: z.string(), sound: z.object({ hz: z.number(), sec: z.number(), volume: z.number() }) }),
-    resultName: "{ path, sound }",
-    doc: "The tone alone as a WAV in the clip cache, for a sound picker's Play button (a preset writes its hz, sec and volume).",
+    result: z.object({ path: z.string(), sound: toneSoundSchema }),
+    resultName: "{ path, sound: { hz, sec, volume, file?, preset? } }",
+    doc: "The tone alone as a WAV in the clip cache, for a sound picker's Play button. A sound file answers hz 0, its file and its length (cut to 2 s).",
+    effect: "read",
+});
+
+const tonePresets = defineMethod({
+    name: "tone.presets",
+    params: z.object({}).strict(),
+    result: z.object({
+        presets: z.array(
+            z.object({
+                name: z.enum(TONE_PRESET_NAMES),
+                label: z.string(),
+                kind: z.enum(["sine", "file"]),
+                /** The volume it plays at when the setting names none. */
+                volume: z.number(),
+                /** A sine preset's pitch and length. */
+                hz: z.number().optional(),
+                sec: z.number().optional(),
+                /** A file preset's sound file. */
+                file: z.string().optional(),
+                /** False when this Mac lacks the preset's file: a picker greys it out. */
+                available: z.boolean(),
+            })
+        ),
+    }),
+    resultName: "{ presets: { name, label, kind, volume, hz?, sec?, file?, available }[] }",
+    doc: "The named tones a sound picker offers: three sines and the Mac's own alert sounds. `config.set` of `global.playback.listen.tone.sound` to `{ preset }` picks one; `tone.preview` plays it.",
     effect: "read",
 });
 
@@ -936,6 +973,7 @@ export const meetingsApi = defineApi({
         momentPlan,
         momentClip,
         tonePreview,
+        tonePresets,
         meetingAudio,
         meetingSpeakers,
         meetingScreen,

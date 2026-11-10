@@ -645,6 +645,37 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(clip.moment).toMatchObject({ fromSec: 2, toSec: 7, startSec: 2, endSec: 7 });
     });
 
+    test("config version 5: the pads before and after, and a tone preset for one call (decisions 8 and 9)", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const range = { kind: "range" as const, fromSec: 10, toSec: 12 };
+        const split = await client.call("moment.plan", {
+            meeting: REVIEW.id,
+            target: range,
+            padSec: 1,
+            padAfterSec: 3,
+        });
+        const soft = await client.call("moment.plan", {
+            meeting: REVIEW.id,
+            target: range,
+            toneSound: { preset: "soft" },
+        });
+        const preview = await client.call("tone.preview", { sound: { preset: "click", volume: 0.2 } });
+        const presets = await client.call("tone.presets", {});
+
+        expect(split.moment).toMatchObject({ padSec: 1, padAfterSec: 3, startSec: 9, endSec: 15 });
+        expect(soft.moment?.tone?.sound).toEqual({ hz: 523, sec: 0.3, volume: 0.35, preset: "soft" });
+        expect(preview.sound).toEqual({ hz: 2000, sec: 0.03, volume: 0.2, preset: "click" });
+        expect(presets.presets.slice(0, 3)).toEqual([
+            { name: "beep", label: "Beep", kind: "sine", volume: 0.6, hz: 880, sec: 0.15, available: true },
+            { name: "soft", label: "Soft", kind: "sine", volume: 0.35, hz: 523, sec: 0.3, available: true },
+            { name: "click", label: "Click", kind: "sine", volume: 0.7, hz: 2000, sec: 0.03, available: true },
+        ]);
+        expect(presets.presets.find((preset) => preset.name === "tink")).toMatchObject({
+            kind: "file",
+            file: "/System/Library/Sounds/Tink.aiff",
+        });
+    });
+
     test("the timeline reads: line ends, speakers, screen, waveform; and the overview", async () => {
         const { client } = await ADAPTERS[kind]();
         const transcript = await client.call("meeting.transcript", { ref: REVIEW.id });
@@ -1192,6 +1223,12 @@ async function captureExamples(): Promise<Example[]> {
         { sound: { hz: 880, sec: 0.15, volume: 0.6 } },
         "The tone alone, for a Play button."
     );
+    await ask(
+        window,
+        "tone.presets",
+        {},
+        "The sound picker's named tones: three sines and the Mac's alert sounds; available is false where this Mac lacks the file."
+    );
     await ask(window, "meeting.speakers", { meeting: REVIEW.id }, "Talk time per label, its spans, and the hints.");
     await ask(window, "meeting.screen", { meeting: REVIEW.id }, "No screen recording: no frames, no pane.");
     await ask(
@@ -1403,7 +1440,9 @@ function normalized(examples: Example[]): unknown {
             .replace(/"path":"[^"]*\/meetings\/config\.json"/g, '"path":"<config>"')
             // A removed project's backup: under the sandbox home, named by the local time of the removal.
             .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
-            .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"'),
+            .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
+            // A file preset's availability is the host's (/System/Library/Sounds is on a Mac only).
+            .replace(/"available":(true|false)/g, '"available":"<host>"'),
         { strict: true }
     );
 }
