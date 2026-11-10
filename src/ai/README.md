@@ -549,7 +549,10 @@ failing line carries the vendor's message and the re-login command.
 
 Nothing sensitive is in the config file. Accounts hold **references** into an AES-256-GCM vault at
 `~/.genesis-tools/security/vault.json`, with a per-entry key derived by HKDF. The master key is resolved from a
-ladder: the `GENESIS_TOOLS_MASTER_KEY` environment variable, then the OS keychain, then an opt-in key file.
+ladder, first hit wins: the `GENESIS_TOOLS_MASTER_KEY` environment variable, then GenesisTools.app's approval window
+(when the app is installed), then the OS keychain, then an opt-in key file. With the app installed, a vault read can
+show the app's approval window. A deny there stops the read: it does not fall through to a keychain key on the same
+Mac. When the app cannot answer, the keychain rung answers instead.
 
 Config itself lives at `~/.genesis-tools/ai/config.json`. It is re-read when its mtime changes, so a long-running
 proxy notices a login performed in another terminal.

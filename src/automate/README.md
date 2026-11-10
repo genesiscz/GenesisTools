@@ -41,7 +41,7 @@ tools automate preset create                   # wizard that writes a new preset
 
 | `preset run` flag      | What it does                                                        |
 |------------------------|---------------------------------------------------------------------|
-| `--dry-run`            | Walk the steps and print what each would do. Nothing runs or saves. |
+| `--dry-run`            | Print what each step would do. No step runs, but expressions do.    |
 | `--var <key=value...>` | Set a variable. Repeat the flag, or list several pairs after one.   |
 | `-v, --verbose`        | Debug logs, including each `tools` command line before it runs.     |
 
@@ -63,6 +63,12 @@ tools automate preset create                   # wizard that writes a new preset
   because no step ran: each earlier step is `skipped`, with a placeholder text as its output. Such a param shows
   `undefined`, empty text or that placeholder. A JavaScript expression that reads into such an output
   (`{{ steps.fetch.output.body.count > 5 }}`) can stop the dry run with `Expression evaluation failed`.
+- ⚠️ A dry run is not a safe way to inspect a preset you do not trust. It skips built-in steps (`if`, `log`,
+  `prompt`, `shell`, `set`) and handler steps (`http`, `file`, `git`, `json` and the others) before it resolves
+  them, it starts no `tools` command, and it saves no run history. It still resolves the params of every `tools`
+  step, though, and a `{{ }}` expression that is more than a plain `vars.`, `steps.` or `env.` path runs as
+  JavaScript with full access to Bun: `{{ Bun.write('/tmp/probe', 'changed') }}` writes that file during the dry
+  run. To inspect a preset, read its JSON.
 - The run prints one line per step (`[2/4] Check endpoint (312ms)`) and a summary. It exits 1 when the preset does
   not load or when any step ends in error, also a step with `onError: "continue"`.
 
