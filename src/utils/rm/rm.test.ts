@@ -53,6 +53,7 @@ import {
     findNestedRepos,
     folderStats,
     graceMinutesFor,
+    hardDenyReason,
     isInside,
     isRootActive,
     isTrashRootName,
@@ -134,6 +135,7 @@ import {
     trashItemName,
     trashRootChangeBlocker,
     userTempDir,
+    vmDataReason,
 } from "./index";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-1111", isInAgent: true };
@@ -219,6 +221,41 @@ describe("hard deny", () => {
 
         expect(verdictOf(guarded, c).kind).toBe("deny");
         expect(verdictOf(dir("keep"), c).kind).toBe("deny");
+    });
+
+    test("refuses VM and container disks by name and by folder, the Photos library and Tresorit's database", () => {
+        const c = ctx();
+        const denied = [
+            file(join(dir("vm"), "Docker.raw")),
+            file(join(dir("vm"), "machine.vmdk")),
+            file(join(c.home, ".tart", "vms", "sonoma", "notes.txt")),
+            file(join(dir("pictures", "Family.photoslibrary", "originals"), "a.jpg")),
+            dir("pictures", "Family.photoslibrary"),
+            file(join(dir("sync", ".tresorit"), "local.db")),
+        ];
+
+        for (const path of denied) {
+            expect(verdictOf(path, c)).toEqual({ kind: "deny", rule: "hard-deny" });
+        }
+
+        expect(hardDenyReason(resolveTarget(file(join(dir("vm"), "swap.img")), c.cwd), c)).toContain("VM disk");
+        expect(hardDenyReason(resolveTarget(file(join(dir("vm"), "export.mov")), c.cwd), c)).toBeNull();
+    });
+
+    test("more VM and container disks are denied by path and by name, an emulator's user data is not", () => {
+        const home = "/Users/alice";
+        for (const path of [
+            `${home}/.local/share/containers/podman/machine/qemu/podman-machine-default.raw`,
+            `${home}/Library/Application Support/rancher-desktop/lima/0/diffdisk`,
+            `${home}/.tart/vms/sonoma/disk.img`,
+            `${home}/.docker/machine/machines/default/disk.vmdk`,
+            `${home}/Downloads/basedisk`,
+        ]) {
+            expect(vmDataReason(path, home)).not.toBeNull();
+        }
+
+        expect(vmDataReason(`${home}/.android/avd/old.avd/userdata-qemu.img.qcow2`, home)).toBeNull();
+        expect(vmDataReason(`${home}/Movies/export.mov`, home)).toBeNull();
     });
 });
 
