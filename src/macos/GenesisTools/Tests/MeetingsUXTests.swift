@@ -309,9 +309,25 @@ final class MeetingsUXTests: XCTestCase {
     func testTheOpenMeetingHasItsRowInNeedsYou() throws {
         let needs = try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()).needsYou
         XCTAssertEqual(needs.row(for: "a"), "q:a", "a meeting opened by its id selects its first row (MU6)")
-        XCTAssertEqual(needs.row(for: "s:a"), "s:a")
+        XCTAssertEqual(needs.row(for: "s:a"), "q:a", "a meeting has one row, so its suggestions lead to that row")
         XCTAssertEqual(needs.row(for: "b"), "b")
         XCTAssertNil(needs.row(for: "c"), "a meeting outside Needs you has no row, and the list says so")
+    }
+
+    func testNeedsYouListsAMeetingOnceWithAllItWaitsFor() throws {
+        let needs = try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()).needsYou
+        XCTAssertEqual(needs.groups.map(\.title), ["Without a project", "Questions to answer"],
+                       "the meeting with questions and suggestions stands once, so no group is left for its suggestions")
+        XCTAssertEqual(needs.groups.flatMap(\.rows).count, needs.total, "the list has as many rows as the sidebar counts")
+        let both = try XCTUnwrap(needs.groups.last?.rows.first)
+        XCTAssertEqual(both.reason(applyAbove: 0.5), "2 questions · 3 suggestions at 50 % or more")
+        typealias Row = MeetingsOverview.NeedsYou.Row
+        XCTAssertEqual(Row(id: "x", noProject: false, questions: 1, suggestions: 0).reason(applyAbove: 0.5), "1 question to answer by ear")
+        XCTAssertEqual(Row(id: "x", noProject: false, questions: 0, suggestions: 3).reason(applyAbove: 0.5), "3 suggestions at 50 % or more")
+        XCTAssertEqual(Row(id: "x", noProject: true, questions: 2, suggestions: 3).reason(applyAbove: 0.5),
+                       "Choose its project · 2 questions · 3 suggestions")
+        XCTAssertEqual(Row(id: "x", noProject: true, questions: 0, suggestions: 0).tag, "x", "a bare id opens the meeting's first tab")
+        XCTAssertEqual(Row(id: "x", noProject: true, questions: 0, suggestions: 3).tag, "s:x", "suggestions open Items")
     }
 
     func testARangeReadsFromAndToWithNoDash() throws {

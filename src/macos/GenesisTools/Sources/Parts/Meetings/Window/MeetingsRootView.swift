@@ -381,6 +381,19 @@ private struct MeetingsByDayList: View {
     }
 }
 
+/// A meeting's name in a list row. A meeting without a title reads "Untitled meeting" as a placeholder (secondary,
+/// italic) in both lists: All meetings drew it grey and upright, which looked like a disabled row, and Needs you drew
+/// it as a name.
+struct MeetingTitleText: View {
+    let meeting: OverviewMeeting
+
+    var body: some View {
+        let untitled = meeting.title.trimmingCharacters(in: .whitespaces).isEmpty
+        Text(verbatim: meeting.displayTitle).font(.system(size: 13, weight: .medium)).italic(untitled).lineLimit(1)
+            .foregroundStyle(untitled ? .secondary : .primary)
+    }
+}
+
 /// One meeting in a list: a value row, so a publish elsewhere does not draw it again.
 struct MeetingRow: View, Equatable {
     let meeting: OverviewMeeting
@@ -388,8 +401,7 @@ struct MeetingRow: View, Equatable {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(verbatim: meeting.displayTitle).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    .foregroundStyle(meeting.title.isEmpty ? .secondary : .primary)
+                MeetingTitleText(meeting: meeting)
                 Spacer(minLength: 4)
                 Text(verbatim: [MeetingsFormat.time(meeting.start), MeetingsFormat.length(meeting.durationSec)]
                     .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
@@ -462,29 +474,11 @@ private struct NeedsYouList: View {
         } else {
             List(selection: Binding(get: { needs.row(for: model.needsSelection) },
                                     set: { tag in Task { @MainActor in model.select(needsTag: tag) } })) {
-                if !needs.noProject.isEmpty {
-                    Section("Without a project") {
-                        ForEach(needs.noProject, id: \.self) { id in
-                            if let meeting = model.meeting(id) {
-                                NeedsRow(meeting: meeting, reason: "Choose its project").tag(id)
-                            }
-                        }
-                    }
-                }
-                if !needs.questions.isEmpty {
-                    Section("Questions to answer") {
-                        ForEach(needs.questions, id: \.id) { entry in
-                            if let meeting = model.meeting(entry.id) {
-                                NeedsRow(meeting: meeting, reason: "\(Plural.count(entry.count, "question")) to answer by ear").tag("q:" + entry.id)
-                            }
-                        }
-                    }
-                }
-                if !needs.suggestions.isEmpty {
-                    Section("Ready to confirm") {
-                        ForEach(needs.suggestions, id: \.id) { entry in
-                            if let meeting = model.meeting(entry.id) {
-                                NeedsRow(meeting: meeting, reason: "\(Plural.count(entry.count, "suggestion")) at \(Int(overview.applyAbove * 100)) % or more").tag("s:" + entry.id)
+                ForEach(needs.groups, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.rows, id: \.id) { row in
+                            if let meeting = model.meeting(row.id) {
+                                NeedsRow(meeting: meeting, reason: row.reason(applyAbove: overview.applyAbove)).tag(row.tag)
                             }
                         }
                     }
@@ -501,11 +495,55 @@ private struct NeedsYouList: View {
 }
 
 extension MeetingsOverview.NeedsYou {
-    /// The row of the open meeting. A meeting with questions or suggestions has rows tagged "q:<id>" and "s:<id>", and
-    /// a meeting opened by its id (a link, a launch from a terminal) named none of them, so no row was selected.
+    /// A meeting in the list, once, with everything it waits for. Listed under each need, a meeting with questions and
+    /// suggestions stood twice, both rows opened the same tab, and the list had more rows than the sidebar counts.
+    struct Row: Equatable {
+        let id: String
+        let noProject: Bool
+        let questions: Int
+        let suggestions: Int
+
+        /// The selection tag: "q:<id>" and "s:<id>" open Items, a bare id opens the meeting's first tab.
+        var tag: String { questions > 0 ? "q:" + id : suggestions > 0 ? "s:" + id : id }
+
+        /// The row's second line. One need reads in full; several read short, so the line fits the column.
+        func reason(applyAbove: Double) -> String {
+            let above = "at \(Int(applyAbove * 100)) % or more"
+            let needs = [noProject, questions > 0, suggestions > 0].filter { $0 }.count
+            var parts: [String] = []
+            if noProject { parts.append("Choose its project") }
+            if questions > 0 { parts.append(Plural.count(questions, "question") + (needs == 1 ? " to answer by ear" : "")) }
+            if suggestions > 0 { parts.append(Plural.count(suggestions, "suggestion") + (needs == 3 ? "" : " " + above)) }
+            return parts.joined(separator: " · ")
+        }
+    }
+
+    struct Group: Equatable {
+        let title: String
+        let rows: [Row]
+    }
+
+    /// The list's groups in its order. A meeting stands in the first group it belongs to.
+    var groups: [Group] {
+        let questionCount = Dictionary(questions.map { ($0.id, $0.count) }, uniquingKeysWith: { first, _ in first })
+        let suggestionCount = Dictionary(suggestions.map { ($0.id, $0.count) }, uniquingKeysWith: { first, _ in first })
+        let withoutProject = Set(noProject)
+        var seen = Set<String>()
+        func rows(_ ids: [String]) -> [Row] {
+            ids.filter { seen.insert($0).inserted }.map {
+                Row(id: $0, noProject: withoutProject.contains($0), questions: questionCount[$0] ?? 0, suggestions: suggestionCount[$0] ?? 0)
+            }
+        }
+        return [Group(title: "Without a project", rows: rows(noProject)),
+                Group(title: "Questions to answer", rows: rows(questions.map(\.id))),
+                Group(title: "Ready to confirm", rows: rows(suggestions.map(\.id)))].filter { !$0.rows.isEmpty }
+    }
+
+    /// The row of the open meeting. A row is tagged "q:<id>", "s:<id>" or the bare id, and a meeting opened by its id
+    /// (a link, a launch from a terminal) named none of them, so no row was selected.
     func row(for selection: String?) -> String? {
         guard let selection else { return nil }
-        let tags = noProject + questions.map { "q:" + $0.id } + suggestions.map { "s:" + $0.id }
+        let tags = groups.flatMap(\.rows).map(\.tag)
         if tags.contains(selection) { return selection }
         let id = selection.hasPrefix("q:") || selection.hasPrefix("s:") ? String(selection.dropFirst(2)) : selection
         return tags.first { $0 == id || $0 == "q:" + id || $0 == "s:" + id }
@@ -544,7 +582,7 @@ private struct NeedsRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
-                Text(verbatim: meeting.displayTitle).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                MeetingTitleText(meeting: meeting)
                 Spacer(minLength: 4)
                 Text(verbatim: "\(MeetingsFormat.dayTitle(meeting.day)) \(MeetingsFormat.time(meeting.start))")
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
