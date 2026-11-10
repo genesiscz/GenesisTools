@@ -56,16 +56,11 @@ enum PRFetch {
         return args
     }
 
-    private struct Failure: Decodable {
-        let error: String
-        let code: String?
-    }
-
     /// Blocks until the tool exits: call it from a detached task, never from a view body.
     static func run(_ args: [String]) -> PRFetchState {
         let capture: ProcessCapture
         do {
-            capture = try ToolsCLIRunner.capture(args, timeout: timeout)
+            capture = try HubSource.bridge.capture(args, timeout: timeout)
         } catch {
             return .failed("Could not fetch the PR head: \(error)")
         }
@@ -75,18 +70,17 @@ enum PRFetch {
         return .failed(sentence(stdout: capture.stdout, stderr: capture.stderr, status: capture.status))
     }
 
-    /// The verb prints `{ error, code }` on failure (src/hub/index.ts `prVerb`); the code picks the lead.
+    /// The verb prints `{ error, code }` on failure (src/hub/index.ts `prVerb`), read as a `ToolsFailure`; the code
+    /// picks the lead. A failure that names nothing reads as its exit summary.
     static func sentence(stdout: Data, stderr: Data, status: Int32) -> String {
-        if let failure = try? JSONDecoder().decode(Failure.self, from: stdout) {
-            switch failure.code {
-            case "auth": return "Sign-in needed to fetch the PR head: \(failure.error)"
-            case "network": return "The host did not answer: \(failure.error)"
-            case "ref-missing": return "The host has no head for this PR: \(failure.error)"
-            default: return "Could not fetch the PR head: \(failure.error)"
-            }
+        let failure = ToolsFailure(argv: ["hub", "pr", "fetch"], capture: ProcessCapture(status: status, stdout: stdout, stderr: stderr))
+        guard failure.named else { return failure.summary }
+        switch failure.code {
+        case "auth": return "Sign-in needed to fetch the PR head: \(failure.message)"
+        case "network": return "The host did not answer: \(failure.message)"
+        case "ref-missing": return "The host has no head for this PR: \(failure.message)"
+        default: return "Could not fetch the PR head: \(failure.message)"
         }
-        let text = String(decoding: stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return "tools hub pr fetch exited \(status)" + (text.isEmpty ? "" : ": \(text.suffix(200))")
     }
 }
 

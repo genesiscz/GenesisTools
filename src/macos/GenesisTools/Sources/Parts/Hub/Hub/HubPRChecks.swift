@@ -90,7 +90,7 @@ final class CheckLogStore: ObservableObject {
             let fetch = Task.detached(priority: .userInitiated) { () -> Result<CheckLogRender, Error> in
                 Result {
                     // A run URL can fetch three jobs' logs; the CLI's own host calls time out at 90 s each.
-                    let output = try ToolsCLIRunner.capture(args, timeout: 180)
+                    let output = try HubSource.bridge.capture(args, timeout: 180)
                     let log = try JSONDecoder().decode(HubCheckLog.self, from: output.stdout)
                     if log.final {
                         cache.writeData(output.stdout, key: url)

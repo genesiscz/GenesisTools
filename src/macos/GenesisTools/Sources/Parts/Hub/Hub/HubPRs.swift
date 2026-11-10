@@ -513,7 +513,7 @@ final class PRsModel: ObservableObject {
             let span = HubPerf.begin("prs.list", "\(paths.count) projects state=\(state) mine=\(mineOnly) limit=\(limit) query=\(query.isEmpty ? "-" : "yes")", awaits: true)
             let result = await Task.detached(priority: .userInitiated) { () -> Result<(HubPRList, Data), Error> in
                 Result {
-                    let data = try ToolsCLIRunner.run(["hub", "pr", "list"] + paths + ["--state", state, "--limit", String(limit)] + mine + search)
+                    let data = try HubSource.bridge.output(["hub", "pr", "list"] + paths + ["--state", state, "--limit", String(limit)] + mine + search)
                     return (try JSONDecoder().decode(HubPRList.self, from: data), data)
                 }
             }.value
@@ -711,7 +711,7 @@ final class PRsModel: ObservableObject {
             }
             let answer = await Task.detached(priority: .userInitiated) { () -> Result<(HubPR, HubPRDetail, Data), Error> in
                 Result {
-                    let capture = try ToolsCLIRunner.capture(["hub", "pr", "show", arg])
+                    let capture = try HubSource.bridge.capture(["hub", "pr", "show", arg])
                     guard capture.status == 0 else { throw PRShowFailure(capture) }
                     let data = capture.stdout
                     return (try JSONDecoder().decode(HubPR.self, from: data), try JSONDecoder().decode(HubPRDetail.self, from: data), data)
@@ -1230,7 +1230,7 @@ final class PRsModel: ObservableObject {
     /// Every forge project cloned under the repo roots (`tools hub pr projects`); blocks, so off the main thread.
     nonisolated static func fetchProjects() throws -> [HubPRProject] {
         struct Answer: Decodable { let projects: [HubPRProject] }
-        return try JSONDecoder().decode(Answer.self, from: ToolsCLIRunner.run(["hub", "pr", "projects"])).projects
+        return try JSONDecoder().decode(Answer.self, from: HubSource.bridge.output(["hub", "pr", "projects"])).projects
     }
 
     /// The checkout of the project whose web path is `project` (`owner/repo`, `group/sub/app`, or its page URL),
@@ -1297,7 +1297,7 @@ final class PRsModel: ObservableObject {
             let span = HubPerf.begin("prs.project", "\(project.repo) limit=\(limit)", awaits: true)
             let result = await Task.detached(priority: .userInitiated) { () -> Result<HubPRList, Error> in
                 Result {
-                    try JSONDecoder().decode(HubPRList.self, from: ToolsCLIRunner.run(["hub", "pr", "list", project.root, "--state", state, "--limit", String(limit)] + mine + search))
+                    try JSONDecoder().decode(HubPRList.self, from: HubSource.bridge.output(["hub", "pr", "list", project.root, "--state", state, "--limit", String(limit)] + mine + search))
                 }
             }.value
             projectLoading.remove(project.project)
@@ -1776,7 +1776,7 @@ final class PRsModel: ObservableObject {
             let span = HubPerf.begin("prs.hoverChecks", pr.id, awaits: true)
             let (id, project, number) = (pr.id, pr.project, pr.number)
             let fresh = await Task.detached(priority: .utility) { () -> (HubPRDetail, Data)? in
-                guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", "\(root)#\(number)"]),
+                guard let data = try? HubSource.bridge.output(["hub", "pr", "show", "\(root)#\(number)"]),
                       let detail = try? JSONDecoder().decode(HubPRDetail.self, from: data) else { return nil }
                 return (detail, data)
             }.value
@@ -1812,7 +1812,7 @@ final class PRsModel: ObservableObject {
         Task {
             let span = HubPerf.begin("prs.show", key, awaits: true)
             let fresh = await Task.detached(priority: .userInitiated) { () -> (HubPRDetail, HubPR?, Data)? in
-                guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", "\(root)#\(pr.number)"]),
+                guard let data = try? HubSource.bridge.output(["hub", "pr", "show", "\(root)#\(pr.number)"]),
                       let detail = try? JSONDecoder().decode(HubPRDetail.self, from: data) else { return nil }
                 return (detail, try? JSONDecoder().decode(HubPR.self, from: data), data)
             }.value
