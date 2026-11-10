@@ -940,3 +940,68 @@ export function swiftRowAudit(codeLines: string[]): string[] {
 
     return out;
 }
+
+/**
+ * Process tools from Swift (2026-11-10). `ps`, `lsof` and `pgrep` read the kernel's whole process table. On a
+ * loaded Mac that read hangs: `ps -Ao pid=` took 18.85 s at load 600 with about 2,100 processes, and every other
+ * reader waited with it (the hub's widget calls died at their 120 s limit). The TypeScript side has
+ * `no-process-tool-spawn`; this is the same gate for the app. Read one process through libproc
+ * (`proc_pidinfo`, `proc_listpids`) or ask the hub server.
+ */
+const SWIFT_PROCESS_TOOL_RULE: SwiftStructRule = {
+    name: "swift-no-process-tool-spawn",
+    severity: "error",
+    message:
+        "Launching ps, lsof or pgrep reads the whole process table, which hangs for seconds on a loaded Mac and " +
+        "stalls every other reader. Use libproc (`proc_listpids`, `proc_pidinfo`) for the processes you need, or " +
+        "`// lint-rules-ignore: <how often it runs, its timeout, and why libproc does not fit>`.",
+};
+const SWIFT_PROCESS_TOOL = /"(?:\/usr)?\/s?bin\/(?:ps|lsof|pgrep)"/;
+/**
+ * The call sites that existed when the rule came, with what bounds each. A new site needs its own reason in an
+ * ignore comment; this list only shrinks.
+ */
+export const SWIFT_PROCESS_TOOL_RATCHET = new Map<string, string>([
+    [
+        "src/macos/GenesisKit/Sources/GenesisKitBase/Perf/HangWatch.swift",
+        "at most once a minute, only after a main-thread stall, killed at 3 s",
+    ],
+    [
+        "src/macos/GenesisKit/Sources/GenesisKitDisk/Disk/DiskSystemProbes.swift",
+        "one fseventsd health read, off the main thread, 5 s timeout",
+    ],
+]);
+
+/** A Swift source line that launches a process tool by its absolute path. Tests and comment lines are left out. */
+export function checkSwiftProcessToolRule(
+    file: string,
+    lines: string[],
+    isSuppressed: (lines: string[], lineNumber: number) => boolean,
+    ratchets = true
+): Finding[] {
+    if (/(^|\/)Tests\//.test(file) || (ratchets && SWIFT_PROCESS_TOOL_RATCHET.has(file))) {
+        return [];
+    }
+
+    const findings: Finding[] = [];
+
+    for (const [index, text] of lines.entries()) {
+        const match = SWIFT_PROCESS_TOOL.exec(text);
+
+        if (!match || text.trimStart().startsWith("//") || isSuppressed(lines, index + 1)) {
+            continue;
+        }
+
+        findings.push({
+            file,
+            line: index + 1,
+            column: match.index + 1,
+            rule: SWIFT_PROCESS_TOOL_RULE.name,
+            severity: SWIFT_PROCESS_TOOL_RULE.severity,
+            message: SWIFT_PROCESS_TOOL_RULE.message,
+            text: text.trim().slice(0, 120),
+        });
+    }
+
+    return findings;
+}

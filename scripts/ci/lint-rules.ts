@@ -48,7 +48,7 @@ import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
 import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
-import { checkSwiftRowRules, checkSwiftStructRules } from "./swift-lint-rules";
+import { checkSwiftProcessToolRule, checkSwiftRowRules, checkSwiftStructRules } from "./swift-lint-rules";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
@@ -1613,6 +1613,7 @@ export function checkSwiftSource(
     const findings: Finding[] = [
         ...checkSwiftStructRules(file, lines, codeLines, isSuppressed),
         ...checkSwiftRowRules(file, lines, codeLines, isSuppressed, ratchets),
+        ...checkSwiftProcessToolRule(file, lines, isSuppressed, ratchets),
     ];
 
     for (const [index, text] of lines.entries()) {
