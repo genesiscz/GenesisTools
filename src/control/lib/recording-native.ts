@@ -366,7 +366,7 @@ const joinSegments = async ({
     segments,
     output,
     audioTitles,
-}: Parameters<SegmentJoiner>[0] & { audioTitles: string[] }): Promise<{ durationMs: number }> => {
+}: Parameters<SegmentJoiner>[0] & { audioTitles: string[] }): ReturnType<SegmentJoiner> => {
     const facts = await Promise.all(segments.map((segment) => readMediaFacts({ input: segment.path })));
     const videos = facts.map(primaryVideo);
     const first = videos[0];
@@ -418,13 +418,10 @@ const joinSegments = async ({
         { segments: segments.length, output, copied: sameShape, audioTracks: audioCounts[0] ?? 0, placements },
         sameShape ? "segments joined by stream copy" : "segments joined by re-encoding"
     );
-    await joinSegmentCursorTracks({
-        segments,
-        lengthsMs: segments.map((segment, index) => joinedLengthMs(segment, facts[index])),
-        placements,
-        output,
-    });
-    return { durationMs: await movieLengthMs(output) };
+    // The same lengths shift the cursor track and, through the session's spans, cut the camera movie.
+    const lengthsMs = segments.map((segment, index) => joinedLengthMs(segment, facts[index]));
+    await joinSegmentCursorTracks({ segments, lengthsMs, placements, output });
+    return { durationMs: await movieLengthMs(output), lengthsMs };
 };
 
 /**

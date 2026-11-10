@@ -408,7 +408,8 @@ describe("RecordingSession", () => {
     // runs on the wall clock, so it is cut to these spans after the recording (camera.ts alignCameraMovie).
     it("each kept segment is a span from its own first frame, after a resume and from 0 again after a restart", async () => {
         const { recorder, runs } = fakeRecorder({ armLater: true, movieMs: 2500 });
-        const recording = session(recorder);
+        // The saved one-segment movie reads 2480 ms: the saved span is the file's length, not the recorder's.
+        const recording = session(recorder, { measure: async () => 2480 });
         await recording.start();
         clock = 1_001_400;
         runs[0].arm({ firstFrameAt: 1_000_800 });
@@ -431,7 +432,35 @@ describe("RecordingSession", () => {
         clock = 1_072_000;
         await recording.command({ cmd: "stop" });
         expect(await recording.finished).toBe("done");
-        expect(recording.movieSpans()).toEqual([{ sourceStartMs: 0, firstFrameEpochMs: 1_070_200, lengthMs: 2500 }]);
+        expect(recording.movieSpans()).toEqual([{ sourceStartMs: 0, firstFrameEpochMs: 1_070_200, lengthMs: 2480 }]);
+    });
+
+    // PR #752 review: the joiner shifts the cursor track by each file's probed length, which differs from the
+    // recorder's movieMs by 13 to 48 ms per segment; the camera spans used movieMs and drifted at every segment.
+    it("a joined movie's spans are as long as the join measured each segment, like its cursor track", async () => {
+        const { recorder, runs } = fakeRecorder({ armLater: true, movieMs: 2500 });
+        const recording = session(recorder, {
+            join: async ({ segments, output }) => {
+                await writeFile(output, "joined");
+                return { durationMs: 4990, lengthsMs: segments.map((_, position) => [2467, 2523][position]) };
+            },
+        });
+        await recording.start();
+        clock = 1_001_400;
+        runs[0].arm({ firstFrameAt: 1_000_800 });
+        clock = 1_003_300;
+        await recording.command({ cmd: "pause" });
+        clock = 1_060_000;
+        await recording.command({ cmd: "resume" });
+        clock = 1_060_900;
+        runs[1].arm({ firstFrameAt: 1_060_550 });
+        clock = 1_063_000;
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("done");
+        expect(recording.movieSpans()).toEqual([
+            { sourceStartMs: 0, firstFrameEpochMs: 1_000_800, lengthMs: 2467 },
+            { sourceStartMs: 2467, firstFrameEpochMs: 1_060_550, lengthMs: 2523 },
+        ]);
     });
 
     it("one segment is moved into place without a join", async () => {
@@ -1267,8 +1296,10 @@ describe("a joined cursor track on the joined movie's clock", () => {
         await writeFile(cursorTrackPath(segments[1].path), '{"t":100.0,"x":0.5,"y":0.6,"click":"left"}\n');
         const output = join(root, "joined.mp4");
 
-        await segmentJoiner()({ segments, output });
+        const joined = await segmentJoiner()({ segments, output });
 
+        // The session's camera spans take the same lengths, so the camera and the cursor line up alike.
+        expect(joined.lengthsMs).toEqual([2530, 2513]);
         expect((await readFile(cursorTrackPath(output), "utf8")).trim().split("\n")).toEqual([
             '{"t":0.0,"x":0.1,"y":0.2}',
             '{"t":2630.0,"x":0.5,"y":0.6,"click":"left"}',

@@ -185,8 +185,15 @@ export function movieFrameStats(
     return { frames, averageFps };
 }
 
-/** Joins finished segments into `output`, one H.264 MP4, and returns the joined movie's length. */
-export type SegmentJoiner = (input: { segments: FinishedSegment[]; output: string }) => Promise<{ durationMs: number }>;
+/**
+ * Joins finished segments into `output`, one H.264 MP4, and returns the joined movie's length. `lengthsMs` is how long
+ * each segment lasts in that movie, in the order given (where the join starts the next one); a joiner that cannot
+ * measure them leaves it out, and the session then uses the recorder's movie lengths.
+ */
+export type SegmentJoiner = (input: {
+    segments: FinishedSegment[];
+    output: string;
+}) => Promise<{ durationMs: number; lengthsMs?: number[] }>;
 
 /** A saved movie's length (ms), measured the way a `SegmentJoiner` measures the movie it joined. */
 export type MovieMeasure = (path: string) => Promise<number>;
@@ -239,6 +246,8 @@ export class RecordingSession {
     private recordedMs = 0;
     /** Movie length of every finished segment: where the next one starts in the joined movie. */
     private movieMs = 0;
+    /** Each saved segment's length in the saved movie (by segment index), as the join or the measure read it. */
+    private readonly savedLengthsMs = new Map<number, number>();
     private queue: Promise<void> = Promise.resolve();
     private ticker: ReturnType<typeof setInterval> | undefined;
     private settle: (outcome: RecordingOutcome) => void = () => {};
@@ -358,14 +367,16 @@ export class RecordingSession {
     /**
      * The kept segments on the wall clock, in movie order: where each starts in the joined movie and when its first
      * frame was captured. A restart drops the earlier segments, so the spans start at 0 again; the camera, which kept
-     * running, is cut to them after the recording (`alignCameraMovie`).
+     * running, is cut to them after the recording (`alignCameraMovie`). Once the movie is saved each span is as long
+     * as its segment lasts in that file (the join's own lengths, the ones the cursor track is shifted by); the
+     * recorder's `movieMs` differs from it by 13 to 48 ms per segment, which would add up against the screen.
      */
     movieSpans(): RecordingSpan[] {
         let sourceStartMs = 0;
         return [...this.segments]
             .sort((a, b) => a.index - b.index)
             .flatMap((segment) => {
-                const lengthMs = segment.movieMs ?? segment.durationMs;
+                const lengthMs = this.savedLengthsMs.get(segment.index) ?? segment.movieMs ?? segment.durationMs;
                 const span =
                     segment.firstFrameAt === undefined
                         ? []
@@ -668,6 +679,7 @@ export class RecordingSession {
             if (ordered.length === 1) {
                 await this.moveMovie(ordered[0].path);
                 durationMs = await this.savedLengthMs(ordered[0]);
+                this.savedLengthsMs.set(ordered[0].index, durationMs);
             } else {
                 durationMs = await this.joinMovie(ordered);
             }
@@ -773,8 +785,14 @@ export class RecordingSession {
     private async joinMovie(ordered: FinishedSegment[]): Promise<number> {
         const temporary = this.temporaryOutput();
         try {
-            const { durationMs } = await this.options.join({ segments: ordered, output: temporary });
+            const { durationMs, lengthsMs } = await this.options.join({ segments: ordered, output: temporary });
             await this.moveMovie(temporary);
+            if (lengthsMs?.length === ordered.length) {
+                for (const [position, segment] of ordered.entries()) {
+                    this.savedLengthsMs.set(segment.index, lengthsMs[position]);
+                }
+            }
+
             return durationMs;
         } finally {
             await unlink(cursorTrackPath(temporary)).catch((error: unknown) => {
