@@ -98,9 +98,10 @@ hours). Each number names its source. Where a line says "one observation", it is
 
 - `ToolsBridge.run` shares one limit between the server's try and the process. After a server timeout the process
   had 0 s left, was started and was killed at once: 41 starts in five days. It is not started now (82e22216a8).
-- `ToolsCLIRunner.capture` gives the process a new full limit after a server timeout (worst case 2T + 1 s). It is
-  not changed: the process answered in 1 to 2 s in the measured cases, because the server was blocked and the Mac
-  was not.
+- `ToolsBridge.capture`, the blocking call every hub verb runs through since 16d69e18c2, follows the same rule: the
+  server gets a third of the limit (`serverPatience`), the process gets what is left, and no process starts when
+  nothing is left. The process answered in 1 to 2 s in the measured cases, because the server was blocked and the
+  Mac was not.
 - The load-top probe of `HangWatch` waits 10 minutes after a `ps` that failed (20481c31a6). It failed 59 times of
   414 in five days, 41 of them in two hours of 2026-11-10.
 - `FseventsdHealth.read()` in `DiskSystemProbes.swift` has no caller in the app.
