@@ -94,6 +94,8 @@ async function readStdout(
             peer.receive(value);
         }
 
+        // A child that exits right after its last reply may end it without a newline: a closing newline reads it.
+        peer.receive(new TextEncoder().encode("\n"));
         reason = await endReason();
     } catch (error) {
         if (!peer.closed) {
