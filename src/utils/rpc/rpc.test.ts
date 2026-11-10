@@ -347,6 +347,27 @@ describe("a peer on a child's stdio", () => {
         expect(peer.closed).toBe(true);
     });
 
+    test("a last reply without a newline before the end of stdout still resolves its call", async () => {
+        const pipe = childPipe();
+        const { peer } = connectChildStdio({
+            child: pipe.child,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const answered = peer.request("one", {}, { timeoutMs: 60_000 });
+        const left = peer.request("two", {}, { timeoutMs: 60_000 });
+        const outcomes = Promise.allSettled([answered, left]);
+
+        pipe.emit('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}');
+        pipe.end();
+
+        const [first, second] = await outcomes;
+        expect(first).toEqual({ status: "fulfilled", value: { ok: true } });
+        expect(second.status === "rejected" && String(second.reason)).toBe("Error: agent closed its stdout");
+    });
+
     test("a dialect without the jsonrpc field writes none and reads messages without it", async () => {
         const pipe = childPipe();
         const notifications: string[] = [];
