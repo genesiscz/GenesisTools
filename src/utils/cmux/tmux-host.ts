@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeSessionsDir } from "@genesiscz/utils/claude/peer-message";
-import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { type CmuxTree, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { tmuxSessionAttachCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -341,42 +341,22 @@ function text(value: unknown): string | null {
     return typeof value === "string" && value !== "" ? value : null;
 }
 
-function list(value: unknown): unknown[] {
-    return Array.isArray(value) ? value : [];
-}
-
 /** `/dev/ttys001` (tmux) and `ttys001` (cmux) name the same terminal. */
 export function ttyName(tty: string | null | undefined): string {
     return (tty ?? "").replace(/^\/dev\//, "");
 }
 
-/** Every terminal tab of a cmux tree that has a tty. */
-export function parseCmuxTerminals(tree: unknown): CmuxTerminal[] {
+/** Every terminal tab of a cmux tree read that has a tty. */
+export function cmuxTerminals(tree: CmuxTree): CmuxTerminal[] {
     const terminals: CmuxTerminal[] = [];
 
-    for (const window of isRecord(tree) ? list(tree.windows) : []) {
-        if (!isRecord(window)) {
-            continue;
-        }
+    for (const window of tree.windows) {
+        for (const workspace of window.workspaces) {
+            for (const pane of workspace.panes) {
+                for (const surface of pane.surfaces ?? []) {
+                    const tty = ttyName(text(surface.tty));
 
-        for (const workspace of list(window.workspaces)) {
-            if (!isRecord(workspace)) {
-                continue;
-            }
-
-            for (const pane of list(workspace.panes)) {
-                if (!isRecord(pane)) {
-                    continue;
-                }
-
-                for (const surface of list(pane.surfaces)) {
-                    const tty = isRecord(surface) ? ttyName(text(surface.tty)) : "";
-
-                    if (
-                        !isRecord(surface) ||
-                        tty === "" ||
-                        (surface.type !== undefined && surface.type !== "terminal")
-                    ) {
+                    if (tty === "" || (surface.type !== null && surface.type !== "terminal")) {
                         continue;
                     }
 
@@ -384,7 +364,7 @@ export function parseCmuxTerminals(tree: unknown): CmuxTerminal[] {
                         tty,
                         surfaceRef: text(surface.ref),
                         surfaceId: text(surface.id),
-                        paneRef: text(surface.pane_ref) ?? text(pane.ref),
+                        paneRef: text(surface.paneRef) ?? text(pane.ref),
                         workspaceRef: text(workspace.ref),
                         workspaceId: text(workspace.id),
                         windowRef: text(window.ref),
@@ -409,9 +389,6 @@ export interface TmuxCmuxLocation {
     at: number;
 }
 
-/** The optional `tree --all` answers in about 100 ms; a stalled cmux must not hold a session listing. */
-const TREE_TIMEOUT_MS = 3_500;
-
 /**
  * The cmux tab each live tmux-hosted session is shown in, keyed by lowercase session id.
  *
@@ -422,6 +399,7 @@ const TREE_TIMEOUT_MS = 3_500;
  * session's tmux session has a client at all.
  */
 export async function tmuxCmuxLocations(
+    /** `readTree`: the tree read's runner (`tree-read.ts`), answering the parsed `tree` JSON; a test injects it. */
     deps: TmuxHostDeps & { readTree?: () => Promise<unknown>; now?: number } = {}
 ): Promise<Map<string, TmuxCmuxLocation>> {
     const hosts = await findAllTmuxHosts(deps);
@@ -431,18 +409,18 @@ export async function tmuxCmuxLocations(
         return locations;
     }
 
-    const readTree =
-        deps.readTree ??
-        (() => runCmuxJSON<unknown>(["--id-format", "both", "tree", "--all"], { timeoutMs: TREE_TIMEOUT_MS }));
-    let terminals: CmuxTerminal[];
+    // A stalled cmux must not hold a session listing: the read is bounded and backs off.
+    const read = await readCmuxTree(deps.readTree ? { run: deps.readTree } : {});
 
-    try {
-        terminals = parseCmuxTerminals(await readTree());
-    } catch (error) {
-        log.debug({ error }, "cmux tree unreadable; tmux-hosted sessions get no cmux location");
+    if (!read.ok) {
+        log.debug(
+            { reason: read.reason, error: read.error },
+            "cmux tree unreadable; tmux-hosted sessions get no cmux location"
+        );
         return locations;
     }
 
+    const terminals = cmuxTerminals(read.tree);
     const byTty = new Map(terminals.map((terminal) => [terminal.tty, terminal]));
     const at = deps.now ?? Date.now();
 

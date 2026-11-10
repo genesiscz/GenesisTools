@@ -28,6 +28,7 @@ import {
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import * as journalRefs from "@genesiscz/utils/cmux/session-refs";
+import * as treeRead from "@genesiscz/utils/cmux/tree-read";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -644,7 +645,10 @@ describe("Claude who JSON contract", () => {
     async function jsonOutput(input: { entryPoint: string; args: string; extra?: string }): Promise<unknown> {
         const scanned = [{ ...row, args: input.args, extra: input.extra }];
         const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue(scanned);
-        const capture = spyOn(processScan, "runCapture").mockResolvedValue('{"windows":[]}');
+        const capture = spyOn(treeRead, "readCmuxTree").mockResolvedValue({
+            ok: true,
+            tree: { caller: null, windows: [] },
+        });
         const sessions = spyOn(CLAUDE_WHO_SOURCE, "activeSessions").mockResolvedValue([]);
         const result = spyOn(out, "result").mockImplementation(() => {});
 

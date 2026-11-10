@@ -1,7 +1,8 @@
 import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
-import { type ActiveAgentProcess, listActiveAgentProcesses, runCapture } from "@genesiscz/utils/ai/active-processes";
+import { type ActiveAgentProcess, listActiveAgentProcesses } from "@genesiscz/utils/ai/active-processes";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { readSessionCmuxRecords, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import { type CmuxTree, cmuxTreeFromJson, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -106,7 +107,7 @@ export interface SessionIdAssignment {
     source: SessionIdSource;
 }
 
-/** The live terminal surfaces, from `cmux --json --id-format both tree --all`: tty by surface UUID, and each one's ref. */
+/** The live terminal surfaces, from the one cmux tree read (`tree-read.ts`): tty by surface UUID, and each one's ref. */
 export interface CmuxSurfaceTtys {
     /** Surface UUID (lower case) → tty. The journal records the UUID; a ref is renumbered at each relaunch. */
     ttyBySurfaceId: Map<string, string>;
@@ -118,28 +119,21 @@ export interface CmuxSurfaceTtys {
  * The link the hook journal is missing: it records which cmux SURFACE a session runs on, but a
  * surface means nothing to `ps`. The tty is the shared key.
  */
-export function parseCmuxTreeTtys(json: string): CmuxSurfaceTtys {
+export function cmuxSurfaceTtys(tree: CmuxTree): CmuxSurfaceTtys {
     const ttyBySurfaceId = new Map<string, string>();
     const refBySurfaceId = new Map<string, string>();
-    const parsed: unknown = SafeJSON.parse(json, { strict: true });
-    const list = (value: unknown, key: string): unknown[] => {
-        const field = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : null;
-        return Array.isArray(field) ? field : [];
-    };
 
-    for (const window of list(parsed, "windows")) {
-        for (const workspace of list(window, "workspaces")) {
-            for (const pane of list(workspace, "panes")) {
-                for (const surface of list(pane, "surfaces")) {
-                    const { id, ref, tty } = surface as { id?: unknown; ref?: unknown; tty?: unknown };
-
-                    if (typeof id !== "string" || typeof tty !== "string" || !tty) {
+    for (const window of tree.windows) {
+        for (const workspace of window.workspaces) {
+            for (const pane of workspace.panes) {
+                for (const { id, ref, tty } of pane.surfaces ?? []) {
+                    if (id === null || !tty) {
                         continue;
                     }
 
                     ttyBySurfaceId.set(id.toLowerCase(), tty);
 
-                    if (typeof ref === "string") {
+                    if (ref !== null) {
                         refBySurfaceId.set(id.toLowerCase(), ref);
                     }
                 }
@@ -148,6 +142,11 @@ export function parseCmuxTreeTtys(json: string): CmuxSurfaceTtys {
     }
 
     return { ttyBySurfaceId, refBySurfaceId };
+}
+
+/** `cmuxSurfaceTtys` over the stdout of `cmux --json --id-format both tree --all`; a fixture's way in. */
+export function parseCmuxTreeTtys(json: string): CmuxSurfaceTtys {
+    return cmuxSurfaceTtys(cmuxTreeFromJson(SafeJSON.parse(json, { strict: true })) ?? { caller: null, windows: [] });
 }
 
 export interface SessionHint {
@@ -347,10 +346,13 @@ interface CmuxContext {
     surfaceByTty: Map<string, string>;
 }
 
-/** Journal + live cmux surfaces. Both are optional: no cmux simply means no hints. */
+/**
+ * Journal + live cmux surfaces. Both are optional: a failed tree read means no hints (logged with its reason), and
+ * the processes still answer. `runner` is the tree read's runner, given the whole command line (`cmux ...`).
+ */
 async function readCmuxContext(
     alias: AccountProviderAlias,
-    runner: (cmd: string[]) => Promise<string>
+    runner: ((cmd: string[]) => Promise<string>) | undefined
 ): Promise<CmuxContext> {
     const empty: CmuxContext = {
         hints: [],
@@ -358,17 +360,23 @@ async function readCmuxContext(
         surfaceByTty: new Map(),
     };
 
-    try {
-        const surfaces = parseCmuxTreeTtys(await runner(["cmux", "--json", "--id-format", "both", "tree", "--all"]));
-        return {
-            hints: buildSessionHints(journalOf(alias), surfaces.ttyBySurfaceId),
-            surfaces,
-            surfaceByTty: invertSurfaceTtys(surfaces),
-        };
-    } catch (error) {
-        logger.debug({ error, alias }, "[who] cmux session hints unavailable");
+    const read = await readCmuxTree(
+        runner
+            ? { run: async (args) => SafeJSON.parse(await runner(["cmux", "--json", ...args]), { strict: true }) }
+            : {}
+    );
+
+    if (!read.ok) {
+        logger.debug({ reason: read.reason, error: read.error, alias }, "[who] cmux session hints unavailable");
         return empty;
     }
+
+    const surfaces = cmuxSurfaceTtys(read.tree);
+    return {
+        hints: buildSessionHints(journalOf(alias), surfaces.ttyBySurfaceId),
+        surfaces,
+        surfaceByTty: invertSurfaceTtys(surfaces),
+    };
 }
 
 export async function listActiveAgentSessions(
@@ -396,7 +404,7 @@ export async function listActiveAgentSessions(
     }
 
     const factsById = new Map(active.map((session) => [session.sessionId, session]));
-    const cmux = await readCmuxContext(source.alias, deps.runner ?? runCapture);
+    const cmux = await readCmuxContext(source.alias, deps.runner);
     const assignments = assignSessionIds(
         withoutHelpers(source, procs),
         active.filter((session) => session.active !== false),
