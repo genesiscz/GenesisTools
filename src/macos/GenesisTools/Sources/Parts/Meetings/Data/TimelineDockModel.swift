@@ -18,10 +18,24 @@ final class TimelineDockModel {
         var rows: @MainActor (String) async throws -> ReviewRows
     }
 
-    /// A range the lens or a merged pin set, for the layer that played then: a new top shows its own span again.
+    /// The ranges the reader zoomed to, for the layer that played then: a new top shows its own span again. The trail
+    /// holds every range on the way, the shown one last: a merged pin or a "Show" adds or starts one, the lens moves
+    /// the last one. The breadcrumb names them and a click goes back.
     struct ViewOverride: Equatable {
         let layer: UUID
-        let range: ClosedRange<Double>
+        var trail: [ClosedRange<Double>]
+
+        init(layer: UUID, trail: [ClosedRange<Double>]) {
+            self.layer = layer
+            self.trail = trail
+        }
+
+        init(layer: UUID, range: ClosedRange<Double>) {
+            self.init(layer: layer, trail: [range])
+        }
+
+        /// The range the timeline shows.
+        var range: ClosedRange<Double> { trail.last ?? 0...1 }
     }
 
     /// Peaks across the whole meeting (the strip), and across the zoomed view widened by one view length each side, so
@@ -96,10 +110,55 @@ final class TimelineDockModel {
         setZoom(all[min(max(index + (out ? 1 : -1), 0), all.count - 1)])
     }
 
-    /// A range from the strip's lens or a merged pin, kept while the same layer is on top.
+    /// A range from the strip's lens, kept while the same layer is on top: the shown range moves, no level is added.
     func setView(_ range: ClosedRange<Double>, layer: UUID?) {
         guard let layer else { return }
-        viewOverride = ViewOverride(layer: layer, range: range)
+        var trail = trail(of: layer)
+        if trail.isEmpty { trail = [range] } else { trail[trail.count - 1] = range }
+        viewOverride = ViewOverride(layer: layer, trail: trail)
+    }
+
+    /// A merged pin's range: one level deeper, so the reader can go back to the range before it.
+    func pushView(_ range: ClosedRange<Double>, layer: UUID?) {
+        guard let layer else { return }
+        var trail = trail(of: layer)
+        if trail.last != range { trail.append(range) }
+        viewOverride = ViewOverride(layer: layer, trail: trail)
+    }
+
+    /// "Show" on a stretch: that range alone, whatever was zoomed to before.
+    func showView(_ range: ClosedRange<Double>, layer: UUID?) {
+        guard let layer else { return }
+        viewOverride = ViewOverride(layer: layer, trail: [range])
+    }
+
+    /// Back to level `index` of the trail; nil shows the layer's own view again.
+    func popView(to index: Int?) {
+        guard let held = viewOverride else { return }
+        guard let index, index >= 0, index < held.trail.count else {
+            viewOverride = nil
+            return
+        }
+        viewOverride = ViewOverride(layer: held.layer, trail: Array(held.trail.prefix(index + 1)))
+    }
+
+    /// One level back: the range before this one, or the layer's own view from the first level.
+    func backView() {
+        guard let held = viewOverride else { return }
+        popView(to: held.trail.count >= 2 ? held.trail.count - 2 : nil)
+    }
+
+    /// The ranges zoomed to while `layer` is on top, the shown one last; none for another layer.
+    func trail(of layer: UUID?) -> [ClosedRange<Double>] {
+        guard let held = viewOverride, held.layer == layer else { return [] }
+        return held.trail
+    }
+
+    /// A layer that takes the place of `old` in the same play (the next stretch of a whole meeting, a click in it)
+    /// keeps the zoomed range.
+    func moveView(from old: UUID, to next: UUID) {
+        guard let held = viewOverride, held.layer == old else { return }
+        viewOverride = ViewOverride(layer: next, trail: held.trail)
     }
 
     // MARK: Reads

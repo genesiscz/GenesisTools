@@ -1,3 +1,4 @@
+import AudioToolbox
 import AVFoundation
 import Foundation
 import Observation
@@ -45,9 +46,18 @@ protocol MomentSound: AnyObject {
     var isPlaying: Bool { get }
     /// Called once when the sound plays to its end (not on `pause` or `stop`).
     var onEnd: (@MainActor () -> Void)? { get set }
+    /// Whether a seek lands where it is asked. The system player opens an Ogg Opus recording, reports the asked time and
+    /// plays the file's start (measured 2026-11-10 on a 2 h 26 min recording: the same level sequence after a seek to
+    /// 0, 2926 and 5376 s, while WAV, AAC, MP3 and FLAC copies each played their own stretch). A whole meeting in such a
+    /// format plays as cut stretches instead of the file.
+    var seeksExactly: Bool { get }
     func play()
     func pause()
     func stop()
+}
+
+extension MomentSound {
+    var seeksExactly: Bool { true }
 }
 
 typealias MomentSoundLoader = @MainActor (URL) throws -> MomentSound
@@ -57,10 +67,31 @@ typealias MomentSoundLoader = @MainActor (URL) throws -> MomentSound
 final class AVMomentSound: NSObject, MomentSound, AVAudioPlayerDelegate {
     private let player: AVAudioPlayer
     var onEnd: (@MainActor () -> Void)?
+    let seeksExactly: Bool
+
+    /// The codings the system player seeks in exactly: the four that were measured. Any other one (Opus, Vorbis, a
+    /// coding nobody measured) takes the cut stretches, which seek in every format.
+    static let seekableCodings: Set<AudioFormatID> = [kAudioFormatLinearPCM, kAudioFormatMPEG4AAC, kAudioFormatMPEGLayer3, kAudioFormatFLAC]
+
+    static func seeksExactly(coding: AudioFormatID?) -> Bool {
+        coding.map(seekableCodings.contains) ?? false
+    }
+
+    /// The file's own coding ("opus", "aac ", "lpcm"), read from the file: the player's `format` is what it decodes to.
+    static func coding(of url: URL) -> AudioFormatID? {
+        var file: AudioFileID?
+        guard AudioFileOpenURL(url as CFURL, .readPermission, 0, &file) == noErr, let file else { return nil }
+        defer { AudioFileClose(file) }
+        var description = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        guard AudioFileGetProperty(file, kAudioFilePropertyDataFormat, &size, &description) == noErr else { return nil }
+        return description.mFormatID
+    }
 
     /// `muted`: the sound plays at volume 0 (a `--snapshot --play` picture of a playing Moment makes no sound).
     init(url: URL, muted: Bool = false) throws {
         player = try AVAudioPlayer(contentsOf: url)
+        seeksExactly = Self.seeksExactly(coding: Self.coding(of: url))
         super.init()
         if muted { player.volume = 0 }
         player.enableRate = true
@@ -258,23 +289,34 @@ final class MomentPlayer {
     /// time takes the top's place, or the whole meeting plays from there in Meeting view (`meetings.playback.view`).
     func playTime(_ second: Double, in meeting: String, from source: MomentSource = .transcript) {
         if let top, top.meeting == meeting, top.contains(second), sounds[top.id] != nil {
+            // The recording itself: its level says where the sound was put, as a new stretch's level does.
+            if top.kind == .file { update(top.id) { $0.label = Self.meetingLabel(second) } }
             seek(to: second)
             return
         }
         if MeetingsPreferences.Playback.view.value(defaults) == .meeting || top?.kind == .file || top?.kind == .rolling {
-            playMeeting(meeting, at: second, from: source)
+            // A click on a paused whole-meeting play puts the sound there and stays paused, as a seek inside a loaded
+            // sound does: the reader clicks, then plays.
+            let holds = phase == .paused && top?.meeting == meeting && top?.kind == .rolling
+            playMeeting(meeting, at: second, from: source, paused: holds)
         } else {
             play(.time(second), in: meeting, from: source == .row ? .outside : source)
         }
     }
 
-    /// Plays the whole meeting from `second`: the recording itself when it has one track and this Mac opens it (an
-    /// instant seek, R3, R4), else 60 s Moments one after the other (decision 16).
-    func playMeeting(_ meeting: String, at second: Double, from source: MomentSource = .pin) {
+    /// Plays the whole meeting from `second`: the recording itself when it has one track, this Mac opens it and the
+    /// player seeks in its coding (an instant seek, R3, R4), else 60 s Moments one after the other (decision 16).
+    /// `paused`: the sound is put at `second` and waits.
+    func playMeeting(_ meeting: String, at second: Double, from source: MomentSource = .pin, paused: Bool = false) {
         var layer = MomentLayer(meeting: meeting, target: .time(second), source: source, kind: .file,
-                                label: "The meeting from \(MeetingsFormat.clock(second))")
+                                label: Self.meetingLabel(second))
         layer.startSec = second
+        let before = top
         place(layer, Self.placement(for: source, clickInQuestion: MeetingsPreferences.Playback.clickInQuestion.value(defaults)))
+        // A whole-meeting level that takes another one's place keeps the range the reader zoomed to.
+        if let before, before.meeting == meeting, before.kind != .moment, !stack.contains(where: { $0.id == before.id }) {
+            timeline.moveView(from: before.id, to: layer.id)
+        }
         let id = layer.id
         phase = .cutting(since: Date())
         cutTask?.cancel()
@@ -282,17 +324,35 @@ final class MomentPlayer {
             guard let self else { return }
             let audio = try? await self.engine.audio(meeting)
             guard !Task.isCancelled, self.top?.id == id else { return }
-            if let audio, audio.tracks == 1, let sound = try? self.load(URL(fileURLWithPath: audio.path)) {
+            if let audio, audio.tracks == 1, let sound = try? self.load(URL(fileURLWithPath: audio.path)), sound.seeksExactly {
                 self.update(id) {
                     $0.startSec = 0
                     $0.endSec = audio.durationSec
                 }
-                self.start(sound, for: id, at: second)
+                self.start(sound, for: id, at: second, paused: paused)
             } else {
                 self.update(id) { $0.kind = .rolling }
-                self.cut(id, Self.rollingParams(meeting, from: second))
+                self.cut(id, Self.rollingParams(meeting, from: second), paused: paused)
             }
         }
+    }
+
+    /// "Show" on a stretch too long for a clip (G-SPK-3): the whole meeting plays from `second`. A whole-meeting play
+    /// of the same meeting moves there and its level is named anew, so the breadcrumb says where the sound is; over
+    /// any other top it is a new level.
+    func showMeeting(_ meeting: String, from second: Double, source: MomentSource = .speakerChip) {
+        guard let top, top.meeting == meeting, top.kind != .moment else {
+            playMeeting(meeting, at: second, from: source)
+            return
+        }
+        if top.kind == .file, let sound = sounds[top.id], top.contains(second) {
+            update(top.id) { $0.label = Self.meetingLabel(second) }
+            seek(to: second)
+            if phase != .playing { run(sound, for: top.id) }
+            GenAnnounce.post("Playing \(Self.meetingLabel(second))")
+            return
+        }
+        playMeeting(meeting, at: second, from: .outside)
     }
 
     /// Cuts the clip of `target` now, so its play is instant (the next row's, G-PLAY-11). Only while no cut runs: the
@@ -505,7 +565,7 @@ final class MomentPlayer {
         stopTicker()
     }
 
-    private func cut(_ id: UUID, _ params: MeetingsAPI.MomentParams) {
+    private func cut(_ id: UUID, _ params: MeetingsAPI.MomentParams, paused: Bool = false) {
         phase = .cutting(since: Date())
         cutTask?.cancel()
         let key = Self.key(params)
@@ -523,12 +583,13 @@ final class MomentPlayer {
                     $0.endSec = clip.moment.endSec
                     $0.toneEndSec = clip.moment.tone.map { $0.atSec + $0.sound.sec }
                     if $0.kind == .moment { $0.label = clip.moment.label }
-                    else { $0.label = "The meeting from \(MeetingsFormat.clock(clip.moment.fromSec))" }
+                    else { $0.label = Self.meetingLabel(clip.moment.fromSec) }
                 }
                 let layer = self.stack.first { $0.id == id }
                 // A stretch of the whole meeting starts after its tone: the stretches play on as one recording.
                 let at = layer?.kind == .rolling ? max(clip.moment.startSec, layer?.toneEndSec ?? 0) : clip.moment.startSec
-                self.start(sound, for: id, at: at)
+                self.start(sound, for: id, at: at, paused: paused)
+                if layer?.kind == .rolling { self.precutStretch(params.meeting, from: clip.moment.endSec) }
             } catch is CancellationError {
                 return
             } catch {
@@ -538,6 +599,15 @@ final class MomentPlayer {
                 await self.learn(params)
             }
         }
+    }
+
+    /// Cuts the stretch after the one that plays, so a whole meeting plays on without a pause each minute (a cut takes
+    /// about 130 ms). Past the meeting's end the engine refuses, which is the end.
+    private func precutStretch(_ meeting: String, from second: Double) {
+        let params = Self.rollingParams(meeting, from: second)
+        let key = Self.key(params)
+        guard cachedClip(key) == nil, inFlight[key] == nil else { return }
+        Task { [weak self] in _ = try? await self?.clip(params) }
     }
 
     /// A clip from the kept ones, the cut that runs for the same Moment, or a new cut.
@@ -562,11 +632,18 @@ final class MomentPlayer {
     }
 
     /// Plays `sound` for the top from the meeting second `at`; every other sound is paused, so two never play at once.
-    private func start(_ sound: MomentSound, for id: UUID, at second: Double) {
+    private func start(_ sound: MomentSound, for id: UUID, at second: Double, paused: Bool = false) {
         guard let layer = stack.first(where: { $0.id == id }) else { return }
         sounds[id] = sound
         sound.onEnd = { [weak self] in self?.ended(id) }
         sound.currentTime = max(0, second - layer.startSec)
+        if paused {
+            let held = max(second, layer.startSec)
+            update(id) { $0.pausedAt = held }
+            position = held
+            phase = .paused
+            return
+        }
         run(sound, for: id)
         GenAnnounce.post("Playing \(layer.label)")
     }
@@ -595,6 +672,8 @@ final class MomentPlayer {
             next.startSec = top.endSec
             drop(top.id)
             stack[stack.count - 1] = next
+            // The next stretch is the same play: the range the reader zoomed to stays.
+            timeline.moveView(from: top.id, to: next.id)
             cut(next.id, Self.rollingParams(top.meeting, from: top.endSec))
             return
         }
@@ -646,6 +725,9 @@ final class MomentPlayer {
     }
 
     // MARK: Helpers
+
+    /// What a whole-meeting level is called: where its sound was put.
+    static func meetingLabel(_ second: Double) -> String { "The meeting from \(MeetingsFormat.clock(second))" }
 
     /// What the bar names before the engine's label arrives.
     static func provisionalLabel(_ target: MomentTarget) -> String {
