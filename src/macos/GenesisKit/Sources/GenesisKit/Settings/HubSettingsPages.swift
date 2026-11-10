@@ -130,7 +130,7 @@ private struct HubPaneSettings: View {
             NativeSettingsCard("Inbox") {
                 NativeSettingsToggle(
                     "Show each decision's context in full",
-                    detail: "Off: a card shows two lines of its context and Show more, so the question and its options come first.",
+                    detail: "Off: a card shows five lines of its context and Show more; a code block in it shows five lines and opens on its own.",
                     identifier: "hub.inbox.contextOpen", isOn: $inboxContextOpen)
             }
             NativeSettingsCard("PR overview") {

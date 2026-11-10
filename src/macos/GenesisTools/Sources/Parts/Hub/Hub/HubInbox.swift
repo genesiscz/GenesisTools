@@ -2247,7 +2247,7 @@ struct InboxDecisionCard: View, Equatable {
             // The widget's decision card draws these two sections too (GenesisKit DecisionDetailViews.swift).
             if let context = item.context, !context.isEmpty {
                 DecisionContextSection(markdown: context, startsOpen: contextOpen, forcedOpen: findInContext,
-                                       foldHeight: DecisionContextSection.twoLines)
+                                       foldHeight: DecisionContextSection.fiveLines)
                     .findField("context")
             }
             if !item.excerptRefs.isEmpty {
