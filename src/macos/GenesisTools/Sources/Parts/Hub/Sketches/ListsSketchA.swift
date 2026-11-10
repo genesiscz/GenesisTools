@@ -66,6 +66,8 @@ extension ListsSketchA {
 
         var body: some View {
             let groups = groups
+            let picked = model.selectedWorktree
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
                     if model.loadingWorktrees, model.worktrees.isEmpty {
@@ -83,10 +85,11 @@ extension ListsSketchA {
                                     WorktreeRow(
                                         worktree: entry.worktree,
                                         facts: entry.facts,
-                                        selected: model.selectedWorktree == entry.worktree.path,
+                                        selected: picked == entry.worktree.path,
                                         select: { model.selectWorktree(entry.worktree) }
                                     )
                                     .equatable()
+                                    .id(entry.worktree.path)
                                 }
                             }
                         } header: {
@@ -103,11 +106,22 @@ extension ListsSketchA {
                 .padding(.bottom, 12)
                 .genScrollBars()
             }
+            // The current list's rule: a selection from a link or a reopen opens its group and comes into view. Without
+            // it the page showed a worktree whose row was far below the fold, with nothing in the sidebar marking it.
+            .modifier(SidebarReveal(
+                proxy: proxy,
+                selection: picked,
+                group: groups.first { $0.rows.contains { $0.worktree.path == picked } }?.repo,
+                loaded: !model.worktrees.isEmpty,
+                prefs: prefs
+            ))
+            }
         }
     }
 
     /// Branch on the first line; under it the folder when it is not the branch's own last part, then the facts:
-    /// "PR #106 · 149 sessions · 2h ago · ± –".
+    /// "PR #106 · 149 sessions · 2h ago". The slot for the changed-file count (C31) is on the page's header only: a
+    /// dashed "± –" on every row was a mark that says nothing, about 30 times per screen.
     struct WorktreeRow: View, Equatable {
         let worktree: HubWorktree
         let facts: WorktreeFacts
@@ -179,8 +193,6 @@ extension ListsSketchA {
                     dot
                     LiveAgo(date: last, style: .brief).fixedSize()
                 }
-                dot
-                ListsSketchA.ChangedSlot()
             }
             .font(.system(size: 10.5))
             .foregroundColor(ReviewPalette.dim)
@@ -666,8 +678,10 @@ extension ListsSketchA {
                     HStack(spacing: 5) {
                         ProviderBadge(provider: entry.session.provider ?? "?", size: 11)
                         Text(verbatim: entry.session.displayTitle).lineLimit(1).truncationMode(.tail)
+                            .layoutPriority(1)
                         Text(verbatim: "·")
-                        Text(verbatim: entry.session.projectName).lineLimit(1).fixedSize()
+                        // Not `fixedSize`: a 60-character project name pushed the row's age off the sidebar.
+                        Text(verbatim: entry.session.projectName).lineLimit(1).truncationMode(.middle)
                         Spacer(minLength: 4)
                         LiveAgo(date: entry.item.date, style: .brief).fixedSize()
                     }
@@ -848,7 +862,15 @@ extension ListsSketchA {
     /// Commits of one project and author that follow each other, with the push that sent them when the feed has it.
     struct Run: Identifiable, Equatable {
         var commits: [TimelineEvent]
-        var push: TimelineEvent?
+        /// Every push whose head commit is in the run, newest first. One author's commits on several branches fall
+        /// into one run, so a run with one branch name for all of them said "79 commits pushed to feat/x" for a push
+        /// of three.
+        var pushes: [TimelineEvent] = []
+        /// "feat/x" for one push, "3 branches" for more; the branches themselves are in `branches`.
+        var branches: [String] {
+            var seen = Set<String>()
+            return pushes.compactMap(\.branch).filter { seen.insert($0).inserted }
+        }
         var id: String { "run:" + (commits.first?.id ?? "") }
         var newest: Date? { commits.first?.date }
         var oldest: Date? { commits.last?.date }
@@ -896,17 +918,23 @@ extension ListsSketchA {
                 runs.append(Run(commits: [event]))
             }
         }
-        // A push whose head is one of a run's commits names the run's branch and leaves the feed.
+        // A push whose head is one of a run's commits joins that run and leaves the feed. One lookup table for all
+        // pushes: a scan of every run's commits per push was pushes x runs x commits on each redraw of the feed.
+        var runOfSha: [String: Int] = [:]
+        for (index, run) in runs.enumerated() {
+            for commit in run.commits {
+                if let sha = commit.sha { runOfSha[sha] = index }
+            }
+        }
         var kept: [TimelineEvent] = []
         for event in others {
-            if event.timelineKind == .push, let head = event.sha,
-               let index = runs.firstIndex(where: { run in run.push == nil && run.commits.contains { $0.sha == head } }) {
-                runs[index].push = event
+            if event.timelineKind == .push, let head = event.sha, let index = runOfSha[head] {
+                runs[index].pushes.append(event)
             } else {
                 kept.append(event)
             }
         }
-        let items = kept.map(FeedItem.event) + runs.map { run in run.commits.count == 1 && run.push == nil ? .event(run.commits[0]) : .run(run) }
+        let items = kept.map(FeedItem.event) + runs.map { run in run.commits.count == 1 && run.pushes.isEmpty ? .event(run.commits[0]) : .run(run) }
         return items.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
     }
 
@@ -1088,6 +1116,13 @@ extension ListsSketchA {
             return formatter
         }()
 
+        /// "pushed to feat/x", or "pushed to 3 branches: feat/x, feat/y, …" when the run holds several pushes.
+        static func pushed(_ branches: [String]) -> String? {
+            guard let first = branches.first else { return nil }
+            if branches.count == 1 { return "pushed to \(first)" }
+            return "pushed to \(branches.count) branches: " + branches.joined(separator: ", ")
+        }
+
         private var span: String {
             let newest = run.newest.map(Self.time.string(from:)) ?? ""
             let oldest = run.oldest.map(Self.time.string(from:)) ?? ""
@@ -1106,9 +1141,9 @@ extension ListsSketchA {
                     .foregroundColor(ReviewPalette.dim)
                     .frame(minWidth: 36, alignment: .leading)
                     .fixedSize()
-                Image(systemName: run.push == nil ? TimelineKind.commit.symbol : TimelineKind.push.symbol)
+                Image(systemName: run.pushes.isEmpty ? TimelineKind.commit.symbol : TimelineKind.push.symbol)
                     .font(.system(size: 11.5))
-                    .foregroundColor(run.push == nil ? TimelineKind.commit.color : TimelineKind.push.color)
+                    .foregroundColor(run.pushes.isEmpty ? TimelineKind.commit.color : TimelineKind.push.color)
                     .frame(width: 16)
                 if let project = newest?.project {
                     Text(verbatim: project)
@@ -1123,8 +1158,8 @@ extension ListsSketchA {
                 Text(verbatim: Plural.count(run.commits.count, "commit"))
                     .font(.system(size: 12.5, weight: .semibold))
                     .fixedSize()
-                if let branch = run.push?.branch {
-                    Text(verbatim: "pushed to \(branch)")
+                if let pushed = Self.pushed(run.branches) {
+                    Text(verbatim: pushed)
                         .font(.system(size: 11.5, design: .monospaced))
                         .foregroundColor(TimelineKind.push.color)
                         .lineLimit(1)
@@ -1156,7 +1191,7 @@ extension ListsSketchA {
             .frame(minHeight: 26)
             .contentShape(Rectangle())
             .rowButton { toggle() }
-            .accessibilityLabel(Text(verbatim: "\(Plural.count(run.commits.count, "commit")) in \(newest?.project ?? "a project")" + (run.push?.branch.map { ", pushed to \($0)" } ?? "")))
+            .accessibilityLabel(Text(verbatim: "\(Plural.count(run.commits.count, "commit")) in \(newest?.project ?? "a project")" + (Self.pushed(run.branches).map { ", " + $0 } ?? "")))
             .accessibilityValue(Text(open ? "Expanded" : "Collapsed"))
             .instantTooltip(open ? "Fold the commits" : "Show the \(run.commits.count) commits")
             .liveRow()
