@@ -13,7 +13,6 @@ import {
     _setMasterKeyProvidersForTest,
     resolveSecret,
 } from "@genesiscz/utils/security";
-import { AIConfig } from "../AIConfig";
 import { _resetBuiltInPluginsForTest, registerBuiltInPlugins } from "../providers/plugins";
 import { _resetPluginsForTest, providerPlugin } from "../providers/registry";
 import { AiConfigStore } from "./AiConfigStore";
@@ -74,9 +73,6 @@ async function seed(accounts: AccountEntry[]): Promise<void> {
     const data: AiConfigData = { version: CONFIG_VERSION, accounts, defaults: {} };
     mkdirSync(join(home, ".genesis-tools", "ai"), { recursive: true });
     writeFileSync(configPath(), SafeJSON.stringify(data, null, 2));
-    // Both caches: `resolveAccountToken` reads through the v3 facade, whose
-    // singleton does not notice an AiConfigStore reset on its own.
-    AIConfig.invalidate();
     AiConfigStore.invalidate();
     await AiConfigStore.load();
 }
@@ -119,7 +115,7 @@ afterEach(() => {
     _resetSecretsForTest();
     _resetPluginsForTest();
     _resetBuiltInPluginsForTest();
-    AIConfig.invalidate();
+    AiConfigStore.invalidate();
 });
 
 describe("resolveAccountToken noRefresh gate", () => {

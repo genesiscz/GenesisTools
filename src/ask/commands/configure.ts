@@ -5,9 +5,10 @@ import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { AskConfig } from "@ask/types/config";
 import * as p from "@clack/prompts";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { applyLoginOutcome, patchAccount, removeAccount } from "@genesiscz/utils/ai/config/account-ops";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import type { AIAccountEntry, AIProvider } from "@genesiscz/utils/config/ai.types";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
@@ -15,8 +16,8 @@ export async function runConfigureWizard(): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" ask config ")));
 
     const config = await loadAskConfig();
-    const aiConfig = await AIConfig.load();
-    const accounts = aiConfig.listAccounts();
+    const store = await AiConfigStore.load();
+    const accounts = store.accounts();
 
     while (true) {
         const action = await p.select({
@@ -31,7 +32,7 @@ export async function runConfigureWizard(): Promise<void> {
                     value: "default-model",
                     label: "Default provider & model",
                     hint: (() => {
-                        const defaults = aiConfig.getAppDefaults("ask");
+                        const defaults = askAppDefaults(store);
                         return defaults?.provider ? `${defaults.provider}/${defaults.model ?? "auto"}` : "not set";
                     })(),
                 },
@@ -76,10 +77,8 @@ export async function runConfigureWizard(): Promise<void> {
 // ── Account Management ──
 
 async function manageAccounts(): Promise<void> {
-    const aiConfig = await AIConfig.load();
-
     while (true) {
-        const accounts = aiConfig.listAccounts();
+        const accounts = (await AiConfigStore.load()).accounts();
 
         const options: Array<{ value: string; label: string; hint?: string }> = accounts.map((a) => ({
             value: `view:${a.name}`,
@@ -111,8 +110,7 @@ async function manageAccounts(): Promise<void> {
 }
 
 async function viewAccount(name: string): Promise<void> {
-    const aiConfig = await AIConfig.load();
-    const account = aiConfig.getAccount(name);
+    const account = (await AiConfigStore.load()).accounts().find((a) => a.name === name);
 
     if (!account) {
         p.log.error(`Account "${name}" not found.`);
@@ -124,12 +122,12 @@ async function viewAccount(name: string): Promise<void> {
         `${pc.dim("Provider:")} ${account.provider}`,
         `${pc.dim("Label:")}    ${account.label ?? pc.dim("none")}`,
         `${pc.dim("Apps:")}     ${account.apps?.join(", ") ?? pc.dim("none")}`,
-        `${pc.dim("API Key:")}  ${account.tokens.apiKey ? pc.dim("configured") : pc.dim("none")}`,
-        `${pc.dim("OAuth:")}    ${account.tokens.accessToken ? pc.dim("configured") : pc.dim("none")}`,
+        `${pc.dim("API Key:")}  ${account.credentials.apiKey ? pc.dim("configured") : pc.dim("none")}`,
+        `${pc.dim("OAuth:")}    ${account.credentials.accessToken ? pc.dim("configured") : pc.dim("none")}`,
     ];
 
-    if (account.tokens.expiresAt) {
-        lines.push(`${pc.dim("Expires:")}  ${new Date(account.tokens.expiresAt).toLocaleString()}`);
+    if (account.credentials.expiresAt) {
+        lines.push(`${pc.dim("Expires:")}  ${new Date(account.credentials.expiresAt).toLocaleString()}`);
     }
 
     p.note(lines.join("\n"), account.name);
@@ -153,7 +151,8 @@ async function viewAccount(name: string): Promise<void> {
         });
 
         if (!p.isCancel(confirm) && confirm) {
-            await aiConfig.removeAccount(name);
+            // The user confirmed this account; a default that points at it does not keep it alive.
+            await removeAccount(account.id, { force: true });
             p.log.success(`Account "${name}" removed.`);
         }
     }
@@ -259,18 +258,16 @@ async function addFromClaudeAccount(): Promise<void> {
         return;
     }
 
-    // Tokens are managed by AIConfig's refresh pipeline.
-    const entry: AIAccountEntry = {
-        name: choice as string,
-        provider: "anthropic-sub",
-        // The stored credentials stay as they are: this only records the apps.
-        tokens: {},
-        label: selected.label,
-        apps: ["ask", "claude"],
-    };
+    const stored = (await AiConfigStore.load()).accounts({ provider: "anthropic-sub" }).find((a) => a.name === choice);
 
-    const aiConfig = await AIConfig.load();
-    await aiConfig.addAccount(entry);
+    if (!stored) {
+        p.log.error(`Account "${choice}" not found.`);
+        return;
+    }
+
+    // The stored credentials stay as they are: this only records the apps.
+    await patchAccount(stored.id, { fields: { apps: ["ask", "claude"] } });
+    const entry = { name: stored.name, label: selected.label };
 
     // Also set as ask config's claude account for backward compat
     const askConfig = await loadAskConfig();
@@ -296,7 +293,7 @@ export type SubscriptionLogin = (opts: RunLoginOptions) => Promise<RunLoginResul
  * The Anthropic subscription login, delegated whole to the shared accounts core.
  *
  * It used to run its own authorization round trip and write through the
- * deprecated `AIConfig` facade, so not one of the login guards applied here: a
+ * deprecated v3 facade, so not one of the login guards applied here: a
  * name guessed from the token's email could replace another provider's account,
  * a grant proving a different identity overwrote the stored one without a word,
  * and a refusal left the vendor file replaced (PR #368 review t3). What is left
@@ -316,9 +313,6 @@ export async function addViaOAuthFlow(login: SubscriptionLogin = runLogin): Prom
         return;
     }
 
-    // The shared lib writes through the v4 store, which this wizard's in-memory
-    // v3 view cannot see; re-read before the next screen renders a stale list.
-    AIConfig.invalidate();
     await linkAskConfigToAccount(result.account);
     p.log.success(`Account "${result.account.name}" added via OAuth.`);
 }
@@ -374,17 +368,13 @@ async function addOAuthKey(): Promise<void> {
         return;
     }
 
-    const entry: AIAccountEntry = {
+    await saveAccount({
         name: name as string,
         provider: "anthropic-sub",
-        tokens: {
+        credentials: {
             accessToken: token as string,
         },
-        apps: ["ask"],
-    };
-
-    const aiConfig = await AIConfig.load();
-    await aiConfig.addAccount(entry);
+    });
     p.log.success(`Account "${name}" added with OAuth token.`);
 }
 
@@ -417,17 +407,13 @@ async function addAnthropicApiKey(): Promise<void> {
         return;
     }
 
-    const entry: AIAccountEntry = {
+    await saveAccount({
         name: name as string,
         provider: "anthropic",
-        tokens: {
+        credentials: {
             apiKey: key as string,
         },
-        apps: ["ask"],
-    };
-
-    const aiConfig = await AIConfig.load();
-    await aiConfig.addAccount(entry);
+    });
     p.log.success(`Account "${name}" added with API key.`);
 }
 
@@ -509,20 +495,16 @@ async function importFromCodexCli(): Promise<void> {
 
     const accountName = email?.split("@")[0]?.toLowerCase() ?? "codex";
 
-    const entry: AIAccountEntry = {
+    await saveAccount({
         name: accountName,
         provider: "openai-sub",
-        tokens: {
+        credentials: {
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
             expiresAt: tokens.expiresAt,
         },
         label: planType ?? "codex",
-        apps: ["ask"],
-    };
-
-    const aiConfig = await AIConfig.load();
-    await aiConfig.addAccount(entry);
+    });
     p.log.success(`Account "${accountName}" imported from Codex CLI.`);
 }
 
@@ -599,20 +581,16 @@ async function addViaCodexOAuth(): Promise<void> {
 
         const accountName = email?.split("@")[0]?.toLowerCase() ?? "codex";
 
-        const entry: AIAccountEntry = {
+        await saveAccount({
             name: accountName,
             provider: "openai-sub",
-            tokens: {
+            credentials: {
                 accessToken: tokens.accessToken,
                 refreshToken: tokens.refreshToken,
                 expiresAt: tokens.expiresAt,
             },
             label: planType ?? "codex",
-            apps: ["ask"],
-        };
-
-        const aiConfig = await AIConfig.load();
-        await aiConfig.addAccount(entry);
+        });
         p.log.success(`Account "${accountName}" added via OAuth.`);
     } catch (err) {
         spinner.stop(`Token exchange failed: ${err}`);
@@ -648,28 +626,25 @@ async function addOpenAIApiKey(): Promise<void> {
         return;
     }
 
-    const entry: AIAccountEntry = {
+    await saveAccount({
         name: name as string,
         provider: "openai",
-        tokens: {
+        credentials: {
             apiKey: key as string,
         },
-        apps: ["ask"],
-    };
-
-    const aiConfig = await AIConfig.load();
-    await aiConfig.addAccount(entry);
+    });
     p.log.success(`Account "${name}" added with OpenAI API key.`);
 }
 
 // ── Provider Settings ──
 
 async function configureProviderSettings(_config: AskConfig): Promise<void> {
-    const aiConfig = await AIConfig.load();
+    const store = await AiConfigStore.load();
     const allProviders = ["openai", "groq", "openrouter", "anthropic", "google", "xai", "jinaai"];
+    const isProviderEnabled = (name: string) => !(store.data().disabledProviders ?? []).includes(name);
 
-    // Determine current state from AIConfig
-    const allDisabled = allProviders.every((name) => !aiConfig.isProviderEnabled(name));
+    // Determine current state from the AI config
+    const allDisabled = allProviders.every((name) => !isProviderEnabled(name));
 
     const masterToggle = await p.confirm({
         message: "Enable auto-detection of provider API keys from environment?",
@@ -687,7 +662,7 @@ async function configureProviderSettings(_config: AskConfig): Promise<void> {
                 value: name,
                 label: name,
             })),
-            initialValues: allProviders.filter((name) => aiConfig.isProviderEnabled(name)),
+            initialValues: allProviders.filter((name) => isProviderEnabled(name)),
         });
 
         if (p.isCancel(enabled)) {
@@ -695,28 +670,13 @@ async function configureProviderSettings(_config: AskConfig): Promise<void> {
         }
 
         const enabledSet = new Set(enabled as string[]);
-
-        await aiConfig.mutate((data) => {
-            for (const name of allProviders) {
-                const isEnabled = enabledSet.has(name);
-
-                if (data.providers[name]) {
-                    data.providers[name].enabled = isEnabled;
-                } else {
-                    data.providers[name] = { enabled: isEnabled, envVariable: "" };
-                }
-            }
-        });
+        await setDisabledProviders(
+            store,
+            allProviders.filter((name) => !enabledSet.has(name)),
+            allProviders
+        );
     } else {
-        await aiConfig.mutate((data) => {
-            for (const name of allProviders) {
-                if (data.providers[name]) {
-                    data.providers[name].enabled = false;
-                } else {
-                    data.providers[name] = { enabled: false, envVariable: "" };
-                }
-            }
-        });
+        await setDisabledProviders(store, allProviders, allProviders);
     }
 
     p.log.success("Provider settings saved.");
@@ -725,8 +685,8 @@ async function configureProviderSettings(_config: AskConfig): Promise<void> {
 // ── Default Model ──
 
 async function configureDefaultModel(_config: AskConfig): Promise<void> {
-    const aiConfig = await AIConfig.load();
-    const askDefaults = aiConfig.getAppDefaults("ask");
+    const store = await AiConfigStore.load();
+    const askDefaults = askAppDefaults(store);
     const currentInfo = askDefaults?.provider ? `${askDefaults.provider}/${askDefaults.model ?? "auto"}` : "not set";
 
     const action = await p.select({
@@ -744,19 +704,19 @@ async function configureDefaultModel(_config: AskConfig): Promise<void> {
     }
 
     if (action === "unset-both") {
-        await aiConfig.setAppDefaults("ask", { provider: undefined, model: undefined });
+        await setAskChatDefaults(store, { provider: undefined, model: undefined });
         p.log.success("Default provider and model unset.");
         return;
     }
 
     if (action === "unset-model") {
-        await aiConfig.setAppDefaults("ask", { model: undefined });
+        await setAskChatDefaults(store, { model: undefined });
         p.log.success("Default model unset.");
         return;
     }
 
     if (action === "unset-provider") {
-        await aiConfig.setAppDefaults("ask", { provider: undefined });
+        await setAskChatDefaults(store, { provider: undefined });
         p.log.success("Default provider unset.");
         return;
     }
@@ -777,7 +737,7 @@ async function configureDefaultModel(_config: AskConfig): Promise<void> {
         return;
     }
 
-    await aiConfig.setAppDefaults("ask", {
+    await setAskChatDefaults(store, {
         provider: modelChoice.provider.name,
         model: modelChoice.model.id,
     });
@@ -788,10 +748,10 @@ async function configureDefaultModel(_config: AskConfig): Promise<void> {
 // ── Show Config ──
 
 async function showCurrentConfig(_config: AskConfig): Promise<void> {
-    const aiConfig = await AIConfig.load();
-    const accounts = aiConfig.listAccounts();
-    const defaultAccount = aiConfig.getDefaultAccount("ask");
-    const askDefaults = aiConfig.getAppDefaults("ask");
+    const store = await AiConfigStore.load();
+    const accounts = store.accounts();
+    const defaultAccount = store.defaultAccount("ask");
+    const askDefaults = askAppDefaults(store);
     const lines: string[] = [];
 
     lines.push(pc.bold("Defaults:"));
@@ -807,7 +767,7 @@ async function showCurrentConfig(_config: AskConfig): Promise<void> {
         lines.push(`  ${pc.dim("(none)")}`);
     } else {
         for (const a of accounts) {
-            const isDefault = a.name === defaultAccount?.name;
+            const isDefault = a.id === defaultAccount?.id;
             const marker = isDefault ? pc.green("★") : " ";
             const providerLabel = formatProvider(a.provider);
             const label = a.label ? pc.dim(` · ${a.label}`) : "";
@@ -820,7 +780,7 @@ async function showCurrentConfig(_config: AskConfig): Promise<void> {
     lines.push(pc.bold("Env Tokens:"));
 
     const knownProviders = ["openai", "groq", "openrouter", "anthropic", "google", "xai", "jinaai"];
-    const disabledProviders = knownProviders.filter((name) => !aiConfig.isProviderEnabled(name));
+    const disabledProviders = knownProviders.filter((name) => (store.data().disabledProviders ?? []).includes(name));
     const allEnabled = disabledProviders.length === 0;
     lines.push(`  Enabled:  ${allEnabled ? pc.green("yes") : pc.red("partial")}`);
 
@@ -831,10 +791,101 @@ async function showCurrentConfig(_config: AskConfig): Promise<void> {
     p.note(lines.join("\n"), "Current Configuration");
 }
 
-function formatProvider(provider: AIProvider): string {
+function formatProvider(provider: string): string {
     const labels: Record<string, string> = {
         "anthropic-sub": "anthropic subscription",
         "openai-sub": "openai subscription",
     };
     return labels[provider] ?? provider;
+}
+
+// ── AI config access ──
+
+/**
+ * ask's chat defaults from the v4 store: provider and model of `defaults.app.ask.chat`, plus the
+ * generation knobs. A chat model that is an account ref names an account, not a model, so it is
+ * not shown as one.
+ */
+function askAppDefaults(
+    store: AiConfigStore
+): { provider?: string; model?: string; temperature?: number; maxTokens?: number } | undefined {
+    const ask = store.data().defaults.app?.ask;
+    if (!ask) {
+        return undefined;
+    }
+
+    const model = ask.chat?.model;
+    return {
+        provider: ask.chat?.provider,
+        model: model && !model.startsWith("@account/") ? model : undefined,
+        temperature: ask.temperature,
+        maxTokens: ask.maxTokens,
+    };
+}
+
+/**
+ * Set or clear ask's default chat provider and model. A key given as `undefined` is cleared, an
+ * omitted key keeps its value. Clearing the model keeps an account ref, which this wizard never
+ * showed as a model.
+ */
+async function setAskChatDefaults(store: AiConfigStore, patch: { provider?: string; model?: string }): Promise<void> {
+    await store.mutate((config) => {
+        const app = { ...(config.defaults.app ?? {}) };
+        const chat = { ...(app.ask?.chat ?? {}) };
+
+        if ("provider" in patch) {
+            if (patch.provider) {
+                chat.provider = patch.provider;
+            } else {
+                delete chat.provider;
+            }
+        }
+
+        if ("model" in patch) {
+            if (patch.model) {
+                chat.model = patch.model;
+            } else if (!chat.model?.startsWith("@account/")) {
+                delete chat.model;
+            }
+        }
+
+        app.ask = { ...(app.ask ?? {}), chat };
+        config.defaults.app = app;
+    });
+}
+
+/** Env-key detection is off for `disabled`, on for the rest of `offered`; providers outside `offered` keep theirs. */
+async function setDisabledProviders(store: AiConfigStore, disabled: string[], offered: string[]): Promise<void> {
+    await store.mutate((config) => {
+        const kept = (config.disabledProviders ?? []).filter((name) => !offered.includes(name));
+        const next = [...new Set([...kept, ...disabled])].sort();
+        config.disabledProviders = next.length > 0 ? next : undefined;
+    });
+}
+
+/**
+ * Store an account this wizard collected credentials for, merged onto an account of the same name
+ * the way a re-login is. The credentials go to the vault through the login write.
+ */
+async function saveAccount(input: {
+    name: string;
+    provider: string;
+    credentials: Partial<AccountEntry["credentials"]>;
+    label?: string;
+}): Promise<void> {
+    const { registerBuiltInPlugins } = await import("@genesiscz/utils/ai/providers/plugins");
+    registerBuiltInPlugins();
+
+    const existing = (await AiConfigStore.load()).accounts().find((a) => a.name === input.name) ?? null;
+    await applyLoginOutcome({
+        name: input.name,
+        ...(existing ? { id: existing.id } : {}),
+        guardedAgainst: existing,
+        outcome: {
+            provider: input.provider,
+            credentials: input.credentials,
+            ...(input.label ? { accountFields: { label: input.label } } : {}),
+        },
+        apps: ["ask"],
+    });
 }

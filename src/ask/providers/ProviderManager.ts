@@ -33,9 +33,9 @@ import { logger } from "@genesiscz/utils/logger";
  *
  * The live ladder is now `resolveCredential`
  * (src/utils/ai/providers/credentials.ts), which applies this same order for
- * every provider and names the variable it spent. This function stays because
- * the deprecated v3 `AIConfig` facade still resolves keys this way and its order
- * is pinned by a unit test: the line decides whose money a call costs.
+ * every provider and names the variable it spent. This function keeps the order
+ * the retired v3 config facade resolved keys in, pinned by a unit test: the line
+ * decides whose money a call costs.
  */
 export function detectApiKeyFor(
     aiConfig: { getProviderApiKey(name: string): string | undefined },
