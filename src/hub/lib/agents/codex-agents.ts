@@ -124,6 +124,42 @@ async function spawnLinkOf(record: CodexAgentRecord): Promise<SpawnLink | null> 
     }
 }
 
+/** A link a cache file holds, checked, because the file is read back from disk. */
+function isSpawnLink(value: unknown): value is SpawnLink {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        "parentSessionId" in value &&
+        typeof value.parentSessionId === "string"
+    );
+}
+
+/** The size and inode of a file, or null when it cannot be read. */
+function fileState(path: string): { size: number; ino: number } | null {
+    try {
+        const status = statSync(path);
+        return { size: status.size, ino: status.ino };
+    } catch (error) {
+        logger.debug({ error, path }, "[hub agents] codex agent file vanished");
+        return null;
+    }
+}
+
+/**
+ * The spawn link from the scan cache when the entry was written for this file (same inode, not smaller), else read
+ * from the rollout. Only a found link is kept: a file whose header is not written yet is read again on the next poll.
+ */
+async function cachedSpawnLink(record: CodexAgentRecord, cache: ScanCache): Promise<SpawnLink | null> {
+    const saved = cache[record.filePath];
+    const state = fileState(record.filePath);
+
+    if (saved && state && saved.ino === state.ino && saved.size <= state.size && isSpawnLink(saved.link)) {
+        return saved.link;
+    }
+
+    return spawnLinkOf(record);
+}
+
 /**
  * Where the agent's last turn stands, from the shared turn-state read of its rollout (`readTurnState`):
  * - a turn that ended: completed;
@@ -177,6 +213,11 @@ interface ScanEntry {
     /** Looked for in a file past the scan window, so a missing model is final. */
     modelFinal: boolean;
     seen: number;
+    /**
+     * The rollout's spawn link, read once per file state: a header never changes once written, so a poll of the same
+     * (or a grown) file answers from here and does not read the head again. Absent in an entry written before it.
+     */
+    link?: SpawnLink;
 }
 
 type ScanCache = Record<string, ScanEntry>;
@@ -264,17 +305,9 @@ function nodeOf(
     context: CodexAgentsContext,
     cache: ScanCache
 ): { node: AgentNode; changed: boolean } {
-    let size = 0;
-    let ino: number | undefined;
-
-    try {
-        const status = statSync(record.filePath);
-        size = status.size;
-        ino = status.ino;
-    } catch (error) {
-        logger.debug({ error, path: record.filePath }, "[hub agents] codex agent file vanished");
-    }
-
+    const state = fileState(record.filePath);
+    const size = state?.size ?? 0;
+    const ino = state?.ino;
     const saved = cache[record.filePath];
     const known = saved && saved.ino === ino && saved.size <= size ? saved : undefined;
     const scanned = scanCalls(record.filePath, size, known);
@@ -301,6 +334,7 @@ function nodeOf(
         model,
         modelFinal,
         seen: context.now,
+        link,
     };
     const previous = cache[record.filePath];
     const changed =
@@ -308,7 +342,8 @@ function nodeOf(
         previous.size !== size ||
         previous.ino !== ino ||
         previous.model !== model ||
-        previous.modelFinal !== modelFinal;
+        previous.modelFinal !== modelFinal ||
+        !isSpawnLink(previous.link);
 
     cache[record.filePath] = next;
 
@@ -349,9 +384,9 @@ export async function attachCodexAgents(
     records: CodexAgentRecord[],
     context: CodexAgentsContext
 ): Promise<Map<string, AgentNode[]>> {
-    const links = await Promise.all(records.map(spawnLinkOf));
     const cachePath = context.cachePath ?? defaultCachePath();
     const cache = loadCache(cachePath);
+    const links = await Promise.all(records.map((record) => cachedSpawnLink(record, cache)));
     const byId = new Map<string, AgentNode>();
     const parents = new Map<string, string>();
     const roots = new Map<string, string>();

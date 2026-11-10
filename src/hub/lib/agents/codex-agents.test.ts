@@ -367,6 +367,59 @@ describe("attachCodexAgents", () => {
         }
     });
 
+    test("a poll reads each rollout's spawn link once per file state, and a cache hit reads no header", async () => {
+        const { records, cache } = family();
+        const options = { now: NOW, cachePath: cache, model: null };
+        const reader = resolveHistoryProvider("codex").reader;
+        const read = reader.readSpawnLink.bind(reader);
+        let allowRead = true;
+        const spy = spyOn(reader, "readSpawnLink").mockImplementation((source) => {
+            if (!allowRead) {
+                throw new Error(`header read on a cache hit: ${source.filePath}`);
+            }
+
+            return read(source);
+        });
+
+        try {
+            await attachCodexAgents(records, options);
+            expect(spy).toHaveBeenCalledTimes(3);
+
+            // Unchanged and grown files answer from the cache: the spy throws on any header read.
+            allowRead = false;
+            writeFileSync(records[0]?.filePath ?? "", call("custom_tool_call"), { flag: "a" });
+            const again = await attachCodexAgents(records, options);
+            expect((again.get(ROOT) ?? []).map((node) => node.id)).toEqual([CHILD_B, CHILD_A]);
+            expect(
+                again
+                    .get(ROOT)
+                    ?.find((node) => node.id === CHILD_B)
+                    ?.children.map((node) => node.id)
+            ).toEqual([GRANDCHILD]);
+            expect(spy).toHaveBeenCalledTimes(3);
+
+            // A file replaced by another (a new inode) is read again.
+            allowRead = true;
+            const path = records[0]?.filePath ?? "";
+            const replacement = `${path}.new`;
+            writeFileSync(
+                replacement,
+                meta({ id: CHILD_A, parent: CHILD_B, depth: 2, nickname: "Cicero", role: "worker", path: "/root/a" })
+            );
+            renameSync(replacement, path);
+            const moved = await attachCodexAgents(records, options);
+            expect(spy).toHaveBeenCalledTimes(4);
+            expect(
+                moved
+                    .get(ROOT)
+                    ?.find((node) => node.id === CHILD_B)
+                    ?.children.map((node) => node.id)
+            ).toContain(CHILD_A);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     test("a head that cannot be read leaves the agent out instead of failing the list", async () => {
         const { records, cache } = family();
         const broken: CodexAgentRecord = {
