@@ -69,7 +69,7 @@ export function createDashboardRouter(): Router {
         ...portsRoutes(),
         ...liveRoutes(getLiveHub()),
         ...processesRoutes(),
-        ...withTableIdempotency(qaRoutes()),
+        ...withTableIdempotency(qaRoutes(getLiveHub())),
         ...qaDecisionRoutes(),
         ...gatewayRoutes(),
         ...withTableIdempotency(handoffRoutes()),

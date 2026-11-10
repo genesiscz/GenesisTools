@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createLiveHub } from "@app/dev-dashboard/lib/live/hub";
+import { startLiveProducers } from "@app/dev-dashboard/lib/live/producers";
 import { QA_ANSWER_MAX_CHARS } from "@app/dev-dashboard/lib/qa-clip";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
+import { todayHandoffLogFile } from "@app/handoff/log-store";
 import type { DeliverDeps, ToolRun } from "@app/question/lib/decisions/deliver";
 import { livePaneTargets, noNativeReceivers } from "@app/question/lib/decisions/deliver.fixtures";
 import { relayedAnswerText } from "@app/question/lib/decisions/delivery-text";
@@ -21,6 +24,7 @@ import { qaRoutes } from "./qa";
 import { qaDecisionRoutes } from "./qa-decisions";
 
 let home = "";
+const hub = createLiveHub();
 
 beforeEach(() => {
     // A scratch home keeps every form and log line out of the real ~/.genesis-tools.
@@ -48,7 +52,7 @@ afterEach(() => {
 });
 
 function findRoute(method: string, pattern: string): RouteDef {
-    const def = qaRoutes().find((d) => d.method === method && d.pattern === pattern);
+    const def = qaRoutes(hub).find((d) => d.method === method && d.pattern === pattern);
 
     if (!def) {
         throw new Error(`route not found: ${method} ${pattern}`);
@@ -745,5 +749,72 @@ describe("qa decision routes", () => {
         );
         expect(empty.status).toBe(400);
         expect(readDecisions(file).find((row) => row.number === 2)?.state).toBe("answered");
+    });
+});
+
+describe("GET /api/qa/stream, the old-shape adapter", () => {
+    async function waitForFrame(
+        frames: Record<string, unknown>[],
+        match: (frame: Record<string, unknown>) => boolean
+    ): Promise<Record<string, unknown>> {
+        const deadline = Date.now() + 5_000;
+
+        while (Date.now() < deadline) {
+            const found = frames.find(match);
+            if (found) {
+                return found;
+            }
+
+            await Bun.sleep(100);
+        }
+
+        throw new Error(`no matching frame in ${Bun.inspect(frames)}`);
+    }
+
+    it("an old client still gets flat type-tagged frames for a waiting form, its answer and a handoff", async () => {
+        const producers = startLiveProducers(hub);
+        const waiting = await createForm();
+        const result = await findRoute("GET", "/api/qa/stream").handler(makeCtx());
+
+        if (result.kind !== "sse") {
+            throw new Error(`expected an sse result, got ${result.kind}`);
+        }
+
+        const frames: Record<string, unknown>[] = [];
+        const stream = result.start({
+            data: (line) => frames.push(SafeJSON.parse(line, { strict: true }) as Record<string, unknown>),
+            comment: () => {},
+        });
+
+        try {
+            const created = await waitForFrame(frames, (f) => f.type === "pending" && f.ev === "created");
+            await findRoute("POST", "/api/qa/pending/:id/answer").handler(
+                makeCtx({ params: { id: waiting.id }, body: { answers: [{ itemId: "q1", selectedChoices: ["yes"] }] } })
+            );
+            const handoffFile = todayHandoffLogFile();
+            mkdirSync(dirname(handoffFile), { recursive: true });
+            appendFileSync(
+                handoffFile,
+                `${SafeJSON.stringify({ ev: "claim", id: "h_1", ts: "2026-11-10T10:00:00.000Z" })}\n`
+            );
+            const answered = await waitForFrame(frames, (f) => f.type === "pending" && f.ev === "answered");
+            const handoff = await waitForFrame(frames, (f) => f.type === "handoff");
+            const qa = await waitForFrame(frames, (f) => f.type === "qa");
+
+            expect(Object.keys(created).sort()).toEqual(["ev", "form", "id", "type"]);
+            expect(created.id).toBe(waiting.id);
+            expect((created.form as AskForm).status).toBe("pending");
+            expect(Object.keys(answered).sort()).toEqual(["ev", "form", "id", "ts", "type"]);
+            expect(answered.id).toBe(waiting.id);
+            expect(typeof answered.ts).toBe("number");
+            expect((answered.form as AskForm).status).toBe("answered");
+            expect(handoff).toEqual({ type: "handoff", id: "h_1", ev: "claim", ts: "2026-11-10T10:00:00.000Z" });
+            expect(typeof qa.id).toBe("string");
+            expect(typeof qa.answerHtml).toBe("string");
+            expect(frames.every((f) => f.v === undefined && f.channel === undefined)).toBe(true);
+        } finally {
+            stream.close();
+            producers.stop();
+        }
     });
 });
