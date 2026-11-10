@@ -73,6 +73,7 @@ async function enumFilter(flag: string, raw: string | true | undefined, values: 
         const picked = await p.select({
             message: `${flag}`,
             options: values.map((value) => ({ value, label: value })),
+            cancel: "back",
         });
 
         if (!p.isCancel(picked) && typeof picked === "string") {
