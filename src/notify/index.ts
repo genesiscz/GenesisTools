@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -29,6 +28,7 @@ import { CHANNEL_NAMES, CHANNELS, dispatchNotification, notificationsConfig } fr
 import { PHONE_WHEN_DEFAULTS, validPhoneClock } from "@genesiscz/utils/notifications/channels/phone/when";
 import { notificationLedgerPath, readNotificationLedger } from "@genesiscz/utils/notifications/ledger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import {
     createBoxTable,
     formatDotStatus,
@@ -66,7 +66,7 @@ async function configureSystem(channels: ChannelConfigs): Promise<void> {
     const current = channels.system;
 
     const enabled = await withCancel(
-        p.confirm({ message: "Enable system (macOS) notifications?", initialValue: current.enabled })
+        p.confirm({ message: "Enable system (macOS) notifications?", initialValue: current.enabled, cancel: "back" })
     );
 
     if (!enabled) {
@@ -80,6 +80,7 @@ async function configureSystem(channels: ChannelConfigs): Promise<void> {
             message: "Default notification title",
             initialValue: current.title ?? "GenesisTools",
             placeholder: "GenesisTools",
+            cancel: "back",
         })
     );
 
@@ -92,11 +93,16 @@ async function configureSystem(channels: ChannelConfigs): Promise<void> {
                 label: s,
                 hint: s === current.sound ? "current" : undefined,
             })),
+            cancel: "back",
         })
     );
 
     const ignoreDnD = await withCancel(
-        p.confirm({ message: "Bypass Do Not Disturb by default?", initialValue: current.ignoreDnD ?? false })
+        p.confirm({
+            message: "Bypass Do Not Disturb by default?",
+            initialValue: current.ignoreDnD ?? false,
+            cancel: "back",
+        })
     );
 
     await notificationsConfig.setGlobalChannel("system", {
@@ -113,7 +119,7 @@ async function configureTelegram(channels: ChannelConfigs): Promise<void> {
     const current = channels.telegram;
 
     const enabled = await withCancel(
-        p.confirm({ message: "Enable Telegram notifications?", initialValue: current.enabled })
+        p.confirm({ message: "Enable Telegram notifications?", initialValue: current.enabled, cancel: "back" })
     );
 
     if (!enabled) {
@@ -128,6 +134,7 @@ async function configureTelegram(channels: ChannelConfigs): Promise<void> {
             initialValue: current.botToken ?? "",
             placeholder: "123456:ABC-DEF...",
             validate: (v) => (!v?.trim() ? "Bot token is required" : undefined),
+            cancel: "back",
         })
     );
 
@@ -137,6 +144,7 @@ async function configureTelegram(channels: ChannelConfigs): Promise<void> {
             initialValue: current.chatId ?? "",
             placeholder: "-1001234567890",
             validate: (v) => (!v?.trim() ? "Chat ID is required" : undefined),
+            cancel: "back",
         })
     );
 
@@ -153,7 +161,7 @@ async function configureWebhook(channels: ChannelConfigs): Promise<void> {
     const current = channels.webhook;
 
     const enabled = await withCancel(
-        p.confirm({ message: "Enable webhook notifications?", initialValue: current.enabled })
+        p.confirm({ message: "Enable webhook notifications?", initialValue: current.enabled, cancel: "back" })
     );
 
     if (!enabled) {
@@ -168,6 +176,7 @@ async function configureWebhook(channels: ChannelConfigs): Promise<void> {
             initialValue: current.url ?? "",
             placeholder: "https://hooks.example.com/...",
             validate: (v) => (!v?.trim() ? "URL is required" : undefined),
+            cancel: "back",
         })
     );
 
@@ -183,7 +192,7 @@ async function configureSay(channels: ChannelConfigs): Promise<void> {
     const current = channels.say;
 
     const enabled = await withCancel(
-        p.confirm({ message: "Enable TTS (say) notifications?", initialValue: current.enabled })
+        p.confirm({ message: "Enable TTS (say) notifications?", initialValue: current.enabled, cancel: "back" })
     );
 
     if (!enabled) {
@@ -197,6 +206,7 @@ async function configureSay(channels: ChannelConfigs): Promise<void> {
             message: "TTS voice name",
             initialValue: current.voice ?? "Samantha",
             placeholder: "Samantha",
+            cancel: "back",
         })
     );
 
@@ -211,13 +221,14 @@ async function configureSay(channels: ChannelConfigs): Promise<void> {
 async function configurePhone(channels: ChannelConfigs): Promise<void> {
     const current = channels.phone;
     const enabled = await withCancel(
-        p.confirm({ message: "Push notifications to your phone?", initialValue: current.enabled })
+        p.confirm({ message: "Push notifications to your phone?", initialValue: current.enabled, cancel: "back" })
     );
     const text = enabled
         ? await withCancel(
               p.confirm({
                   message: "Show the message on the lock screen? (Apple carries the payload; off sends the title only)",
                   initialValue: current.text !== false,
+                  cancel: "back",
               })
           )
         : current.text;
@@ -232,6 +243,7 @@ async function configurePhone(channels: ChannelConfigs): Promise<void> {
                     { value: "away", label: "When away from the Mac" },
                     { value: "always", label: "Always" },
                 ],
+                cancel: "back",
             })
         );
         const idle =
@@ -244,11 +256,12 @@ async function configurePhone(channels: ChannelConfigs): Promise<void> {
                               v && /^\d+$/.test(v) && Number(v) > 0 && Number(v) <= 1440
                                   ? undefined
                                   : "Enter a whole number from 1 to 1440",
+                          cancel: "back",
                       })
                   )
                 : String(current.when?.idleMinutes ?? PHONE_WHEN_DEFAULTS.idleMinutes);
         const quietEnabled = await withCancel(
-            p.confirm({ message: "Set quiet hours?", initialValue: !!current.when?.quiet })
+            p.confirm({ message: "Set quiet hours?", initialValue: !!current.when?.quiet, cancel: "back" })
         );
         const clock = async (label: string, initialValue: string) =>
             withCancel(
@@ -257,6 +270,7 @@ async function configurePhone(channels: ChannelConfigs): Promise<void> {
                     initialValue,
                     placeholder: "22:00",
                     validate: (v) => (v && validPhoneClock(v) ? undefined : "Enter a time from 00:00 to 23:59"),
+                    cancel: "back",
                 })
             );
         const quiet = quietEnabled
@@ -325,6 +339,7 @@ async function configCommand(): Promise<void> {
                     { value: "show", label: "Show current config" },
                     { value: "back", label: "Back" },
                 ],
+                cancel: "back",
             })
         );
 
