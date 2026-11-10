@@ -372,8 +372,7 @@ export function registerPermissionsCommand(program: Command): void {
             let kind = kindArg;
 
             if (!kind && isInteractive()) {
-                const { select } = await import("@clack/prompts");
-                const picked = await select({
+                const picked = await p.select({
                     message: "Which grant?",
                     options: PERMISSION_KINDS.map((value) => ({ value, label: value })),
                 });
@@ -560,10 +559,9 @@ export function registerPermissionsCommand(program: Command): void {
             let pane = typeof options.pane === "string" ? options.pane : undefined;
 
             if (!pane && isInteractive()) {
-                const { select } = await import("@clack/prompts");
-                const picked = await select({
+                const picked = await p.select({
                     message: "Which pane?",
-                    options: PANES.map((p) => ({ value: p, label: p })),
+                    options: PANES.map((pane) => ({ value: pane, label: pane })),
                 });
                 pane = typeof picked === "string" ? picked : undefined;
             }
@@ -638,6 +636,7 @@ async function partsOption(
             message: flag === "--parts" ? "Which optional parts should the app have?" : "Which parts should it add?",
             options: APP_PARTS.map((part) => ({ value: part.id, label: part.id, hint: part.summary })),
             required: false,
+            cancel: "back",
         });
 
         return p.isCancel(picked) ? null : normalizeParts(picked.map(String));
