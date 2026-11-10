@@ -199,7 +199,7 @@ enum AgentsSource {
         }
 
         let args = ["hub", "agents", "--agent", child, "--json"] + (parent.map { ["--session", $0] } ?? [])
-        return try JSONDecoder().decode(Envelope.self, from: MonitorJSON.dataByDroppingPreamble(run(args))).agent
+        return try JSONDecoder().decode(Envelope.self, from: run(args)).agent
     }
 
     /// Whole spawn prompts by agent key: a prompt never changes once the agent started.
@@ -220,26 +220,21 @@ enum AgentsSource {
         }
 
         let data = try run(["hub", "agents", "counts", "--session", parent, "--ids", ids.joined(separator: ","), "--json"])
-        return try JSONDecoder().decode(Envelope.self, from: MonitorJSON.dataByDroppingPreamble(data)).agents
+        return try JSONDecoder().decode(Envelope.self, from: data).agents
     }
 
     static func mail(parent: String, child: String) throws -> AgentMail {
         let data = try run(["hub", "agents", "mail", "--session", parent, "--agent", child, "--json"])
-        return try JSONDecoder().decode(AgentMail.self, from: MonitorJSON.dataByDroppingPreamble(data))
+        return try JSONDecoder().decode(AgentMail.self, from: data)
     }
 
     static func decode(_ data: Data) throws -> AgentsEnvelope {
-        try JSONDecoder().decode(AgentsEnvelope.self, from: MonitorJSON.dataByDroppingPreamble(data))
+        try JSONDecoder().decode(AgentsEnvelope.self, from: data)
     }
 
+    /// The JSON a `tools hub agents` verb printed, its preamble dropped by the client.
     private static func run(_ args: [String]) throws -> Data {
-        let result = try ToolsCLIRunner.capture(args, timeout: 90)
-        guard result.status == 0 else {
-            let message = String(decoding: result.stderr.isEmpty ? result.stdout : result.stderr, as: UTF8.self).trimmed
-            throw ReviewError.git("tools \(args.prefix(3).joined(separator: " ")) exited \(result.status): \(message.suffix(300))")
-        }
-
-        return result.stdout
+        try HubSource.bridge.json(args, timeout: 90)
     }
 }
 

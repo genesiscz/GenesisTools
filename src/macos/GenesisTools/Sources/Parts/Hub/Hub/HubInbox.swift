@@ -423,7 +423,7 @@ final class HubInboxModel: ObservableObject {
     /// The write running for each item, so a note queued behind a pick keeps that pick.
     private var runningWrites: [String: [String]] = [:]
     /// The write runner and reload seam used by the inbox's existing write queue.
-    var captureWrite: @Sendable ([String]) throws -> ProcessCapture = { try ToolsCLIRunner.capture($0) }
+    var captureWrite: @Sendable ([String]) throws -> ProcessCapture = { try HubSource.bridge.capture($0) }
     var reloadAfterWrite: (() -> Void)?
     /// A load asked for while one ran (a write finished meanwhile). It runs when that one ends.
     private var reloadPending = false
@@ -532,7 +532,7 @@ final class HubInboxModel: ObservableObject {
         loading = true
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("inbox.load")
-            let result = Result { try JSONDecoder().decode(InboxEnvelope.self, from: ToolsCLIRunner.run(["question", "inbox", "--json"])) }
+            let result = Result { try JSONDecoder().decode(InboxEnvelope.self, from: HubSource.bridge.output(["question", "inbox", "--json"])) }
             span.end((try? result.get()).map { "\($0.sessions.count) sessions, tools \($0.elapsedMs ?? -1) ms" } ?? "failed")
             let preferences = WidgetPreferencesFile.shared.current()
             DispatchQueue.main.async { [weak self] in
@@ -672,7 +672,7 @@ final class HubInboxModel: ObservableObject {
         let sessionId = target.sessionId
         let number = target.number
         DispatchQueue.global(qos: .userInitiated).async {
-            let found = try? JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(
+            let found = try? JSONDecoder().decode(SessionDecisionsEnvelope.self, from: HubSource.bridge.output(
                 ["question", "inbox", "--session", sessionId, "--json"]))
             let item = found?.decisions.first { $0.id == id }
             DispatchQueue.main.async { [weak self] in
@@ -953,7 +953,7 @@ final class HubInboxModel: ObservableObject {
             // fell through to a send that queued the answers silently.
             let resolved: Result<InboxTargetResolution, Error>
             do {
-                let output = try ToolsCLIRunner.output(of: await ToolsCLIRunner.captureCancellable(targetArgs), targetArgs)
+                let output = try ToolsFailure.check(await HubSource.bridge.captureCancellable(targetArgs), argv: targetArgs)
                 resolved = Result { try JSONDecoder().decode(InboxTargetResolution.self, from: output) }
             } catch is CancellationError {
                 self?.endSend(sessionId, cancelled: true)
@@ -1063,10 +1063,10 @@ final class HubInboxModel: ObservableObject {
             let delivery: InboxDelivery
             do {
                 // The wait for a resumed pane sits inside the run: give it room beyond the default.
-                let capture = try await ToolsCLIRunner.captureCancellable(args, timeout: TimeInterval(Self.resumeWaitSeconds + 60))
+                let capture = try await HubSource.bridge.captureCancellable(args, timeout: TimeInterval(Self.resumeWaitSeconds + 60))
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
                     ?? .failure("Nothing was sent: the send did not finish.",
-                                raw: ToolsCLIRunner.exitDetail(capture, args))
+                                raw: ToolsFailure(argv: args, capture: capture).summary)
             } catch is CancellationError {
                 delivery = .cancelled
             } catch {
@@ -1160,7 +1160,7 @@ final class HubInboxModel: ObservableObject {
         do {
             try JSONEncoder().encode(request).write(to: file)
             // The send can wait on a busy receiver: room beyond the default. Cancel (F19) stops it before it writes.
-            let run = try await ToolsCLIRunner.captureStoppable(["hub", "widget", "call", "--input", file.path], timeout: 120)
+            let run = try await HubSource.bridge.captureStoppable(["hub", "widget", "call", "--input", file.path], timeout: 120)
             return widgetDelivery(run.capture, stopped: run.stopped, ids: ids, titles: titles, resend: resend)
         } catch is CancellationError {
             return .cancelled
@@ -1176,7 +1176,7 @@ final class HubInboxModel: ObservableObject {
         guard capture.status == 0, let result = try? JSONDecoder().decode(WidgetJSON.self, from: capture.stdout) else {
             if stopped { return .cancelled }
             return .failure("Nothing was sent: the widget's sender did not answer. The answers stay staged.",
-                            raw: ToolsCLIRunner.exitDetail(capture, ["hub", "widget", "call"]))
+                            raw: ToolsFailure(argv: ["hub", "widget", "call"], capture: capture).summary)
         }
         var delivery = InboxDelivery.outcome(WidgetDecisionSendOutcome(result, titles: titles), ids: ids, resend: resend)
         if stopped, delivery.error == nil, let text = delivery.outcomeText {
@@ -1281,9 +1281,9 @@ final class HubInboxModel: ObservableObject {
             let delivery: InboxDelivery
             do {
                 let callArgs = ["hub", "widget", "call", "--input", file.path]
-                let capture = try ToolsCLIRunner.capture(callArgs)
+                let capture = try HubSource.bridge.capture(callArgs)
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
-                    ?? .failure("the hub did not answer.", raw: ToolsCLIRunner.exitDetail(capture, callArgs))
+                    ?? .failure("the hub did not answer.", raw: ToolsFailure(argv: callArgs, capture: capture).summary)
             } catch {
                 delivery = .failure("the hub could not run tools.", raw: "\(error)")
             }
@@ -1313,10 +1313,10 @@ final class HubInboxModel: ObservableObject {
             let span = HubPerf.begin("inbox.answer")
             let delivery: InboxDelivery
             do {
-                let capture = try ToolsCLIRunner.capture(args)
+                let capture = try HubSource.bridge.capture(args)
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
                     ?? .failure("The answer was not sent. Try again.",
-                                raw: ToolsCLIRunner.exitDetail(capture, args))
+                                raw: ToolsFailure(argv: args, capture: capture).summary)
             } catch {
                 delivery = .failure("The answer was not sent: the hub could not run tools.", raw: "\(error)")
             }
@@ -1347,7 +1347,7 @@ final class HubInboxModel: ObservableObject {
         let tool = cmuxTool(provider: session.provider)
         DispatchQueue.global(qos: .userInitiated).async {
             // --first as CmuxHost.focus passes it: without a terminal, a session open in two panes fails.
-            let capture = try? ToolsCLIRunner.capture([tool, "cmux", "focus", sessionId, "--first"])
+            let capture = try? HubSource.bridge.capture([tool, "cmux", "focus", sessionId, "--first"])
             let failed = capture.map { $0.status != 0 } ?? true
             // One sentence on screen; the tool's own words go to the log (F10).
             if failed {
