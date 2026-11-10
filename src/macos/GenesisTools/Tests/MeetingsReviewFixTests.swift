@@ -164,6 +164,104 @@ final class MeetingsReviewFixTests: XCTestCase {
         XCTAssertEqual(closed, 1, "Esc closes the Review sheet")
     }
 
+    // MARK: Finding 10 (G33): an answer does not move the next row
+
+    /// Five open term rows, each tall enough that its fold frees room: the rows under a folding row would move up.
+    private func termRows() throws -> ReviewRows {
+        let rows = (1...5).map { index in
+            #"""
+            {"id":"r\#(index)","label":"r\#(index)","kind":"term","status":"suggested","confidence":0.8,"what":"OMP\#(index) → EMP\#(index)",
+             "edit":"spelling","sources":[],
+             "parts":[{"kind":"when","from":{"sec":\#(index * 60),"text":"0\#(index):00"},"target":{"kind":"item","id":"r\#(index)"}},
+                      {"kind":"asks","pieces":[{"text":"Is this the word the team uses for the service in this part of the meeting?"}]},
+                      {"kind":"asks","pieces":[{"text":"The transcript heard it twice in this stretch."}]}],
+             "choices":[{"value":"EMP\#(index)","label":"EMP\#(index)","role":"suggested","action":{"kind":"confirm"},"confidence":0.8},
+                        {"value":"OMP\#(index)","label":"OMP\#(index)","role":"heard","action":{"kind":"reject"}}],
+             "target":{"kind":"item","id":"r\#(index)"}}
+            """#
+        }.joined(separator: ",")
+        let json = #"{"meeting":"m","hidden":{"lowPriority":0,"minPriority":0.5},"rows":[\#(rows)]}"#
+        return try JSONDecoder().decode(ReviewRows.self, from: Data(json.utf8))
+    }
+
+    private func confirmed(_ id: String) throws -> JournalEntry {
+        let json = #"{"token":"t-\#(id)","at":"2026-11-09T17:32:38.000Z","meeting":"m","actor":{"kind":"window"},"action":{"kind":"confirm","items":["\#(id)"]},"decided":["\#(id)"],"changes":[{"id":"\#(id)","before":{"id":"\#(id)","kind":"term","status":"suggested"},"after":{"id":"\#(id)","kind":"term","status":"confirmed"}}]}"#
+        return try JSONDecoder().decode(JournalEntry.self, from: Data(json.utf8))
+    }
+
+    /// The Items tab in an off-screen window that the screen does not show, with the row probes on.
+    private func hostedItems(_ detail: MeetingDetailModel, height: CGFloat) -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: height), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.contentView = NSHostingView(rootView: ItemsTab(detail: detail).defaultAppStorage(defaults).frame(width: 640, height: height))
+        window.orderFrontRegardless()
+        return window
+    }
+
+    private func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.4)) }
+
+    func testAnAnswerKeepsTheNextRowWhereItWasUntilTheReaderScrolls() throws {
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        defaults.set(MeetingsPreferences.Rows.AutoplayNext.off.rawValue, forKey: MeetingsPreferences.Rows.autoplayNext.key)
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        let rows = try termRows()
+        detail.rows = .loaded(rows)
+        detail.selectedRow = "r1"
+        let host = hostedItems(detail, height: 420)
+        defer { host.orderOut(nil); host.close() }
+        settle()
+        let before = try XCTUnwrap(FrameProbe.frames["meetings.row.r2"], "the next row is on screen")
+        let firstBefore = try XCTUnwrap(FrameProbe.frames["meetings.row.r1"])
+
+        // What `decided` does after the service saved the answer: the row folds and the next open row is selected.
+        detail.foldAnswered(rows.rows[0], entry: try confirmed("r1"))
+        detail.autoplayNext(after: rows.rows[0])
+        settle()
+        XCTAssertEqual(detail.selectedRow, "r2")
+        XCTAssertEqual(detail.rows.value?.rows.first?.status, "confirmed", "the answered row folds at once (R16)")
+        let after = try XCTUnwrap(FrameProbe.frames["meetings.row.r2"])
+        XCTAssertEqual(after.minY, before.minY, accuracy: 0.5, "G33: the next row keeps its screen position across the fold")
+
+        // The reader scrolls: the held row gives its room back.
+        let scroll = try XCTUnwrap(Self.scrollView(in: host.contentView), "the list scrolls")
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 40))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        settle()
+        XCTAssertTrue(detail.heldFolds.isEmpty, "a scroll releases the held height")
+        let released = try XCTUnwrap(FrameProbe.frames["meetings.row.r1"])
+        XCTAssertLessThan(released.height, firstBefore.height - 20, "the folded row is one line again")
+    }
+
+    func testAnAnsweredRowFoldsAtOnceWithKeepPlaceOff() throws {
+        defaults.set(false, forKey: MeetingsPreferences.Rows.keepPlace.key)
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        let rows = try termRows()
+        detail.rows = .loaded(rows)
+        detail.foldAnswered(rows.rows[0], entry: try confirmed("r1"))
+        XCTAssertTrue(detail.heldFolds.isEmpty, "off: the row folds to one line at once")
+        defaults.removeObject(forKey: MeetingsPreferences.Rows.keepPlace.key)
+        detail.foldAnswered(rows.rows[1], entry: try confirmed("r2"))
+        XCTAssertEqual(detail.heldFolds, ["r2"], "on by default")
+        XCTAssertEqual(MeetingDetailModel.visibleRows(detail.rows.value?.rows ?? [], order: .priority, decided: .hidden,
+                                                      keeping: detail.heldFolds).map(\.id),
+                       ["r2", "r3", "r4", "r5"], "a hidden-when-decided row stays while it is held")
+    }
+
+    private static func scrollView(in view: NSView?) -> NSScrollView? {
+        guard let view else { return nil }
+        if let scroll = view as? NSScrollView { return scroll }
+        for child in view.subviews { if let found = scrollView(in: child) { return found } }
+        return nil
+    }
+
     // MARK: Finding 3: a stored 0 is a value when the setting offers it
 
     func testAStoredZeroIsTheValueWhenTheChoicesOfferIt() {

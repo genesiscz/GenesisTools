@@ -84,6 +84,9 @@ final class MeetingDetailModel {
     var pendingReach: PendingReach?
     /// The History sheet: the meeting's journal, or one row's (G43).
     var history: HistorySheet?
+    /// Rows this window just answered that keep their open height until the reader scrolls, so the rows under them do
+    /// not move (G33, `meetings.rows.keepPlace`).
+    var heldFolds: Set<String> = []
     /// The row each window decision was about, by its journal token: an event of it is not news.
     @ObservationIgnored var ownTokens: Set<String> = []
     @ObservationIgnored var autoplayTask: Task<Void, Never>?

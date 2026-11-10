@@ -184,6 +184,10 @@ extension MeetingsPreferences {
         static let openPersonPicker = MeetingsWindowSetting(
             key: "meetings.rows.openPersonPicker", defaultValue: true, choices: [true, false],
             title: "Open the people list by itself", detail: "A speaker range's editor opens the person picker with it.")
+        static let keepPlace = MeetingsWindowSetting(
+            key: "meetings.rows.keepPlace", defaultValue: true, choices: [true, false],
+            title: "Keep the next row in place",
+            detail: "An answered row keeps its height until you scroll, so the rows under it do not move. Off folds it at once.")
     }
 
     /// The notice stack (F4 keys stay in `MeetingsPreferences`; this adds the visible count).
