@@ -10,7 +10,9 @@ enum EditOpDiff {
               old.zooms.map(\.id) == new.zooms.map(\.id), ids(old.redactions) == ids(new.redactions),
               ids(old.texts) == ids(new.texts), ids(old.shapes) == ids(new.shapes),
               (old.camera?.hidden ?? []).map(\.id) == (new.camera?.hidden ?? []).map(\.id),
-              (old.camera == nil) == (new.camera == nil) || new.camera == nil else { return nil }
+              (old.camera == nil) == (new.camera == nil) || new.camera == nil,
+              // A voiceover clip added here has no file length yet; the window adds one with its own op.
+              Set(ids(new.audio.voiceovers)).isSubset(of: ids(old.audio.voiceovers)) else { return nil }
         var ops: [EditOp] = []
         for (a, b) in zip(old.zooms, new.zooms) where a != b { ops += zoom(a, b) }
         for (a, b) in zip(old.redactions ?? [], new.redactions ?? []) where a != b { ops += redaction(a, b) }
@@ -152,9 +154,14 @@ enum EditOpDiff {
                 ops.append(.music(EditOp.Music(enabled: false)))
             }
         }
-        // R4 voiceover clips: the window moves a clip or changes its volume; adding or removing one sends its own op.
+        // R4 voiceover clips: the window moves a clip or changes its volume; a removed clip is an unvoiceover, so a
+        // change that drops one never leaves it in the service's edit (an added one returns nil above).
         if a.voiceovers != b.voiceovers {
             let before = a.voiceovers ?? []
+            let kept = Set(ids(b.voiceovers))
+            for clip in before where !kept.contains(clip.id) {
+                ops.append(.unvoiceover(EditOp.Unvoiceover(id: clip.id)))
+            }
             for clip in b.voiceovers ?? [] {
                 guard let old = before.first(where: { $0.id == clip.id }), old != clip else { continue }
                 var op = EditOp.Voiceover(id: clip.id)

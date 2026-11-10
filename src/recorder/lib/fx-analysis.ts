@@ -1,14 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-    existsSync,
-    mkdirSync,
-    mkdtempSync,
-    readdirSync,
-    readFileSync,
-    rmSync,
-    statSync,
-    writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -77,6 +68,7 @@ import {
     waitStretches,
 } from "@genesiscz/utils/recording-editor/waits";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
@@ -225,9 +217,14 @@ export function exportFrameCache(movie: string): FrameCache & { flush(): void } 
     const path = toolDataDir("recorder", "verify-ocr", `${movieContentKey(movie)}.json`);
     let lines: Record<string, ScreenTextFrame["lines"]> = {};
 
+    // A file that does not parse (cut short by a crash before writes were atomic) is a miss: its frames are read again.
     if (existsSync(path)) {
-        const parsed = frameLinesSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
-        lines = parsed.success ? parsed.data : {};
+        try {
+            const parsed = frameLinesSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
+            lines = parsed.success ? parsed.data : {};
+        } catch (error) {
+            log.debug({ error, path }, "verifyHidden: its kept frame reads do not parse; they are read again");
+        }
     }
 
     let unsaved = 0;
@@ -238,7 +235,7 @@ export function exportFrameCache(movie: string): FrameCache & { flush(): void } 
 
         try {
             mkdirSync(dirname(path), { recursive: true });
-            writeFileSync(path, SafeJSON.stringify(lines));
+            atomicWriteFileSync(path, SafeJSON.stringify(lines));
             unsaved = 0;
         } catch (error) {
             log.warn({ error, path }, "verifyHidden: its frame reads could not be kept; the next run reads them again");
@@ -874,8 +871,14 @@ export async function privateData(
  */
 export type TextQuery = TextMatcherOptions;
 
-/** Every place of a text (or a pattern) on the screen, the input of the `hideText` op. */
-export async function textHitsOf(project: EditProject, options: TrackOptions & TextQuery): Promise<PrivateHit[]> {
+/**
+ * Every place of a text (or a pattern) on the screen, the input of the `hideText` op, and one warning per text or
+ * pattern that no screen text matched: a caller returns them, because a log line never reaches a REPL script.
+ */
+export async function textHitsOf(
+    project: EditProject,
+    options: TrackOptions & TextQuery
+): Promise<{ hits: PrivateHit[]; warnings: string[] }> {
     let read: readonly ScreenTextFrame[] = [];
     const hits = await trackedHits(project, textMatcher(options), {
         ...options,
@@ -886,27 +889,43 @@ export async function textHitsOf(project: EditProject, options: TrackOptions & T
     });
 
     // R8 7: a pattern that never matched is said, not silently dropped (a \w that did not take Czech letters did).
-    for (const query of unmatchedQueries(read, options)) {
-        log.out.warn(
+    const warnings = unmatchedQueries(read, options).map(
+        (query) =>
             `no screen text ${options.scan ? "of the range read" : "of the whole movie"} matches ${query}: each OCR line is matched on its own, without case; \\w and \\b take letters of any language, \\p{L} is any letter`
-        );
+    );
+
+    for (const warning of warnings) {
+        log.out.warn(warning);
     }
 
-    return hits;
+    return { hits, warnings };
 }
+
+/** findText's answer: the hits, and `warnings` naming each text or pattern no screen text matched (absent: none). */
+export type FoundText = PrivateHitOut[] & { warnings?: string[] };
 
 export async function findText(
     project: EditProject,
     options: TrackOptions & TextQuery & { from?: TimeValue; to?: TimeValue }
-): Promise<PrivateHitOut[]> {
+): Promise<FoundText> {
     // R7 6: from/to (source seconds) as hideText takes them; a place that shows at any moment between them counts.
     const fromUs = options.from === undefined ? 0 : timeToUs(options.from);
     const toUs = options.to === undefined ? Number.POSITIVE_INFINITY : timeToUs(options.to);
-    const hits = await textHitsOf(project, { ...options, scan: options.scan ?? scanOf(options.from, options.to) });
-    return hitsOut(
+    const { hits, warnings } = await textHitsOf(project, {
+        ...options,
+        scan: options.scan ?? scanOf(options.from, options.to),
+    });
+    const found: FoundText = hitsOut(
         project,
         hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs)
     );
+
+    // The answer stays the array of hits it always was; a miss rides on it, so a script reads it as found.warnings.
+    if (warnings.length > 0) {
+        found.warnings = warnings;
+    }
+
+    return found;
 }
 
 /**
@@ -1009,6 +1028,13 @@ export async function verifyHidden(
         timeBase?: "source" | "output";
     }
 ): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[]; fixOps: EditOp[]; notes?: string[] }> {
+    // The REPL's bounds: 0 or NaN would never advance the frame grid, and a minute between reads checks nothing.
+    const everySeconds = options.everySeconds ?? 0.25;
+
+    if (!Number.isFinite(everySeconds) || everySeconds < 0.1 || everySeconds > 5) {
+        throw new Error(`verifyHidden reads a frame every 0.1 to 5 seconds, not every ${options.everySeconds}`);
+    }
+
     const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
     // R6 3: every text and pattern (and the private data, when asked or when nothing else is) in one read.
     const matchers = [
@@ -1046,7 +1072,7 @@ export async function verifyHidden(
         fromUs: range.fromUs,
         toUs: Math.min(durationUs, range.toUs),
         cache,
-        fps: 1 / (options.everySeconds ?? 0.25),
+        fps: 1 / everySeconds,
         onFrame: (done, total) => {
             const tenth = Math.floor((done / Math.max(1, total)) * 10);
 
@@ -1158,7 +1184,7 @@ async function sceneChangesOf(project: EditProject): Promise<number[]> {
             step.changed / Math.max(1, step.cells) > 1 / 3 ? [Math.round((index * 1_000_000) / fps)] : []
         );
     } catch (error) {
-        logger.debug({ error }, "verifyHidden: no change steps, so no scene changes to read around");
+        log.debug({ error }, "verifyHidden: no change steps, so no scene changes to read around");
         return [];
     }
 }

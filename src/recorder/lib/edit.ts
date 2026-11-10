@@ -324,6 +324,8 @@ export async function computeEdit({
             const before = next;
             next = applyOp(next, op, measured);
             warnings.push(...opPlacementWarnings(op, before, next));
+            // A text or pattern of a hideText that no screen text matched hid nothing: said in the answer, not a log.
+            warnings.push(...(measured.textMisses ?? []).map((miss) => `${op.op}: ${miss}`));
             facts.push(measured);
             removedIdleUs.push(...(measured.idleUs ?? []).map(([from, to]): [number, number] => [from, to]));
 
@@ -663,19 +665,18 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     }
 
     if (op.op === "hideText") {
-        return {
-            textHits: await textHitsOf(project, {
-                text: op.text,
-                pattern: op.pattern,
-                unit: op.unit,
-                texts: op.texts,
-                patterns: op.patterns,
-                exclude: op.exclude,
-                excludeFixed: op.excludeFixed,
-                // R8 6: from/to read only that part of the screen.
-                scan: scanOf(op.from, op.to),
-            }),
-        };
+        const { hits, warnings } = await textHitsOf(project, {
+            text: op.text,
+            pattern: op.pattern,
+            unit: op.unit,
+            texts: op.texts,
+            patterns: op.patterns,
+            exclude: op.exclude,
+            excludeFixed: op.excludeFixed,
+            // R8 6: from/to read only that part of the screen.
+            scan: scanOf(op.from, op.to),
+        });
+        return { textHits: hits, ...(warnings.length > 0 ? { textMisses: warnings } : {}) };
     }
 
     if (op.op === "speedUpWaits") {

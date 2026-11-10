@@ -251,6 +251,20 @@ final class RecorderOverlayTests: XCTestCase {
         return stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 180 && bytes[$0 + 1] > 150 && bytes[$0 + 2] < 90 }.count
     }
 
+    func testTextPlatesKeepOnlyTheLastPlates() throws {
+        // A karaoke line makes one plate per word said; the cache keeps the newest few, not every one for good.
+        let plates = TextPlates(limit: 4)
+        let line = "one two three four five six seven eight"
+        for said in 1...8 {
+            XCTAssertNotNil(plates.plate(line, fontSize: 24, maxWidth: 600, highlight: (characters: said * 4, color: .yellow)))
+        }
+        XCTAssertEqual(plates.count, 4)
+        let newest = try XCTUnwrap(plates.plate(line, fontSize: 24, maxWidth: 600, highlight: (characters: 32, color: .yellow)))
+        XCTAssertTrue(newest === plates.plate(line, fontSize: 24, maxWidth: 600, highlight: (characters: 32, color: .yellow)),
+                      "a plate still kept is drawn once")
+        XCTAssertEqual(plates.count, 4)
+    }
+
     func testAVoiceoverAndDuckingRoundTripThroughTheEditFile() throws {
         var project = edit()
         project.audio.voiceovers = [.init(id: "v1", atUs: 1_000_000, file: "/v.mp3", durationUs: 2_000_000, volume: 1.4, label: "Intro")]
@@ -262,5 +276,12 @@ final class RecorderOverlayTests: XCTestCase {
         louder.audio.ducking = nil
         XCTAssertEqual(EditOpDiff.ops(from: project, to: louder),
                        [.voiceover(EditOp.Voiceover(id: "v1", volume: 0.5)), .ducking(EditOp.Ducking(enabled: false))])
+        // A clip the change drops is named as its own op; one it adds cannot be named here (no file length yet).
+        var removed = project
+        removed.audio.voiceovers = []
+        XCTAssertEqual(EditOpDiff.ops(from: project, to: removed), [.unvoiceover(EditOp.Unvoiceover(id: "v1"))])
+        var added = project
+        added.audio.voiceovers?.append(.init(id: "v2", atUs: 3_000_000, file: "/w.mp3", durationUs: 1_000_000, volume: 1, label: nil))
+        XCTAssertNil(EditOpDiff.ops(from: project, to: added))
     }
 }

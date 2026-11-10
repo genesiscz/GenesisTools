@@ -141,8 +141,14 @@ enum ZoomCurve {
         let ordered = zooms.sorted { $0.startUs < $1.startUs }
         for (first, second) in zip(ordered, ordered.dropFirst()) where linked(first, second) {
             // The glide runs from where the first zoom would start to leave to where the second would have arrived.
-            let start = max(first.startUs + Int64(first.easeInMs) * 1000, first.endUs - Int64(first.easeOutMs) * 1000)
-            let end = min(second.endUs - Int64(second.easeOutMs) * 1000, second.startUs + Int64(second.easeInMs) * 1000)
+            var start = max(first.startUs + Int64(first.easeInMs) * 1000, first.endUs - Int64(first.easeOutMs) * 1000)
+            var end = min(second.endUs - Int64(second.easeOutMs) * 1000, second.startUs + Int64(second.easeInMs) * 1000)
+            if end <= start {
+                // A deep overlap leaves that window empty, and the view jumped at the second zoom's start: it glides
+                // over the second zoom's ease-in instead.
+                start = second.startUs
+                end = min(second.endUs, second.startUs + max(1, Int64(second.easeInMs)) * 1000)
+            }
             guard end > start, sourceUs >= start, sourceUs < end else { continue }
             let t = Double(sourceUs - start) / Double(end - start)
             let progress = t * t * (3 - 2 * t)

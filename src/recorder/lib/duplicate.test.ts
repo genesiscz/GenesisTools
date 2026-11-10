@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -89,12 +89,21 @@ describe("duplicateRecording", () => {
         const folder = fixture(root, "video-2026-11-07_10-00-00");
         const answer = await duplicateRecording(folder, { title: "After", now: new Date(2026, 10, 7, 15, 30, 0) });
 
-        const id = answer.id ?? "";
-        expect(id).toMatch(/^video-2026-11-07_15-30-00-[0-9a-f]{8}$/);
-        expect(answer.folder).toBe(recordingsLibraryDir(id));
-        expect(read(join(answer.folder, "recording.json"))).toMatchObject({ id, title: "After" });
-        expect(read(answer.path)).toMatchObject({ source: { recording: id } });
-        expect(listLibrary().map((row) => row.id)).toContain(id);
+        // The copy lands in the shared library: removed even when an assertion fails, so `last` and the library's
+        // order never depend on which tests ran before.
+        try {
+            const id = answer.id ?? "";
+            expect(id).toMatch(/^video-2026-11-07_15-30-00-[0-9a-f]{8}$/);
+            expect(answer.folder).toBe(recordingsLibraryDir(id));
+            expect(read(join(answer.folder, "recording.json"))).toMatchObject({ id, title: "After" });
+            expect(read(answer.path)).toMatchObject({ source: { recording: id } });
+            expect(listLibrary().map((row) => row.id)).toContain(id);
+        } finally {
+            rmSync(answer.folder, { recursive: true, force: true });
+            rmSync(root, { recursive: true, force: true });
+        }
+
+        expect(existsSync(answer.folder)).toBe(false);
     });
 
     test("a plain movie copies its edit and the files the edit names in its folder", async () => {

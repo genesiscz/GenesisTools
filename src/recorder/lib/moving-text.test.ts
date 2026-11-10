@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { movieContentKey } from "@genesiscz/utils/recording-editor/analysis-cache";
 import { framePresentationUs, gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
 import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
 import { applyOp, editOpSchema, wholeProject } from "@genesiscz/utils/recording-editor/project";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
-import { exportFrameCache, exportRangeOf, ocrVideo, scanOf, textHitsOf } from "./fx-analysis";
+import { exportFrameCache, exportRangeOf, ocrVideo, scanOf, textHitsOf, verifyHidden } from "./fx-analysis";
 
 /**
  * Round 6 item 1: hidden text must stay hidden while the screen scrolls or slides. The movie is generated from two
@@ -119,7 +121,7 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
                 ],
             });
             const project = wholeProject({ video: movie, durationUs: SECONDS * 1_000_000, width: W, height: H });
-            const hits = await textHitsOf(project, { text: "Orla Fictive" });
+            const { hits } = await textHitsOf(project, { text: "Orla Fictive" });
             const hidden = applyOp(project, editOpSchema.parse({ op: "hideText", text: "Orla Fictive" }), {
                 textHits: hits,
             });
@@ -196,12 +198,15 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         });
         const project = wholeProject({ video: movie, durationUs: 8_000_000, width: W, height: H });
         const read: number[] = [];
-        const hits = await textHitsOf(project, {
+        const { hits, warnings } = await textHitsOf(project, {
             text: "Orla Fictive",
+            // Invented, and on no screen: its miss comes back to the caller, not only to a log line.
+            texts: ["Nobody Fictional"],
             scan: scanOf(4, 5),
             onRead: (frames) => read.push(...frames.map((frame) => frame.atUs)),
         });
         expect(hits.length).toBeGreaterThan(0);
+        expect(warnings).toEqual([expect.stringContaining('matches "Nobody Fictional"')]);
         expect(read.length).toBeGreaterThan(0);
         // One second each side of 4 to 5 s, nothing else.
         expect(Math.min(...read)).toBeGreaterThanOrEqual(3_000_000);
@@ -240,6 +245,18 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         expect(frames.map((frame) => frame.atUs)).toEqual([0, 500_000, 1_000_000, 1_500_000]);
         expect(frames.every((frame) => frame.lines[0]?.text === "Orla Fictive")).toBe(true);
 
+        // A kept file cut short (a run killed while it wrote) is a miss, never an error out of verifyHidden.
+        const cut = join(folder, "cut.mp4");
+        writeFileSync(cut, "bytes of their own, so the kept file is their own too");
+        const keptPath = toolDataDir("recorder", "verify-ocr", `${movieContentKey(cut)}.json`);
+        mkdirSync(dirname(keptPath), { recursive: true });
+        writeFileSync(keptPath, '{"0":[{"text":"Orla');
+        const fresh = exportFrameCache(cut);
+        expect(fresh.get(0)).toBeUndefined();
+        fresh.set(0, lines);
+        fresh.flush();
+        expect(exportFrameCache(cut).get(0)).toEqual(lines);
+
         // from/to in source seconds, a cut moment taken as the next or last kept one; the intro card leads.
         const project = applyOp(
             wholeProject({ video: movie, durationUs: 10_000_000, width: 320, height: 180 }),
@@ -252,6 +269,32 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
             toUs: 2_000_000,
         });
         expect(exportRangeOf(project, {})).toBeUndefined();
+    }, 60_000);
+
+    test("a movie written again under the same path is listed again, never read on its old frame times", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-grid-identity-"));
+        const movie = join(folder, "export.mp4");
+        const make = (seconds: number) =>
+            runVideoCommand({
+                command: [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    `testsrc=s=160x120:r=10:d=${seconds}`,
+                    "-pix_fmt",
+                    "yuv420p",
+                    movie,
+                ],
+            });
+        await make(1);
+        expect(framePresentationUs(movie)).toHaveLength(10);
+        await make(2);
+        expect(framePresentationUs(movie)).toHaveLength(20);
     }, 60_000);
 
     test("a stretch is read by the frames' own times, never after an input seek, a gap keeping the frame before it (round 8)", async () => {
@@ -316,4 +359,20 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         expect(bytes.subarray(0, size)).toEqual(pair.subarray(0, size));
         expect(bytes.subarray(size, 2 * size)).toEqual(pair.subarray(size, 2 * size));
     }, 60_000);
+});
+
+describe("frame reads refuse a rate that never advances", () => {
+    test("gridRead and verifyHidden name the bad interval instead of looping", async () => {
+        for (const fps of [0, -2, Number.NaN]) {
+            expect(() => gridRead({ video: "/nowhere/movie.mp4", fromUs: 0, toUs: 1_000_000, fps })).toThrow(
+                "a positive number of times a second"
+            );
+        }
+
+        for (const everySeconds of [0, -1, Number.NaN, 30]) {
+            await expect(verifyHidden("/nowhere/edit.json", { everySeconds })).rejects.toThrow(
+                "every 0.1 to 5 seconds"
+            );
+        }
+    });
 });

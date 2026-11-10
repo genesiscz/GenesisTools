@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -13,24 +14,35 @@ import { logger } from "@genesiscz/utils/logger";
  */
 
 const { log } = logger.scoped("recording-editor-frames");
-const timesOf = new Map<string, number[]>();
+const timesOf = new Map<string, { identity: string; times: number[] }>();
+/** How long ffprobe may list a movie's frames; it blocks the process meanwhile, so a hung probe must end. */
+const FRAME_TIMES_TIMEOUT_MS = 60_000;
 
-/** Each video frame's own presentation time (microseconds), in decode order, from the container (cached per path). */
+/**
+ * Each video frame's own presentation time (microseconds), in decode order, from the container. Kept per path and
+ * file identity (inode, size, modification time, as `movieContentKey` checks it), so a movie written again under the
+ * same path (an export replaced) is listed again instead of read on its old timeline.
+ */
 export function framePresentationUs(video: string): number[] {
+    const stat = statSync(video);
+    const identity = `${stat.ino}:${stat.size}:${Math.round(stat.mtimeMs)}`;
     const known = timesOf.get(video);
 
-    if (known) {
-        return known;
+    if (known?.identity === identity) {
+        return known.times;
     }
 
     const probe = spawnSync(
         "ffprobe",
         ["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", video],
-        { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }
+        { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: FRAME_TIMES_TIMEOUT_MS }
     );
 
     if (probe.status !== 0) {
-        throw new Error(`ffprobe could not list the frames of ${video}: ${(probe.stderr ?? "").trim().slice(-300)}`);
+        const why = probe.error ? `${probe.error.message}; ` : "";
+        throw new Error(
+            `ffprobe could not list the frames of ${video}: ${why}${(probe.stderr ?? "").trim().slice(-300)}`
+        );
     }
 
     const times = probe.stdout
@@ -40,7 +52,7 @@ export function framePresentationUs(video: string): number[] {
         .filter((us) => Number.isFinite(us))
         .sort((a, b) => a - b);
     log.debug({ video, frames: times.length }, "frame times read with ffprobe");
-    timesOf.set(video, times);
+    timesOf.set(video, { identity, times });
     return times;
 }
 
@@ -69,6 +81,11 @@ export function gridRead(options: {
     fps: number;
     extra?: string;
 }): GridRead {
+    // A rate of 0, a negative one or NaN never advances the grid below and would fill memory with slots.
+    if (!Number.isFinite(options.fps) || options.fps <= 0) {
+        throw new Error(`frames are read a positive number of times a second, not ${options.fps}`);
+    }
+
     const times = framePresentationUs(options.video);
     const stepUs = 1_000_000 / options.fps;
     const indices: number[] = [];

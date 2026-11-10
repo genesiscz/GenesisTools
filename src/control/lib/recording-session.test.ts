@@ -10,6 +10,7 @@ import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import * as videoProbe from "@genesiscz/utils/video/probe";
+import * as videoProcess from "@genesiscz/utils/video/process";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
 import {
@@ -18,6 +19,7 @@ import {
     type NativeRecorderOptions,
     nativeSegmentRecorder,
     segmentCaptureSpec,
+    titleAudioTracks,
 } from "./recording-native";
 import {
     concatCopyArgv,
@@ -983,6 +985,26 @@ describe("joining segments with their audio and cursor tracks", () => {
         ]);
         expect(single).toContain("title=Microphone");
         expect(single.at(-1)).toBe("/m/screen.mp4.titled.mp4");
+    });
+
+    it("a titling copy that fails half way leaves no second copy of the movie beside it", async () => {
+        const folder = join(tmpdir(), `gt-titles-${randomUUID()}`);
+        await mkdir(folder, { recursive: true });
+        const movie = join(folder, "screen.mp4");
+        await writeFile(movie, "the recording");
+        const copy = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            await writeFile(String(command.at(-1)), "half a copy");
+            throw new Error("ffmpeg timed out");
+        });
+
+        try {
+            await expect(titleAudioTracks(movie, ["Microphone"])).rejects.toThrow("ffmpeg timed out");
+            expect(existsSync(`${movie}.titled.mp4`)).toBe(false);
+            expect(await readFile(movie, "utf8")).toBe("the recording");
+        } finally {
+            copy.mockRestore();
+            await rm(folder, { recursive: true, force: true });
+        }
     });
 
     it("moves each segment's cursor samples by the length of the segments before it", () => {

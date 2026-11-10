@@ -47,13 +47,19 @@ final class Filmstrip {
                 // The strip fills in as tiles arrive instead of all at the end.
                 if made.count % 12 == 0 {
                     let partial = made.sorted { $0.sourceUs < $1.sourceUs }
-                    await MainActor.run { self?.tiles = partial }
+                    await MainActor.run {
+                        guard !Task.isCancelled else { return }
+                        self?.tiles = partial
+                    }
                 }
             }
             made.sort { $0.sourceUs < $1.sourceUs }
             span.end()
             let tiles = made
+            // A load that a newer one replaced publishes nothing: its tiles are the old movie's, and `loaded` belongs
+            // to the newer load. The check runs on the main actor, where `load` cancels, so no publish slips past it.
             await MainActor.run {
+                guard !Task.isCancelled else { return }
                 self?.tiles = tiles
                 self?.loaded = true
             }
@@ -88,6 +94,7 @@ final class Waveform {
                   let duration = try? await asset.load(.duration), duration.seconds > 0,
                   let reader = try? AVAssetReader(asset: asset) else {
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
                     self?.hasAudio = false
                     self?.loaded = true
                 }
@@ -103,6 +110,7 @@ final class Waveform {
             // A reader that cannot start still ends the load: the lane waits for `loaded`, and stayed blank for good.
             guard reader.startReading() else {
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
                     self?.hasAudio = false
                     self?.loaded = true
                 }
@@ -129,7 +137,9 @@ final class Waveform {
             // Scaled to the movie's own loudest moment, so a quiet recording still shows its shape.
             let loudest = peaks.max() ?? 0
             let result = loudest > 0.0005 ? peaks.map { $0 / loudest } : peaks
+            // A replaced read stops early with partial peaks: publish nothing, as the filmstrip does.
             await MainActor.run {
+                guard !Task.isCancelled else { return }
                 self?.peaks = result
                 self?.hasAudio = true
                 self?.loaded = true

@@ -22,6 +22,16 @@ final class RecorderFxAnalysisTests: XCTestCase {
         XCTAssertTrue(track.dejittered(points: 0, aspect: 0.5625) === track)
     }
 
+    func testDejitterKeepsEachSettingApartAndOnlyTheLastFew() {
+        // A 100-point display: 3 points is 0.03 of the width. The step up is 0.0535, so 0.0301 at aspect 0.563 (kept)
+        // and 0.0285 at 0.532 (dropped). The old packed key gave both pairs the same entry.
+        let track = CursorTrack(samples: [sample(0, 0.5, 0.5), sample(16, 0.5, 0.5535)], pointWidth: 100)
+        XCTAssertEqual(track.dejittered(points: 3.00, aspect: 0.563).samples.count, 2)
+        XCTAssertEqual(track.dejittered(points: 3.01, aspect: 0.532).samples.count, 1)
+        for step in 0..<20 { _ = track.dejittered(points: 1 + Double(step) / 10, aspect: 0.5625) }
+        XCTAssertEqual(track.smoothTracksCount, CursorTrack.smoothTracksKept)
+    }
+
     func testSmoothCursorSitsExactlyOnAClickAndGlidesElsewhere() throws {
         var samples: [CursorTrack.Sample] = []
         for step in 0...60 {
@@ -112,6 +122,14 @@ final class RecorderFxAnalysisTests: XCTestCase {
         XCTAssertEqual(off, [.cursorSmooth(EditOp.CursorSmooth(enabled: false)), .autoSpeed(EditOp.AutoSpeed(badge: false, position: .topRight))])
         XCTAssertEqual(EditOp.json([.hidePrivate(EditOp.HidePrivate(ids: ["p1"]))]), #"[{"ids":["p1"],"op":"hidePrivate"}]"#)
         XCTAssertEqual(EditOp.json([.hideText(EditOp.HideText(text: "alice@example.com", excludeFixed: true))]),
+                       #"[{"excludeFixed":true,"op":"hideText","text":"alice@example.com"}]"#)
+    }
+
+    func testTheHideButtonKeepsFixedAreasHiddenUnlessAskedToLeaveThemVisible() {
+        // A fixed header can hold the name being hidden, so the default never leaves fixed areas visible.
+        XCTAssertEqual(EditOp.json([PrivateDataSection.hideTextOp("alice@example.com", leaveFixed: false)]),
+                       #"[{"op":"hideText","text":"alice@example.com"}]"#)
+        XCTAssertEqual(EditOp.json([PrivateDataSection.hideTextOp("alice@example.com", leaveFixed: true)]),
                        #"[{"excludeFixed":true,"op":"hideText","text":"alice@example.com"}]"#)
     }
 

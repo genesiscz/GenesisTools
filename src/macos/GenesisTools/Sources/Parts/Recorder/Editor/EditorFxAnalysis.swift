@@ -86,6 +86,13 @@ struct PrivateDataSection: View {
     @State private var busy = false
     @State private var failure: String?
     @State private var phrase = ""
+    /// Off by default: a fixed area (a header) can hold the very name being hidden, and an area left visible shows it.
+    @State private var leaveFixed = false
+
+    /// The op the Hide button sends. Fixed areas stay hidden unless the person chose to leave them visible.
+    static func hideTextOp(_ text: String, leaveFixed: Bool) -> EditOp {
+        .hideText(EditOp.HideText(text: text, excludeFixed: leaveFixed ? true : nil))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -98,9 +105,14 @@ struct PrivateDataSection: View {
                 Button("Hide") { hideText() }
                     .disabled(busy || phrase.trimmingCharacters(in: .whitespaces).isEmpty)
                     .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Finds every place the words show (OCR on this Mac) and blurs each one while it shows; the blur follows a scroll and leaves a toast over it visible")
+                    .instantTooltip("Finds every place the words show (OCR on this Mac) and blurs each one while it shows; the blur follows a scroll")
                     .accessibilityIdentifier("recorder.hide.textButton")
             }
+            Toggle("Leave fixed areas visible", isOn: $leaveFixed)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11.5))
+                .instantTooltip("A tab bar or a toast that stays still while the text scrolls is not blurred. Leave this off when a fixed header holds a name or a number: an area left visible shows the text inside it.")
+                .accessibilityIdentifier("recorder.hide.leaveFixed")
             SectionLabel(text: "Private data", value: hits.map { Plural.count($0.count, "hit") })
             Text("Emails, tokens and keys, phone numbers, IBANs and card numbers on the screen. The text is read on this Mac with Vision; nothing leaves it.")
                 .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
@@ -172,7 +184,7 @@ struct PrivateDataSection: View {
         let text = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !busy else { return }
         busy = true
-        model.applyOps(EditOp.json([.hideText(EditOp.HideText(text: text, excludeFixed: true))])) { result in
+        model.applyOps(EditOp.json([Self.hideTextOp(text, leaveFixed: leaveFixed)])) { result in
             busy = false
             switch result {
             case .success:

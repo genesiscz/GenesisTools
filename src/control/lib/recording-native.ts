@@ -301,12 +301,18 @@ export async function titleAudioTracks(movie: string, titles: string[]): Promise
         return;
     }
 
+    // A copy that failed half way (an ffmpeg error, the timeout) must not stay beside the private movie.
     const temporary = `${movie}.titled.mp4`;
-    await runVideoCommand({
-        command: audioTitlesArgv({ input: movie, output: temporary, titles }),
-        timeoutMs: 120_000,
-    });
-    await rename(temporary, movie);
+
+    try {
+        await runVideoCommand({
+            command: audioTitlesArgv({ input: movie, output: temporary, titles }),
+            timeoutMs: 120_000,
+        });
+        await rename(temporary, movie);
+    } finally {
+        await rm(temporary, { force: true });
+    }
 }
 
 /** The joiner of a recording whose tracks are `audioTitles` (`audioTrackTitles(options.audio)`). */

@@ -796,6 +796,21 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(ZoomCurve.view(atSource: 3_000_000, zooms: [left, right], cursor: nil).centerX, 0.75, accuracy: 0.0001)
     }
 
+    func testDeeplyOverlappingZoomsGlideInsteadOfJumping() {
+        // The second starts at 3 s inside the first (0 to 5 s): the window from the first's leave to the second's
+        // arrival is empty, and the view jumped from one focus to the other in one frame at 3 s.
+        let first = EditProject.Zoom(id: "a", startUs: 0, endUs: 5_000_000, scale: 2, focusX: 0.25, focusY: 0.5, easeInMs: 500, easeOutMs: 500)
+        let second = EditProject.Zoom(id: "b", startUs: 3_000_000, endUs: 8_000_000, scale: 2, focusX: 0.75, focusY: 0.5, easeInMs: 500, easeOutMs: 500)
+        var previous = ZoomCurve.view(atSource: 2_900_000, zooms: [first, second], cursor: nil)
+        for us in stride(from: 2_916_667, through: 4_000_000, by: 16_667) {
+            let view = ZoomCurve.view(atSource: Int64(us), zooms: [first, second], cursor: nil)
+            XCTAssertEqual(view.scale, 2, accuracy: 0.0001, "at \(us) µs")
+            XCTAssertLessThan(abs(view.centerX - previous.centerX), 0.05, "at \(us) µs")
+            previous = view
+        }
+        XCTAssertEqual(ZoomCurve.view(atSource: 3_600_000, zooms: [first, second], cursor: nil).centerX, 0.75, accuracy: 0.0001)
+    }
+
     func testAFollowZoomTracksTheSmoothedCursor() {
         let track = CursorTrack(samples: (0...40).map { CursorTrack.Sample(ms: Double($0) * 50, x: 0.3, y: 0.6, click: nil) })
         let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 2_000_000, scale: 2, mode: .follow, easeInMs: 0, easeOutMs: 0)
@@ -1095,6 +1110,24 @@ final class RecorderEditTests: XCTestCase {
         }
         input.markAsFinished()
         await writer.finishWriting()
+    }
+
+    @MainActor
+    func testAFilmstripLoadThatANewerLoadReplacedPublishesNothing() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("strip-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie)
+        let strip = Filmstrip()
+        // The first load is cancelled at once: its empty answer must neither show nor end the second load.
+        strip.load(video: movie, durationUs: 2_000_000, count: 40)
+        strip.load(video: movie, durationUs: 2_000_000, count: 4)
+        let deadline = Date().addingTimeInterval(30)
+        while !strip.loaded, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(strip.loaded)
+        XCTAssertEqual(strip.spacingUs, 500_000)
+        XCTAssertEqual(strip.tiles.map(\.sourceUs), [0, 500_000, 1_000_000, 1_500_000])
     }
 
     func testACancelledExportStopsAndLeavesNoFile() async throws {
