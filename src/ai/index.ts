@@ -206,10 +206,9 @@ interface ImageFlags {
 }
 
 async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
-    // lazy: saves 51.6 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) — the deprecated config facade, wanted by image alone
-    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig.ts");
-    const config = await AIConfig.load();
-    const token = config.getHfToken() ?? env.hf.getKey();
+    // lazy: the provider key resolver loads the plugin barrel, wanted by image alone
+    const { providerApiKey } = await import("@genesiscz/utils/ai/providers/resolve");
+    const token = await providerApiKey("huggingface").catch(() => env.hf.getKey());
 
     if (!token) {
         out.error(pc.red("Hugging Face token required."));

@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as historySearch from "@app/claude/lib/history/search";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { _resetBuiltInPluginsForTest, registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -115,7 +114,6 @@ async function seed(accounts: AccountEntry[]): Promise<void> {
     const data: AiConfigData = { version: CONFIG_VERSION, accounts, defaults: {} };
     mkdirSync(join(home, ".genesis-tools", "ai"), { recursive: true });
     writeFileSync(configPath(), SafeJSON.stringify(data, null, 2));
-    AIConfig.invalidate();
     AiConfigStore.invalidate();
     await AiConfigStore.load();
 }
@@ -159,7 +157,7 @@ afterEach(() => {
     _resetSecretsForTest();
     _resetPluginsForTest();
     _resetBuiltInPluginsForTest();
-    AIConfig.invalidate();
+    AiConfigStore.invalidate();
 });
 
 describe("accounts list", () => {
