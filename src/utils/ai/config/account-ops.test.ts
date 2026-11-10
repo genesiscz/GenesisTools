@@ -12,11 +12,12 @@ import {
     resolveSecret,
     secrets,
 } from "@genesiscz/utils/security";
+import { _setSecretStoreOperationObserverForTest } from "@genesiscz/utils/security/SecretStore";
 import type { LoginOutcome } from "../providers/account-features";
 import type { BindContext, ProviderPlugin } from "../providers/plugin-types";
 import { _resetPluginsForTest, registerPlugin } from "../providers/registry";
 import { resolveProviderApiKey } from "../providers/resolve";
-import { AiConfigStore } from "./AiConfigStore";
+import { AiConfigStore, defaultAccountName } from "./AiConfigStore";
 import {
     AccountChangedError,
     AccountInUseError,
@@ -25,6 +26,7 @@ import {
     clearCredentials,
     editAccount,
     removeAccount,
+    storeRefreshedTokens,
     testAccount,
 } from "./account-ops";
 import { _clearExternalRefScanners, registerExternalRefScanner } from "./refs";
@@ -616,5 +618,105 @@ describe("testAccount", () => {
         expect((await testAccount("probe")).ok).toBe(true);
         expect((await testAccount("probe", { live: true })).ok).toBe(false);
         expect((await testAccount("probe", { live: true })).health?.detail).toBe("endpoint unreachable");
+    });
+});
+
+describe("storeRefreshedTokens", () => {
+    async function seedOAuth(): Promise<string> {
+        const account = await addAccount({ provider: "fake", name: "oauth", secrets: { refreshToken: "rt-1" } });
+        const store = await AiConfigStore.load();
+        await store.mutate((config) => {
+            const entry = config.accounts.find((candidate) => candidate.id === account.id);
+            if (entry) {
+                entry.credentials.expiresAt = 1;
+            }
+        });
+        return account.id;
+    }
+
+    test("two concurrent refreshes with the same previous token spend it once", async () => {
+        const id = await seedOAuth();
+        let upstream = 0;
+        const refresh = async () => {
+            upstream++;
+            await Bun.sleep(30);
+            return { accessToken: "at-2", refreshToken: "rt-2", expiresAt: Date.now() + 3_600_000 };
+        };
+
+        const results = await Promise.all([
+            storeRefreshedTokens(id, "rt-1", refresh),
+            storeRefreshedTokens(id, "rt-1", refresh),
+        ]);
+
+        expect(upstream).toBe(1);
+        expect(results.map((result) => result.status).sort()).toEqual(["already-refreshed", "stored"]);
+        expect(results.every((result) => result.tokens.refreshToken === "rt-2")).toBe(true);
+
+        const stored = readRawConfig().accounts.find((entry) => entry.id === id);
+        expect(isSecureRef(stored?.credentials.refreshToken)).toBe(true);
+        expect(await resolveSecret(stored?.credentials.refreshToken)).toBe("rt-2");
+    });
+
+    test("a stale previous token never reaches the producer", async () => {
+        const id = await seedOAuth();
+        const result = await storeRefreshedTokens(id, "rt-0", async () => {
+            throw new Error("the producer must not run when the stored token moved on");
+        });
+
+        expect(result).toMatchObject({ status: "already-refreshed", tokens: { refreshToken: "rt-1" } });
+    });
+
+    test("a producer that declines keeps the stored pair and writes nothing new", async () => {
+        const id = await seedOAuth();
+        const before = readFileSync(configPath(), "utf8");
+
+        const result = await storeRefreshedTokens(id, "rt-1", async () => null);
+
+        expect(result).toMatchObject({ status: "kept", tokens: { refreshToken: "rt-1" } });
+        expect(SafeJSON.parse(readFileSync(configPath(), "utf8"), { strict: true }).accounts).toEqual(
+            SafeJSON.parse(before, { strict: true }).accounts
+        );
+    });
+});
+
+describe("metadata reads with a locked vault", () => {
+    test("list, default and lookup succeed and never touch the vault when no master key is on the ladder", async () => {
+        await addAccount({ provider: "fake", name: "work", secrets: { apiKey: "sk-work" } });
+        await addAccount({ provider: "fake", name: "personal", secrets: { apiKey: "sk-personal" } });
+        await (await AiConfigStore.load()).mutate((config) => {
+            config.defaults.app = { claude: { chat: { model: "@account/acc_personal:some-model" } } };
+        });
+
+        // Lock the vault: no rung answers, and every vault operation is recorded.
+        _setMasterKeyProvidersForTest([
+            {
+                id: "env",
+                available: async () => false,
+                get: async () => {
+                    throw new Error("the vault is locked");
+                },
+                getSync: () => {
+                    throw new Error("the vault is locked");
+                },
+                set: async () => {},
+            },
+        ]);
+        _resetSecretsForTest();
+        AiConfigStore.invalidate();
+        const operations: string[] = [];
+        _setSecretStoreOperationObserverForTest((operation) => operations.push(operation));
+
+        try {
+            const store = await AiConfigStore.load();
+
+            expect(store.accounts({ provider: "fake" }).map((entry) => entry.name)).toEqual(["work", "personal"]);
+            expect(store.account("acc_work")?.name).toBe("work");
+            expect(store.defaultAccount("claude")?.name).toBe("personal");
+            expect(store.defaultAccount("ask")?.name).toBe("work");
+            expect(defaultAccountName(store.data(), "claude")).toBe("personal");
+            expect(operations).toEqual([]);
+        } finally {
+            _setSecretStoreOperationObserverForTest(undefined);
+        }
     });
 });

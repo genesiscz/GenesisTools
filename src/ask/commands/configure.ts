@@ -263,11 +263,8 @@ async function addFromClaudeAccount(): Promise<void> {
     const entry: AIAccountEntry = {
         name: choice as string,
         provider: "anthropic-sub",
-        tokens: {
-            accessToken: selected.accessToken || undefined,
-            refreshToken: selected.refreshToken,
-            expiresAt: selected.expiresAt,
-        },
+        // The stored credentials stay as they are: this only records the apps.
+        tokens: {},
         label: selected.label,
         apps: ["ask", "claude"],
     };

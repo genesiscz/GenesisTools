@@ -7,7 +7,7 @@ import { writeDefaultsSnapshot } from "./defaults-snapshot";
 import { _resetMigrationStateForTest, ensureAiConfigMigrated } from "./migrate";
 import { assertSafeToWriteRealConfig } from "./migration-guard";
 import { convertConfig } from "./migrations/2026-08-configV4";
-import { type AccountRef, accountRef, type Referrer, referrersOf } from "./refs";
+import { type AccountRef, accountRef, isAccountRef, type Referrer, referrersOf, refToId } from "./refs";
 import { type AccountEntry, type AiConfigData, aiConfigSchema, CONFIG_VERSION, emptyConfig } from "./schema";
 import { isGateOnly } from "./selectors";
 
@@ -279,6 +279,17 @@ export class AiConfigStore {
         return this.config.accounts.filter((account) => matches(account, filter));
     }
 
+    /**
+     * The account a context (a task or an app) defaults to, else the first account. Metadata only:
+     * it never touches the vault, so naming the default needs no master key.
+     */
+    defaultAccount(context: string): AccountEntry | undefined {
+        const id = defaultAccountIds(this.config)[context];
+        const byDefault = id ? this.config.accounts.find((entry) => entry.id === id) : undefined;
+
+        return byDefault ?? this.config.accounts[0];
+    }
+
     ref(idOrName: string): AccountRef | undefined {
         const account = this.account(idOrName);
         return account ? accountRef(account.id) : undefined;
@@ -338,4 +349,55 @@ export class AiConfigStore {
             return result;
         }, timeout);
     }
+}
+
+/**
+ * The account id each context defaults to: per task from `defaults.account`, then per app from
+ * an app's chat model that names an account. Metadata only, so it never unlocks the vault.
+ */
+function defaultAccountIds(config: AiConfigData): Record<string, string> {
+    const ids: Record<string, string> = {};
+    const idOf = (ref: unknown) => {
+        if (!isAccountRef(ref)) {
+            return undefined;
+        }
+
+        const id = refToId(ref);
+        return config.accounts.some((entry) => entry.id === id) ? id : undefined;
+    };
+
+    for (const [task, ref] of Object.entries(config.defaults.account ?? {})) {
+        const id = idOf(ref);
+        if (id) {
+            ids[task] = id;
+        }
+    }
+
+    for (const [app, appDefaults] of Object.entries(config.defaults.app ?? {})) {
+        const id = idOf(appDefaults?.chat?.model?.split(":")[0]);
+        if (id) {
+            ids[app] = id;
+        }
+    }
+
+    return ids;
+}
+
+/** The account name each context defaults to (see `defaultAccountIds`). */
+export function defaultAccountNames(config: AiConfigData): Record<string, string> {
+    const names: Record<string, string> = {};
+
+    for (const [context, id] of Object.entries(defaultAccountIds(config))) {
+        const name = config.accounts.find((entry) => entry.id === id)?.name;
+        if (name) {
+            names[context] = name;
+        }
+    }
+
+    return names;
+}
+
+/** The context's default account name without the vault: the context's default, else the first account. */
+export function defaultAccountName(config: AiConfigData, context: string): string | undefined {
+    return defaultAccountNames(config)[context] ?? config.accounts[0]?.name;
 }
