@@ -27,6 +27,7 @@ import {
     pluginsDisabledFor,
     ratchetAdditions,
     staleRatchetEntries,
+    staticallyImportsReadme,
     withinCountRatchets,
 } from "./lint-rules";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
@@ -1082,6 +1083,33 @@ describe("no-tool-command-in-utils", () => {
         }
 
         expect(stale).toEqual([]);
+    });
+});
+
+describe("no-static-readme-import", () => {
+    const rule = "no-static-readme-import";
+
+    test("flags a static import or re-export of the README module, by alias or by relative path", () => {
+        expect(rules('import { printReadmeAndExit } from "@genesiscz/utils/readme";', "src/x/index.ts")).toContain(
+            rule
+        );
+        expect(rules('import { printReadmeAndExit } from "@app/utils/readme.ts";', "src/x/index.ts")).toContain(rule);
+        expect(rules('export { printReadmeAndExit } from "@genesiscz/utils/readme";', "src/x/a.ts")).toContain(rule);
+        expect(rules('import "@genesiscz/utils/readme";', "src/x/index.ts")).toContain(rule);
+    });
+
+    test("resolves a relative specifier against the importing file", () => {
+        // checkSource parses without a file name, so the relative case is pinned on the helper the rule calls.
+        expect(staticallyImportsReadme('import { a } from "../readme";', "src/utils/cli/a.ts")).toBe(true);
+        expect(staticallyImportsReadme('import { a } from "../utils/readme.ts";', "src/x/index.ts")).toBe(true);
+        expect(staticallyImportsReadme('import { a } from "./readme";', "src/x/lib/a.ts")).toBe(false);
+    });
+
+    test("passes the dynamic import, a type-only import and other modules named readme", () => {
+        expect(rules('const m = await import("@genesiscz/utils/readme");', "src/x/index.ts")).not.toContain(rule);
+        expect(rules('import type { X } from "@genesiscz/utils/readme";', "src/x/index.ts")).not.toContain(rule);
+        expect(rules('import { a } from "./readme";', "src/x/lib/a.ts")).not.toContain(rule);
+        expect(rules('import { a } from "@genesiscz/utils/readme-flag";', "src/x/index.ts")).not.toContain(rule);
     });
 });
 
