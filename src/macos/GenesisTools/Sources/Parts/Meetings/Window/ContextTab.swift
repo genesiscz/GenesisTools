@@ -50,6 +50,8 @@ struct ContextTab: View {
                             }
                         }
                         .padding(.vertical, 2)
+                        // The remove button stays near the words it removes: in a wide window it stood 800 pt from them.
+                        .frame(maxWidth: TranscriptBlockView.measure + 80, alignment: .leading)
                         .liveRow()
                     }
                     .listStyle(.inset)
