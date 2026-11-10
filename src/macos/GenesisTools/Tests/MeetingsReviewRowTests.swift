@@ -368,6 +368,19 @@ final class MeetingsReviewRowTests: XCTestCase {
     }
 
     /// A sentence names a suggestion by what it is and where; its id is the terminal's handle.
+    func testTheDockNamesARowByItsKindAndTime() throws {
+        let rows = try rows().rows
+        let word = MomentLayer(meeting: "m", target: .item("i2"), source: .row, kind: .moment, label: "i2")
+        XCTAssertEqual(TimelineDock.crumbTitle(of: word, meeting: "m", rows: rows), "Word 05:09", "an item id names nothing to a reader")
+        let question = MomentLayer(meeting: "m", target: .item("q1"), source: .row, kind: .moment, label: "Q1")
+        XCTAssertEqual(TimelineDock.crumbTitle(of: question, meeting: "m", rows: rows), "Q1", "a question keeps its label")
+        let elsewhere = MomentLayer(meeting: "other", target: .item("i2"), source: .row, kind: .moment, label: "i2")
+        XCTAssertEqual(TimelineDock.crumbTitle(of: elsewhere, meeting: "m", rows: rows), "i2", "the rows of another meeting name nothing here")
+        let span = ZoomSpan(startSec: 308, endSec: 320, fromSec: 309, toSec: 311, spotSec: 309, label: "i2")
+        XCTAssertEqual(TimelineDock.flagged(span, top: word, meeting: "m", rows: rows).label, "Word", "the flag's time stands before its words")
+        XCTAssertEqual(TimelineDock.flagged(span, top: question, meeting: "m", rows: rows).label, "i2", "a question's span keeps its words")
+    }
+
     func testAnUndoComesBackToTheRowItReopened() throws {
         let rows = try rows().rows
         let undo = try entry(token: "t9", action: #"{"kind":"revert","token":"t1"}"#, changes: [("gone", "confirmed", "suggested"), ("i2", "confirmed", "suggested")])

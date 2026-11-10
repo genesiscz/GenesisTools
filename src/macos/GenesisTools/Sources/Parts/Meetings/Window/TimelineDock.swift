@@ -42,9 +42,9 @@ struct TimelineDock: View {
             let screen = screenBeside ? dock.screens[meeting].flatMap { $0.recorded && !$0.frames.isEmpty ? $0 : nil } : nil
             let state = TimelineDockState(
                 meetingTitle: title ?? meeting,
-                moments: player.stack.map(StackBreadcrumb.Level.init(layer:)),
+                moments: player.stack.map { StackBreadcrumb.Level(id: $0.id.uuidString, title: Self.crumbTitle(of: $0, meeting: meeting, rows: rows)) },
                 isPlaying: player.phase == .playing,
-                span: span,
+                span: span.map { Self.flagged($0, top: top, meeting: meeting, rows: rows) },
                 zoom: TimelineDockModel.effectiveZoom(dock.zoom, span: span),
                 view: view,
                 durationSec: max(duration, view.upperBound),
@@ -98,6 +98,26 @@ struct TimelineDock: View {
     static func span(of layer: MomentLayer) -> ZoomSpan? {
         guard layer.kind == .moment, let moment = layer.moment else { return nil }
         return ZoomSpan(moment: moment)
+    }
+
+    /// The row a layer plays, when it plays a row of `meeting` that is not a question. The engine labels such a
+    /// Moment by its item id ("i70"), which names nothing to a reader.
+    static func plainRow(of layer: MomentLayer, meeting: String, rows: [ReviewRow]) -> ReviewRow? {
+        guard layer.kind == .moment, layer.meeting == meeting, case .item(let id) = layer.target else { return nil }
+        return rows.first { $0.id == id && !$0.isQuestion }
+    }
+
+    /// What the breadcrumb calls a layer: "Speaker range 01:12" for a row that is not a question, else its own label.
+    static func crumbTitle(of layer: MomentLayer, meeting: String, rows: [ReviewRow]) -> String {
+        plainRow(of: layer, meeting: meeting, rows: rows).map(ReviewRowView.reference) ?? layer.label
+    }
+
+    /// The span with the flag's words: the row's kind ("Speaker range"), since the flag's time stands before them.
+    static func flagged(_ span: ZoomSpan, top: MomentLayer, meeting: String, rows: [ReviewRow]) -> ZoomSpan {
+        guard let row = plainRow(of: top, meeting: meeting, rows: rows) else { return span }
+        var named = span
+        named.label = ReviewRowView.kindWord(row.kind)
+        return named
     }
 
     /// The pins' rows: the open meeting's (as its Items tab holds them), else the ones the dock read for the meeting.
