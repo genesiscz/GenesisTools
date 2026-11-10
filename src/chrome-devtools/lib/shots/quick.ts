@@ -38,6 +38,15 @@ export const SHOTS_MODULES: PlanModules = { [SHOTS_MODULE]: { ...kit, defineShot
 
 export type ImageFormat = "png" | "webp";
 
+/** How a shot's WebP is written: at most `maxWidth` pixels wide (0 keeps the full width), at `quality` (0 to 100). */
+export interface WebpOutput {
+    maxWidth: number;
+    quality: number;
+}
+
+/** The first shot script's setting since 2026-11-10: small enough for a repository, and the labels stay readable. */
+export const WEBP_OUTPUT: WebpOutput = { maxWidth: 1200, quality: 60 };
+
 /** The format an output path asks for, by its extension; null for anything but .png and .webp. */
 export function imageFormatOf(path: string): ImageFormat | null {
     const extension = extname(path).toLowerCase();
@@ -120,25 +129,31 @@ export async function loadWebPlan(value: string): Promise<WebPlan> {
 
 export interface ShotFiles {
     annotated: string;
-    raw: string;
     marks: string;
+    /** Only when asked for: the raw image, full size, always PNG. */
+    raw?: string;
 }
 
-/** `shot.png` → the annotated `shot.png`, the raw `shot.original.png` and the marks `shot.marks.json`. */
-export function shotFilesFor(out: string): ShotFiles {
+/** `shot.webp` → the annotated `shot.webp` and the marks `shot.marks.json`; with `raw`, also `shot.original.png`. */
+export function shotFilesFor(out: string, raw = false): ShotFiles {
     const extension = extname(out);
     const stem = out.slice(0, out.length - extension.length);
-    return { annotated: out, raw: `${stem}.original${extension}`, marks: `${stem}.marks.json` };
+    return { annotated: out, marks: `${stem}.marks.json`, ...(raw ? { raw: `${stem}.original.png` } : {}) };
 }
 
 export type QuickShotResult = { ok: true; files: ShotFiles; notes: string[] } | { ok: false; problems: string[] };
 
-/** Marks what the tab shows now and writes the annotated image, the raw one and the marks in image pixels. */
+/**
+ * Marks what the tab shows now and writes the annotated image and the marks in the raw image's pixels. A WebP is
+ * written by `webp` (default WEBP_OUTPUT), a PNG at full size. The raw image is written only with `raw`.
+ */
 export async function takeQuickShot(input: {
     cdp: CdpLike;
     plan: WebPlan;
     out: string;
     setup?: Partial<PageSetup>;
+    raw?: boolean;
+    webp?: WebpOutput;
 }): Promise<QuickShotResult> {
     const format = imageFormatOf(input.out);
     if (!format) {
@@ -157,10 +172,13 @@ export async function takeQuickShot(input: {
         input.plan.pixels.length > 0
             ? (await renderAnnotationPlan({ input: composed, annotations: input.plan.pixels, preset })).png
             : composed;
-    const files = shotFilesFor(input.out);
+    const files = shotFilesFor(input.out, input.raw === true);
     mkdirSync(dirname(input.out), { recursive: true });
-    await Bun.write(files.annotated, await encodeImage(final, format));
-    await Bun.write(files.raw, await encodeImage(capture.images.raw, format));
+    await Bun.write(files.annotated, await encodeImage(final, format, input.webp ?? WEBP_OUTPUT));
+    if (files.raw) {
+        await Bun.write(files.raw, capture.images.raw);
+    }
+
     await Bun.write(
         files.marks,
         `${SafeJSON.stringify({ preset, annotations: [...capture.images.annotations, ...input.plan.pixels] }, null, 2)}\n`

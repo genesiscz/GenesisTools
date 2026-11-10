@@ -54,14 +54,27 @@ export async function stackImages(images: readonly Buffer[], background = "#ffff
     return canvas.toBuffer("image/png");
 }
 
-/** PNG as it is, or WebP at `quality` (0 to 100, default 85: the first shot script's cwebp setting). */
-export async function encodeImage(png: Buffer, format: "png" | "webp", quality = 85): Promise<Buffer> {
+export interface EncodeOptions {
+    /** WebP quality, 0 to 100 (default 85). */
+    quality?: number;
+    /** A wider image is scaled down to this width, keeping its aspect ratio; 0 or absent keeps the full width. */
+    maxWidth?: number;
+}
+
+/** PNG as it is, or WebP at `quality`, scaled down to `maxWidth` when it is wider (ImageMagick's `-resize "Nx>"`). */
+export async function encodeImage(png: Buffer, format: "png" | "webp", options: EncodeOptions = {}): Promise<Buffer> {
     if (format === "png") {
         return png;
     }
 
     const image = await loadImage(png);
-    const canvas = createCanvas(image.width, image.height);
-    canvas.getContext("2d").drawImage(image, 0, 0);
-    return canvas.encode("webp", quality);
+    const maxWidth = options.maxWidth ?? 0;
+    const scale = maxWidth > 0 && image.width > maxWidth ? maxWidth / image.width : 1;
+    const width = Math.round(image.width * scale);
+    const height = Math.max(1, Math.round(image.height * scale));
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(image, 0, 0, width, height);
+    return canvas.encode("webp", options.quality ?? 85);
 }

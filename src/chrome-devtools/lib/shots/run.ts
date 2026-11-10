@@ -1,8 +1,9 @@
 /**
  * Runs a shot book: one browser and one tab for the run, every part of every selected shot, the parts stacked into
- * one image, and the files the first shot script wrote: `<stem>.<tag>.webp` (annotated) and
- * `<stem>.<tag>.original.webp` (raw) in the output folder, PNGs under `png/` when asked, and the marks plus a run
- * manifest under `.shots/<tag>/`. A failing shot is reported by name and the run goes on.
+ * one image, and the files the first shot script writes: `<stem>.<tag>.webp` (annotated, at most 1200 px wide at
+ * quality 60 unless the book says otherwise) in the output folder, a full-size annotated PNG under `png/` when the book
+ * asks, the raw image as `png/<stem>.<tag>.original.png` only with `raw`, and the marks (in the raw image's pixels)
+ * plus a run manifest under `.shots/<tag>/`. A failing shot is reported by name and the run goes on.
  */
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -22,6 +23,8 @@ export interface RunOptions {
     /** Overrides the book's `browser.use`. */
     use?: BrowserKind;
     port?: number;
+    /** Also write the raw image (overrides the book's `output.raw`). */
+    raw?: boolean;
     onResult?: (result: ShotResult) => void;
 }
 
@@ -116,15 +119,15 @@ async function shootOne(tab: ShotTab, book: ShotBook, shot: Shot, options: RunOp
     const name = `${shot.stem}.${options.tag}`;
     const files: string[] = [];
     for (const format of book.output.formats) {
-        const folder = format === "png" ? join(options.out, "png") : options.out;
-        const pair: Array<[string, Buffer]> = [
-            [join(folder, `${name}.${format}`), annotated],
-            [join(folder, `${name}.original.${format}`), raw],
-        ];
-        for (const [path, png] of pair) {
-            await writeAtomic(path, await encodeImage(png, format, book.output.quality));
-            files.push(path);
-        }
+        const path = join(format === "png" ? join(options.out, "png") : options.out, `${name}.${format}`);
+        await writeAtomic(path, await encodeImage(annotated, format, book.output.webp));
+        files.push(path);
+    }
+
+    if (options.raw ?? book.output.raw) {
+        const path = join(options.out, "png", `${name}.original.png`);
+        await writeAtomic(path, raw);
+        files.push(path);
     }
 
     const marks = join(options.out, ".shots", options.tag, `${shot.stem}.marks.json`);

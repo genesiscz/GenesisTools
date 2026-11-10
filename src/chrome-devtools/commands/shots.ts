@@ -96,13 +96,14 @@ export function registerShots(program: Command): void {
 
     withBrowserOptions(withBookOptions(shots.command("run <book>")))
         .description(
-            "take every shot of the book (or --only some) and write <stem>.<tag>.webp and <stem>.<tag>.original.webp"
+            "take every shot of the book (or --only some) and write the annotated <stem>.<tag>.webp (at most 1200 px wide, quality 60, unless the book's output.webp says otherwise)"
         )
+        .option("--raw", "also write the raw image, full size, as png/<stem>.<tag>.original.png")
         .option("--out <dir>", "output folder (default: a new folder in the temp dir)")
         .option("--tag <tag>", "file tag (default: month and day, 1109 for 9 November)")
         .option("--json", "the run report as JSON on stdout")
         .action(
-            guarded(async (path: string, opts: BookOptions & { out?: string; tag?: string }) => {
+            guarded(async (path: string, opts: BookOptions & { out?: string; tag?: string; raw?: boolean }) => {
                 const loaded = await book(path, opts);
                 const outDir = opts.out ? resolve(opts.out) : mkdtempSync(join(tmpdir(), "shots-"));
                 const report = await runShots(loaded, {
@@ -111,6 +112,7 @@ export function registerShots(program: Command): void {
                     out: outDir,
                     use: browserOf(opts),
                     port: portOf(opts),
+                    ...(opts.raw ? { raw: true } : {}),
                     onResult: opts.json ? undefined : (result) => out.println(resultLine(result)),
                 });
                 const failed = report.results.filter((result) => result.status === "failed").length;
