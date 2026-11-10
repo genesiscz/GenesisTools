@@ -28,7 +28,7 @@ import {
     textRects,
 } from "@genesiscz/utils/chrome-devtools/shots/page";
 import { parseShotPart } from "@genesiscz/utils/chrome-devtools/shots/part";
-import { type AnnotationRect, composeOverlay, validateAnnotations } from "@genesiscz/utils/image";
+import { type AnnotationRect, composeOverlay, encodeImage, validateAnnotations } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { attach, type Page } from "../cdp";
@@ -354,17 +354,20 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         const plan = await loadWebPlan(planPath);
         expect([plan.marks.length, plan.pixels.length, plan.clip?.pad]).toEqual([1, 1, 10]);
 
-        const result = await takeQuickShot({ cdp, plan, out: join(dir, "usages.webp"), setup: SETUP });
+        const result = await takeQuickShot({ cdp, plan, out: join(dir, "usages.webp"), setup: SETUP, raw: true });
         if (!result.ok) {
             throw new Error(result.problems.join("; "));
         }
 
         expect(result.files).toEqual({
             annotated: join(dir, "usages.webp"),
-            raw: join(dir, "usages.original.webp"),
             marks: join(dir, "usages.marks.json"),
+            raw: join(dir, "usages.original.png"),
         });
-        expect([existsSync(result.files.annotated), existsSync(result.files.raw)]).toEqual([true, true]);
+        expect([existsSync(result.files.annotated), existsSync(join(dir, "usages.original.png"))]).toEqual([
+            true,
+            true,
+        ]);
         const marks: unknown = SafeJSON.parse(readFileSync(result.files.marks, "utf8"), { strict: true });
         const annotations =
             marks && typeof marks === "object" && "annotations" in marks ? marks.annotations : undefined;
@@ -389,15 +392,29 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
 });
 
 describe("the quick shot's output names", () => {
-    test("only .png and .webp are image outputs, and the raw and marks files sit beside the annotated one", () => {
+    test("only .png and .webp are image outputs, the marks sit beside the annotated one, and the raw only when asked", () => {
         expect([imageFormatOf("a/shot.PNG"), imageFormatOf("shot.webp"), imageFormatOf("proposal.shots.json")]).toEqual(
             ["png", "webp", null]
         );
         expect(shotFilesFor("/out/18-usages.1110.webp")).toEqual({
             annotated: "/out/18-usages.1110.webp",
-            raw: "/out/18-usages.1110.original.webp",
             marks: "/out/18-usages.1110.marks.json",
         });
+        expect(shotFilesFor("/out/18-usages.1110.webp", true).raw).toBe("/out/18-usages.1110.original.png");
+    });
+
+    test("a WebP wider than maxWidth is scaled down with its aspect ratio, a narrower one and a PNG are not", async () => {
+        const canvas = createCanvas(1500, 100);
+        canvas.getContext("2d").fillRect(0, 0, 1500, 100);
+        const png = canvas.toBuffer("image/png");
+        const sizeOf = async (image: Buffer) => {
+            const loaded = await loadImage(image);
+            return [loaded.width, loaded.height];
+        };
+
+        expect(await sizeOf(await encodeImage(png, "webp", { maxWidth: 1200, quality: 60 }))).toEqual([1200, 80]);
+        expect(await sizeOf(await encodeImage(png, "webp", { maxWidth: 2000 }))).toEqual([1500, 100]);
+        expect(await encodeImage(png, "png", { maxWidth: 1200 })).toBe(png);
     });
 });
 
@@ -430,7 +447,10 @@ describe("a shot book", () => {
             preset: "review-dashed",
             viewport: { width: 1440, height: 900, scale: 1 },
         });
-        expect(book.output).toEqual({ formats: ["webp"], quality: 85 });
+        expect(book.output).toEqual({ formats: ["webp"], raw: false, webp: { maxWidth: 1200, quality: 60 } });
+        expect(() => parseShotBook({ ...BOOK, output: { webp: { quality: 120 } } }, "book.json")).toThrow(
+            /output\.webp\.quality: expected a number from 0 to 100, got 120/
+        );
         expect(book.shots.map((shot) => [shot.id, shot.parts.length])).toEqual([
             ["18", 1],
             ["08", 2],
@@ -524,6 +544,7 @@ describe.skipIf(!HAS_CHROME)("running a shot book in headless Chrome", () => {
         const report = await runShots(bookFor([{ target: "testid=title", at: "right", label: "název" }]), {
             tag: "1110",
             out,
+            raw: true,
         });
         const result = report.results[0];
         if (result.status !== "ok") {
@@ -532,14 +553,17 @@ describe.skipIf(!HAS_CHROME)("running a shot book in headless Chrome", () => {
 
         expect(result.files.map((file) => file.slice(out.length + 1))).toEqual([
             "08-names.1110.webp",
-            "08-names.1110.original.webp",
             "png/08-names.1110.png",
             "png/08-names.1110.original.png",
             ".shots/1110/08-names.marks.json",
         ]);
         const stacked = await loadImage(readFileSync(join(out, "png/08-names.1110.png")));
         const raw = await loadImage(readFileSync(join(out, "png/08-names.1110.original.png")));
+        const webp = await loadImage(readFileSync(join(out, "08-names.1110.webp")));
         expect([stacked.width, stacked.height]).toEqual([raw.width, raw.height]);
+        // the heading is a block, so the clip spans the 1440 px page: the WebP is scaled down to 1200 px
+        expect(raw.width).toBe(1440);
+        expect([webp.width, webp.height]).toEqual([1200, Math.round((raw.height * 1200) / 1440)]);
         const marks: unknown = SafeJSON.parse(readFileSync(join(out, ".shots/1110/08-names.marks.json"), "utf8"), {
             strict: true,
         });
@@ -557,6 +581,22 @@ describe.skipIf(!HAS_CHROME)("running a shot book in headless Chrome", () => {
         ).toBe(true);
         expect(existsSync(report.manifest)).toBe(true);
         expect(report.reproducible).toBe(true);
+    }, 60_000);
+
+    test("by default a run writes no raw image", async () => {
+        const out = mkdtempSync(join(tmpdir(), "shot-run-"));
+        const report = await runShots(bookFor([{ target: "testid=title" }]), { tag: "1110", out });
+        const result = report.results[0];
+        if (result.status !== "ok") {
+            throw new Error(result.problems.join("; "));
+        }
+
+        expect(result.files.map((file) => file.slice(out.length + 1))).toEqual([
+            "08-names.1110.webp",
+            "png/08-names.1110.png",
+            ".shots/1110/08-names.marks.json",
+        ]);
+        expect(existsSync(join(out, "png/08-names.1110.original.png"))).toBe(false);
     }, 60_000);
 
     test("rehearse names a target that matches nothing, and writes nothing", async () => {

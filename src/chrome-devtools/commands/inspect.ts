@@ -52,6 +52,7 @@ interface ShotOptions {
     pad?: string;
     annotate?: string;
     preset?: string;
+    raw?: boolean;
 }
 
 function collect(value: string, previous: string[]): string[] {
@@ -425,9 +426,13 @@ Examples:
 
     withPage(program.command("shot"))
         .description(
-            "screenshot the tab; with --mark or --annotate, an annotated and a raw image of what it shows now, plus the marks in image pixels"
+            "screenshot the tab; with --mark or --annotate, an annotated image of what it shows now plus the marks in image pixels (--raw adds the raw image)"
         )
-        .argument("[path]", "output image: .png, or .webp with marks", artifactPath("shot.png"))
+        .argument(
+            "[path]",
+            "output image: .png (full size), or .webp with marks (at most 1200 px wide, quality 60)",
+            artifactPath("shot.png")
+        )
         .option("--full", "capture beyond the viewport (plain screenshot only)")
         .option(
             "--mark <locator>",
@@ -444,6 +449,7 @@ Examples:
             "a plan: items with a target are marks on the page, items with a rect draw in image pixels (inline JSON, .json, .jsonc or .ts)"
         )
         .option("--preset <name>", `look of the marks: ${Object.keys(ANNOTATION_PRESETS).join(", ")}`)
+        .option("--raw", "with marks: also write the raw image, full size, as <stem>.original.png")
         .action(async (path: string, opts: ShotOptions) => {
             const marked = opts.mark.length > 0 || opts.annotate !== undefined;
             const format = imageFormatOf(path);
@@ -459,7 +465,12 @@ Examples:
             }
 
             try {
-                const result = await takeQuickShot({ cdp: cdpLikeOf(page), plan: await quickPlan(opts), out: path });
+                const result = await takeQuickShot({
+                    cdp: cdpLikeOf(page),
+                    plan: await quickPlan(opts),
+                    out: path,
+                    raw: opts.raw === true,
+                });
                 if (!result.ok) {
                     out.log.error(`no shot: ${result.problems.join("; ")}`);
                     process.exit(1);
@@ -469,7 +480,7 @@ Examples:
                     out.log.info(note);
                 }
 
-                out.println(`${result.files.annotated}\n${result.files.raw}\n${result.files.marks}`);
+                out.println([result.files.annotated, result.files.raw, result.files.marks].filter(Boolean).join("\n"));
                 process.exit(0);
             } catch (error) {
                 out.log.error(error instanceof Error ? error.message : String(error));

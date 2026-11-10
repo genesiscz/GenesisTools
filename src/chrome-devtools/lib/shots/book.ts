@@ -15,7 +15,7 @@ import {
     type ShotPart,
 } from "@genesiscz/utils/chrome-devtools/shots/part";
 import { isPresetName, type PresetName, readPlanValue } from "@genesiscz/utils/image";
-import { type ImageFormat, SHOTS_MODULES } from "./quick.ts";
+import { type ImageFormat, SHOTS_MODULES, WEBP_OUTPUT, type WebpOutput } from "./quick.ts";
 
 export type BrowserKind = "headless" | "attach";
 export const BROWSER_KINDS: readonly BrowserKind[] = ["headless", "attach"];
@@ -51,7 +51,13 @@ export interface BookInput {
     };
     look?: { preset?: PresetName; amberPreset?: PresetName };
     page?: { dismiss?: LocatorSource[]; settleMs?: number; freeze?: boolean; readyTimeoutMs?: number };
-    output?: { formats?: ImageFormat[]; quality?: number };
+    output?: {
+        /** The annotated image's formats: WebP in the output folder, PNG (full size) under `png/`. */
+        formats?: ImageFormat[];
+        /** Also write the raw image, full size, as `png/<stem>.<tag>.original.png`. */
+        raw?: boolean;
+        webp?: Partial<WebpOutput>;
+    };
     shots: ShotInput[];
 }
 
@@ -69,7 +75,7 @@ export interface ShotBook {
     use: BrowserKind;
     browser: BrowserSettings;
     setup: PageSetup;
-    output: { formats: ImageFormat[]; quality: number };
+    output: { formats: ImageFormat[]; raw: boolean; webp: WebpOutput };
     shots: Shot[];
 }
 
@@ -115,13 +121,13 @@ function cookieSource(value: unknown, path: string): CookieSource {
     return fail(path, 'a command source needs argv: ["tool", "arg", ...]');
 }
 
-function positive(value: unknown, fallback: number, path: string): number {
+function positive(value: unknown, fallback: number, path: string, max = Number.POSITIVE_INFINITY): number {
     if (value === undefined) {
         return fallback;
     }
 
-    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-        fail(path, `expected a number of 0 or more, got ${String(value)}`);
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > max) {
+        fail(path, `expected a number from 0 to ${max}, got ${String(value)}`);
     }
 
     return value;
@@ -219,7 +225,19 @@ export function parseShotBook(value: unknown, file: string, overrides: { base?: 
             readyTimeoutMs: positive(page.readyTimeoutMs, DEFAULT_SETUP.readyTimeoutMs, `${file}: page.readyTimeoutMs`),
             preset: defaults.preset,
         },
-        output: { formats, quality: positive(input.output?.quality, 85, `${file}: output.quality`) },
+        output: {
+            formats,
+            raw: input.output?.raw === true,
+            webp: {
+                maxWidth: positive(input.output?.webp?.maxWidth, WEBP_OUTPUT.maxWidth, `${file}: output.webp.maxWidth`),
+                quality: positive(
+                    input.output?.webp?.quality,
+                    WEBP_OUTPUT.quality,
+                    `${file}: output.webp.quality`,
+                    100
+                ),
+            },
+        },
         shots,
     };
 }

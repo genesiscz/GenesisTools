@@ -301,12 +301,13 @@ throwaway profile and a loopback fixture (no model, no network). Measured 2026-0
 ## Annotated page shots (`shot --mark`, `shots`)
 
 Boxes and labels drawn INTO the page (its own font, so Czech letters are right), photographed, and
-removed: each shot is a raw image and an annotated one that differ only under the overlay. Targets
+removed. Each shot is photographed twice, raw and annotated, and the two differ only under the
+overlay; a run writes the annotated image, and the raw one only when asked (`--raw`). Targets
 are locator strings resolved when the shot runs, never pixels; a target that matches nothing, or a
 label with no free spot, fails the shot by name instead of drawing at 0,0.
 
 ```bash
-# One quick shot of the tab you look at: annotated, raw (.original) and the marks in image pixels.
+# One quick shot of the tab you look at: the annotated image and the marks (--raw adds the raw PNG).
 tools chrome-devtools shot ~/shots/usages.webp \
     --mark testid=usages-button \
     --label "Kde je použitý" \
@@ -322,8 +323,8 @@ tools chrome-devtools shots run scripts/proposal.shots.ts --tag 1110 --out wiki/
 
 | Command | What it does |
 |---|---|
-| `shot [path] --mark <loc> [--label <t>] [--at <side>] [--clip <loc>] [--pad <px>] [--annotate <plan>] [--preset <name>]` | Marks on the current tab; `.png` or `.webp`; refuses any other output name |
-| `shots run <book> [--only ids] [--out dir] [--tag t] [--base url] [--browser headless\|attach] [--port n] [--json]` | Every shot: `<stem>.<tag>.webp`, `<stem>.<tag>.original.webp`, PNGs under `png/` when the book asks, marks and the run report under `.shots/<tag>/` |
+| `shot [path] --mark <loc> [--label <t>] [--at <side>] [--clip <loc>] [--pad <px>] [--annotate <plan>] [--preset <name>] [--raw]` | Marks on the current tab; a `.webp` at most 1200 px wide at quality 60, a `.png` at full size; refuses any other output name; `--raw` adds `<stem>.original.png` |
+| `shots run <book> [--only ids] [--out dir] [--tag t] [--base url] [--browser headless\|attach] [--port n] [--raw] [--json]` | Every shot: the annotated `<stem>.<tag>.webp`, a full-size annotated PNG under `png/` when the book asks, the raw image as `png/<stem>.<tag>.original.png` only with `--raw` (or `output.raw`), marks and the run report under `.shots/<tag>/` |
 | `shots list <book> [--only ids] [--json]` | id, stem, parts, first URL, note; no browser |
 | `shots check <book>` | Parses every locator, mark and part; no browser, changes nothing |
 | `shots rehearse <book> [--only ids]` | Visits every part, runs its steps, resolves every locator and places every label; no image |
@@ -338,8 +339,10 @@ book's folder needs no `node_modules`. A mark also takes the first shot script's
 side that covers no page text and no other label inside the clip (`clip.fit: "labels"` grows the
 clip instead). Browsers: `headless` (default; a fresh Chrome, login cookies copied in memory from
 your running browser for the book's base URL only, or from `browser.headless.cookies: { from:
-"command", argv }`), or `attach` (your running browser, a new background tab). The marks file is
-an annotation plan: `tools control draw <image> --annotate <marks.json>` redraws it. Code:
+"command", argv }`), or `attach` (your running browser, a new background tab). A book's `output`
+defaults to `{ formats: ["webp"], raw: false, webp: { maxWidth: 1200, quality: 60 } }`;
+`maxWidth: 0` keeps the full width. The marks file is an annotation plan in the raw image's pixels:
+`tools control draw <raw.png> --annotate <marks.json>` redraws it onto the raw image. Code:
 `src/utils/chrome-devtools/shots/` (vendored: locators, the in-page agent, `capturePart`) and
 `lib/shots/` (book, browsers, runner, quick shot).
 
