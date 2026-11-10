@@ -2757,7 +2757,7 @@ struct PRDetailView: View {
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
                 Spacer()
                 if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
+                    NoticePill(text: notice.text, tone: notice.tone, fixes: notice.fixes) { model.headerNotice = nil }
                 }
                 if prs.review != nil {
                     IconButton(systemName: "arrow.up.right.square", tooltip: "Open this review in its own window: the same diff, threads and proposal") {
@@ -3501,10 +3501,8 @@ struct PRSessionsSection: View {
                     .findRow("session:\(row.id)", cornerRadius: 6)
             }
             if let error = store.errors[pr.id] {
-                Text(verbatim: "Session search failed: \(error)")
-                    .font(.system(size: 11))
-                    .foregroundColor(ReviewPalette.removed)
-                    .lineLimit(2)
+                FailureInline(message: "\(error)", outcome: "The search for this PR's sessions failed",
+                              action: "Find the sessions of a PR", area: "hub", identifier: "pr.sessions.failure")
                     .textSelection(.enabled)
                     .instantTooltip(error)
             }

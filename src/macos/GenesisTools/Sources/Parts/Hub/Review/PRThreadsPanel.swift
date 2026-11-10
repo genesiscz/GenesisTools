@@ -251,12 +251,7 @@ struct PRReviewBar: View {
                     : "Threads on the PR; they sit on their lines only in the Branch scope or the PR's range.")
                     + " Open: unresolved and not outdated, the same count as the PR list. Outdated: unresolved, but a later push moved their lines.")
         } else if let error = store.error {
-            Text(verbatim: "Threads did not load: \(error)")
-                .foregroundColor(ReviewPalette.removed)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .textSelection(.enabled)
-                .instantTooltip(error)
+            FailureInline(error, form: .compact, identifier: "pr-threads.failure") { store.load(noCache: true) }
         } else {
             Text("Reading the PR's threads…").foregroundColor(ReviewPalette.dim).lineLimit(1)
         }

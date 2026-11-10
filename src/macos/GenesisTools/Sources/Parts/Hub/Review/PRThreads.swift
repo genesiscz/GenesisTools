@@ -446,7 +446,8 @@ final class PRThreadsStore: ObservableObject {
     /// A write in flight ("Resolving…"); the thread buttons wait for it.
     @Published private(set) var busy: String?
     @Published var notice: String?
-    @Published private(set) var error: String?
+    /// The last threads read that failed, as a report; nil after one that worked.
+    @Published private(set) var error: FailureReport?
     /// Called on the main thread after new threads land (the model re-renders the diff's cards).
     var onChange: (() -> Void)?
     var onSubmitted: ((PRIdentity, Set<String>) -> Void)?
@@ -490,8 +491,9 @@ final class PRThreadsStore: ObservableObject {
                 }
             }
             let span = HubPerf.begin("pr.threads", args.suffix(from: 3).joined(separator: " "))
+            let ledger = ToolsCallLedger()
             let result = Result { () -> PRThreadsPayload in
-                let data = try PRCLI.run(args)
+                let data = try ledger.recordSync { try PRCLI.run(args) }
                 let payload = try JSONDecoder().decode(PRThreadsPayload.self, from: data)
                 ReviewCache.threads.writeData(data, key: cacheKey)
                 return payload
@@ -518,7 +520,9 @@ final class PRThreadsStore: ObservableObject {
                         self.onChange?()
                     }
                 case .failure(let failure):
-                    self.error = "\(failure)"
+                    FailureReport.toolsCall(failure, outcome: "The PR's threads did not load", action: "Read the PR's review threads",
+                                            call: ledger.failed, argv: args, title: "PR threads did not load", area: "hub")
+                        .deliver({ [weak self] in self?.error = $0 }, isCurrent: { [weak self] in self?.error == $0 })
                     HubPerf.log("pr.threads failed: \(failure)")
                 }
                 if self.loadAgain {

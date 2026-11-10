@@ -312,11 +312,8 @@ struct TimelineDetailView: View {
             if let detail = timeline.details[event.id] {
                 content(detail)
             } else if let error = timeline.detailErrors[event.id] {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle").foregroundColor(ReviewPalette.modified)
-                    Text(error).font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim).lineLimit(3)
-                    Button("Retry") { timeline.loadDetail(event, fresh: true) }.buttonStyle(.genHoverPlain()).font(.system(size: 11.5))
-                }
+                FailureInline(message: error, outcome: "This event's details did not load", action: "Open an Activity row's details",
+                              area: "hub", identifier: "timeline.detail.failure") { timeline.loadDetail(event, fresh: true) }
             } else {
                 SkeletonLines(count: 3)
                     .skeletonShimmer()

@@ -246,7 +246,8 @@ struct HubDigestPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if let error = model.error {
-                        Text(verbatim: error).foregroundColor(ReviewPalette.removed)
+                        FailureInline(message: error, outcome: "The digest did not load", action: "Open the digest",
+                                      area: "hub", identifier: "digest.failure")
                     }
                     if let digest = model.digest {
                         sections(digest)

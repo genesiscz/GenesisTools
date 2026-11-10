@@ -543,6 +543,8 @@ final class ReviewModel: ObservableObject {
     @Published var fileInViewID: String?
     @Published var options: DiffViewOptions
     @Published var error: String?
+    /// `error` as a report for the pane (`FailureInline` with Try again), made when the error changes.
+    @Published private(set) var errorReport: FailureReport?
     @Published var loading = false
     @Published var lastLoaded: Date?
     @Published var commentCount = 0
@@ -1468,6 +1470,14 @@ final class ReviewModel: ObservableObject {
             roots = next
         }
         error = roots.count == 1 ? roots[0].error : nil
+        if error == nil {
+            if errorReport != nil { errorReport = nil }
+        } else if errorReport?.log != error {
+            errorReport = error.map {
+                FailureReport.unexpected($0, outcome: "The changes did not load", action: "List the changes of the checkout",
+                                         title: "Changes did not load", area: "hub")
+            }
+        }
         if started { watchRoots() }
 
         let merged = ReviewRoots.merge(roots)
@@ -3001,12 +3011,10 @@ struct ReviewRootView: View {
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
                 }
-                if let error = model.error {
-                    Text(error)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(ReviewPalette.removed)
-                        .textSelection(.enabled)
-                        .padding(8)
+                if let report = model.errorReport {
+                    FailureInline(report, form: .compact, identifier: "review.failure") { model.reload() }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 // An error is the answer: "No changes against HEAD" under it contradicted it.
@@ -4095,11 +4103,19 @@ private struct RootFolderRow: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 10))
                         .foregroundColor(ReviewPalette.removed)
+                        .accessibilityLabel("Error")
                     Text(error)
                         .font(.system(size: 10.5))
                         .foregroundColor(ReviewPalette.removed)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .help(error)
+                    // The row has no room for the whole error: the failure window holds it, with Copy and Report a bug.
+                    IconButton(systemName: "doc.text.magnifyingglass", tooltip: "Details of this failure", size: 10) {
+                        FailureReporter.shared.showDetails(
+                            FailureReport.unexpected(error, outcome: "The changes of \(root.prefix) did not load",
+                                                     action: "List the changes of the checkout", area: "hub"))
+                    }
                 } else if !root.shown {
                     Text("not in Changes").font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
                 }

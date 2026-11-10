@@ -279,7 +279,8 @@ final class HubAgentsModel: ObservableObject {
     private(set) var loading = false
     private(set) var showingCached = false
     @Published private(set) var loaded = false
-    @Published private(set) var error: String?
+    /// Why the last list read failed, as a report (`FailureInline` with Try again); nil after a read that worked.
+    @Published private(set) var error: FailureReport?
     /// A `--session` or `--agent` request the loaded list does not hold; the list itself loaded fine.
     @Published var requestMiss: String?
     /// `AgentTree.key(parent:child:)` of the open child.
@@ -664,7 +665,8 @@ final class HubAgentsModel: ObservableObject {
         Task {
             let span = HubPerf.begin("agents.list", scope.map { "session \($0.prefix(8))" } ?? "all", awaits: true)
             let read = readList
-            let result = await Task.detached(priority: .utility) { Result { try read(scope) } }.value
+            let ledger = ToolsCallLedger()
+            let result = await Task.detached(priority: .utility) { ledger.recordSync { Result { try read(scope) } } }.value
             inFlight = false
             loading = false
             switch result {
@@ -685,8 +687,15 @@ final class HubAgentsModel: ObservableObject {
                 if scope == nil { openNewestIfDue() }
             case .failure(let failure):
                 span.end("failed")
-                error = "\(failure)"
+                let report = FailureReport.toolsCall(failure, outcome: "The agents did not load", action: "List the agents",
+                                                     call: ledger.failed, title: "Agents did not load", area: "hub",
+                                                     expected: "The Agents mode lists each session's agents.")
+                error = report
                 HubPerf.log("agents.list failed: \(failure)")
+                Task { [weak self] in
+                    let full = await report.addingCallLog()
+                    if self?.error == report { self?.error = full }
+                }
             }
             if !loaded || scope == nil {
                 if !loaded { loaded = true }
@@ -1317,13 +1326,9 @@ struct AgentsListView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
                             if let error = agents.error {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    NoticePill(text: "Could not load the agents.", more: error, tone: .error)
-                                    GhostButton("Try again", symbol: "arrow.clockwise", tooltip: "Load the agents again",
-                                                action: agents.reload)
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 4)
+                                FailureInline(error, form: .compact, identifier: "agents.failure", retry: agents.reload)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 4)
                             }
                             if let miss = agents.requestMiss {
                                 NoticePill(text: miss, tone: .warning) { agents.requestMiss = nil }

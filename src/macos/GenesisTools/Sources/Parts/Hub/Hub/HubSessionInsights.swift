@@ -376,10 +376,8 @@ struct SessionInsightsSection: View {
                     jump(turnIndex: index, rowId: "t-\(id)")
                 })
             } else if let error = model.error {
-                Text(verbatim: error)
-                    .font(.system(size: 11))
-                    .foregroundStyle(SessionPalette.red)
-                    .textSelection(.enabled)
+                FailureInline(message: error, outcome: "The session's insights did not load", action: "Read the session's insights",
+                              area: "hub", identifier: "insights.failure")
             } else {
                 // Shaped like the cost chart and the tool table that replace it.
                 VStack(alignment: .leading, spacing: 10) {

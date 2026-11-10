@@ -21,10 +21,12 @@ extension HubModel {
         decisionsRequest += 1
         let request = decisionsRequest
         let read = readDecisions
+        decisionsFailure = nil
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("decisions.load")
+            let ledger = ToolsCallLedger()
             let result = Result {
-                try read(sessionId)
+                try ledger.recordSync { try read(sessionId) }
             }
             span.end((try? result.get()).map { "\($0.decisions.count) decisions" } ?? "failed")
             DispatchQueue.main.async { [weak self] in
@@ -35,7 +37,12 @@ extension HubModel {
                 case .success(let envelope):
                     self.decisions = envelope.decisions
                 case .failure(let error):
-                    self.notice = "Could not read this session's decisions: \(error)"
+                    FailureReport.toolsCall(error, outcome: "This session's decisions did not load", action: "Read the session's decisions",
+                                            call: ledger.failed, argv: ["question", "inbox", "--session", sessionId, "--json"],
+                                            title: "Decisions did not load", area: "hub")
+                        .deliver({ [weak self] in self?.decisionsFailure = $0 }, isCurrent: { [weak self] in
+                            self?.decisionsFailure == $0 && self?.decisionsRequest == request
+                        })
                 }
             }
         }
