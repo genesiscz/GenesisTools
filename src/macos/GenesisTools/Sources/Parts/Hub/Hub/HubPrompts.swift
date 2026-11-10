@@ -75,15 +75,6 @@ struct PromptSendResult: Decodable {
     let dryRun: Bool
 }
 
-/// `{error, code, missing}`: what every `tools hub prompts … --json` prints on a failure.
-struct PromptCLIError: Decodable, Error, CustomStringConvertible {
-    let error: String
-    let code: String
-    let missing: [String]?
-
-    var description: String { error }
-}
-
 /// What the picker fills variables from: the selected session and what the hub knows about it.
 struct PromptContext: Equatable {
     var sessionId: String?
@@ -128,15 +119,9 @@ final class PromptLibraryStore: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var busy = false
 
+    /// A failure is the verb's `{error, code, missing}` on stdout, read as a `ToolsFailure`.
     nonisolated private static func runCLI(_ args: [String]) throws -> Data {
-        let capture = try ToolsCLIRunner.capture(args)
-        if capture.status != 0 {
-            if let failure = try? JSONDecoder().decode(PromptCLIError.self, from: capture.stdout) {
-                throw failure
-            }
-            throw ReviewError.git("tools \(args.prefix(3).joined(separator: " ")) exited \(capture.status): \(String(decoding: capture.stderr, as: UTF8.self).trimmed.suffix(300))")
-        }
-        return capture.stdout
+        try HubSource.bridge.output(args)
     }
 
     func load() async {

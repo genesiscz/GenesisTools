@@ -78,7 +78,7 @@ final class PRSessionsStore: ObservableObject {
             let span = HubPerf.begin("prs.sessions", key, awaits: true)
             let fetch = Task.detached(priority: .utility) { () -> Result<HubPRSessions, Error> in
                 Result {
-                    let data = try ToolsCLIRunner.run(args)
+                    let data = try HubSource.bridge.output(args)
                     let found = try JSONDecoder().decode(HubPRSessions.self, from: data)
                     cache.writeData(data, key: key)
                     return found
