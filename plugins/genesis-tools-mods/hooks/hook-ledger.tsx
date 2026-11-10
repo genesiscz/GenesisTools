@@ -5,11 +5,21 @@
 // with their text, and the dedupe switch for this session. The status line cannot take a click, so the count left it
 // on 2026-10-23. The count is per session and survives a reload of the plugin. `mods.hooks.dedupe` drops a repeat: an
 // entry, or an area-rule block inside one, already handed to the same loop since its last compaction becomes a
-// one-line receipt. Each injection and each drop goes to `mods-log/hooks.jsonl`.
+// one-line receipt. Each injection and each drop goes to `mods-log/hooks.jsonl`. With `mods.hooks.metrics` (on by
+// default) each injection is also one `agent-context / hook.injection` event in the `tools metrics` spool, with its
+// session, agent, source and rule file (`metrics.ts`).
 import type { ElementTable, RenderElement } from "claude-code";
 import type { HookCount, HookLedger } from "../types";
 import { liveSince } from "./live";
-import { agentsDir, type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
+import {
+    AREA_BLOCK,
+    INJECTION_DEFINITION,
+    type InjectionEntry,
+    injectionEvents,
+    modsSpoolPath,
+    spoolInjections,
+} from "./metrics";
+import { agentsDir, appendJsonl, type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
 import { barText, dimNote, divider, headerRow, type Kit, listRow, plural, sectionTitle, sidebarFrame } from "./sidebar";
 
 export const HOOKS_PANE = "mods-hooks";
@@ -78,7 +88,6 @@ let opened: number | undefined;
 
 /** Shorter entries are never dropped: a receipt would save nothing. */
 const MIN_DEDUPE_CHARS = 200;
-const AREA_BLOCK = /(?=Contents of \S+ \(area rules\):)/;
 
 /** What each loop has been handed since its last compaction: a key per whole entry and per area-rule block. */
 const seen = new Map<string, Map<string, number>>();
@@ -111,7 +120,7 @@ export function dedupeEntry(
     text: string,
     held: Map<string, number>,
     now: number
-): { text: string; droppedChars: number; dropped: string[] } {
+): { text: string; droppedChars: number; dropped: string[]; whole: boolean } {
     const whole = keyOf(text);
     const before = held.get(whole);
 
@@ -119,14 +128,14 @@ export function dedupeEntry(
         const head = text.split("\n")[0]?.slice(0, 80) ?? "hook context";
         const note = receipt(`"${head}"`, text.length, before);
 
-        return { text: note, droppedChars: text.length - note.length, dropped: [head] };
+        return { text: note, droppedChars: text.length - note.length, dropped: [head], whole: true };
     }
 
     held.set(whole, now);
     const [preface = "", ...blocks] = text.split(AREA_BLOCK);
 
     if (blocks.length === 0) {
-        return { text, droppedChars: 0, dropped: [] };
+        return { text, droppedChars: 0, dropped: [], whole: false };
     }
 
     const kept: string[] = [];
@@ -150,7 +159,52 @@ export function dedupeEntry(
         kept.push(`${note}\n\n`);
     }
 
-    return { text: dropped.length ? `${preface}${kept.join("")}`.trimEnd() : text, droppedChars, dropped };
+    return {
+        text: dropped.length ? `${preface}${kept.join("")}`.trimEnd() : text,
+        droppedChars,
+        dropped,
+        whole: false,
+    };
+}
+
+/** True once this plugin load wrote the metric's define line. */
+let declared = false;
+
+/** The injection's events in the `tools metrics` spool; a failure here never reaches the hook's answer. */
+async function spoolMetrics(
+    host: Host,
+    input: Record<string, unknown>,
+    answer: { event: string; agent: string; entries: InjectionEntry[]; block: string; at: number }
+): Promise<void> {
+    try {
+        const home = (await host.env("GENESIS_TOOLS_HOME")) ?? (await host.env("HOME"));
+
+        if (!home) {
+            return;
+        }
+
+        const events = injectionEvents(
+            {
+                session: await host.sessionId(),
+                agent: answer.agent,
+                agentType: typeof input.agent_type === "string" ? input.agent_type : null,
+                event: answer.event,
+                tool: typeof input.tool_name === "string" ? input.tool_name : null,
+                harness: "claude",
+            },
+            answer
+        );
+        const path = modsSpoolPath(home, answer.at);
+
+        if (!declared) {
+            declared = true;
+            await appendJsonl(host, path, { ...INJECTION_DEFINITION });
+        }
+
+        await spoolInjections((to, record) => appendJsonl(host, to, record), path, events);
+    } catch (error) {
+        await logMod(host, "hooks", { event: "metrics-failed", error: String(error) }).catch(() => undefined);
+    }
 }
 
 function add(count: HookCount, chars: number): HookCount {
@@ -190,14 +244,17 @@ export async function ledgerClassic(host: Host, input: unknown, answer: unknown)
         const now = Date.now();
         let droppedChars = 0;
         const dropped: string[] = [];
+        const injections: InjectionEntry[] = [];
         const kept = entries.map((entry) => {
             if (!dedupe) {
+                injections.push({ text: entry, whole: false, droppedRules: [] });
                 return entry;
             }
 
             const out = dedupeEntry(entry, held, now);
             droppedChars += out.droppedChars;
             dropped.push(...out.dropped);
+            injections.push({ text: entry, whole: out.whole, droppedRules: out.whole ? [] : out.dropped });
 
             return out.text;
         });
@@ -220,6 +277,11 @@ export async function ledgerClassic(host: Host, input: unknown, answer: unknown)
             dropped: dropped.length ? dropped : undefined,
             droppedChars: droppedChars || undefined,
         });
+
+        if (settings.metrics) {
+            await spoolMetrics(host, input, { event, agent, entries: injections, block, at: now });
+        }
+
         save(host);
         recent = [
             ...recent,

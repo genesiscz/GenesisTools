@@ -282,7 +282,7 @@ describe("the mods section", () => {
         expect(read.agentModel).toEqual({ enabled: false, format: "short" });
         // Out of range keeps the default, as the CLI does.
         expect(read.cacheBand.warnMinutes).toBe(10);
-        expect(read.hooks).toEqual({ tokens: false, dedupe: false });
+        expect(read.hooks).toEqual({ tokens: false, dedupe: false, metrics: true });
         expect(modsSettings("{ not json")).toEqual(MODS_DEFAULTS);
     });
 });

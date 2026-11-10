@@ -44,7 +44,8 @@ export interface ModsSettings {
     cacheBand: { enabled: boolean; warnMinutes: number; cautionMinutes: number; others: boolean };
     tmpUsage: { enabled: boolean; minutes: number };
     agentsBand: { enabled: boolean; warnMinutes: number };
-    hooks: { tokens: boolean; dedupe: boolean };
+    /** `metrics`: each injection also goes to the `tools metrics` spool as `agent-context / hook.injection`. */
+    hooks: { tokens: boolean; dedupe: boolean; metrics: boolean };
     /**
      * `readings`: every refresh and reading goes to `mods-log/<feature>.jsonl` too (the git rows of each pass, the
      * session files reading, the answers scans). Commands, failures, the hook ledger and what the links mod changed
@@ -218,7 +219,11 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
             enabled: bool(agents.enabled, d.agentsBand.enabled),
             warnMinutes: whole(agents.warnMinutes, 1, 24 * 60, d.agentsBand.warnMinutes),
         },
-        hooks: { tokens: bool(hooks.tokens, d.hooks.tokens), dedupe: bool(hooks.dedupe, d.hooks.dedupe) },
+        hooks: {
+            tokens: bool(hooks.tokens, d.hooks.tokens),
+            dedupe: bool(hooks.dedupe, d.hooks.dedupe),
+            metrics: bool(hooks.metrics, d.hooks.metrics),
+        },
         sidebar: {
             hints: bool(sidebar.hints, d.sidebar.hints),
             feedback:

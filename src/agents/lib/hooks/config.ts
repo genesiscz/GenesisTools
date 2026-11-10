@@ -377,9 +377,11 @@ export interface ModsConfig {
     agentsBand: { enabled: boolean; warnMinutes: number };
     /**
      * What the classic hooks hand the model: `tokens` shows the estimate as a band chip that opens a sidebar, `dedupe`
-     * replaces a context block already given to the same loop since its last compaction with a one-line receipt.
+     * replaces a context block already given to the same loop since its last compaction with a one-line receipt,
+     * `metrics` records each injection as an `agent-context / hook.injection` event for `tools metrics` (session, agent,
+     * event, source, rule file).
      */
-    hooks: { tokens: boolean; dedupe: boolean };
+    hooks: { tokens: boolean; dedupe: boolean; metrics: boolean };
     /** `readings`: routine refreshes go to `mods-log/<feature>.jsonl`, batched by file. */
     log: { readings: boolean };
     /**
