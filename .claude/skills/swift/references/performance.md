@@ -567,3 +567,36 @@ samples in `MarkdownRootHostingView.layout`. Report: the notes vault's `2026-10-
   skips display passes and hides the loop).
 - `HangWatch.onSpin` recovers only a spin that returns to the run loop. A wedge inside one SwiftUI transaction (log
   line `main-thread WEDGED`) never reaches it, so the fix must be the root cause.
+
+## A loaded Mac: subprocesses, timeouts and what the user keeps (2026-11-10 06:45)
+
+Load 300 to 800 for hours, about 2,100 processes; `ps` hung up to 18.85 s and the hub server was silent for 222 s.
+The full account is in `.claude/skills/performance/references/loaded-machine.md`. What it means for Swift code:
+
+### Never launch `ps`, `lsof` or `pgrep` from the app
+- **Symptom:** `app-perf.log` lines "ps ... did not exit within 3 s" in bursts; every reader of the process table
+  waits together.
+- **Fix:** read through libproc (`proc_listpids`, `proc_pidinfo`, `proc_pid_rusage`). The lint rule
+  `swift-no-process-tool-spawn` (`scripts/ci/swift-lint-rules.ts`) fails a new launch. Two sites stay on its
+  ratchet list: the load-top probe needs the CPU of other users' processes, and libproc answers EPERM for those
+  (`fseventsd`); only the setuid `ps` reads them.
+- **A probe that failed waits before it runs again.** The load-top probe ran once a minute after a stall and failed
+  59 of 414 times in five days. It now waits 10 minutes after a failed `ps` (20481c31a6).
+
+### A user action must not lose its input on a timeout
+- **Symptom:** the widget showed "Sending…" for 4 minutes, and a picked decision with its note vanished. The write
+  waited 120 s, the pick was hidden at 60 s, and the failure handler removed it at 120 s.
+- **Fix:** a timeout keeps the input on screen with the reason and a Try again (68f926c887, write limit 30 s). Of
+  624 widget calls in five days, 6 that answered took longer than 30 s. Pick a limit from such a distribution.
+- **Rule:** a timeout change names what the user sees when it fires. The failure path never clears state the user
+  typed or picked.
+
+### One in flight per kind, and no second full wait
+- A refresh that a change triggers runs one at a time; the newest ask follows the running one (570dcdae21). Before,
+  each change of the watched sessions started one more `tools hub stuck check`.
+- A server call that used its whole limit does not start the same call as a process (82e22216a8): 41 such
+  processes were started and killed at once in five days.
+- Every `Process` launch has a limit, also a "small" `git` read (b6835b4b39: 10 s, then the result of a failed
+  `git`).
+- Not solved: the app cannot tell a silent hub server from a slow call. The server answers `{"op":"health"}`, and
+  no client sends it while a call waits.
