@@ -599,11 +599,18 @@ tools git worktree backup /tmp/cc/shop/<session>/worktrees/fix-x --remove --note
 | `--json` | The plan (with `--dry-run`) or the result as JSON on stdout |
 
 The backup goes to `~/.genesis-tools/backups/worktrees/<YYYY-MM-DD>-<repo>-<worktree>/` (`-2`, `-3`, ... when the name
-is taken):
+is taken). The folder is created with mode 0700, and copied folders keep their own mode, because it can hold ignored
+secrets such as `.env.local`:
 
 - `commits/`: one `git format-patch` file per commit in `<base>..HEAD`. The base is the merge base with the branch's
-  upstream, else `origin/HEAD`, else the main checkout's branch. Merge commits are skipped and counted.
-- `uncommitted-on-<short HEAD>.patch`: `git diff HEAD --binary`, staged and unstaged changes together.
+  upstream when it has one. Without an upstream, it compares two candidates, `origin/HEAD` and the branch the main
+  checkout has out (unless that is this worktree's own branch), and takes the merge base that leaves the fewest
+  commits in `<base>..HEAD`. So a worktree cut from a feature branch gets its own commits, not the whole feature
+  branch. Merge commits are skipped and counted.
+- `uncommitted-on-<short HEAD>.patch`: `git diff HEAD --binary`, the working copy of every changed tracked file.
+- `staged-on-<short HEAD>.patch`: `git diff --cached HEAD --binary`, the index, when it differs from HEAD. It is a
+  separate patch because a staged version can differ from the working copy (a partly staged file, or a file staged
+  and then changed back).
 - `untracked/` and `ignored/`: the files with their paths, mode and mtime (an APFS clone, so no extra space on the
   same volume). Ignored entries that a tool rebuilds (`node_modules`, `dist`, `.next`, `target`, `*.log`, ...) are
   skipped; sockets and fifos are listed, not copied.
@@ -612,10 +619,13 @@ is taken):
   `refs/backups/worktrees/<folder name>` keeps them alive in the repository.
 
 The proof runs in a scratch repository that borrows the source's objects: `git apply --cached --check` of the
-uncommitted patch on HEAD's tree, and `git am` of the commit patches on the base, whose tree must equal HEAD's tree
-when the range has no merge commits. `--remove` then reads the worktree's fingerprint again (HEAD, the diff, the
-untracked and ignored files with size and mtime) and refuses when anything changed. It runs
-`git worktree remove --force` once, so a locked worktree stays refused. The branch stays in the repository.
+uncommitted patch on HEAD's tree; the staged patch applied on HEAD's tree, which must build the same tree as a copy
+of the worktree's index; and `git am` of the commit patches on the base, whose tree must equal HEAD's tree. The tree
+is compared when the range has merge commits too: a merge whose resolution is in no patch fails the proof. Every
+copied file and symlink is then compared with the contents read before the copy. `--remove` reads the worktree's
+fingerprint again (HEAD, the working-tree and index diffs, the untracked and ignored files with their mode, size,
+mtime and contents) and refuses when anything changed. It runs `git worktree remove --force` once, so a locked
+worktree stays refused. The branch stays in the repository.
 
 It refuses before writing anything when a merge, rebase, cherry-pick, revert or bisect is in progress, when the
 worktree has initialized submodules, when the index has unmerged entries, when the copy exceeds the limit, or when
