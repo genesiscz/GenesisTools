@@ -11,6 +11,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import {
     fillerListsOf,
     languageSettings,
+    listenPads,
     MEETINGS_CONFIG_VERSION,
     MeetingsConfigStore,
     matchProjects,
@@ -19,6 +20,7 @@ import {
     recorderSettings,
     resolveDictionary,
     sourceFolders,
+    TONE_PRESETS,
 } from "./config";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
 import { MeetingStore, nextId, titleSlug } from "./record";
@@ -174,7 +176,7 @@ describe("meetings config", () => {
         expect(raw).toEqual({
             version: MEETINGS_CONFIG_VERSION,
             global: {
-                playback: { listen: { padSec: 2, roundCap: 7 } },
+                playback: { listen: { padBeforeSec: 2, padAfterSec: 2, roundCap: 7 } },
                 suggest: { questionCap: 7 },
                 capture: { retentionDays: 9 },
             },
@@ -323,10 +325,73 @@ describe("meetings config", () => {
             version: MEETINGS_CONFIG_VERSION,
             global: { playback: { listen: { roundCap: 5 } }, suggest: { questionCap: 5 } },
         });
-        await config.setListenPad(3);
+        await config.setListenPads({ beforeSec: 3, afterSec: 4 });
         expect(await config.storage.getConfig()).toMatchObject({
-            global: { playback: { listen: { padSec: 3, roundCap: 5 } } },
+            global: { playback: { listen: { padBeforeSec: 3, padAfterSec: 4, roundCap: 5 } } },
         });
+    });
+
+    test("a version 4 file splits listen.padSec into padBeforeSec and padAfterSec, and a key already there wins", async () => {
+        const v4 = { version: 4, global: { playback: { listen: { padSec: 7, tone: { sound: { hz: 440 } } } } } };
+        const raw: Record<string, unknown> = structuredClone(v4);
+
+        expect(migrateMeetingsConfig(raw)).toBe(true);
+        expect(raw).toEqual({
+            version: MEETINGS_CONFIG_VERSION,
+            global: { playback: { listen: { padBeforeSec: 7, padAfterSec: 7, tone: { sound: { hz: 440 } } } } },
+        });
+        expect(migrateMeetingsConfig(raw)).toBe(false);
+        // The version 4 sine reads as it is.
+        expect(meetingsConfigSchema.parse(v4).global.playback.listen.tone.sound).toEqual({
+            hz: 440,
+            sec: 0.15,
+            volume: 0.6,
+        });
+
+        const both = { version: 4, global: { playback: { listen: { padSec: 7, padAfterSec: 2 } } } };
+        expect(listenPads(meetingsConfigSchema.parse(both).global.playback.listen)).toEqual({
+            beforeSec: 7,
+            afterSec: 2,
+        });
+
+        const config = store();
+        await config.storage.setConfig(v4);
+        expect(listenPads((await config.read()).global.playback.listen)).toEqual({ beforeSec: 7, afterSec: 7 });
+        expect(await config.storage.getConfig()).toEqual({
+            version: MEETINGS_CONFIG_VERSION,
+            global: { playback: { listen: { padBeforeSec: 7, padAfterSec: 7, tone: { sound: { hz: 440 } } } } },
+        });
+    });
+
+    test("the pads: none saved until the first listen, one side set stands for both", () => {
+        const listen = (settings: Record<string, unknown>) =>
+            meetingsConfigSchema.parse({ version: 5, global: { playback: { listen: settings } } }).global.playback
+                .listen;
+
+        expect(listenPads(listen({}))).toBeUndefined();
+        expect(listenPads(listen({ padAfterSec: 4 }))).toEqual({ beforeSec: 4, afterSec: 4 });
+        expect(listenPads(listen({ padBeforeSec: 1, padAfterSec: 9 }))).toEqual({ beforeSec: 1, afterSec: 9 });
+        expect(() => listen({ padBeforeSec: 61 })).toThrow();
+    });
+
+    test("the tone's sound is a sine, a preset or a sound file; each reads with its volume", () => {
+        const sound = (value: unknown) =>
+            meetingsConfigSchema.parse({ version: 5, global: { playback: { listen: { tone: { sound: value } } } } })
+                .global.playback.listen.tone.sound;
+
+        expect(sound(undefined)).toEqual({ hz: 880, sec: 0.15, volume: 0.6 });
+        // A preset without a volume plays at its own (resolveToneSound reads TONE_PRESETS).
+        expect(sound({ preset: "tink" })).toEqual({ preset: "tink" });
+        expect(sound({ preset: "soft", volume: 0.1 })).toEqual({ preset: "soft", volume: 0.1 });
+        expect(() => sound({ file: "sounds/chime.wav" })).toThrow("absolute path");
+        expect(sound({ file: "/sounds/chime.wav", volume: 0.2 })).toEqual({ file: "/sounds/chime.wav", volume: 0.2 });
+        expect(sound({ hz: 440, sec: 0.2 })).toEqual({ hz: 440, sec: 0.2, volume: 0.6 });
+        expect(() => sound({ preset: "gong" })).toThrow();
+        expect(() => sound({ hz: 440, sec: 3 })).toThrow();
+        expect(Object.keys(TONE_PRESETS).slice(0, 3)).toEqual(["beep", "soft", "click"]);
+        // The sines are the Meetings window's presets (SidePanelSections.swift TonePreset).
+        expect(TONE_PRESETS.soft).toMatchObject({ volume: 0.35, sound: { hz: 523, sec: 0.3 } });
+        expect(TONE_PRESETS.click).toMatchObject({ volume: 0.7, sound: { hz: 2000, sec: 0.03 } });
     });
 
     test("a meeting language needs its block in languages", () => {

@@ -3,7 +3,12 @@ import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, u
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import type { MeetingsConfig, ToneSound } from "@genesiscz/utils/meetings/config";
+import {
+    type ListenPads,
+    listenPads,
+    type MeetingsConfig,
+    type ToneSoundSetting,
+} from "@genesiscz/utils/meetings/config";
 import {
     type MeetingItem,
     type MeetingRecord,
@@ -26,6 +31,7 @@ import {
     questionLabel,
     questionOccurrence,
 } from "./questions";
+import { resolveToneSound, sineToneSound, type ToneSound } from "./tone-sound";
 
 const { log } = logger.scoped("meetings-moment");
 
@@ -51,7 +57,10 @@ export type ListenSettings = MeetingsConfig["global"]["playback"]["listen"];
 /** Audio after a voice's span, and before it besides the tone's lead. */
 export const SPEAKER_PAD_SEC = 0.3;
 
-/** Audio around a span when `playback.listen.padSec` is not set yet (the smaller choice the first `listen` offers). */
+/**
+ * Audio before and after a span when `playback.listen.padBeforeSec` and `padAfterSec` are not set yet (the smaller
+ * choice the first `listen` offers).
+ */
 export const DEFAULT_PAD_SEC = 5;
 
 /** A term item with no line found for its words hears this much from its time (questions.ts asks a term the same). */
@@ -85,8 +94,10 @@ export interface Moment {
     /** The heard stretch on the transcript clock, before the pad. */
     fromSec: number;
     toSec: number;
-    /** Audio kept on each side of the heard stretch. */
+    /** Audio kept before the heard stretch, and after it unless `padAfterSec` says otherwise. */
     padSec: number;
+    /** Audio kept after the heard stretch, present only when it differs from `padSec` (`playback.listen.padAfterSec`). */
+    padAfterSec?: number;
     /** Where the clip starts and ends on the transcript clock: the stretch with its pad, never before 0. */
     startSec: number;
     endSec: number;
@@ -376,36 +387,65 @@ export interface MomentInput {
     record: MeetingRecord;
     transcript: readonly TranscriptEntry[] | TranscriptLines;
     listen: ListenSettings;
-    /** Audio around an `around` span; else `listen.padSec`, else `DEFAULT_PAD_SEC`. */
+    /**
+     * Audio before an `around` span, and after it unless `padAfterSec` is given; else the saved pads
+     * (`listen.padBeforeSec`, `padAfterSec`), else `DEFAULT_PAD_SEC` on both sides.
+     */
     padSec?: number;
+    /** Audio after an `around` span. */
+    padAfterSec?: number;
     /** At most this long from the span's start (the window's "Clip 5s" on a selection: 5); the pad stays. */
     lengthSec?: number;
+    /**
+     * The tone's sound as `resolveToneSound` made it. A caller whose `listen.tone.sound` is a sound file passes it (its
+     * length is read from the file); a sine is made from the settings when absent.
+     */
+    toneSound?: ToneSound;
+}
+
+/** The audio an `around` span keeps on each side: the caller's, else the saved pads, else `DEFAULT_PAD_SEC`. */
+function aroundPads(input: MomentInput): ListenPads {
+    const saved = listenPads(input.listen) ?? { beforeSec: DEFAULT_PAD_SEC, afterSec: DEFAULT_PAD_SEC };
+    const beforeSec = input.padSec ?? saved.beforeSec;
+    const afterSec = input.padAfterSec ?? (input.padSec === undefined ? saved.afterSec : input.padSec);
+    return { beforeSec, afterSec };
+}
+
+/** The tone's sound: the resolved one the caller passed, else the sine the settings name. */
+function toneSoundOf(input: MomentInput): ToneSound {
+    const sound = input.toneSound ?? sineToneSound(input.listen.tone.sound);
+
+    if (!sound) {
+        // A sound file's length is read from the file: the caller resolves it (`resolveToneSound`) before planning.
+        throw new Error("The tone is a sound file: resolve it with resolveToneSound before planning the Moment.");
+    }
+
+    return sound;
 }
 
 function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment {
     const { listen } = input;
-    const padSec =
-        span.pad === "voice"
-            ? listen.tone.leadSec + SPEAKER_PAD_SEC
-            : (input.padSec ?? listen.padSec ?? DEFAULT_PAD_SEC);
+    const voicePad = listen.tone.leadSec + SPEAKER_PAD_SEC;
+    const pads = span.pad === "voice" ? { beforeSec: voicePad, afterSec: voicePad } : aroundPads(input);
     // The tone marks the spot when the clip holds it, else the start of what is heard.
-    const inClip = span.spotSec >= span.fromSec - padSec && span.spotSec <= span.toSec + padSec;
-    const startSec = Math.max(0, span.fromSec - padSec);
+    const inClip = span.spotSec >= span.fromSec - pads.beforeSec && span.spotSec <= span.toSec + pads.afterSec;
+    const startSec = Math.max(0, span.fromSec - pads.beforeSec);
     return {
         meeting: input.record.id,
         target,
         label: span.label,
         fromSec: span.fromSec,
         toSec: span.toSec,
-        padSec,
+        padSec: pads.beforeSec,
+        ...(pads.afterSec === pads.beforeSec ? {} : { padAfterSec: pads.afterSec }),
         startSec,
-        endSec: span.toSec + padSec,
+        endSec: span.toSec + pads.afterSec,
         spotSec: span.spotSec,
         ...(listen.tone.enabled
             ? {
                   tone: {
                       atSec: (inClip ? span.spotSec : span.fromSec) - listen.tone.leadSec,
-                      sound: listen.tone.sound,
+                      sound: toneSoundOf(input),
                   },
               }
             : {}),
@@ -458,6 +498,7 @@ export function clipPlan(moment: Moment): ClipPlan {
         fromSec: moment.fromSec,
         toSec: moment.toSec,
         padSec: moment.padSec,
+        ...(moment.padAfterSec === undefined ? {} : { padAfterSec: moment.padAfterSec }),
         ...(moment.tone ? { toneAtSec: moment.tone.atSec, toneSound: moment.tone.sound } : {}),
     };
 }
@@ -501,12 +542,25 @@ export function momentCacheDir(meeting?: string): string {
 /** The cache holds at most this much; the clips used longest ago go first. */
 export const MOMENT_CACHE_BYTES = 500 * 1024 * 1024;
 
+/** A tone file's time and size, so an edited sound file is a new clip key; nothing for a sine or a gone file. */
+function toneFileVersion(moment: Moment): number[] {
+    const file = moment.tone?.sound.file;
+
+    if (!file || !existsSync(file)) {
+        return [];
+    }
+
+    const { mtimeMs, size } = statSync(file);
+    return [mtimeMs, size];
+}
+
 /**
  * Where a Moment's clip goes in the clip cache: `<label>-<key>.wav`, the key from what the clip holds (its span, its
- * tone) and the recording (its path, time and size), so the same Moment of the same recording is cut once (G16, G-PLAY-10).
+ * tone, a tone file's version) and the recording (its path, time and size), so the same Moment of the same recording
+ * is cut once (G16, G-PLAY-10).
  */
 export function momentCachePath(moment: Moment, source: ClipSource): string {
-    const key = clipKey(moment, [source.path, source.mtimeMs, source.size]);
+    const key = clipKey(moment, [source.path, source.mtimeMs, source.size, ...toneFileVersion(moment)]);
     return join(momentCacheDir(moment.meeting), `${clipName(moment)}-${key}.wav`);
 }
 
@@ -659,6 +713,11 @@ export interface OpenMomentOptions {
     record: MeetingRecord;
     target: MomentTarget;
     padSec?: number;
+    padAfterSec?: number;
+    /** This tone instead of the settings' `playback.listen.tone.sound` (`play --tone`). */
+    toneSound?: ToneSoundSetting;
+    /** Reads a tone file's length (tests pass a fake); ffprobe by default. */
+    probeTone?: (path: string) => Promise<{ durationSec: number }>;
     /** At most this long from the span's start (`MomentInput.lengthSec`). */
     lengthSec?: number;
     screen?: boolean;
@@ -669,12 +728,18 @@ export interface OpenMomentOptions {
 async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Promise<Moment> {
     const { store, record } = options;
     const [meeting, config] = await Promise.all([opened.meeting(), opened.config()]);
+    const listen = config.global.playback.listen;
+    const toneSound = listen.tone.enabled
+        ? await resolveToneSound(options.toneSound ?? listen.tone.sound, { probe: options.probeTone ?? probeAudio })
+        : undefined;
     const moment = planMoment({
         record,
         transcript: meeting.transcript,
-        listen: config.global.playback.listen,
+        listen,
         target: options.target,
+        ...(toneSound ? { toneSound } : {}),
         ...(options.padSec === undefined ? {} : { padSec: options.padSec }),
+        ...(options.padAfterSec === undefined ? {} : { padAfterSec: options.padAfterSec }),
         ...(options.lengthSec === undefined ? {} : { lengthSec: options.lengthSec }),
     });
 

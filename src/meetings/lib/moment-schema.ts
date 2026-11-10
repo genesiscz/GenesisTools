@@ -1,5 +1,7 @@
+import { TONE_PRESET_NAMES } from "@genesiscz/utils/meetings/config";
 import { parseClock } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
+import type { ToneSound } from "./tone-sound";
 
 /**
  * The Moment engine's shapes that a client names: a target, the Moment the engine answers, and why it cannot play.
@@ -56,7 +58,17 @@ export const MOMENT_STATE_CODES = [
 ] as const;
 export type MomentStateCode = (typeof MOMENT_STATE_CODES)[number];
 
-const toneSoundSchema = z.object({ hz: z.number(), sec: z.number(), volume: z.number() });
+/**
+ * A tone's sound as a Moment names it (`ToneSound`, tone-sound.ts): a sine of `hz`, or a sound file (`file`, `hz` 0),
+ * `sec` long at `volume`; `preset` names the preset it came from.
+ */
+export const toneSoundSchema = z.object({
+    hz: z.number(),
+    sec: z.number(),
+    volume: z.number(),
+    file: z.string().optional(),
+    preset: z.enum(TONE_PRESET_NAMES).optional(),
+}) satisfies z.ZodType<ToneSound>;
 
 /** One frame of a Moment's spot (`MomentFrame`). */
 export const momentFrameSchema = z.object({
@@ -81,6 +93,8 @@ export const momentSchema = z.object({
     fromSec: z.number(),
     toSec: z.number(),
     padSec: z.number(),
+    /** The pad after the heard stretch, present only when it differs from `padSec`. */
+    padAfterSec: z.number().optional(),
     startSec: z.number(),
     endSec: z.number(),
     spotSec: z.number(),

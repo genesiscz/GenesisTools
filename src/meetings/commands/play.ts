@@ -1,7 +1,16 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { LISTEN_PLAYERS, MEETING_PLAYERS, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import {
+    LISTEN_PLAYERS,
+    MEETING_PLAYERS,
+    MeetingsConfigStore,
+    TONE_PRESET_NAMES,
+    type ToneSoundSetting,
+    toneSoundSettingSchema,
+} from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
@@ -22,6 +31,7 @@ interface PlayOptions {
     clip?: boolean;
     moment?: boolean;
     before?: string;
+    tone?: string;
     player?: string;
     json?: boolean;
     start?: boolean;
@@ -90,6 +100,37 @@ function wanted(opts: PlayOptions): { target: MomentTarget } | { atSec: number }
         : { target: { kind: "range", fromSec: atSec, toSec } };
 }
 
+/**
+ * `--tone`: a preset's name, a sound file's path, or a tone setting as JSON (`{"file":"/x.wav","volume":0.3}`,
+ * `{"hz":440,"sec":0.2}`). A preset plays at its own volume, a file at the default one.
+ */
+function toneFlag(value: string): { sound: ToneSoundSetting } | { error: string } {
+    const preset = TONE_PRESET_NAMES.find((name) => name === value);
+
+    if (preset) {
+        return { sound: toneSoundSettingSchema.parse({ preset }) };
+    }
+
+    if (value.trim().startsWith("{")) {
+        let json: unknown;
+
+        try {
+            json = SafeJSON.parse(value, { strict: true });
+        } catch {
+            return { error: `--tone is not JSON: ${value}` };
+        }
+
+        const parsed = toneSoundSettingSchema.safeParse(json);
+        return parsed.success
+            ? { sound: parsed.data }
+            : { error: `--tone is not a tone (${parsed.error.issues[0]?.message}). Try {"hz":440,"sec":0.2}.` };
+    }
+
+    return existsSync(value)
+        ? { sound: toneSoundSettingSchema.parse({ file: resolve(value) }) }
+        : { error: `--tone takes a preset (${TONE_PRESET_NAMES.join(", ")}), a sound file or JSON; ${value} is none.` };
+}
+
 /** One line for a person: what the Moment hears, the clip around it, where the tone sounds, and the screen. */
 function momentLine(moment: Moment): string {
     const tone = moment.tone ? `, tone at ${formatClock(moment.tone.atSec)}` : "";
@@ -103,13 +144,24 @@ function momentLine(moment: Moment): string {
 /** A Moment target: planned (`--no-start`), cut (`--clip`), or cut and played once in the clip player. */
 async function playMoment(record: MeetingRecord, target: MomentTarget, opts: PlayOptions): Promise<void> {
     if (opts.before !== undefined) {
-        fail("--before sets the lead-in of an open-ended --at play; a Moment pads by playback.listen.padSec.");
+        fail(
+            "--before sets the lead-in of an open-ended --at play; a Moment pads by playback.listen.padBeforeSec and padAfterSec."
+        );
         return;
     }
 
+    const tone = opts.tone === undefined ? undefined : toneFlag(opts.tone);
+
+    if (tone && "error" in tone) {
+        fail(tone.error);
+        return;
+    }
+
+    const toneSound = tone?.sound;
+
     if (!opts.clip && opts.start === false) {
         const planned = await withMeetingsClient((client) =>
-            client.call("moment.plan", { meeting: record.id, target })
+            client.call("moment.plan", { meeting: record.id, target, ...(toneSound ? { toneSound } : {}) })
         );
 
         if (!planned.moment) {
@@ -146,7 +198,9 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
         }
     }
 
-    const cut = await withMeetingsClient((client) => client.call("moment.clip", { meeting: record.id, target }));
+    const cut = await withMeetingsClient((client) =>
+        client.call("moment.clip", { meeting: record.id, target, ...(toneSound ? { toneSound } : {}) })
+    );
 
     if (!player) {
         opts.json ? out.result(SafeJSON.stringify(cut, null, 2)) : ui.ok(`Cut ${momentLine(cut)}: ${cut.path}`);
@@ -167,6 +221,11 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
 
     if ("error" in what) {
         fail(what.error);
+        return;
+    }
+
+    if (opts.tone !== undefined && !("target" in what)) {
+        fail("--tone sets a Moment's tone; --at alone plays on from there without one (add --moment, --to or --clip).");
         return;
     }
 
@@ -271,6 +330,10 @@ export function registerPlayCommand(program: Command): void {
             "with --at alone: play the Moment at that time (a bounded clip with the tone), not on from there"
         )
         .option("--before <sec>", "start this many seconds earlier (default: playback.beforeSec, 5); --at alone only")
+        .option(
+            "--tone <sound>",
+            `a Moment's tone for this call: a preset (${TONE_PRESET_NAMES.join(", ")}), a sound file, or JSON ({"hz":440,"sec":0.2}); default playback.listen.tone.sound`
+        )
         .option(
             "--player <id>",
             `this player for one call: ${MEETING_PLAYERS.join(", ")} for --at alone, ${LISTEN_PLAYERS.join(", ")} for a Moment`

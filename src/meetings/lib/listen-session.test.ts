@@ -28,6 +28,7 @@ import {
     questionView,
     questionWarnings,
 } from "./questions";
+import { sineToneSound } from "./tone-sound";
 
 const now = "2026-11-02T15:00:00.000Z";
 let stores = 0;
@@ -509,7 +510,7 @@ describe("listen --clip-out (MC22)", () => {
             questions: openQuestions(record),
             transcript: words,
             listen,
-            padSec: 5,
+            pads: { beforeSec: 5, afterSec: 5 },
             audioPath: "/clips/call.ogg",
             dir: "/clips/out",
             cut: async (options) => {
@@ -526,7 +527,7 @@ describe("listen --clip-out (MC22)", () => {
                 audioPath: "/clips/call.ogg",
                 outPath: clip,
                 ...plan,
-                toneSound: listen.tone.sound,
+                toneSound: sineToneSound(listen.tone.sound),
             }))
         );
         const spot = askedSpotSec(asQuestion(record.items[0]), words);
