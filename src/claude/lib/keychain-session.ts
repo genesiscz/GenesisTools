@@ -37,7 +37,7 @@ export async function inspectKeychainBeforeInject(aiConfig: AIConfig): Promise<{
     preSync: KeychainSyncResult;
     foreign: ForeignKeychainEntry | null;
 }> {
-    const preSync = await syncKeychainToConfig(aiConfig);
+    const preSync = await syncKeychainToConfig();
 
     if (preSync.status === "no-match") {
         return { preSync, foreign: { uuid: preSync.uuid } };
@@ -89,7 +89,7 @@ export async function finishKeychainSession(
     injectedUuid: string | undefined,
     foreignBackupPath: string | undefined
 ): Promise<KeychainSyncResult> {
-    const postSync = await syncKeychainToConfig(aiConfig);
+    const postSync = await syncKeychainToConfig();
 
     const currentUuid =
         postSync.status === "synced" || postSync.status === "unchanged" || postSync.status === "no-match"
