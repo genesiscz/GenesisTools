@@ -1,12 +1,12 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import * as realClack from "@clack/prompts";
 import { type RepoConfig, repoConfigPaths, writeLocalRepoConfig } from "@genesiscz/utils/git";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { makeTestBackend } from "@genesiscz/utils/prompts/p/__tests__/test-backend";
+import { setPromptBackend } from "@genesiscz/utils/testing/prompt-mock";
 
-const CANCEL = Symbol("cancel");
 const answers: unknown[] = [];
 const asked: string[] = [];
 const answer = (kind: string): unknown => {
@@ -14,18 +14,14 @@ const answer = (kind: string): unknown => {
     return answers.shift();
 };
 
-mock.module("@clack/prompts", () => ({
-    ...realClack,
-    intro: () => {},
-    outro: () => {},
-    note: () => {},
-    cancel: () => {},
-    isCancel: (value: unknown) => value === CANCEL,
-    select: async () => answer("select"),
-    multiselect: async () => answer("multiselect"),
-    text: async () => answer("text"),
-    confirm: async () => answer("confirm"),
-}));
+// The scripted answers are untyped on purpose: each prompt hands back what the test queued, CANCEL included.
+setPromptBackend({
+    ...makeTestBackend(),
+    select: async () => answer("select") as never,
+    multiselect: async () => answer("multiselect") as never,
+    text: async () => answer("text") as never,
+    confirm: async () => answer("confirm") as never,
+});
 
 const { backupExitCode, parseMaxCopyMb, preWriteReasons, runConfig } = await import("./worktree");
 
