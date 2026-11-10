@@ -241,6 +241,7 @@ struct PersonPickerRow: View {
     let action: () -> Void
 
     var body: some View {
+        // lint-rules-ignore: short list (at most 20 people a search returns, in a lazy stack)
         Button(action: action) {
             HStack(spacing: 8) {
                 PersonAvatarView(person: person)

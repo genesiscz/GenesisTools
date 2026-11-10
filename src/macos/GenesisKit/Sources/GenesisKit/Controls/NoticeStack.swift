@@ -423,6 +423,7 @@ public struct NoticeStackView: View {
     @ViewBuilder
     func moreChip(_ count: Int) -> some View {
         if count > 0 {
+            // lint-rules-ignore: short list (one "+N more" chip beside at most maxVisible notices)
             Button {
                 showsAll = true
             } label: {

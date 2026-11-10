@@ -167,6 +167,7 @@ struct PinMark: View {
     @FocusState private var focused: Bool
 
     var body: some View {
+        // lint-rules-ignore: short list (pins closer than 6 pt merge, so a lane holds at most its width / 6 marks; each stays a focusable button, because the keyboard focus opens its card, G-CARD-1)
         Button {
             if cluster.isSingle, let pin = cluster.pins.first { actions.select(pin.id) } else { actions.expand(cluster.range) }
         } label: {

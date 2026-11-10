@@ -411,6 +411,7 @@ struct MeetingsCatalogCard: View {
                     Label(footnote, systemImage: "clock.arrow.circlepath").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 6)
+                // lint-rules-ignore: short list (one card per window settings section, about six)
                 Button("Reset to Defaults") { reset(section) }
                     .controlSize(.small)
                     .disabled(section.isDefault)
