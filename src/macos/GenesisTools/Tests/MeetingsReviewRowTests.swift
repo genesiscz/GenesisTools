@@ -310,5 +310,25 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(MeetingsFormat.clock(6588), "1:49:48")
         XCTAssertEqual(MeetingsFormat.clock(0), "00:00")
     }
+
+    /// At the window's smallest size a folded line had 15 pt for its text and its status: one character and an
+    /// ellipsis. Each narrower shape drops one thing, and a question keeps its answer to the last.
+    func testAFoldedLineDropsItsStatusThenItsRevertWordsThenAQuestionsText() {
+        let question = ReviewRowView.foldedShapes(isQuestion: true)
+        XCTAssertEqual(question.map(\.words), [true, false, false], "who decided it goes first: the mark says it is decided")
+        XCTAssertEqual(question.map(\.revertWords), [true, true, false], "then Revert and edit becomes its glyph")
+        XCTAssertNil(question[2].textWidth, "a question's answer outlives its text")
+        XCTAssertNotNil(ReviewRowView.foldedShapes(isQuestion: false)[2].textWidth, "a row without an answer of its own is its text")
+        let widths = question.compactMap(\.textWidth)
+        XCTAssertEqual(widths, widths.sorted(by: >), "each shape asks for less text room than the one before")
+    }
+
+    /// The playing row's bar is left out below the width it reads at: squeezed, its flag drew over its times.
+    func testThePlayingBarNeedsRoomForItsTimes() {
+        XCTAssertGreaterThan(PlayingRowBar.smallestWidth(times: true), PlayingRowBar.smallestWidth(times: false) + 100,
+                             "two clock times of seven digits need about 110 pt")
+        XCTAssertGreaterThanOrEqual(PlayingRowBar.smallestWidth(times: false), 4 * FlagMark.hitWidth,
+                                    "a bar shorter than a few flags is only its flag")
+    }
 }
 

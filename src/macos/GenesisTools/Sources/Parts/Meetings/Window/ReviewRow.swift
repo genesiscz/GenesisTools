@@ -67,9 +67,9 @@ struct ReviewRowView: View {
             } else {
                 HStack(spacing: 8) {
                     decidedMark
-                    decidedTail
+                    decidedTail(words: true)
                     Spacer(minLength: 6)
-                    revertButton
+                    revertButton(words: true)
                 }
             }
             if !row.sources.isEmpty { sources }
@@ -90,11 +90,16 @@ struct ReviewRowView: View {
             }
             if let player, let span = playingSpan(player) {
                 // R25, G-ROW-1: the playing row's own timeline takes the header's free room, so the row keeps its height.
-                PlayingRowBar(span: span, position: { player.position },
-                              onFlag: { player.playTime($0, in: detail.id, from: .outside) },
-                              onSeek: { player.playTime($0, in: detail.id, from: .outside) })
-                    .frame(minWidth: 120, maxWidth: .infinity)
-                    .padding(.horizontal, 6)
+                // In a narrow header it gives up its times first, then itself: squeezed under its smallest width, its
+                // flag drew over the times and the row's time wrapped to two lines.
+                ViewThatFits(in: .horizontal) {
+                    playingBar(player, span: span, times: true)
+                        .frame(minWidth: PlayingRowBar.smallestWidth(times: true), idealWidth: PlayingRowBar.smallestWidth(times: true), maxWidth: .infinity)
+                    playingBar(player, span: span, times: false)
+                        .frame(minWidth: PlayingRowBar.smallestWidth(times: false), idealWidth: PlayingRowBar.smallestWidth(times: false), maxWidth: .infinity)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 6)
             } else {
                 Spacer(minLength: 6)
             }
@@ -104,6 +109,12 @@ struct ReviewRowView: View {
             }
             .accessibilityLabel("History of \(row.label)")
         }
+    }
+
+    private func playingBar(_ player: MomentPlayer, span: ZoomSpan, times: Bool) -> PlayingRowBar {
+        PlayingRowBar(span: span, position: { player.position }, showsTimes: times,
+                      onFlag: { player.playTime($0, in: detail.id, from: .outside) },
+                      onSeek: { player.playTime($0, in: detail.id, from: .outside) })
     }
 
     /// The span of this row's Moment while it is the one on top of the player (R25).
@@ -287,18 +298,64 @@ struct ReviewRowView: View {
 
     /// A decided row, folded in place (R16): its status, who decided it and why (R35), and "Revert and edit" (G35).
     private var folded: some View {
-        HStack(spacing: 8) {
+        // A narrow column drops what the reader needs least, in this order: who decided it (the mark already says
+        // that it is decided), the words of "Revert and edit" (its glyph stays), then a question's text (its answer
+        // stays). Squeezed as one line, the text shrank to one character and the status to an ellipsis.
+        // Each part measures as a nominal width (`FoldedShape.nominal`), so the shape follows the column's width
+        // and not a row's own words: measured by its words, a row with a short answer kept its status and the row
+        // under it did not.
+        let shapes = Self.foldedShapes(isQuestion: Self.foldedAnswer(row) != nil)
+        return ViewThatFits(in: .horizontal) {
+            foldedLine(shapes[0])
+            foldedLine(shapes[1])
+            foldedLine(shapes[2])
+        }
+    }
+
+    /// One shape of the folded line: the room its text needs to be worth showing (nil: no text), and whether it says
+    /// who decided it and writes "Revert and edit" out.
+    struct FoldedShape: Hashable {
+        let textWidth: CGFloat?
+        let words: Bool
+        let revertWords: Bool
+
+        /// The widths the parts measure as when the line picks its shape: a label, an answer, who decided it.
+        enum Nominal {
+            static let label: CGFloat = 30
+            static let answer: CGFloat = 130
+            static let words: CGFloat = 110
+            static let gap: CGFloat = 8
+        }
+    }
+
+    /// The folded line's shapes from the widest to the narrowest. A row without an answer of its own keeps its text in
+    /// every shape, because the text is all it says.
+    static func foldedShapes(isQuestion: Bool) -> [FoldedShape] {
+        [FoldedShape(textWidth: 150, words: true, revertWords: true),
+         FoldedShape(textWidth: 90, words: false, revertWords: true),
+         FoldedShape(textWidth: isQuestion ? nil : 60, words: false, revertWords: false)]
+    }
+
+    private func foldedLine(_ shape: FoldedShape) -> some View {
+        // A row without an answer of its own measures its text as the text and an answer, so it takes the shape the
+        // questions around it take.
+        let answerRoom = Self.foldedAnswer(row) == nil ? FoldedShape.Nominal.answer + FoldedShape.Nominal.gap : 0
+        return HStack(spacing: FoldedShape.Nominal.gap) {
             decidedMark
             Text(verbatim: row.label).font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(.secondary)
                 .lineLimit(1).fixedSize()
-            // Above the spacer's priority: beside a spacer of its own priority a one-line text gets half the free
-            // room and truncates with room to spare.
-            Text(verbatim: Self.foldedText(row)).font(.system(size: 12.5)).lineLimit(1).truncationMode(.tail)
-                .layoutPriority(0.5)
-            decidedTail
+                .frame(idealWidth: FoldedShape.Nominal.label, alignment: .leading)
+            if let width = shape.textWidth {
+                // Above the spacer's priority: beside a spacer of its own priority a one-line text gets half the free
+                // room and truncates with room to spare. The ideal width is the room this shape asks for its text.
+                Text(verbatim: Self.foldedText(row)).font(.system(size: 12.5)).lineLimit(1).truncationMode(.tail)
+                    .frame(idealWidth: width + answerRoom, alignment: .leading)
+                    .layoutPriority(0.5)
+            }
+            decidedTail(words: shape.words)
             Spacer(minLength: 6)
             if busy { ProgressView().controlSize(.small) }
-            revertButton
+            revertButton(words: shape.revertWords)
             IconButton(systemName: "clock.arrow.circlepath", tooltip: "This row's history") { detail.openHistory(item: row.id) }
                 .accessibilityLabel("History of \(row.label)")
         }
@@ -313,20 +370,32 @@ struct ReviewRowView: View {
     /// What the row was decided as, then who decided it and why. The answer never truncates: the question before it
     /// gives way first, because a folded question that hides its answer says nothing.
     @ViewBuilder
-    private var decidedTail: some View {
+    private func decidedTail(words: Bool) -> some View {
         if let answer = Self.foldedAnswer(row) {
             Text(verbatim: "→ \(answer)").font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+                .frame(idealWidth: FoldedShape.Nominal.answer, alignment: .leading)
                 .layoutPriority(2)
+                .instantTooltip(words ? "" : Self.decidedWords(row))
         }
-        Text(verbatim: Self.decidedWords(row)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
-            .layoutPriority(1)
-            .instantTooltip(row.decision?.reason.map { "Why: \($0)" } ?? "")
+        if words {
+            Text(verbatim: Self.decidedWords(row)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                .frame(idealWidth: FoldedShape.Nominal.words, alignment: .leading)
+                .layoutPriority(1)
+                .instantTooltip(row.decision?.reason.map { "Why: \($0)" } ?? "")
+        }
     }
 
-    private var revertButton: some View {
-        LiveButton(tooltip: "Take this decision back for this row and edit it", enabled: !busy, pressable: true,
-                   action: { detail.revertAndEdit(row) }) {
-            Text("Revert and edit").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+    @ViewBuilder
+    private func revertButton(words: Bool) -> some View {
+        let tooltip = "Take this decision back for this row and edit it"
+        if words {
+            LiveButton(tooltip: tooltip, enabled: !busy, pressable: true, action: { detail.revertAndEdit(row) }) {
+                Text("Revert and edit").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+            }
+        } else {
+            IconButton(systemName: "arrow.uturn.backward", tooltip: "Revert and edit: \(tooltip.lowercased())") { detail.revertAndEdit(row) }
+                .disabled(busy)
+                .accessibilityLabel("Revert and edit \(row.label)")
         }
     }
 
@@ -466,8 +535,9 @@ private struct ChoiceButton: View {
                     Text(verbatim: "\(number)").font(.system(size: 10, weight: .semibold).monospacedDigit()).foregroundStyle(.tertiary)
                 }
                 Text(verbatim: choice.label).font(.system(size: 12.5, weight: choice.role == "suggested" ? .semibold : .regular))
-                if let confidence = choice.confidence {
-                    Text(verbatim: "\(Int((confidence * 100).rounded()))").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                if let confidence = MeetingsWords.confidence(choice.confidence) {
+                    // With its sign, as the row's header writes it: a bare "58" beside a name read as a count.
+                    Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 8).padding(.vertical, 3)
@@ -482,7 +552,7 @@ private struct ChoiceButton: View {
         case "presumed": return "The best other candidate"
         case "heard": return "The words as they were said"
         case "earlier": return "The answer of an earlier question about the same words"
-        case "none": return "None of these: what it decides is rejected"
+        case "none": return "\(choice.label): what it decides is rejected"
         case "split": return "Several voices: one question per line and voice"
         case "skip": return "Leave it open for now"
         default: return "Answer “\(choice.label)”"

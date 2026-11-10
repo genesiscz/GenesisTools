@@ -13,8 +13,14 @@ struct PlayingRowBar: View {
     /// The subtitle line's height, so the row does not change height when it starts or stops playing.
     var height: CGFloat = 17
     var stepSec: Double = 5
+    /// "54:31 → 54:46" after the bar. A narrow header leaves them out: the row's own time stands beside the bar.
+    var showsTimes = true
     var onFlag: (Double) -> Void = { _ in }
     var onSeek: (Double) -> Void = { _ in }
+
+    /// The least width the bar is readable at: room for the pad, the asked span and the flag, and for the times
+    /// when it shows them (two clock times of up to seven digits each).
+    static func smallestWidth(times: Bool) -> CGFloat { times ? 210 : 90 }
 
     private var clip: ClosedRange<Double> { span.startSec...max(span.startSec + 0.1, span.endSec) }
 
@@ -33,7 +39,9 @@ struct PlayingRowBar: View {
                         .frame(width: max(2, askEnd - askX), height: 10).offset(x: askX, y: mid - 5)
                     TimelinePlayhead(position: position, view: clip)
                         .frame(width: width, height: height - 2).offset(y: 1)
-                    FlagMark(text: MeetingsFormat.clock(span.fromSec), lineHeight: height, accessibility:
+                    // The flag alone: the row's time button beside the bar already says the asked time, and the
+                    // time on the flag covered half of a short bar.
+                    FlagMark(text: "", lineHeight: height, accessibility:
                              "Asked spot at \(MeetingsFormat.clock(span.spotSec)). Plays from there.", compact: true) {
                         onFlag(span.flagSeekTarget)
                     }
@@ -59,11 +67,13 @@ struct PlayingRowBar: View {
             }
             .accessibilityAction(named: "Play from the asked spot") { onFlag(span.flagSeekTarget) }
             .accessibilityIdentifier("meetings.row.minibar")
-            Text(verbatim: "\(MeetingsFormat.clock(span.startSec)) → \(MeetingsFormat.clock(span.endSec))")
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .fixedSize()
-                .accessibilityHidden(true)
+            if showsTimes {
+                Text(verbatim: "\(MeetingsFormat.clock(span.startSec)) → \(MeetingsFormat.clock(span.endSec))")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .accessibilityHidden(true)
+            }
         }
         .frame(height: height)
     }

@@ -188,7 +188,9 @@ struct PinMark: View {
                 } else {
                     Text(verbatim: "\(cluster.pins.count)")
                         .font(.system(size: 9, weight: .bold).monospacedDigit())
-                        .foregroundStyle(.white)
+                        // The playing group's capsule is the text colour (white in the dark look), so its count
+                        // takes the window's colour; white on white showed an empty capsule.
+                        .foregroundStyle(cluster.state == .playing ? Color(nsColor: .windowBackgroundColor) : .white)
                         .padding(.horizontal, 4)
                         .frame(minWidth: Self.iconWidth, minHeight: 14)
                         .background(Capsule().fill(tint))
