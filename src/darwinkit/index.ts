@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import * as p from "@clack/prompts";
-import { parseVariadic, runTool } from "@genesiscz/utils/cli";
+import { parseVariadic, runTool, type ToolErrorReport } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos";
@@ -175,6 +175,12 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
 
 // ─── Main ───────────────────────────────────────────────────────────────────────
 
+/** A terminal gets clack's red error mark; piped output gets the bare message. */
+function formatDarwinKitError(error: unknown): ToolErrorReport {
+    const message = error instanceof Error ? error.message : String(error);
+    return { message: process.stdout.isTTY ? `${pc.red("■")}  ${message}` : message, exitCode: 1 };
+}
+
 async function main(): Promise<void> {
     if (process.argv.length <= 2) {
         if (process.stdout.isTTY) {
@@ -189,7 +195,7 @@ async function main(): Promise<void> {
 
     const program = buildProgram();
 
-    await runTool(program, { tool: "darwinkit" });
+    await runTool(program, { tool: "darwinkit", formatError: formatDarwinKitError });
 }
 
 try {

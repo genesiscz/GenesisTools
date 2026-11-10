@@ -1,4 +1,4 @@
-export type { RunToolOpts, RunToolResult } from "./commander";
+export type { RunToolOpts, RunToolResult, ToolErrorReport } from "./commander";
 export { getVerbosity, isVerbose, runTool } from "./commander";
 export type { ExecResult, ExecutorOptions } from "./executor";
 export {

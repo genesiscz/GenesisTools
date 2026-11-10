@@ -22,7 +22,9 @@
  *   tools azure-devops testplan <list|show|search|create|update|delete|suite|points|outcome|case> [options]
  */
 
+import { authGuide, isAuthError, isSslError, SSL_PROXY_GUIDE } from "@app/azure-devops/cli.utils";
 import { azLoginSuggestionBlock } from "@app/azure-devops/lib/az-cli.utils";
+import type { ToolErrorReport } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -295,8 +297,23 @@ Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-de
 `);
 }
 
+/** The SSL/proxy and login guides, which used to print from this entry's own catch before runTool reported errors. */
+function formatAzureDevOpsError(error: unknown): ToolErrorReport | undefined {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (isSslError(message)) {
+        return { message: SSL_PROXY_GUIDE };
+    }
+
+    if (isAuthError(message)) {
+        return { message: `ERROR: ${message}\n${authGuide()}` };
+    }
+
+    return undefined;
+}
+
 async function main(): Promise<void> {
-    await runTool(program, { tool: "azure-devops" });
+    await runTool(program, { tool: "azure-devops", formatError: formatAzureDevOpsError });
 }
 
 main().catch((err) => {

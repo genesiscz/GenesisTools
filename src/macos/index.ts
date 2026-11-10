@@ -49,7 +49,8 @@
  *   tools macos contacts search
  */
 
-import { runTool } from "@genesiscz/utils/cli";
+import { runTool, type ToolErrorReport } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
@@ -104,9 +105,25 @@ for (const name of toRegister) {
     (await REGISTRARS[name]!())(program);
 }
 
+/**
+ * Every permission-aware path (MacDatabase, Voice Memos, Calendar) already prints the grant it needs, who holds it and
+ * how to switch it on, so a permission error only gets a pointer to `macos permissions`.
+ */
+function formatMacosError(error: unknown): ToolErrorReport | undefined {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (message.includes("not authorized") || message.includes("permission")) {
+        return {
+            message: `ERROR: ${message}\n\nRun \`${toolCommand("macos permissions")}\` to see which grants GenesisTools holds.`,
+        };
+    }
+
+    return undefined;
+}
+
 async function main(): Promise<void> {
     try {
-        await runTool(program, { tool: "macos" });
+        await runTool(program, { tool: "macos", formatError: formatMacosError });
     } finally {
         // No-op unless a command actually opened DarwinKit, and by then the
         // module is already in the loader cache, so this import is free. Doing

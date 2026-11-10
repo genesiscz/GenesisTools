@@ -212,6 +212,23 @@ describe("runTool error boundary", () => {
         }
     });
 
+    it("prints a tool's formatError report with its exit code and still records the failure", async () => {
+        const run = await runFixture("formatted");
+
+        expect(run.exitCode).toBe(3);
+        expect(run.stderr.match(/^custom report$/gm)?.length).toBe(1);
+        expect(run.stderr).not.toContain("ERROR:");
+        expect(run.failures.map((failure) => [failure.kind, failure.message])).toEqual([["error", "formatted"]]);
+    });
+
+    it("falls back to the default report when formatError throws", async () => {
+        const run = await runFixture("formatter-throws");
+
+        expect(run.exitCode).toBe(1);
+        expect(run.stderr.match(/^ERROR: formatter-throws$/gm)?.length).toBe(1);
+        expect(run.stderr).not.toContain("the formatter broke");
+    });
+
     it("leaves a Commander error to Commander's own exit path", async () => {
         const run = await runFixture("nope");
 

@@ -10,7 +10,7 @@ import { azLoginSuggestionBlock, extractTenantFromStderr } from "@app/azure-devo
 import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 
-const SSL_PROXY_GUIDE = `
+export const SSL_PROXY_GUIDE = `
 🔐 SSL Certificate Error (Proxy Detected)
 
 Azure CLI cannot verify SSL certificates - likely due to a corporate proxy
@@ -31,7 +31,7 @@ Quick fixes:
 More info: https://learn.microsoft.com/cli/azure/use-cli-effectively#work-behind-a-proxy
 `;
 
-function authGuide(): string {
+export function authGuide(): string {
     return `
 🔐 Azure CLI Authentication Required
 
