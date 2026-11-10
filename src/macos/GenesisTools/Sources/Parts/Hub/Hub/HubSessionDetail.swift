@@ -87,6 +87,9 @@ struct HubSessionDetailHost: View {
     @State private var loadState: TranscriptLoadState = .loading
     @State private var loadingEarlier = false
     @State private var banner: String?
+    /// The banner's failure (a refresh or an earlier page that did not load), with Try again.
+    @State private var bannerFailure: FailureReport?
+    @State private var bannerRetry: (@MainActor () -> Void)?
     @State private var loadID = 0
     /// Between onAppear and onDisappear. A page load that finishes after the detail left must not start a follow.
     @State private var onScreen = false
@@ -128,8 +131,15 @@ struct HubSessionDetailHost: View {
             loadingEarlier: loadingEarlier,
             windowNote: searchNote ?? (windowStart > 0 ? envelope.map { "Turns \(windowStart + 1)–\($0.nextOffset)" } : nil),
             banner: banner,
+            bannerFailure: bannerFailure,
+            onRetryBanner: bannerRetry,
+            onRetry: { Task { await retryFirstPage() } },
             onLoadEarlier: { Task { await loadEarlier() } },
-            onDismissBanner: { banner = nil },
+            onDismissBanner: {
+                banner = nil
+                bannerFailure = nil
+                bannerRetry = nil
+            },
             onReaderAtEnd: { readerAtEnd = $0 },
             preset: TranscriptPreset(query: transcriptQuery ?? ""),
             leadingInset: 16,
@@ -462,18 +472,25 @@ struct HubSessionDetailHost: View {
         loadingEarlier = false
         let span = HubPerf.begin("transcript.page", "limit=\(limit) offset=\(offset.map(String.init) ?? "-")", awaits: true)
         defer { span.end("\(turns.count) turns") }
+        let ledger = ToolsCallLedger()
         do {
             // A window that stopped short of the latest turn (more turns arrived than the limit left
             // room for) is fetched again from the same offset (GenesisKit `TranscriptPaging.fetchWindow`).
-            let fetched = try await TranscriptPaging.fetchWindow(
-                using: HubSource.bridge,
-                sessionId: session.sessionId,
-                offset: offset,
-                limit: limit,
-                throughEnd: throughEnd,
-                isCurrent: { id == loadID }
-            )
+            let wanted = session.sessionId
+            let fetched = try await ledger.record {
+                try await TranscriptPaging.fetchWindow(
+                    using: HubSource.bridge,
+                    sessionId: wanted,
+                    offset: offset,
+                    limit: limit,
+                    throughEnd: throughEnd,
+                    isCurrent: { id == loadID }
+                )
+            }
             guard id == loadID else { return }
+            // A new window replaces whatever an older load or page reported.
+            bannerFailure = nil
+            bannerRetry = nil
             envelope = fetched
             turns = fetched.turns
             windowStart = fetched.windowStart
@@ -524,13 +541,37 @@ struct HubSessionDetailHost: View {
             await rebuild()
         } catch {
             guard id == loadID else { return }
-            if document.sections.isEmpty {
-                loadState = .failed(error.localizedDescription)
-            } else {
-                banner = error.localizedDescription
-            }
+            let report = FailureReport.toolsCall(error, outcome: "The transcript did not load", action: "Open the session's transcript",
+                                                 call: ledger.failed, title: "Transcript did not load", area: "hub",
+                                                 expected: "The session's latest turns show in the transcript.")
+            let first = document.sections.isEmpty
+            showFailure(report, first: first, retry: { Task { await retryFirstPage() } })
             NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
+            // The details' log (this call's lines in app-perf.log and the calls of the minute before) is read off the
+            // main thread; the failure shows at once and takes it when it arrives.
+            let full = await report.addingCallLog()
+            guard id == loadID else { return }
+            showFailure(full, first: first, retry: { Task { await retryFirstPage() } })
         }
+    }
+
+    /// A failure of this detail's loads: the pane's placeholder while nothing is on screen, else the banner.
+    private func showFailure(_ report: FailureReport, first: Bool, retry: @escaping @MainActor () -> Void) {
+        if first {
+            loadState = .failed(report)
+        } else {
+            banner = nil
+            bannerFailure = report
+            bannerRetry = retry
+        }
+    }
+
+    /// Try again under a failed first page: the same load, with the loading state back.
+    private func retryFirstPage() async {
+        if document.sections.isEmpty {
+            loadState = .loading
+        }
+        await load(offset: nil, limit: Self.firstPage)
     }
 
     /// Prepends earlier turns in `fillChunk` steps until the window holds `pageSize` turns, one step per
@@ -566,8 +607,13 @@ struct HubSessionDetailHost: View {
         let start = max(0, windowStart - count)
         let span = HubPerf.begin("transcript.earlier", "offset=\(start)", awaits: true)
         defer { span.end() }
+        let ledger = ToolsCallLedger()
+        let sessionId = session.sessionId
+        let windowEnd = windowStart
         do {
-            let page = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: windowStart - start, offset: start)
+            let page = try await ledger.record {
+                try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: sessionId, limit: windowEnd - start, offset: start)
+            }
             // Another session or a refresh while it loaded: these turns are not this window's.
             guard owner == session.id, generation == loadID else { return false }
             let known = Set(turns.map(\.id))
@@ -579,7 +625,16 @@ struct HubSessionDetailHost: View {
             return true
         } catch {
             guard owner == session.id, generation == loadID else { return false }
-            banner = "Could not load earlier turns: \(error.localizedDescription)"
+            let report = FailureReport.toolsCall(error, outcome: "Earlier turns did not load", action: "Load earlier turns",
+                                                 call: ledger.failed, title: "Earlier turns did not load", area: "hub")
+            let retry: @MainActor () -> Void = { Task { await loadEarlier(count: count) } }
+            showFailure(report, first: false, retry: retry)
+            Task {
+                let full = await report.addingCallLog()
+                if owner == session.id, generation == loadID, bannerFailure == report {
+                    showFailure(full, first: false, retry: retry)
+                }
+            }
             return false
         }
     }

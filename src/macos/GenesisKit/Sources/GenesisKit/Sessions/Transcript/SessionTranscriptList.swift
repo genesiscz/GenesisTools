@@ -25,7 +25,19 @@ import SwiftUI
 public enum TranscriptLoadState: Equatable {
     case loading
     case loaded
-    case failed(String)
+    /// The first page did not load: the pane shows `FailureInline` with this report.
+    case failed(FailureReport)
+
+    /// A failure a caller only has words for.
+    public static func failed(_ message: String) -> TranscriptLoadState {
+        .failed(FailureReport(title: "The transcript did not load", headline: FailureLog.sentence(message) ?? message,
+                              dayLog: FailureReport.dayLogPath()))
+    }
+
+    public var failure: FailureReport? {
+        if case .failed(let report) = self { return report }
+        return nil
+    }
 }
 
 public struct TranscriptPreset: Equatable {
@@ -114,6 +126,8 @@ public struct SessionTranscriptList: View {
     /// and a "Latest" button appears once they scrolled away.
     public var followsLatest = false
     public var emptyMessage = "No turns in this session file."
+    /// Loads the first page again after a failure: the failure's Try again. Nil hides the button.
+    public var onRetry: (@MainActor () -> Void)?
     /// Whether the reader is at the latest turn, each time it flips: a host can trim a live window's oldest turns
     /// only while nobody reads them.
     public var onReaderAtEnd: (Bool) -> Void = { _ in }
@@ -135,8 +149,10 @@ public struct SessionTranscriptList: View {
         followsLatest: Bool = false,
         emptyMessage: String = "No turns in this session file.",
         activity: TranscriptActivityFeed? = nil,
+        onRetry: (@MainActor () -> Void)? = nil,
         onReaderAtEnd: @escaping (Bool) -> Void = { _ in }
     ) {
+        self.onRetry = onRetry
         self.onReaderAtEnd = onReaderAtEnd
         self.activity = activity
         self.document = document
@@ -544,17 +560,8 @@ public struct SessionTranscriptList: View {
         case .loading where document.sections.isEmpty:
             TranscriptSkeleton()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        case .failed(let message) where document.sections.isEmpty:
-            placeholder {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 22))
-                    .foregroundStyle(SessionPalette.red)
-                Text(verbatim: message)
-                    .font(SessionPalette.mono(11.5))
-                    .foregroundStyle(SessionPalette.red)
-                    .multilineTextAlignment(.center)
-                    .textSelection(.enabled)
-            }
+        case .failed(let report) where document.sections.isEmpty:
+            FailureInline(report, form: .pane, identifier: "transcript.failure", retry: onRetry)
         default:
             if document.sections.isEmpty {
                 placeholder {
