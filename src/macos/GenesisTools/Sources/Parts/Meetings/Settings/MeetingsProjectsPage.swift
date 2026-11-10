@@ -96,15 +96,78 @@ struct MeetingsProjectsPage: View {
     }
 }
 
+/// One project as a card that folds. Folded, it shows the name and what the project holds; a click anywhere on the header
+/// row opens it. The open state is kept per project across launches; a card with unsaved rules stays open, and a link
+/// to its anchor (`project-<name>`, the window's "Edit rules…") opens it.
 private struct ProjectCard: View {
     @Bindable var model: MeetingsSettingsModel
     let name: String
     let settings: MeetingsSettings
+    @State private var open: Bool
+    @Environment(\.nativeSettingsIndexing) private var indexing
+    @ObservedObject private var anchors = NativeSettingsHighlightCenter.shared
+
+    init(model: MeetingsSettingsModel, name: String, settings: MeetingsSettings) {
+        _model = Bindable(model)
+        self.name = name
+        self.settings = settings
+        // The first frame already has the saved state, so a card does not snap open after the page appears.
+        _open = State(initialValue: MeetingsPreferences.openProjects().contains(name)
+            || Self.linked(name, center: NativeSettingsHighlightCenter.shared))
+    }
+
+    static func anchor(_ name: String) -> String { "project-\(name)" }
+
+    /// A link to this card arrived a moment ago (the window opens the page on it before the card exists).
+    private static func linked(_ name: String, center: NativeSettingsHighlightCenter) -> Bool {
+        guard center.anchor == anchor(name), let at = center.requestedAt else { return false }
+        return Date().timeIntervalSince(at) < 10
+    }
 
     var body: some View {
+        let unsaved = model.hasUnsavedRules(name)
+        // The hidden copy the settings search reads draws every card open, so a rule inside a folded card is found.
+        let shown = open || unsaved || indexing
+        let summary = ProjectCardSummary.line(name, in: settings)
+        NativeSettingsCard {
+            GenDisclosure(isExpanded: Binding(get: { shown }, set: { setOpen($0, unsaved: unsaved) }),
+                          minHeight: 40, spacing: 14, identifier: "meetings.project.\(name)",
+                          accessibilityTitle: "\(name), \(summary)\(unsaved ? ", rules not saved" : "")") {
+                rules
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: name).font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: 6) {
+                        Text(verbatim: summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        if unsaved {
+                            Text("· rules not saved, so it stays open").font(.system(size: 11)).foregroundStyle(KitPalette.modified)
+                                .lineLimit(1).layoutPriority(-1)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .nativeSettingsSearchCard(name, detail: summary)
+        .onChange(of: anchors.token) { _, _ in
+            if anchors.anchor == Self.anchor(name) { setOpen(true, unsaved: unsaved) }
+        }
+    }
+
+    private func setOpen(_ value: Bool, unsaved: Bool) {
+        // Unsaved rules keep the card open: folding them away would hide the Save button.
+        guard value || !unsaved, value != open else { return }
+        open = value
+        if model.writes, !indexing { MeetingsPreferences.setProject(name, open: value) }
+    }
+
+    @ViewBuilder
+    private var rules: some View {
         let project = settings.projects[name]
         let draft = model.drafts[name] ?? model.savedRules(name, in: settings)
-        NativeSettingsCard(name, subtitle: "Its meetings get its dictionary and labels; a rule below puts a meeting in it.") {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Its meetings get its dictionary and labels; a rule below puts a meeting in it.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
             TokenList(title: "Wispr folders", detail: "A Wispr Flow note in one of these folders is this project's.",
                       values: draft.folders, placeholder: "Add a folder") { values in model.editDraft(name) { $0.folders = values } }
             Divider()
@@ -153,6 +216,7 @@ private struct ProjectCard: View {
                 }
             }
         }
+        .padding(.trailing, 6)
     }
 }
 

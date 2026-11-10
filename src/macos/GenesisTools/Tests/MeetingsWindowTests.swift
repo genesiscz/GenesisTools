@@ -293,6 +293,31 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(preview.words, "3 pairings in 2 projects; 2 people leave a project")
     }
 
+    func testAFoldedProjectCardSaysWhatTheProjectHolds() throws {
+        let projects = try JSONDecoder().decode([String: ProjectSettings].self, from: Data("""
+        {"shop":{"labels":["Checkout","Billing","Ops"],"export":{"folder":"/Users/alice/Notes/acme"},
+                 "match":{"calendar":{"calendars":["Work"]},"title":{"words":[]},"people":[
+                   {"name":"Alice","email":"alice@example.com","pairedBy":[{"kind":"manual"}]}]}},
+         "empty":{"labels":[],"match":{"people":[]}}}
+        """.utf8))
+        XCTAssertEqual(ProjectCardSummary.line(projects["shop"], folders: 1),
+                       "2 rules · 3 labels · 1 paired person · exports to Notes/acme")
+        XCTAssertEqual(ProjectCardSummary.line(projects["empty"], folders: 0), "no rules yet")
+    }
+
+    func testAProjectCardKeepsItsOpenStateAcrossARename() throws {
+        let suite = "meetings.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(MeetingsPreferences.openProjects(defaults), [], "every card starts folded")
+        MeetingsPreferences.setProject("shop", open: true, defaults)
+        MeetingsPreferences.setProject("side", open: true, defaults)
+        MeetingsPreferences.setProject("side", open: false, defaults)
+        XCTAssertEqual(MeetingsPreferences.openProjects(defaults), ["shop"])
+        MeetingsPreferences.renameOpenProject("shop", to: "store", defaults)
+        XCTAssertEqual(MeetingsPreferences.openProjects(defaults), ["store"])
+    }
+
     // MARK: Layout
 
     /// A failed overview shows the CLI's whole sentence in the list's error pill. The window must still show the sidebar's

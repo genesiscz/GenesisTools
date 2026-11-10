@@ -485,7 +485,10 @@ extension MeetingsSettingsModel {
         let to = typed.trimmingCharacters(in: .whitespaces)
         guard !to.isEmpty, to != from else { return }
         run(key: "project.rename.\(from)", Self.renameArgs(from, to: to), done: "Renamed \(from) to \(to)",
-            undo: { [weak self] in self?.renameProject(to, to: from) }, saved: { _ in renamed?() }) { $0.loadSettings() }
+            undo: { [weak self] in self?.renameProject(to, to: from) }, saved: { model in
+                if model.writes { MeetingsPreferences.renameOpenProject(from, to: to) }
+                renamed?()
+            }) { $0.loadSettings() }
     }
 
     /// Removes a project (`projects remove`); its settings go into a backup first. While meetings have it the CLI

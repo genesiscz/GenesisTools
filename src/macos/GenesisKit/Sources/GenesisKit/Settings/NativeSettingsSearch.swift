@@ -213,6 +213,13 @@ extension View {
                 }
             }
     }
+
+    /// Names a card the search can find and jump to when the card draws its own header (a card that folds, whose
+    /// header is a button) instead of a `NativeSettingsCard` title. Its rows name it as their card.
+    public func nativeSettingsSearchCard(_ title: String, detail: String? = nil) -> some View {
+        environment(\.nativeSettingsSearchCard, title)
+            .nativeSettingsSearchable(NativeSettingsSearchEntry(kind: .card, title: title, detail: detail), cornerRadius: 22)
+    }
 }
 
 /// Every page but the one on screen, drawn once and hidden while a search runs, so the search learns their cards and
