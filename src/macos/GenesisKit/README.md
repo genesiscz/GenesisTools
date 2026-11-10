@@ -1147,7 +1147,7 @@ IconButton(
 
 #### `AutocompleteField` and `AutocompleteFolderField`
 
-`GenesisKitBase/Controls/`: a field that completes from `items`, `lazyItems` (read once) or `search` (per typed text, debounced), with the keyboard (Down, Up, Return, Tab, Escape), loading, no match and a failed read with Retry, drawn through `KitLook`; the folder field completes paths (`~`, `/`, hidden folders after a dot) and says when macOS keeps a folder from the app.
+`GenesisKitBase/Controls/`: a field that completes from `items`, `lazyItems` (read once) or `search` (per typed text, debounced), with the keyboard (Down, Up, Return, Tab, Escape), loading, no match and a failed read with Retry, drawn through `KitLook`; the folder field completes paths (`~`, `/`, hidden folders after a dot) and says when macOS keeps a folder from the app. The list floats over the page by default (`presentation: .floating`, a never-key child window of the field's window that follows the field and closes when the window stops being key, so nothing in the page moves); `presentation: .inPage` draws it in the page and pushes the content below down.
 
 #### `GhostButton`
 

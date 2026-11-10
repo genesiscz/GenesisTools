@@ -227,13 +227,30 @@ public final class AutocompleteModel<Item: AutocompleteItem>: ObservableObject {
         dismissed = false
     }
 
+    /// Whether the list shows: the field has the keyboard and nothing closed the list since.
+    public var isOpen: Bool { focused && !dismissed }
+
     func typed() {
         dismissed = false
         marked = nil
     }
 
+    /// Escape, a click outside the window's keyboard, or a floating list scrolled out of sight closed the list.
     func dismiss() {
         dismissed = true
+        marked = nil
+    }
+
+    /// A value was taken. Return and a click close the list; Tab keeps it open, because Tab completes and goes on (the
+    /// folder field fills a folder and lists its folders next).
+    func took(_ key: AutocompleteKey) {
+        marked = nil
+        if key != .tab { dismissed = true }
+    }
+
+    /// The caller set the text (a taken value cleared, a folder filled by Tab): the mark goes, and a closed list stays
+    /// closed until the user types or presses Down.
+    func changedOutside() {
         marked = nil
     }
 
@@ -261,7 +278,9 @@ public final class AutocompleteModel<Item: AutocompleteItem>: ObservableObject {
 
 /// A text field that completes from values the caller gives: a fixed list (`items`), a list read once when first
 /// needed (`lazyItems`), or a search per typed text (`search`). The list opens under the field while it has the
-/// keyboard and something to show, and pushes what is below it down (it never covers the next field).
+/// keyboard and something to show. By default it floats over the page in a child window (`.floating`), so nothing in
+/// the page moves and no card or scroll view cuts it; `.inPage` draws it in the page and pushes what is below down.
+/// A taken value (Return, a click) closes the list; typing or Down opens it again.
 ///
 /// Keys: Down and Up move the mark, Return takes the marked row (or the typed text when `allowsFreeText` and no row is
 /// marked), Tab takes the marked row (and moves on when none is), Escape closes the list first and clears the field
@@ -279,19 +298,26 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
     private let label: String?
     private let identifier: String?
     private let preview: AutocompletePreview?
+    private let presentation: AutocompletePresentation
     private let onChoose: (AutocompleteChoice<Item>) -> Void
     @StateObject private var model = AutocompleteModel<Item>()
+    /// The floating list's panel; it makes no window until the list first opens.
+    @State private var floating = AutocompleteFloatingList()
     @Environment(\.kitLook) private var look
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.nativeSettingsReduceMotion) private var appReduceMotion
+    @Environment(\.widgetReduceMotion) private var widgetReduceMotion
     @GenReduceMotion private var reduceMotion
 
     /// - Parameters:
     ///   - allowsFreeText: Return with no marked row takes the typed text, a value the list does not hold.
     ///   - hides: values to leave out of the list, such as those already chosen.
     ///   - preview: draws the list open as given, for a picture with no keyboard (the catalog); nil in an app.
+    ///   - presentation: the list floats over the page (`.floating`, the default) or opens in it (`.inPage`).
     public init(_ placeholder: String, text: Binding<String>, source: AutocompleteSource<Item>, allowsFreeText: Bool = false,
                 hides: @escaping (Item) -> Bool = { _ in false }, maxRows: Int = 7, label: String? = nil,
                 identifier: String? = nil, preview: AutocompletePreview? = nil,
+                presentation: AutocompletePresentation = .floating,
                 onChoose: @escaping (AutocompleteChoice<Item>) -> Void) {
         _text = text
         self.placeholder = placeholder
@@ -302,31 +328,35 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
         self.label = label
         self.identifier = identifier
         self.preview = preview
+        self.presentation = presentation
         self.onChoose = onChoose
     }
 
     /// A fixed list, filtered as the user types.
     public init(_ placeholder: String, text: Binding<String>, items: [Item], allowsFreeText: Bool = false,
                 hides: @escaping (Item) -> Bool = { _ in false }, label: String? = nil, identifier: String? = nil,
-                preview: AutocompletePreview? = nil, onChoose: @escaping (AutocompleteChoice<Item>) -> Void) {
+                preview: AutocompletePreview? = nil, presentation: AutocompletePresentation = .floating,
+                onChoose: @escaping (AutocompleteChoice<Item>) -> Void) {
         self.init(placeholder, text: text, source: .items(items), allowsFreeText: allowsFreeText, hides: hides, label: label,
-                  identifier: identifier, preview: preview, onChoose: onChoose)
+                  identifier: identifier, preview: preview, presentation: presentation, onChoose: onChoose)
     }
 
     /// A list read once, when the field first needs values.
     public init(_ placeholder: String, text: Binding<String>, lazyItems: @escaping @Sendable () async throws -> [Item],
                 allowsFreeText: Bool = false, hides: @escaping (Item) -> Bool = { _ in false }, label: String? = nil,
-                identifier: String? = nil, onChoose: @escaping (AutocompleteChoice<Item>) -> Void) {
+                identifier: String? = nil, presentation: AutocompletePresentation = .floating,
+                onChoose: @escaping (AutocompleteChoice<Item>) -> Void) {
         self.init(placeholder, text: text, source: .lazyItems(lazyItems), allowsFreeText: allowsFreeText, hides: hides,
-                  label: label, identifier: identifier, onChoose: onChoose)
+                  label: label, identifier: identifier, presentation: presentation, onChoose: onChoose)
     }
 
     /// A search per typed text.
     public init(_ placeholder: String, text: Binding<String>, search: @escaping @Sendable (String) async throws -> [Item],
                 allowsFreeText: Bool = false, hides: @escaping (Item) -> Bool = { _ in false }, label: String? = nil,
-                identifier: String? = nil, onChoose: @escaping (AutocompleteChoice<Item>) -> Void) {
+                identifier: String? = nil, presentation: AutocompletePresentation = .floating,
+                onChoose: @escaping (AutocompleteChoice<Item>) -> Void) {
         self.init(placeholder, text: text, source: .search(search), allowsFreeText: allowsFreeText, hides: hides,
-                  label: label, identifier: identifier, onChoose: onChoose)
+                  label: label, identifier: identifier, presentation: presentation, onChoose: onChoose)
     }
 
     /// The rows the list shows for the text now.
@@ -346,7 +376,7 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
 
     private var listOpen: Bool {
         if preview != nil { return true }
-        return model.focused && !model.dismissed
+        return model.isOpen
     }
 
     private var markedIndex: Int? {
@@ -354,22 +384,44 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
         return model.marked.flatMap { $0 < matches.count ? $0 : nil }
     }
 
+    /// The list goes to a child window: floating, and not a picture.
+    private var usesPanel: Bool { presentation == .floating && preview == nil }
+
     public var body: some View {
         let rows = matches
+        let list = listOpen ? listContent(rows) : nil
         VStack(alignment: .leading, spacing: 4) {
             AutocompleteTextField(placeholder: placeholder, text: $text, label: label ?? placeholder, identifier: identifier,
-                                  onFocus: focus, onType: type, onCommand: { command(rows, $0) })
+                                  floating: usesPanel ? floating : nil, list: usesPanel ? list.map(carried) : nil,
+                                  reduceMotion: reduceMotion, onFocus: focus, onType: type,
+                                  onCommand: { command(rows, $0) }, onListClosed: { model.dismiss() })
                 .frame(maxWidth: .infinity)
-            if listOpen, let list = listContent(rows) {
+            if presentation == .inPage, let list {
                 list.transition(.genReveal)
             }
         }
         .clipShape(Rectangle().inset(by: -4))
         .animation(GenMotion.animation(expanding: listOpen, reduceMotion: reduceMotion), value: listOpen)
-        // A value set from outside (a Tab that filled a folder) is asked like a typed one.
+        // A picture has no child window: the floating list draws under the field, outside its layout.
+        .overlay(alignment: .bottomLeading) {
+            if presentation == .floating, preview != nil, let list {
+                // A view with no height at the field's bottom edge; the list hangs from it.
+                Color.clear.frame(height: 0).overlay(alignment: .topLeading) {
+                    list.fixedSize(horizontal: false, vertical: true)
+                        .frame(minWidth: AutocompletePlacement.minimumWidth, alignment: .leading)
+                        .offset(y: AutocompletePlacement.gap)
+                }
+            }
+        }
+        // The panel follows the field when the page's layout moves it.
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { _ in
+            if usesPanel { floating.follow() }
+        }
+        // A value set from outside (a Tab that filled a folder, a taken value cleared) is asked like a typed one, and
+        // a closed list stays closed.
         .onChange(of: text) { _, value in
             guard model.focused else { return }
-            model.typed()
+            model.changedOutside()
             model.need(source, text: value)
         }
         .onChange(of: rows.count) { _, count in
@@ -403,6 +455,7 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
             if listOpen, let index = model.marked, index < rows.count {
                 take(rows[index], key: .returnKey)
             } else if allowsFreeText, !trimmed.isEmpty {
+                model.took(.returnKey)
                 onChoose(AutocompleteChoice(item: nil, text: trimmed, key: .returnKey))
             }
             return true
@@ -424,8 +477,18 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
     }
 
     private func take(_ item: Item, key: AutocompleteKey) {
-        model.marked = nil
+        model.took(key)
         onChoose(AutocompleteChoice(item: item, text: item.autocompleteTitle, key: key))
+    }
+
+    /// The list for the panel: a new hosting view does not inherit the field's environment, so the look, the colour
+    /// scheme and the app's and the widget's Reduce Motion go with it (the system's reaches it by itself).
+    private func carried(_ list: AnyView) -> AnyView {
+        AnyView(list
+            .environment(\.kitLook, look)
+            .environment(\.colorScheme, scheme)
+            .environment(\.nativeSettingsReduceMotion, appReduceMotion)
+            .environment(\.widgetReduceMotion, widgetReduceMotion))
     }
 
     private func announce(count: Int) {
@@ -465,12 +528,18 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
     private func panel(@ViewBuilder _ content: () -> some View) -> some View {
         let ground = look.surface(.well, scheme: scheme)
         let radius = look.radius(.well, height: 30, legacy: 7)
+        let shape = RoundedRectangle(cornerRadius: radius, style: look.corners)
+        let floats = presentation == .floating
         return content()
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(KitSurfaceBackground(ground, radius: radius, corners: look.corners))
+            // Over the page the look's well (a tint) needs a ground of its own, or the rows below show through.
+            .background { if floats { shape.fill(Color(nsColor: .windowBackgroundColor)) } }
             .overlay {
-                RoundedRectangle(cornerRadius: radius, style: look.corners).strokeBorder(Color.primary.opacity(0.08))
+                shape.strokeBorder(Color.primary.opacity(floats ? 0.14 : 0.08))
             }
+            // Over the page it casts a soft shadow (the panel leaves room for it).
+            .shadow(color: .black.opacity(floats ? 0.32 : 0), radius: 10, y: 4)
             .accessibilityElement(children: .contain)
     }
 
@@ -508,7 +577,8 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
             }
             .scrollIndicators(rows.count > maxRows ? .automatic : .never)
             .frame(height: height)
-            .onChange(of: model.marked) { _, index in
+            // The marked row as a value: in the floating panel this view does not observe the model.
+            .onChange(of: marked) { _, index in
                 guard let index else { return }
                 proxy.scrollTo(index)
             }
@@ -602,12 +672,23 @@ struct AutocompleteTextField: NSViewRepresentable {
     @Binding var text: String
     let label: String
     let identifier: String?
+    /// The floating list's panel, when the list floats; nil for the in-page list and in a picture.
+    let floating: AutocompleteFloatingList?
+    /// The list the panel shows now (nil: closed).
+    let list: AnyView?
+    let reduceMotion: Bool
     let onFocus: (Bool) -> Void
     let onType: (String) -> Void
     /// True when the key was used.
     let onCommand: (AutocompleteCommand) -> Bool
+    /// The panel closed the list by itself (the window lost the keyboard, the field scrolled out of sight).
+    let onListClosed: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    static func dismantleNSView(_ field: Field, coordinator: Coordinator) {
+        coordinator.floating?.tearDown()
+    }
 
     func makeNSView(context: Context) -> Field {
         let field = Field(string: text)
@@ -623,11 +704,16 @@ struct AutocompleteTextField: NSViewRepresentable {
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.delegate = context.coordinator
         field.onFocus = { [weak coordinator = context.coordinator] in coordinator?.parent.onFocus(true) }
+        if let identifier, AutocompleteLaunch.take(identifier) {
+            // A picture of the open list: the model opens it, with no key event and no first responder.
+            AutocompleteLaunch.whenInSight(field) { [weak coordinator = context.coordinator] in coordinator?.parent.onFocus(true) }
+        }
         return field
     }
 
     func updateNSView(_ field: Field, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.show(list, in: floating, field: field)
         if field.stringValue != text {
             // While the field is edited, its editor holds the text: set it there and keep the caret at the end.
             if let editor = field.currentEditor() as? NSTextView {
@@ -653,9 +739,35 @@ struct AutocompleteTextField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: AutocompleteTextField
+        private(set) var floating: AutocompleteFloatingList?
+        private var pending: AnyView?
+        private var scheduled = false
 
         init(_ parent: AutocompleteTextField) {
             self.parent = parent
+        }
+
+        /// Hands the list to the panel on the next turn of the run loop: a SwiftUI update never lays out another
+        /// window inside itself. Several updates in one turn show the last list once.
+        @MainActor
+        func show(_ list: AnyView?, in floating: AutocompleteFloatingList?, field: NSView) {
+            if floating !== self.floating {
+                self.floating?.tearDown()
+                self.floating = floating
+            }
+            guard let floating else { return }
+            floating.attach(field)
+            floating.onClose = { [weak self] in self?.parent.onListClosed() }
+            pending = list
+            guard !scheduled else { return }
+            scheduled = true
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.scheduled = false
+                    self.floating?.update(self.pending, reduceMotion: self.parent.reduceMotion)
+                }
+            }
         }
 
         func controlTextDidChange(_ notification: Notification) {

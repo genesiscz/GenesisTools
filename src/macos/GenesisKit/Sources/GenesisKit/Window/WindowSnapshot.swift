@@ -110,29 +110,40 @@ public enum WindowSnapshot {
         }
     }
 
+    /// The window and the child windows it shows (a floating autocomplete list), each lowered under the desktop picture
+    /// and made opaque for the capture, then put back.
     private static func windowServerImage(_ window: NSWindow) async throws -> NSBitmapImageRep {
-        let level = window.level
-        let alpha = window.alphaValue
+        let windows = [window] + (window.childWindows ?? []).filter(\.isVisible)
+        let saved = windows.map { ($0, $0.level, $0.alphaValue) }
         defer {
-            window.alphaValue = alpha
-            window.level = level
+            for (each, level, alpha) in saved {
+                each.alphaValue = alpha
+                each.level = level
+            }
         }
 
         let minimum = Int(CGWindowLevelForKey(.minimumWindow))
-        window.level = NSWindow.Level(rawValue: minimum)
-        guard let own = try await settled(window, until: { $0.layer == minimum }),
-              coveredByDesktopPicture(own.bounds, above: listed(window, .optionOnScreenAboveWindow),
-                                      desktopLevel: Int(CGWindowLevelForKey(.desktopWindow)))
-        else { throw Failure.notHidden }
+        var bounds: [CGRect] = []
+        for each in windows {
+            each.level = NSWindow.Level(rawValue: minimum)
+            guard let own = try await settled(each, until: { $0.layer == minimum }),
+                  coveredByDesktopPicture(own.bounds, above: listed(each, .optionOnScreenAboveWindow),
+                                          desktopLevel: Int(CGWindowLevelForKey(.desktopWindow)))
+            else { throw Failure.notHidden }
+            bounds.append(own.bounds)
+        }
 
-        window.alphaValue = 1
-        guard try await settled(window, until: { $0.alpha >= 1 }) != nil else { throw Failure.notHidden }
-        let number = CGWindowID(window.windowNumber)
+        for each in windows {
+            each.alphaValue = 1
+            guard try await settled(each, until: { $0.alpha >= 1 }) != nil else { throw Failure.notHidden }
+        }
+        let numbers = windows.map { CGWindowID($0.windowNumber) }
+        let area = bounds.dropFirst().reduce(bounds[0]) { $0.union($1) }
         // The window server can stop answering, and ScreenCaptureKit ignores cancellation: past the deadline the capture
         // falls back to `cacheDisplay` and the late answer is dropped.
         let capture = Task { () -> Result<CGImage, Failure> in
             do {
-                return .success(try await serverImage(number))
+                return .success(numbers.count == 1 ? try await serverImage(numbers[0]) : try await serverImage(numbers, area: area))
             } catch {
                 return .failure(error as? Failure ?? .screenCaptureKit(error.localizedDescription))
             }
@@ -154,6 +165,25 @@ public enum WindowSnapshot {
         configuration.height = Int((info.contentRect.height * CGFloat(info.pointPixelScale)).rounded())
         configuration.showsCursor = false
         configuration.ignoreShadowsSingleWindow = true
+        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+    }
+
+    /// Several windows as the window server composes them on their display (a child's shadow over its parent
+    /// included), cut to `area` (global coordinates, origin at the top left).
+    private static func serverImage(_ numbers: [CGWindowID], area: CGRect) async throws -> CGImage {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        let targets = numbers.compactMap { number in content.windows.first { $0.windowID == number } }
+        guard targets.count == numbers.count,
+              let display = content.displays.first(where: { $0.frame.contains(CGPoint(x: area.midX, y: area.midY)) })
+        else { throw Failure.notListed }
+        let filter = SCContentFilter(display: display, including: targets)
+        let scale = CGFloat(SCShareableContent.info(for: filter).pointPixelScale)
+        let configuration = SCStreamConfiguration()
+        configuration.sourceRect = area.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
+        configuration.width = Int((area.width * scale).rounded())
+        configuration.height = Int((area.height * scale).rounded())
+        configuration.showsCursor = false
+        configuration.backgroundColor = CGColor.clear
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 }
