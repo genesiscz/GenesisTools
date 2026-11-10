@@ -1,7 +1,7 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
+import { ensureFaceReady, faceReadiness, openFace } from "@app/macos/lib/permissions/part-readiness";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -371,15 +371,7 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
 
 /** Builds the app with the recorder part when the installed one lacks it. */
 export async function ensureRecorderPart(onStep?: (line: string) => void): Promise<void> {
-    const status = appStatus();
-
-    if (status.built && status.parts.includes("recorder")) {
-        return;
-    }
-
-    onStep?.("GenesisTools.app has no recorder part yet: building it (about a minute)");
-    log.info({ parts: status.parts }, "recorder: adding the recorder part");
-    await buildApp({ onStep, parts: { add: ["recorder"] } });
+    await ensureFaceReady("--recorder", { build: "allow", stale: "accept", onStep });
 }
 
 /**
@@ -387,18 +379,15 @@ export async function ensureRecorderPart(onStep?: (line: string) => void): Promi
  * turn's limit kills it halfway, and the build went on as an orphan holding the app's build lock (R2-NR3).
  */
 export function requireRecorderPart(doing: string): void {
-    const status = appStatus();
+    const readiness = faceReadiness("--recorder", { build: "refuse", stale: "accept" });
 
-    if (status.built && status.parts.includes("recorder")) {
+    if (readiness.ready) {
         return;
     }
 
-    const missing = status.built
-        ? "the installed GenesisTools.app has no recorder part"
-        : "GenesisTools.app is not installed";
-    log.debug({ doing, built: status.built, parts: status.parts }, "recorder: refused, no recorder part");
+    log.debug({ doing, reason: readiness.reason }, "recorder: refused, the app cannot serve the recorder face");
     throw new Error(
-        `${doing} needs the recorder part of GenesisTools.app, and ${missing}. Nothing was started. Add it from a shell (a build of about a minute, longer than a turn): ${toolCommand("macos permissions build --add-part recorder")}`
+        `${doing} cannot run: ${readiness.sentence} (from a shell: the build takes about a minute, longer than a turn)`
     );
 }
 
@@ -479,11 +468,7 @@ export async function waitForEditorOpen({ timeoutMs }: { timeoutMs: number }): P
 /** Runs `open` with these arguments; throws with its message when it fails. */
 export function openWithApp(args: string[]): void {
     log.debug({ args }, "recorder: open the app");
-    const result = spawnSync("open", args, { encoding: "utf8" });
-
-    if (result.status !== 0) {
-        throw new Error(`open failed (${result.status}): ${(result.stderr || result.error?.message || "").trim()}`);
-    }
+    openFace(args);
 }
 
 /** The `open` arguments of a recorder window: a new process that hands them to the running recorder face. */
