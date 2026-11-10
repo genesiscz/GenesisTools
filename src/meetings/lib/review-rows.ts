@@ -377,7 +377,13 @@ function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoi
 
     return [
         ...ordered(answers),
-        { value: NONE_OF_THESE, label: "None of these", role: "none", action: answer(NONE_OF_THESE) },
+        {
+            value: NONE_OF_THESE,
+            // A word question without a candidate has no "these": the same answer reads as what it does to the word.
+            label: answers.length === 0 && question.about !== "speaker" ? "Keep as heard" : "None of these",
+            role: "none",
+            action: answer(NONE_OF_THESE),
+        },
         ...(question.about === "speaker"
             ? [{ value: "split", label: "Several voices", role: "split" as const, action: { kind: "split" as const } }]
             : []),

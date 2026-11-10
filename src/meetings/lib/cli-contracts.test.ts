@@ -486,6 +486,32 @@ describe("rows --json: the review rows (F3)", () => {
         ]);
     });
 
+    test("a word question without a candidate offers Keep as heard: None of these named nothing there", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const bare = meetingRecordSchema.parse({
+            id: "2026-11-05-bare",
+            title: "Bare",
+            start: at,
+            createdAt: at,
+            createdBy: "new",
+            items: [
+                question("i1", { question: 'What is "Hohem"?', heard: "Hohem" }),
+                question("i2", { about: "speaker", question: 'Who speaks under "Speaker 2"?' }),
+            ],
+        });
+        const labels = (index: number) =>
+            reviewRow(bare, bare.items[index]!).choices.map((choice) => [choice.label, choice.role, choice.value]);
+
+        expect(labels(0)).toEqual([
+            ["Keep as heard", "none", "none of these"],
+            ["Skip", "skip", "skip"],
+        ]);
+        expect(labels(1)[0]).toEqual(["None of these", "none", "none of these"]);
+        expect(reviewRow(record, record.items[2]!).choices.find((choice) => choice.role === "none")?.label).toBe(
+            "None of these"
+        );
+    });
+
     test("typed candidate scores win over the saved strings, best first, and a score that does not read is left out", async () => {
         const { candidateScores } = await import("./review-rows");
         const typed = structuredClone(record.items[0]!);
