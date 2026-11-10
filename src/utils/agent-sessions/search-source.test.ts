@@ -7,9 +7,12 @@ import {
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
+    noMetadata,
     noMidWork,
+    noRecordRead,
     noRowAnchors,
     noSessionChanges,
+    noStatistics,
 } from "./testing/no-backward-read";
 import type { HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
 
@@ -115,6 +118,9 @@ function reader(records: HistorySourceRecord[]): NativeSessionReader<string> {
         readChanges: noSessionChanges,
         rowAnchors: noRowAnchors,
         analysis: noAnalysis,
+        readMetadata: noMetadata,
+        readRecords: noRecordRead,
+        readStatistics: noStatistics,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [SOURCE.root],

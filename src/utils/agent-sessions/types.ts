@@ -229,7 +229,9 @@ export interface HistoryRecordRead {
     complete: boolean;
 }
 
-export interface HistoryStatisticsRead {
+/** What one transcript contributes to the statistics tables. */
+export interface SupportedHistoryStatistics {
+    supported: true;
     summary: HistoryFileStatistics;
     /** Exact event-date token buckets for uncached compatibility facades; persisted daily contributions keep provider semantics. */
     dailyTokens?: Record<string, TokenUsage>;
@@ -237,6 +239,12 @@ export interface HistoryStatisticsRead {
     issues: NativeSourceIssue[];
     complete: boolean;
 }
+
+/**
+ * `readStatistics`'s answer. A provider whose files carry no statistics answers `{ supported: false, reason }` from
+ * the member, and the refresh then reports coverage "unsupported"; the member is never left out.
+ */
+export type HistoryStatisticsRead = SupportedHistoryStatistics | { supported: false; reason: string };
 
 export interface HistoryReadOptions {
     signal?: AbortSignal;
@@ -503,14 +511,17 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
     lineLocalRecords?: boolean;
     /** Scanned records never carry `metadataChanges`, so a session's metadata after a scan is its indexed row. */
     scanKeepsMetadata?: boolean;
-    /** Compact operations are enabled as provider extraction completes. */
-    readMetadata?(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): Promise<HistoryMetadataRead>;
-    scan?(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): AsyncIterable<HistorySourceRecord>;
-    readRecords?(
+    /** The session's metadata row, read from its transcript and sidecars. */
+    readMetadata(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): Promise<HistoryMetadataRead>;
+    /** Every original record of the session, oldest first, with its searchable entries. */
+    scan(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): AsyncIterable<HistorySourceRecord>;
+    /** The original records a search matched, found again by the locators `scan` gave them. */
+    readRecords(
         source: NativeSessionSource<Kind>,
         options: HistoryReadOptions & { locators: string[] }
     ): Promise<HistoryRecordRead>;
-    readStatistics?(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): Promise<HistoryStatisticsRead>;
+    /** One transcript's statistics contribution, or `{ supported: false, reason }` when the provider keeps none. */
+    readStatistics(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): Promise<HistoryStatisticsRead>;
     roots(): string[];
     discover(
         roots: string[],
@@ -549,19 +560,17 @@ export interface NativeIndexSyncResult extends NativeIndexStatus {
 export type NativeIndexChanges = Pick<NativeIndexSyncResult, "parsed" | "unchanged" | "removed" | "issues">;
 
 /** The reader members a provider's history module implements itself; the provider's reader spreads them in. */
-export type HistoryOperations<Kind extends AgentKind> = Pick<NativeSessionReader<Kind>, "parserVersion"> &
-    Required<
-        Pick<
-            NativeSessionReader<Kind>,
-            | "readMetadata"
-            | "scan"
-            | "readRecords"
-            | "readBackward"
-            | "readTurnBoundary"
-            | "readForward"
-            | "continuedIn"
-            | "currentModel"
-            | "scanInsights"
-            | "rowAnchors"
-        >
-    >;
+export type HistoryOperations<Kind extends AgentKind> = Pick<
+    NativeSessionReader<Kind>,
+    | "parserVersion"
+    | "readMetadata"
+    | "scan"
+    | "readRecords"
+    | "readBackward"
+    | "readTurnBoundary"
+    | "readForward"
+    | "continuedIn"
+    | "currentModel"
+    | "scanInsights"
+    | "rowAnchors"
+>;

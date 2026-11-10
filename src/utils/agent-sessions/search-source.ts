@@ -109,10 +109,6 @@ export async function searchHistorySource(options: {
 }): Promise<HistorySourceMatch | null> {
     const { source, reader, filters } = options;
 
-    if (!reader.scan) {
-        throw new Error(`${reader.kind} does not implement source-backed history scanning`);
-    }
-
     const metadata = { ...options.metadata };
     const issues: NativeSourceIssue[] = [];
     const matchedLocators: string[] = [];

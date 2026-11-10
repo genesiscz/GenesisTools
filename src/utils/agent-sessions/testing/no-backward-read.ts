@@ -1,5 +1,12 @@
 import type { SessionAnalysisReader } from "../analysis-types";
-import type { BackwardRead, RowAnchorWalk } from "../types";
+import type {
+    BackwardRead,
+    HistoryMetadataRead,
+    HistoryRecordRead,
+    HistorySourceRecord,
+    HistoryStatisticsRead,
+    RowAnchorWalk,
+} from "../types";
 
 /** `readBackward` for a test reader whose test never walks a session backwards. */
 export async function noBackwardRead(): Promise<BackwardRead> {
@@ -41,4 +48,22 @@ export const noAnalysis: SessionAnalysisReader = {
 /** `midWork` for a test reader whose sessions are never asked whether they still work: always finished. */
 export function noMidWork(): boolean {
     return false;
+}
+
+/** `readStatistics` for a test reader whose provider keeps no statistics: every source answers that it cannot. */
+export async function noStatistics(): Promise<HistoryStatisticsRead> {
+    return { supported: false, reason: "test reader" };
+}
+
+/** `readMetadata` for a test reader whose test never indexes a session: no source names a session. */
+export async function noMetadata(): Promise<HistoryMetadataRead> {
+    return { metadata: null, issues: [], complete: true };
+}
+
+/** `scan` for a test reader whose sessions hold no original records. */
+export async function* noRecordScan(): AsyncIterable<HistorySourceRecord> {}
+
+/** `readRecords` for a test reader whose test never hydrates a search match. */
+export async function noRecordRead(): Promise<HistoryRecordRead> {
+    return { records: [], issues: [], complete: true };
 }

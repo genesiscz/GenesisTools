@@ -9,10 +9,7 @@ import { toSessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-r
 import { parseHistoryDate } from "@genesiscz/utils/agent-sessions/history-date";
 import { catalogHistory, catalogHistoryCounts, openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
-import { claudeProjectName } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
-import { aggregateHistoryStatistics } from "@genesiscz/utils/agent-sessions/statistics-aggregate";
 import type { NativeSessionReader, NativeSessionSource } from "@genesiscz/utils/agent-sessions/types";
-import { concurrentMap } from "@genesiscz/utils/async";
 import {
     aggregateDailyStats,
     type DateRange,
@@ -33,8 +30,6 @@ import type { SearchFilters, SearchResult } from "./types";
 
 // Re-export all types
 export * from "./types";
-
-const STATISTICS_READ_CONCURRENCY = 16;
 
 function hist() {
     return profiler.scope("claude-history");
@@ -210,24 +205,6 @@ export interface ConversationStats {
     conversationLengths: number[];
 }
 
-/** The Claude reader (`resolveHistoryProvider("claude")`) with its statistics member. */
-type ClaudeStatisticsReader = NativeSessionReader<string> & {
-    readStatistics: NonNullable<NativeSessionReader<string>["readStatistics"]>;
-};
-
-function isClaudeStatisticsReader(reader: NativeSessionReader<string>): reader is ClaudeStatisticsReader {
-    return reader.readStatistics !== undefined;
-}
-
-function claudeStatisticsReader(): ClaudeStatisticsReader {
-    const { reader } = resolveHistoryProvider("claude");
-    if (!isClaudeStatisticsReader(reader)) {
-        throw new Error("Claude native history statistics are unavailable");
-    }
-
-    return reader;
-}
-
 function rootForClaudeFile(reader: NativeSessionReader<string>, filePath: string): string {
     const configured = reader
         .roots()
@@ -259,57 +236,6 @@ function sourceForClaudeFile(reader: NativeSessionReader<string>, filePath: stri
     };
 }
 
-export async function getConversationStats(): Promise<ConversationStats> {
-    const p = hist();
-    const reader = claudeStatisticsReader();
-    const discovery = await p.measureAsync("stats-uncached.discover", () => reader.discover(reader.roots()));
-    const issues = [...discovery.issues];
-    const ordered = await p.measureAsync("stats-uncached.stat-sort", async () => {
-        // One vanished file used to reject the whole call, and the burst was unbounded while the
-        // read stage below is deliberately capped.
-        const stated = await concurrentMap({
-            items: discovery.sources,
-            concurrency: STATISTICS_READ_CONCURRENCY,
-            fn: async (source) => ({ source, mtime: (await stat(source.filePath)).mtimeMs }),
-            onError: (source, error) => {
-                issues.push({ path: source.filePath, message: `Could not stat source: ${String(error)}` });
-            },
-        });
-        const sources = [...stated.values()];
-        sources.sort((left, right) => right.mtime - left.mtime);
-        return sources.map(({ source }) => source);
-    });
-    const bySource = await p.measureAsync("stats-uncached.read", () =>
-        concurrentMap({
-            items: ordered,
-            concurrency: STATISTICS_READ_CONCURRENCY,
-            fn: async (source) => {
-                const statistics = await reader.readStatistics(source);
-                issues.push(...statistics.issues);
-                return statistics;
-            },
-            // Without this a failed read is dropped from the aggregate with no trace, so the
-            // totals are quietly short and nothing says which source is missing.
-            onError: (source, error) => {
-                issues.push({ path: source.filePath, message: `Could not read statistics: ${String(error)}` });
-            },
-        })
-    );
-    const statistics = aggregateHistoryStatistics(
-        ordered.flatMap((source) => {
-            const value = bySource.get(source);
-            return value ? [{ project: claudeProjectName({ source }) ?? "", statistics: value }] : [];
-        })
-    );
-
-    if (issues.length > 0) {
-        logger.warn({ issues }, "Claude uncached statistics skipped malformed or unavailable source records");
-    }
-
-    p.summary("getConversationStats");
-    return statistics;
-}
-
 // =============================================================================
 // Date Parsing Helper
 // =============================================================================
@@ -339,8 +265,12 @@ export interface FileStats {
 /** @deprecated Use the provider statistics reader through HistoryService. */
 export async function computeFileStats(filePath: string): Promise<FileStats> {
     const canonicalFilePath = await realpath(filePath);
-    const reader = claudeStatisticsReader();
+    const { reader } = resolveHistoryProvider("claude");
     const statistics = await reader.readStatistics(sourceForClaudeFile(reader, canonicalFilePath));
+    if (!statistics.supported) {
+        throw new Error(`Claude native history statistics are unavailable: ${statistics.reason}`);
+    }
+
     return {
         ...statistics.summary,
         tokenUsage: statistics.summary.tokenUsage ?? {
@@ -364,7 +294,7 @@ export async function processFileForCache(filePath: string): Promise<FileStats |
                 return null;
             }
 
-            const source = sourceForClaudeFile(claudeStatisticsReader(), canonicalFilePath);
+            const source = sourceForClaudeFile(resolveHistoryProvider("claude").reader, canonicalFilePath);
             await openHistoryService({ provider: "claude", roots: [source.root] }).refreshStatistics();
             const refreshed = getFileIndex(canonicalFilePath);
             return refreshed?.mtime === mtime ? computeFileStats(canonicalFilePath) : null;

@@ -24,9 +24,13 @@ import {
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
+    noMetadata,
     noMidWork,
+    noRecordRead,
+    noRecordScan,
     noRowAnchors,
     noSessionChanges,
+    noStatistics,
 } from "./testing/no-backward-read";
 
 afterEach(() => {
@@ -64,6 +68,10 @@ test("a registered fourth history provider can be resolved without an account al
             readChanges: noSessionChanges,
             rowAnchors: noRowAnchors,
             analysis: noAnalysis,
+            readMetadata: noMetadata,
+            scan: noRecordScan,
+            readRecords: noRecordRead,
+            readStatistics: noStatistics,
             readTurnBoundary: async () => null,
             readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
             roots: () => [],
