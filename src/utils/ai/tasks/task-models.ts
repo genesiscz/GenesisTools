@@ -1,4 +1,4 @@
-import { byProvider, catalogKeysFor } from "../catalog";
+import { defaultModelIdFor } from "../catalog";
 import { byTaskAndProvider } from "../local/descriptors";
 import { ELEVENLABS_DEFAULT_STT_MODEL_ID } from "../providers/elevenlabs/AIElevenLabsTranscriptionProvider";
 import type { Capability } from "../providers/plugin-types";
@@ -81,7 +81,7 @@ export function taskModelDefault(providerId: string, capability: Capability): st
  * A text task (summarize, translate) has no row in that table, so a lone
  * `--provider anthropic` falls back to the provider's first catalog model for
  * the capability. That is the model the resolver picks for a configured
- * `{ provider }` default (`defaultModelIdFor` in core/resolve.ts), so a
+ * `{ provider }` default (`defaultModelIdFor` in catalog/defaults.ts), so a
  * per-call flag lands on the same model a saved default would, without saving.
  */
 export function taskModelRef(
@@ -95,7 +95,7 @@ export function taskModelRef(
     }
 
     if (provider) {
-        const fallback = taskModelDefault(provider, capability) ?? catalogTaskModel(provider, capability);
+        const fallback = taskModelDefault(provider, capability) ?? defaultModelIdFor(provider, capability);
         if (!fallback) {
             throw new Error(`No default ${capability} model is defined for provider "${provider}".`);
         }
@@ -104,18 +104,6 @@ export function taskModelRef(
     }
 
     return model;
-}
-
-function catalogTaskModel(providerId: string, capability: Capability): string | undefined {
-    for (const key of catalogKeysFor(providerId)) {
-        const entry = byProvider(key).find((model) => model.capabilities.has(capability) && !model.flags?.hidden);
-
-        if (entry) {
-            return entry.id;
-        }
-    }
-
-    return undefined;
 }
 
 /** Providers this table can name a model for — the input to availability fallback. */
