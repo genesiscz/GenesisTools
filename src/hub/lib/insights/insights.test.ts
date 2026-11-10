@@ -509,6 +509,14 @@ describe("insights cache identity", () => {
         expect(insightsCacheKey(resolved("claude", claude))).toBe(insightsCacheKey(resolved("claude", claude)));
     });
 
+    test("an entry cached before Claude's fast-tier rates (v3) misses, so its costs are computed again", () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-insights-"));
+        const key = insightsCacheKey(resolved("claude", transcript(dir, "session.jsonl", "aaaa\n")));
+
+        expect(key.endsWith("-v4.json")).toBe(true);
+        expect(key.endsWith("-v3.json")).toBe(false);
+    });
+
     test("a moved file, or a same-sized file put in its place with the same mtime, misses the old entry", () => {
         const dir = mkdtempSync(join(tmpdir(), "hub-insights-"));
         const path = transcript(dir, "session.jsonl", "aaaa\n");

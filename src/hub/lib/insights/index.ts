@@ -55,8 +55,11 @@ const log = logger.child({ component: "hub/insights" });
 /** Transcripts the stuck scan reads at once. */
 const STUCK_SCAN_CONCURRENCY = 4;
 
-/** Bump when the cached JSON's shape or the cache key changes. */
-const CACHE_VERSION = 3;
+/**
+ * Bump when the cached JSON's shape, the cache key or the pricing behind its costs changes. 4: a Claude fast-mode
+ * call got its fast-tier rates and Fable 5.2 got catalog prices, so a v3 entry holds standard-rate and $0 costs.
+ */
+const CACHE_VERSION = 4;
 /** How old a heavy part a library caller gets when it does not say; the key already names the file state. */
 const CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 /** The stuck detector reads this much of the file's end for full tool inputs. */
