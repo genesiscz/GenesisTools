@@ -2044,6 +2044,7 @@ struct PRListView: View {
                         moreProjects(shown: Set(groups.map(\.project)))
                     }
                     .padding(.bottom, 12)
+                    .genScrollBars()
                 }
                 .modifier(SidebarReveal(
                     proxy: proxy,
@@ -2934,6 +2935,7 @@ struct PRDetailView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .genScrollBars()
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { overviewHeight = $0 }
         .modifier(PRCommitScrollTarget(prs: prs, prID: pr.id))

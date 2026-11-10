@@ -312,6 +312,7 @@ struct AgentProcsView: View {
                         }
                     }
                     .padding(.vertical, 8)
+                    .genScrollBars()
                 }
             }
         }

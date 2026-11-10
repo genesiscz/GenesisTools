@@ -41,6 +41,7 @@ private struct HubAppearanceSettings: View {
     @EnvironmentObject private var appearance: NativeSettingsAppearance
     @EnvironmentObject private var store: NativeSettingsStore
     @Environment(\.accessibilityReduceTransparency) private var systemOpaque
+    @AppStorage(GenScrollBarStyle.key) private var scrollBars = GenScrollBarStyle.genesis.rawValue
 
     private var native: Bool { preferences.style == .native }
 
@@ -80,6 +81,15 @@ private struct HubAppearanceSettings: View {
                         detail: "Let the desktop show through the hub, blurred. ⌘⇧G in the hub does the same.",
                         identifier: "hub.glass", isOn: $preferences.glass)
                 }
+            }
+            NativeSettingsCard("Scroll bars", subtitle: "The bars of the hub's lists, panes and diffs.") {
+                NativeSettingsSegmented(
+                    "Style", identifier: "hub.scrollBars",
+                    options: GenScrollBarStyle.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                    selection: Binding(
+                        get: { GenScrollBarStyle(stored: scrollBars) },
+                        set: { scrollBars = $0.rawValue }),
+                    minSegmentWidth: 100)
             }
             Text("Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)

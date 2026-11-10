@@ -481,6 +481,7 @@ struct WorktreeCleanupView: View {
                         }
                     }
                     .padding(.bottom, 14)
+                    .genScrollBars()
                 }
             }
         }

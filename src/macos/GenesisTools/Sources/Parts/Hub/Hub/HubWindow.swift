@@ -2867,6 +2867,7 @@ private struct SessionListView: View {
                             HubHistorySection(model: model, history: history, shown: Set(sections.flatMap(\.rows).map(\.sessionId)))
                         }
                         .padding(.bottom, 12)
+                        .genScrollBars()
                     }
                     .modifier(SidebarArrowKeys(
                         ids: { [collapsed = prefs.collapsed] in Self.sessionKeyOrder(sections, collapsed: collapsed) },

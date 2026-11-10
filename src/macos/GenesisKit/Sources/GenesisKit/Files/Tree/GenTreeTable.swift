@@ -37,6 +37,8 @@ public struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresen
     @GenReduceMotion private var reduceMotion
     /// A cover over the subtree: the table, laid above the root, hides with its slot (`genOverlaysHidden`).
     @Environment(\.genOverlaysHidden) private var overlaysHidden
+    /// GenesisKit's thin overlay scroll bar or the system's (Settings → Hub → Appearance).
+    @AppStorage(GenScrollBarStyle.key) private var scrollBars = GenScrollBarStyle.genesis.rawValue
     /// The visible tree rows in depth-first display order.
     let rows: [Row]
     /// The selection, style and decoration revision used to invalidate visible cells.
@@ -97,6 +99,7 @@ public struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresen
         scroll.hasHorizontalScroller = false
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
+        GenScrollBars.apply(GenScrollBarStyle(stored: scrollBars), to: scroll)
         scroll.automaticallyAdjustsContentInsets = false
         scroll.contentInsets = insets
         context.coordinator.table = table
@@ -115,6 +118,7 @@ public struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresen
     /// Updates row content and repositions the AppKit overlay after a SwiftUI change.
     public func updateNSView(_ slot: GenOverlaySlot, context: Context) {
         box.scrollView = slot.overlay as? NSScrollView
+        if let scroll = box.scrollView { GenScrollBars.apply(GenScrollBarStyle(stored: scrollBars), to: scroll) }
         guard let table = context.coordinator.table else { return }
         apply(to: context.coordinator, table: table, force: false)
         if slot.isHidden != overlaysHidden {

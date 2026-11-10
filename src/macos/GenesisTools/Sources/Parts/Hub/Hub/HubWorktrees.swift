@@ -399,6 +399,7 @@ struct WorktreeListView: View {
                     }
                 }
                 .padding(.bottom, 12)
+                .genScrollBars()
             }
             .modifier(SidebarReveal(
                 proxy: proxy,
@@ -652,6 +653,7 @@ struct WorktreeSessionsList: View {
                 }
                 .padding(.vertical, 4)
                 .scrollOverflowContent()
+                .genScrollBars()
             }
             .scrollOverflowHints(.vertical)
             .frame(height: min(CGFloat(max(shown.count, 1)) * Self.rowHeight + 8, 420))
