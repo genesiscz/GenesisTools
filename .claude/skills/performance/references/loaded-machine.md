@@ -10,7 +10,7 @@ hours). Each number names its source. Where a line says "one observation", it is
 - So group **runnable processes by owner** (simulator device, agent session, app). A top-CPU list does not explain a
   high load. The diagnostics skill has this view: GenesisClaude `user/skills/diagnostics/scripts/choke.ts`.
 - The hooks and mods were not the cause. At the peak hour (2,710 Bash calls) the Bash hooks used about 0.3 of one
-  core (vault report `GenesisBrain/GenesisTools/2026-11-10-ModsPerformance.md`).
+  core (report in the notes vault: `GenesisTools/2026-11-10-ModsPerformance.md`).
 
 ## Reading the process table can hang for the whole machine
 
