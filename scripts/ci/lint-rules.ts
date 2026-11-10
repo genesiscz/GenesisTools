@@ -275,9 +275,13 @@ export function importsRetiredAiConfig(text: string, node: SgNode): boolean {
 /**
  * A literal that names a coding agent's transcript format: a Claude, Codex or Grok record type or field, or a raw-line
  * probe such as `'"type":"user"'`. That knowledge belongs to the provider readers (.claude/rules/agent-transcripts.md).
+ * The Claude change parse's raw-line probes count too (`readers/claude-changes-parse.ts`): the line markers
+ * `'"promptId"'`, `'"tool_use"'` and `'"file-history-'`, and a `"promptId":"…"` search. A bare `"tool_use"` stays
+ * allowed (it is also an Anthropic API block type), and so does a typed `case "file-history-snapshot":` over the
+ * Claude SDK message union (`src/utils/claude/types.ts`).
  */
 const TRANSCRIPT_FORMAT =
-    /^["'`](?:continued-in|continuedInSessionId|response_item|event_msg|session_meta|turn_context|compact_boundary|isCompactSummary|isSidechain|chat_history\.jsonl)["'`]$|\\?"(?:type|subtype)\\?"\s*:\s*\\?"(?:user|assistant|continued-in|response_item|event_msg|session_meta|turn_context|compact_boundary)\\?"/;
+    /^["'`](?:continued-in|continuedInSessionId|response_item|event_msg|session_meta|turn_context|compact_boundary|isCompactSummary|isSidechain|chat_history\.jsonl)["'`]$|\\?"(?:type|subtype)\\?"\s*:\s*\\?"(?:user|assistant|continued-in|response_item|event_msg|session_meta|turn_context|compact_boundary)\\?"|^['`]"(?:promptId|tool_use)"['`]$|\\?"promptId\\?"\s*:|^["'`]\\?"file-history-/;
 /** The readers own the format; the Claude SDK message types describe it; plugins are standalone; benchmarks replay it. */
 const TRANSCRIPT_FORMAT_ALLOWED =
     /^(?:src\/utils\/agent-sessions\/|src\/utils\/claude\/types\.ts$|plugins\/|scripts\/benchmarks\/)/;
