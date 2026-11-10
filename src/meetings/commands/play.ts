@@ -332,7 +332,7 @@ export function registerPlayCommand(program: Command): void {
         .option("--before <sec>", "start this many seconds earlier (default: playback.beforeSec, 5); --at alone only")
         .option(
             "--tone <sound>",
-            `a Moment's tone for this call: a preset (${TONE_PRESET_NAMES.join(", ")}), a sound file, or JSON ({"hz":440,"sec":0.2}); default playback.listen.tone.sound`
+            `a Moment's tone for this call: a preset (${TONE_PRESET_NAMES.join(", ")}), a sound file, or JSON ({"hz":440,"sec":0.2}); default playback.listen.tone.sound. It sounds even when playback.listen.tone.enabled is off`
         )
         .option(
             "--player <id>",
