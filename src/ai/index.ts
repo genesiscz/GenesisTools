@@ -5,7 +5,6 @@ import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { registerAiProxyRefScanner } from "@app/ai-proxy/lib/account-refs";
-import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard.ts";
@@ -13,6 +12,7 @@ import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format.ts";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers.ts";
+import * as p from "@genesiscz/utils/prompts/p";
 import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -399,6 +399,7 @@ async function interactiveMode(): Promise<void> {
                 { value: "models", label: "Manage models" },
                 { value: "config", label: "Configure AI settings" },
             ],
+            cancel: "back",
         })
     );
 
@@ -416,9 +417,11 @@ async function interactiveMode(): Promise<void> {
     }
 
     if (action === "translate") {
-        const text = await withCancel(p.text({ message: "Text to translate:", placeholder: "Enter text..." }));
+        const text = await withCancel(
+            p.text({ message: "Text to translate:", placeholder: "Enter text...", cancel: "back" })
+        );
 
-        const to = await withCancel(p.text({ message: "Target language:", placeholder: "en" }));
+        const to = await withCancel(p.text({ message: "Target language:", placeholder: "en", cancel: "back" }));
 
         await cmdTranslate(text, { to });
         p.outro(pc.green("Done."));
@@ -434,6 +437,7 @@ async function interactiveMode(): Promise<void> {
                     { value: "clipboard", label: "Clipboard" },
                     { value: "file", label: "File" },
                 ],
+                cancel: "back",
             })
         );
 
@@ -456,6 +460,7 @@ async function interactiveMode(): Promise<void> {
                             return `File not found: ${value}`;
                         }
                     },
+                    cancel: "back",
                 })
             );
 
@@ -464,7 +469,9 @@ async function interactiveMode(): Promise<void> {
             return;
         }
 
-        const text = await withCancel(p.text({ message: "Text to summarize:", placeholder: "Paste text..." }));
+        const text = await withCancel(
+            p.text({ message: "Text to summarize:", placeholder: "Paste text...", cancel: "back" })
+        );
 
         // Write to temp file for the summarizer, clean up after
         const tmpPath = join(tmpdir(), `ai-summarize-${Date.now()}.txt`);
@@ -483,7 +490,7 @@ async function interactiveMode(): Promise<void> {
 
     if (action === "image") {
         const prompt = await withCancel(
-            p.text({ message: "Image prompt:", placeholder: "A futuristic cityscape at sunset..." })
+            p.text({ message: "Image prompt:", placeholder: "A futuristic cityscape at sunset...", cancel: "back" })
         );
 
         const output = await withCancel(
@@ -491,6 +498,7 @@ async function interactiveMode(): Promise<void> {
                 message: "Output file path:",
                 placeholder: "./image.png",
                 defaultValue: `./ai-image-${Date.now()}.png`,
+                cancel: "back",
             })
         );
 
@@ -500,7 +508,9 @@ async function interactiveMode(): Promise<void> {
     }
 
     if (action === "classify") {
-        const text = await withCancel(p.text({ message: "Text to classify:", placeholder: "Enter text..." }));
+        const text = await withCancel(
+            p.text({ message: "Text to classify:", placeholder: "Enter text...", cancel: "back" })
+        );
 
         const categories = await withCancel(
             p.text({
@@ -516,6 +526,7 @@ async function interactiveMode(): Promise<void> {
                         return "At least 2 categories required";
                     }
                 },
+                cancel: "back",
             })
         );
 
