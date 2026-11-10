@@ -137,7 +137,9 @@ struct ReviewRowView: View {
     private func partLine(_ part: RowPart) -> some View {
         switch part {
         case .who(let text):
-            bullet("person", Text(verbatim: text))
+            if row.isQuestion || !Self.whoRepeatsTitle(text, title: row.what, when: row.whenText) {
+                bullet("person", Text(verbatim: text))
+            }
         case .said(let text, let speaker, let context):
             // The line above already names the speaker: the same name before the quote said it twice.
             bullet("quote.opening", saidText(text, speaker: speaker == Self.who(row) ? nil : speaker, context: context))
@@ -416,6 +418,13 @@ struct ReviewRowView: View {
     /// one-line text. The one-line text of a question starts with its time and ends in its answer.
     static func title(_ row: ReviewRow) -> String {
         row.isQuestion ? asked(row) ?? row.what : row.what
+    }
+
+    /// True when a row's who line says what its title says: a speaker range's title is "Speaker 2 01:12 → Alice" and
+    /// its who line "Speaker 2 → Alice", the same two names one line apart.
+    static func whoRepeatsTitle(_ who: String, title: String, when: String?) -> Bool {
+        let bare = when.map { title.replacingOccurrences(of: " \($0)", with: "") } ?? title
+        return bare == who
     }
 
     /// The answer a folded question shows after its text; nil for a row whose text already carries it.

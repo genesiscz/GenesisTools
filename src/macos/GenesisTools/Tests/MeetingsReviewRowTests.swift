@@ -327,6 +327,25 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(widths, widths.sorted(by: >), "each shape asks for less text room than the one before")
     }
 
+    /// The pin's card informs, it does not answer: it lists the candidates of an open row, never the actions, and a
+    /// decided row shows how it was decided in their place.
+    func testThePinCardListsCandidatesNotActions() throws {
+        let rows = try rows().rows
+        let open = try XCTUnwrap(rows.first { $0.id == "q1" })
+        XCTAssertEqual(PinCard.shownChoices(open).map(\.label), ["Dana Example"], "None of these is an action of the row, not a candidate")
+        let decided = try XCTUnwrap(rows.first { !$0.isOpen })
+        XCTAssertTrue(PinCard.shownChoices(decided).isEmpty, "a decided row's choices made it read as open: \(decided.id)")
+    }
+
+    func testASpeakerRangeDoesNotSayItsTwoNamesTwice() {
+        XCTAssertTrue(ReviewRowView.whoRepeatsTitle("Speaker 2 → Alice Example", title: "Speaker 2 01:12 → Alice Example", when: "01:12"),
+                      "the title holds both names: the who line under it said them again")
+        XCTAssertTrue(ReviewRowView.whoRepeatsTitle("Speaker 2 → Alice Example", title: "Speaker 2 01:12–01:40 → Alice Example", when: "01:12–01:40"))
+        XCTAssertFalse(ReviewRowView.whoRepeatsTitle("Bob Example", title: "OMP → EMP", when: "10:00"),
+                       "a word's who line names the speaker of its line, which the title does not")
+        XCTAssertFalse(ReviewRowView.whoRepeatsTitle("Speaker 2", title: "Speaker 2 01:12 → Alice Example", when: "01:12"))
+    }
+
     /// The playing row's bar is left out below the width it reads at: squeezed, its flag drew over its times.
     func testThePlayingBarNeedsRoomForItsTimes() {
         XCTAssertGreaterThan(PlayingRowBar.smallestWidth(times: true), PlayingRowBar.smallestWidth(times: false) + 100,

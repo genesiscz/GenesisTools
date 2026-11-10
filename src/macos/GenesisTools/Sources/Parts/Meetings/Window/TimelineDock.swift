@@ -154,7 +154,8 @@ struct TimelineDock: View {
             PinCard(row: row,
                     onPlay: { player.play(row.target, in: meeting, from: .pin) },
                     onSelect: { window?.revealRow(row.id, in: meeting) },
-                    onShowSource: { source in Self.show(source, meeting: meeting, player: player) })
+                    onShowSource: { source in Self.show(source, meeting: meeting, player: player) },
+                    reference: { id in rows.first { $0.id == id }.map(ReviewRowView.reference) })
         }
     }
 
