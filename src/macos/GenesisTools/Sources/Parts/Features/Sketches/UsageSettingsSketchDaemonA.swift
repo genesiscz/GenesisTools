@@ -171,7 +171,7 @@ private struct UsageSketchDaemonRowA: View {
     private var details: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let stats {
-                Text("\(Plural.count(stats.runs, "run")) in 24 hours: \(stats.ok) ok, \(stats.failed) failed, \(stats.timedOut) timed out (\(DaemonFormat.percent(stats.failureRate))). Typical \(DaemonFormat.duration(stats.p50Ms)), slow \(DaemonFormat.duration(stats.p90Ms)), longest \(DaemonFormat.duration(stats.maxMs)).")
+                Text(verbatim: "\(Plural.count(stats.runs, "run")) in 24 hours: \(stats.ok) ok, \(stats.failed) failed, \(stats.timedOut) timed out (\(DaemonFormat.percent(stats.failureRate))). Typical \(DaemonFormat.duration(stats.p50Ms)), slow \(DaemonFormat.duration(stats.p90Ms)), longest \(DaemonFormat.duration(stats.maxMs)).")
                     .font(.system(size: 11.5))
                     .fixedSize(horizontal: false, vertical: true)
                 ForEach(stats.recentRuns.prefix(6)) { run in
