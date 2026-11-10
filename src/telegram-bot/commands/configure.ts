@@ -1,8 +1,13 @@
 import { loadTelegramConfig, saveTelegramConfig } from "@app/telegram-bot/lib/config";
 import { WEBHOOK_ALLOWED_UPDATES } from "@app/telegram-bot/lib/webhook/settings";
 import * as p from "@genesiscz/utils/prompts/p";
+import { createApi, describeApiError, TELEGRAM_REQUEST_TIMEOUT_SECONDS } from "@genesiscz/utils/telegram-bot/lib/api";
 import type { Command } from "commander";
-import { Api } from "grammy";
+
+/** One long poll for the first message must end inside the client's request timeout, or the client aborts it. */
+const FIRST_MESSAGE_POLL_SECONDS = TELEGRAM_REQUEST_TIMEOUT_SECONDS - 2;
+/** About three minutes of waiting for the first message. */
+const FIRST_MESSAGE_POLLS = Math.ceil(180 / FIRST_MESSAGE_POLL_SECONDS);
 
 export function registerConfigureCommand(program: Command): void {
     program
@@ -45,14 +50,16 @@ export function registerConfigureCommand(program: Command): void {
                 return;
             }
 
-            const api = new Api(token as string);
+            // A self-hosted Bot API root from the config being replaced stays: the new token is checked there and kept.
+            const apiRoot = existing?.apiRoot;
+            const api = createApi(token as string, apiRoot);
             let botUsername: string;
             try {
                 const me = await api.getMe();
                 botUsername = me.username ?? me.first_name;
                 p.log.success(`Connected to bot: @${botUsername}`);
             } catch (err) {
-                p.log.error(`Invalid token: ${(err as Error).message}`);
+                p.log.error(`Invalid token: ${describeApiError(err, token as string)}`);
                 return;
             }
 
@@ -73,11 +80,11 @@ export function registerConfigureCommand(program: Command): void {
             spinner.start("Waiting for your message...");
 
             let chatId: number | null = null;
-            for (let attempt = 0; attempt < 6; attempt++) {
+            for (let attempt = 0; attempt < FIRST_MESSAGE_POLLS; attempt++) {
                 try {
                     const updates = await api.getUpdates({
                         offset: nextOffset,
-                        timeout: 30,
+                        timeout: FIRST_MESSAGE_POLL_SECONDS,
                         // The full list: Telegram keeps the last list it was given, and a ["message"] here once
                         // kept every later button press from arriving.
                         allowed_updates: [...WEBHOOK_ALLOWED_UPDATES],
@@ -109,13 +116,14 @@ export function registerConfigureCommand(program: Command): void {
                 chats: { commands: chatId },
                 botUsername,
                 configuredAt: new Date().toISOString(),
+                ...(apiRoot ? { apiRoot } : {}),
             });
 
             try {
                 await api.sendMessage(chatId, "GenesisTools telegram-bot configured successfully!");
                 p.log.success("Test message sent");
             } catch (err) {
-                p.log.warn(`Could not send test message: ${(err as Error).message}`);
+                p.log.warn(`Could not send test message: ${describeApiError(err, token as string)}`);
             }
 
             p.outro("Configuration complete!");

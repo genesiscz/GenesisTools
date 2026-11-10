@@ -2,6 +2,7 @@ import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
 import { createTelegramApi } from "@app/telegram-bot/lib/webhook/api";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import * as p from "@genesiscz/utils/prompts/p";
+import { describeApiError } from "@genesiscz/utils/telegram-bot/lib/api";
 import type { ParseMode } from "@genesiscz/utils/telegram-bot/lib/types";
 import type { Command } from "commander";
 
@@ -30,7 +31,7 @@ export function registerSendCommand(program: Command): void {
                 });
                 p.log.success("Message sent");
             } catch (err) {
-                p.log.error(`Failed: ${(err as Error).message}`);
+                p.log.error(`Failed: ${describeApiError(err, config.botToken)}`);
                 process.exit(1);
             }
         });

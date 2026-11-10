@@ -3,7 +3,7 @@ import { CALLBACK_ROUTES } from "@app/telegram-bot/lib/callback-routes";
 import { createCallbackRouter } from "@app/telegram-bot/lib/callbacks";
 import { botChats, loadTelegramConfig, notConfiguredMessage, saveWebhookUrl } from "@app/telegram-bot/lib/config";
 import { COMMANDS } from "@app/telegram-bot/lib/handlers/help";
-import { createTelegramApi, describeApiError } from "@app/telegram-bot/lib/webhook/api";
+import { createTelegramApi } from "@app/telegram-bot/lib/webhook/api";
 import { runWebhookService } from "@app/telegram-bot/lib/webhook/service";
 import {
     resolveApiRoot,
@@ -15,6 +15,7 @@ import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import * as p from "@genesiscz/utils/prompts/p";
 import { secrets } from "@genesiscz/utils/security";
+import { describeApiError } from "@genesiscz/utils/telegram-bot/lib/api";
 import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
 import type { Command } from "commander";
 
