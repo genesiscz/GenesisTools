@@ -15,11 +15,10 @@
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { rawLogFiles } from "@app/agents/commands/changes";
-import { type ChangeEvent, sessionChangesPath } from "@app/agents/lib/changes/log";
 import { canonicalClaudeTranscriptSync } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
+import { type ChangeLogRow, readChangeLog } from "@genesiscz/utils/agents/change-log";
 import { runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { out } from "@genesiscz/utils/logger";
 import { lastChangedTurns, loadSessionChanges, type TurnChanges } from "@genesiscz/utils/session-changes";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -87,10 +86,10 @@ function bump(into: Record<string, number>, key: string): void {
 
 function compareSession(session: string): SessionReport {
     const started = performance.now();
-    const rows = readJsonlRows<ChangeEvent>(sessionChangesPath(session)).rows;
+    const rows = readChangeLog(session);
     const computed = loadSessionChanges({ sessionId: session, log: rows });
     const newByTurn = new Map<string, TurnChanges>(computed.turns.map((turn) => [turn.turnId, turn]));
-    const oldByTurn = new Map<string, ChangeEvent[]>();
+    const oldByTurn = new Map<string, ChangeLogRow[]>();
 
     for (const row of rows) {
         const list = oldByTurn.get(row.turn) ?? [];

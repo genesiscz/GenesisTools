@@ -1,16 +1,12 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, sep } from "node:path";
-import { bashWritesByPath, type ChangeLogRow, changeLogPath } from "@genesiscz/utils/agents/change-log";
+import type { ChangeLogRow } from "@genesiscz/utils/agents/change-log";
 import { cloudReadRisk } from "@genesiscz/utils/fs/cloud-placeholder";
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { RmBashWrite } from "@genesiscz/utils/rm";
 import { namedArguments } from "../hooks/diff/command-paths";
 
 const MAX_BYTES = 2_000_000;
 const SAMPLE_BYTES = 8_192;
-
-/** The change-log row, as the read side in `@genesiscz/utils/agents/change-log` defines and parses it. */
-export type ChangeEvent = ChangeLogRow;
 
 export interface ChangeSink {
     hash: (bytes: Buffer) => string;
@@ -24,26 +20,6 @@ export interface ChangeBytes {
     after?: Buffer;
     beforeSkipped?: "binary" | "large";
     afterSkipped?: "binary" | "large";
-}
-
-/** One session's change log, shared by the hook that writes it and every reader (`changeLogPath`). Throws on an unsafe id. */
-export const sessionChangesPath: (session: string) => string = changeLogPath;
-
-/**
- * Every Bash command of `session` that recorded writing each path (`tools rm`'s own-files rule asks), in log order:
- * when it began (rows before 2026-11-02 carry no start) and when its row was written. The rows come from
- * `bashWritesByPath`, read once on the first lookup and kept by this lookup while later ones see a grown log.
- */
-export function bashWriteLookup(session: string, options: { maxBytes?: number } = {}): (path: string) => RmBashWrite[] {
-    let index: ReadonlyMap<string, ChangeLogRow[]> | undefined;
-
-    return (path) => {
-        if (index === undefined) {
-            index = bashWritesByPath(session, options);
-        }
-
-        return (index.get(path) ?? []).map((row) => ({ ...(row.began ? { began: row.began } : {}), ended: row.ts }));
-    };
 }
 
 /** The harness file tools this log records: Edit and MultiEdit as `edit`, Write as `write`. */
@@ -64,7 +40,7 @@ export function fileToolSource(tool: string): "edit" | "write" | null {
  */
 export function recordFileToolEdit(
     file: string,
-    event: Omit<ChangeEvent, "ts" | "source" | "beforeOid" | "afterOid"> & { ts?: string },
+    event: Omit<ChangeLogRow, "ts" | "source" | "beforeOid" | "afterOid"> & { ts?: string },
     original: string | null | undefined,
     sink: ChangeSink
 ): void {
@@ -301,7 +277,7 @@ export function recordScriptedEdits(
         since,
         known,
         ...event
-    }: Omit<ChangeEvent, "ts" | "source" | "path" | "beforeOid" | "afterOid"> & {
+    }: Omit<ChangeLogRow, "ts" | "source" | "path" | "beforeOid" | "afterOid"> & {
         ts?: string;
         /**
          * When the command began, in epoch ms. A path the command only NAMES is logged when
@@ -411,12 +387,12 @@ function prehashed(sink: ChangeSink, blobs: Array<Buffer | undefined>): ChangeSi
 /** Append one change. Never throws. Identical content is stored once by the hash function. */
 export function recordChange(
     file: string,
-    event: Omit<ChangeEvent, "ts" | "beforeOid" | "afterOid"> & { ts?: string },
+    event: Omit<ChangeLogRow, "ts" | "beforeOid" | "afterOid"> & { ts?: string },
     bytes: ChangeBytes | null,
     sink: ChangeSink
 ): void {
     try {
-        const row: ChangeEvent = {
+        const row: ChangeLogRow = {
             ts: event.ts ?? new Date().toISOString(),
             ...event,
             beforeOid: null,
@@ -449,7 +425,7 @@ export function recordChange(
 }
 
 /** The ids of the last `count` turns in log order (a turn's rows can interleave with the next one's). */
-export function lastTurnIds(rows: ReadonlyArray<Pick<ChangeEvent, "turn">>, count: number): string[] {
+export function lastTurnIds(rows: ReadonlyArray<Pick<ChangeLogRow, "turn">>, count: number): string[] {
     const order: string[] = [];
 
     for (const row of rows) {

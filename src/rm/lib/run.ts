@@ -1,5 +1,5 @@
 import { relative } from "node:path";
-import { bashWriteLookup } from "@app/agents/lib/changes/log";
+import { bashWriteLookup } from "@genesiscz/utils/agents/change-log";
 import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
 import { createStopwatch, formatBytes, formatCount } from "@genesiscz/utils/format";
 import { rmEnablePresetCommand, rmRequestHintLine } from "@genesiscz/utils/genesis-tools/tools/hints";
