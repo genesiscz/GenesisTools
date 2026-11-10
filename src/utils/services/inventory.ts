@@ -6,7 +6,7 @@ import { captureSync, type PsRow } from "@genesiscz/utils/process/ps";
 import { listListeningTcp } from "@genesiscz/utils/process/sockets";
 import { listPortRegistry, type RegistryEntry } from "@genesiscz/utils/ui/dashboards";
 
-/** Every GenesisTools launchd job carries this prefix (`src/utils/DashboardApp/launchd.ts`, `src/daemon`). */
+/** Every GenesisTools launchd job carries this prefix (`src/utils/process/launchd-agent.ts`). */
 export const LAUNCHD_PREFIX = "com.genesis-tools.";
 
 export interface LaunchdJob {

@@ -19,6 +19,15 @@ import { currentCommandWithForce } from "@genesiscz/utils/genesis-tools/tools/su
 import { logger, out } from "@genesiscz/utils/logger";
 import { launchdPlistNeedsGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { getPortOwner } from "@genesiscz/utils/network";
+import {
+    bootoutLaunchd,
+    defaultPlistLabel,
+    installLaunchd,
+    isLaunchdInstalled,
+    plistPath,
+    refreshLaunchd,
+    uninstallLaunchd,
+} from "@genesiscz/utils/process/launchd-agent";
 import { spawnDashboard } from "@genesiscz/utils/process/spawnDashboard";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -32,15 +41,6 @@ import {
     resolveDashboardBrowserUrl,
 } from "./access";
 import { spawnDetached } from "./detach";
-import {
-    bootoutLaunchd,
-    defaultPlistLabel,
-    installLaunchd,
-    isLaunchdInstalled,
-    plistPath,
-    refreshLaunchd,
-    uninstallLaunchd,
-} from "./launchd";
 import {
     launchdSpawnCmd,
     logFileSpawnEnv,
