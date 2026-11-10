@@ -5,9 +5,11 @@ import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
 
 /**
  * One side of a newline-delimited JSON-RPC 2.0 connection, the same on the server and on the client: it answers the
- * other side's requests one after another, in the order they came, and sends requests of its own whose replies it
- * matches by id. Each side numbers its own ids. Two notifications belong to the transport (the LSP shape):
- * `$/progress { id, fraction?, label? }` from the side doing the work, and `$/cancel { id }` from the side that asked.
+ * other side's requests, and sends requests of its own whose replies it matches by id. Each side numbers its own ids.
+ * A message with a `method` is a request or a notification of the other side; one without is a reply. Two
+ * notifications belong to the transport (the LSP shape): `$/progress { id, fraction?, label? }` from the side doing
+ * the work, and `$/cancel { id }` from the side that asked. The dialect (`RpcDialect`) says which of these
+ * conventions the other side speaks: the recorder speaks all of them, the Codex app-server writes no `jsonrpc` field.
  */
 
 export type RpcId = string | number | null;
@@ -15,7 +17,38 @@ export type RpcLog = ReturnType<typeof logger.scoped>["log"];
 
 export const PROGRESS_METHOD = "$/progress";
 export const CANCEL_METHOD = "$/cancel";
-const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** The bytes one line may hold before the connection ends. */
+export const DEFAULT_MAX_LINE_BYTES = 8 * 1024 * 1024;
+
+/** What the other side of a connection speaks; every field has the recorder's value by default. */
+export interface RpcDialect {
+    /** Write `jsonrpc: "2.0"` on every message and require it on every message read. */
+    jsonrpcField: boolean;
+    /** Send `$/cancel` when a request's signal aborts, and stop a running call on the other side's `$/cancel`. */
+    cancel: boolean;
+    /** Send `$/progress` from a running call, and restart a request's deadline on the other side's `$/progress`. */
+    progress: boolean;
+    /** How long a request waits for its reply when the call names no `timeoutMs`. */
+    defaultDeadlineMs: number;
+    /**
+     * Answer the other side's requests one after another, in the order they came. Off, each request is answered as
+     * soon as its handler settles, so a request held for a person (an approval) does not hold the next one.
+     */
+    inOrder: boolean;
+    /** The longest line read; a longer one ends the connection. */
+    maxLineBytes: number;
+}
+
+/** The recorder's dialect, and the default of every field a peer does not set. */
+export const DEFAULT_RPC_DIALECT: RpcDialect = {
+    jsonrpcField: true,
+    cancel: true,
+    progress: true,
+    defaultDeadlineMs: 10_000,
+    inOrder: true,
+    maxLineBytes: DEFAULT_MAX_LINE_BYTES,
+};
 
 export interface RpcProgress {
     fraction?: number;
@@ -28,8 +61,13 @@ export interface RpcCallContext {
     id?: RpcId;
     /** Aborts on the caller's `$/cancel` and when the connection closes. */
     signal: AbortSignal;
-    /** Sends `$/progress` for this request (nothing for a notification); each one restarts the caller's deadline. */
+    /** Sends `$/progress` for this request (nothing for a notification, or a dialect without progress). */
     progress(update: RpcProgress): void;
+    /**
+     * Settles once this side's answer (its result or its error) went to the transport; rejects when the connection
+     * had closed by then. A notification resolves once its handler settled.
+     */
+    answered: Promise<void>;
 }
 
 export interface RpcIncoming {
@@ -40,23 +78,36 @@ export interface RpcIncoming {
 
 export interface RpcRequestOptions {
     timeoutMs?: number;
-    /** Aborting sends `$/cancel` and rejects with an RpcError of code `RPC_CANCELLED`. */
+    /** Aborting rejects with an RpcError of code `RPC_CANCELLED`, and sends `$/cancel` when the dialect speaks it. */
     signal?: AbortSignal;
     onProgress?: (update: RpcProgress) => void;
 }
 
+const rpcIdSchema = z.union([z.string(), z.number(), z.null()]);
 const rpcRequest = z.object({
-    jsonrpc: z.literal("2.0"),
-    id: z.union([z.string(), z.number(), z.null()]).optional(),
+    id: rpcIdSchema.optional(),
     method: z.string(),
     params: z.unknown().optional(),
 });
 const rpcReply = z.object({
-    jsonrpc: z.literal("2.0"),
-    id: z.union([z.string(), z.number(), z.null()]).optional(),
+    id: rpcIdSchema.optional(),
     result: z.unknown().optional(),
     error: z.object({ code: z.number(), message: z.string(), data: z.unknown().optional() }).optional(),
 });
+/**
+ * Without the `jsonrpc` field the other side speaks a JSON-RPC-like dialect (the Codex app-server), read as leniently
+ * as its own client always read it: an error may come without a code or a message.
+ */
+const liteReply = rpcReply.extend({
+    error: z
+        .object({ code: z.number().optional(), message: z.string().optional(), data: z.unknown().optional() })
+        .optional(),
+});
+const jsonrpcField = { jsonrpc: z.literal("2.0") };
+const schemas = {
+    withField: { request: rpcRequest.extend(jsonrpcField), reply: rpcReply.extend(jsonrpcField) },
+    without: { request: rpcRequest, reply: liteReply },
+};
 const idParams = z.object({ id: z.union([z.string(), z.number()]) }).passthrough();
 const progressParams = z.object({
     id: z.number(),
@@ -70,6 +121,8 @@ export class LineBuffer {
     private pendingBytes = 0;
     private readonly decoder = new TextDecoder();
 
+    constructor(private readonly maxBytes = DEFAULT_MAX_LINE_BYTES) {}
+
     push(chunk: Uint8Array): string[] {
         const parts = this.decoder.decode(chunk, { stream: true }).split("\n");
         const lines: string[] = [];
@@ -77,10 +130,10 @@ export class LineBuffer {
         for (const [index, part] of parts.entries()) {
             this.pendingBytes += Buffer.byteLength(part);
 
-            if (this.pendingBytes > 8 * 1024 * 1024) {
+            if (this.pendingBytes > this.maxBytes) {
                 this.pending = "";
                 this.pendingBytes = 0;
-                throw new Error("RPC frame exceeds 8 MiB");
+                throw new Error(`RPC frame exceeds ${this.maxBytes / (1024 * 1024)} MiB`);
             }
 
             this.pending += part;
@@ -173,7 +226,8 @@ interface Outgoing {
 
 interface Running {
     controller: AbortController;
-    cancelled: PromiseWithResolvers<never>;
+    /** `PromiseWithResolvers` by its shape: the dashboards that reach this file through the Codex client lack that lib name. */
+    cancelled: ReturnType<typeof Promise.withResolvers<never>>;
 }
 
 export interface RpcPeerOptions {
@@ -191,7 +245,8 @@ export interface RpcPeerOptions {
     /** Names the connection in log lines: `live recording` gives "live recording call refused". */
     label: string;
     logFields?: Record<string, unknown>;
-    defaultTimeoutMs?: number;
+    /** What the other side speaks; a field left out keeps `DEFAULT_RPC_DIALECT`'s value. */
+    dialect?: Partial<RpcDialect>;
     /** The other side stopped reading and its unsent messages reached `OUTBOX_LIMIT_BYTES`: end the socket here. */
     onBacklogFull?: () => void;
 }
@@ -206,16 +261,21 @@ function parseOrNull(text: string, log: RpcLog, label: string): unknown {
 }
 
 export class RpcPeer {
-    private readonly lines = new LineBuffer();
+    private readonly lines: LineBuffer;
     private readonly outbox: Outbox;
     private readonly outgoing = new Map<number, Outgoing>();
     private readonly running = new Map<string | number, Running>();
+    private readonly dialect: RpcDialect;
+    private readonly schemas: (typeof schemas)[keyof typeof schemas];
     private nextId = 1;
     private closedReason?: string;
-    /** The other side's requests, answered one after another in the order they came. */
+    /** The other side's requests, answered one after another in the order they came (an in-order dialect). */
     queue: Promise<void> = Promise.resolve();
 
     constructor(private readonly options: RpcPeerOptions) {
+        this.dialect = { ...DEFAULT_RPC_DIALECT, ...options.dialect };
+        this.schemas = this.dialect.jsonrpcField ? schemas.withField : schemas.without;
+        this.lines = new LineBuffer(this.dialect.maxLineBytes);
         this.outbox = new Outbox(options.write, (bytes) => {
             options.log.warn(
                 { ...options.logFields, bytes },
@@ -247,7 +307,8 @@ export class RpcPeer {
     }
 
     send(body: Record<string, unknown>): void {
-        this.outbox.send(`${SafeJSON.stringify({ jsonrpc: "2.0", ...body })}\n`);
+        const message = this.dialect.jsonrpcField ? { jsonrpc: "2.0", ...body } : body;
+        this.outbox.send(`${SafeJSON.stringify(message)}\n`);
     }
 
     notify(method: string, params?: unknown): void {
@@ -261,7 +322,7 @@ export class RpcPeer {
         }
 
         const id = this.nextId++;
-        const timeoutMs = options.timeoutMs ?? this.options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+        const timeoutMs = options.timeoutMs ?? this.dialect.defaultDeadlineMs;
         return new Promise<T>((resolve, reject) => {
             const signal = options.signal;
             const onAbort = () => {
@@ -272,7 +333,11 @@ export class RpcPeer {
                 }
 
                 this.drop(id, waiting);
-                this.notify(CANCEL_METHOD, { id });
+
+                if (this.dialect.cancel) {
+                    this.notify(CANCEL_METHOD, { id });
+                }
+
                 reject(new RpcError(RPC_CANCELLED, `${method}: cancelled`));
             };
             const waiting: Outgoing = {
@@ -336,18 +401,18 @@ export class RpcPeer {
 
     private receiveLine(line: string): void {
         const value = parseOrNull(line, this.options.log, this.options.label);
-        const request = rpcRequest.safeParse(value);
+        const request = this.schemas.request.safeParse(value);
 
         if (request.success) {
             const { id, method, params } = request.data;
 
             // The transport's own notifications act at once: the call they name may be running now.
-            if (id === undefined && method === CANCEL_METHOD) {
+            if (id === undefined && method === CANCEL_METHOD && this.dialect.cancel) {
                 this.cancelRunning(params);
                 return;
             }
 
-            if (id === undefined && method === PROGRESS_METHOD) {
+            if (id === undefined && method === PROGRESS_METHOD && this.dialect.progress) {
                 this.progressOutgoing(params);
                 return;
             }
@@ -361,7 +426,7 @@ export class RpcPeer {
             return;
         }
 
-        const reply = rpcReply.safeParse(value);
+        const reply = this.schemas.reply.safeParse(value);
 
         const replyShaped = typeof value === "object" && value !== null && ("result" in value || "error" in value);
 
@@ -392,7 +457,7 @@ export class RpcPeer {
         );
     }
 
-    private settle(id: number, reply: z.infer<typeof rpcReply>): boolean {
+    private settle(id: number, reply: z.infer<typeof liteReply>): boolean {
         const waiting = this.outgoing.get(id);
 
         if (!waiting) {
@@ -402,7 +467,8 @@ export class RpcPeer {
         this.drop(id, waiting);
 
         if (reply.error) {
-            waiting.reject(new RpcError(reply.error.code, reply.error.message, reply.error.data));
+            const { code = JSON_RPC_ERRORS.internal, message, data } = reply.error;
+            waiting.reject(new RpcError(code, message ?? `${this.options.label} returned an unknown RPC error`, data));
         } else {
             waiting.resolve(reply.result);
         }
@@ -448,7 +514,7 @@ export class RpcPeer {
             this.running.set(key, running);
         }
 
-        this.queue = this.queue.then(async () => {
+        const run = async () => {
             try {
                 await this.answer(incoming, running);
             } finally {
@@ -456,20 +522,44 @@ export class RpcPeer {
                     this.running.delete(key);
                 }
             }
+        };
+
+        if (this.dialect.inOrder) {
+            this.queue = this.queue.then(run);
+            return;
+        }
+
+        run().catch((error) => {
+            this.options.log.warn({ ...this.options.logFields, error }, `${this.options.label} answer not sent`);
         });
     }
 
     private async answer(incoming: RpcIncoming, running: Running): Promise<void> {
         const { id, method } = incoming;
         const { label, log, logFields } = this.options;
+        const answered = Promise.withResolvers<void>();
+        // A handler that does not wait for its own answer must not surface a closed connection as unhandled.
+        answered.promise.catch(() => undefined);
         const context: RpcCallContext = {
             ...(id !== undefined ? { id } : {}),
             signal: running.controller.signal,
             progress: (update) => {
-                if (id !== undefined && id !== null && !this.closed) {
+                if (id !== undefined && id !== null && !this.closed && this.dialect.progress) {
                     this.notify(PROGRESS_METHOD, { id, ...update });
                 }
             },
+            answered: answered.promise,
+        };
+        const reply = (body: Record<string, unknown>) => {
+            if (id !== undefined) {
+                this.send({ id, ...body });
+            }
+
+            if (this.closedReason) {
+                answered.reject(new Error(this.closedReason));
+            } else {
+                answered.resolve();
+            }
         };
 
         try {
@@ -482,10 +572,7 @@ export class RpcPeer {
             work.catch(() => undefined);
             const result = await Promise.race([work, running.cancelled.promise]);
             log.debug({ ...logFields, method }, `${label} call`);
-
-            if (id !== undefined) {
-                this.send({ id, result: result ?? null });
-            }
+            reply({ result: result ?? null });
         } catch (error) {
             const code = error instanceof RpcError ? error.code : JSON_RPC_ERRORS.internal;
             // A refusal (an RpcError) is the caller's answer, which it gets; only an unexpected throw is this side's.
@@ -495,17 +582,14 @@ export class RpcPeer {
                 log.warn({ ...logFields, method, error }, `${label} call failed`);
             }
 
-            if (id !== undefined) {
-                const data = error instanceof RpcError ? error.data : undefined;
-                this.send({
-                    id,
-                    error: {
-                        code,
-                        message: error instanceof Error ? error.message : String(error),
-                        ...(data !== undefined ? { data } : {}),
-                    },
-                });
-            }
+            const data = error instanceof RpcError ? error.data : undefined;
+            reply({
+                error: {
+                    code,
+                    message: error instanceof Error ? error.message : String(error),
+                    ...(data !== undefined ? { data } : {}),
+                },
+            });
         }
     }
 }
