@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
+import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
@@ -138,10 +139,18 @@ function fakeSource(): TranscriptSource {
 
 let stores = 0;
 
-/** A scratch store with the two meetings, written as files (fixed times, so every answer is the same each run). */
-function scratchStore(): { store: MeetingStore; linkedSource: (record: { id: string }) => LinkedSource | undefined } {
+/**
+ * A scratch store with the two meetings, written as files (fixed times, so every answer is the same each run), and a
+ * scratch meetings config for the library methods.
+ */
+function scratchStore(): {
+    store: MeetingStore;
+    config: MeetingsConfigStore;
+    linkedSource: (record: { id: string }) => LinkedSource | undefined;
+} {
     stores += 1;
     const store = new MeetingStore(new Storage(`meetings-service-${process.pid}-${stores}`));
+    const config = new MeetingsConfigStore(new Storage(`meetings-service-config-${process.pid}-${stores}`));
 
     for (const record of [REVIEW, RETRO]) {
         mkdirSync(store.folder(record.id), { recursive: true });
@@ -151,6 +160,7 @@ function scratchStore(): { store: MeetingStore; linkedSource: (record: { id: str
     const source = fakeSource();
     return {
         store,
+        config,
         linkedSource: (record) => (record.id === REVIEW.id ? { source, sourceMeetingId: "wf-2041" } : undefined),
     };
 }
@@ -257,11 +267,12 @@ const quietDeps: MeetingsHandlerDeps = {
 };
 
 async function startService(options: { dir?: string; watch?: MeetingsServiceOptions["watch"] } = {}) {
-    const { store, linkedSource } = scratchStore();
+    const { store, config, linkedSource } = scratchStore();
     const dir = options.dir ?? serviceDir();
     const start = await startMeetingsService({
         dir,
         store: () => store,
+        configStore: () => config,
         linkedSource,
         idleMs: 0,
         code: CODE,
@@ -274,32 +285,34 @@ async function startService(options: { dir?: string; watch?: MeetingsServiceOpti
     }
 
     closing.push(() => start.service.stop("test end"));
-    return { dir, store, service: start.service };
+    return { dir, store, config, service: start.service };
 }
 
 interface Adapter {
     client: MeetingsClient;
     emit: (event: "meeting.changed", params: { meeting: string; parts: Array<"show" | "transcript"> }) => void;
     store: MeetingStore;
+    /** The meetings config the library methods change. */
+    config: MeetingsConfigStore;
 }
 
 const ADAPTERS: Record<"socket" | "in-process", (caller?: MeetingsHello) => Promise<Adapter>> = {
     socket: async (caller = hello) => {
-        const { service, store } = await startService();
+        const { service, store, config } = await startService();
         const client = await SocketMeetingsClient.connect(service.entry, caller);
         closing.push(() => client.close());
-        return { client, store, emit: (event, params) => service.emit(event, params) };
+        return { client, store, config, emit: (event, params) => service.emit(event, params) };
     },
     "in-process": async (caller = hello) => {
-        const { store, linkedSource } = scratchStore();
+        const { store, config, linkedSource } = scratchStore();
         const events = new LocalMeetingsEvents();
         const client = new InProcessMeetingsClient({
             hello: caller,
-            deps: { store: () => store, linkedSource, ...quietDeps },
+            deps: { store: () => store, configStore: () => config, linkedSource, ...quietDeps },
             events,
         });
         closing.push(() => client.close());
-        return { client, store, emit: (event, params) => events.emit(event, params) };
+        return { client, store, config, emit: (event, params) => events.emit(event, params) };
     },
 };
 
@@ -656,6 +669,154 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(overview.meetings.map((one) => one.id)).toEqual([RETRO.id, REVIEW.id]);
     });
 
+    test("the projects: add, labels, preview, rename, unpair and remove answer what their commands print", async () => {
+        const { client, store, config } = await ADAPTERS[kind]();
+
+        expect(await client.call("projects.add", { name: "Atlas" })).toEqual({ name: "Atlas", added: true });
+        expect(await client.call("projects.add", { name: "Atlas" })).toEqual({ name: "Atlas", added: false });
+        expect((await failure(client.call("projects.add", { name: "-atlas" }))).message).toContain(
+            "a project name is letters"
+        );
+        expect(await client.call("projects.labels", { project: "Atlas", add: ["Checkout", "Billing"] })).toEqual({
+            project: "Atlas",
+            labels: ["Checkout", "Billing"],
+        });
+        expect(await client.call("projects.labels", { project: "Atlas", remove: ["billing"] })).toEqual({
+            project: "Atlas",
+            labels: ["Checkout"],
+        });
+        expect((await failure(client.call("projects.labels", { project: "Nowhere" }))).message).toContain(
+            "No project Nowhere"
+        );
+
+        // The saved rules match nothing; a draft title word matches the design review.
+        const preview = await client.call("projects.preview", { draft: { Atlas: { titleWords: ["Design"] } } });
+        expect(preview.map((row) => [row.id, row.project, row.now, row.draft, row.changed])).toEqual([
+            [RETRO.id, undefined, [], [], false],
+            [REVIEW.id, "Atlas", [], ["Atlas"], true],
+        ]);
+
+        expect(await client.call("projects.rename", { from: "Atlas", to: "Harbor" })).toEqual({
+            from: "Atlas",
+            to: "Harbor",
+            meetings: [REVIEW.id],
+        });
+        expect(store.resolve(REVIEW.id)?.project).toBe("Harbor");
+
+        await config.pairPeople({
+            project: "Harbor",
+            people: [{ name: "Alex Example", email: "alex@example.com" }],
+            by: { kind: "manual", at: NOW.toISOString() },
+        });
+        const person = { name: "Alex Example", email: "alex@example.com" };
+        expect(await client.call("projects.unpair", { project: "Harbor", person })).toEqual({
+            removed: [{ project: "Harbor", name: "Alex Example", email: "alex@example.com", left: true }],
+        });
+        expect(await client.call("projects.unpair", { project: "Harbor", person })).toEqual({ removed: [] });
+        expect(await client.call("projects.unpair", { entry: "cal-entry-1" })).toEqual({ removed: [] });
+        expect((await failure(client.call("projects.unpair", { project: "Harbor" }))).message).toContain(
+            "Name a calendar entry"
+        );
+
+        expect((await failure(client.call("projects.remove", { name: "Harbor" }))).message).toContain(
+            `1 meeting has the project Harbor: ${REVIEW.id}`
+        );
+        const removal = await client.call("projects.remove", { name: "Harbor", unassign: true });
+        expect(removal).toMatchObject({ name: "Harbor", unassigned: [REVIEW.id] });
+        expect(SafeJSON.parse(await Bun.file(removal.backup).text(), { strict: true })).toMatchObject({
+            project: "Harbor",
+            block: { labels: ["Checkout"] },
+        });
+        expect(store.resolve(REVIEW.id)?.project).toBeUndefined();
+        expect(Object.keys((await config.read()).projects)).toEqual([]);
+    });
+
+    test("the dictionary: add, show, test, a refused Undo's add, a rename and remove", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const fix = { type: "fix" as const, value: "Atlass", substitution: "Atlas" };
+
+        expect(await client.call("dictionary.add", { entry: fix })).toEqual({
+            entry: fix,
+            level: "global",
+            projectAdded: false,
+        });
+        const term = { type: "term" as const, value: "Harbor", spoken: ["harbour"] };
+        expect(await client.call("dictionary.add", { entry: term, project: "Atlas" })).toEqual({
+            entry: term,
+            level: "project Atlas",
+            projectAdded: true,
+        });
+
+        const refused = await failure(client.call("dictionary.add", { entry: fix, ifAbsent: true }));
+        expect(refused).toBeInstanceOf(MeetingsConflictError);
+        expect(errorText(refused)).toBe(
+            "[dictionary-exists] Atlass is in the global dictionary already; it was left as it is"
+        );
+
+        const shown = await client.call("dictionary.show", { project: "Atlas" });
+        expect(shown.project).toBe("Atlas");
+        expect(shown.entries.map((entry) => [entry.value, entry.level])).toEqual([
+            ["Atlass", "global"],
+            ["Harbor", "project Atlas"],
+        ]);
+        expect((await client.call("dictionary.show", {})).entries.map((entry) => entry.value)).toEqual(["Atlass"]);
+        expect((await failure(client.call("dictionary.show", { project: "Nowhere" }))).message).toContain(
+            "Unknown project Nowhere"
+        );
+
+        const tested = await client.call("dictionary.test", { phrase: "The Atlass page in harbour", project: "Atlas" });
+        expect(tested.text).toBe("The Atlas page in Harbor");
+        expect(tested.fired.map((entry) => entry.value)).toEqual(["Atlass", "Harbor"]);
+
+        const renamed = { ...fix, value: "Atlasss" };
+        expect(await client.call("dictionary.add", { entry: renamed, replace: "Atlass" })).toEqual({
+            entry: renamed,
+            level: "global",
+            projectAdded: false,
+            replaced: "Atlass",
+        });
+        expect((await client.call("dictionary.show", {})).entries.map((entry) => entry.value)).toEqual(["Atlasss"]);
+
+        expect(await client.call("dictionary.remove", { value: "Atlasss" })).toEqual({
+            value: "Atlasss",
+            level: "global",
+            removed: true,
+        });
+        expect(await client.call("dictionary.remove", { value: "Atlasss" })).toEqual({
+            value: "Atlasss",
+            level: "global",
+            removed: false,
+        });
+    });
+
+    test("config.edit writes every change in one write, or none when one names a value changed since", async () => {
+        const { client, config } = await ADAPTERS[kind]();
+
+        expect(
+            await client.call("config.edit", {
+                edits: [
+                    { path: "global.capture.activeFps", value: 2 },
+                    { path: "global.assign.ask", value: false, expect: true },
+                ],
+            })
+        ).toEqual([
+            { path: ["global", "capture", "activeFps"], value: 2 },
+            { path: ["global", "assign", "ask"], value: false },
+        ]);
+
+        const stale = await failure(
+            client.call("config.edit", {
+                edits: [
+                    { path: "global.capture.activeFps", value: 3 },
+                    { path: "global.assign.ask", unset: true, expect: true },
+                ],
+            })
+        );
+        expect(stale).toBeInstanceOf(MeetingsConflictError);
+        expect(errorText(stale)).toStartWith("[config-stale] global.assign.ask changed since it was read");
+        expect((await config.read()).global.capture.activeFps).toBe(2);
+    });
+
     test("a subscription with an empty meeting is refused as invalid params instead of hearing every meeting", async () => {
         const { client } = await ADAPTERS[kind]();
         const refused = await failure(client.subscribe({ meeting: "" }, () => undefined));
@@ -909,7 +1070,7 @@ interface Example {
 
 /** Every example of the fixture, from a live service on a scratch store over raw sockets. */
 async function captureExamples(): Promise<Example[]> {
-    const { service, store } = await startService();
+    const { service, store, config } = await startService();
     const examples: Example[] = [];
     const ask = async (
         connection: Awaited<ReturnType<typeof rawConnection>>,
@@ -1112,6 +1273,91 @@ async function captureExamples(): Promise<Example[]> {
         { meeting: REVIEW.id, action: { kind: "assign", person: "Dana Example", lines: [{ atSec: 9, line: 1 }] } },
         "One line given to a person: the assignment, and the stretches of the same label it may also reach."
     );
+    await ask(
+        window,
+        "projects.add",
+        { name: "Atlas" },
+        "The settings page's Add project; added: false when it was known."
+    );
+    await ask(
+        window,
+        "projects.labels",
+        { project: "Atlas", add: ["Checkout"] },
+        "remove takes labels away the same way."
+    );
+    await ask(
+        window,
+        "config.edit",
+        {
+            edits: [
+                { path: '["sources","wisprflow","match","Atlas","folders"]', value: ["Design"] },
+                { path: '["projects","Atlas","match","title","words"]', value: ["review"], expect: null },
+            ],
+        },
+        "The page's Save rules: a project's source folders and title words in one write; expect names the value read."
+    );
+    await ask(
+        window,
+        "projects.preview",
+        { draft: { Atlas: { titleWords: ["Retro"] } }, limit: 5 },
+        "Each recent meeting against the saved rules (now) and the draft being edited."
+    );
+    await ask(
+        window,
+        "dictionary.add",
+        { entry: { type: "fix", value: "Atlass", substitution: "Atlas" }, project: "Atlas" },
+        "An entry in the project's dictionary."
+    );
+    await ask(
+        window,
+        "dictionary.add",
+        { entry: { type: "fix", value: "Atlass", substitution: "Atlas" }, project: "Atlas", ifAbsent: true },
+        "An Undo's add of an entry made again since: dictionary-exists, and it is left as it is."
+    );
+    await ask(
+        window,
+        "dictionary.show",
+        { project: "Atlas" },
+        "The global entries, then the project's, each with its level."
+    );
+    await ask(window, "dictionary.test", { phrase: "The Atlass page", project: "Atlas" });
+    await ask(
+        window,
+        "dictionary.remove",
+        { value: "Atlass", project: "Atlas" },
+        "removed: false when it was not there."
+    );
+    await config.pairPeople({
+        project: "Atlas",
+        people: [{ name: "Alex Example", email: "alex@example.com" }],
+        by: {
+            kind: "calendar",
+            from: "apple-calendar",
+            entryId: "cal-2041",
+            at: NOW.toISOString(),
+            title: "Design review",
+        },
+    });
+    await ask(
+        window,
+        "projects.unpair",
+        { entry: "cal-2041" },
+        "The pairings one calendar entry made; left: the person is no longer paired with the project."
+    );
+    await ask(
+        window,
+        "projects.unpair",
+        { project: "Atlas", person: { name: "Alex Example", email: "alex@example.com" } },
+        "One person from one project: nothing when they were not paired."
+    );
+    await ask(window, "projects.rename", { from: "Atlas", to: "Harbor" }, "Its settings, pairings and meetings.");
+    await ask(
+        window,
+        "projects.remove",
+        { name: "Harbor" },
+        "Refused while a meeting has it; unassign leaves the meeting without a project."
+    );
+    await ask(window, "projects.remove", { name: "Harbor", unassign: true }, "The backup keeps the removed settings.");
     for (const method of ["decision.applied", "decision.reverted", "comment.sent"]) {
         const heard = window.lines.find((line) => line.method === method);
         examples.push({ method, direction: "service→client", ...(heard ? { notification: heard } : {}) });
@@ -1155,6 +1401,8 @@ function normalized(examples: Example[]): unknown {
             .replace(/"(path)":"[^"]*?(\/meetings-cache\/[^"]*?)-[0-9a-z]+\.wav"/g, '"$1":"<home>$2-<key>.wav"')
             .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>"')
             .replace(/"path":"[^"]*\/meetings\/config\.json"/g, '"path":"<config>"')
+            // A removed project's backup: under the sandbox home, named by the local time of the removal.
+            .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
             .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"'),
         { strict: true }
     );
@@ -1229,6 +1477,8 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
             [
                 "already-decided",
                 "ambiguous-person",
+                "dictionary-exists",
+                "failed",
                 "unplayable",
                 "unknown-comment",
                 "already-sent",

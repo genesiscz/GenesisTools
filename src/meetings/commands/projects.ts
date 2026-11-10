@@ -4,14 +4,12 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, sourceFolders } from "@genesiscz/utils/meetings/config";
 import type { PersonRef } from "@genesiscz/utils/meetings/people";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { projectLabels } from "../lib/meeting-fields";
-import { removeProject, renameProject } from "../lib/project-admin";
+import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail } from "../lib/shared";
-import { matchPreviewRead, windowJson } from "../lib/window-reads";
+import { matchPreviewFlags, windowJson } from "../lib/window-reads";
 
 function matchSummary(config: MeetingsConfig, name: string): string {
     const project = config.projects[name];
@@ -62,7 +60,7 @@ async function listProjects(opts: { json?: boolean }): Promise<void> {
 
 async function addProject(name: string): Promise<void> {
     try {
-        const added = await new MeetingsConfigStore().addProject(name);
+        const { added } = await withMeetingsClient((client) => client.call("projects.add", { name }));
         ui.ok(added ? `Added project ${name} to the known projects.` : `Project ${name} is known already.`);
     } catch (err) {
         fail(errorText(err));
@@ -75,12 +73,7 @@ function plural(count: number, noun: string): string {
 
 async function rename(name: string, to: string, opts: { json?: boolean }): Promise<void> {
     try {
-        const result = await renameProject({
-            config: new MeetingsConfigStore(),
-            store: new MeetingStore(),
-            from: name,
-            to,
-        });
+        const result = await withMeetingsClient((client) => client.call("projects.rename", { from: name, to }));
 
         if (opts.json) {
             out.result(SafeJSON.stringify(result, null, 2));
@@ -95,12 +88,9 @@ async function rename(name: string, to: string, opts: { json?: boolean }): Promi
 
 async function remove(name: string, opts: { unassign?: boolean; json?: boolean }): Promise<void> {
     try {
-        const result = await removeProject({
-            config: new MeetingsConfigStore(),
-            store: new MeetingStore(),
-            name,
-            unassign: opts.unassign,
-        });
+        const result = await withMeetingsClient((client) =>
+            client.call("projects.remove", { name, ...(opts.unassign ? { unassign: true } : {}) })
+        );
 
         if (opts.json) {
             out.result(SafeJSON.stringify(result, null, 2));
@@ -118,7 +108,13 @@ async function remove(name: string, opts: { unassign?: boolean; json?: boolean }
 
 async function labels(name: string, opts: { add?: string[]; remove?: string[] }): Promise<void> {
     try {
-        const known = await projectLabels({ config: new MeetingsConfigStore(), project: name, ...opts });
+        const { labels: known } = await withMeetingsClient((client) =>
+            client.call("projects.labels", {
+                project: name,
+                ...(opts.add ? { add: opts.add } : {}),
+                ...(opts.remove ? { remove: opts.remove } : {}),
+            })
+        );
         ui.ok(`${name} labels: ${known.length > 0 ? known.join(", ") : "none"}`);
     } catch (err) {
         fail(errorText(err));
@@ -152,10 +148,9 @@ async function pair(name: string, opts: { person: string[]; note?: string }): Pr
 
 async function unpair(name: string | undefined, opts: { entry?: string; person?: string }): Promise<void> {
     try {
-        const store = new MeetingsConfigStore();
-
         if (opts.entry) {
-            const removed = await store.unpairEntry(opts.entry);
+            const entry = opts.entry;
+            const { removed } = await withMeetingsClient((client) => client.call("projects.unpair", { entry }));
             ui.ok(`Calendar entry ${opts.entry}: ${removed.length} pairing(s) removed.`);
 
             for (const person of removed) {
@@ -172,8 +167,11 @@ async function unpair(name: string | undefined, opts: { entry?: string; person?:
             return;
         }
 
-        const removed = await store.unpairPerson(name, parsePerson(opts.person));
-        ui.ok(removed ? `${opts.person} left ${name}.` : `${opts.person} was not paired with ${name}.`);
+        const person = parsePerson(opts.person);
+        const { removed } = await withMeetingsClient((client) =>
+            client.call("projects.unpair", { project: name, person })
+        );
+        ui.ok(removed.length > 0 ? `${opts.person} left ${name}.` : `${opts.person} was not paired with ${name}.`);
     } catch (err) {
         fail(errorText(err));
     }
@@ -215,7 +213,10 @@ async function people(name: string | undefined, opts: { json?: boolean }): Promi
 
 async function preview(opts: { draft?: string; limit?: string; json?: boolean }): Promise<void> {
     try {
-        const { draft, rows } = await matchPreviewRead(opts);
+        const { draft, limit } = matchPreviewFlags(opts);
+        const rows = await withMeetingsClient((client) =>
+            client.call("projects.preview", { ...(draft ? { draft } : {}), limit })
+        );
 
         if (opts.json) {
             out.result(windowJson(rows));

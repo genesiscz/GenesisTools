@@ -10,18 +10,21 @@ import { ABBR_EXPANSIONS, type DictionaryEntry, dictionaryEntrySchema } from "@g
 import type { Command } from "commander";
 import pc from "picocolors";
 import { suggestDictionary } from "../lib/dictionary-suggest";
-import { testPhrase } from "../lib/dictionary-test";
+import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { isMeetingSourceId, meetingSource } from "../lib/sources";
-import { dictionaryShowRead, windowJson } from "../lib/window-reads";
+import { windowJson } from "../lib/window-reads";
 
 const ENTRY_TYPES = ["fix", "abbr", "term", "keep"] as const;
 
 async function show(opts: { project?: string; json?: boolean }): Promise<void> {
     const store = new MeetingsConfigStore();
+    const project = opts.project;
 
     try {
-        const view = dictionaryShowRead(await store.read(), opts.project);
+        const view = await withMeetingsClient((client) =>
+            client.call("dictionary.show", { ...(project ? { project } : {}) })
+        );
 
         if (opts.json) {
             out.result(windowJson(view));
@@ -96,18 +99,22 @@ async function add(
     }
 
     const entry: DictionaryEntry = parsed.data;
-    const store = new MeetingsConfigStore();
+    const project = opts.project;
 
     try {
-        if (opts.project && (await store.addProject(opts.project))) {
-            ui.ok(`Added project ${opts.project} to the known projects.`);
-        }
+        await withMeetingsClient(async (client) => {
+            // The project first, as its own call: its line prints even when the entry is refused after it.
+            if (project && (await client.call("projects.add", { name: project })).added) {
+                ui.ok(`Added project ${project} to the known projects.`);
+            }
 
-        if (opts.replace && opts.replace !== entry.value) {
-            await store.replaceDictionaryEntry(scopeOf(opts.project), opts.replace, entry);
-        } else {
-            await store.putDictionaryEntry(scopeOf(opts.project), entry, { ifAbsent: opts.ifAbsent === true });
-        }
+            await client.call("dictionary.add", {
+                entry,
+                ...(project ? { project } : {}),
+                ...(opts.replace ? { replace: opts.replace } : {}),
+                ...(opts.ifAbsent ? { ifAbsent: true } : {}),
+            });
+        });
 
         ui.ok(
             `${entry.type} ${entry.value} saved to the ${opts.project ? `project ${opts.project}` : "global"} dictionary${opts.replace && opts.replace !== entry.value ? ` in place of ${opts.replace}` : ""}.`
@@ -119,7 +126,10 @@ async function add(
 
 async function remove(value: string, opts: { project?: string }): Promise<void> {
     try {
-        const removed = await new MeetingsConfigStore().removeDictionaryEntry(scopeOf(opts.project), value);
+        const project = opts.project;
+        const { removed } = await withMeetingsClient((client) =>
+            client.call("dictionary.remove", { value, ...(project ? { project } : {}) })
+        );
         const level = opts.project ? `project ${opts.project}` : "global";
 
         if (removed) {
@@ -255,10 +265,10 @@ function collect(value: string, previous: string[] = []): string[] {
 
 async function test(phrase: string, opts: { project?: string; json?: boolean }): Promise<void> {
     try {
-        const result = testPhrase(await new MeetingsConfigStore().read(), {
-            phrase,
-            ...(opts.project ? { project: opts.project } : {}),
-        });
+        const project = opts.project;
+        const result = await withMeetingsClient((client) =>
+            client.call("dictionary.test", { phrase, ...(project ? { project } : {}) })
+        );
 
         if (opts.json) {
             out.result(windowJson(result));

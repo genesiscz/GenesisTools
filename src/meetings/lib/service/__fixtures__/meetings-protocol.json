@@ -42,6 +42,7 @@
             "config.read",
             "config.set",
             "config.unset",
+            "config.edit",
             "meeting.rows",
             "comment.stage",
             "comment.list",
@@ -53,6 +54,16 @@
             "people.planMerge",
             "people.merge",
             "people.unmerge",
+            "projects.add",
+            "projects.rename",
+            "projects.remove",
+            "projects.labels",
+            "projects.unpair",
+            "projects.preview",
+            "dictionary.show",
+            "dictionary.add",
+            "dictionary.remove",
+            "dictionary.test",
             "subscribe",
             "unsubscribe"
           ],
@@ -62,7 +73,7 @@
             "decision.reverted",
             "comment.sent"
           ],
-          "version": "7ddd26c23e59"
+          "version": "22605e347fb5"
         }
       }
     },
@@ -588,6 +599,7 @@
             "config.read",
             "config.set",
             "config.unset",
+            "config.edit",
             "meeting.rows",
             "comment.stage",
             "comment.list",
@@ -599,6 +611,16 @@
             "people.planMerge",
             "people.merge",
             "people.unmerge",
+            "projects.add",
+            "projects.rename",
+            "projects.remove",
+            "projects.labels",
+            "projects.unpair",
+            "projects.preview",
+            "dictionary.show",
+            "dictionary.add",
+            "dictionary.remove",
+            "dictionary.test",
             "subscribe",
             "unsubscribe"
           ],
@@ -608,7 +630,7 @@
             "decision.reverted",
             "comment.sent"
           ],
-          "version": "7ddd26c23e59"
+          "version": "22605e347fb5"
         }
       }
     },
@@ -1473,7 +1495,7 @@
           },
           "delaySec": 2,
           "repeatGapSec": 1,
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Kft1G8/gt-test-home-e2qaq2/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-3jv1z22o1vm0i.wav"
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-T9FA9D/gt-test-home-c2v96u/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-2ex5tp3ts3apx.wav"
         }
       }
     },
@@ -1493,7 +1515,7 @@
         "jsonrpc": "2.0",
         "id": 21,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Kft1G8/mtg-audio-rlnSmt/upload.ogg",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-T9FA9D/mtg-audio-TeWdQJ/upload.ogg",
           "tracks": 1,
           "channels": 2,
           "durationSec": 45
@@ -1545,7 +1567,7 @@
         "jsonrpc": "2.0",
         "id": 23,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Kft1G8/gt-test-home-e2qaq2/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-T9FA9D/gt-test-home-c2v96u/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
           "sound": {
             "hz": 880,
             "sec": 0.15,
@@ -1707,7 +1729,7 @@
         "jsonrpc": "2.0",
         "id": 27,
         "result": {
-          "generatedAt": "2026-11-09T23:51:48.932Z",
+          "generatedAt": "2026-11-10T03:40:01.264Z",
           "days": 3650,
           "applyAbove": 0.5,
           "meetings": [
@@ -1787,7 +1809,7 @@
         "jsonrpc": "2.0",
         "id": 28,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Kft1G8/gt-test-home-e2qaq2/.genesis-tools/meetings/config.json",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-T9FA9D/gt-test-home-c2v96u/.genesis-tools/meetings/config.json",
           "value": 30
         }
       }
@@ -2868,6 +2890,431 @@
       }
     },
     {
+      "method": "projects.add",
+      "direction": "client→service",
+      "note": "The settings page's Add project; added: false when it was known.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 51,
+        "method": "projects.add",
+        "params": {
+          "name": "Atlas"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 51,
+        "result": {
+          "name": "Atlas",
+          "added": true
+        }
+      }
+    },
+    {
+      "method": "projects.labels",
+      "direction": "client→service",
+      "note": "remove takes labels away the same way.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 52,
+        "method": "projects.labels",
+        "params": {
+          "project": "Atlas",
+          "add": [
+            "Checkout"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 52,
+        "result": {
+          "project": "Atlas",
+          "labels": [
+            "Checkout"
+          ]
+        }
+      }
+    },
+    {
+      "method": "config.edit",
+      "direction": "client→service",
+      "note": "The page's Save rules: a project's source folders and title words in one write; expect names the value read.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 53,
+        "method": "config.edit",
+        "params": {
+          "edits": [
+            {
+              "path": "[\"sources\",\"wisprflow\",\"match\",\"Atlas\",\"folders\"]",
+              "value": [
+                "Design"
+              ]
+            },
+            {
+              "path": "[\"projects\",\"Atlas\",\"match\",\"title\",\"words\"]",
+              "value": [
+                "review"
+              ],
+              "expect": null
+            }
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 53,
+        "result": [
+          {
+            "path": [
+              "sources",
+              "wisprflow",
+              "match",
+              "Atlas",
+              "folders"
+            ],
+            "value": [
+              "Design"
+            ]
+          },
+          {
+            "path": [
+              "projects",
+              "Atlas",
+              "match",
+              "title",
+              "words"
+            ],
+            "value": [
+              "review"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "method": "projects.preview",
+      "direction": "client→service",
+      "note": "Each recent meeting against the saved rules (now) and the draft being edited.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 54,
+        "method": "projects.preview",
+        "params": {
+          "draft": {
+            "Atlas": {
+              "titleWords": [
+                "Retro"
+              ]
+            }
+          },
+          "limit": 5
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 54,
+        "result": [
+          {
+            "id": "2026-11-03-1400-retro",
+            "title": "Retro",
+            "start": "2026-11-03T13:00:00.000Z",
+            "now": [],
+            "draft": [
+              "Atlas"
+            ],
+            "changed": true
+          },
+          {
+            "id": "2026-11-03-1000-design-review",
+            "title": "Design review",
+            "start": "2026-11-03T09:00:00.000Z",
+            "project": "Atlas",
+            "now": [
+              "Atlas"
+            ],
+            "draft": [],
+            "changed": true
+          }
+        ]
+      }
+    },
+    {
+      "method": "dictionary.add",
+      "direction": "client→service",
+      "note": "An entry in the project's dictionary.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 55,
+        "method": "dictionary.add",
+        "params": {
+          "entry": {
+            "type": "fix",
+            "value": "Atlass",
+            "substitution": "Atlas"
+          },
+          "project": "Atlas"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 55,
+        "result": {
+          "entry": {
+            "type": "fix",
+            "value": "Atlass",
+            "substitution": "Atlas"
+          },
+          "level": "project Atlas",
+          "projectAdded": false
+        }
+      }
+    },
+    {
+      "method": "dictionary.add",
+      "direction": "client→service",
+      "note": "An Undo's add of an entry made again since: dictionary-exists, and it is left as it is.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 56,
+        "method": "dictionary.add",
+        "params": {
+          "entry": {
+            "type": "fix",
+            "value": "Atlass",
+            "substitution": "Atlas"
+          },
+          "project": "Atlas",
+          "ifAbsent": true
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 56,
+        "error": {
+          "code": 1100,
+          "message": "Atlass is in the project Atlas dictionary already; it was left as it is",
+          "data": {
+            "code": "dictionary-exists"
+          }
+        }
+      }
+    },
+    {
+      "method": "dictionary.show",
+      "direction": "client→service",
+      "note": "The global entries, then the project's, each with its level.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 57,
+        "method": "dictionary.show",
+        "params": {
+          "project": "Atlas"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 57,
+        "result": {
+          "project": "Atlas",
+          "abbrExpansion": "every",
+          "entries": [
+            {
+              "type": "fix",
+              "value": "Atlass",
+              "substitution": "Atlas",
+              "level": "project Atlas"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "dictionary.test",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 58,
+        "method": "dictionary.test",
+        "params": {
+          "phrase": "The Atlass page",
+          "project": "Atlas"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 58,
+        "result": {
+          "phrase": "The Atlass page",
+          "text": "The Atlas page",
+          "fired": [
+            {
+              "type": "fix",
+              "value": "Atlass",
+              "substitution": "Atlas"
+            }
+          ],
+          "suggestions": [],
+          "counts": {
+            "fixes": 1,
+            "spoken": 0,
+            "fuzzy": 0,
+            "expansions": 0,
+            "meanings": 0
+          }
+        }
+      }
+    },
+    {
+      "method": "dictionary.remove",
+      "direction": "client→service",
+      "note": "removed: false when it was not there.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 59,
+        "method": "dictionary.remove",
+        "params": {
+          "value": "Atlass",
+          "project": "Atlas"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 59,
+        "result": {
+          "value": "Atlass",
+          "level": "project Atlas",
+          "removed": true
+        }
+      }
+    },
+    {
+      "method": "projects.unpair",
+      "direction": "client→service",
+      "note": "The pairings one calendar entry made; left: the person is no longer paired with the project.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 60,
+        "method": "projects.unpair",
+        "params": {
+          "entry": "cal-2041"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 60,
+        "result": {
+          "removed": [
+            {
+              "project": "Atlas",
+              "name": "Alex Example",
+              "email": "alex@example.com",
+              "left": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "projects.unpair",
+      "direction": "client→service",
+      "note": "One person from one project: nothing when they were not paired.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 61,
+        "method": "projects.unpair",
+        "params": {
+          "project": "Atlas",
+          "person": {
+            "name": "Alex Example",
+            "email": "alex@example.com"
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 61,
+        "result": {
+          "removed": []
+        }
+      }
+    },
+    {
+      "method": "projects.rename",
+      "direction": "client→service",
+      "note": "Its settings, pairings and meetings.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 62,
+        "method": "projects.rename",
+        "params": {
+          "from": "Atlas",
+          "to": "Harbor"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 62,
+        "result": {
+          "from": "Atlas",
+          "to": "Harbor",
+          "meetings": [
+            "2026-11-03-1000-design-review"
+          ]
+        }
+      }
+    },
+    {
+      "method": "projects.remove",
+      "direction": "client→service",
+      "note": "Refused while a meeting has it; unassign leaves the meeting without a project.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 63,
+        "method": "projects.remove",
+        "params": {
+          "name": "Harbor"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 63,
+        "error": {
+          "code": 1100,
+          "message": "1 meeting has the project Harbor: 2026-11-03-1000-design-review. Rename it instead, or remove it with --unassign to leave them without a project.",
+          "data": {
+            "code": "failed"
+          }
+        }
+      }
+    },
+    {
+      "method": "projects.remove",
+      "direction": "client→service",
+      "note": "The backup keeps the removed settings.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 64,
+        "method": "projects.remove",
+        "params": {
+          "name": "Harbor",
+          "unassign": true
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 64,
+        "result": {
+          "name": "Harbor",
+          "unassigned": [
+            "2026-11-03-1000-design-review"
+          ],
+          "backup": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-T9FA9D/gt-test-home-c2v96u/.genesis-tools/backups/meetings/2026-11-03-1000-project-Harbor.json"
+        }
+      }
+    },
+    {
       "method": "decision.applied",
       "direction": "service→client",
       "notification": {
@@ -3138,6 +3585,7 @@
             "config.read",
             "config.set",
             "config.unset",
+            "config.edit",
             "meeting.rows",
             "comment.stage",
             "comment.list",
@@ -3149,6 +3597,16 @@
             "people.planMerge",
             "people.merge",
             "people.unmerge",
+            "projects.add",
+            "projects.rename",
+            "projects.remove",
+            "projects.labels",
+            "projects.unpair",
+            "projects.preview",
+            "dictionary.show",
+            "dictionary.add",
+            "dictionary.remove",
+            "dictionary.test",
             "subscribe",
             "unsubscribe"
           ],
@@ -3158,7 +3616,7 @@
             "decision.reverted",
             "comment.sent"
           ],
-          "version": "7ddd26c23e59"
+          "version": "22605e347fb5"
         }
       }
     },
