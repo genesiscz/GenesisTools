@@ -5,7 +5,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { runLogViewer } from "../interactive/log-viewer";
 import { getLogsBaseDir } from "../lib/config";
-import { DAEMON_STDERR_LOG, DAEMON_STDOUT_LOG } from "../lib/launchd";
+import { DAEMON_STDERR_LOG } from "../lib/launchd";
 import { listRunsForTask, parseLogFile } from "../lib/log-reader";
 
 export function registerLogsCommand(program: Command): void {
@@ -65,10 +65,6 @@ function showTaskLogs(taskName: string): void {
 
 function tailDaemonLogs(): void {
     const files: string[] = [];
-
-    if (existsSync(DAEMON_STDOUT_LOG)) {
-        files.push(DAEMON_STDOUT_LOG);
-    }
 
     if (existsSync(DAEMON_STDERR_LOG)) {
         files.push(DAEMON_STDERR_LOG);
