@@ -156,7 +156,7 @@ describe("headerExtras", () => {
 });
 
 describe("staleHeaderText", () => {
-    const PLAN_REASON = "plan is claude_free (canceled) — Claude Code needs a paid subscription";
+    const PLAN_REASON = "plan is claude_free (canceled). Claude Code needs a paid subscription";
     const ORG_403 =
         'Usage API 403: {"type":"error","error":{"type":"permission_error",' +
         '"message":"OAuth authentication is currently not allowed for this organization."}}';
