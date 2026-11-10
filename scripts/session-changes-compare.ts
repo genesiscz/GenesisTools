@@ -16,16 +16,12 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { rawLogFiles } from "@app/agents/commands/changes";
 import { type ChangeEvent, sessionChangesPath } from "@app/agents/lib/changes/log";
+import { canonicalClaudeTranscriptSync } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
 import { runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { out } from "@genesiscz/utils/logger";
-import {
-    findClaudeTranscript,
-    lastChangedTurns,
-    loadSessionChanges,
-    type TurnChanges,
-} from "@genesiscz/utils/session-changes";
+import { lastChangedTurns, loadSessionChanges, type TurnChanges } from "@genesiscz/utils/session-changes";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 
@@ -81,7 +77,7 @@ function recentSessions(count: number): string[] {
     return found
         .sort((a, b) => b.mtime - a.mtime)
         .map((item) => item.id)
-        .filter((id) => findClaudeTranscript(id) !== null)
+        .filter((id) => canonicalClaudeTranscriptSync(id) !== undefined)
         .slice(0, count);
 }
 

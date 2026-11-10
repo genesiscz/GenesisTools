@@ -6,7 +6,7 @@ import { repoRootOf } from "@genesiscz/utils/git/repo-root";
 import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
 import { analyzeCommand, type CommandAnalysis, isLockOrManifest, namedBy } from "./command";
 import { type PathRuleContext, pathExclusion, rootOf } from "./rules";
-import { fileToolVia, isShellTool } from "./transcript";
+import { fileToolVia, isShellTool } from "./tool-calls";
 import type {
     BlobStore,
     ChangeConfidence,

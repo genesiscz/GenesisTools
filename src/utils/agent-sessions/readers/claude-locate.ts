@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { lastClaudeTitleIn } from "@genesiscz/utils/agent-sessions/readers/claude-title";
 import type { FolderReads, HarnessRoots, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
 import {
@@ -20,7 +20,7 @@ import {
     nativeSessionRoots,
     nativeSessionRootsForHome,
 } from "@genesiscz/utils/providers/session-paths";
-import { canonicalClaudeCopy } from "./claude-discovery";
+import { canonicalClaudeCopy, canonicalClaudeCopySync } from "./claude-discovery";
 import { claudeSubagentFiles, claudeSubagentsDir, isClaudeSubagentPath } from "./claude-paths";
 
 /** The Claude driver's `locate` part: `<project>/<id>.jsonl` with its sub-agent files, and `tools claude worker` turn files. */
@@ -94,21 +94,73 @@ const folderReads: FolderReads = {
     readText: (path) => readFileSync(path, "utf8"),
 };
 
+/** Where a Claude id lookup looks beyond the main transcripts of every project folder. */
+export interface ClaudeTranscriptScope {
+    /** Only this project folder (its encoded name, `claudeProjectFolder`) under each root. */
+    projectFolder?: string;
+    /** Also answer a sub-agent transcript (`subagents/`), as `ClaudeSession.fromSessionId` does. */
+    includeSubagents?: boolean;
+}
+
+/** The shortest id prefix a lookup accepts, as `tools claude summarize` and the hub print a session id. */
+const MIN_PREFIX = 8;
+
 /**
- * The main transcript of a full Claude session id that history discovery indexes: one folder listing per root and
- * discovery's own duplicate order, not the newest file, which after a cwd move is often a title-only stub.
+ * The copies a Claude session id names, in any letter case: every file of the exact id; else, for a prefix of at least
+ * eight characters, the files of every id it starts. A prefix that starts two ids is logged; the copy order then picks.
+ */
+function claudeTranscriptCopies(
+    sessionId: string,
+    roots: Pick<HarnessRoots, "native">,
+    { projectFolder, includeSubagents = false }: ClaudeTranscriptScope
+): string[] {
+    const wanted = sessionId.toLowerCase();
+    const hits = roots.native.flatMap((root) =>
+        findClaude(wanted, root, folderReads).filter(
+            (hit) =>
+                (includeSubagents || !isClaudeSubagentPath(hit.filePath)) &&
+                (!projectFolder || relative(root, hit.filePath).split(sep)[0] === projectFolder)
+        )
+    );
+    const exact = hits.filter((hit) => hit.sessionId.toLowerCase() === wanted);
+
+    if (exact.length > 0 || wanted.length < MIN_PREFIX) {
+        return exact.map((hit) => hit.filePath);
+    }
+
+    const prefixed = hits.filter((hit) => hit.sessionId.toLowerCase().startsWith(wanted));
+    const ids = new Set(prefixed.map((hit) => hit.sessionId));
+
+    if (ids.size > 1) {
+        logger.warn({ prefix: sessionId, ids: [...ids] }, "[claude-locate] an id prefix names several sessions");
+    }
+
+    return prefixed.map((hit) => hit.filePath);
+}
+
+/**
+ * The transcript of a Claude session id (full, or a prefix of eight characters or more) that history discovery
+ * indexes: one folder listing per root and discovery's own duplicate order (`preferTranscriptCopy`), not the newest
+ * file or the first in folder order, which after a cwd move is often a title-only stub.
  */
 export async function canonicalClaudeTranscript(
     sessionId: string,
-    roots: Pick<HarnessRoots, "native"> = claudeLocate.defaultRoots()
+    roots: Pick<HarnessRoots, "native"> = claudeLocate.defaultRoots(),
+    scope: ClaudeTranscriptScope = {}
 ): Promise<string | undefined> {
-    const wanted = sessionId.toLowerCase();
-    const paths = roots.native
-        .flatMap((root) => findClaude(wanted, root, folderReads))
-        .filter((hit) => hit.sessionId.toLowerCase() === wanted && !isClaudeSubagentPath(hit.filePath))
-        .map((hit) => hit.filePath);
+    return canonicalClaudeCopy(claudeTranscriptCopies(sessionId, roots, scope));
+}
 
-    return canonicalClaudeCopy(paths);
+/**
+ * {@link canonicalClaudeTranscript} for a synchronous caller (`NativeSessionReader.readChanges`, `tools agents
+ * blame`): the same copies in the same order, so the two forms never answer different files.
+ */
+export function canonicalClaudeTranscriptSync(
+    sessionId: string,
+    roots: Pick<HarnessRoots, "native"> = claudeLocate.defaultRoots(),
+    scope: ClaudeTranscriptScope = {}
+): string | undefined {
+    return canonicalClaudeCopySync(claudeTranscriptCopies(sessionId, roots, scope));
 }
 
 export function findClaude(query: string, projectsDir: string, fs: FolderReads): RankedHit[] {
