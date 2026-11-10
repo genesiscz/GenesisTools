@@ -119,7 +119,14 @@ export const clackBackend: PromptBackend = {
 
     confirm: async (opts) => {
         const message = opts.danger ? pc.red(opts.message) : opts.message;
-        return unwrap(await clack.confirm({ message, initialValue: opts.initialValue }));
+        return unwrap(
+            await clack.confirm({
+                message,
+                initialValue: opts.initialValue,
+                active: opts.active,
+                inactive: opts.inactive,
+            })
+        );
     },
 
     typedConfirm: typedConfirmImpl,

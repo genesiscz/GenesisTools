@@ -22,6 +22,9 @@ export interface ConfirmOpts extends CancelOpts {
     message: string;
     initialValue?: boolean;
     danger?: boolean;
+    /** The labels of the two answers (clack draws them; inquirer's yes/no prompt has none). */
+    active?: string;
+    inactive?: string;
 }
 
 export interface TextOpts extends CancelOpts {
