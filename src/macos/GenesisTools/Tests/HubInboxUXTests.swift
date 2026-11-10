@@ -78,7 +78,7 @@ final class HubInboxUXTests: XCTestCase {
         process.arguments = ["30"]
         let started = Date()
         let task = Task {
-            try await ToolsCLIRunner.runCancellable { handle in
+            try await ToolsBridge.runCancellable { handle in
                 try process.runCapturing(timeout: 60, afterStart: { handle.adopt(process) })
             }
         }
@@ -110,7 +110,7 @@ final class HubInboxUXTests: XCTestCase {
         process.arguments = ["-c", "trap 'kill $!; echo finished; exit 0' TERM; sleep 30 & wait"]
         let started = Date()
         let task = Task {
-            try await ToolsCLIRunner.runStoppable { handle in
+            try await ToolsBridge.runStoppable { handle in
                 try process.runCapturing(timeout: 60, afterStart: { handle.adopt(process) })
             }
         }
