@@ -16,6 +16,21 @@ public enum Harness: String, CaseIterable, Sendable {
         }
     }
 
+    /// The name the harness reports itself by at run time (`AI_AGENT`, a decision actor's harness).
+    public var runtimeAgent: String {
+        switch self {
+        case .claude: return "claude-code"
+        case .codex: return "codex"
+        case .grok: return "grok"
+        }
+    }
+
+    /// The harness that reports this run-time agent name, or nil for an agent no driver claims.
+    public init?(runtimeAgent: String) {
+        guard let harness = Harness.allCases.first(where: { $0.runtimeAgent == runtimeAgent }) else { return nil }
+        self = harness
+    }
+
     /// The letter of the harness's badge.
     public var markLetter: String {
         switch self {
