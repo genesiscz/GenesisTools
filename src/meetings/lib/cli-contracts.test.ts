@@ -422,6 +422,19 @@ describe("rows --json: the review rows (F3)", () => {
         expect(all.hidden.lowPriority).toBe(0);
     });
 
+    test("a decided row says what it was decided as (the answer, the spelling, the speaker); an open or rejected row says nothing", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const decided = (index: number, status: "confirmed" | "rejected") =>
+            reviewRow(record, { ...record.items[index]!, status });
+
+        expect(reviewRow(record, record.items[5]!).answer).toBe("EMP");
+        expect(decided(0, "confirmed").answer).toBe("EMP");
+        expect(decided(1, "confirmed").answer).toBe("Alice Example");
+        expect(decided(0, "rejected").answer).toBeUndefined();
+        expect(reviewRow(record, record.items[0]!).answer).toBeUndefined();
+        expect(reviewRow(record, record.items[2]!).answer).toBeUndefined();
+    });
+
     test("a question reads as parts: who, when, what it asks without the baked time, what it settles", async () => {
         const { reviewRow } = await import("./review-rows");
         const speaker = reviewRow(record, record.items[3]!);
