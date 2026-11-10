@@ -8,6 +8,7 @@ import { escapeJxa } from "@genesiscz/utils/macos/jxa";
 import { recordNotification } from "@genesiscz/utils/notifications/ledger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 
 export interface NotificationOptions {
     title?: string;
@@ -443,6 +444,8 @@ export interface PostedNotification {
  * Prefer {@link sendNotification} unless you need the id back to retract it later.
  */
 export async function postNotification(opts: NotificationOptions): Promise<PostedNotification> {
+    // Every backend (the app, terminal-notifier, osascript) raises a real banner, so a test process is refused here.
+    refuseHostEffectInTest("postNotification", "Assert the notification payload instead of delivering it.");
     const posted = await postThroughChain(opts);
 
     // GenesisTools.app posts through GenesisKit's NotificationEngine, which records the line itself with
