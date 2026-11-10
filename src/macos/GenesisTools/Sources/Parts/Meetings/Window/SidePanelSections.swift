@@ -407,7 +407,7 @@ struct SidePanelSections: View {
                     .accessibilityIdentifier("meetings.sidePanel.\(section.id).settings")
             }
             Button("Reset to Defaults") { reset(section) }
-                .buttonStyle(.borderless)
+                .buttonStyle(.genHoverPlain())
                 .font(.system(size: 11))
                 .disabled(section.isDefault)
                 .instantTooltip("Put every \(section.title.lowercased()) setting back to its default")

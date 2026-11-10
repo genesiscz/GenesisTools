@@ -376,15 +376,24 @@ struct ContactsPersonRow: View {
         .accessibilityIdentifier("meetings.contacts.row.\(person.id)")
     }
 
+    /// A drawn menu button: the list can hold 500 people, and a SwiftUI `Menu` is an NSPopUpButton per row.
     private var actionsMenu: some View {
-        Menu { actions } label: {
+        MenuButton(items: { menuItems }) {
             Image(systemName: "ellipsis.circle").font(.system(size: 14))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .fixedSize()
         .instantTooltip("Actions for \(person.name)")
         .accessibilityLabel("Actions for \(person.name)")
+    }
+
+    /// The same actions as `actions` (the context menu and VoiceOver), for the drawn menu.
+    private var menuItems: [MenuButtonItem] {
+        var items: [MenuButtonItem] = [.action("Merge with…", run: mergeWith)]
+        if let unmerge { items.append(.action("Split Merge", run: unmerge)) }
+        if let showMeetings { items.append(.action("Show Meetings", run: showMeetings)) }
+        items.append(.divider)
+        items.append(person.hidden ? .action("Show Again") { setHidden(false) } : .action("Hide") { setHidden(true) })
+        return items
     }
 
     @ViewBuilder
