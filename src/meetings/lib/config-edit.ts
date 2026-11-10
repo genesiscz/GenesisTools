@@ -4,6 +4,7 @@ import { type MeetingsConfig, type MeetingsConfigStore, meetingsConfigSchema } f
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { closestName } from "@genesiscz/utils/transclude/registry";
 import { z } from "zod";
+import { configEditSchema } from "./library-schema";
 
 /** Keys a path may never walk through: they reach the object's prototype, not the config. */
 const FORBIDDEN = new Set(["__proto__", "prototype", "constructor"]);
@@ -191,11 +192,6 @@ export function configValueAt(config: MeetingsConfig, segments: string[]): unkno
 
 /** One change of a config edit: a value to write, or `unset` to remove the key so its default applies again. */
 export type ConfigEdit = { path: string; expect?: unknown } & ({ value: unknown; unset?: never } | { unset: true });
-
-const configEditSchema = z.union([
-    z.object({ path: z.string().min(1), value: z.unknown(), expect: z.unknown().optional() }).strict(),
-    z.object({ path: z.string().min(1), unset: z.literal(true), expect: z.unknown().optional() }).strict(),
-]);
 
 const EDITS_SHAPE =
     "config edit takes a JSON array of { path, value, expect? } or { path, unset: true, expect? } (expect: the value the change replaces)";
