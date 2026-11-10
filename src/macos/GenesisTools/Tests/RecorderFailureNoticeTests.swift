@@ -43,12 +43,17 @@ final class RecorderFailureNoticeTests: XCTestCase {
                        "The camera was asked for, but it did not start: the camera needs GenesisTools.app's recorder face connected to the recorder service as its host")
     }
 
-    func testAStartThatStoppedAtOnceReadsAsItsErrorWithWhatRanAndWhere() {
+    func testAStartThatStoppedAtOnceReadsAsItsErrorWithWhatRanAndWhere() throws {
         let failure = ToolsRunner.EarlyFailure(argv: ["recorder", "start", "--window", "101344", "--camera"], status: 1,
                                                output: Self.output, logFile: "/Users/alice/.genesis-tools/logs/recorder-start.log",
                                                logLine: 812)
-        // Noon UTC: 1970-01-01 in every zone from UTC-11 to UTC+11, so the day log's name does not depend on the Mac's zone.
-        let report = RecorderNotice.startReport(failure, time: Date(timeIntervalSince1970: 43_200), app: nil, home: "/Users/alice")
+        // The day log is named by the local date, so the zone is fixed here and never the Mac's own.
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let noon = Date(timeIntervalSince1970: 43_200)
+        let report = RecorderNotice.startReport(failure, time: noon, app: nil, home: "/Users/alice", timeZone: utc)
+        let auckland = try XCTUnwrap(TimeZone(identifier: "Pacific/Auckland"))
+        XCTAssertEqual(RecorderNotice.startReport(failure, time: noon, app: nil, home: "/Users/alice", timeZone: auckland).dayLog,
+                       "/Users/alice/.genesis-tools/logs/1970-01-02.log", "noon UTC is already the next day in UTC+12")
         XCTAssertEqual(report.title, "Recording failed")
         XCTAssertEqual(report.headline,
                        "The camera was asked for, but it did not start: the camera needs GenesisTools.app's recorder face connected to the recorder service as its host.")
