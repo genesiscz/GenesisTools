@@ -39,6 +39,9 @@ export const agentsToolChangesDoor: CallDoor<{ session: string; toolIds: string[
     async run({ session, toolIds }, { signal }) {
         try {
             signal.throwIfAborted();
+            // `loadSessionChanges` loads the providers with a synchronous require on its first read; while another door's
+            // import of the same module is still running, that require throws. Loaded here first, it never races.
+            await import("@genesiscz/utils/agent-sessions/provider");
             const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
             const { toolChangesJson } = await import("@app/agents/lib/changes/tool-changes");
             const file = changeLogPath(session);
@@ -91,6 +94,9 @@ export const agentsTurnChangesDoor: CallDoor<{ session: string; lastTurns: numbe
     async run({ session, lastTurns, storeBlobs }, { signal }) {
         try {
             signal.throwIfAborted();
+            // `loadSessionChanges` loads the providers with a synchronous require on its first read; while another door's
+            // import of the same module is still running, that require throws. Loaded here first, it never races.
+            await import("@genesiscz/utils/agent-sessions/provider");
             const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
             const { sessionTurnChanges, turnChangesJson } = await import("@app/agents/lib/changes/tool-changes");
             const file = changeLogPath(session);
