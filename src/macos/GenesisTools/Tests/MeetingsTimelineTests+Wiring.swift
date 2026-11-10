@@ -278,7 +278,49 @@ extension MeetingsTimelineTests {
         XCTAssertEqual(player.top?.target, .time(0), "outside the clip the Moment at that time takes its place, from 0")
     }
 
-    private func makePlayer(_ defaults: UserDefaults) -> MomentPlayer {
+    // MARK: Snapshot of the wired dock
+
+    /// The dock as the window draws it: the real player with a Moment on top, the dock model's peaks, the open meeting's
+    /// rows as pins, at 900 pt and 1400 pt, light and dark (`MEETINGS_UI_SNAPSHOTS` keeps the PNGs).
+    func testSnapshotsOfTheWiredDock() async throws {
+        let (defaults, name) = try suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let reads = TimelineDockModel.Reads(
+            audio: { meeting in MeetingsAPI.MeetingAudio.Result(path: "/tmp/\(meeting).m4a", tracks: 1, channels: 1, durationSec: 8772) },
+            waveform: { params in
+                let from = params.fromSec ?? 0, to = params.toSec ?? 8772
+                let peaks = params.fromSec == nil ? TimelineFixture.peaks
+                    : (0..<params.buckets).map { index in abs(sin(Double(index) * 0.9)) * 0.7 + 0.2 }
+                return MeetingsAPI.MeetingWaveform.Result(meeting: params.meeting, fromSec: from, toSec: to, peaks: peaks, cannot: nil)
+            },
+            screen: { _ in throw MeetingsService.Unavailable(reason: "test") },
+            rows: { _ in throw MeetingsService.Unavailable(reason: "test") })
+        let window = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        window.player = makePlayer(defaults, timeline: TimelineDockModel(reads: reads, defaults: defaults))
+        window.select("m")
+        let word = ReviewRow(
+            id: "i5", label: "i5", kind: "term", status: "suggested", confidence: 0.82, priority: 0.5, what: "\"OMP\" → \"EMP\"",
+            parts: [.when(from: ClockTime(sec: 3276, text: "54:36"), to: nil, target: .time(3276))],
+            choices: [], edit: "spelling", needs: nil, sources: [], target: .time(3276), decision: nil)
+        var shown = try rows([], ids: [])
+        shown.rows = [word, TimelineFixture.questionRow]
+        window.detail?.rows = .loaded(shown)
+        window.player.play(.time(3276), in: "m", from: .row)
+        try await until("the Moment plays") { window.player.phase == .playing }
+        window.player.timeline.prepare("m")
+        try await until("the peaks land") { window.player.timeline.whole["m"] != nil && window.player.timeline.audio["m"] != nil }
+        let span = try XCTUnwrap(window.player.top.flatMap(TimelineDock.span(of:)))
+        window.player.timeline.ensureZoomPeaks("m", view: span.fitView, durationSec: 8772)
+        try await until("the finer peaks land") { window.player.timeline.zoomed != nil }
+        for width in TimelineSnapshot.widths {
+            for scheme in TimelineSnapshot.schemes {
+                try TimelineSnapshot.write(MeetingsPlayerBar(player: window.player, title: "Backend DTO design review", window: window),
+                                           name: "wired-dock", width: width, scheme: scheme)
+            }
+        }
+    }
+
+    private func makePlayer(_ defaults: UserDefaults, timeline: TimelineDockModel? = nil) -> MomentPlayer {
         let engine = MomentPlayer.Engine(
             cut: { params in
                 let at = params.target.startSec ?? 100
@@ -290,7 +332,7 @@ extension MeetingsTimelineTests {
             plan: { _ in MeetingsAPI.MomentPlan.Result(moment: nil, cannot: nil) },
             audio: { _ in throw MeetingsService.Unavailable(reason: "test") })
         return MomentPlayer(engine: engine, load: { _ in SilentSound() }, defaults: defaults,
-                            timeline: TimelineDockModel(reads: Self.noReads, defaults: defaults))
+                            timeline: timeline ?? TimelineDockModel(reads: Self.noReads, defaults: defaults))
     }
 
     private func until(_ what: String, timeout: TimeInterval = 3, _ condition: () -> Bool) async throws {

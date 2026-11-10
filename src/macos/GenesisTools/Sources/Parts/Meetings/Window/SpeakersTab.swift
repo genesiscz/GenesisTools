@@ -10,7 +10,6 @@ struct SpeakersTab: View {
     /// Below this width a speaker's rename field goes under its numbers: beside them, at the window's smallest size the
     /// field and the Play button left the numbers about 20 pt, one letter per line.
     static let stackWidth: CGFloat = 560
-    @State private var stacked = false
     @State private var reviewing: String?
 
     var body: some View {
@@ -22,29 +21,33 @@ struct SpeakersTab: View {
                 let renames = detail.record.value?.speakers.labels ?? [:]
                 // The most spoken first: in the CLI's order a label with 7 turns stood above one with 427.
                 let speakers = stats.speakers.sorted { $0.spokenSec > $1.spokenSec }
-                List {
-                    lanes(stats, names: renames)
-                        .listRowSeparator(.hidden)
-                    ForEach(speakers) { speaker in
-                        VStack(alignment: .leading, spacing: 4) {
-                            SpeakerRow(speaker: SpeakerStat(speaker), rename: renames[speaker.label], stacked: stacked,
-                                       hints: MeetingsWords.speakerHints(stats.hints, for: speaker.label),
-                                       play: speaker.firstSec.map { first in { detail.play(at: first, from: .speakerChip) } }) {
-                                detail.rename(label: speaker.label, to: $0)
-                            }
-                            ForEach(Array(stats.hints.filter { $0.label == speaker.label && !($0.ranges ?? []).isEmpty }.enumerated()),
-                                    id: \.offset) { _, hint in
-                                SpeakerHintChips(ranges: hint.ranges ?? [], longestClipSec: longestClipSec,
-                                                 play: { from, to in playRange(from, to) },
-                                                 zoom: { from, to in zoom(from, to) },
-                                                 review: { reviewing = speaker.label })
-                                    .padding(.leading, 4)
+                // The width straight from a GeometryReader, not a state an onGeometryChange sets: the window opened at
+                // its smallest size reported no change, so the rows stayed side by side and wrapped one letter per line.
+                GeometryReader { proxy in
+                    let stacked = proxy.size.width < Self.stackWidth
+                    List {
+                        lanes(stats, names: renames)
+                            .listRowSeparator(.hidden)
+                        ForEach(speakers) { speaker in
+                            VStack(alignment: .leading, spacing: 4) {
+                                SpeakerRow(speaker: SpeakerStat(speaker), rename: renames[speaker.label], stacked: stacked,
+                                           hints: MeetingsWords.speakerHints(stats.hints, for: speaker.label),
+                                           play: speaker.firstSec.map { first in { detail.play(at: first, from: .speakerChip) } }) {
+                                    detail.rename(label: speaker.label, to: $0)
+                                }
+                                ForEach(Array(stats.hints.filter { $0.label == speaker.label && !($0.ranges ?? []).isEmpty }.enumerated()),
+                                        id: \.offset) { _, hint in
+                                    SpeakerHintChips(ranges: hint.ranges ?? [], longestClipSec: longestClipSec,
+                                                     play: { from, to in playRange(from, to) },
+                                                     zoom: { from, to in zoom(from, to) },
+                                                     review: { reviewing = speaker.label })
+                                        .padding(.leading, 4)
+                                }
                             }
                         }
                     }
+                    .listStyle(.inset)
                 }
-                .listStyle(.inset)
-                .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.stackWidth }) { stacked = $0 }
                 .sheet(item: Binding(get: { reviewing.map(ReviewLabel.init) }, set: { reviewing = $0?.label })) { review in
                     HintRangesSheet(label: review.label, names: renames,
                                     ranges: stats.hints.filter { $0.label == review.label }.flatMap { $0.ranges ?? [] },
