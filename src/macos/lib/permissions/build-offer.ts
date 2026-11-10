@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { spinner as clackSpinner } from "@clack/prompts";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppLauncherPath } from "@genesiscz/utils/macos/genesis-app";
 import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "@genesiscz/utils/macos/xcode";
+import { spinner as clackSpinner, confirm } from "@genesiscz/utils/prompts/p";
 import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { buildApp } from "./app";
@@ -256,7 +256,7 @@ export function createRealBuildOfferDeps(): BuildOfferDeps {
         isTty: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
         progress: {
             interactive: process.stderr.isTTY === true,
-            spinner: () => clackSpinner({ output: process.stderr }),
+            spinner: () => clackSpinner(),
         },
         noAppEnv: () => env.tools.isAppLauncherDisabled(),
         isAppBuilt: () => existsSync(genesisAppLauncherPath()),
@@ -266,11 +266,10 @@ export function createRealBuildOfferDeps(): BuildOfferDeps {
         readXcodeNoticeAt: () => readOfferStateFrom(path).xcodeNoticeAtMs,
         writeXcodeNoticeAt: (atMs) => writeOfferStateTo(path, { xcodeNoticeAtMs: atMs }),
         confirmBuild: async () => {
-            const p = await import("@clack/prompts");
-            const answer = await p.confirm({
+            // Asked only when stdout is a terminal too (isTty), so the prompt's own stream is the terminal.
+            const answer = await confirm({
                 message: "Build and install GenesisTools.app now?",
                 initialValue: true,
-                output: process.stderr,
             });
             return answer === true;
         },

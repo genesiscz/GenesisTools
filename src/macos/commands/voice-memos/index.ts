@@ -9,7 +9,6 @@ import {
     selectOutput,
     selectProvider,
 } from "@app/macos/lib/voice-memos/prompts.ts";
-import * as p from "@clack/prompts";
 import type { LanguageDetectionResult } from "@genesiscz/utils/ai/LanguageDetector.ts";
 import { getAllProviders } from "@genesiscz/utils/ai/providers/index.ts";
 import { Transcriber } from "@genesiscz/utils/ai/tasks/Transcriber.ts";
@@ -32,6 +31,7 @@ import {
     VoiceMemosError,
 } from "@genesiscz/utils/macos/voice-memos.ts";
 import { printSettingsSummary } from "@genesiscz/utils/prompts/clack/settings-summary.ts";
+import * as p from "@genesiscz/utils/prompts/p";
 import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -258,6 +258,7 @@ async function ensureTranscribeProvider(opts: TranscribeOpts): Promise<string> {
         const picked = await p.select({
             message: "Pick a transcription provider:",
             options: available.map((id) => ({ value: id, label: id })),
+            cancel: "back",
         });
 
         if (p.isCancel(picked)) {
@@ -805,6 +806,7 @@ async function interactiveMode(): Promise<void> {
                 const dest = await p.text({
                     message: "Export to directory",
                     initialValue: ".",
+                    cancel: "back",
                 });
 
                 if (p.isCancel(dest)) {

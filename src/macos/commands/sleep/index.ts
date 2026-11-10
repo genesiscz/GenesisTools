@@ -1,6 +1,6 @@
-import * as p from "@clack/prompts";
 import { formatDuration, parseDuration } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 import pc from "picocolors";
 
