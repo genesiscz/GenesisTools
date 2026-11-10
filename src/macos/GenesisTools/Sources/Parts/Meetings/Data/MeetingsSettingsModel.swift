@@ -32,6 +32,8 @@ final class MeetingsSettingsModel {
     var meetingPeople: [String: Loadable<[MeetingsAPI.ProjectsMeetingPeople.Person]>] = [:]
     /// Paths with a write in flight, so their control waits and a second change does not race the first.
     internal(set) var writing: Set<String> = []
+    /// The newest value asked for a path while its write before it still runs; it is written when that one ends.
+    @ObservationIgnored private var queuedSets: [String: (path: [String], value: Any, done: String?)] = [:]
     var drafts: [String: MatchRulesDraft] = [:]
     /// The notices of the pages' actions, floating over the visible page.
     @ObservationIgnored let notices: NoticeStackModel
@@ -183,9 +185,24 @@ final class MeetingsSettingsModel {
 
     /// Writes one config value (`config.set`, or `config set`) and reads the settings again. A refused value shows the
     /// schema's sentence; the control goes back to the saved value with the reload.
+    ///
+    /// A value set while the write before it of the same path still runs is kept, the newest one only, and written
+    /// when that write ends: it then names the saved value as the one it replaces. Dropped, the second of two quick
+    /// steps of a number field was lost.
     func set(_ path: [String], _ value: Any, done: String? = nil) {
-        run(key: path.joined(separator: "."), .config(.set(path, JSONValue(foundation: value), readFrom: settingsRaw)),
+        let key = path.joined(separator: ".")
+        guard writes else { return }
+        guard !writing.contains(key) else {
+            queuedSets[key] = (path, value, done)
+            return
+        }
+        run(key: key, .config(.set(path, JSONValue(foundation: value), readFrom: settingsRaw)),
             done: done, saved: { $0.settingsRaw = $0.settingsRaw?.setting(path, to: JSONValue(foundation: value)) }) {
+            if let next = $0.queuedSets.removeValue(forKey: key) {
+                // Its own end reads the settings again.
+                $0.set(next.path, next.value, done: next.done)
+                return
+            }
             $0.loadSettings()
             if path.first == "global", path.dropFirst().first == "capture" { $0.loadCost() }
         }
@@ -431,7 +448,6 @@ final class MeetingsSettingsModel {
         guard !writing.contains(key) else { return }
         writing.insert(key)
         Task {
-            defer { writing.remove(key) }
             do {
                 switch step {
                 case .command(let args): _ = try await MeetingsCLI.run(args)
@@ -456,6 +472,8 @@ final class MeetingsSettingsModel {
                     model?.run(key: key, step, done: done, undo: undo, saved: saved, then: then)
                 })
             }
+            // Before `then`: a value kept for this path is written from there.
+            writing.remove(key)
             then(self)
         }
     }
