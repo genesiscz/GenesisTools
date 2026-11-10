@@ -90,7 +90,7 @@ const DEFAULT_PROVIDERS: Record<string, ProviderConfig> = {
 };
 
 // ── Default task configs ──
-// Matches DEFAULT_CONFIG from src/utils/ai/AIConfig.ts
+// The task defaults the retired AIConfig facade seeded (its file is gone since 2026-11-10); kept so an old config migrates the same way.
 
 const DEFAULT_TASKS: Record<string, TaskConfig> = {
     transcribe: { provider: "local-hf" },
