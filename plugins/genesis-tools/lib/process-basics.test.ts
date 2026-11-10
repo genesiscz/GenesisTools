@@ -1,25 +1,10 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
 import { formatLstart, listProcessBasics, readProcessBasics, systemTimeZone } from "./process-basics";
 
-const REPO = join(import.meta.dir, "..", "..", "..");
-
-test("the plugin's copy is byte-identical to the one in src/utils/process", () => {
-    const canonical = readFileSync(join(REPO, "src/utils/process/process-basics.ts"), "utf8");
-    const copy = readFileSync(join(import.meta.dir, "process-basics.ts"), "utf8");
-    // Edit src/utils/process/process-basics.ts, then copy it over plugins/genesis-tools/lib/process-basics.ts.
-    expect(copy === canonical).toBe(true);
-});
-
-test("the plugin's liveness probe is byte-identical to src/utils/process-alive.ts", () => {
-    const canonical = readFileSync(join(REPO, "src/utils/process-alive.ts"), "utf8");
-    const copy = readFileSync(join(import.meta.dir, "process-alive.ts"), "utf8");
-    // pid-safety-guard.sh allows the signal-0 probe only in files named process-alive.ts, so the copy must stay that helper.
-    expect(copy === canonical).toBe(true);
-});
+// This file and process-alive.ts are copies of src that scripts/gen-harness-plugin.ts writes; its --check (run by
+// src/utils/harness/conformance.test.ts, CI and the pre-push hook) fails when they differ.
 
 test.skipIf(process.platform !== "linux")(
     "the Linux table reads /proc/stat once and no command line, not once per process",

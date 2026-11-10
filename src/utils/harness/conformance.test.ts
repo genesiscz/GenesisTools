@@ -10,7 +10,7 @@ import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
 import { directReads } from "@genesiscz/utils/ai/transcripts/resolve";
 import { env } from "@genesiscz/utils/env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
-import { HARNESS_PLUGIN_PATH, renderHarnessPlugin } from "../../../scripts/gen-harness-plugin";
+import { staleOutputs } from "../../../scripts/gen-harness-plugin";
 import { HARNESS_SWIFT_PATH, renderHarnessSwift } from "../../../scripts/gen-harness-swift";
 import { HARNESS_WEB_PATH, renderHarnessWeb } from "../../../scripts/gen-harness-web";
 import { toolPartsComplete, toolPartsRegistered } from "./tool-parts";
@@ -190,8 +190,10 @@ describe("the Swift mirror of the drivers", () => {
         expect(readFileSync(HARNESS_SWIFT_PATH, "utf8")).toBe(renderHarnessSwift());
     });
 
-    test("the plugin's Generated/harness-facts.ts is what scripts/gen-harness-plugin.ts writes from today's drivers", () => {
-        expect(readFileSync(HARNESS_PLUGIN_PATH, "utf8")).toBe(renderHarnessPlugin());
+    // The --check of the script: harness-facts.ts, the scratch dirs, the host markers, the mods defaults and the
+    // whole-file copies (process-basics.ts, process-alive.ts, option-labels.ts) are what it writes from src today.
+    test("every file the plugins carry from src is what scripts/gen-harness-plugin.ts writes", () => {
+        expect(staleOutputs()).toEqual([]);
     });
 
     test("the dashboard's harness-meta.generated.ts is what scripts/gen-harness-web.ts writes from today's drivers", () => {
