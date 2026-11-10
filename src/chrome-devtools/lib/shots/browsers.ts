@@ -7,7 +7,7 @@
  */
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { browser, type CdpCookie, Conn, localDebuggerUrl, Page, targets } from "../cdp.ts";
+import { browser, type CdpCookie, connect, Page, targets } from "../cdp.ts";
 import { cdpLikeOf } from "../cdp-like-adapter.ts";
 import { launchHeadlessChrome } from "../headless.ts";
 import { chooseCdpPort } from "../page-capture.ts";
@@ -48,7 +48,7 @@ async function backgroundTab(port: number): Promise<ShotTab> {
         throw new Error(`could not open a background tab on port ${port}`);
     }
 
-    const page = new Page(new Conn(localDebuggerUrl(target, port)), target);
+    const page = new Page(connect(target, port), target);
     // a background tab may get no frames; focus emulation makes it render and answer screenshots
     await page.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch((error: unknown) => {
         log.debug({ error }, "focus emulation unavailable");
@@ -177,7 +177,7 @@ const attachSource: ShotBrowserSource<"attach"> = {
                     throw new Error(`no tab open on port ${port}`);
                 }
 
-                const page = new Page(new Conn(localDebuggerUrl(current, port)), current);
+                const page = new Page(connect(current, port), current);
                 return {
                     cdp: cdpLikeOf(page),
                     shared: true,

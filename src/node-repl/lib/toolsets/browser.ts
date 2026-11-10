@@ -93,7 +93,7 @@ export class BrowserToolset extends ReplToolset {
     async bootstrap(ctx: ToolsetContext): Promise<Record<string, unknown>> {
         // lazy: saves 14.8 ms cold import (tools ts imports lazy, 2026-11-05) — listing the toolsets loads no CDP driver
         const { createTabDriver } = await import("@app/chrome-devtools/lib/tab-driver");
-        const { Conn, localDebuggerUrl, Page, targets } = await import("@app/chrome-devtools/lib/cdp");
+        const { connect, Page, targets } = await import("@app/chrome-devtools/lib/cdp");
         const { closeTab } = await import("@app/chrome-devtools/lib/tabs");
         const driver = (port: number): TabDriver => {
             let current = this.drivers.get(port);
@@ -167,7 +167,7 @@ export class BrowserToolset extends ReplToolset {
                             );
                         }
 
-                        const page = new Page(new Conn(localDebuggerUrl(target, options.port)), target);
+                        const page = new Page(connect(target, options.port), target);
 
                         try {
                             const path = join(ctx.scratchDir, `browser-${++this.shots}.png`);
