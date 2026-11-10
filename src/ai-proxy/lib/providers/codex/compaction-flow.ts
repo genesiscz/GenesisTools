@@ -32,11 +32,7 @@ import {
 } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { CompactionTrace, recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
 import { noteBlockedCompaction, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
-import {
-    type BackgroundCompactionSettings,
-    type CompactionPolicy,
-    compactionPolicy,
-} from "@app/ai-proxy/lib/sessions/settings";
+import { type CompactionPolicy, compactionPolicy } from "@app/ai-proxy/lib/sessions/settings";
 import type { ClaudeCodeTurn } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
 import {
@@ -48,7 +44,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 
-export class CompactionRestoreError extends Error {
+class CompactionRestoreError extends Error {
     constructor(
         readonly marker: string,
         readonly permanent: boolean,
@@ -60,7 +56,7 @@ export class CompactionRestoreError extends Error {
     }
 }
 
-export function inputHasFallback(input: unknown[], id: string): boolean {
+function inputHasFallback(input: unknown[], id: string): boolean {
     return input.some(
         (item) =>
             isObject(item) &&
@@ -522,16 +518,10 @@ export class CodexCompactionFlow {
             let notice: ((durationMs: number) => string) | undefined;
 
             if (turn.background) {
-                const answered = await this.answerFromBackground({
-                    key: turn.background.key,
-                    point: turn.background.point,
+                const answered = await this.answerFromBackground(turn, turn.background, {
                     rawInput,
-                    accountHash: turn.stamp.accountHash,
-                    model: turn.model,
                     stream: parsed.stream === true,
-                    trace,
                     startedAt,
-                    settings: policy.background,
                 });
 
                 if (answered.response) {
@@ -542,20 +532,12 @@ export class CodexCompactionFlow {
             }
 
             return {
-                answer: await this.compactNatively({
-                    req: turn.req,
-                    model: turn.model,
-                    bodyText: turn.bodyText,
-                    context: turn.context,
-                    parsed,
-                    responsesBody: body,
+                answer: await this.compactNatively(turn, {
+                    body,
                     rawInput,
-                    stamp: turn.stamp,
-                    client: turn.client,
-                    trace,
+                    stream: parsed.stream === true,
                     startedAt,
                     notice,
-                    threadKey: turn.background?.key,
                 }),
             };
         }
@@ -598,17 +580,7 @@ export class CodexCompactionFlow {
         trackBackground(
             key,
             contextTokens,
-            this.runBackgroundCompaction({
-                req: turn.req,
-                model: turn.model,
-                concreteModel: turn.concreteModel,
-                body: sent,
-                rawInput,
-                stamp: turn.stamp,
-                contextTokens,
-                sessionId: turn.context?.sessionId,
-                trace,
-            }),
+            this.runBackgroundCompaction(turn, { body: sent, rawInput, contextTokens }),
             (unused, reason) =>
                 trace.record("background-wasted", {
                     reason,
@@ -718,28 +690,33 @@ export class CodexCompactionFlow {
      * session's effort, so the cached prefix holds. Claude Code gets a note with a marker; the item and the history it
      * compacted go to disk for the later turns. Any failure writes the text summary instead, as before.
      */
-    async compactNatively(input: {
-        req: Request;
-        model: string;
-        bodyText: string;
-        context: ProviderRequestContext | undefined;
-        parsed: Record<string, unknown>;
-        responsesBody: Record<string, unknown>;
-        rawInput: unknown[];
-        stamp: ReasoningEnvelopeStamp;
-        client: FailureClient;
-        trace: CompactionTrace;
-        startedAt: number;
-        /** Why a background result could not answer this turn, for the agent to tell the user. */
-        notice?: (durationMs: number) => string;
-        threadKey?: string;
-    }): Promise<Response> {
-        const { req, model, client } = input;
-        const sent = Array.isArray(input.responsesBody.input) ? input.responsesBody.input : [];
+    private async compactNatively(
+        turn: CompactionTurn,
+        sending: {
+            /** The turn's body with its markers restored. */
+            body: Record<string, unknown>;
+            /** The history it compacts, as the client sent it (markers unexpanded). */
+            rawInput: unknown[];
+            stream: boolean;
+            startedAt: number;
+            /** Why a background result could not answer this turn, for the agent to tell the user. */
+            notice?: (durationMs: number) => string;
+        }
+    ): Promise<Response> {
+        const { req, model, client } = turn;
+        const input = {
+            ...sending,
+            bodyText: turn.bodyText,
+            context: turn.context,
+            stamp: turn.stamp,
+            trace: turn.trace,
+        };
+        const threadKey = turn.background?.key;
+        const sent = Array.isArray(input.body.input) ? input.body.input : [];
         const response = await this.deps.upstream(
             req,
             model,
-            { ...input.responsesBody, input: [...sent, { type: "compaction_trigger" }], stream: true },
+            { ...input.body, input: [...sent, { type: "compaction_trigger" }], stream: true },
             client
         );
         const { item, usage, summary } = response.ok ? compactionFromSse(await readCompactionText(response)) : {};
@@ -771,12 +748,12 @@ export class CodexCompactionFlow {
         const tokens = usageTokens(usage);
         const notice = input.notice?.(durationMs);
 
-        if (input.threadKey) {
-            clearBackground(input.threadKey);
+        if (threadKey) {
+            clearBackground(threadKey);
 
             if (notice) {
                 setPendingNotice(
-                    input.threadKey,
+                    threadKey,
                     `${notice} Start your next reply with one sentence that tells the user this.`
                 );
             }
@@ -788,7 +765,7 @@ export class CodexCompactionFlow {
             model,
             text: `<summary>\n${compactionNote(id, summary)}${notice ? `\n${notice}` : ""}\n</summary>`,
             tokens,
-            stream: input.parsed.stream === true,
+            stream: input.stream,
         });
     }
 
@@ -796,17 +773,19 @@ export class CodexCompactionFlow {
      * A compaction turn answered from the background run of its thread, when that run can stand for it. A run in
      * flight is awaited (the turn's keepalives are already running), like Codex does, instead of a second request.
      */
-    async answerFromBackground(input: {
-        key: string;
-        point: number;
-        rawInput: unknown[];
-        accountHash: string;
-        model: string;
-        stream: boolean;
-        trace: CompactionTrace;
-        startedAt: number;
-        settings: BackgroundCompactionSettings;
-    }): Promise<{ response?: Response; notice?: (durationMs: number) => string }> {
+    private async answerFromBackground(
+        turn: CompactionTurn,
+        background: { key: string; point: number },
+        answering: { rawInput: unknown[]; stream: boolean; startedAt: number }
+    ): Promise<{ response?: Response; notice?: (durationMs: number) => string }> {
+        const input = {
+            ...background,
+            ...answering,
+            accountHash: turn.stamp.accountHash,
+            model: turn.model,
+            trace: turn.trace,
+            settings: turn.policy.background,
+        };
         await backgroundInFlight(input.key);
         const result = backgroundResult(input.key);
 
@@ -866,17 +845,19 @@ export class CodexCompactionFlow {
      * Compacts what one turn sent, in the background: the same request plus `compaction_trigger`, at its effort and
      * on its cached prefix, on a request of its own that the client's hang-up does not cancel. Never throws.
      */
-    async runBackgroundCompaction(input: {
-        req: Request;
-        model: string;
-        concreteModel: string;
-        body: Record<string, unknown>;
-        rawInput: unknown[];
-        stamp: ReasoningEnvelopeStamp;
-        contextTokens: number;
-        sessionId?: string;
-        trace: CompactionTrace;
-    }): Promise<BackgroundResult | undefined> {
+    private async runBackgroundCompaction(
+        turn: CompactionTurn,
+        what: { body: Record<string, unknown>; rawInput: unknown[]; contextTokens: number }
+    ): Promise<BackgroundResult | undefined> {
+        const input = {
+            ...what,
+            req: turn.req,
+            model: turn.model,
+            concreteModel: turn.concreteModel,
+            stamp: turn.stamp,
+            sessionId: turn.context?.sessionId,
+            trace: turn.trace,
+        };
         const startedAt = Date.now();
         const abort = new AbortController();
         const timer = setTimeout(() => abort.abort(), BACKGROUND_COMPACTION_TIMEOUT_MS);
@@ -978,7 +959,7 @@ export class CodexCompactionFlow {
      * serves after a switch compacts the saved history once more there (one uncached read, which the switch costs
      * anyway) and keeps that item too.
      */
-    async compactionItem(input: {
+    private async compactionItem(input: {
         id: string;
         req: Request;
         model: string;
