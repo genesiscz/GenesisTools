@@ -187,7 +187,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         let questions = [TalkTimeQuestion(id: "q1", atSec: 100, label: "Q12"), TalkTimeQuestion(id: "q2", atSec: 110),
                          TalkTimeQuestion(id: "q3", atSec: 600)]
         let banners = TalkTimeLayout.banners(questions, durationSec: 1000, width: 500)
-        XCTAssertEqual(banners.map(\.text), ["? 2", "?"])
+        XCTAssertEqual(banners.map(\.text), ["? ×2", "?"])
         XCTAssertEqual(banners[0].ids, ["q1", "q2"])
         XCTAssertEqual(TalkTimeLayout.banners([questions[0]], durationSec: 1000, width: 500).map(\.text), ["? Q12"])
 
@@ -195,7 +195,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         let near = [TalkTimeQuestion(id: "q7", atSec: 400, label: "Q7"), TalkTimeQuestion(id: "q9", atSec: 460, label: "Q9"),
                     TalkTimeQuestion(id: "q1", atSec: 700, label: "Q1")]
         let merged = TalkTimeLayout.banners(near, durationSec: 1000, width: 500)
-        XCTAssertEqual(merged.map(\.text), ["? 2", "? Q1"])
+        XCTAssertEqual(merged.map(\.text), ["? ×2", "? Q1"])
         for (before, after) in zip(merged, merged.dropFirst()) {
             XCTAssertGreaterThanOrEqual(after.x - before.x, TalkTimeLayout.bannerWidth)
         }

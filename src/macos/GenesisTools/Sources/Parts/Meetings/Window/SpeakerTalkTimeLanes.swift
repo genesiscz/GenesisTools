@@ -27,7 +27,7 @@ struct TalkTimeBlock: Equatable, Hashable {
     var isJoined: Bool { spans > 1 }
 }
 
-/// A banner in points: one question, or several closer than a banner's width merged into "? N".
+/// A banner in points: one question, or several closer than a banner's width merged into "? ×N".
 struct TalkTimeBanner: Equatable, Hashable {
     let x: CGFloat
     let ids: [String]
@@ -78,7 +78,7 @@ enum TalkTimeLayout {
     /// The room a banner with a label takes ("? Q12" in bold 10.5 pt with its padding, and a gap).
     static let bannerWidth: CGFloat = 46
 
-    /// The banners at `width` points; questions closer than `mergeWidth` merge into one "? N" banner. The merge
+    /// The banners at `width` points; questions closer than `mergeWidth` merge into one "? ×N" banner ("? 2" read as question 2). The merge
     /// distance is a banner's own width: at 22 pt two labelled banners 22 to 45 pt apart drew over each other.
     static func banners(_ questions: [TalkTimeQuestion], durationSec: Double, width: CGFloat,
                         mergeWidth: CGFloat = TalkTimeLayout.bannerWidth) -> [TalkTimeBanner] {
@@ -93,7 +93,7 @@ enum TalkTimeLayout {
             }
         }
         return groups.map { group in
-            let text = group.count == 1 ? (group[0].label.map { "? \($0)" } ?? "?") : "? \(group.count)"
+            let text = group.count == 1 ? (group[0].label.map { "? \($0)" } ?? "?") : "? ×\(group.count)"
             return TalkTimeBanner(x: CGFloat(group[0].atSec) * scale, ids: group.map(\.id), text: text, atSec: group[0].atSec)
         }
     }
