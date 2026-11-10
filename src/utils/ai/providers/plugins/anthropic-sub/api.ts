@@ -317,7 +317,7 @@ function identityOf(account: AccountEntry) {
 }
 
 function planReason(account: AccountEntry): string {
-    return `plan is ${account.subscriptionPlan ?? "unknown"} (${account.subscriptionStatus ?? "unknown"}) — Claude Code needs a paid subscription`;
+    return `plan is ${account.subscriptionPlan ?? "unknown"} (${account.subscriptionStatus ?? "unknown"}). Claude Code needs a paid subscription`;
 }
 
 export interface PollAccountArgs {
