@@ -2,10 +2,10 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { CMUX_IDENTITY_ENV } from "@genesiscz/utils/cmux/caller-enricher";
-import { runCmux, runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 
 import { windowList } from "@genesiscz/utils/cmux/lib/socket";
-import { parseCmuxTree } from "@genesiscz/utils/cmux/live-layout";
+import { liveTree } from "@genesiscz/utils/cmux/live-layout";
 import { focusedPlace } from "@genesiscz/utils/cmux/open-command";
 import {
     buildWorkspaceCreateArgs,
@@ -511,13 +511,8 @@ export function liveSessionIO(): SessionNewIO {
         nonce: () => randomBytes(3).toString("hex"),
         ensureTitle: (input) => ensureWorkspaceTitle(input),
         surfaceIds: async (surface) => {
-            const result = await runCmux(["--id-format", "both", "tree"], { json: true });
-
-            if (result.code !== 0) {
-                throw new Error(`cmux tree failed (${result.code}): ${result.stderr.trim()}`);
-            }
-
-            const live = parseCmuxTree(result.stdout).surfaces.get(surface);
+            // Throws when the bounded tree read fails: a wedged cmux is not "no such surface".
+            const live = (await liveTree()).surfaces.get(surface);
             return live ? { workspaceId: live.workspaceId, surfaceId: live.id } : null;
         },
     };

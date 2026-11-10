@@ -2,6 +2,8 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CmuxUnresponsiveError } from "@genesiscz/utils/cmux/lib/health";
+import type { CmuxTreeBackoff } from "@genesiscz/utils/cmux/lib/tree-backoff";
 import type { LiveSurface } from "@genesiscz/utils/cmux/live-layout";
 import type { LiveAgentSurface } from "@genesiscz/utils/cmux/live-surfaces";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -13,6 +15,7 @@ import {
     type LiveSessionReads,
     type LiveSessionRow,
     liveAgentProcesses,
+    liveSessionReads,
     locateLiveSessions,
 } from "./locate";
 import { FLEET_PHASES, fleetPhaseLabel } from "./phase";
@@ -162,6 +165,49 @@ describe("locateLiveSessions", () => {
             [SESSION_B, "journal", 10, true],
             [SESSION_A, "argv", 20, false],
         ]);
+    });
+
+    it("a wedged cmux answers within the tree timeout on the first refresh and from the backoff on the second", async () => {
+        const TREE_MS = 50;
+        let treeCalls = 0;
+        let record: CmuxTreeBackoff | null = null;
+        const tree = liveSessionReads({
+            timeoutMs: TREE_MS,
+            // A cmux that takes the call and never answers.
+            run: () => {
+                treeCalls++;
+                return new Promise<unknown>(() => {});
+            },
+            probe: async () => {
+                throw new CmuxUnresponsiveError("cmux tree", {
+                    state: "socket-dead",
+                    appPid: 42,
+                    probes: { ping: { ok: false, ms: 1 }, identify: { ok: false, ms: 0 } },
+                });
+            },
+            backoff: { read: () => record, write: (next) => (record = next) },
+            appPid: () => 42,
+        }).tree;
+        const reads = { ...fakeReads({ journalTty: "ttys001", processes: [psEntry(10, "claude")] }), tree };
+        const refresh = async () => {
+            const started = performance.now();
+            const rows = await locateLiveSessions({ reads });
+            return { rows, ms: performance.now() - started };
+        };
+
+        const first = await refresh();
+        expect(treeCalls).toBe(1);
+        expect(first.ms).toBeLessThan(TREE_MS + 1_000);
+        // No surface was read, so the process answers alone; the failure is not a tab list.
+        expect(first.rows.map((row) => [row.match, row.process?.pid ?? null, row.surface])).toEqual([
+            ["process", 10, null],
+        ]);
+        expect(record).toMatchObject({ failures: 1, state: "socket-dead" });
+
+        const second = await refresh();
+        expect(treeCalls).toBe(1);
+        expect(second.ms).toBeLessThan(TREE_MS);
+        expect(second.rows).toEqual(first.rows);
     });
 });
 

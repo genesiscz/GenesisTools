@@ -1,4 +1,3 @@
-import { findCmuxAppPid } from "@genesiscz/utils/cmux/lib/health";
 import {
     type CmuxLivePane,
     type CmuxLiveSnapshot,
@@ -6,13 +5,7 @@ import {
     fetchCmuxLiveSnapshot,
 } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { buildCmuxHierarchy } from "@genesiscz/utils/cmux/lib/tree";
-import {
-    activeTreeBackoff,
-    fileTreeBackoffStore,
-    nextTreeBackoff,
-    skippedTreeError,
-    type TreeBackoffStore,
-} from "@genesiscz/utils/cmux/lib/tree-backoff";
+import { type CmuxTree as CmuxTreeAnswer, type CmuxTreeRead, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -75,15 +68,10 @@ export interface CmuxTree<S extends CmuxTreeSurface = CmuxTreeSurface> {
 }
 
 export interface CmuxTreeDeps {
-    fetchSnapshot?: () => Promise<CmuxLiveSnapshot>;
-    /**
-     * The shared memory of a cmux that does not answer (`lib/tree-backoff.ts`); null turns it off. Default: the file
-     * under `~/.genesis-tools/cmux/`, unless a snapshot is injected (a test), which gets none.
-     */
-    backoff?: TreeBackoffStore | null;
-    /** The running cmux app's pid; default `findCmuxAppPid`. */
-    appPid?: () => number | undefined;
-    now?: () => number;
+    /** The geometry snapshot, given the tree already read; a test that injects it reads no tree unless `readTree` is injected too. */
+    fetchSnapshot?: (tree: CmuxTreeAnswer | undefined) => Promise<CmuxLiveSnapshot>;
+    /** The tree read that gates the snapshot (`tree-read.ts`, which owns the bound, the probe and the backoff). */
+    readTree?: () => Promise<CmuxTreeRead>;
 }
 
 const prof = profiler.scope("cmux");
@@ -111,42 +99,32 @@ function toTreePane(pane: CmuxLivePane): CmuxTreePane {
     };
 }
 
-/** Every window's hierarchy, from one live snapshot (no previews). */
+/**
+ * Every window's hierarchy, from one live snapshot (no previews). The tree read goes first: when cmux did not answer
+ * (or answered nothing recently, the backoff), the snapshot is not asked at all, and the reason is the error.
+ */
 export async function fetchCmuxTree(deps: CmuxTreeDeps = {}): Promise<CmuxTree> {
     const started = performance.now();
-    const now = deps.now ?? Date.now;
-    const backoff = deps.backoff !== undefined ? deps.backoff : deps.fetchSnapshot ? null : fileTreeBackoffStore();
-    const previous = backoff?.read() ?? null;
-    const skip = activeTreeBackoff({ record: previous, now: now(), appPid: deps.appPid ?? findCmuxAppPid });
+    const readTree = deps.readTree ?? (deps.fetchSnapshot ? undefined : () => readCmuxTree());
+    const read = readTree ? await prof.measureAsync("tree.read", readTree) : undefined;
 
-    if (skip) {
-        log.debug({ backoff: skip }, "cmux tree not asked: cmux did not answer recently");
+    if (read && !read.ok) {
+        log.debug({ reason: read.reason }, "cmux tree read failed; no snapshot");
         return {
-            fetchedAt: new Date(now()).toISOString(),
+            fetchedAt: new Date().toISOString(),
             available: false,
-            error: skippedTreeError(skip),
+            error: read.error,
             windows: [],
             totalMs: performance.now() - started,
         };
     }
 
-    const fetchSnapshot = deps.fetchSnapshot ?? (() => fetchCmuxLiveSnapshot({ previews: "none", allWindows: true }));
-    const snapshot = await prof.measureAsync("tree.snapshot", fetchSnapshot);
-
-    if (backoff) {
-        const next = nextTreeBackoff({
-            previous,
-            unresponsive: snapshot.available ? undefined : snapshot.unresponsive,
-            error: snapshot.error,
-            now: now(),
-        });
-
-        // A success after no failure writes nothing, so a healthy cmux costs one stat per call.
-        if (next || (previous && previous.failures > 0)) {
-            backoff.write(next);
-            log.debug({ backoff: next }, next ? "cmux tree backs off" : "cmux tree answered again; backoff cleared");
-        }
-    }
+    const tree = read?.ok ? read.tree : undefined;
+    const fetchSnapshot =
+        deps.fetchSnapshot ??
+        ((known: CmuxTreeAnswer | undefined) =>
+            fetchCmuxLiveSnapshot({ previews: "none", allWindows: true, ...(known ? { tree: known } : {}) }));
+    const snapshot = await prof.measureAsync("tree.snapshot", () => fetchSnapshot(tree));
 
     if (!snapshot.available) {
         return {

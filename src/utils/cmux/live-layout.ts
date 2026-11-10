@@ -1,8 +1,8 @@
-import { runCmux } from "@genesiscz/utils/cmux/lib/cli";
+import { type CmuxTree, cmuxTreeFromJson, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
- * The live layout from one `cmux --id-format both tree --all`: every terminal tab with its surface, pane,
+ * The live layout from the one tree read (`tree-read.ts`): every terminal tab with its surface, pane,
  * workspace and window UUIDs, its tty and title, and the caller's tab. The restore, adoption, close and focus
  * checks all read it here. The profile capture (snapshot.ts) keeps its own `list-panes` reads, because the tree
  * carries no pane geometry (frames, columns, rows).
@@ -33,56 +33,40 @@ export interface CmuxTreeView {
     surfaces: Map<string, LiveSurface>;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
+function text(value: string | null): string | null {
+    return value !== null && value !== "" ? value : null;
 }
 
-function list(value: unknown): unknown[] {
-    return Array.isArray(value) ? value : [];
-}
-
-function text(value: unknown): string | null {
-    return typeof value === "string" && value !== "" ? value : null;
-}
-
-/** The terminal surfaces of `cmux --id-format both tree --json`, keyed by ref, with their UUID, tty, workspace and window. */
-export function parseCmuxTree(stdout: string): CmuxTreeView {
-    const parsed: unknown = SafeJSON.parse(stdout, { strict: true });
+/** The terminal surfaces of a tree read, keyed by ref, with their UUID, tty, workspace and window. */
+export function cmuxTreeView(tree: CmuxTree): CmuxTreeView {
     const surfaces = new Map<string, LiveSurface>();
 
-    if (!isRecord(parsed)) {
-        return { caller: null, callerId: null, surfaces };
-    }
+    for (const window of tree.windows) {
+        const windowRef = text(window.ref);
 
-    const caller = isRecord(parsed.caller) ? text(parsed.caller.surface_ref) : null;
-    const callerId = isRecord(parsed.caller) ? text(parsed.caller.surface_id) : null;
-
-    for (const window of list(parsed.windows)) {
-        if (!isRecord(window) || !text(window.ref)) {
+        if (!windowRef) {
             continue;
         }
 
-        for (const workspace of list(window.workspaces)) {
-            if (!isRecord(workspace) || !text(workspace.ref)) {
+        for (const workspace of window.workspaces) {
+            const workspaceRef = text(workspace.ref);
+
+            if (!workspaceRef) {
                 continue;
             }
 
-            for (const pane of list(workspace.panes)) {
-                if (!isRecord(pane)) {
-                    continue;
-                }
+            for (const pane of workspace.panes) {
+                for (const surface of pane.surfaces ?? []) {
+                    const ref = text(surface.ref);
 
-                for (const surface of list(pane.surfaces)) {
-                    const ref = isRecord(surface) ? text(surface.ref) : null;
-
-                    if (isRecord(surface) && ref && surface.type === "terminal") {
+                    if (ref && surface.type === "terminal") {
                         surfaces.set(ref, {
                             ref,
                             id: text(surface.id),
                             tty: text(surface.tty),
-                            workspace: String(workspace.ref),
+                            workspace: workspaceRef,
                             workspaceId: text(workspace.id),
-                            window: String(window.ref),
+                            window: windowRef,
                             paneId: text(pane.id),
                             windowId: text(window.id),
                             title: text(surface.title),
@@ -94,17 +78,29 @@ export function parseCmuxTree(stdout: string): CmuxTreeView {
         }
     }
 
-    return { caller, callerId, surfaces };
+    return {
+        caller: text(tree.caller?.surfaceRef ?? null),
+        callerId: text(tree.caller?.surfaceId ?? null),
+        surfaces,
+    };
 }
 
-/** Every terminal surface of every cmux window, with its UUID and tty. Reads in the background; it never changes focus. */
-export async function liveTree(): Promise<CmuxTreeView> {
-    // The surface UUIDs let adoption tell a session's own surface from a renumbered ref.
-    const result = await runCmux(["--id-format", "both", "tree", "--all"], { json: true });
+/** `cmuxTreeView` over the stdout of `cmux --json --id-format both tree`; a fixture's way in. */
+export function parseCmuxTree(stdout: string): CmuxTreeView {
+    const tree = cmuxTreeFromJson(SafeJSON.parse(stdout, { strict: true }));
+    return tree ? cmuxTreeView(tree) : { caller: null, callerId: null, surfaces: new Map() };
+}
 
-    if (result.code !== 0) {
-        throw new Error(`cmux tree failed (${result.code}): ${result.stderr.trim()}`);
+/**
+ * Every terminal surface of every cmux window, with its UUID and tty. Reads in the background; it never changes
+ * focus. Throws when the read failed (timed out, failed, or backed off): a wedged cmux is not a cmux with no tabs.
+ */
+export async function liveTree(): Promise<CmuxTreeView> {
+    const read = await readCmuxTree();
+
+    if (!read.ok) {
+        throw new Error(`cmux tree read (${read.reason}): ${read.error}`);
     }
 
-    return parseCmuxTree(result.stdout);
+    return cmuxTreeView(read.tree);
 }
