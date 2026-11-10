@@ -205,7 +205,12 @@ describe("GET /share/:slug assets", () => {
         expect(html).toContain(`<img src="${assetUrl(SPACED)}" alt="spaced"`);
         expect(html).toContain(`<img src="${assetUrl(LOGO)}"`);
         expect(html).toContain(`data-asset-panel="${assetUrl(DATA)}"`);
-        expect(html).toContain(`href="${assetUrl(WRAP)}#L8" class="dd-md-asset-chip dd-md-asset-markdown"`);
+        // wrap.md shows a picture of its own, so its chip names the note as well as its bytes (`assetPanelQuery`).
+        const wrapChip = `href="${assetUrl(WRAP)}&amp;note=`;
+        expect(html).toContain(wrapChip);
+        expect(html.slice(html.indexOf(wrapChip) + wrapChip.length)).toMatch(
+            /^[0-9a-f]{16}#L8" class="dd-md-asset-chip dd-md-asset-markdown"/
+        );
         expect(html).toContain(`href="${assetUrl(TOOL)}#L5-L6" class="dd-md-asset-chip dd-md-asset-code"`);
         expect(html).toContain(`href="${assetUrl(TOOL)}#L500"`);
         expect(html).toContain(`data-asset-panel="${assetUrl(OTHER_NOTE)}"`);
@@ -433,6 +438,75 @@ describe("GET /share/:slug assets", () => {
         expect(html).not.toContain('data-asset-name="Návrh.proposal.md"');
         // Another note's heading rides on its chip, and the panel scrolls to it.
         expect(html).toMatch(/href="\/share\/[^"?]+\?asset=[0-9a-f]+#some-part" class="dd-md-asset-chip/);
+        // The composed link opened the decomposed file: it is the note itself, never one of its attachments.
+        expect(html).toContain("zip, 1 attachment</small>");
+
+        const zipped = await get({ download: "zip" }, "*/*", selfSlug);
+        const names = zipped.kind === "binary" ? [...unzip(zipped.body).keys()] : [];
+        expect(names.filter((name) => name.normalize("NFC").endsWith("Návrh.proposal.md"))).toHaveLength(1);
+        expect(names.some((name) => name.endsWith("Other Note.md"))).toBe(true);
+    });
+
+    test("a self-link qualified by its folder or its .md suffix jumps to the heading inside the page", async () => {
+        writeFileSync(
+            join(dir, "vault/Notes/Self.md"),
+            "## Summary\n\n[[Notes/Self#Summary|folder]]\n\n[[Notes/Self.md#Summary|suffix]]\n\n[[Self#Summary|bare]]"
+        );
+        const selfSlug = (await publishNote("Notes/Self.md")).slug;
+        const page = await get({}, "text/html", selfSlug);
+        const html = page.kind === "raw" ? page.body : "";
+
+        for (const label of ["folder", "suffix", "bare"]) {
+            expect(html).toContain(`<a href="#summary" class="dd-wikilink">${label}</a>`);
+        }
+        expect(html).not.toContain('class="dd-md-asset-chip');
+    });
+
+    test("two linked notes with the same text in two folders each show their own folder's picture", async () => {
+        const report = "# Report\n\n![[shot.png]]";
+        const shotA = Buffer.from("\u0089PNG twin-report-a");
+        const shotB = Buffer.from("\u0089PNG twin-report-b");
+        mkdirSync(join(dir, "vault/Twin/A"), { recursive: true });
+        mkdirSync(join(dir, "vault/Twin/B"), { recursive: true });
+        writeFileSync(join(dir, "vault/Twin/A/report.md"), report);
+        writeFileSync(join(dir, "vault/Twin/B/report.md"), report);
+        writeFileSync(join(dir, "vault/Twin/A/shot.png"), shotA);
+        writeFileSync(join(dir, "vault/Twin/B/shot.png"), shotB);
+        writeFileSync(
+            join(dir, "vault/Twin/Main.md"),
+            "![[A/report]]\n\n![[B/report]]\n\n[[A/report|first]]\n\n[[B/report|second]]"
+        );
+        const twinSlug = (await publishNote("Twin/Main.md")).slug;
+        const page = await get({}, "text/html", twinSlug);
+        const html = page.kind === "raw" ? page.body : "";
+        const image = (bytes: Buffer) => `<img src="/share/${twinSlug}?asset=${sha(bytes)}"`;
+
+        // Each `![[report]]` in place shows its own folder's shot.png.
+        const blocks = html.split('<div class="dd-md-transclusion">').slice(1);
+        expect(blocks).toHaveLength(2);
+        expect(blocks[0]).toContain(image(shotA));
+        expect(blocks[0]).not.toContain(image(shotB));
+        expect(blocks[1]).toContain(image(shotB));
+
+        // The panels share the bytes' hash, so each chip names its note too, and each panel shows that note's picture.
+        const keys = [...html.matchAll(new RegExp(`\\?asset=${sha(report)}&amp;note=([0-9a-f]{16})`, "g"))].map(
+            (match) => match[1] ?? ""
+        );
+        expect(new Set(keys).size).toBe(2);
+        const panels = await Promise.all(
+            [...new Set(keys)].map((note) => get({ asset: sha(report), note, view: "fragment" }, "*/*", twinSlug))
+        );
+        const panelHtml = panels.map((res) => (res.kind === "raw" ? res.body : ""));
+        expect(panelHtml.filter((body) => body.includes(image(shotA)))).toHaveLength(1);
+        expect(panelHtml.filter((body) => body.includes(image(shotB)))).toHaveLength(1);
+        const badKey = await get({ asset: sha(report), note: "not-a-key" }, "*/*", twinSlug);
+        expect(badKey.kind !== "sse" && badKey.status).toBe(404);
+
+        // The zip holds both pictures.
+        const zipped = await get({ download: "zip" }, "*/*", twinSlug);
+        const files = zipped.kind === "binary" ? unzip(zipped.body) : new Map<string, Uint8Array>();
+        expect(Buffer.from(files.get("Main/A/shot.png") ?? []).equals(shotA)).toBe(true);
+        expect(Buffer.from(files.get("Main/B/shot.png") ?? []).equals(shotB)).toBe(true);
     });
 
     test("a note named by dots alone downloads under a safe folder, never `..`", async () => {
@@ -699,7 +773,12 @@ describe("GET /share/:slug assets", () => {
     });
 
     test("both downloads count source bytes without attachments", async () => {
-        const index = { byTarget: new Map(), byHash: new Map(), linkedImages: new Map() };
+        const index = {
+            byTarget: new Map(),
+            byHash: new Map(),
+            linkedImages: new Map(),
+            sharedNote: join(dir, "large.md"),
+        };
         const sourceBytes = SHARE_BUNDLE_MAX_BYTES + 1;
 
         expect(await buildShareEmbed({ vaultRoot: dir, index, panelBase: () => "", sourceBytes })).toBeNull();

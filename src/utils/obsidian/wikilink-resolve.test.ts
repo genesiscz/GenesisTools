@@ -45,4 +45,18 @@ describe("resolveWikilinkToVaultPath", () => {
 
         expect(resolveWikilinkToVaultPath(dupes, "a", "GenesisTools/from.md")).toBe("GenesisTools/a.md");
     });
+
+    test("a composed link finds a decomposed file name and returns the name as the disk spells it", () => {
+        // macOS keeps `á` of a file name as `a` + U+0301 (NFD); a link typed in a note is NFC.
+        const disk = "Návrh.md".normalize("NFD");
+        const nfd: VaultEntry[] = [
+            { name: "Návrh.md".normalize("NFC"), relativePath: "Other/Návrh.md".normalize("NFC"), isDirectory: false },
+            { name: disk, relativePath: `Notes/${disk}`, isDirectory: false },
+        ];
+
+        expect(resolveWikilinkToVaultPath(nfd.slice(1), "Návrh".normalize("NFC"))).toBe(`Notes/${disk}`);
+        expect(resolveWikilinkToVaultPath(nfd.slice(1), "Notes/Návrh.md".normalize("NFC"))).toBe(`Notes/${disk}`);
+        // Of two matches, the one in the linking note's folder still wins, whichever form either path uses.
+        expect(resolveWikilinkToVaultPath(nfd, "Návrh", "Notes/Úvod.md".normalize("NFD"))).toBe(`Notes/${disk}`);
+    });
 });

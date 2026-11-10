@@ -5,8 +5,12 @@ export function wikilinkTargetKey(target: string): string {
     return normalizeVaultPath(target.trim()).replace(/\.md$/i, "");
 }
 
+/**
+ * The vault path a wikilink `target` names, as the disk spells it, or null. Names are compared in NFC: macOS keeps a
+ * file name's accents decomposed (NFD), while a link typed in a note is composed, and both name the same file.
+ */
 export function resolveWikilinkToVaultPath(entries: VaultEntry[], target: string, fromPath?: string): string | null {
-    const key = wikilinkTargetKey(target);
+    const key = wikilinkTargetKey(target).normalize("NFC");
     const matches: string[] = [];
 
     function walk(items: VaultEntry[]): void {
@@ -16,8 +20,8 @@ export function resolveWikilinkToVaultPath(entries: VaultEntry[], target: string
                 continue;
             }
 
-            const relNoExt = item.relativePath.replace(/\.md$/i, "");
-            const base = item.name.replace(/\.md$/i, "");
+            const relNoExt = item.relativePath.normalize("NFC").replace(/\.md$/i, "");
+            const base = item.name.normalize("NFC").replace(/\.md$/i, "");
 
             if (base === key || relNoExt === key || relNoExt.endsWith(`/${key}`)) {
                 matches.push(item.relativePath);
@@ -36,12 +40,10 @@ export function resolveWikilinkToVaultPath(entries: VaultEntry[], target: string
     }
 
     if (fromPath) {
-        const fromDir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : "";
-        const sameDir = matches.filter((match) => {
-            const dir = match.includes("/") ? match.slice(0, match.lastIndexOf("/")) : "";
-
-            return dir === fromDir;
-        });
+        const dirOf = (path: string) =>
+            (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "").normalize("NFC");
+        const fromDir = dirOf(fromPath);
+        const sameDir = matches.filter((match) => dirOf(match) === fromDir);
 
         if (sameDir.length >= 1) {
             return sameDir[0];
