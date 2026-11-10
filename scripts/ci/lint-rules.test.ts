@@ -14,6 +14,7 @@ import {
     RAW_AGENT_ENV_RATCHET,
     RAW_TERMINAL_ENV_RATCHET,
 } from "./agent-context-ratchet";
+import { EXEC_DEADLINE_RATCHET } from "./exec-deadline-ratchet";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import {
     AI_CONFIG_IMPORT_RATCHET,
@@ -21,6 +22,7 @@ import {
     changedFiles,
     checkSource,
     checkSwiftSource,
+    countRatchetShortfalls,
     type Finding,
     maskSwiftNonCode,
     namesToolCommand,
@@ -1929,5 +1931,86 @@ describe("no-proxy-provider-branch", () => {
         }
 
         expect(stale).toEqual([]);
+    });
+});
+
+describe("no-exec-without-deadline", () => {
+    const rule = "no-exec-without-deadline";
+    const found = (source: string, file = "src/example/run.ts") =>
+        checkSource(file, source, { ratchets: false })
+            .filter((item) => item.rule === rule)
+            .map((item) => item.text);
+
+    test("an Executor call with no timeout is found, and one that names a bound, or another exec API, is not", () => {
+        expect(
+            found(
+                [
+                    'git.exec(["status"]);',
+                    'executor.execOrThrow(args, "failed");',
+                    "run.git.executor.exec(args, { cwd });",
+                    'new Executor({ cwd }).exec(argv, { env: { A: "1" } });',
+                    'git.exec(["fetch"], { timeout: { ms: 600_000, reason: "a fetch" } });',
+                    'git.exec(["push"], { timeout });',
+                    'executor.execOrThrow(args, "failed", { timeout: 5_000 });',
+                    'git.exec(["status"], { ...options });',
+                    "git.exec(args, options);",
+                    "/^a(b)$/.exec(line);",
+                    'db.exec("CREATE TABLE t (a)");',
+                    "pattern.exec(text);",
+                ].join("\n")
+            )
+        ).toEqual([
+            'git.exec(["status"])',
+            'executor.execOrThrow(args, "failed")',
+            "run.git.executor.exec(args, { cwd })",
+            'new Executor({ cwd }).exec(argv, { env: { A: "1" } })',
+        ]);
+        expect(found('git.exec(["status"]);', "src/utils/cli/executor.ts")).toEqual([]);
+    });
+
+    test("every count on the roster is the file's real number of calls, and the list only names files that exist", async () => {
+        const stale: string[] = [];
+
+        for (const [file, allowed] of EXEC_DEADLINE_RATCHET) {
+            const count = found(await Bun.file(file).text(), file).length;
+
+            if (count !== allowed) {
+                stale.push(`${file}: listed ${allowed}, found ${count}`);
+            }
+        }
+
+        expect(stale).toEqual([]);
+    });
+
+    test("a count above the file's calls is a finding, a file outside the scan is judged only when it is gone", () => {
+        const finding = (file: string): Finding => ({
+            file,
+            line: 1,
+            column: 1,
+            rule,
+            severity: "error",
+            message: "",
+            text: "",
+        });
+        const counts = new Map([
+            [
+                rule,
+                new Map([
+                    ["src/a.ts", 2],
+                    ["scripts/ci/lint-rules.ts", 1],
+                    ["src/gone.ts", 1],
+                ]),
+            ],
+        ]);
+
+        const shortfalls = countRatchetShortfalls([finding("src/a.ts")], new Set(["src/a.ts"]), counts);
+
+        expect(shortfalls.map((item) => [item.file, item.message])).toEqual([
+            ["src/a.ts", `The ratchet allows 2 findings of ${rule} here and the file has 1: lower its count to 1.`],
+            ["src/gone.ts", `The ratchet allows 1 findings of ${rule} here and the file has 0: lower its count to 0.`],
+        ]);
+        expect(
+            countRatchetShortfalls([finding("src/a.ts"), finding("src/a.ts")], new Set(["src/a.ts"]), counts)
+        ).toHaveLength(1);
     });
 });
