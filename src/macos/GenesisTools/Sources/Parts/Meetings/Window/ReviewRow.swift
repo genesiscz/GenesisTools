@@ -79,14 +79,19 @@ struct ReviewRowView: View {
     private var headerLine: some View {
         HStack(spacing: 6) {
             Text(verbatim: row.label).font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .lineLimit(1).fixedSize()
                 .padding(.horizontal, 5).padding(.vertical, 1)
                 .background(Color.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+            // The label, the kind and the score never break: the playing bar takes only the room they leave. Beside it at
+            // 900 pt "Question" broke into "Questi" and "on", then "Q15" into "Q1" and "5", then "30 %".
             Text(verbatim: Self.kindWord(row.kind)).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                .lineLimit(1).fixedSize()
             if let player {
                 MomentButton(player: player, meeting: detail.id, target: row.target, label: row.whenText, source: .row)
             }
             if let confidence = MeetingsWords.confidence(row.confidence), row.isOpen {
                 Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
+                    .lineLimit(1).fixedSize()
             }
             if let player, let span = playingSpan(player) {
                 // R25, G-ROW-1: the playing row's own timeline takes the header's free room, so the row keeps its height.
