@@ -583,7 +583,7 @@ function refuseUnavailable({ request, reason, options }: MoveRefusal): void {
 }
 
 /**
- * In a test process (the dual-signal detection the keychain guard uses) a move takes only a path inside the test's own
+ * In a test process (any one test signal, as the keychain guard decides: a data-loss guard errs toward refusing) a move takes only a path inside the test's own
  * temp folder: any other path is the user's real data, and a child process a test spawns reaches here outside the
  * preload. Null when the process is no test or the path is a fixture.
  */
