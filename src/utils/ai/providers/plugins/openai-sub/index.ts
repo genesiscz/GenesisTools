@@ -3,6 +3,7 @@ import { codexHistoryReader } from "@genesiscz/utils/agent-sessions/compact-read
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
 import { primaryCodexHome } from "@genesiscz/utils/providers/session-paths";
 import { resolveSecret } from "@genesiscz/utils/security";
+import { composeAuthFetch } from "../../../core/fetch";
 import {
     CODEX_AUTH_PATH,
     extractAccountId,
@@ -24,8 +25,10 @@ import { codexUsage } from "./usage";
  *
  * `bind` makes no network request: it neither lists models (the catalog answers
  * "is this model known", and the picker asks `listModels`) nor reads a token. The
- * token is read for each request, so a long-running process follows the Codex
- * CLI's refreshes.
+ * fetch it builds owns the auth: the token is read for each request, so a
+ * long-running process follows the Codex CLI's refreshes, and on a 401 it
+ * force-refreshes once (under the config lock, in `CodexAccountBinding`) and
+ * repeats the request once.
  */
 /**
  * The two plan-wide window slots the Codex app-server reports. Per-model pools
@@ -63,20 +66,39 @@ export const openAiSubPlugin: ProviderPlugin = {
         const { createOpenAI } = await import("@ai-sdk/openai");
         const { fetchWhamResponse } = await import("../../../openai/wham-request");
         // Per-request token resolve so a long-running process follows CLI /
-        // account refreshes instead of serving the token from bind time.
+        // account refreshes instead of serving the token from bind time. The
+        // workspace id is fixed for a binding (`CodexAccountBinding` refuses an
+        // identity change), so the last one read is the one every token carries.
+        let workspace: string | undefined;
+        const remember = (tokens: { accessToken: string; chatgptAccountId: string }): string => {
+            workspace = tokens.chatgptAccountId;
+            return tokens.accessToken;
+        };
         // WHAM requires SSE even for SDK doGenerate calls. The transport restores
         // the requested response mode after applying the backend's request dialect.
-        const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-            const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-            signal?.throwIfAborted();
-            const fresh = await binding.tokens();
-            signal?.throwIfAborted();
-            const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-            headers.set("Authorization", `Bearer ${fresh.accessToken}`);
-            headers.set("ChatGPT-Account-Id", fresh.chatgptAccountId);
+        const freshTokenFetch = composeAuthFetch({
+            getToken: async () => remember(await binding.tokens()),
+            // Recover from the token THIS request sent: when another request already moved the
+            // account to a newer token, that one is used and nothing is spent.
+            refresh: async (rejected) => {
+                const current = await binding.tokens();
 
-            return fetchWhamResponse({ input, init: { ...init, headers }, ...(ctx.fetch ? { fetch: ctx.fetch } : {}) });
-        };
+                if (current.accessToken !== rejected) {
+                    return remember(current);
+                }
+
+                return remember(await binding.tokens({ forceRefresh: true }));
+            },
+            authorize: (headers, token) => {
+                headers.set("Authorization", `Bearer ${token}`);
+
+                if (workspace) {
+                    headers.set("ChatGPT-Account-Id", workspace);
+                }
+            },
+            fetch: ((input: RequestInfo | URL, init?: RequestInit) =>
+                fetchWhamResponse({ input, init, ...(ctx.fetch ? { fetch: ctx.fetch } : {}) })) as typeof fetch,
+        });
         const provider = createOpenAI({
             apiKey: "codex-sub-placeholder",
             baseURL: WHAM_BASE_URL,

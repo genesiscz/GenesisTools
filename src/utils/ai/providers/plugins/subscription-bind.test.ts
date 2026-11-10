@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { claudeOAuth } from "@genesiscz/utils/claude/auth";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -9,9 +10,14 @@ import {
     _resetSecretsForTest,
     _setMasterKeyProvidersForTest,
 } from "@genesiscz/utils/security";
+import { APICallError, generateText } from "ai";
 import { AiConfigStore } from "../../config/AiConfigStore";
 import { type AccountEntry, CONFIG_VERSION } from "../../config/schema";
+import { grokOAuth } from "../../grok/oauth";
+import { codexOAuth } from "../../openai/codex-auth";
 import type { WhamModelRecord } from "../../openai/sub-models";
+import { anthropicSubPlugin } from "./anthropic-sub";
+import { grokSubPlugin } from "./grok-sub";
 import { openAiSubPlugin } from "./openai-sub";
 import { listOpenAiSubModels, OPENAI_SUB_MODEL_LIST_TTL_MS, resetOpenAiSubModelLists } from "./openai-sub/models";
 
@@ -151,5 +157,316 @@ describe("openai-sub bind", () => {
         expect(fallback.length).toBeGreaterThan(0);
         expect(fallback.every((entry) => entry.source === "static")).toBe(true);
         expect(fetched).toBe(2);
+    });
+});
+
+interface Sent {
+    authorization: string | null;
+    workspace: string | null;
+}
+
+/** A transport that answers 401 to the first `rejections` requests and `ok()` afterwards. */
+function transport(rejections: number, ok: () => Response): { fetch: typeof fetch; sent: Sent[] } {
+    const sent: Sent[] = [];
+    const fake = async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const headers = new Headers(init?.headers);
+        sent.push({ authorization: headers.get("authorization"), workspace: headers.get("chatgpt-account-id") });
+
+        if (sent.length <= rejections) {
+            return new Response(
+                SafeJSON.stringify({ error: { type: "authentication_error", message: "fixture 401" } }),
+                {
+                    status: 401,
+                    headers: { "content-type": "application/json" },
+                }
+            );
+        }
+
+        return ok();
+    };
+
+    return { fetch: fake as typeof fetch, sent };
+}
+
+async function statusOf(promise: Promise<unknown>): Promise<number | "ok"> {
+    try {
+        await promise;
+        return "ok";
+    } catch (err) {
+        if (APICallError.isInstance(err)) {
+            return err.statusCode ?? -1;
+        }
+
+        throw err;
+    }
+}
+
+function anthropicAccount(expiresAt = Date.now() + 3_600_000): AccountEntry {
+    return {
+        id: "acc_claude_work",
+        name: "work",
+        provider: "anthropic-sub",
+        enabled: true,
+        billing: { mode: "subscription" },
+        credentials: { accessToken: "claude-access-1", refreshToken: "claude-refresh-1", expiresAt },
+        useEnvApiKey: false,
+    };
+}
+
+function anthropicOk(): Response {
+    return Response.json({
+        id: "msg_fixture",
+        type: "message",
+        role: "assistant",
+        model: "claude-haiku-5-5",
+        content: [{ type: "text", text: "pong" }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 3, output_tokens: 1 },
+    });
+}
+
+describe("anthropic-sub bind", () => {
+    test("a 401 recovers once: exactly one refresh, and the request repeats with the new token", async () => {
+        const account = anthropicAccount();
+        saveConfig([account]);
+        const refresh = spyOn(claudeOAuth, "refresh").mockImplementation(async (refreshToken: string) => {
+            expect(refreshToken).toBe("claude-refresh-1");
+            return {
+                accessToken: "claude-access-2",
+                refreshToken: "claude-refresh-2",
+                expiresAt: Date.now() + 3_600_000,
+                scopes: [],
+            };
+        });
+        const wire = transport(1, anthropicOk);
+
+        try {
+            const binding = await anthropicSubPlugin.bind({ account, fetch: wire.fetch });
+            const result = await generateText({
+                model: binding.language("claude-haiku-5-5"),
+                prompt: "ping",
+                maxRetries: 0,
+            });
+
+            expect(result.text).toBe("pong");
+            expect(refresh).toHaveBeenCalledTimes(1);
+            expect(wire.sent.map((request) => request.authorization)).toEqual([
+                "Bearer claude-access-1",
+                "Bearer claude-access-2",
+            ]);
+        } finally {
+            refresh.mockRestore();
+        }
+    });
+
+    test("a second 401 surfaces as an error after the one refresh", async () => {
+        const account = anthropicAccount();
+        saveConfig([account]);
+        const refresh = spyOn(claudeOAuth, "refresh").mockImplementation(async () => ({
+            accessToken: "claude-access-2",
+            refreshToken: "claude-refresh-2",
+            expiresAt: Date.now() + 3_600_000,
+            scopes: [],
+        }));
+        const wire = transport(2, anthropicOk);
+
+        try {
+            const binding = await anthropicSubPlugin.bind({ account, fetch: wire.fetch });
+            const status = await statusOf(
+                generateText({ model: binding.language("claude-haiku-5-5"), prompt: "ping", maxRetries: 0 })
+            );
+
+            expect(status).toBe(401);
+            expect(refresh).toHaveBeenCalledTimes(1);
+            expect(wire.sent).toHaveLength(2);
+        } finally {
+            refresh.mockRestore();
+        }
+    });
+
+    test("a probe bind of an expired account never reaches the refresh", async () => {
+        const account = anthropicAccount(Date.now() - 60_000);
+        saveConfig([account]);
+        const refresh = spyOn(claudeOAuth, "refresh").mockImplementation(async () => {
+            throw new Error("a probe spent the single-use refresh token");
+        });
+
+        try {
+            await expect(anthropicSubPlugin.bind({ account, probe: true })).rejects.toThrow("refresh is disabled");
+            expect(refresh).not.toHaveBeenCalled();
+        } finally {
+            refresh.mockRestore();
+        }
+    });
+});
+
+function codexOk(): Response {
+    const events = [
+        {
+            type: "response.output_item.done",
+            output_index: 0,
+            item: {
+                type: "message",
+                id: "msg_fixture",
+                role: "assistant",
+                status: "completed",
+                content: [{ type: "output_text", text: "pong", annotations: [] }],
+            },
+        },
+        {
+            type: "response.completed",
+            response: {
+                id: "resp_fixture",
+                object: "response",
+                model: "gpt-6.1-sol",
+                created_at: 1_700_000_000,
+                status: "completed",
+                output: [],
+                usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+            },
+        },
+    ];
+
+    return new Response(events.map((event) => `data: ${SafeJSON.stringify(event)}\n\n`).join(""), {
+        headers: { "content-type": "text/event-stream" },
+    });
+}
+
+describe("openai-sub bind auth", () => {
+    test("a 401 recovers once: exactly one refresh, and the request repeats with the new token", async () => {
+        const account = codexAccount();
+        saveConfig([account]);
+        const second = codexToken("workspace-a", "second");
+        const refresh = spyOn(codexOAuth, "refresh").mockImplementation(async (refreshToken: string) => {
+            expect(refreshToken).toBe("codex-refresh-1");
+            return { accessToken: second, refreshToken: "codex-refresh-2", expiresAt: Date.now() + 3_600_000 };
+        });
+        const wire = transport(1, codexOk);
+
+        try {
+            const binding = await openAiSubPlugin.bind({ account, fetch: wire.fetch });
+            const result = await generateText({
+                model: binding.language("gpt-6.1-sol"),
+                prompt: "ping",
+                maxRetries: 0,
+            });
+
+            expect(result.text).toBe("pong");
+            expect(refresh).toHaveBeenCalledTimes(1);
+            expect(wire.sent).toEqual([
+                {
+                    authorization: `Bearer ${codexToken("workspace-a", "first", account.credentials.expiresAt)}`,
+                    workspace: "workspace-a",
+                },
+                { authorization: `Bearer ${second}`, workspace: "workspace-a" },
+            ]);
+        } finally {
+            refresh.mockRestore();
+        }
+    });
+
+    test("a second 401 surfaces as an error after the one refresh", async () => {
+        const account = codexAccount();
+        saveConfig([account]);
+        const refresh = spyOn(codexOAuth, "refresh").mockImplementation(async () => ({
+            accessToken: codexToken("workspace-a", "second"),
+            refreshToken: "codex-refresh-2",
+            expiresAt: Date.now() + 3_600_000,
+        }));
+        const wire = transport(2, codexOk);
+
+        try {
+            const binding = await openAiSubPlugin.bind({ account, fetch: wire.fetch });
+            const status = await statusOf(
+                generateText({ model: binding.language("gpt-6.1-sol"), prompt: "ping", maxRetries: 0 })
+            );
+
+            expect(status).toBe(401);
+            expect(refresh).toHaveBeenCalledTimes(1);
+            expect(wire.sent).toHaveLength(2);
+        } finally {
+            refresh.mockRestore();
+        }
+    });
+});
+
+function grokToken(marker: string): string {
+    return jwt({ exp: Math.floor((Date.now() + 3_600_000) / 1000), sub: "xai-user-invented", marker });
+}
+
+function grokAccount(): AccountEntry {
+    return {
+        id: "acc_grok_work",
+        name: "work",
+        provider: "grok-sub",
+        enabled: true,
+        billing: { mode: "subscription" },
+        credentials: {
+            accessToken: grokToken("first"),
+            refreshToken: "grok-refresh-1",
+            expiresAt: Date.now() + 3_600_000,
+        },
+        useEnvApiKey: false,
+    };
+}
+
+function grokOk(): Response {
+    return Response.json({
+        id: "chatcmpl-fixture",
+        object: "chat.completion",
+        created: 0,
+        model: "grok-4.5",
+        choices: [{ index: 0, message: { role: "assistant", content: "pong" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+    });
+}
+
+describe("grok-sub bind", () => {
+    test("a 401 recovers once: exactly one refresh, and the request repeats with the new token", async () => {
+        const account = grokAccount();
+        const first = account.credentials.accessToken;
+        saveConfig([account]);
+        const second = grokToken("second");
+        const refresh = spyOn(grokOAuth, "refresh").mockImplementation(async (refreshToken: string) => {
+            expect(refreshToken).toBe("grok-refresh-1");
+            return { accessToken: second, refreshToken: "grok-refresh-2", expiresAt: Date.now() + 3_600_000 };
+        });
+        const wire = transport(1, grokOk);
+
+        try {
+            const binding = await grokSubPlugin.bind({ account, fetch: wire.fetch });
+            const result = await generateText({ model: binding.language("grok-4.5"), prompt: "ping", maxRetries: 0 });
+
+            expect(result.text).toBe("pong");
+            expect(refresh).toHaveBeenCalledTimes(1);
+            expect(wire.sent.map((request) => request.authorization)).toEqual([`Bearer ${first}`, `Bearer ${second}`]);
+        } finally {
+            refresh.mockRestore();
+        }
+    });
+
+    test("a second 401 surfaces as an error after the one refresh", async () => {
+        const account = grokAccount();
+        saveConfig([account]);
+        const refresh = spyOn(grokOAuth, "refresh").mockImplementation(async () => ({
+            accessToken: grokToken("second"),
+            refreshToken: "grok-refresh-2",
+            expiresAt: Date.now() + 3_600_000,
+        }));
+        const wire = transport(2, grokOk);
+
+        try {
+            const binding = await grokSubPlugin.bind({ account, fetch: wire.fetch });
+            const status = await statusOf(
+                generateText({ model: binding.language("grok-4.5"), prompt: "ping", maxRetries: 0 })
+            );
+
+            expect(status).toBe(401);
+            expect(refresh).toHaveBeenCalledTimes(1);
+            expect(wire.sent).toHaveLength(2);
+        } finally {
+            refresh.mockRestore();
+        }
     });
 });
