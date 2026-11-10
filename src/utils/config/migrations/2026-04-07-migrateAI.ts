@@ -1,3 +1,4 @@
+import type { ConfigMigration } from "@genesiscz/utils/ai/config/migrate";
 import type {
     AIAccountEntry,
     AIConfigData,
@@ -6,7 +7,6 @@ import type {
     ProviderConfig,
     TaskConfig,
 } from "@genesiscz/utils/config/ai.types";
-import type { ConfigMigration } from "@genesiscz/utils/config/migration";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 

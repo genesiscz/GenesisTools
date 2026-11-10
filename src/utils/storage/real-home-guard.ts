@@ -75,7 +75,7 @@ export { isTestProcess };
  * definition the bug this file exists to catch: a path resolved before the sandbox existed.
  * Asking "is this a test?" is a proxy for that question, and a proxy can be wrong. This cannot.
  */
-function sandboxInstalled(): boolean {
+export function sandboxInstalled(): boolean {
     if (!env.tools.hasExplicitHome()) {
         return false;
     }

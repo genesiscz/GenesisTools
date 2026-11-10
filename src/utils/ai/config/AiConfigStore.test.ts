@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { _overrideRealHomeWriteForTest } from "@genesiscz/utils/config/real-home-write";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -414,6 +415,27 @@ describe("AiConfigStore mutation", () => {
         AiConfigStore.invalidate();
         const reloaded = await AiConfigStore.load();
         expect(reloaded.accounts().length).toBe(SEED.accounts.length);
+    });
+
+    // The last line of defence: a worktree build or a test aimed at the real home must not write the v4 shape.
+    test("a write the real-home check refuses throws before the callback and leaves the file byte-identical", async () => {
+        const store = await AiConfigStore.load();
+        const before = readFileSync(configPath(home), "utf8");
+        let ran = false;
+        _overrideRealHomeWriteForTest({ sandbox: false });
+
+        try {
+            await expect(
+                store.mutate(() => {
+                    ran = true;
+                })
+            ).rejects.toThrow(/Refusing to write the AI config into the real ~\/\.genesis-tools: a test process/);
+        } finally {
+            _overrideRealHomeWriteForTest(undefined);
+        }
+
+        expect(ran).toBe(false);
+        expect(readFileSync(configPath(home), "utf8")).toBe(before);
     });
 
     test("withLock returns the callback's value", async () => {

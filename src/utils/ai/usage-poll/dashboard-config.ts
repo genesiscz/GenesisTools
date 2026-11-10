@@ -5,6 +5,7 @@ import {
     type UsageAlertsConfig,
 } from "@genesiscz/utils/ai/usage/alerts/config";
 import { EMPTY_BUDGETS, mergeBudgets, type UsageBudgets } from "@genesiscz/utils/ai/usage/budgets/budgets";
+import { mayPersistMigration } from "@genesiscz/utils/config/real-home-write";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -220,7 +221,7 @@ export async function loadDashboardConfig(options: { readOnly?: boolean } = {}):
 
     const migrated = merge(legacy);
 
-    if (!options.readOnly) {
+    if (!options.readOnly && mayWriteMigrated("the claude-era preferences copy")) {
         logger.debug({ from: LEGACY_TOOL_NAME, to: TOOL_NAME }, "[usage] copied dashboard preferences once");
         await store().setConfig(migrated);
     }
@@ -230,11 +231,11 @@ export async function loadDashboardConfig(options: { readOnly?: boolean } = {}):
 
 /**
  * Writes a migrated config back once, through the store's atomic update, so the old keys leave the file. A
- * diagnostic (`readOnly`) reads the migrated shape in memory and never writes. A write that fails is logged; the
- * next load migrates in memory again.
+ * diagnostic (`readOnly`) reads the migrated shape in memory and never writes, and so does a process the real-home
+ * write check refuses. A write that fails is logged; the next load migrates in memory again.
  */
 async function writeBackMigration(saved: StoredConfig, readOnly: boolean): Promise<void> {
-    if (readOnly || !migrateDashboardConfig(saved).changed) {
+    if (readOnly || !migrateDashboardConfig(saved).changed || !mayWriteMigrated("the thresholds write-back")) {
         return;
     }
 
@@ -247,6 +248,20 @@ async function writeBackMigration(saved: StoredConfig, readOnly: boolean): Promi
     } catch (err) {
         logger.warn({ err }, "[usage] the dashboard config migration could not be written back");
     }
+}
+
+/**
+ * Asks the shared real-home write check before a migrated shape is persisted. A worktree build must not move the
+ * file the installed tools read; it keeps the migrated shape in memory instead.
+ */
+function mayWriteMigrated(what: string): boolean {
+    const verdict = mayPersistMigration();
+
+    if (!verdict.allowed) {
+        logger.debug({ reason: verdict.reason }, `[usage] ${what} stays in memory`);
+    }
+
+    return verdict.allowed;
 }
 
 export async function saveDashboardConfig(config: UsageDashboardConfig): Promise<void> {
