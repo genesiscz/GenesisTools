@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import * as p from "@clack/prompts";
 import { AiConfigStore, defaultAccountName } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { focusedPlace, launchTarget, openCommandAt } from "@genesiscz/utils/cmux/open-command";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import { buildCmuxCommand, type ClaudeLaunch } from "../lib/launchers/claudeLauncher";
 
@@ -209,6 +209,7 @@ async function pickEnum<T extends string>({
         const picked = await p.select<string>({
             message: `Pick ${flag}`,
             options: values.map((value): { value: string; label: string } => ({ value, label: value })),
+            cancel: "back",
         });
         return p.isCancel(picked) ? null : (values.find((value) => value === picked) ?? null);
     }
