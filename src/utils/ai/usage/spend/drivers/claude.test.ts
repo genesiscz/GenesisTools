@@ -42,6 +42,26 @@ describe("claude driver", () => {
         expect(billedCost(claudeDriver, events[0])).toBeCloseTo(3.32, 10);
     });
 
+    test("a fast-mode call carries the fast tier and bills Fable 5.2 at twice its standard rates", () => {
+        const call = (id: string, speed: string) =>
+            SafeJSON.stringify({
+                type: "assistant",
+                timestamp: "2026-11-10T09:00:00.000Z",
+                message: {
+                    id,
+                    model: "claude-fable-5-2",
+                    usage: { input_tokens: 1_000_000, output_tokens: 1_000_000, speed },
+                },
+            });
+        const [fast, standard] = collectEvents(claudeDriver, [call("msg-fast", "fast"), call("msg-std", "standard")]);
+
+        expect(fast.serviceTier).toBe("fast");
+        expect(standard.serviceTier).toBeUndefined();
+        // Fable 5.2: $8 in and $40 out per Mtok standard, $16 and $80 in fast mode.
+        expect(billedCost(claudeDriver, standard)).toBeCloseTo(48, 10);
+        expect(billedCost(claudeDriver, fast)).toBeCloseTo(96, 10);
+    });
+
     test("ignores non-assistant lines and lines without usage", () => {
         const events = collectEvents(claudeDriver, [
             SafeJSON.stringify({ type: "user", timestamp: "2026-08-27T09:00:00.000Z", message: { id: "u1" } }),
