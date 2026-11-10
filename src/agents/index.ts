@@ -2,15 +2,7 @@
 
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
-import { registerBlameCommand } from "./commands/blame";
-import { registerChangesCommand } from "./commands/changes";
-import { registerDiscoverCommand } from "./commands/discover";
-import { registerHooksCommands } from "./commands/hooks";
-import { registerLeaveCommand } from "./commands/leave";
-import { registerListenCommand } from "./commands/listen";
-import { registerLoginCommand } from "./commands/login";
-import { registerMessageCommand } from "./commands/message";
-import { registerRequestCommand } from "./commands/request";
+import { AGENTS_REGISTRARS } from "./registrars";
 
 const program = new Command();
 
@@ -19,14 +11,4 @@ program
     .description("Cross-agent communication: register/login/message/discover/listen across the swarm")
     .version("0.1.0");
 
-registerLoginCommand(program);
-registerMessageCommand(program);
-registerLeaveCommand(program);
-registerRequestCommand(program);
-registerDiscoverCommand(program);
-registerListenCommand(program);
-registerHooksCommands(program);
-registerChangesCommand(program);
-registerBlameCommand(program);
-
-await runTool(program, { tool: "agents" });
+await runTool(program, { tool: "agents", registrars: AGENTS_REGISTRARS });
