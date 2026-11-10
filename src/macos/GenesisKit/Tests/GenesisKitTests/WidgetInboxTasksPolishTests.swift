@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import GenesisKitFixtures
 import SwiftUI
 import XCTest
 @testable import GenesisKitBase
@@ -1104,7 +1105,8 @@ final class WarmPaneVisibilityTests: XCTestCase {
     }
 }
 
-/// One session with one open decision, as the widget's snapshot carries it.
+/// One session with one open decision, as the widget's snapshot carries it: the golden snapshot the hub's real builder
+/// wrote (`snapshot-staged-decision.json` in GenesisKitFixtures/Widget), with the staging state each test sets.
 @MainActor
 private enum StagingFixture {
     static let key = "local:codex:fixture-staged:"
@@ -1114,15 +1116,14 @@ private enum StagingFixture {
     static func snapshot(draftOption: String?, decisionClick: String = "stage", stagedOnly: Bool = false,
                          stagedOnLeave: String = "ask", draft: String? = nil, second: Bool = false,
                          multiple: Bool = false) throws -> String {
-        var item: [String: Any] = ["id": "decision:d1", "sourceId": "d1", "kind": "decision", "key": key, "at": 1,
-                                   "needsAnswer": true, "title": "Keep it?", "number": 7, "options": ["keep", "drop"],
-                                   "revision": 1]
-        var card: [String: Any] = ["id": "decision:d1", "kind": "decision", "sourceId": "d1", "sessionKey": key, "at": 1,
-                                   "title": "Keep it?", "body": "", "status": draftOption == nil ? "open" : "drafted",
-                                   "revision": 1, "number": 7,
-                                   "choices": [["id": "a", "title": "keep", "recommended": true],
-                                               ["id": "b", "title": "drop", "recommended": false]],
-                                   "attachments": [], "refs": [], "read": true]
+        let golden = try KitFixture.data("snapshot-staged-decision.json", in: "Widget")
+        var wire = try XCTUnwrap(JSONSerialization.jsonObject(with: golden) as? [String: Any])
+        var notifications = try XCTUnwrap(wire["notifications"] as? [String: Any])
+        var session = try XCTUnwrap((notifications["sessions"] as? [[String: Any]])?.first)
+        var item = try XCTUnwrap(session["pendingItem"] as? [String: Any])
+        var card = try XCTUnwrap((wire["cards"] as? [[String: Any]])?.first)
+        XCTAssertEqual(session["key"] as? String, key)
+        card["status"] = draftOption == nil ? "open" : "drafted"
         if let draftOption { item["draftOption"] = draftOption; card["draftOption"] = draftOption }
         if let draft { item["draft"] = draft; card["draft"] = draft; card["status"] = "drafted" }
         if multiple { item["multiple"] = true; card["multiple"] = true }
@@ -1132,21 +1133,24 @@ private enum StagingFixture {
             other["id"] = "decision:d2"; other["sourceId"] = "d2"; other["number"] = 8; other["title"] = "Ship it?"
             other["status"] = "open"; other["draftOption"] = nil; other["draft"] = nil
             cards.append(other)
+            notifications["pendingDecisionIDs"] = ["d1", "d2"]
         }
-        let session: [String: Any] = ["key": key, "target": ["hostId": "local", "provider": "codex",
-            "sessionId": "fixture-staged", "sourceHome": "", "cwd": "/fixture"], "title": "Staged fixture",
-            "project": "Fixture", "activityAt": 0, "status": "waiting", "pinned": true, "visible": true, "hiddenByFilter": false]
-        var notifications: [String: Any] = ["unread": 0, "needsAnswer": 1, "complete": true, "truncated": false,
-            "sessions": [["key": key, "unread": 0, "needsAnswer": 1, "pendingItem": item,
-                          "items": stagedOnly ? [] : [item]]]]
-        if stagedOnly { notifications["staged"] = [item] }
-        let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
-            "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
-                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en",
-                "decisionClick": decisionClick, "stagedOnLeave": stagedOnLeave],
-            "assets": [:], "drafts": [:], "outgoing": []], "sessions": [session], "cards": cards,
-            "manifests": [:], "errors": [], "selectedKey": key, "notifications": notifications])
-        return String(decoding: data, as: UTF8.self)
+        session["latest"] = item
+        session["pendingItem"] = item
+        session["items"] = stagedOnly ? [] : [item]
+        notifications["sessions"] = [session]
+        // The hub lists every decision with an unsent pick or note in `staged` (`widgetSnapshot`), whatever its session
+        // lists.
+        notifications["staged"] = stagedOnly || draftOption != nil || draft != nil ? [item] : []
+        var state = try XCTUnwrap(wire["state"] as? [String: Any])
+        var preferences = try XCTUnwrap(state["preferences"] as? [String: Any])
+        preferences["decisionClick"] = decisionClick
+        preferences["stagedOnLeave"] = stagedOnLeave
+        state["preferences"] = preferences
+        wire["state"] = state
+        wire["cards"] = cards
+        wire["notifications"] = notifications
+        return String(decoding: try JSONSerialization.data(withJSONObject: wire), as: UTF8.self)
     }
 
     static func model(root: URL? = nil, defaults given: UserDefaults? = nil) -> WidgetModel {
