@@ -48,7 +48,7 @@ struct MeetingsProjectsPage: View {
                 }
             }
 
-            WouldMatchCard(model: model)
+            WouldMatchCard(model: model, projects: settings.projectNames)
 
             if settings.projectNames.isEmpty {
                 NativeSettingsCard {
@@ -385,9 +385,13 @@ private struct FromMeetingsList: View {
     }
 }
 
-/// The last 20 meetings: the projects the saved rules match, and the drafts' when they differ.
+/// The last 20 meetings: the projects the saved rules match, and the drafts' when they differ. Each row offers what
+/// to do: Confirm (no project, one match), Update (another project than the match), a menu (several matches), a check
+/// (it has the match), and on every row a project menu to set it by hand. A change has an Undo and updates its row in
+/// place while the list reads again.
 private struct WouldMatchCard: View {
     @Bindable var model: MeetingsSettingsModel
+    let projects: [String]
 
     var body: some View {
         NativeSettingsCard("Would match", subtitle: "The last 20 meetings against the rules below, while you edit them.") {
@@ -400,19 +404,7 @@ private struct WouldMatchCard: View {
                     Text("No meeting yet.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 ForEach(rows) { row in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(verbatim: row.title.isEmpty ? "Untitled meeting" : row.title).font(.system(size: 12)).lineLimit(1)
-                        Spacer(minLength: 6)
-                        Text(verbatim: "has \(row.project ?? "none")").font(.system(size: 11)).foregroundStyle(.tertiary)
-                        Text(verbatim: row.now.isEmpty ? "matches none" : "matches \(row.now.joined(separator: ", "))")
-                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
-                        if row.changed {
-                            Image(systemName: "arrow.right").font(.system(size: 9)).foregroundStyle(KitPalette.modified).accessibilityHidden(true)
-                            Text(verbatim: row.draft.isEmpty ? "none" : row.draft.joined(separator: ", "))
-                                .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(KitPalette.modified)
-                                .accessibilityLabel("with your edit: \(row.draft.isEmpty ? "none" : row.draft.joined(separator: ", "))")
-                        }
-                    }
+                    WouldMatchRow(model: model, row: row, projects: projects)
                 }
             } else if model.preview.failure == nil {
                 HStack(spacing: 8) {
@@ -421,6 +413,93 @@ private struct WouldMatchCard: View {
                 }
             }
         }
+    }
+}
+
+private struct WouldMatchRow: View {
+    @Bindable var model: MeetingsSettingsModel
+    let row: MatchPreviewRow
+    let projects: [String]
+
+    private var title: String { row.title.isEmpty ? "Untitled meeting" : row.title }
+
+    var body: some View {
+        let busy = model.isSettingProject(row)
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: title).font(.system(size: 12.5)).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(verbatim: "has \(row.project ?? "no project")").foregroundStyle(.tertiary)
+                    Text(verbatim: row.now.isEmpty ? "matches none" : "matches \(row.now.joined(separator: ", "))")
+                        .foregroundStyle(.secondary)
+                    if row.changed {
+                        Image(systemName: "arrow.right").font(.system(size: 9)).foregroundStyle(KitPalette.modified).accessibilityHidden(true)
+                        Text(verbatim: row.draft.isEmpty ? "none" : row.draft.joined(separator: ", "))
+                            .fontWeight(.semibold).foregroundStyle(KitPalette.modified)
+                            .accessibilityLabel("with your edit: \(row.draft.isEmpty ? "none" : row.draft.joined(separator: ", "))")
+                    }
+                }
+                .font(.system(size: 11)).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            action(busy: busy)
+            MenuButton(items: { projectItems }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "folder").font(.system(size: 11))
+                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(.secondary).padding(.horizontal, 4).padding(.vertical, 3)
+            }
+            .instantTooltip("Set the project of “\(title)” by hand")
+            .accessibilityLabel("Project of \(title)")
+            .disabled(busy)
+        }
+        .liveRow()
+    }
+
+    @ViewBuilder
+    private func action(busy: Bool) -> some View {
+        switch WouldMatchAction.of(row) {
+        case .none:
+            EmptyView()
+        case .matches(let project):
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(KitPalette.added)
+                .instantTooltip("It is in \(project), as the rules say")
+                .accessibilityLabel("It is in \(project), as the rules say")
+        case .confirm(let project):
+            LiveButton(tooltip: "Put “\(title)” in \(project); Undo follows", enabled: !busy) {
+                model.setMeetingProject(row, to: project)
+            } label: {
+                Text("Confirm").font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 3)
+            }
+        case .update(let from, let to):
+            LiveButton(tooltip: "Move “\(title)” from \(from) to \(to), as the rules say; Undo follows", enabled: !busy) {
+                model.setMeetingProject(row, to: to)
+            } label: {
+                Text("Update").font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 3)
+            }
+        case .choose(let matched):
+            MenuButton(items: {
+                matched.map { project in .action("Put it in \(project)", checked: project == row.project) { model.setMeetingProject(row, to: project) } }
+            }) {
+                HStack(spacing: 3) {
+                    Text("Choose").font(.system(size: 12, weight: .medium))
+                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                }
+                .padding(.horizontal, 6).padding(.vertical, 3)
+            }
+            .instantTooltip("The rules match \(Plural.count(matched.count, "project")): pick one")
+            .disabled(busy)
+        }
+    }
+
+    private var projectItems: [MenuButtonItem] {
+        var items: [MenuButtonItem] = projects.map { project in
+            .action(project, checked: project == row.project) { model.setMeetingProject(row, to: project) }
+        }
+        items.append(.divider)
+        items.append(.action("No project", checked: row.project == nil) { model.setMeetingProject(row, to: nil) })
+        return items
     }
 }
 
