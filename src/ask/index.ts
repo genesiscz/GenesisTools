@@ -16,13 +16,13 @@ import { getFileTools } from "@ask/tools/file-tools";
 import { getLanguageModel } from "@ask/types";
 import { expandAtMentions } from "@ask/utils/at-mentions";
 import { webSearchTool } from "@ask/utils/websearch";
-import * as p from "@clack/prompts";
 import { transcriptionManager } from "@genesiscz/utils/ai/transcription/TranscriptionManager";
 import { watchToolRun } from "@genesiscz/utils/cli/failures/watch";
 import { answerReadmeFlag } from "@genesiscz/utils/cli/readme-flag";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { input } from "@genesiscz/utils/prompts/clack";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { ToolSet } from "ai";
 import { tool } from "ai";
 import pc from "picocolors";
@@ -318,6 +318,7 @@ class ASKTool {
                 label: `${m.provider.name}/${m.model.id}`,
                 hint: m.model.name !== m.model.id ? m.model.name : undefined,
             })),
+            cancel: "back",
         });
 
         if (p.isCancel(choice)) {

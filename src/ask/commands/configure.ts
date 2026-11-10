@@ -4,12 +4,12 @@ import { loadAskConfig, saveAskConfig } from "@ask/config";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { AskConfig } from "@ask/types/config";
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { applyLoginOutcome, patchAccount, removeAccount } from "@genesiscz/utils/ai/config/account-ops";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 export async function runConfigureWizard(): Promise<void> {
@@ -50,6 +50,7 @@ export async function runConfigureWizard(): Promise<void> {
                     label: "Exit",
                 },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "exit") {
@@ -91,6 +92,7 @@ async function manageAccounts(): Promise<void> {
         const choice = await p.select({
             message: "Accounts",
             options,
+            cancel: "back",
         });
 
         if (p.isCancel(choice) || choice === "back") {
@@ -138,6 +140,7 @@ async function viewAccount(name: string): Promise<void> {
             { value: "remove", label: pc.red("Remove account") },
             { value: "back", label: "Back" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(action) || action === "back") {
@@ -148,6 +151,7 @@ async function viewAccount(name: string): Promise<void> {
         const confirm = await p.confirm({
             message: `Remove account "${name}"?`,
             initialValue: false,
+            cancel: "back",
         });
 
         if (!p.isCancel(confirm) && confirm) {
@@ -166,6 +170,7 @@ async function addAccount(): Promise<void> {
             { value: "openai", label: "OpenAI / Codex" },
             { value: "back", label: "Back" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(provider) || provider === "back") {
@@ -207,6 +212,7 @@ async function addAnthropicAccount(): Promise<void> {
             },
             { value: "back", label: "Back" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(method) || method === "back") {
@@ -245,6 +251,7 @@ async function addFromClaudeAccount(): Promise<void> {
             value: a.name,
             label: `${a.name}${a.label ? pc.dim(` (${a.label})`) : ""}`,
         })),
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {
@@ -348,6 +355,7 @@ async function addOAuthKey(): Promise<void> {
                 return "Token is required";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(token)) {
@@ -362,6 +370,7 @@ async function addOAuthKey(): Promise<void> {
                 return "Name is required";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(name)) {
@@ -387,6 +396,7 @@ async function addAnthropicApiKey(): Promise<void> {
                 return "API key is required";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(key)) {
@@ -401,6 +411,7 @@ async function addAnthropicApiKey(): Promise<void> {
                 return "Name is required";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(name)) {
@@ -440,6 +451,7 @@ async function addOpenAIAccount(): Promise<void> {
             },
             { value: "back", label: "Back" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(method) || method === "back") {
@@ -533,6 +545,7 @@ async function addViaCodexOAuth(): Promise<void> {
     const openBrowser = await p.confirm({
         message: "Open URL in browser?",
         initialValue: true,
+        cancel: "back",
     });
 
     if (p.isCancel(openBrowser)) {
@@ -551,6 +564,7 @@ async function addViaCodexOAuth(): Promise<void> {
                 return "Code is required";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(code)) {
@@ -606,6 +620,7 @@ async function addOpenAIApiKey(): Promise<void> {
                 return "API key is required";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(key)) {
@@ -620,6 +635,7 @@ async function addOpenAIApiKey(): Promise<void> {
                 return "Name is required";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(name)) {
@@ -649,6 +665,7 @@ async function configureProviderSettings(_config: AskConfig): Promise<void> {
     const masterToggle = await p.confirm({
         message: "Enable auto-detection of provider API keys from environment?",
         initialValue: !allDisabled,
+        cancel: "back",
     });
 
     if (p.isCancel(masterToggle)) {
@@ -663,6 +680,7 @@ async function configureProviderSettings(_config: AskConfig): Promise<void> {
                 label: name,
             })),
             initialValues: allProviders.filter((name) => isProviderEnabled(name)),
+            cancel: "back",
         });
 
         if (p.isCancel(enabled)) {
@@ -697,6 +715,7 @@ async function configureDefaultModel(_config: AskConfig): Promise<void> {
             { value: "unset-model", label: "Unset model only", hint: "keep provider, clear model" },
             { value: "unset-provider", label: "Unset provider only", hint: "keep model, clear provider" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(action)) {

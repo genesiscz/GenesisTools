@@ -1,10 +1,10 @@
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
 import { colorizeByPriceTier } from "@ask/utils/helpers";
-import * as p from "@clack/prompts";
 import { logger } from "@genesiscz/utils/logger";
 import type { SearchItem } from "@genesiscz/utils/prompts/clack";
 import { searchSelect, searchSelectCancelSymbol } from "@genesiscz/utils/prompts/clack";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 export class ModelSelector {
@@ -38,6 +38,7 @@ export class ModelSelector {
                 label: pc.cyan(provider.name),
                 hint: provider.config.description || `${provider.models.length} models`,
             })),
+            cancel: "back",
         });
 
         if (p.isCancel(result)) {
