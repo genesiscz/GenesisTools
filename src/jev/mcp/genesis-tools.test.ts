@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { answerText } from "@app/genesis-tools-mcp/lib/tool-entry";
 import { type Evaluator, lazyEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { answerText } from "@genesiscz/utils/mcp/tool-entry";
 import { GrepSetupError } from "../lib/grep/search";
-import { jevToolEntries } from "./genesis-tools";
+import { toolGroup } from "./genesis-tools";
 import { lazyGrepEvaluator } from "./tools/grep";
 
 describe("lazy evaluators", () => {
@@ -45,9 +45,9 @@ describe("lazy evaluators", () => {
     });
 });
 
-describe("jevToolEntries", () => {
+describe("the jev tool group", () => {
     test("exposes every Jev MCP tool under the jev_ prefix with a JSON schema", () => {
-        const entries = jevToolEntries();
+        const { entries } = toolGroup();
         expect(Object.keys(entries).sort()).toEqual([
             "jev_compact",
             "jev_grep",
@@ -63,7 +63,7 @@ describe("jevToolEntries", () => {
     });
 
     test("the handler returns JSON text the host can parse back", async () => {
-        const entries = jevToolEntries();
+        const { entries } = toolGroup();
         const text = await entries.jev_verify_templates.handler({}, { signal: new AbortController().signal });
         const parsed: { templates?: unknown[] } = SafeJSON.parse(answerText(text));
         expect(Array.isArray(parsed.templates)).toBe(true);
