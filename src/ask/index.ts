@@ -19,16 +19,16 @@ import { webSearchTool } from "@ask/utils/websearch";
 import * as p from "@clack/prompts";
 import { transcriptionManager } from "@genesiscz/utils/ai/transcription/TranscriptionManager";
 import { watchToolRun } from "@genesiscz/utils/cli/failures/watch";
+import { answerReadmeFlag } from "@genesiscz/utils/cli/readme-flag";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { input } from "@genesiscz/utils/prompts/clack";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import type { ToolSet } from "ai";
 import { tool } from "ai";
 import pc from "picocolors";
 
 // Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
+await answerReadmeFlag(import.meta.dir);
 
 import { showPricing } from "@ask/pricing/index";
 import type { Args, ChatConfig, CLIOptions, ProviderChoice } from "@ask/types";

@@ -13,11 +13,7 @@ import { ensureStorage } from "@app/automate/lib/storage.ts";
 import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme.ts";
 import { Command } from "commander";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 

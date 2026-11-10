@@ -2,7 +2,6 @@
 
 import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Storage } from "@genesiscz/utils/storage";
 import { Command } from "commander";
 import { registerConfigCommand, runConfigurationMenu } from "./commands/config";
@@ -13,8 +12,6 @@ import { registerSendCommand, runSendFlow } from "./commands/send";
 import { registerServerCommand } from "./commands/server";
 import { registerWakeCommand, runWakeFlow } from "./commands/wake";
 import { readWakeupConfig } from "./config";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 const storage = new Storage("wakeup");

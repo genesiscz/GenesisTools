@@ -5,14 +5,11 @@ import { parseVariadic, runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 import pc from "picocolors";
 import { type CommandDef, commands, GROUP_LABELS, GROUP_ORDER, getCommandsByGroup } from "./lib/commands";
 import { defaultFormat, formatOutput, type OutputFormat } from "./lib/format";
 import { runCommandInteractive, runInteractiveMenu } from "./lib/interactive";
-
-handleReadmeFlag(import.meta.url);
 
 // ─── Logo ───────────────────────────────────────────────────────────────────────
 

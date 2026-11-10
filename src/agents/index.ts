@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import { runTool } from "@genesiscz/utils/cli";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 import { registerBlameCommand } from "./commands/blame";
 import { registerChangesCommand } from "./commands/changes";
@@ -12,8 +11,6 @@ import { registerListenCommand } from "./commands/listen";
 import { registerLoginCommand } from "./commands/login";
 import { registerMessageCommand } from "./commands/message";
 import { registerRequestCommand } from "./commands/request";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 

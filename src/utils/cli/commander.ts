@@ -2,12 +2,14 @@ import { basename, dirname } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger, setBaseBinding, setConsoleLevel } from "@genesiscz/utils/logger";
 import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
+import { isPromptCancel } from "@genesiscz/utils/prompts/cancel";
 
 import { type Command, CommanderError } from "commander";
 import { setCurrentCommand } from "./current-command";
 import { enhanceHelp, markRequiredOptionsDeep, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
 import { commandPathFromArgv, noteToolError, secretsFromArgv, watchToolRun } from "./failures/watch";
 import { observeInterrupts } from "./interrupt";
+import { answerReadmeFlag } from "./readme-flag";
 import { currentRunLabel, recordRunOnExit, setRunLabel } from "./run-record";
 
 export type Verbosity = 0 | 1 | 2 | 3;
@@ -159,24 +161,6 @@ function callerDirOf(argv: readonly string[]): string {
     return dirname(argv[1] ?? "");
 }
 
-export function argvRequestsReadme(args: string[]): boolean {
-    // Stop at the conventional `--` separator: everything after it is meant
-    // for a wrapped child command (e.g. `tools task run -- bash --readme`),
-    // not for the wrapper itself. Scanning past it caused the wrapper to
-    // hijack any child whose own flags happened to include --readme.
-    for (const arg of args) {
-        if (arg === "--") {
-            return false;
-        }
-
-        if (arg === "--readme" || arg.startsWith("--readme=")) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 /**
  * Unified tool bootstrap: registers the non-destructive `-v`/`--verbose`
  * (and trace-gated `--trace`) option + a visible `--readme` flag, resolves
@@ -296,11 +280,7 @@ export async function runTool(
 
     setSuggestCommandProgram(program);
 
-    const readmeInArgv = argvRequestsReadme(argv.slice(2));
-    if (readmeInArgv) {
-        const { printReadmeAndExit } = await import("@genesiscz/utils/readme");
-        printReadmeAndExit(callerDirOf(argv));
-    }
+    await answerReadmeFlag(callerDirOf(argv), argv.slice(2));
 
     program.hook("preAction", async (_thisCommand, actionCommand) => {
         setCurrentCommand(actionCommand);
@@ -324,7 +304,12 @@ export async function runTool(
             throw error;
         }
 
-        reportUnhandledToolError(error);
+        // A cancelled prompt is the user's choice, not a failure: exit 0, print nothing, record no failure.
+        if (isPromptCancel(error)) {
+            process.exitCode = 0;
+        } else {
+            reportUnhandledToolError(error);
+        }
     }
 
     return { tool, verbosity: _verbosity, isVerbose: _verbosity >= 1, command: program };

@@ -17,10 +17,7 @@ import { registerSyncCommand } from "@app/ms-teams/commands/sync";
 import { registerTranscriptsCommand } from "@app/ms-teams/commands/transcripts";
 import { enhanceHelp, isInteractive, runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 program

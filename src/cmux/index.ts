@@ -18,10 +18,7 @@ import { CMUX_REGISTRARS } from "@app/cmux/registrars";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
 import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
 import { out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 

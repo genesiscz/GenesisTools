@@ -23,10 +23,7 @@ import { registerSessionCommand } from "@app/tmux/commands/session";
 import { registerSessionsCommand } from "@app/tmux/commands/sessions";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 

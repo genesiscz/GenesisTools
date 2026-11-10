@@ -2,20 +2,12 @@ import { enhanceHelp, isInteractive } from "@genesiscz/utils/cli";
 import { configureLogger, logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
 
-import { Command, Option } from "commander";
-import { showHelp } from "./utils/command.utils.js";
-import { defaultProviders } from "./utils/providers/index.js";
-import type { MCPProvider } from "./utils/providers/types.js";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
-
 import { runTool } from "@genesiscz/utils/cli";
+import { Command, Option } from "commander";
 import {
     authClient,
     authLogin,
@@ -49,7 +41,10 @@ import {
     syncServers,
 } from "./commands/index.js";
 import { STATIC_CLIENT_REDIRECT_URI_DEFAULT } from "./lib/auth/constants.ts";
+import { showHelp } from "./utils/command.utils.js";
 import { setGlobalOptions } from "./utils/config.utils.js";
+import { defaultProviders } from "./utils/providers/index.js";
+import type { MCPProvider } from "./utils/providers/types.js";
 
 /**
  * Collect --project values: repeatable flag, each value may be comma-separated
