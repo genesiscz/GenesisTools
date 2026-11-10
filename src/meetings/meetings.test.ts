@@ -86,6 +86,15 @@ import {
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
 import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./lib/screen-boxes";
 import { showText } from "./lib/show-text";
+import {
+    addPolish,
+    anchorScores,
+    CandidateTallies,
+    directoryMatcher,
+    rosterTallies,
+    scoreCandidates,
+    speakerScoresOf,
+} from "./lib/speaker-scores";
 import { printSpeakerStats } from "./lib/speakers-view";
 import { settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
@@ -676,6 +685,213 @@ describe("own label (R17)", () => {
 
         expect(at(4)).toMatchObject({ speaker: "Rob Example", rules: ["E1", "E3", "R17"], confidence: 0.65 });
         expect(at(60)).toMatchObject({ speaker: "Bob Example", rules: ["E1", "E3", "E4"] });
+    });
+});
+
+describe("speaker candidate scores (G31)", () => {
+    const evidenceRun = (options: {
+        transcript: TranscriptEntry[];
+        speakers?: SourceMeeting["speakers"];
+        presence?: Array<{ name: string; self?: boolean; fromSec: number; toSec: number }>;
+        readings: Array<{ tSec: number; speaking: string[] }>;
+        liveName?: string;
+    }) =>
+        suggestItems({
+            record: meetingRecordSchema.parse({ ...record, participants: [{ name: "Alice Example", self: true }] }),
+            meeting: { ...meeting, speakers: options.speakers ?? meeting.speakers, transcript: options.transcript },
+            rules: ["evidence"],
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            ...(options.presence ? { presence: options.presence } : {}),
+            evidence: {
+                selfName: "Alice Example",
+                segments: [
+                    {
+                        startSec: 0,
+                        endSec: 60,
+                        channel: "system",
+                        ...(options.liveName ? { liveName: options.liveName } : {}),
+                    },
+                ],
+                speaking: options.readings.map((reading) => ({ ...reading, muted: [] })),
+                files: [],
+            },
+            now: "2026-11-02T15:00:00.000Z",
+        });
+    const scoresAt = (items: ReturnType<typeof suggestItems>, label: string) => {
+        const range = items.find((item) => item.kind === "speaker-range" && item.label === label);
+        return range ? speakerScoresOf(range) : [];
+    };
+    const total = (scores: Array<{ confidence: number }>) => scores.reduce((sum, score) => sum + score.confidence, 0);
+
+    test("the range's speaker keeps its confidence; another voice E3 shows gets a share; nobody else gets a number", () => {
+        const items = evidenceRun({
+            transcript: [
+                line("Carol Example", 0, "Já to udělám.", 2),
+                line("Carol Example", 10, "A ještě tohle.", 2),
+                line("Carol Example", 20, "A pak tamto.", 2),
+            ],
+            readings: [
+                { tSec: 2, speaking: ["Bob Example"] },
+                { tSec: 12, speaking: ["Bob Example", "Dan Example"] },
+                { tSec: 22, speaking: ["Bob Example"] },
+            ],
+            liveName: "Bob Example",
+        });
+        const range = items.find((item) => item.kind === "speaker-range");
+        const scores = scoresAt(items, "Carol Example");
+
+        expect(range).toMatchObject({ speaker: "Bob Example", rules: ["E1", "E3", "E4"], confidence: 0.7 });
+        expect(scores.map((score) => score.speaker)).toEqual(["Bob Example", "Dan Example"]);
+        expect(scores[0]).toMatchObject({
+            confidence: 0.7,
+            lines: 3,
+            evidence: expect.arrayContaining([
+                { kind: "voice", rule: "E3", lines: 3 },
+                { kind: "voice", rule: "E4", lines: 3 },
+            ]),
+        });
+        // Dan: E3 on two lines of three (a reading counts for the lines around it), 0.5 × 2 / 3, against a voice nobody
+        // listed (0.2, no attendance): 0.3 × 0.33 / 0.53.
+        expect(scores[1]).toEqual({
+            speaker: "Dan Example",
+            confidence: 0.19,
+            lines: 3,
+            evidence: [{ kind: "voice", rule: "E3", lines: 2 }],
+        });
+        expect(total(scores)).toBeLessThanOrEqual(1);
+    });
+
+    test("a call voice under the user's label: the candidates share the rule's confidence, the user gets none", () => {
+        const presence = [
+            { name: "Alice Example", self: true, fromSec: 0, toSec: 100 },
+            { name: "Bob Example", fromSec: 0, toSec: 100 },
+            { name: "Dan Example", fromSec: 0, toSec: 100 },
+        ];
+        const transcript = [
+            line("Alice Example", 0, "Tak to bereme.", 1),
+            line("Alice Example", 10, "Dobře, jdeme na to.", 1),
+        ];
+        const items = evidenceRun({
+            transcript,
+            speakers: [{ speakerId: 1, name: "Alice Example", origin: "platform" }],
+            presence,
+            readings: [
+                { tSec: 2, speaking: ["Bob Example"] },
+                { tSec: 12, speaking: ["Bob Example"] },
+            ],
+        });
+        const range = items.find((item) => item.kind === "speaker-range");
+        const scores = scoresAt(items, "Alice Example");
+
+        expect(range).toMatchObject({ candidates: ["Bob Example", "Dan Example"], confidence: 0.6 });
+        // Bob: E3 on both lines and present (0.5 + 0.2); Dan: present only (0.2); 0.05 for someone the roster misses.
+        expect(scores.map((score) => [score.speaker, score.confidence])).toEqual([
+            ["Bob Example", 0.44],
+            ["Dan Example", 0.13],
+        ]);
+        expect(scores.some((score) => sameName(score.speaker, "Alice Example"))).toBe(false);
+        expect(total(scores)).toBeLessThanOrEqual(0.6);
+
+        // Turn timing (R17): Dan talks under his own label within 10 s of each line, so the voice is likely his.
+        const timed = evidenceRun({
+            transcript: [
+                transcript[0]!,
+                line("Dan Example", 5, "Já myslím, že jo.", 3),
+                transcript[1]!,
+                line("Dan Example", 15, "Přesně.", 3),
+            ],
+            speakers: [
+                { speakerId: 1, name: "Alice Example", origin: "platform" },
+                { speakerId: 3, name: "Dan Example", origin: "platform" },
+            ],
+            presence,
+            readings: [
+                { tSec: 2, speaking: ["Bob Example"] },
+                { tSec: 12, speaking: ["Bob Example"] },
+            ],
+        });
+        const top = scoresAt(timed, "Alice Example")[0];
+
+        expect(top).toMatchObject({
+            speaker: "Dan Example",
+            evidence: expect.arrayContaining([{ kind: "timing", rule: "R17", lines: 2 }]),
+        });
+    });
+
+    test("attendance alone: the people in the call share the rule's confidence evenly; the polish and the directory weigh in", () => {
+        const roster = rosterTallies({ fromSec: 0, toSec: 60, present: ["Bob Example", "Dan Example"] });
+        const even = scoreCandidates({
+            tallies: roster.tallies,
+            label: "Carol Example",
+            confidence: 0.95,
+            rules: ["RA"],
+        });
+
+        expect(even).toEqual([
+            { speaker: "Bob Example", confidence: 0.42, evidence: [{ kind: "roster", rule: "RA" }] },
+            { speaker: "Dan Example", confidence: 0.42, evidence: [{ kind: "roster", rule: "RA" }] },
+        ]);
+
+        // An agent's confirmed range (the polish) over half of it names Dan.
+        addPolish(roster, {
+            items: [
+                meetingItemSchema.parse({
+                    id: "i9",
+                    kind: "speaker-range",
+                    status: "confirmed",
+                    label: "Carol Example",
+                    fromSec: 30,
+                    toSec: 60,
+                    speaker: "Dan Example",
+                    rules: ["agent"],
+                    suggestedAt: "2026-11-02T15:00:00.000Z",
+                }),
+            ],
+            label: "Carol Example",
+            fromSec: 0,
+            toSec: 60,
+        });
+        const polished = scoreCandidates({
+            tallies: roster.tallies,
+            label: "Carol Example",
+            confidence: 0.95,
+            rules: ["RA"],
+        });
+
+        expect(polished[0]).toMatchObject({
+            speaker: "Dan Example",
+            evidence: expect.arrayContaining([{ kind: "polish", rule: "agent" }]),
+        });
+        expect(polished[0]!.confidence).toBeGreaterThan(polished[1]!.confidence);
+
+        // The people directory: two names of one person (a merge's alias) are one candidate.
+        const folded = new CandidateTallies({
+            samePerson: directoryMatcher([
+                { name: "Dan Example", email: "dan@example.com", aliases: ["Daniel Example"] },
+            ]),
+        });
+        folded.of("Dan Example").roster = 1;
+        folded.of("Daniel Example").roster = 1;
+
+        expect(folded.tallies.map((tally) => [tally.name, tally.directory])).toEqual([["Dan Example", true]]);
+    });
+
+    test("an answer that raises a range's speaker keeps the others' proportions in the room it leaves", () => {
+        const scores = [
+            { speaker: "Bob Example", confidence: 0.6, evidence: [] },
+            { speaker: "Dan Example", confidence: 0.2, evidence: [] },
+            { speaker: "Eve Example", confidence: 0.12, evidence: [] },
+        ];
+        const raised = anchorScores(scores, "Dan Example", 0.6, [{ kind: "answer", rule: "user" }]);
+
+        // The others had 0.8 left; now 0.4: half of each.
+        expect(raised.map((score) => [score.speaker, score.confidence])).toEqual([
+            ["Dan Example", 0.6],
+            ["Bob Example", 0.3],
+            ["Eve Example", 0.06],
+        ]);
+        expect(raised[0]!.evidence).toEqual([{ kind: "answer", rule: "user" }]);
     });
 });
 

@@ -39,6 +39,18 @@ import { arrivalItems } from "./arrival";
 import { contextFileText, contextMoment } from "./context-file";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
+import {
+    addPolish,
+    anchorScores,
+    type CandidateTallies,
+    lineTallies,
+    rosterTallies,
+    ruleEvidence,
+    type SamePerson,
+    type SpeakerScore,
+    scoreCandidates,
+    speakerScoresOf,
+} from "./speaker-scores";
 import { unlabeledStretches, unlabeledView } from "./unlabeled";
 
 const { log } = logger.scoped("meetings-suggest");
@@ -174,6 +186,11 @@ type OmitEach<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 /** An item before it has an id and a time. */
 type NewItem = OmitEach<MeetingItem, "id" | "suggestedAt">;
 
+/** A range's `evidence.candidateScores`, or nothing when no candidate has evidence. */
+function scoresEvidence(scores: SpeakerScore[]): { candidateScores?: SpeakerScore[] } {
+    return scores.length > 0 ? { candidateScores: scores } : {};
+}
+
 /** Turns the speaker hints into items. A hint without a time range (several people) gives none. */
 function speakerItems(options: {
     hints: SpeakerHint[];
@@ -183,15 +200,26 @@ function speakerItems(options: {
     /** Who named each label: a platform names the person, so attendance can tell whether they are still there. */
     originOf: Map<string, string | undefined>;
     presence: Presence[] | undefined;
+    samePerson?: SamePerson;
 }): NewItem[] {
     const { hints, selfName, lastSecOf } = options;
     const items: NewItem[] = [];
     // The platform may name the recording user by email; the record knows their name.
     const speakerName = (attendee: string) => (attendee === options.selfAttendee && selfName ? selfName : attendee);
+    const stays = options.presence?.map((stay) => (stay.self && selfName ? { ...stay, name: selfName } : stay));
+    const samePerson = options.samePerson;
+    const scored = (range: {
+        label: string;
+        speaker?: string;
+        confidence: number;
+        rules: string[];
+        tallies: CandidateTallies;
+    }) => scoresEvidence(scoreCandidates({ ...range, tallies: range.tallies.tallies, samePerson }));
 
     for (const hint of hints) {
         if (hint.kind === "absent-speaker") {
             for (const range of hint.ranges) {
+                const present = range.present?.map(speakerName);
                 items.push({
                     kind: "speaker-range",
                     status: "suggested",
@@ -206,7 +234,23 @@ function speakerItems(options: {
                           : {}),
                     confidence: CONFIDENCE.attendance,
                     rules: [MeetingRule.Attendance],
-                    evidence: { lines: range.lines, reason: `${hint.label} was not in the call` },
+                    evidence: {
+                        lines: range.lines,
+                        reason: `${hint.label} was not in the call`,
+                        ...scored({
+                            label: hint.label,
+                            ...(present?.length === 1 ? { speaker: present[0] } : {}),
+                            confidence: CONFIDENCE.attendance,
+                            rules: [MeetingRule.Attendance],
+                            tallies: rosterTallies({
+                                fromSec: range.fromSec,
+                                toSec: range.toSec,
+                                present,
+                                selfName,
+                                samePerson,
+                            }),
+                        }),
+                    },
                 });
             }
         } else if (hint.kind === "sole-attendee") {
@@ -222,7 +266,23 @@ function speakerItems(options: {
                     speaker,
                     confidence: CONFIDENCE.attendance,
                     rules: [MeetingRule.Attendance],
-                    evidence: { lines: range.lines, reason: `only ${hint.person} was in the call` },
+                    evidence: {
+                        lines: range.lines,
+                        reason: `only ${hint.person} was in the call`,
+                        ...scored({
+                            label: hint.label,
+                            speaker,
+                            confidence: CONFIDENCE.attendance,
+                            rules: [MeetingRule.Attendance],
+                            tallies: rosterTallies({
+                                fromSec: range.fromSec,
+                                toSec: range.toSec,
+                                present: [speaker],
+                                selfName,
+                                samePerson,
+                            }),
+                        }),
+                    },
                 });
             }
         } else if (hint.kind === "leave-then-continues") {
@@ -245,19 +305,21 @@ function speakerItems(options: {
                     return;
                 }
 
+                const confidence = Math.min(1, base + (hint.strength === "strong" ? CONFIDENCE.llmBonus : 0));
+                const rules = [
+                    MeetingRule.LeavePhrase,
+                    MeetingRule.ContinuesAfterLeave,
+                    ...(leave.confirmedBy ? [MeetingRule.FarewellAnswered] : []),
+                    ...(leave.echoOf ? [MeetingRule.EchoedFarewell] : []),
+                ];
                 items.push({
                     kind: "speaker-range",
                     status: "suggested",
                     label: hint.label,
                     fromSec: leave.continuesAtSec,
                     toSec: until,
-                    confidence: Math.min(1, base + (hint.strength === "strong" ? CONFIDENCE.llmBonus : 0)),
-                    rules: [
-                        MeetingRule.LeavePhrase,
-                        MeetingRule.ContinuesAfterLeave,
-                        ...(leave.confirmedBy ? [MeetingRule.FarewellAnswered] : []),
-                        ...(leave.echoOf ? [MeetingRule.EchoedFarewell] : []),
-                    ],
+                    confidence,
+                    rules,
                     evidence: {
                         leaveAt: leave.atSec,
                         said: leave.text,
@@ -265,6 +327,18 @@ function speakerItems(options: {
                         ...(answered ? {} : { intention: true }),
                         ...(leave.confirmedBy ? { answeredBy: leave.confirmedBy } : {}),
                         ...(leave.echoOf ? { notThisPerson: leave.echoOf.label } : {}),
+                        ...scored({
+                            label: hint.label,
+                            confidence,
+                            rules,
+                            tallies: rosterTallies({
+                                fromSec: leave.continuesAtSec,
+                                toSec: until,
+                                presence: stays,
+                                selfName,
+                                samePerson,
+                            }),
+                        }),
                     },
                 });
             });
@@ -1274,6 +1348,9 @@ function evidenceItems(options: {
     evidence: MeetingEvidence;
     presence?: Presence[];
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
+    /** The record's items: an agent's speaker ranges over the same lines score their speaker (the polish). */
+    items?: readonly MeetingItem[];
+    samePerson?: SamePerson;
 }): NewItem[] {
     const selfName = options.evidence.selfName;
 
@@ -1309,17 +1386,44 @@ function evidenceItems(options: {
               shares: number[];
               echoLines: number;
               endSec: number;
+              /** The range's lines and, per line, the platform labels talking within 10 s (R17). */
+              lines: LineEvidence[];
+              nearby: string[][];
           }
         | undefined;
     const close = () => {
         if (open) {
             const mean = open.shares.reduce((sum, share) => sum + share, 0) / open.shares.length;
-            open.item.confidence = Math.round(mean * 100) / 100;
+            const confidence = Math.round(mean * 100) / 100;
+            open.item.confidence = confidence;
+            const tallies = lineTallies({
+                lines: open.lines,
+                selfName,
+                nearby: open.nearby,
+                micHolds: micSure,
+                samePerson: options.samePerson,
+            });
+            addPolish(tallies, {
+                items: options.items ?? [],
+                label: open.item.label,
+                fromSec: open.item.fromSec,
+                toSec: open.endSec,
+            });
+            const candidateScores = scoreCandidates({
+                tallies: tallies.tallies,
+                lines: open.lines.length,
+                label: open.item.label,
+                speaker: open.item.speaker,
+                confidence,
+                rules: open.item.rules,
+                samePerson: options.samePerson,
+            });
             open.item.evidence = {
                 ...open.item.evidence,
                 lines: open.shares.length,
                 endSec: open.endSec,
                 ...(open.echoLines > 0 ? { echoLines: open.echoLines } : {}),
+                ...(candidateScores.length > 0 ? { candidateScores } : {}),
             };
             items.push(open.item);
             open = undefined;
@@ -1395,12 +1499,13 @@ function evidenceItems(options: {
                 continue;
             }
 
+            const nearby = nearbyLabels(line);
             const found = findingFor({
                 line,
                 selfName,
                 isSelfLabel,
                 platformLabel: platformLabels.has(label),
-                ownLabelNearby: nearbyLabels(line),
+                ownLabelNearby: nearby,
             });
             const finding = localVoiceFinding({
                 line,
@@ -1424,6 +1529,8 @@ function evidenceItems(options: {
                 open.endSec = Math.max(open.endSec, line.endSec);
                 open.shares.push(finding.confidence);
                 open.echoLines += finding.echo ? 1 : 0;
+                open.lines.push(line);
+                open.nearby.push(nearby);
                 continue;
             }
 
@@ -1433,6 +1540,8 @@ function evidenceItems(options: {
                 shares: [finding.confidence],
                 echoLines: finding.echo ? 1 : 0,
                 endSec: line.endSec,
+                lines: [line],
+                nearby: [nearby],
                 item: {
                     kind: "speaker-range",
                     status: "suggested",
@@ -1499,11 +1608,20 @@ function agreeing(first: NewItem, second: NewItem): NewItem {
         a === undefined || b === undefined
             ? (a ?? b)
             : Math.min(AGREEING_MAX, Math.round((1 - (1 - a) * (1 - b)) * 100) / 100);
+    const evidence = { ...second.evidence, ...first.evidence };
+    const scores =
+        first.kind === "speaker-range" && first.speaker ? speakerScoresOf({ kind: first.kind, evidence }) : [];
     return {
         ...first,
         rules: [...new Set([...first.rules, ...second.rules])],
         ...(confidence === undefined ? {} : { confidence }),
-        evidence: { ...second.evidence, ...first.evidence },
+        evidence:
+            scores.length > 0 && confidence !== undefined && first.kind === "speaker-range" && first.speaker
+                ? {
+                      ...evidence,
+                      candidateScores: anchorScores(scores, first.speaker, confidence, ruleEvidence(second.rules)),
+                  }
+                : evidence,
     };
 }
 
@@ -1535,6 +1653,8 @@ export function suggestItems(options: {
     sourceLabels?: { readAloudLabel: string; lineLabel: string };
     /** `global.suggest.restatedIdentifiers` (default `skip`). */
     restatedIdentifiers?: "skip" | "mark";
+    /** One person under two names (the people directory): a speaker range scores them as one candidate. */
+    samePerson?: SamePerson;
     now: string;
 }): MeetingItem[] {
     const { record } = options;
@@ -1559,6 +1679,7 @@ export function suggestItems(options: {
                 lastSecOf,
                 originOf: new Map(stats.speakers.map((stat) => [stat.label, stat.origin])),
                 presence: options.presence,
+                samePerson: options.samePerson,
             })
         );
     }
@@ -1570,6 +1691,8 @@ export function suggestItems(options: {
                 evidence: options.evidence,
                 presence: options.presence,
                 energyMicShare: options.energyMicShare,
+                items: record.items,
+                samePerson: options.samePerson,
             }),
             ...arrivalItems({
                 entries: meeting.transcript,
