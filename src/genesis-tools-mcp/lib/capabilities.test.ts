@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { filterRegistryByCapabilities } from "./server";
-import { entryFromMcpTool, toolCallResult } from "./tool-entry";
+import { entryFromMcpTool, toolCallResult } from "@genesiscz/utils/mcp/tool-entry";
+import type { ToolGroupRow } from "@genesiscz/utils/mcp/tool-group";
+import { TOOL_GROUPS } from "./groups";
+import { closeLoadedGroups, enabledToolGroups, filterRegistryByCapabilities, loadToolGroup } from "./server";
 
 /**
  * The capability filter is a separation boundary, not a convenience: `question_ask` is the
@@ -184,5 +187,68 @@ describe("the usage capability", () => {
             "usage_limits",
             "usage_series",
         ]);
+    });
+});
+
+describe("the tool group table", () => {
+    test.each(TOOL_GROUPS.map((row) => [row.id, row] as const))("%s is reachable by its capability", (id, row) => {
+        const names = registry(`${row.prefix}one`, `${row.prefix}two`, "question_answer", "handoff_post");
+
+        expect(Object.keys(filterRegistryByCapabilities(names, [id])).sort()).toEqual([
+            `${row.prefix}one`,
+            `${row.prefix}two`,
+        ]);
+        expect(enabledToolGroups(TOOL_GROUPS, [id]).map((enabled) => enabled.id)).toEqual([id]);
+    });
+
+    test("an opt-in group is mounted only when the list names it, never for an unset list", () => {
+        const optIn = TOOL_GROUPS.filter((row) => row.optIn).map((row) => row.id);
+        const unset = enabledToolGroups(TOOL_GROUPS, undefined).map((row) => row.id);
+
+        expect(optIn.sort()).toEqual(["alza", "waze"]);
+        expect(unset.sort()).toEqual(["control", "fetch", "jev", "usage"]);
+        expect(enabledToolGroups(TOOL_GROUPS, ["question_answer", "jev"]).map((row) => row.id)).toEqual(["jev"]);
+    });
+
+    test("a group loads once, and close calls every loaded group's close, even after one fails", async () => {
+        const calls: string[] = [];
+        const fake = (id: string, close?: () => Promise<void>): ToolGroupRow => ({
+            id: `test_${id}`,
+            prefix: `test_${id}_`,
+            optIn: false,
+            load: async () => {
+                calls.push(`load ${id}`);
+                return { entries: {}, close };
+            },
+        });
+        const failing = fake("failing", async () => {
+            calls.push("close failing");
+            throw new Error("would not close");
+        });
+        const closing = fake("closing", async () => {
+            calls.push("close closing");
+        });
+        const silent = fake("silent");
+
+        await loadToolGroup(failing);
+        await loadToolGroup(failing);
+        await loadToolGroup(closing);
+        await loadToolGroup(silent);
+        await closeLoadedGroups();
+
+        expect(calls).toEqual(["load failing", "load closing", "load silent", "close failing", "close closing"]);
+
+        // A closed group is forgotten, so the next request loads it again.
+        await loadToolGroup(closing);
+        expect(calls.at(-1)).toBe("load closing");
+        await closeLoadedGroups();
+    });
+
+    test("every group id has a line in the README capability list", async () => {
+        const readme = await Bun.file(join(import.meta.dir, "..", "README.md")).text();
+
+        for (const row of TOOL_GROUPS) {
+            expect(readme).toMatch(new RegExp(`^- \`${row.id}\``, "m"));
+        }
     });
 });
