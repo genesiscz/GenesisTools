@@ -349,6 +349,16 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(ItemsTab.waitingWords(open: 0), "Nothing waits for you in this meeting")
     }
 
+    /// A Screen row lists what changed in the frame before its menu bar, which the OCR reads first.
+    func testAScreenRowListsTheMenuBarLast() {
+        func box(_ text: String, y: Double) -> OcrBox { OcrBox(x: 10, y: y, width: 80, height: 20, text: text, confidence: 1) }
+        let lines = [box("Messages", y: 4), box("Edit", y: 4), box("Ship the DTO on Friday", y: 400), box("Window", y: 6),
+                     box("Reply", y: 900)]
+        XCTAssertEqual(FrameRow.listed(lines, frameHeight: 1200).map(\.text), ["Ship the DTO on Friday", "Reply", "Messages", "Edit", "Window"])
+        let menuOnly = [box("Messages", y: 4), box("Edit", y: 4)]
+        XCTAssertEqual(FrameRow.listed(menuOnly, frameHeight: 1200), menuOnly, "a frame whose new text is all menu words lists it as read")
+    }
+
     /// The list keeps a row it selects after a Skip or an answer clear of the notice that the Skip left at its edge.
     func testTheListKeepsRoomForTheNoticesAtItsEdge() {
         XCTAssertEqual(ItemsTab.noticeRoom(count: 0, limit: nil), 0, "no notice, no room: the list ends at the window's edge")
