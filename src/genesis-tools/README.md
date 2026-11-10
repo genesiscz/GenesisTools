@@ -61,7 +61,7 @@ The filters of `failures`, `stats` and `usage`:
 | `--since <when>`    | records from this point on (default `24h`)                     |
 | `--until <when>`    | records up to this point (default now)                         |
 | `--tool <names...>` | these tools                                                    |
-| `--kind <kinds...>` | these kinds: `usage`, `error`, `crash`, `exit`, `interrupt`    |
+| `--kind <kinds...>` | `usage`, `error`, `crash`, `exit`, `interrupt`, `deadline`     |
 | `--command <text>`  | a command path that contains the text (`usage sessions`)       |
 | `--agent <agent>`   | `claude-code`, `codex`, `grok`, `copilot`, `unknown` (a shell) |
 | `--model <text>`    | a model that contains the text, any case (`sonnet`, `gpt-6`)   |

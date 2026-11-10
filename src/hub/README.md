@@ -28,7 +28,7 @@ tools hub [open] [flags]          # open the hub window (open is the default com
 tools hub status [--json]         # exit 0 when GenesisTools.app with the review window is installed, else 1
 tools hub nav open|list|configure # the navigation history (see "History" below)
 tools hub link <commit> [--repo]  # print the hub link for a commit or a range
-tools hub dev monitor             # stream the app's hangs, stalls, frame drops and crashes while you change it
+tools hub dev monitor             # stream the app's hangs, stalls, frame drops, crashes and command deadlines
 ```
 
 #### Open the hub at a place
@@ -502,6 +502,12 @@ adds its migrations to `src/hub/lib/data-db.ts` instead of opening another SQLit
   (`--min-profile-ms`). It reads the files every 500 ms (`--interval-ms`) and prints at most one batch per 10 s
   (`--min-delay-ms`). `--from-start` replays what the logs already hold, then follows them, and `--json` prints one
   object per event.
+- The monitor also reads the failures log of the day: a `deadline` record (a command a tool ran through `Executor`
+  that outlived its bound) is an event with the command that shows it (`tools genesis-tools logs show <id>`); no
+  other failure kind is. At start it prints one summary of what happened since a monitor last ran (the last 24 h on
+  a first run): command deadlines, failed tool runs, hang captures and crash reports, each with the command or
+  folder that lists them. `--no-summary` turns it off; with `--json` it is one `{ kind: "summary" }` object. The
+  time of the last run is in `~/.genesis-tools/hub/dev-monitor-state.json`.
 - Most commands take `--json`. `pr list`, `pr show`, `pr projects` and `repo` always print JSON. Commands that
   cache take `--max-cache-age <seconds>` (default: always fetch fresh); `--fresh` and `--no-cache` stay for old
   callers.
