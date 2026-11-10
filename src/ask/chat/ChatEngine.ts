@@ -110,7 +110,10 @@ export class ChatEngine {
             providerType: this.config.providerType,
             systemPromptPrefix: this.config.providerChoice?.provider.systemPromptPrefix,
             label: `${this.config.provider}/${this.config.modelName}`,
-            accountId: this.config.providerChoice?.provider.account?.name ?? this.config.provider,
+            accountId:
+                this.config.providerChoice?.provider.account?.id ??
+                this.config.providerChoice?.provider.account?.name ??
+                this.config.provider,
             provider: this.config.providerType ?? this.config.provider,
             modelId: this.config.modelName,
             app: "ask",

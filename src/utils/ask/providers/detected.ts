@@ -115,7 +115,8 @@ export async function toModelInfoFor(model: ResolvedModel, providerName: string)
 export interface ToDetectedProviderOptions {
     binding: ProviderBinding;
     pluginId: string;
-    account?: { name: string; label?: string };
+    /** `id` is the immutable account id: the usage row records it, never the renameable name. */
+    account?: { id: string; name: string; label?: string };
     models: ModelInfo[];
     /** How the credential was found ("env (OPENAI_API_KEY)", "vault", …). Never the value. */
     credentialSource?: string;
@@ -152,6 +153,7 @@ export async function toProviderChoice(resolved: ResolvedBinding): Promise<Provi
             binding: resolved.binding,
             pluginId,
             account: {
+                id: resolved.account.id,
                 name: resolved.account.name,
                 ...(resolved.account.label ? { label: resolved.account.label } : {}),
             },
