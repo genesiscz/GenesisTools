@@ -1,5 +1,4 @@
 import { basename } from "node:path";
-import * as p from "@clack/prompts";
 import { CmuxDidNotAnswerError, type RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { readCmuxTerminal } from "@genesiscz/utils/cmux/caller-enricher";
@@ -11,6 +10,7 @@ import { readProcessRow } from "@genesiscz/utils/process/libproc-table";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { profiler } from "@genesiscz/utils/profile";
 import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
+import * as p from "@genesiscz/utils/prompts/p";
 import {
     buildResumeTableOpts,
     printAmbiguousSessions,

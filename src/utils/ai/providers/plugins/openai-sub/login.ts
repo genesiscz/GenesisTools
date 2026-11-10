@@ -1,7 +1,7 @@
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
-import * as p from "@clack/prompts";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import { callbackStateError, readCallbackCode } from "../../../oauth/callback-code";
 import { type StartCallbackListener, startCallbackListener } from "../../../oauth/callback-server";

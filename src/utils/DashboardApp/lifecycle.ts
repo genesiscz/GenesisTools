@@ -7,7 +7,6 @@
  * functions; the imperative `DashboardApp` API on `types.ts` does the same.
  */
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import * as p from "@clack/prompts";
 import { Browser } from "@genesiscz/utils/browser";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { formatDuration } from "@genesiscz/utils/format";
@@ -30,6 +29,7 @@ import {
 } from "@genesiscz/utils/process/launchd-agent";
 import { spawnDashboard } from "@genesiscz/utils/process/spawnDashboard";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import * as p from "@genesiscz/utils/prompts/p";
 import { stripAnsi } from "@genesiscz/utils/string";
 import pc from "picocolors";
 import {
@@ -963,6 +963,7 @@ async function ensureDashboardRunningForOpen(ctx: LifecycleContext, port: number
     const shouldStart = await p.confirm({
         message: `${config.name ?? config.key} is not running on port ${port}. Start it now?`,
         initialValue: true,
+        cancel: "back",
     });
 
     if (p.isCancel(shouldStart) || !shouldStart) {

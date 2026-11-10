@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli/executor";
 import { logger } from "@genesiscz/utils/logger";
 import { searchSelect, searchSelectCancelSymbol } from "@genesiscz/utils/prompts/clack";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { byProvider, type CatalogEntry, catalogKeysFor, providerNameFor } from "../catalog";
 import { discoverModels } from "../catalog/discover";
@@ -208,6 +208,7 @@ async function pickInteractively(store?: ResolveOptions["store"]): Promise<Model
                 label: pc.cyan(target.accountName),
                 hint: target.subscription ? `${target.provider} · subscription` : target.provider,
             })),
+            cancel: "back",
         });
 
         if (p.isCancel(chosen)) {
