@@ -73,6 +73,8 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         case roomy
         /// Over a given width that `roomy` does not fit: one text size down, 5 pt on each side.
         case compact
+        /// The same text with 3 pt on each side: the last step that keeps every title whole.
+        case tight
         /// The last step: equal segments, the titles scale down to 85 % and then cut.
         case scaled
 
@@ -83,6 +85,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
             case .natural: size.padding
             case .roomy: 8
             case .compact: 5
+            case .tight: 3
             case .scaled: 4
             }
         }
@@ -102,6 +105,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
             ViewThatFits(in: .horizontal) {
                 strip(.roomy)
                 strip(.compact)
+                strip(.tight)
                 strip(.scaled)
             }
         } else {
@@ -175,7 +179,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         let surface = layer == .thumb
             ? look.surface(.thumb, hue: item.hue, scheme: scheme, selected: true)
             : look.surface(.segment, hue: item.hue, scheme: scheme)
-        let step: CGFloat = fit == .compact ? 1 : 0
+        let step: CGFloat = fit == .compact || fit == .tight ? 1 : 0
         return HStack(spacing: 5) {
             if let symbol = item.symbol {
                 Image(systemName: symbol)
@@ -186,7 +190,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
                 .font(.system(size: size.font - step, weight: item.id == selection ? .semibold : .medium))
                 .lineLimit(1)
                 .minimumScaleFactor(fit == .scaled ? 0.85 : 1)
-                .fixedSize(horizontal: fit == .roomy || fit == .compact, vertical: false)
+                .fixedSize(horizontal: fit == .roomy || fit == .compact || fit == .tight, vertical: false)
                 .foregroundStyle(layer == .sizing ? Color.clear : surface.label)
             if let count = item.count {
                 countPill(count, item, layer)
