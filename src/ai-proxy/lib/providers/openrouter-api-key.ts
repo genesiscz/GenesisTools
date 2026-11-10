@@ -1,6 +1,7 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { assertApiKeySourceAllowed, resolveAccountApiKey } from "@app/ai-proxy/lib/providers/api-key-guard";
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
+import { OPENROUTER_API_BASE_URL } from "@app/ai-proxy/lib/providers/endpoints";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { mapOpenRouterReasoningEffort } from "@app/ai-proxy/lib/reasoning-effort-vocab";
@@ -11,8 +12,6 @@ import { logger } from "@genesiscz/utils/logger";
 import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 import { isObject } from "@genesiscz/utils/object";
 import { matchGlob } from "@genesiscz/utils/string";
-
-export const OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1";
 
 const APP_NAME = "GenesisTools";
 const APP_URL = "https://github.com/genesiscz/GenesisTools";

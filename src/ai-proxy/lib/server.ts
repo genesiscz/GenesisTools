@@ -11,12 +11,8 @@ import {
 } from "@app/ai-proxy/lib/clients";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
-import {
-    acquireProvider,
-    buildProviderMap,
-    configureModelFacts,
-    providerUnavailableResponse,
-} from "@app/ai-proxy/lib/providers/registry";
+import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/pool";
+import { configureModelFacts } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";

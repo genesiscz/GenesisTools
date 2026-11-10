@@ -1,4 +1,5 @@
-import { accountConfigFingerprint, resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/account-config";
+import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
+import { resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/providers/account-paths";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";

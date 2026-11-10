@@ -2,7 +2,7 @@ import { resolveProxyRoute } from "@app/ai-proxy/lib/account-model-ref";
 import type { ResolvedClient } from "@app/ai-proxy/lib/clients";
 import { resolveClient, routeDenial } from "@app/ai-proxy/lib/clients";
 import { jsonError } from "@app/ai-proxy/lib/http-error";
-import { acquireProvider, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
+import { acquireProvider, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/pool";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { AiProxyConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { checkClientQuota } from "@app/ai-proxy/lib/usage/client-ledger";
