@@ -66,6 +66,9 @@ struct MeetingsRootView: View {
                 }
             }
             .heightFromWindow()
+            // The list that takes the title out of the toolbar is not in this layout, so the meeting's header title
+            // stood in the toolbar again, cut to "Backend DTO Desi…" over the sidebar.
+            .modifier(NoToolbarTitle())
             .toolbar { SidePanelToolbar(model: model) }
         }
     }
