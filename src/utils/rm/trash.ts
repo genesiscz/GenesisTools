@@ -12,6 +12,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { createStopwatch, formatCount } from "@genesiscz/utils/format";
 import { walkFiles } from "@genesiscz/utils/fs/disk-usage";
@@ -21,6 +22,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { isProcessAliveSince } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { testProcessReason } from "@genesiscz/utils/test-process";
 import { isTrashRootName, loadRmConfig, type RmConfig, rmDataDir } from "./config";
 import { appendRmLedger } from "./ledger";
 import {
@@ -297,6 +299,13 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
     const planned: Array<{ request: MoveRequest; item: TrashItem }> = [];
 
     for (const [index, request] of requests.entries()) {
+        const inTest = testProcessRefusal(request.target);
+
+        if (inTest) {
+            refuseInTestProcess({ request, reason: inTest, options });
+            continue;
+        }
+
         let root: string;
 
         try {
@@ -567,6 +576,35 @@ function refuseUnavailable({ request, reason, options }: MoveRefusal): void {
         action: "refuse",
         path: request.original ?? request.target.path,
         rule: "trash-unavailable",
+        reason,
+        caller: options.caller,
+    });
+    options.onRefused(request, reason);
+}
+
+/**
+ * In a test process (the dual-signal detection the keychain guard uses) a move takes only a path inside the test's own
+ * temp folder: any other path is the user's real data, and a child process a test spawns reaches here outside the
+ * preload. Null when the process is no test or the path is a fixture.
+ */
+function testProcessRefusal(target: RmTarget): string | null {
+    const why = testProcessReason();
+
+    if (!why || isInside(target.canonical, realOrSelf(tmpdir()))) {
+        return null;
+    }
+
+    return `the rm trash refuses a path outside the test temp folder in a test process (${why}): build the fixture under os.tmpdir()`;
+}
+
+function refuseInTestProcess({ request, reason, options }: MoveRefusal): void {
+    if (!options.onRefused) {
+        throw new Error(`${request.target.path}: ${reason}`);
+    }
+    appendRmLedger({
+        action: "refuse",
+        path: request.original ?? request.target.path,
+        rule: "test-process",
         reason,
         caller: options.caller,
     });
