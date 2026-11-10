@@ -16,10 +16,30 @@ export interface WebLogFile {
     text: string;
 }
 
+export type WebLogRootState = "missing" | "unreadable" | "readable";
+
+/**
+ * Whether the log folder exists and can be listed. Without Full Disk Access, macOS privacy makes an existing folder
+ * unreadable, and that must not read as "no log". Read-only.
+ */
+export function webLogRootState(root: string): WebLogRootState {
+    if (!existsSync(root)) {
+        return "missing";
+    }
+
+    try {
+        readdirSync(root);
+        return "readable";
+    } catch (err) {
+        log.debug({ err, root }, "[ms-teams] the web-client log directory exists but cannot be listed");
+        return "unreadable";
+    }
+}
+
 /**
  * Every file of the Teams web-client log under the WebView file system, read one at a time. Read-only. Teams
- * rotates these files within one to two hours, so a reader sees only the recent past. A file that vanished or
- * cannot be read is skipped.
+ * rotates these files within one to two hours, so a reader sees only the recent past. A file or folder that vanished
+ * or cannot be read is skipped; this never throws.
  */
 export function* readWebLogFiles(root: string): Generator<WebLogFile> {
     if (!existsSync(root)) {
@@ -59,8 +79,17 @@ export function parseWebLogFile(text: string): WebLogLine[] {
 
 function listWebLogFiles(dir: string): string[] {
     const out: string[] = [];
+    let names: string[];
 
-    for (const name of readdirSync(dir)) {
+    try {
+        names = readdirSync(dir);
+    } catch (err) {
+        // A folder that rotation removed mid-read, or one macOS privacy hides, is skipped, never fatal.
+        log.debug({ err, dir }, "[ms-teams] skipped a web-client log directory that cannot be listed");
+        return out;
+    }
+
+    for (const name of names) {
         const path = join(dir, name);
         let isDir: boolean;
 

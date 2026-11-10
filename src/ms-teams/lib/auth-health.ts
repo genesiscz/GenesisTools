@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import { parseWebLogFile, readWebLogFiles, type WebLogLine } from "./web-log";
+import { parseWebLogFile, readWebLogFiles, type WebLogLine, webLogRootState } from "./web-log";
 
 const log = logger.scoped("ms-teams").log;
 
@@ -48,8 +48,10 @@ export interface ResourceHealth {
     failures: number;
     lastSuccessAt: number | null;
     lastFailureAt: number | null;
-    /** Error codes of the failures: `invalid_grant`, `token_expired`, `InteractionRequired`, `AADSTS…`. */
+    /** Error codes of every failure: `invalid_grant`, `token_expired`, `InteractionRequired`, `AADSTS…`. */
     errors: string[];
+    /** Error codes of the newest failure only. `needsSignIn` reads these, never the union in `errors`. */
+    lastFailureErrors: string[];
     /** The newest renew failed with a sign-in error and nothing renewed after it. */
     needsSignIn: boolean;
     chatCritical: boolean;
@@ -62,7 +64,20 @@ export interface GraphQlFailure {
     lastAt: number;
 }
 
-export type AuthVerdict = "healthy" | "needs-sign-in" | "chat-errors" | "other-sign-in" | "no-log";
+/**
+ * `healthy` needs evidence: at least one chat token renewed and none of them failed last. A log without a completed
+ * chat-token renew is `no-evidence`, and a chat token whose newest renew failed without a sign-in code is
+ * `renew-errors`. `unreadable` is a log folder that exists but cannot be listed (Full Disk Access).
+ */
+export type AuthVerdict =
+    | "healthy"
+    | "needs-sign-in"
+    | "renew-errors"
+    | "no-evidence"
+    | "chat-errors"
+    | "other-sign-in"
+    | "no-log"
+    | "unreadable";
 
 export interface TeamsAuthHealth {
     files: number;
@@ -93,6 +108,11 @@ interface RenewAttempt {
 export function readAuthHealth(root: string): TeamsAuthHealth {
     const lines: WebLogLine[] = [];
     let files = 0;
+
+    if (webLogRootState(root) === "unreadable") {
+        log.debug({ root }, "[ms-teams] the web-client log cannot be listed, so its auth health is unknown");
+        return { ...collectAuthHealth([]), files, verdict: "unreadable" };
+    }
 
     for (const { path, text } of readWebLogFiles(root)) {
         if (!text.includes("[Telemetry]") && !text.includes("GraphQL resolver") && !text.includes("REDUCED_CAPAB")) {
@@ -241,6 +261,7 @@ function summarizeResources(attempts: RenewAttempt[]): ResourceHealth[] {
             lastSuccessAt: null,
             lastFailureAt: null,
             errors: [],
+            lastFailureErrors: [],
             needsSignIn: false,
             chatCritical: CHAT_RESOURCES.has(attempt.resource),
         };
@@ -250,6 +271,12 @@ function summarizeResources(attempts: RenewAttempt[]): ResourceHealth[] {
             row.lastSuccessAt = Math.max(row.lastSuccessAt ?? 0, attempt.at);
         } else {
             row.failures++;
+
+            // Attempts arrive in the order their first line was logged, not by end time, so compare the times.
+            if (row.lastFailureAt === null || attempt.at >= row.lastFailureAt) {
+                row.lastFailureErrors = attempt.errors;
+            }
+
             row.lastFailureAt = Math.max(row.lastFailureAt ?? 0, attempt.at);
             row.errors = [...new Set([...row.errors, ...attempt.errors])];
         }
@@ -258,8 +285,7 @@ function summarizeResources(attempts: RenewAttempt[]): ResourceHealth[] {
     }
 
     for (const row of byResource.values()) {
-        const failedLast = row.lastFailureAt !== null && row.lastFailureAt > (row.lastSuccessAt ?? 0);
-        row.needsSignIn = failedLast && row.errors.some((code) => SIGN_IN_ERRORS.has(code));
+        row.needsSignIn = newestRenewFailed(row) && row.lastFailureErrors.some((code) => SIGN_IN_ERRORS.has(code));
     }
 
     return [...byResource.values()].sort(
@@ -269,6 +295,11 @@ function summarizeResources(attempts: RenewAttempt[]): ResourceHealth[] {
             b.failures - a.failures ||
             a.resource.localeCompare(b.resource)
     );
+}
+
+/** The newest completed renew of this resource failed, and nothing renewed after it. */
+export function newestRenewFailed(row: Pick<ResourceHealth, "lastFailureAt" | "lastSuccessAt">): boolean {
+    return row.lastFailureAt !== null && row.lastFailureAt > (row.lastSuccessAt ?? 0);
 }
 
 function judge(input: {
@@ -282,8 +313,19 @@ function judge(input: {
         return "no-log";
     }
 
-    if (input.resources.some((r) => r.needsSignIn && r.chatCritical)) {
+    const chat = input.resources.filter((r) => r.chatCritical);
+
+    if (chat.some((r) => r.needsSignIn)) {
         return "needs-sign-in";
+    }
+
+    if (chat.some(newestRenewFailed)) {
+        return "renew-errors";
+    }
+
+    // The verdicts below say the chat tokens renew, so they need a completed chat-token renew to stand on.
+    if (chat.length === 0) {
+        return "no-evidence";
     }
 
     const windowEnd = input.windowEnd;

@@ -93,7 +93,7 @@ and a few more).
 ### `media upload`: images and videos for a PR or an issue
 
 ```bash
-tools github media upload shot.png demo.mp4 --repo owner/repo            # prints one markdown line per file
+tools github media upload shot.png demo.mp4 --repo owner/repo            # prints the markdown, a blank line between files
 tools github media upload "shot.png#Login page" --repo owner/repo        # alt text after the first #
 tools github media upload shot.png --repo owner/repo --dry-run           # repo id, write access, a verdict per file
 tools github media upload shot.png --repo owner/repo --pr 42 --append    # also add the lines to the PR body
@@ -112,9 +112,12 @@ because GitHub plays it inline only when the URL stands alone in its paragraph.
 - **An upload cannot be undone.** The asset stays on GitHub even when nothing uses it. `--dry-run` uploads nothing: it
   prints the repo id, whether you can push, and the type, size and verdict of each file.
 - `--pr <n>` or `--issue <n>` labels the output. With `--append` the command also writes the lines into that body
-  (a blank line, then each line separated by a blank line). Without `--append` the body stays as it is.
+  (a blank line, then each line separated by a blank line). It reads that body before the first upload, so a wrong
+  number fails before anything is uploaded. Without `--append` the body stays as it is.
 - Errors: 404 means no write access, 422 means GitHub refused the file (its message is printed), 429 means rate
   limited (the `Retry-After` seconds are printed). GitHub Enterprise Server is not supported.
+- When a later file or the `--append` write fails, the command still prints the markdown (or the `--json` rows) of
+  the files it already uploaded, then the error, and exits 1. Retry only the files that are not printed.
 - Observed 2026-11-09: a fresh asset answers 404 to a request without a token and 302 (to a signed S3 URL) with one,
   until something references it. Check the rendered PR or comment, not a logged-out `curl`.
 

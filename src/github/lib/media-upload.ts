@@ -169,6 +169,29 @@ export class MediaUploadError extends Error {
     }
 }
 
+/**
+ * A later upload or the body write failed after some files were already uploaded. Those uploads cannot be undone,
+ * so their URLs ride on the error: the command prints them, and a retry need not upload them again.
+ */
+export class MediaUploadPartialError extends Error {
+    constructor(
+        message: string,
+        readonly uploaded: UploadedFile[],
+        options: { cause: unknown }
+    ) {
+        super(message, options);
+        this.name = "MediaUploadPartialError";
+    }
+}
+
+/** The markdown of several files, a blank line between them: a video URL plays inline only alone in its paragraph. */
+export function joinMarkdown(files: Array<Pick<UploadedFile, "markdown">>): string {
+    return files
+        .map((file) => file.markdown)
+        .filter((markdown): markdown is string => markdown !== null)
+        .join("\n\n");
+}
+
 function responseDetail(text: string): string {
     const trimmed = text.trim();
     if (trimmed === "") {
@@ -422,28 +445,56 @@ export async function uploadMedia(input: MediaUploadInput, deps: MediaUploadDeps
 
     const doFetch = deps.fetch ?? fetch;
     const token = deps.token();
-    const uploaded: UploadedFile[] = [];
+    const ref = input.append && input.target ? { owner, repo: name, number: input.target.number } : null;
 
-    for (const file of planned) {
-        const url = await uploadMediaFile({ file, repoId: repo.id, repo: input.repo, token, fetch: doFetch, files });
-        uploaded.push({
-            file: file.path,
-            url,
-            kind: file.kind,
-            bytes: file.bytes,
-            contentType: file.contentType,
-            markdown: markdownFor(file, url),
-        });
+    if (ref) {
+        // A wrong --pr or --issue fails on this read, before any upload that cannot be undone.
+        await deps.api.getBody(ref);
     }
 
+    const uploaded: UploadedFile[] = [];
     let appended = false;
-    if (input.append && input.target) {
-        const ref = { owner, repo: name, number: input.target.number };
-        const current = await deps.api.getBody(ref);
-        const lines = uploaded.map((file) => file.markdown).join("\n\n");
-        const body = current.trim() === "" ? lines : `${current.replace(/\s+$/, "")}\n\n${lines}`;
-        await deps.api.setBody({ ...ref, body });
-        appended = true;
+
+    try {
+        for (const file of planned) {
+            const url = await uploadMediaFile({
+                file,
+                repoId: repo.id,
+                repo: input.repo,
+                token,
+                fetch: doFetch,
+                files,
+            });
+            uploaded.push({
+                file: file.path,
+                url,
+                kind: file.kind,
+                bytes: file.bytes,
+                contentType: file.contentType,
+                markdown: markdownFor(file, url),
+            });
+        }
+
+        if (ref) {
+            // Read the body again right before the write, so an edit made during the uploads is kept.
+            const current = await deps.api.getBody(ref);
+            const lines = joinMarkdown(uploaded);
+            const body = current.trim() === "" ? lines : `${current.replace(/\s+$/, "")}\n\n${lines}`;
+            await deps.api.setBody({ ...ref, body });
+            appended = true;
+        }
+    } catch (error) {
+        if (uploaded.length === 0) {
+            throw error;
+        }
+
+        const reason = error instanceof Error ? error.message : String(error);
+        const step =
+            uploaded.length === planned.length
+                ? `Uploaded all ${planned.length} file(s), then writing the body failed`
+                : `Uploaded ${uploaded.length} of ${planned.length} file(s), then the next one failed`;
+        logger.debug({ uploaded: uploaded.length, planned: planned.length }, "github media upload: partial failure");
+        throw new MediaUploadPartialError(`${step}: ${reason}`, uploaded, { cause: error });
     }
 
     return { ...base, dryRun: false, appended, files: uploaded };

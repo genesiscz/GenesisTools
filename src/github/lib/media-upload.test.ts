@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
     type FileAccess,
     IMAGE_LIMIT_BYTES,
+    joinMarkdown,
     type MediaRepoApi,
+    MediaUploadPartialError,
     parseMediaArg,
     uploadMedia,
 } from "@app/github/lib/media-upload";
@@ -45,6 +47,19 @@ function api(options: { canPush?: boolean; body?: string } = {}) {
         },
     };
     return { mediaApi, written };
+}
+
+/** The error an upload run rejected with, which must carry the files already uploaded. */
+async function partialError(run: Promise<unknown>): Promise<MediaUploadPartialError> {
+    const caught = await run.then(
+        () => null,
+        (error: unknown) => error
+    );
+    if (!(caught instanceof MediaUploadPartialError)) {
+        throw new Error(`expected a MediaUploadPartialError, got ${String(caught)}`);
+    }
+
+    return caught;
 }
 
 const ok = (id: string) =>
@@ -225,5 +240,98 @@ describe("tools github media upload", () => {
         );
         expect(plain).toMatchObject({ appended: false, target: { kind: "issue", number: 9 } });
         expect(labelled.written).toHaveLength(0);
+    });
+
+    test("a failed second upload keeps the first file's URL on the error", async () => {
+        const { mediaApi } = api();
+        const partial = await partialError(
+            uploadMedia(
+                { repo: "shop/storefront", files: [{ path: "/s/a.png" }, { path: "/s/b.png" }] },
+                {
+                    api: mediaApi,
+                    token: () => "t",
+                    files: files({ "/s/a.png": 5, "/s/b.png": 5 }),
+                    fetch: fakeFetch(
+                        [ok("a"), new Response("{}", { status: 429, headers: { "Retry-After": "37" } })],
+                        []
+                    ),
+                }
+            )
+        );
+
+        expect(partial.message).toBe(
+            "Uploaded 1 of 2 file(s), then the next one failed: GitHub rate limited the upload of b.png. Retry after 37 seconds."
+        );
+        expect(partial.uploaded.map((file) => file.markdown)).toEqual([
+            "![a](https://github.com/user-attachments/assets/a)",
+        ]);
+    });
+
+    test("a failed --append write after the uploads keeps every URL on the error", async () => {
+        const mediaApi: MediaRepoApi = {
+            getRepo: async () => ({ id: 1, canPush: true }),
+            getBody: async () => "Body.",
+            setBody: async () => {
+                throw new Error("Validation Failed");
+            },
+        };
+        const partial = await partialError(
+            uploadMedia(
+                {
+                    repo: "shop/storefront",
+                    files: [{ path: "/s/a.png" }, { path: "/s/v.mp4" }],
+                    target: { kind: "pr", number: 7 },
+                    append: true,
+                },
+                {
+                    api: mediaApi,
+                    token: () => "t",
+                    files: files({ "/s/a.png": 5, "/s/v.mp4": 5 }),
+                    fetch: fakeFetch([ok("a"), ok("b")], []),
+                }
+            )
+        );
+
+        expect(partial.message).toBe("Uploaded all 2 file(s), then writing the body failed: Validation Failed");
+        expect(partial.uploaded.map((file) => file.url)).toEqual([
+            "https://github.com/user-attachments/assets/a",
+            "https://github.com/user-attachments/assets/b",
+        ]);
+    });
+
+    test("--append on a PR that cannot be read fails before any upload", async () => {
+        const calls: Call[] = [];
+        const mediaApi: MediaRepoApi = {
+            getRepo: async () => ({ id: 1, canPush: true }),
+            getBody: async () => {
+                throw new Error("Not Found");
+            },
+            setBody: async () => {},
+        };
+
+        await expect(
+            uploadMedia(
+                {
+                    repo: "shop/storefront",
+                    files: [{ path: "/s/a.png" }],
+                    target: { kind: "pr", number: 99 },
+                    append: true,
+                },
+                { api: mediaApi, token: () => "t", files: files({ "/s/a.png": 5 }), fetch: fakeFetch([], calls) }
+            )
+        ).rejects.toThrow("Not Found");
+        expect(calls).toHaveLength(0);
+    });
+});
+
+describe("joinMarkdown", () => {
+    test("puts a blank line between files, so a video URL stands alone in its paragraph", () => {
+        expect(
+            joinMarkdown([
+                { markdown: "![a](https://github.com/user-attachments/assets/a)" },
+                { markdown: "https://github.com/user-attachments/assets/b" },
+                { markdown: null },
+            ])
+        ).toBe("![a](https://github.com/user-attachments/assets/a)\n\nhttps://github.com/user-attachments/assets/b");
     });
 });

@@ -1,8 +1,11 @@
 import {
+    joinMarkdown,
     type MediaRepoApi,
     type MediaTarget,
+    MediaUploadPartialError,
     type MediaUploadResult,
     parseMediaArg,
+    type UploadedFile,
     uploadMedia,
 } from "@app/github/lib/media-upload";
 import { formatBytes } from "@genesiscz/utils/format";
@@ -85,6 +88,26 @@ function printDryRun(result: MediaUploadResult): void {
     out.println(chalk.dim("Dry run: nothing was uploaded. An upload cannot be undone."));
 }
 
+/** The uploaded files as `--json` rows, or as markdown with a blank line between files. */
+function printUploaded(files: UploadedFile[], json: boolean | undefined): void {
+    if (json) {
+        out.result(
+            files.map((file) => ({
+                file: file.file,
+                url: file.url,
+                kind: file.kind,
+                bytes: file.bytes,
+                contentType: file.contentType,
+                markdown: file.markdown,
+                ...(file.verdict ? { verdict: file.verdict } : {}),
+            }))
+        );
+        return;
+    }
+
+    out.println(joinMarkdown(files));
+}
+
 export async function mediaUploadCommand(files: string[], flags: UploadFlags): Promise<void> {
     const repo = flags.repo ?? (await detectRepoFromGit());
     if (!repo) {
@@ -114,28 +137,15 @@ export async function mediaUploadCommand(files: string[], flags: UploadFlags): P
         }
     );
 
-    if (flags.json) {
-        out.result(
-            result.files.map((file) => ({
-                file: file.file,
-                url: file.url,
-                kind: file.kind,
-                bytes: file.bytes,
-                contentType: file.contentType,
-                markdown: file.markdown,
-                ...(file.verdict ? { verdict: file.verdict } : {}),
-            }))
-        );
-        return;
-    }
-
-    if (result.dryRun) {
+    if (result.dryRun && !flags.json) {
         printDryRun(result);
         return;
     }
 
-    for (const file of result.files) {
-        out.println(file.markdown ?? "");
+    printUploaded(result.files, flags.json);
+
+    if (flags.json) {
+        return;
     }
 
     if (target && !result.appended) {
@@ -171,6 +181,11 @@ export function createMediaCommand(): Command {
                 try {
                     await mediaUploadCommand(files, flags);
                 } catch (error) {
+                    if (error instanceof MediaUploadPartialError) {
+                        // These uploads cannot be undone: print them, so a retry does not upload them again.
+                        printUploaded(error.uploaded, flags.json);
+                    }
+
                     logger.error({ error }, "github media upload failed");
                     out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                     process.exit(1);
