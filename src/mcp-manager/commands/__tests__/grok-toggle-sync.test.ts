@@ -2,11 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { setupInquirerMock } from "./inquirer-mock.js";
 
 setupInquirerMock();
-setupStorageSandbox();
 
 const { GrokProvider } = await import("@app/mcp-manager/utils/providers/grok.js");
 const { syncServers } = await import("../sync.js");

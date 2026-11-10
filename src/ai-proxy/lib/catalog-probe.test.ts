@@ -9,10 +9,7 @@ import { githubTokenPath } from "@genesiscz/utils/ai/github-copilot/paths";
 import type { CopilotModelRecord } from "@genesiscz/utils/ai/github-copilot/types";
 import * as subModels from "@genesiscz/utils/ai/openai/sub-models";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { catalogFilePath, resetProxyCatalogCache } from "./catalog";
-
-setupStorageSandbox();
 
 /**
  * `tools ai-proxy models` and `accounts list` only print a table, but the two

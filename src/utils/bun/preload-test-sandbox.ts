@@ -81,9 +81,9 @@ async function invalidateConfigSingletons(): Promise<void> {
  *
  * The invariant is deliberately narrow: unset means `Storage` falls back to
  * `homedir()` and writes the user's real store, which is the whole failure. A
- * DIFFERENT value is fine and must be left alone — `setupStorageSandbox()` and
- * several suites install their own fixture root on purpose, and forcing them
- * back to this one breaks them (50 tests, measured).
+ * DIFFERENT value is fine and must be left alone: several suites install their
+ * own fixture root on purpose, and forcing them back to this one breaks them
+ * (50 tests, measured).
  */
 function guardSandbox(sandboxRoot: string): void {
     afterEach(async () => {

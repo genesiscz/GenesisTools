@@ -23,8 +23,9 @@ import { isTestProcess, testProcessReason } from "@genesiscz/utils/test-process"
  * still freezes the home at import, and an unset variable still means the real
  * home. So this guard stays.
  *
- * `test-sandbox.ts` already guards this, but only for test files that opt in, and
- * neither incident was in a file that had. So this check is ALWAYS ON, and it is
+ * An opt-in per-file sandbox (`setupStorageSandbox`, retired 2026-11-10) guarded
+ * this only for the files that installed it, and neither incident was in one. So
+ * this check is ALWAYS ON, and it is
  * checked at WRITE time against the resolved path rather than at construction
  * time — the whole failure is that the path was resolved too early.
  *
@@ -154,10 +155,10 @@ export function assertTestSafePath(targetPath: string, operation: string): void 
     throw new Error(
         `Refusing to ${operation} "${targetPath}" from a test: that is the REAL ~/.genesis-tools, not a sandbox.\n` +
             `Guard armed by: ${reason}.\n` +
-            `A Storage instance or a cached singleton (AIConfig, AiConfigStore) resolved its path before the test\n` +
-            `sandbox was installed, or outlived the teardown that removed it.\n` +
-            `Fix the test: set GENESIS_TOOLS_HOME to a mkdtemp dir BEFORE the module under test is imported, and\n` +
-            `invalidate any singleton in afterEach. See utils/storage/test-sandbox.ts.\n` +
+            `GENESIS_TOOLS_HOME was unset when this path was built, or a path was captured at import (a module-level\n` +
+            `constant) before the test sandbox was installed.\n` +
+            `Fix the test: keep GENESIS_TOOLS_HOME set (the test preload sets it; set your own mkdtemp dir BEFORE the\n` +
+            `module under test is imported), and build paths at use time. See utils/bun/preload-test-sandbox.ts.\n` +
             `If this write is genuinely intended, set ${ESCAPE_HATCH}=1.`
     );
 }

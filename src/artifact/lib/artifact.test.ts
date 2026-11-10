@@ -16,7 +16,6 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import * as storage from "@genesiscz/utils/storage";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { plugin } from "bun";
 import { act, type ComponentType, createElement } from "react";
 import {
@@ -83,8 +82,6 @@ import {
 import { registryPath, runningPath } from "./storage";
 import { listShippedTemplates, renderTemplate, resolveTemplateDir } from "./templates";
 import { cacheDirFor, fsAllowRoots } from "./vite";
-
-setupStorageSandbox();
 
 let dir: string;
 

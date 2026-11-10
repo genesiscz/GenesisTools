@@ -3,12 +3,10 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { setupInquirerMock } from "./inquirer-mock.js";
 
 // Setup prompt mock + storage sandbox BEFORE importing modules under test
 setupInquirerMock();
-setupStorageSandbox();
 
 const { ClaudeProvider } = await import("@app/mcp-manager/utils/providers/claude.js");
 const { CodexProvider } = await import("@app/mcp-manager/utils/providers/codex.js");
