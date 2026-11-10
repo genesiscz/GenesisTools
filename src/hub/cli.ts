@@ -3,7 +3,6 @@
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { createBuildProgressDisplay } from "@app/macos/lib/permissions/swift-progress";
-import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseSince, parseUntil } from "@genesiscz/utils/date";
@@ -14,6 +13,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { profiler } from "@genesiscz/utils/profile";
+import * as p from "@genesiscz/utils/prompts/p";
 import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import { Command } from "commander";
 import { registerCheckLogCommand } from "./commands/checks";
@@ -106,6 +106,7 @@ async function enumFlag<T extends string>(
         const picked = await p.select<string>({
             message: flag,
             options: values.map((value): { value: string; label: string } => ({ value, label: value })),
+            cancel: "back",
         });
         return p.isCancel(picked) ? null : (values.find((value) => value === picked) ?? null);
     }
@@ -800,6 +801,7 @@ pr.command("list")
                 const picked = await p.select({
                     message: "Which PRs/MRs",
                     options: PR_LIST_STATES.map((value) => ({ value, label: value })),
+                    cancel: "back",
                 });
 
                 if (p.isCancel(picked)) {

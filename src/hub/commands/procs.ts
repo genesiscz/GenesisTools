@@ -1,8 +1,8 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import { type Command, InvalidArgumentError, Option } from "commander";
 import pc from "picocolors";
@@ -151,7 +151,7 @@ async function confirmed(message: string, retry: string[], yes?: boolean): Promi
         return false;
     }
 
-    const ok = await p.confirm({ message, initialValue: false });
+    const ok = await p.confirm({ message, initialValue: false, cancel: "back" });
 
     if (p.isCancel(ok) || !ok) {
         out.log.info("Cancelled. Nothing was signalled.");
