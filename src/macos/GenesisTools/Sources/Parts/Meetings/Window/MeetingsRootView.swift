@@ -547,38 +547,51 @@ private struct NeedsRow: View {
 // MARK: - A project
 
 /// The project's rules, labels and people above its meetings, each with a way to the Settings card that edits it.
-private struct ProjectSummary: View {
+struct ProjectSummary: View {
     let name: String
     let settings: ProjectSettings?
     let wispr: MeetingsSettings.Source?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            line("Wispr folders", wispr?.match[name]?.folders ?? [])
-            line("Calendars", settings?.match?.calendar?.calendars ?? [])
-            line("Title words", settings?.match?.title?.words ?? [])
-            line("Labels", settings?.labels ?? [])
+        let rules = Self.rules(folders: wispr?.match[name]?.folders ?? [], calendars: settings?.match?.calendar?.calendars ?? [],
+                               words: settings?.match?.title?.words ?? [], labels: settings?.labels ?? [])
+        return VStack(alignment: .leading, spacing: 6) {
+            if rules.isEmpty {
+                // One sentence for a project without a rule: four lines that each said "none" pushed its meetings
+                // 80 pt down and told the reader nothing.
+                Text("No rule finds this project's meetings yet. A meeting joins it when you choose the project.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(rules, id: \.title) { rule in line(rule.title, rule.values) }
             // The counts take their own line: beside the two buttons they wrapped in the list's width.
             Text(verbatim: "\(Plural.count(settings?.match?.people.count ?? 0, "paired person", "paired people")) · \(Plural.count(settings?.dictionary?.entries.count ?? 0, "dictionary entry", "dictionary entries"))")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
-            HStack(spacing: 10) {
-                Button("Edit rules…") { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.projectsPage + "#project-\(name)") }
-                    .buttonStyle(.genHoverPlain()).font(.system(size: 12))
-                    .instantTooltip("Open Settings → Meetings → Projects at this project")
-                Button("Dictionary…") { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.dictionaryPage) }
-                    .buttonStyle(.genHoverPlain()).font(.system(size: 12))
-                    .instantTooltip("Open Settings → Meetings → Dictionary")
+            HStack(spacing: 8) {
+                GhostButton("Edit rules…", symbol: "slider.horizontal.3", tooltip: "Open Settings → Meetings → Projects at this project",
+                            identifier: "meetings.project.rules") {
+                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.projectsPage + "#project-\(name)")
+                }
+                GhostButton("Dictionary…", symbol: "character.book.closed", tooltip: "Open Settings → Meetings → Dictionary",
+                            identifier: "meetings.project.dictionary") {
+                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.dictionaryPage)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14).padding(.vertical, 10)
     }
 
+    /// The rules that hold a value, in the order Settings lists them. A rule without one is left out.
+    static func rules(folders: [String], calendars: [String], words: [String], labels: [String]) -> [(title: String, values: [String])] {
+        [("Wispr folders", folders), ("Calendars", calendars), ("Title words", words), ("Labels", labels)]
+            .filter { !$0.1.isEmpty }
+            .map { (title: $0.0, values: $0.1) }
+    }
+
     private func line(_ title: String, _ values: [String]) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(title).font(.system(size: 11.5)).foregroundStyle(.secondary).frame(width: 92, alignment: .leading)
-            Text(verbatim: values.isEmpty ? "none" : values.joined(separator: ", "))
-                .font(.system(size: 12)).foregroundStyle(values.isEmpty ? .tertiary : .primary).lineLimit(2)
+            Text(verbatim: values.joined(separator: ", ")).font(.system(size: 12)).lineLimit(2)
         }
     }
 }

@@ -429,6 +429,36 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertLessThanOrEqual(picker.width, 401, "R2-MU4: the picker fits the column: \(picker)")
     }
 
+    /// The questions' row and the ruler's row had a wider lane than the speakers' rows (a width set on an empty
+    /// name or share is a width on nothing), so no banner and no clock time stood over the second it names.
+    func testTheQuestionsAndTheRulerShareTheSpeakersLane() throws {
+        let speakers = try JSONDecoder().decode([MeetingsAPI.MeetingSpeakers.Speaker].self, from: Data("""
+        [{"label":"Alice","origin":"call","turns":2,"lines":2,"words":40,"spokenSec":600,"firstSec":0,"lastSec":3600,
+          "spans":[{"fromSec":0,"toSec":300,"turns":1},{"fromSec":3300,"toSec":3600,"turns":1}]}]
+        """.utf8))
+        for width in [900.0, 440.0] {
+            let lanes = SpeakerTalkTimeLanes(speakers: speakers, durationSec: 3600, timed: true,
+                                             questions: [TalkTimeQuestion(id: "i1", atSec: 1800, label: "Q1")],
+                                             playSpan: { _, _ in }, zoom: { _, _ in })
+            let lane = try probe("meetings.lanes.lane", width: width, lanes)
+            let banners = try probe("meetings.lanes.banners", width: width, lanes)
+            let ruler = try probe("meetings.lanes.ruler", width: width, lanes)
+            XCTAssertGreaterThan(lane.width, 100, "the lane has room at \(width) pt: \(lane)")
+            XCTAssertEqual(banners.minX, lane.minX, accuracy: 0.5, "the banners start where the lane starts at \(width) pt")
+            XCTAssertEqual(banners.width, lane.width, accuracy: 0.5, "and end where it ends: \(banners) against \(lane)")
+            XCTAssertEqual(ruler.minX, lane.minX, accuracy: 0.5, "the ruler starts where the lane starts at \(width) pt")
+            XCTAssertEqual(ruler.width, lane.width, accuracy: 0.5, "and ends where it ends: \(ruler) against \(lane)")
+        }
+    }
+
+    func testAProjectListsOnlyTheRulesItHas() {
+        XCTAssertTrue(ProjectSummary.rules(folders: [], calendars: [], words: [], labels: []).isEmpty,
+                      "four lines that each said none told nothing: a project without a rule says so in one sentence")
+        let rules = ProjectSummary.rules(folders: [], calendars: ["Work"], words: [], labels: ["design", "ops"])
+        XCTAssertEqual(rules.map(\.title), ["Calendars", "Labels"])
+        XCTAssertEqual(rules.map(\.values), [["Work"], ["design", "ops"]])
+    }
+
     func testANarrowSpeakerRowKeepsItsNumbersReadable() throws {
         let speaker = try JSONDecoder().decode(SpeakerStat.self, from: Data("""
         {"label":"Speaker 2","turns":42,"lines":42,"words":3779,"spokenSec":1440,"firstSec":375,"lastSec":3152}

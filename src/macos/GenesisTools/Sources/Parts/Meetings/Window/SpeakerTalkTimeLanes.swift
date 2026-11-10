@@ -150,13 +150,13 @@ struct SpeakerTalkTimeLanes: View {
                     .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.compactWidth }) { compact = $0 }
                 if showsQuestions && !questions.isEmpty {
                     row(name: Text("Open questions").font(.system(size: 11)).foregroundStyle(.secondary)) { width in
-                        bannerLane(width: width)
+                        bannerLane(width: width).frameProbe("meetings.lanes.banners")
                     } share: { EmptyView() }
                     .frame(height: 26)
                 }
                 ForEach(sortedSpeakers) { speaker in
                     row(name: nameLabel(speaker)) { width in
-                        lane(speaker, width: width)
+                        lane(speaker, width: width).frameProbe("meetings.lanes.lane")
                     } share: {
                         Text(verbatim: shareText(speaker))
                             .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
@@ -169,7 +169,7 @@ struct SpeakerTalkTimeLanes: View {
                         if let first = speaker.spans.first { playSpan(first.fromSec, first.toSec) }
                     }
                 }
-                row(name: EmptyView()) { _ in ruler } share: { EmptyView() }
+                row(name: EmptyView()) { _ in ruler.frameProbe("meetings.lanes.ruler") } share: { EmptyView() }
                     .frame(height: 16)
             }
         }
@@ -181,10 +181,15 @@ struct SpeakerTalkTimeLanes: View {
 
     private func row<Name: View, Lane: View, Share: View>(name: Name, @ViewBuilder lane: @escaping (CGFloat) -> Lane,
                                                          @ViewBuilder share: () -> Share) -> some View {
+        // Each side column is a stack of its own: a width on an empty name or share is a width on nothing, so the row
+        // of the questions and the row of the ruler had a wider lane than the speakers, and neither a banner nor a
+        // clock time stood over the second it names.
         HStack(spacing: 12) {
-            name.frame(width: compact ? Self.compactNameWidth : Self.nameWidth, alignment: .leading)
+            ZStack(alignment: .leading) { name }
+                .frame(width: compact ? Self.compactNameWidth : Self.nameWidth, alignment: .leading)
             GeometryReader { proxy in lane(proxy.size.width) }
-            share().frame(width: compact ? Self.compactShareWidth : Self.shareWidth, alignment: .trailing)
+            ZStack(alignment: .trailing) { share() }
+                .frame(width: compact ? Self.compactShareWidth : Self.shareWidth, alignment: .trailing)
         }
     }
 
