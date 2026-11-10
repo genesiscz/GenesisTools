@@ -271,27 +271,11 @@ struct PRPublishResult: Decodable {
     let warning: String?
 }
 
-/// `{error, code}`: what a `tools hub pr … --json` failure prints on stdout.
-struct PRCLIError: Decodable, Error, CustomStringConvertible {
-    let error: String
-    let code: String
-
-    var description: String { error }
-}
-
 enum PRCLI {
-    /// Blocking: call it off the main thread only.
+    /// Blocking: call it off the main thread only. A failure is the verb's `{error, code}` on stdout, read as a
+    /// `ToolsFailure`.
     static func run(_ args: [String]) throws -> Data {
-        let result = try ToolsCLIRunner.capture(args)
-        guard result.status == 0 else {
-            if let failure = try? JSONDecoder().decode(PRCLIError.self, from: result.stdout) {
-                throw failure
-            }
-            let message = String(decoding: result.stderr, as: UTF8.self)
-            throw ReviewError.git("tools \(args.prefix(3).joined(separator: " ")) exited \(result.status): \(message.trimmed.suffix(300))")
-        }
-
-        return result.stdout
+        try HubSource.bridge.output(args)
     }
 }
 

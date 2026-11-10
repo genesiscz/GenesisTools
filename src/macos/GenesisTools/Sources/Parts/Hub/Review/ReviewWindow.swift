@@ -1542,7 +1542,7 @@ final class ReviewModel: ObservableObject {
             let answer: StoredProposalLookup
             do {
                 // Only this PR's keyed file: the whole archive grows with every PR ever reviewed.
-                let capture = try ToolsCLIRunner.capture(StoredProposal.listArguments(for: identity), timeout: 20)
+                let capture = try HubSource.bridge.capture(StoredProposal.listArguments(for: identity), timeout: 20)
                 guard capture.status == 0 else {
                     throw ReviewError.git("tools hub proposal list exited \(capture.status)")
                 }
@@ -2386,7 +2386,7 @@ final class ReviewModel: ObservableObject {
             if !cached.missing.isEmpty {
                 let span = HubPerf.begin("review.blame", "\(cached.missing.count) files in \(root.lastPathComponent), \(paths.count - cached.missing.count) cached")
                 let args = AgentBlame.arguments(repo: root.path, paths: cached.missing)
-                switch Result(catching: { try JSONDecoder().decode(AgentBlameResult.self, from: ToolsCLIRunner.run(args)) }) {
+                switch Result(catching: { try JSONDecoder().decode(AgentBlameResult.self, from: HubSource.bridge.output(args)) }) {
                 case .success(let found):
                     span.end("\(found.files.count) with agent lines, \(found.sources.count) turns, \(found.elapsedMs ?? 0) ms in tools")
                     ReviewCache.writeBlame(found, repo: root.path, asked: cached.missing, hashes: cached.hashes)
