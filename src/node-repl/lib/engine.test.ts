@@ -18,6 +18,8 @@ import {
     resultMessage,
     runTimeoutFor,
     runTimeoutHint,
+    StderrTail,
+    streamPrinter,
     withoutStreamed,
 } from "./engine";
 import {
@@ -131,11 +133,62 @@ describe("console output streams while the turn runs", () => {
         }
     });
 
-    it("leaves the turn text whole when nothing streamed or the streamed lines are not in it", () => {
+    it("leaves the turn text whole when nothing streamed or the text does not start with the streamed lines", () => {
         expect(withoutStreamed("a\nb", [])).toBe("a\nb");
-        expect(withoutStreamed("note\nx\ny\nresult", ["x", "y"])).toBe("note\nresult");
+        expect(withoutStreamed("x\ny\nresult", ["x", "y"])).toBe("result");
         expect(withoutStreamed("x\ny", ["x", "y"])).toBe("");
         expect(withoutStreamed("other", ["x"])).toBe("other");
+        expect(withoutStreamed("xy\nresult", ["x"])).toBe("xy\nresult");
+    });
+
+    // A nodeRepl.write line between two console lines did not stream, the console lines were no longer one run in the
+    // text, and the CLI printed them twice and out of order.
+    it("streams nodeRepl.write lines too, in the order of the text, so the printed lines come out whole", async () => {
+        const seen: string[] = [];
+        const engine = new ReplEngine({ defaultTimeoutMs: 10_000, onOutput: (line) => seen.push(line) });
+        try {
+            const result = await engine.run('console.log("a"); nodeRepl.write("b"); console.log("c"); "done"');
+            expect(seen).toEqual(["a", "b", "c"]);
+            expect(result.text).toBe("a\nb\nc\ndone");
+            expect(withoutStreamed(result.text, seen)).toBe("done");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    it("prints no line after the first one that does not fit, so what printed is the start of the cut text", async () => {
+        const printed: string[] = [];
+        const printer = streamPrinter({ max: 12, print: (line) => printed.push(line) });
+        const engine = new ReplEngine({ defaultTimeoutMs: 10_000, maxOutputChars: 12, onOutput: printer.onOutput });
+        try {
+            const result = await engine.run('console.log("aaaa"); console.log("bbbbbbbbbb"); console.log("c"); "done"');
+            printer.stop();
+            expect(printed).toEqual(["aaaa"]);
+            expect(printer.printed).toEqual(["aaaa"]);
+            expect(withoutStreamed(result.text, printer.printed)).toStartWith("bbbbbbb\n… [output cut at 12 of ");
+        } finally {
+            await engine.shutdown();
+        }
+
+        printer.onOutput("after");
+        expect(printed).toEqual(["aaaa"]);
+    });
+});
+
+describe("the worker's stderr tail", () => {
+    it("holds a bounded part of a line that never ends, and still quotes the lines after it", () => {
+        const tail = new StderrTail();
+        for (let chunk = 0; chunk < 20; chunk++) {
+            tail.push("x".repeat(100_000));
+        }
+
+        expect(tail.pendingChars).toBeLessThanOrEqual(1200);
+        tail.push("\nnext line\npartial");
+        expect(tail.pendingChars).toBe("partial".length);
+        const quoted = tail.quote("stderr");
+        expect(quoted).toContain(`  ${"x".repeat(300)}…`);
+        expect(quoted).toContain("  next line");
+        expect(quoted).toContain("  partial");
     });
 });
 
@@ -339,6 +392,15 @@ describe("ReplEngine", () => {
         );
         const path = await engine.run("await import('/nonexistent/nr31.ts')");
         expect(path.error).toBe("Cannot find module '/nonexistent/nr31.ts': no file is there.");
+    });
+
+    it("a file that is there but lacks a package keeps Bun's message, which names the missing package", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "nr31-dep-"));
+        const file = join(folder, "has-dep.ts");
+        writeFileSync(file, 'import "nr31-missing-dependency";\nexport const value = 1;\n');
+        const result = await engine.run(`await import(${SafeJSON.stringify(file)})`);
+        expect(result.error).toStartWith("Cannot find package 'nr31-missing-dependency'");
+        expect(result.error).not.toContain("no file is there");
     });
 
     // NR17: a folder that does not exist was answered "module directory registered".

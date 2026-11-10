@@ -89,6 +89,20 @@ describe("preset store", () => {
         expect(readPreset("twice", dir).script).toBe("return 'second';\n");
     });
 
+    test("replacing a name twice at the same time keeps both old versions in .trash", () => {
+        const dir = root();
+        const now = new Date("2026-11-05T10:00:00Z");
+        const save = (script: string) =>
+            savePreset({ name: "tight", input: { script }, knownToolsets: known, root: dir, now });
+        save("return 1;");
+        const second = save("return 2;");
+        const third = save("return 3;");
+        expect(third.replaced).not.toBe(second.replaced);
+        expect(readFileSync(join(second.replaced ?? "", PRESET_SCRIPT), "utf8")).toBe("return 1;\n");
+        expect(readFileSync(join(third.replaced ?? "", PRESET_SCRIPT), "utf8")).toBe("return 2;\n");
+        expect(readPreset("tight", dir).script).toBe("return 3;\n");
+    });
+
     test("removal moves the folder to .trash and the list drops it", () => {
         const dir = root();
         savePreset({ name: "old", input: { script: "1" }, knownToolsets: known, root: dir });

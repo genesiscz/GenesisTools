@@ -91,11 +91,21 @@ function checkScript(name: string, script: string): void {
     }
 }
 
-/** Moves a preset's folder to `.trash/<name>-<time>` and returns where, so it can be moved back. */
+/**
+ * Moves a preset's folder to `.trash/<name>-<time>` and returns where, so it can be moved back. A second move of the
+ * same name in the same millisecond (or with the same injected `now`) gets `-1`, `-2` and so on: the rename onto the
+ * first trashed folder failed, and with it the save that replaced the preset.
+ */
 function moveToTrash(folder: string, name: string, root: string, now: Date): string {
     const trash = join(root, ".trash");
     mkdirSync(trash, { recursive: true });
-    const target = join(trash, `${name}-${now.toISOString().replace(/[:.]/g, "-")}`);
+    const stamp = `${name}-${now.toISOString().replace(/[:.]/g, "-")}`;
+    let target = join(trash, stamp);
+
+    for (let n = 1; existsSync(target); n++) {
+        target = join(trash, `${stamp}-${n}`);
+    }
+
     renameSync(folder, target);
     return target;
 }

@@ -15,6 +15,7 @@ import {
     RUN_TIMEOUT_MS,
     runTimeoutFor,
     runTimeoutHint,
+    streamPrinter,
     withoutStreamed,
 } from "./lib/engine";
 import { coerceParam, listPresets, readPreset, removePreset, resolveParams, savePreset } from "./lib/presets";
@@ -214,30 +215,20 @@ program
                 return;
             }
 
-            // R6 11: console lines print as the turn writes them (a long edit showed nothing for minutes), up to
+            // R6 11: the turn's lines print as the turn writes them (a long edit showed nothing for minutes), up to
             // --max-output; the answer then prints only what was not printed yet (the result, a note).
-            const streamed: string[] = [];
-            let streamedChars = 0;
-            let answered = false;
+            const printer = streamPrinter({ max: maxOutputChars, print: (line) => out.print(`${line}\n`) });
             const engine = new ReplEngine({
                 toolsets,
                 maxOutputChars,
                 timeoutHint: runTimeoutHint,
-                onOutput: (line) => {
-                    if (answered || (maxOutputChars > 0 && streamedChars + line.length > maxOutputChars)) {
-                        return;
-                    }
-
-                    streamed.push(line);
-                    streamedChars += line.length + 1;
-                    out.print(`${line}\n`);
-                },
+                onOutput: printer.onOutput,
             });
 
             try {
                 const result = await engine.run(source, timeout);
-                answered = true;
-                printTurnText(withoutStreamed(result.text, streamed));
+                printer.stop();
+                printTurnText(withoutStreamed(result.text, printer.printed));
 
                 for (const image of result.images) {
                     out.log.info(`image written to ${image.path}`);

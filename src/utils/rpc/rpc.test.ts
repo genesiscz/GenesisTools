@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { RPC_CANCELLED, RpcError } from "./errors";
-import { LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
+import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
+import { failedCallLevel, LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
 import { RpcSocketClient, type RpcSocketClientOptions } from "./socket-client";
 import { type RpcConnection, RpcSocketServer } from "./socket-server";
 
@@ -174,6 +174,42 @@ test("disconnect settles an abort-ignoring handler and skips queued mutations", 
     peer.close("disconnected");
     await peer.queue;
     expect(calls).toEqual(["hang"]);
+});
+
+// An internal RpcError (a failed live microphone change) and a refused notification were logged at debug only, so
+// neither reached the console; a notification gets no reply, so nobody heard of it.
+test("a failed call is a warning when it is internal, info for a notification, and debug for a refused request", () => {
+    const refused = new RpcError(1001, "no such display");
+    expect(failedCallLevel(refused, false)).toBe("debug");
+    expect(failedCallLevel(refused, true)).toBe("info");
+    expect(failedCallLevel(new RpcError(JSON_RPC_ERRORS.internal, "the mic did not change"), false)).toBe("warn");
+    expect(failedCallLevel(new Error("boom"), false)).toBe("warn");
+});
+
+test("a peer logs a refused notification at info and a refused request at debug", async () => {
+    const log = logger.scoped("rpc-test").log;
+    const info = spyOn(log, "info");
+    const debug = spyOn(log, "debug");
+    try {
+        const peer = new RpcPeer({
+            write: (bytes) => bytes.length,
+            invalid: "answer",
+            log,
+            label: "test",
+            handle: async () => {
+                throw new RpcError(1001, "no such display");
+            },
+        });
+        peer.receive(
+            Buffer.from('{"jsonrpc":"2.0","method":"audio.mute"}\n{"jsonrpc":"2.0","id":1,"method":"audio.mute"}\n')
+        );
+        await peer.queue;
+        expect(info.mock.calls.map((call) => call[1])).toContain("test call refused");
+        expect(debug.mock.calls.map((call) => call[1])).toContain("test call refused");
+    } finally {
+        info.mockRestore();
+        debug.mockRestore();
+    }
 });
 
 test("RPC frames are bounded across fragments and normal lines still decode", () => {

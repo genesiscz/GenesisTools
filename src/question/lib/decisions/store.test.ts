@@ -809,6 +809,11 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionsMarkdown([{ ...row, option: undefined, recommended: "b" }])).toContain(
             "- a) run it now\n- b) build the tool first, then run it for today (recommended)"
         );
+        // A recommendation of several letters marks each of them, and only them.
+        const several = decisionsMarkdown([
+            { ...row, options: ["now", "later", "never"], option: undefined, recommended: "ac" },
+        ]);
+        expect(several).toContain("- a) now (recommended)\n- b) later\n- c) never (recommended)");
     });
 
     test("indented lettered options are not lettered twice, while literal labels stay intact", () => {

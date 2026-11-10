@@ -5,7 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { waitsOnHuman } from "../waiting/set";
-import { decisionOptionLabels, shownDecisionText } from "./option-labels";
+import { decisionOptionLabels, recommendedLetters, shownDecisionText } from "./option-labels";
 import {
     boundContext,
     cleanBlock,
@@ -184,6 +184,8 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
             ].filter((part): part is string => part !== null);
             // The list under the prompt names every option, so "a) …" lines that only repeat it leave the prompt.
             const shown = shownDecisionText(row);
+            // Every letter of a recommendation is marked: "ac" compared as one string marked no option at all.
+            const recommended = recommendedLetters(row.recommended);
 
             return [
                 { h3: heading },
@@ -195,7 +197,7 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
                           {
                               ul: shown.options.map(
                                   (option, index) =>
-                                      `${letter(index)}) ${optionLabel(option, letter(index))}${row.recommended === letter(index) ? " (recommended)" : ""}`
+                                      `${letter(index)}) ${optionLabel(option, letter(index))}${recommended.has(letter(index)) ? " (recommended)" : ""}`
                               ),
                           },
                       ]

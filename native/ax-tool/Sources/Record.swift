@@ -1607,20 +1607,29 @@ private final class ScreenStreamHost {
 /// The shareable content once the window server lists `windowIDs` (the recording border's panels). A panel ordered in
 /// a moment ago is not listed until its change is committed, and no run loop had turned yet: the filter left it in,
 /// and its rounded corners were in every movie (review 2026-11-06: about 30 red pixels in each corner). Commits the
-/// panels, then asks again for at most `timeout` seconds; past it, the last answer stands.
+/// panels, then asks again for at most `timeout` seconds; past it, the last answer stands. Each retry has only the time
+/// left, and a retry that fails or stalls keeps the last answer too (`pollListing`).
 func shareableContent(listing windowIDs: Set<CGWindowID>, timeout: TimeInterval = 1) throws -> SCShareableContent {
     CATransaction.flush()
-    let deadline = Date().addingTimeInterval(timeout)
-    while true {
-        let content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
-        let listed = Set(content.windows.map(\.windowID))
-        if windowIDs.isSubset(of: listed) { return content }
-        if Date() >= deadline {
-            FileHandle.standardError.write(Data("ax-tool: the recording border is not listed yet; the movie may show its corners\n".utf8))
-            return content
-        }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    let polled = try pollListing(
+        timeout: timeout,
+        wait: { RunLoop.current.run(until: Date().addingTimeInterval($0)) },
+        fetch: { remaining in
+            try awaitResult(timeoutSeconds: remaining ?? 30) {
+                try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            }
+        },
+        isListed: { content in windowIDs.isSubset(of: Set(content.windows.map(\.windowID))) }
+    )
+    switch polled.end {
+    case .listed:
+        break
+    case .deadline:
+        FileHandle.standardError.write(Data("ax-tool: the recording border is not listed yet; the movie may show its corners\n".utf8))
+    case .retryFailed(let reason):
+        FileHandle.standardError.write(Data("ax-tool: listing the windows again failed (\(reason)); the movie may show the recording border's corners\n".utf8))
     }
+    return polled.value
 }
 
 func awaitResult<T>(timeoutSeconds: Double = 30, _ operation: @escaping () async throws -> T) throws -> T {
