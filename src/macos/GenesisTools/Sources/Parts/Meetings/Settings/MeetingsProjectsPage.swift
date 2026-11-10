@@ -169,13 +169,16 @@ private struct ProjectCard: View {
             Text("Its meetings get its dictionary and labels; a rule below puts a meeting in it.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             TokenList(title: "Wispr folders", detail: "A Wispr Flow note in one of these folders is this project's.",
-                      values: draft.folders, placeholder: "Add a folder") { values in model.editDraft(name) { $0.folders = values } }
+                      values: draft.folders, placeholder: "Add a folder",
+                      suggest: { try await model.wisprFolderValues() }) { values in model.editDraft(name) { $0.folders = values } }
             Divider()
             TokenList(title: "Calendar names", detail: "An overlapping entry in one of these calendars is this project's.",
-                      values: draft.calendars, placeholder: "Add a calendar") { values in model.editDraft(name) { $0.calendars = values } }
+                      values: draft.calendars, placeholder: "Add a calendar",
+                      suggest: { try await model.calendarValues() }) { values in model.editDraft(name) { $0.calendars = values } }
             Divider()
             TokenList(title: "Title words", detail: "A meeting whose title holds one of these words is this project's.",
-                      values: draft.titleWords, placeholder: "Add a word") { values in model.editDraft(name) { $0.titleWords = values } }
+                      values: draft.titleWords, placeholder: "Add a word",
+                      suggest: { try await model.titleWordValues() }) { values in model.editDraft(name) { $0.titleWords = values } }
             if model.hasUnsavedRules(name) {
                 HStack {
                     Text("The preview above uses these rules; they are not saved yet.").font(.system(size: 11.5)).foregroundStyle(KitPalette.modified)
@@ -190,24 +193,15 @@ private struct ProjectCard: View {
             }
             Divider()
             TokenList(title: "Labels", detail: "Labels a meeting of this project can carry, to group meetings finer.",
-                      values: project?.labels ?? [], placeholder: "Add a label") { values in
+                      values: project?.labels ?? [], placeholder: "Add a label",
+                      suggest: { try await model.labelValues() }) { values in
                 let old = project?.labels ?? []
                 model.changeLabels(name, add: values.filter { !old.contains($0) }, remove: old.filter { !values.contains($0) })
             }
             Divider()
             PeopleList(model: model, project: name, people: project?.match?.people ?? [], projects: settings.projects)
             Divider()
-            NativeSettingsRow("Export folder", detail: "Where Export writes this project's meeting notes.") {
-                HStack(spacing: 8) {
-                    if let folder = project?.export?.folder {
-                        PathLabel(path: folder, font: .system(size: 11, design: .monospaced), showIcons: false)
-                        Button("Clear") { model.clearExportFolder(name) }.buttonStyle(.genHoverPlain())
-                    } else {
-                        Text("Asks on the first export").font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                    Button("Choose…") { model.chooseExportFolder(name) }.buttonStyle(.bordered).nativeSettingsPointer()
-                }
-            }
+            ExportFolderRow(model: model, project: name, folder: project?.export?.folder)
             Divider()
             NativeSettingsRow("The project", detail: "Rename it everywhere it is named, or remove it; its settings go into a backup first.") {
                 HStack(spacing: 8) {
@@ -363,12 +357,48 @@ private struct WouldMatchCard: View {
     }
 }
 
-/// A list of short values: each a chip with a remove button, and a field that adds on Return.
+/// "Export folder": the folder Export writes to, a field that completes folders from a typed path, and the system's
+/// folder panel.
+private struct ExportFolderRow: View {
+    @Bindable var model: MeetingsSettingsModel
+    let project: String
+    let folder: String?
+    @State private var typed = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Export folder").font(.system(size: 13))
+            Text("Where Export writes this project's meeting notes. Type a path (~ is your home folder) or choose one.")
+                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                if let folder {
+                    PathLabel(path: folder, font: .system(size: 11, design: .monospaced), showIcons: false)
+                    Button("Clear") { model.clearExportFolder(project) }.buttonStyle(.genHoverPlain())
+                } else {
+                    Text("Asks on the first export").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
+            HStack(alignment: .top, spacing: 8) {
+                AutocompleteFolderField("A folder, ~/ for home", text: $typed, label: "Export folder of \(project)",
+                                        identifier: "meetings.project.\(project).exportFolder") { path in
+                    model.setExportFolder(project, path: path)
+                    typed = ""
+                }
+                .frame(maxWidth: 320)
+                Button("Choose…") { model.chooseExportFolder(project) }.buttonStyle(.bordered).nativeSettingsPointer()
+            }
+        }
+    }
+}
+
+/// A list of short values: each a chip with a remove button, and a field that adds on Return. With `suggest`, the
+/// field completes from those values (`AutocompleteField`) and still takes a typed value.
 struct TokenList: View {
     let title: String
     let detail: String?
     let values: [String]
     let placeholder: String
+    var suggest: (@Sendable () async throws -> [AutocompleteValue])?
     let commit: ([String]) -> Void
     @State private var text = ""
 
@@ -377,10 +407,7 @@ struct TokenList: View {
             Text(title).font(.system(size: 13))
             if let detail { Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary) }
             FlowChips(values: values) { value in commit(values.filter { $0 != value }) }
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.roundedBorder).frame(maxWidth: 260)
-                .onSubmit(add)
-                .onExitCommand { text = "" }
+            field
                 // Clears once the saved list holds the value; a refused write keeps it in the field.
                 .onChange(of: values) { _, now in
                     if now.contains(text.trimmingCharacters(in: .whitespaces)) { text = "" }
@@ -388,8 +415,25 @@ struct TokenList: View {
         }
     }
 
-    private func add() {
-        let value = text.trimmingCharacters(in: .whitespaces)
+    @ViewBuilder
+    private var field: some View {
+        if let suggest {
+            AutocompleteField(placeholder, text: $text, lazyItems: suggest, allowsFreeText: true,
+                              hides: { item in values.contains { $0.caseInsensitiveCompare(item.title) == .orderedSame } },
+                              label: "\(title): \(placeholder.lowercased())") { choice in
+                add(choice.text)
+            }
+            .frame(maxWidth: 320)
+        } else {
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.roundedBorder).frame(maxWidth: 260)
+                .onSubmit { add(text) }
+                .onExitCommand { text = "" }
+        }
+    }
+
+    private func add(_ typed: String) {
+        let value = typed.trimmingCharacters(in: .whitespaces)
         guard !value.isEmpty, !values.contains(value) else {
             text = ""
             return

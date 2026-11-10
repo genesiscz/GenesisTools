@@ -14,6 +14,7 @@ import { RpcError } from "@genesiscz/utils/rpc/errors";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
+import type { SuggestionReads } from "../project-suggestions";
 import { TOOL } from "../shared";
 import type { LinkedSource } from "../sources";
 import { correctedTranscriptRead, revisionsRead, transcriptJsonView } from "../window-reads";
@@ -81,6 +82,9 @@ export interface MeetingsHandlerDeps {
     listenerAlive?: (pid: number) => boolean;
     /** The people directory's Contacts source (tests pass a fake, or none); darwinkit's Contacts by default. */
     contacts?: () => PeopleSource | undefined;
+    /** What the settings page's suggestions read beyond the config and the records (tests pass fakes); the sources' own
+     * folder lists and the Calendar app by default. */
+    suggestionReads?: () => SuggestionReads;
 }
 
 /**
@@ -255,6 +259,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "projects.labels": async (params) => (await library()).changeProjectLabels(params, deps),
         "projects.unpair": async (params) => (await library()).unpairProjects(params, deps),
         "projects.preview": async (params) => (await library()).previewProjects(params, storeOf(), deps),
+        "projects.suggestions": async () => (await library()).suggestProjectValues(storeOf(), deps),
         "dictionary.show": async (params) => (await library()).showDictionary(params, deps),
         "dictionary.add": async (params) => (await library()).addDictionaryEntry(params, deps),
         "dictionary.remove": async (params) => (await library()).removeDictionaryEntry(params, deps),

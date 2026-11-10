@@ -25,6 +25,7 @@ import {
     phraseTestSchema,
     projectRemovalSchema,
     projectRenameSchema,
+    projectSuggestionsSchema,
     unpairedSchema,
 } from "../library-schema";
 import { matchDraftSchema } from "../match-preview";
@@ -902,6 +903,15 @@ const projectsPreview = defineMethod({
     effect: "read",
 });
 
+const projectsSuggestions = defineMethod({
+    name: "projects.suggestions",
+    params: z.object({}).strict(),
+    result: projectSuggestionsSchema,
+    resultName: "{ folders, calendars, titleWords, labels }",
+    doc: "The values the settings page offers while a project's rules are typed: each source's folders, the Calendar app's calendars, title words and labels already in use. A list that could not be read says why in its reason. Reads only.",
+    effect: "read",
+});
+
 /** A dictionary level: a project's, or the global one when absent. */
 const dictionaryProject = projectName.optional();
 
@@ -1005,6 +1015,7 @@ export const meetingsApi = defineApi({
         projectsLabels,
         projectsUnpair,
         projectsPreview,
+        projectsSuggestions,
         dictionaryShow,
         dictionaryAdd,
         dictionaryRemove,

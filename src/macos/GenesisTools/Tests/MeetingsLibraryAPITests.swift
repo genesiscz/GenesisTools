@@ -32,6 +32,7 @@ final class MeetingsLibraryAPITests: XCTestCase {
         MeetingsAPI.ProjectsLabels.name, MeetingsAPI.ProjectsUnpair.name, MeetingsAPI.ProjectsPreview.name,
         MeetingsAPI.DictionaryShowEntries.name, MeetingsAPI.DictionaryAdd.name, MeetingsAPI.DictionaryRemove.name,
         MeetingsAPI.DictionaryTest.name, MeetingsAPI.ConfigEdit.name, MeetingsAPI.TonePresets.name,
+        MeetingsAPI.ProjectsSuggestions.name,
     ]
 
     func testEveryLibraryExampleDecodesWithTheSwiftTypes() throws {
@@ -77,6 +78,14 @@ final class MeetingsLibraryAPITests: XCTestCase {
                     let rows = try MeetingsService.decode(MeetingsAPI.ProjectsPreview.Result.self, result)
                     XCTAssertEqual(rows.map(\.id), ["2026-11-03-1400-retro", Self.review])
                     XCTAssertEqual(rows.first?.draft, ["Atlas"], "the draft's title word matches the retro")
+                }
+            case MeetingsAPI.ProjectsSuggestions.name:
+                try roundTrip(MeetingsAPI.ProjectsSuggestions.Params.self, params, label)
+                if let result {
+                    let suggestions = try MeetingsService.decode(MeetingsAPI.ProjectsSuggestions.Result.self, result)
+                    XCTAssertEqual(suggestions.folders["wisprflow"], .init(values: ["Design", "Ops"], from: "source", reason: nil))
+                    XCTAssertEqual(suggestions.calendars.values, ["Home", "Work"])
+                    XCTAssertEqual(suggestions.labels, ["Checkout"])
                 }
             case MeetingsAPI.DictionaryShowEntries.name:
                 try roundTrip(MeetingsAPI.DictionaryShowEntries.Params.self, params, label)

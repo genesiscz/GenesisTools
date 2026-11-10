@@ -45,6 +45,9 @@ final class MeetingsSettingsModel {
     @ObservationIgnored let service: MeetingsService?
     private var previewTask: Task<Void, Never>?
     private var phraseTask: Task<Void, Never>?
+    /// The one read of the values the rule fields offer, shared by every field of every project; Settings opened
+    /// again reads it again.
+    @ObservationIgnored var suggestionsTask: Task<MeetingsAPI.ProjectsSuggestions.Result, Error>?
 
     /// `service` nil is the shared one (`MeetingsService.shared`, itself nil under XCTest and in the preview).
     init(writes: Bool = true, notices: NoticeStackModel? = nil, service: MeetingsService? = nil) {
@@ -89,6 +92,7 @@ final class MeetingsSettingsModel {
         if cost != .idle { reads.insert(.cost) }
         if preview != .idle { reads.insert(.preview) }
         if dictionary != .idle { reads.insert(.dictionary) }
+        suggestionsTask = nil
         if settings != .idle || !reads.isEmpty { load(reads) }
     }
 

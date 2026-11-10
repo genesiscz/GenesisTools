@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { PhraseTest } from "./dictionary-test";
 import type { MatchPreviewRow } from "./match-preview";
 import type { ProjectRemoval, ProjectRename } from "./project-admin";
+import type { ProjectSuggestions } from "./project-suggestions";
 import type { DictionaryShowView } from "./window-reads";
 
 /**
@@ -75,6 +76,18 @@ export const projectRemovalSchema = z.object({
 
 /** A person as a project pairing names one: a name, and the address when it is known. */
 export const pairedPersonRefSchema = z.object({ name: z.string(), email: z.string().optional() });
+
+/** The values the settings page's rule fields offer (`projects.suggestions`). */
+export const projectSuggestionsSchema = z.object({
+    /** Per source: its folders, from its own list or from the folders its meetings sit in. */
+    folders: z.record(
+        z.string(),
+        z.object({ values: z.array(z.string()), from: z.enum(["source", "meetings"]), reason: z.string().optional() })
+    ),
+    calendars: z.object({ values: z.array(z.string()), reason: z.string().optional() }),
+    titleWords: z.array(z.string()),
+    labels: z.array(z.string()),
+}) satisfies z.ZodType<ProjectSuggestions>;
 
 /** One pairing an unpair removed. `left`: the person is no longer paired with the project at all. */
 export const unpairedSchema = z.object({
