@@ -264,7 +264,7 @@ enum HubSpend {
         day.dateFormat = "yyyyMMdd"
         do {
             return try cache.fetch(key: key(session), revision: session.mtime, force: force) {
-                try ToolsCLIRunner.run(["ai-spend", "session", "--id", session.sessionId, "--json", "--since", day.string(from: since)])
+                try HubSource.bridge.output(["ai-spend", "session", "--id", session.sessionId, "--json", "--since", day.string(from: since)])
             }
         } catch {
             HubPerf.log("spend.session failed for \(session.sessionId.prefix(8)): \(error)")

@@ -217,7 +217,7 @@ final class WorktreeCleanupStore: ObservableObject {
             let span = HubPerf.begin("worktrees.cleanup.scan", "\(repos.count) repos", awaits: true)
             let scan = Task.detached(priority: .utility) { () -> Result<(CleanupReport, Data), Error> in
                 Result {
-                    let data = try ToolsCLIRunner.run(args)
+                    let data = try HubSource.bridge.output(args)
                     return (try JSONDecoder().decode(CleanupReport.self, from: data), data)
                 }
             }
@@ -300,7 +300,7 @@ final class WorktreeCleanupStore: ObservableObject {
                 let span = HubPerf.begin("worktrees.cleanup.size", "\(batch.count) paths", awaits: true)
                 let result = await Task.detached(priority: .utility) { () -> Result<[CleanupSize], Error> in
                     Result {
-                        try JSONDecoder().decode([CleanupSize].self, from: ToolsCLIRunner.run(["hub", "worktrees", "size"] + batch + ["--json"]))
+                        try JSONDecoder().decode([CleanupSize].self, from: HubSource.bridge.output(["hub", "worktrees", "size"] + batch + ["--json"]))
                     }
                 }.value
                 sizing.subtract(batch)
@@ -348,7 +348,7 @@ final class WorktreeCleanupStore: ObservableObject {
             let result = await Task.detached(priority: .userInitiated) { () -> Result<[CleanupOutcome], Error> in
                 Result {
                     // Exit 1 means "some were kept"; the JSON on stdout still says which.
-                    let capture = try ToolsCLIRunner.capture(["hub", "worktrees", "remove"] + batch + olderThan + ["--yes", "--json"], timeout: 300)
+                    let capture = try HubSource.bridge.capture(["hub", "worktrees", "remove"] + batch + olderThan + ["--yes", "--json"], timeout: 300)
                     return try JSONDecoder().decode([CleanupOutcome].self, from: capture.stdout)
                 }
             }.value
@@ -395,7 +395,7 @@ final class WorktreeCleanupStore: ObservableObject {
             let result = await Task.detached(priority: .userInitiated) { () -> Result<[MoveAsideOutcome], Error> in
                 Result {
                     // Exit 1 means "some were kept"; the JSON on stdout still says which.
-                    let capture = try ToolsCLIRunner.capture(["hub", "worktrees", "move-aside"] + batch + olderThan + ["--yes", "--json"], timeout: 300)
+                    let capture = try HubSource.bridge.capture(["hub", "worktrees", "move-aside"] + batch + olderThan + ["--yes", "--json"], timeout: 300)
                     return try JSONDecoder().decode([MoveAsideOutcome].self, from: capture.stdout)
                 }
             }.value

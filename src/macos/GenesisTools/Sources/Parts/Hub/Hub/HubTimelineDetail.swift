@@ -245,7 +245,7 @@ enum TimelineDetail {
 
     /// Blocking: runs `tools` and decodes; call off the main thread.
     static func load(_ args: [String]) throws -> TimelineDetail {
-        let capture = try ToolsCLIRunner.capture(args)
+        let capture = try HubSource.bridge.capture(args)
         if capture.status != 0, let failure = try? JSONDecoder().decode(TimelineDetailError.self, from: capture.stdout) {
             throw failure
         }

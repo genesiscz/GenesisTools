@@ -182,7 +182,7 @@ final class HubUsageModel: ObservableObject {
 
     /// The hub's runner: the resident server when it has the door, else a `tools` process.
     nonisolated static let hubClient = UsageClient { argv in
-        try await Task.detached(priority: .userInitiated) { try ToolsCLIRunner.run(argv) }.value
+        try await Task.detached(priority: .userInitiated) { try HubSource.bridge.output(argv) }.value
     }
 
     var settings: UsageSettings { preferences.settings }

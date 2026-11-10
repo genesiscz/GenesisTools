@@ -417,7 +417,7 @@ final class HubTimelineModel: ObservableObject {
             }
             let ledger = ToolsCallLedger()
             let result = Result { () -> TimelineEnvelope in
-                let data = try ledger.recordSync { try ToolsCLIRunner.run(args) }
+                let data = try ledger.recordSync { try HubSource.bridge.output(args) }
                 let envelope = try JSONDecoder().decode(TimelineEnvelope.self, from: data)
                 cache.writeData(data, key: key)
                 return envelope
@@ -508,7 +508,7 @@ final class HubTimelineModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("timeline.older", "before \(cursor)")
             let ledger = ToolsCallLedger()
-            let result = Result { try JSONDecoder().decode(TimelineEnvelope.self, from: ledger.recordSync { try ToolsCLIRunner.run(args) }) }
+            let result = Result { try JSONDecoder().decode(TimelineEnvelope.self, from: ledger.recordSync { try HubSource.bridge.output(args) }) }
             span.end((try? result.get()).map { "\($0.events.count) events" } ?? "failed")
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {

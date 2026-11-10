@@ -939,7 +939,7 @@ enum HubSubagents {
     /// Blocking: call off the main thread. nil when the read failed (the digest's rows stay).
     static func list(sessionId: String) -> [SessionSubagent]? {
         do {
-            let rows = try decode(ToolsCLIRunner.run(["ai", "sessions", "subagents", sessionId, "--json"]))
+            let rows = try decode(HubSource.bridge.json(["ai", "sessions", "subagents", sessionId, "--json"]))
             let running = rows.filter { $0.state == .running }.count
             HubPerf.log("subagents \(sessionId.prefix(8)): \(rows.count), \(running) running")
             return rows
@@ -951,7 +951,7 @@ enum HubSubagents {
 
     /// The command's stdout as rows (src/utils/ai/transcripts/subagents.ts).
     static func decode(_ data: Data) throws -> [SessionSubagent] {
-        try JSONDecoder().decode(Envelope.self, from: MonitorJSON.dataByDroppingPreamble(data)).subagents.map(row)
+        try JSONDecoder().decode(Envelope.self, from: data).subagents.map(row)
     }
 
     private static func row(_ agent: Envelope.Agent) -> SessionSubagent {
@@ -988,15 +988,15 @@ enum HubSessionSearch {
     /// Blocking: call off the main thread.
     static func grep(sessionId: String, query: String) throws -> Hits {
         // `--` first: a query such as "-v" is the text to find, not an option (commander refuses it).
-        let data = try ToolsCLIRunner.run(["ai", "sessions", "grep", "--json", "--limit", "500", "--", sessionId, query])
-        return try JSONDecoder().decode(Hits.self, from: MonitorJSON.dataByDroppingPreamble(data))
+        let data = try HubSource.bridge.json(["ai", "sessions", "grep", "--json", "--limit", "500", "--", sessionId, query])
+        return try JSONDecoder().decode(Hits.self, from: data)
     }
 
     /// Blocking: call off the main thread. The turns carry their session-wide `index`.
     static func turns(sessionId: String, indices: [Int]) throws -> [TranscriptTurn] {
         guard !indices.isEmpty else { return [] }
         let list = indices.map(String.init).joined(separator: ",")
-        let data = try ToolsCLIRunner.run(["ai", "sessions", "tail", sessionId, "--json", "--turns", list])
+        let data = try HubSource.bridge.output(["ai", "sessions", "tail", sessionId, "--json", "--turns", list])
         return try SessionTranscriptClient.decode(data).turns
     }
 }

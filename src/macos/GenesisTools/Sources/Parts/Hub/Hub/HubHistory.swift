@@ -79,7 +79,7 @@ final class HubHistoryModel: ObservableObject {
             let span = HubPerf.begin("history.search", "\(trimmed.count) chars", awaits: true)
             let result = await Task.detached(priority: .userInitiated) { () -> Result<[HubHistoryHit], Error> in
                 Result {
-                    let data = try ToolsCLIRunner.run(["claude", "history", "--all", "--json", "--limit", "30", "-q", trimmed])
+                    let data = try HubSource.bridge.output(["claude", "history", "--all", "--json", "--limit", "30", "-q", trimmed])
                     return try JSONDecoder().decode([HubHistoryHit].self, from: data)
                 }
             }.value
