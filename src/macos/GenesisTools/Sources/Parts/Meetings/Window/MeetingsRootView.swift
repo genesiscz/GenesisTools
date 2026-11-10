@@ -8,12 +8,20 @@ struct MeetingsRootView: View {
     /// The playback dock's height: the columns keep that much room at their bottom (`meetingsDockInset`), so their
     /// last rows scroll above the dock instead of under it.
     @State private var dockHeight: CGFloat = 0
+    /// The window's width: below `panelHidesListBelow` the open settings panel hides the meetings list (G53).
+    @State private var windowWidth: CGFloat = 0
 
     var body: some View {
         // The dock floats over the columns with a bottom inset (G-LAYOUT-1). As the second child of a VStack it took its
         // height from the columns, so starting a Moment shrank the list under the pointer.
         Group {
-            if model.place == .contacts { contactsPanes } else { panes }
+            if model.place == .contacts {
+                contactsPanes
+            } else if Self.panelHidesList(width: windowWidth, panelOpen: model.sidePanelOpen && model.detail != nil) {
+                meetingWithPanel
+            } else {
+                panes
+            }
         }
             .environment(\.meetingsDockInset, dockHeight)
             .sheet(item: Bindable(model.people).pendingAssign) { pending in
@@ -28,6 +36,38 @@ struct MeetingsRootView: View {
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { dockHeight = $0 }
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.player.isActive)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
+    }
+
+    /// The settings panel takes 320 pt of the meeting's column (`MeetingDetailView.paneWidth`). Below this window width
+    /// the three columns left the meeting about 120 pt at the 900 pt minimum, so the list steps aside while the panel is
+    /// open: sidebar | meeting | panel, the meeting about 400 pt there. The sidebar's own button still hides it too.
+    /// (A split view's column visibility did not hide a column in the snapshot window, so the layout is two columns.)
+    static let panelHidesListBelow: CGFloat = 1320
+
+    static func panelHidesList(width: CGFloat, panelOpen: Bool) -> Bool {
+        panelOpen && width > 0 && width < panelHidesListBelow
+    }
+
+    /// Sidebar | the open meeting with the settings panel, for a window too narrow for the list beside them.
+    private var meetingWithPanel: some View {
+        NavigationSplitView {
+            MeetingsSidebar(model: model)
+                .safeAreaPadding(.bottom, dockHeight)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 190, max: 300)
+        } detail: {
+            Group {
+                if let detail = model.detail {
+                    MeetingDetailView(detail: detail, window: model)
+                        .environment(\.meetingDetail, detail)
+                        .id(detail.id)
+                }
+            }
+            .heightFromWindow()
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) { SidePanelToggle(model: model) }
+            }
+        }
     }
 
     private var contactsPanes: some View {
