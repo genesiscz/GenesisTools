@@ -31,7 +31,7 @@ import {
     type WorkerUsagePart,
 } from "@genesiscz/utils/worker/cost";
 import { z } from "zod";
-import { formatCostLine, type WorkerCostCard, workerCostCard } from "./cost";
+import { formatCostLine, type WorkerCostCard, workerCostCard } from "./spend-pricing";
 
 const log = logger.child({ component: "ai-spend:worker-ledger" });
 

@@ -28,11 +28,6 @@ import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
-import { toUsageEvents, transcriptCutoffMs } from "./lib/register";
-import { renderSummary } from "./lib/render";
-import { resolveSessionFlag } from "./lib/reports/commands";
-import { planWorkerBackfill, planWorkerReprice } from "./lib/workers/backfill";
-import { formatCostLine, formatUsd, workerCostCard } from "./lib/workers/cost";
 import {
     appendWorkerCostRows,
     bookedCostLine,
@@ -46,7 +41,12 @@ import {
     WORKER_PRICING_VERSION,
     type WorkerCostRow,
     workerCostLedgerPath,
-} from "./lib/workers/ledger";
+} from "@genesiscz/utils/worker/spend-ledger";
+import { formatCostLine, formatUsd, workerCostCard } from "@genesiscz/utils/worker/spend-pricing";
+import { toUsageEvents, transcriptCutoffMs } from "./lib/register";
+import { renderSummary } from "./lib/render";
+import { resolveSessionFlag } from "./lib/reports/commands";
+import { planWorkerBackfill, planWorkerReprice } from "./lib/workers/backfill";
 import { requestedWorkerBackends, type WorkerSessionInfo } from "./lib/workers/sessions";
 import { buildWorkerStats } from "./lib/workers/stats";
 
@@ -1250,7 +1250,7 @@ describe("worker cost ledger", () => {
         await withFileLock(workerCostLedgerPath() + ".lock", async () => {
             const source =
                 "import { appendWorkerCostRows } from " +
-                SafeJSON.stringify(join(import.meta.dir, "lib/workers/ledger.ts")) +
+                SafeJSON.stringify(join(import.meta.dir, "../utils/worker/spend-ledger.ts")) +
                 "; const pending = appendWorkerCostRows([" +
                 SafeJSON.stringify(row) +
                 "]); console.log('started'); await pending;";
