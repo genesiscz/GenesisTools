@@ -1,10 +1,11 @@
 import AppKit
 import SwiftUI
 
-// GenesisTools --meetings [--place needs|all|project:<name>] [--meeting <id>] [--tab transcript|screen|items|speakers|context] [--no-focus]
+// GenesisTools --meetings [--place needs|all|project:<name>] [--meeting <id>] [--tab transcript|screen|items|speakers|context] [--no-focus] [--muted]
 //   The Meetings window: meetings by day with what each needs, one meeting with its transcript, screen, items,
 //   speakers and context, the meetings that need you, and each project. One per login session: a later launch hands
-//   its request to the running one and exits.
+//   its request to the running one and exits. `--muted` starts a window whose Moments play without sound (a check
+//   of the running window on a Mac that must stay quiet).
 // GenesisTools --meetings … --snapshot <png> [--width <pt>] [--height <pt>] [--play <target json>] [--place contacts]
 //                         [--side-panel] [--select <row id>] [--edit <row id>]
 //   Draws the window off screen into a PNG once its data has loaded, then exits (verification without a screen).
@@ -37,6 +38,8 @@ struct MeetingsRequest {
     var meeting: String?
     var tab: MeetingDetailModel.Tab?
     var focus = true
+    /// `--muted`: the window's Moments play without sound.
+    var muted = false
     /// `--side-panel`: the settings side panel opens beside the meeting.
     var sidePanel = false
     var snapshot: String?
@@ -72,6 +75,7 @@ struct MeetingsRequest {
             case "--meeting": request.meeting = value()
             case "--tab": request.tab = value().flatMap(MeetingDetailModel.Tab.init(rawValue:))
             case "--no-focus", "--no-activate": request.focus = false
+            case "--muted": request.muted = true
             case "--side-panel": request.sidePanel = true
             case "--select": request.select = value()
             case "--edit": request.edit = value()
@@ -100,6 +104,10 @@ package func runMeetings(_ args: [String]) -> Never {
     MainActor.assumeIsolated {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
+        if request.muted {
+            let model = MeetingsWindow.shared.model
+            model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
+        }
         MeetingsMenuTarget.shared.model = MeetingsWindow.shared.model
         MeetingsMenu.install()
         HangWatch.start()

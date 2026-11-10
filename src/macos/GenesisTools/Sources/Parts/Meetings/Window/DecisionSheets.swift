@@ -23,7 +23,9 @@ struct ReachSheet: View {
                                 if let player = detail.window?.player {
                                     MomentButton(player: player, meeting: detail.id, target: .item(item.id), label: detail.rowLabel(item.id), source: .speakerChip)
                                 }
-                                Text(verbatim: detail.rows.value?.rows.first { $0.id == item.id }?.what ?? item.id)
+                                // What the question asks: its one-line text starts with the time the button beside
+                                // it already shows.
+                                Text(verbatim: detail.rows.value?.rows.first { $0.id == item.id }.map(ReviewRowView.title) ?? item.id)
                                     .font(.system(size: 12.5)).lineLimit(2)
                             }
                         }
