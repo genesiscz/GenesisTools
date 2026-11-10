@@ -67,6 +67,16 @@ struct SidePanelRow: Identifiable, Equatable {
     let defaultValue: SidePanelValue?
     /// The tone row: its Play button plays this sound.
     var tone: ToneSound?
+    /// A row of the same section this one needs: off while that row holds none of `values` (ux checklist, Settings:
+    /// a sub-option is disabled while its parent is off, and says which).
+    var requires: Requirement?
+
+    struct Requirement: Equatable {
+        let rowID: String
+        let values: [SidePanelValue]
+        /// What the row says while it is off: "Off while Tone is off."
+        let words: String
+    }
 
     var id: String {
         switch store {
@@ -82,6 +92,13 @@ struct SidePanelRow: Identifiable, Equatable {
     var valueTitle: String {
         choices.first { $0.value == value }?.title ?? SidePanelWords.title(value, store: store)
     }
+
+    /// This row, off while the row `id` of its section holds none of `values`.
+    func requiring(_ id: String, _ values: [SidePanelValue], _ words: String) -> SidePanelRow {
+        var row = self
+        row.requires = Requirement(rowID: id, values: values, words: words)
+        return row
+    }
 }
 
 /// One section: its rows, a line under them, and the Settings page card it matches.
@@ -95,6 +112,19 @@ struct SidePanelSection: Identifiable, Equatable {
     var settingsAnchor: String?
 
     var isDefault: Bool { rows.allSatisfy(\.isDefault) }
+
+    /// Whether `row` takes a change now: its requirement's row holds one of the values it needs.
+    func isEnabled(_ row: SidePanelRow) -> Bool {
+        guard let requirement = row.requires, let parent = rows.first(where: { $0.id == requirement.rowID }) else { return true }
+        return requirement.values.contains(parent.value)
+    }
+
+    /// The row's detail line, with why it is off while it is.
+    func detail(_ row: SidePanelRow) -> String {
+        guard !isEnabled(row), let words = row.requires?.words else { return row.detail }
+        return "\(row.detail) \(words)"
+    }
+
     /// The app defaults keys a reset removes.
     var windowKeys: [String] { rows.compactMap { if case .window(let key) = $0.store { return key } else { return nil } } }
     /// The config paths a reset unsets.
@@ -126,14 +156,22 @@ enum SidePanelWords {
         MeetingsPreferences.typedAnswerKey: ["always": "On every question", "noChoices": "Without choices"],
     ]
 
+    /// A number choice of 0 that means "not at all" for its key.
+    static let zeroTitles: [String: String] = [
+        MeetingsPreferences.Transcript.blockBreakSec.key: "Off",
+        MeetingsPreferences.Panes.collapseHeight.key: "Never",
+    ]
+
     static func choice(_ raw: String, key: String) -> String {
         keyedTitles[key]?[raw] ?? choiceTitles[raw] ?? raw
     }
 
     /// A number with the unit its key names: "1.25×", "30 s", "300 ms", or a count.
     static func number(_ value: Double, key: String) -> String {
+        if value == 0, let zero = zeroTitles[key] { return zero }
         let text = value == value.rounded() ? String(Int(value)) : String(format: "%g", value)
         if key.hasSuffix("speed") { return "\(text)×" }
+        if key.hasSuffix("Height") || key.hasSuffix(".height") { return "\(text) pt" }
         if key.hasSuffix("Ms") { return "\(text) ms" }
         if key.hasSuffix("Sec") || key.hasSuffix("Seconds") || key.hasSuffix("seconds") || key.hasSuffix("plainSeconds") { return "\(text) s" }
         return text
@@ -196,17 +234,22 @@ enum SidePanelCatalog {
         typealias Rows = MeetingsPreferences.Rows
         typealias Playback = MeetingsPreferences.Playback
         typealias Panes = MeetingsPreferences.Panes
+        typealias Transcript = MeetingsPreferences.Transcript
+        typealias Speakers = MeetingsPreferences.Speakers
         let playback = SidePanelSection(id: "playback", title: "Playback", rows: [
             row(Playback.view, value: Playback.view.value(defaults)),
             row(Playback.speed, value: Playback.speed.value(defaults)),
             row(Playback.repeatClip, value: Playback.repeatClip.value(defaults)),
             row(Playback.afterClip, value: Playback.afterClip.value(defaults)),
-            row(Playback.moreSec, value: Playback.moreSec.value(defaults)),
+            row(Playback.moreSec, value: Playback.moreSec.value(defaults))
+                .requiring(Playback.afterClip.key, [.text(Playback.AfterClip.offerMore.rawValue), .text(Playback.AfterClip.continue.rawValue)],
+                           "Off while a clip's end is Stop."),
             row(Playback.contextSec, value: Playback.contextSec.value(defaults)),
             row(Playback.rewindSec, value: Playback.rewindSec.value(defaults)),
             row(Playback.clickInQuestion, value: Playback.clickInQuestion.value(defaults)),
             row(Playback.onTopEnd, value: Playback.onTopEnd.value(defaults)),
             row(Playback.stackDepth, value: Playback.stackDepth.value(defaults)),
+            row(Playback.keys, value: Playback.keys.value(defaults)),
         ])
         let rows = SidePanelSection(id: "rows", title: "Rows", rows: [
             row(Rows.typedAnswer, value: Rows.typedAnswer.value(defaults)),
@@ -217,7 +260,9 @@ enum SidePanelCatalog {
             row(Rows.lowPriority, value: Rows.lowPriority.value(defaults)),
             row(Rows.askReach, value: Rows.askReach.value(defaults)),
             row(Rows.autoplayNext, value: Rows.autoplayNext.value(defaults)),
-            row(Rows.autoplayDelaySec, value: Rows.autoplayDelaySec.value(defaults)),
+            row(Rows.autoplayDelaySec, value: Rows.autoplayDelaySec.value(defaults))
+                .requiring(Rows.autoplayNext.key, [.text(Rows.AutoplayNext.afterAnswer.rawValue)], "Off while the next row does not play."),
+            row(Rows.openPersonPicker, value: Rows.openPersonPicker.value(defaults)),
         ])
         let notices = SidePanelSection(id: "notices", title: "Notices", rows: [
             numberRow(key: MeetingsPreferences.noticeSecondsKey, title: "A notice with Undo stays for",
@@ -238,26 +283,41 @@ enum SidePanelCatalog {
                          defaultValue: .text(MeetingsPreferences.NoticePlace.bottom.rawValue)),
             row(MeetingsPreferences.Notices.maxVisible, value: MeetingsPreferences.Notices.maxVisible.value(defaults)),
         ], settingsAnchor: MeetingsSettingsPages.noticesAnchor)
+        let timelineOn: [SidePanelValue] = [.flag(true)]
         let panes = SidePanelSection(id: "panes", title: "Timeline and Panes", rows: [
             row(Panes.timelineShown, value: Panes.timelineShown.value(defaults)),
-            row(Panes.hoverDelayMs, value: Panes.hoverDelayMs.value(defaults)),
+            row(Panes.hoverDelayMs, value: Panes.hoverDelayMs.value(defaults))
+                .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off."),
+            row(Panes.collapseHeight, value: Panes.collapseHeight.value(defaults))
+                .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off: the dock is one line."),
             row(Panes.followPlayback, value: Panes.followPlayback.value(defaults)),
             row(Panes.screenBesidePlayback, value: Panes.screenBesidePlayback.value(defaults)),
+            row(Panes.screenHeight, value: Panes.screenHeight.value(defaults))
+                .requiring(Panes.screenBesidePlayback.key, [.flag(true)], "Off while the screen is not beside the sound."),
             row(Panes.transcriptPane, value: Panes.transcriptPane.value(defaults)),
+        ])
+        let transcript = SidePanelSection(id: "transcript", title: "Transcript and Speakers", rows: [
+            row(Transcript.dimPast, value: Transcript.dimPast.value(defaults)),
+            row(Transcript.avatars, value: Transcript.avatars.value(defaults)),
+            row(Transcript.blockBreakSec, value: Transcript.blockBreakSec.value(defaults)),
+            row(Transcript.clipSec, value: Transcript.clipSec.value(defaults)),
+            row(Speakers.showQuestions, value: Speakers.showQuestions.value(defaults)),
+            row(Speakers.hintChips, value: Speakers.hintChips.value(defaults)),
         ])
         typealias People = MeetingsPreferences.People
         let people = SidePanelSection(id: "people", title: "Speaker Names", rows: [
             row(People.renameBlur, value: People.renameBlur.value(defaults)),
             row(People.offerNew, value: People.offerNew.value(defaults)),
         ])
-        return [playback, rows, notices, panes, people]
+        return [playback, rows, notices, panes, transcript, people]
     }
 
     /// The keys whose readers read a whole number (`integer(forKey:)`, `MeetingsWindowSetting<Int>`).
     static let integerKeys: Set<String> = [
         MeetingsPreferences.noticeSecondsKey, MeetingsPreferences.plainNoticeSecondsKey,
         MeetingsPreferences.Notices.maxVisible.key, MeetingsPreferences.Playback.stackDepth.key,
-        MeetingsPreferences.Panes.hoverDelayMs.key,
+        MeetingsPreferences.Panes.hoverDelayMs.key, MeetingsPreferences.Panes.collapseHeight.key,
+        MeetingsPreferences.Panes.screenHeight.key, MeetingsPreferences.Speakers.hintChips.key,
     ]
 
     /// Writes a window row's value into `defaults` as the type its reader reads (the side panel and the Settings page).
@@ -291,20 +351,23 @@ enum SidePanelCatalog {
         if pad == nil { padChoices.insert(SidePanelChoice(value: .text(""), title: "Not set"), at: 0) }
         var soundChoices = TonePreset.allCases.map { SidePanelChoice(value: .text($0.rawValue), title: $0.title) }
         if preset == nil { soundChoices.append(SidePanelChoice(value: .text("custom"), title: "Custom")) }
+        let toneOn = "\(listenPath).tone.enabled"
         return SidePanelSection(id: "engine", title: "Clip and Tone", rows: [
             SidePanelRow(store: .engine(path: "\(listenPath).padSec"), title: "Sound around the asked spot",
                          detail: "Seconds a Moment plays before and after the words it is about.",
                          choices: padChoices, value: pad.map(SidePanelValue.number) ?? .text(""), defaultValue: nil),
-            SidePanelRow(store: .engine(path: "\(listenPath).tone.enabled"), title: "Tone",
+            SidePanelRow(store: .engine(path: toneOn), title: "Tone",
                          detail: "A short tone just before the asked spot, in the window and the terminal.",
                          choices: [], value: .flag(flag(["tone", "enabled"]) ?? true), defaultValue: .flag(true)),
             numberRow(key: "leadSec", title: "Tone before the spot", detail: "How long before the asked spot the tone sounds.",
                       choices: [0.2, 0.4, 0.6, 1], value: number(["tone", "leadSec"]) ?? 0.4, defaultValue: 0.4,
-                      store: .engine(path: "\(listenPath).tone.leadSec")),
+                      store: .engine(path: "\(listenPath).tone.leadSec"))
+                .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
             SidePanelRow(store: .engine(path: "\(listenPath).tone.sound"), title: "Tone sound",
                          detail: "Beep is a clear 880 Hz, Soft is lower and quieter, Click is very short.",
                          choices: soundChoices, value: .text(preset?.rawValue ?? "custom"),
-                         defaultValue: .text(TonePreset.beep.rawValue), tone: sound),
+                         defaultValue: .text(TonePreset.beep.rawValue), tone: sound)
+                .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
             numberRow(key: "longestClipSec", title: "Longest clip",
                       detail: "A longer item or turn is shown, not played.",
                       choices: [15, 30, 60, 120], value: number(["longestClipSec"]) ?? 30, defaultValue: 30,
@@ -356,7 +419,8 @@ struct SidePanelSections: View {
                     Section {
                         if !folded.contains(section.id) {
                             ForEach(section.rows) { row in
-                                SidePanelRowView(row: row, change: { change(row, $0) }, playTone: playTone)
+                                SidePanelRowView(row: row, change: { change(row, $0) }, playTone: playTone,
+                                                 enabled: section.isEnabled(row), detail: section.detail(row))
                             }
                             if let footnote = section.footnote {
                                 Label(footnote, systemImage: "clock.arrow.circlepath")
@@ -425,6 +489,9 @@ struct SidePanelRowView: View {
     let row: SidePanelRow
     let change: (SidePanelValue) -> Void
     var playTone: ((ToneSound) -> Void)?
+    /// False while the row it needs is off (`SidePanelSection.isEnabled`); `detail` then says why.
+    var enabled = true
+    var detail: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -433,14 +500,16 @@ struct SidePanelRowView: View {
                     .font(.system(size: 12))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(enabled ? .primary : .secondary)
                 Spacer(minLength: 6)
                 control
+                    .disabled(!enabled)
                 if let playTone, let sound = SidePanelCatalog.sound(row.value, for: row) {
                     IconButton(systemName: "play.circle", tooltip: "Play the tone", size: 13) { playTone(sound) }
                         .accessibilityIdentifier("meetings.sidePanel.playTone")
                 }
             }
-            Text(row.detail)
+            Text(detail ?? row.detail)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

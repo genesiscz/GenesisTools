@@ -14,13 +14,15 @@ struct MeetingsPlayerBar: View {
 
     @AppStorage(MeetingsPreferences.Panes.timelineShown.key) private var timelineShown =
         MeetingsPreferences.Panes.timelineShown.defaultValue
+    @AppStorage(MeetingsPreferences.Panes.collapseHeight.key) private var collapseHeight =
+        MeetingsPreferences.Panes.collapseHeight.defaultValue
     @State private var windowHeight: CGFloat = 0
 
-    /// Below this window height the dock folds to one line: the full dock is about 280 pt, and the rows keep the rest.
-    static let collapseHeight: CGFloat = 560
-
-    static func collapses(timelineShown: Bool, windowHeight: CGFloat) -> Bool {
-        !timelineShown || (windowHeight > 0 && windowHeight < collapseHeight)
+    /// Below `collapseHeight` (`meetings.timeline.collapseHeight`, 560 pt) the dock folds to one line: the full dock is
+    /// about 280 pt, and the rows keep the rest. 0 never folds it.
+    static func collapses(timelineShown: Bool, windowHeight: CGFloat,
+                          collapseHeight: Int = MeetingsPreferences.Panes.collapseHeight.defaultValue) -> Bool {
+        !timelineShown || (windowHeight > 0 && windowHeight < CGFloat(collapseHeight))
     }
 
     var body: some View {
@@ -28,7 +30,8 @@ struct MeetingsPlayerBar: View {
             VStack(spacing: 0) {
                 Divider()
                 TimelineDock(player: player, title: title, window: window ?? MeetingsMenuTarget.shared.model,
-                             collapsed: Self.collapses(timelineShown: timelineShown, windowHeight: windowHeight))
+                             collapsed: Self.collapses(timelineShown: timelineShown, windowHeight: windowHeight,
+                                                       collapseHeight: collapseHeight))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // Over the breadcrumb line, not above it: a cut or a failure never changes the dock's height.
                     .overlay(alignment: .top) { status }

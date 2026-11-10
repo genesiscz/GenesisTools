@@ -112,9 +112,11 @@ enum MeetingsPlaybackKeys {
         return perform(key, model: model)
     }
 
-    /// Runs `key` on the window's player; false lets the views have it.
+    /// Runs `key` on the window's player; false lets the views have it. With `meetings.playback.keys` off every key goes
+    /// on to the views (ux checklist: single-key shortcuts can be turned off).
     @discardableResult
     static func perform(_ key: Key, model: MeetingsWindowModel) -> Bool {
+        guard MeetingsPreferences.Playback.keys.value(model.defaults) else { return false }
         let player = model.player
         switch key {
         case .space:

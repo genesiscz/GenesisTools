@@ -36,6 +36,11 @@ struct TranscriptBlocksPane: View {
 
     @AppStorage(MeetingsPreferences.Panes.followPlayback.key) private var followSetting =
         MeetingsPreferences.Panes.followPlayback.defaultValue
+    @AppStorage(MeetingsPreferences.Transcript.dimPast.key) private var dimPast = MeetingsPreferences.Transcript.dimPast.defaultValue
+    @AppStorage(MeetingsPreferences.Transcript.avatars.key) private var avatars = MeetingsPreferences.Transcript.avatars.defaultValue
+    @AppStorage(MeetingsPreferences.Transcript.blockBreakSec.key) private var blockBreakSec =
+        MeetingsPreferences.Transcript.blockBreakSec.defaultValue
+    @AppStorage(MeetingsPreferences.Transcript.clipSec.key) private var clipSec = MeetingsPreferences.Transcript.clipSec.defaultValue
     /// Follows the playback now: the setting's value until the reader scrolls away, then off until "Jump to now".
     @State private var following: Bool?
     @State private var selection: Set<String> = []
@@ -52,7 +57,7 @@ struct TranscriptBlocksPane: View {
                 EmptyState(symbol: "magnifyingglass", text: "No line holds “\(filter)”")
             } else {
                 FollowingBlocks(blocks: blocks, player: detail.window?.player, meeting: detail.id, follows: isFollowing,
-                                jump: jump, selection: selection, popoverLine: popoverLine,
+                                jump: jump, selection: selection, popoverLine: popoverLine, dimsPast: dimPast, showsAvatar: avatars,
                                 play: { detail.play(at: $0, from: .transcript) },
                                 select: select,
                                 scrolledAway: { if isFollowing { following = false } },
@@ -71,7 +76,8 @@ struct TranscriptBlocksPane: View {
         let marks = MeetingDetailModel.lineMarks(entries: entries, hints: detail.speakers.value?.hints ?? [],
                                                  items: detail.record.value?.items ?? [],
                                                  comments: detail.comments.value?.comments ?? [])
-        return TranscriptBlock.build(from: entries, durationSec: durationSec, marks: marks)
+        return TranscriptBlock.build(from: entries, durationSec: durationSec, marks: marks,
+                                     breakAfterGapSec: MeetingsPreferences.Transcript.breakAfterGapSec(blockBreakSec))
     }
 
     private var durationSec: Double? {
@@ -138,6 +144,7 @@ struct TranscriptBlocksPane: View {
         guard let chosen = TranscriptSelection.lines(selectedLines) else { return AnyView(EmptyView()) }
         return AnyView(SelectionPopover(
             selection: chosen,
+            clipLengthSec: clipSec > 0 ? clipSec : MeetingsPreferences.Transcript.clipSec.defaultValue,
             stage: { selection, text in
                 detail.stageComment(selection, text: text)
                 clearSelection()
@@ -180,6 +187,8 @@ private struct FollowingBlocks: View {
     let jump: Int
     let selection: Set<String>
     let popoverLine: String?
+    let dimsPast: Bool
+    let showsAvatar: Bool
     let play: (Double) -> Void
     let select: (TranscriptBlockLine, TranscriptLineClick) -> Void
     let scrolledAway: () -> Void
@@ -193,7 +202,8 @@ private struct FollowingBlocks: View {
         let heard = TranscriptBlock.heard(in: blocks, at: position)
         ScrollViewReader { proxy in
             ScrollView {
-                TranscriptBlocksList(blocks: blocks, heard: heard, selection: selection, pastBefore: position,
+                TranscriptBlocksList(blocks: blocks, heard: heard, selection: selection, dimsPast: dimsPast,
+                                     showsAvatar: showsAvatar, pastBefore: dimsPast ? position : nil,
                                      popoverLine: popoverLine, popover: popover, closePopover: closePopover,
                                      play: play, select: select)
                     .padding(.vertical, 4)

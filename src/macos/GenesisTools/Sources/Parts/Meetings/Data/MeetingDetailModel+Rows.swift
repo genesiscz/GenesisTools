@@ -34,7 +34,7 @@ extension MeetingDetailModel {
     func loadRows() { readRows(quiet: false) }
 
     func readRows(quiet: Bool) {
-        read(\.rows, generation: \.rowsGeneration, Self.rowsRead(id, lowPriority: MeetingsPreferences.Rows.lowPriority.value()),
+        read(\.rows, generation: \.rowsGeneration, Self.rowsRead(id, lowPriority: MeetingsPreferences.Rows.lowPriority.value(defaults)),
              quiet: quiet) { [weak self] rows in
             guard let self else { return }
             self.rowsLanded(rows)
@@ -112,7 +112,7 @@ extension MeetingDetailModel {
     func decide(_ row: ReviewRow, _ action: DecisionAction, askReach: Bool = true) {
         guard !busyItems.contains(row.id) else { return }
         let reason = reasons[row.id].flatMap(MeetingsWords.typedAnswer)
-        let asks = askReach && MeetingsPreferences.Rows.askReach.value() == .always && Self.mayReach(action)
+        let asks = askReach && MeetingsPreferences.Rows.askReach.value(defaults) == .always && Self.mayReach(action)
         guard asks else {
             apply(row, action, reason: reason)
             return
@@ -138,7 +138,7 @@ extension MeetingDetailModel {
     /// The sheet's Apply; `askAgain` false is its "Do not ask again", which turns `meetings.rows.askReach` to never.
     func applyReach(_ pending: PendingReach, askAgain: Bool = true) {
         pendingReach = nil
-        if !askAgain { UserDefaults.standard.set(MeetingsPreferences.Rows.AskReach.never.rawValue, forKey: MeetingsPreferences.Rows.askReach.key) }
+        if !askAgain { defaults.set(MeetingsPreferences.Rows.AskReach.never.rawValue, forKey: MeetingsPreferences.Rows.askReach.key) }
         apply(pending.row, pending.action, reason: pending.reason)
     }
 
@@ -286,15 +286,15 @@ extension MeetingDetailModel {
     /// says so.
     func autoplayNext(after row: ReviewRow) {
         guard let rows = rows.value?.rows else { return }
-        let order = MeetingsPreferences.Rows.order.value(), shown = Self.visibleRows(rows, order: order, decided: .inPlace)
+        let order = MeetingsPreferences.Rows.order.value(defaults), shown = Self.visibleRows(rows, order: order, decided: .inPlace)
         guard let next = Self.nextOpenRow(after: row.id, in: shown) else {
             notices.push(StackedNotice(text: "That was the last open row of this meeting"))
             return
         }
         selectedRow = next.id
-        guard MeetingsPreferences.Rows.autoplayNext.value() == .afterAnswer, let player = window?.player else { return }
+        guard MeetingsPreferences.Rows.autoplayNext.value(defaults) == .afterAnswer, let player = window?.player else { return }
         player.precut(next.target, in: id)
-        let delay = MeetingsPreferences.Rows.autoplayDelaySec.value()
+        let delay = MeetingsPreferences.Rows.autoplayDelaySec.value(defaults)
         let playingBefore = player.top?.id
         autoplayTask?.cancel()
         autoplayTask = Task { [weak self] in

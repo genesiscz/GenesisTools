@@ -24,6 +24,8 @@ final class MeetingDetailModel {
 
     let id: String
     weak var window: MeetingsWindowModel?
+    /// The defaults the window settings live in: the window's (a test passes its own suite), `.standard` without one.
+    var defaults: UserDefaults { window?.defaults ?? .standard }
     var tab: Tab = .transcript
     /// The tab is the one the meeting opened on by itself, not one a request named or the reader picked.
     var tabIsDefault = false
