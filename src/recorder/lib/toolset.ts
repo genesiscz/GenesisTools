@@ -76,11 +76,11 @@ import { cameraRefusal, recorderFaceState } from "./camera-recorder";
 import { type DemoDriver, type DemoStep, demoEditSchema, runDemo } from "./demo";
 import { duplicateRecording } from "./duplicate";
 import {
-    collapseUndo,
     defaultExportName,
     EXPORT_FORMATS,
     type ExportFormat,
     type ExportRun,
+    editPathOf,
     editProject,
     exportAs,
     exportProgressPrinter,
@@ -88,9 +88,9 @@ import {
     previewTranscriptCuts,
     transcriptWords,
     undoDepth,
-    undoEdit,
     writeSubtitles,
 } from "./edit";
+import { withEditSession } from "./edit-session";
 import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
 import {
     cachedScreenText,
@@ -1920,7 +1920,7 @@ export class Movie {
         }
 
         // Its steps undo as one.
-        collapseUndo(before.path, depth);
+        await withEditSession(before.path, (session) => session.collapseUndo(depth));
         const opened = await openProject(this.recording);
         return { ...describeProject(opened.project, opened.path), steps };
     }
@@ -1967,15 +1967,16 @@ export class Movie {
     }
 
     async undo(options: { all?: boolean } = {}) {
-        let undone = await undoEdit(this.recording);
-        const ops = [...(undone.undone ?? [])];
+        const path = editPathOf(this.recording);
+        return withEditSession(path, async (session) => {
+            const ops = [...(await session.undo({ by: "agent" })).undone];
 
-        while (options.all && undoDepth(undone.path) > 0) {
-            undone = await undoEdit(this.recording);
-            ops.push(...(undone.undone ?? []));
-        }
+            while (options.all && session.undoDepth > 0) {
+                ops.push(...(await session.undo({ by: "agent" })).undone);
+            }
 
-        return { undone: ops, stepsLeft: undoDepth(undone.path), ...briefOf(undone.project, undone.path) };
+            return { undone: ops, stepsLeft: session.undoDepth, ...briefOf(session.current.project, path) };
+        });
     }
 
     async shape(options: Omit<Extract<EditOp, { op: "shape" }>, "op">) {

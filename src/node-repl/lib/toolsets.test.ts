@@ -12,15 +12,8 @@ import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
 import { missingCameraWarning } from "@app/recorder/lib/camera-recorder";
-import {
-    collapseUndo,
-    defaultExportName,
-    editProject,
-    inItsFolder,
-    transcriptWords,
-    undoDepth,
-    undoEdit,
-} from "@app/recorder/lib/edit";
+import { defaultExportName, editProject, inItsFolder, transcriptWords, undoDepth } from "@app/recorder/lib/edit";
+import { withEditSession } from "@app/recorder/lib/edit-session";
 import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "@app/recorder/lib/frames-recording";
 import { requireRecorderPart } from "@app/recorder/lib/library";
 import {
@@ -115,6 +108,10 @@ import {
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
+
+/** The CLI's undo and collapse with no recorder service: each on a short-lived session of the edit file. */
+const undoEdit = (path: string) => withEditSession(path, (session) => session.undo({ by: "agent" }));
+const collapseUndo = (path: string, depth: number) => withEditSession(path, (session) => session.collapseUndo(depth));
 
 /** Writes one PNG every 60 ms of a colour that changes with each frame, until the capture ends. */
 class FakeRecorder extends FrameRecorder {
@@ -951,7 +948,7 @@ describe("movie chapters", () => {
         const depth = undoDepth(path);
         await editProject(path, [{ op: "text", from: 1, to: 2, text: "A" }]);
         await editProject(path, [{ op: "text", from: 2, to: 3, text: "B" }]);
-        collapseUndo(path, depth);
+        await collapseUndo(path, depth);
         expect(undoDepth(path)).toBe(depth + 1);
         const collapsed = await undoEdit(path);
         expect(collapsed.undone).toEqual(["text", "text"]);
