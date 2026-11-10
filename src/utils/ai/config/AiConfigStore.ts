@@ -87,7 +87,7 @@ function matches(account: AccountEntry, filter: AccountFilter): boolean {
 /**
  * The single reader/writer for the unified AI config.
  *
- * Unlike the v3 `AIConfig` singleton, which captured the file once per process
+ * Unlike the retired v3 facade singleton, which captured the file once per process
  * and never looked again, this store stamps the file's mtime on load and
  * re-reads when it changes. That staleness is why a long-running ai-proxy or
  * dashboard kept serving credentials that a `tools claude login` in another
