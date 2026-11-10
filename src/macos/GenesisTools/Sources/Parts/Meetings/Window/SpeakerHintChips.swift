@@ -27,7 +27,7 @@ struct HintChip: Equatable, Hashable, Identifiable {
 
     /// The chips of a hint's ranges in time order: a range up to `longestClipSec` plays, a longer one shows (zooms),
     /// because the engine refuses a Moment that long (G-SPK-3). At most `maxShown` chips; the rest are counted for
-    /// "Review N" (G-SPK-1). Ranges without times have no chip.
+    /// "Review all N" (G-SPK-1). Ranges without times have no chip.
     static func chips(for ranges: [SpeakerHint.Range], longestClipSec: Double = 30, maxShown: Int = 3) -> (chips: [HintChip], more: Int) {
         let timed = ranges.compactMap { range -> HintChip? in
             guard let from = range.fromSec, let to = range.toSec else { return nil }
@@ -40,17 +40,17 @@ struct HintChip: Equatable, Hashable, Identifiable {
     }
 }
 
-/// A hint's ranges as chips: ▸ plays a range, "Show" zooms a long one, "Review N" opens all of them when there are
+/// A hint's ranges as chips: ▸ plays a range, "Show" zooms a long one, "Review all N" opens all of them when there are
 /// more than `maxShown`.
 struct SpeakerHintChips: View {
     let ranges: [SpeakerHint.Range]
     /// The longest Moment the engine cuts (`global.playback.listen.longestClipSec`, 30).
     var longestClipSec: Double = 30
-    /// Chips before "Review N". The plan's pick: 3.
+    /// Chips before "Review all N" ("Review 4" did not say that it holds the three chips before it too). The plan's pick: 3.
     var maxShown = 3
     let play: (Double, Double) -> Void
     let zoom: (Double, Double) -> Void
-    /// "Review N": walk every range of the hint (the wiring agent picks the surface).
+    /// "Review all N": walk every range of the hint (the wiring agent picks the surface).
     var review: () -> Void = {}
 
     var body: some View {
@@ -63,14 +63,14 @@ struct SpeakerHintChips: View {
                 }
                 if more > 0 {
                     Button(action: review) {
-                        Text(verbatim: "Review \(more)")
+                        Text(verbatim: "Review all \(more)")
                             .font(.system(size: 11.5, weight: .medium))
                             .padding(.horizontal, 8).frame(height: 22)
                             .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.4)))
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Review all \(more) stretches of this hint")
+                    .instantTooltip("Open a list of all \(more) stretches that this line names")
                 }
             }
         }
