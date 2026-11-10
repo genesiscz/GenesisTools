@@ -3,8 +3,8 @@
 import { isBuiltinAction } from "@app/automate/lib/builtins.ts";
 import { getPresetMeta, listPresets, loadPreset } from "@app/automate/lib/storage.ts";
 import type { Preset } from "@app/automate/lib/types.ts";
-import * as p from "@clack/prompts";
 import { formatRelativeTime } from "@genesiscz/utils/format.ts";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 

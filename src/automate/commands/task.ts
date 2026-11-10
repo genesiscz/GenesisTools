@@ -3,11 +3,11 @@ import { runPreset } from "@app/automate/lib/engine";
 import { computeNextRunAt, parseInterval } from "@app/automate/lib/interval-parser";
 import { createRunLogger } from "@app/automate/lib/run-logger";
 import { listPresets, loadPreset } from "@app/automate/lib/storage";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -59,6 +59,7 @@ export function registerTaskCommand(parent: Command): void {
                     value: pr.fileName.replace(".json", ""),
                     label: `${pr.name} — ${pr.description ?? ""}`,
                 })),
+                cancel: "back",
             });
             if (p.isCancel(presetName)) {
                 return;
@@ -72,6 +73,7 @@ export function registerTaskCommand(parent: Command): void {
                         return "Only alphanumeric, hyphens, underscores";
                     }
                 },
+                cancel: "back",
             });
 
             if (!p.isCancel(name)) {
@@ -99,6 +101,7 @@ export function registerTaskCommand(parent: Command): void {
                         return (e as Error).message;
                     }
                 },
+                cancel: "back",
             });
             if (p.isCancel(interval)) {
                 return;
@@ -244,7 +247,7 @@ export function registerTaskCommand(parent: Command): void {
                 return;
             }
 
-            const confirm = await p.confirm({ message: `Delete task "${name}"?` });
+            const confirm = await p.confirm({ message: `Delete task "${name}"?`, cancel: "back" });
 
             if (p.isCancel(confirm) || !confirm) {
                 return;
