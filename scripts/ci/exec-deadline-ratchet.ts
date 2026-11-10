@@ -31,7 +31,6 @@ export const EXEC_DEADLINE_RATCHET: ReadonlyMap<string, number> = new Map<string
     ["src/utils/git/origins/pr-fetch.ts", 5],
     ["src/utils/git/repo-config.ts", 3],
     ["src/utils/git/repo-facts.ts", 3],
-    ["src/utils/git/worktree-backup.ts", 1],
     ["src/utils/git/worktree.ts", 7],
     ["src/utils/github/url-parser.ts", 1],
 ]);
