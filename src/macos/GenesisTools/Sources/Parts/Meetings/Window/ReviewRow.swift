@@ -331,16 +331,36 @@ private struct RowEditor: View {
     let row: ReviewRow
     let detail: MeetingDetailModel
     @FocusState private var focused: Bool
+    /// A speaker range's voice: the person picker under the field (R23), open with the editor.
+    @State private var picking = false
+
+    /// A speaker range is confirmed as a person: the picker ranks the people in the call at its start first.
+    private var picksPerson: Bool { row.kind == "speaker-range" && row.edit == "person" }
+
+    private var draft: Binding<String> {
+        Binding(get: { detail.drafts[row.id] ?? "" }, set: { detail.drafts[row.id] = $0 })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                TextField(prompt, text: Binding(get: { detail.drafts[row.id] ?? "" }, set: { detail.drafts[row.id] = $0 }))
+                TextField(prompt, text: draft)
                     .textFieldStyle(.roundedBorder).frame(maxWidth: 320)
                     .focused($focused)
                     .onSubmit { detail.submitDraft(on: row) }
                     .onExitCommand { detail.closeEditor() }
                     .accessibilityLabel("\(ReviewRowView.editWord(row.edit)) for \(row.label)")
+                    .popover(isPresented: $picking, arrowEdge: .bottom) {
+                        SpeakerNamePopover(name: draft, atSec: row.startSec) { name in
+                            picking = false
+                            detail.decide(row, .confirm([row.id], speaker: name))
+                        }
+                    }
+                if picksPerson {
+                    IconButton(systemName: "person.crop.circle.badge.questionmark", tooltip: "Pick the person from the people you know") {
+                        picking = true
+                    }
+                }
                 GhostButton("Save", symbol: "return", tooltip: "Save it (Return); it is confirmed so") { detail.submitDraft(on: row) }
                     .disabled(MeetingDetailModel.draftDecision(detail.drafts[row.id], on: row) == nil)
                 IconButton(systemName: "xmark", tooltip: "Close the editor; what you typed stays (Esc)") { detail.closeEditor() }
@@ -350,7 +370,10 @@ private struct RowEditor: View {
                 .textFieldStyle(.roundedBorder).frame(maxWidth: 420)
                 .onSubmit { detail.submitDraft(on: row) }
         }
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            if picksPerson { picking = true }
+        }
     }
 
     private var prompt: String {

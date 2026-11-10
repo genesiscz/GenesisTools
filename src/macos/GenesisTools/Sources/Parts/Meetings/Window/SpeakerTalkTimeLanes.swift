@@ -118,8 +118,19 @@ struct SpeakerTalkTimeLanes: View {
     var openQuestion: ([String]) -> Void = { _ in }
 
     static let nameWidth: CGFloat = 170
-    static let shareWidth: CGFloat = 92
+    /// "50 % · 1 h 02 min" in 11 pt monospaced digits on one line (92 pt wrapped it in two).
+    static let shareWidth: CGFloat = 124
     static let laneHeight: CGFloat = 30
+    /// Below this width the names and the shares narrow (the share shows the percent only), so the lanes keep about half
+    /// the width: at the window's smallest size the detail column is about 440 pt, and the full columns left the lanes
+    /// 30 pt.
+    static let compactWidth: CGFloat = 620
+    static let compactNameWidth: CGFloat = 112
+    static let compactShareWidth: CGFloat = 40
+    /// The room an end label of the ruler takes ("2:26:10" in 10 pt monospaced digits, with a gap).
+    static let rulerEndRoom: CGFloat = 80
+
+    @State private var compact = false
 
     var body: some View {
         if !timed {
@@ -131,6 +142,8 @@ struct SpeakerTalkTimeLanes: View {
             EmptyView()
         } else {
             VStack(alignment: .leading, spacing: 0) {
+                Color.clear.frame(height: 0)
+                    .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.compactWidth }) { compact = $0 }
                 if showsQuestions && !questions.isEmpty {
                     row(name: Text("Open questions").font(.system(size: 11)).foregroundStyle(.secondary)) { width in
                         bannerLane(width: width)
@@ -143,6 +156,7 @@ struct SpeakerTalkTimeLanes: View {
                     } share: {
                         Text(verbatim: shareText(speaker))
                             .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                            .lineLimit(1).minimumScaleFactor(0.8)
                     }
                     .frame(height: Self.laneHeight)
                     .accessibilityElement(children: .ignore)
@@ -164,9 +178,9 @@ struct SpeakerTalkTimeLanes: View {
     private func row<Name: View, Lane: View, Share: View>(name: Name, @ViewBuilder lane: @escaping (CGFloat) -> Lane,
                                                          @ViewBuilder share: () -> Share) -> some View {
         HStack(spacing: 12) {
-            name.frame(width: Self.nameWidth, alignment: .leading)
+            name.frame(width: compact ? Self.compactNameWidth : Self.nameWidth, alignment: .leading)
             GeometryReader { proxy in lane(proxy.size.width) }
-            share().frame(width: Self.shareWidth, alignment: .trailing)
+            share().frame(width: compact ? Self.compactShareWidth : Self.shareWidth, alignment: .trailing)
         }
     }
 
@@ -241,8 +255,13 @@ struct SpeakerTalkTimeLanes: View {
     private var ruler: some View {
         GeometryReader { proxy in
             let marks = Self.rulerMarks(durationSec: durationSec)
+            // A mark too close to an end label leaves out: at the narrowest lanes "2:00:00" overlapped "2:26:10".
+            let inner = marks.dropFirst().dropLast().filter { sec in
+                let x = CGFloat(sec / durationSec) * proxy.size.width
+                return x > Self.rulerEndRoom && x < proxy.size.width - Self.rulerEndRoom
+            }
             ZStack(alignment: .topLeading) {
-                ForEach(marks.dropFirst().dropLast(), id: \.self) { sec in
+                ForEach(inner, id: \.self) { sec in
                     rulerText(sec).position(x: CGFloat(sec / durationSec) * proxy.size.width, y: 7)
                 }
                 HStack {
@@ -273,13 +292,14 @@ struct SpeakerTalkTimeLanes: View {
         return marks
     }
 
-    private func shareText(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker) -> String {
+    private func shareText(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker, full: Bool = false) -> String {
         let total = speakers.reduce(0) { $0 + $1.spokenSec }
         let share = total > 0 ? Int((speaker.spokenSec / total * 100).rounded()) : 0
+        if compact, !full { return "\(share) %" }
         return "\(share) % · \(MeetingsFormat.length(speaker.spokenSec) ?? "0 s")"
     }
 
     private func accessibilityText(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker) -> String {
-        "\(displayName(speaker)), \(shareText(speaker)), \(Plural.count(speaker.turns, "turn")), \(Plural.count(speaker.spans.count, "stretch", "stretches"))"
+        "\(displayName(speaker)), \(shareText(speaker, full: true)), \(Plural.count(speaker.turns, "turn")), \(Plural.count(speaker.spans.count, "stretch", "stretches"))"
     }
 }

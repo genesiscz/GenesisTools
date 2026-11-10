@@ -52,7 +52,8 @@ struct SpeakerHintChips: View {
     var body: some View {
         let (chips, more) = HintChip.chips(for: ranges, longestClipSec: longestClipSec, maxShown: maxShown)
         if !chips.isEmpty {
-            HStack(spacing: 6) {
+            // Wrapped, not one line: four chips are wider than the detail column at the window's smallest size.
+            WrapLayout(spacing: 6, lineSpacing: 6) {
                 ForEach(chips) { chip in
                     chipButton(chip)
                 }

@@ -272,10 +272,17 @@ enum TimelineFixture {
 enum TimelineSnapshot {
     static let widths: [CGFloat] = [900, 1400]
     static let schemes: [ColorScheme] = [.light, .dark]
-    static let folder = URL(fileURLWithPath: "/Users/Martin/Tresors/Projects/GenesisBrain/GenesisTools/GenesisTools.native/Meetings/UxRefinements/2026-11-09/UIPrep/timeline")
+    /// `MEETINGS_UI_SNAPSHOTS=<folder>` keeps the pictures; without it they go to the temporary folder, so a test run
+    /// never writes into a notes folder.
+    static var folder: URL {
+        if let path = ProcessInfo.processInfo.environment["MEETINGS_UI_SNAPSHOTS"], !path.isEmpty {
+            return URL(fileURLWithPath: path)
+        }
+        return FileManager.default.temporaryDirectory
+    }
 
-    /// Renders `view` at `width` on the window background of `scheme` and writes `<name>-<width>-<scheme>.png`. The
-    /// folder is the notes folder of the maintainer's Mac; elsewhere the PNG goes to the temporary folder.
+    /// Renders `view` at `width` on the window background of `scheme` and writes `<name>-<width>-<scheme>.png` into
+    /// `folder`.
     @MainActor
     static func write<V: View>(_ view: V, name: String, width: CGFloat, scheme: ColorScheme) throws {
         let content = view
@@ -286,7 +293,7 @@ enum TimelineSnapshot {
         renderer.scale = 2
         let image = try XCTUnwrap(renderer.cgImage, "\(name) did not render")
         let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
-        let base = FileManager.default.fileExists(atPath: folder.path) ? folder : FileManager.default.temporaryDirectory
-        try png.write(to: base.appendingPathComponent("\(name)-\(Int(width))-\(scheme == .dark ? "dark" : "light").png"))
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try png.write(to: folder.appendingPathComponent("\(name)-\(Int(width))-\(scheme == .dark ? "dark" : "light").png"))
     }
 }
