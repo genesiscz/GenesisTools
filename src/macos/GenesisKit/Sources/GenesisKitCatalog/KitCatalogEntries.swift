@@ -624,11 +624,36 @@ private struct CatalogAutocomplete: View {
     @State var text: String
     let items: [AutocompleteValue]
     var allowsFreeText = false
+    /// The pictures of the list's states draw it in the page; the floating section draws it over the page.
+    var presentation = AutocompletePresentation.inPage
     let preview: AutocompletePreview?
 
     var body: some View {
-        AutocompleteField("Add a calendar", text: $text, items: items, allowsFreeText: allowsFreeText, preview: preview) { _ in }
+        AutocompleteField("Add a calendar", text: $text, items: items, allowsFreeText: allowsFreeText, preview: preview,
+                          presentation: presentation) { _ in }
             .frame(width: 300)
+    }
+}
+
+/// The floating list as a picture: the field keeps its closed height and the list's surface, with its shadow, draws
+/// under it over a stand-in of the rows below. The app shows the same surface in a child window.
+private struct CatalogFloatingAutocomplete: View {
+    let items: [AutocompleteValue]
+    let text: String
+    let marked: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CatalogAutocomplete(text: text, items: items, presentation: .floating, preview: AutocompletePreview(marked: marked))
+                .zIndex(1)
+            ForEach(["Title words", "Labels", "People"], id: \.self) { row in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(row).font(.system(size: 13))
+                    Text("A row of the page, where it was with the list closed.").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(width: 300, alignment: .leading)
     }
 }
 
@@ -646,7 +671,7 @@ private struct CatalogFolderField: View {
     }()
 
     var body: some View {
-        AutocompleteFolderField(text: $text, home: Self.home, preview: preview) { _ in }
+        AutocompleteFolderField(text: $text, home: Self.home, preview: preview, presentation: .inPage) { _ in }
             .frame(width: 300)
     }
 }
@@ -661,14 +686,19 @@ extension KitCatalog {
         ]
         return CatalogEntry(
             id: "autocomplete", group: "Inputs", name: "Autocomplete field (AutocompleteField)",
-            summary: "A text field that completes from values the caller gives: a fixed list (items), a list read once when first needed (lazyItems), or a search per typed text (search). The list opens under the field while it has the keyboard; Down and Up move the mark, Return or Tab take it, Escape closes the list and then clears the field.",
+            summary: "A text field that completes from values the caller gives: a fixed list (items), a list read once when first needed (lazyItems), or a search per typed text (search). The list opens under the field while it has the keyboard; Down and Up move the mark, Return or Tab take it, Escape closes the list and then clears the field. By default the list floats over the page in a child window, so nothing below it moves; presentation: .inPage draws it in the page.",
             source: "GenesisKitBase/Controls/AutocompleteField.swift", isNew: true,
             critique: [
                 "Before it, every value list in the settings was a bare field: the reader typed a calendar or a folder name from memory and a typo matched nothing.",
-                "The list pushes the rows under the field down instead of floating over them, so it is never cut by a card's edge; it moves what is below it.",
+                "Its first list opened in the page and pushed the rows under the field down while it was open. It now floats over them in a child window of the field's window, so nothing moves and no card's edge cuts it; the in-page list stays as presentation: .inPage.",
             ],
             sections: [
-                CatalogSection("States", flow: .column, [
+                CatalogSection("Over the page (the default)", flow: .column, [
+                    CatalogVariant("Floating: the app shows this list in a panel of its own, a child window under the field; the field keeps its height and the rows below stay where they were", props: "presentation: .floating") {
+                        CatalogFloatingAutocomplete(items: calendars, text: "wo", marked: 1)
+                    },
+                ]),
+                CatalogSection("States (presentation: .inPage)", flow: .column, [
                     CatalogVariant("The list open, the typed part marked", props: "items: calendars, text: \"wo\"") {
                         CatalogAutocomplete(text: "wo", items: calendars, preview: AutocompletePreview())
                     },

@@ -35,6 +35,7 @@ final class KitCatalogTests: XCTestCase {
 
     /// Files in `Controls/` that draw nothing of their own.
     static let notDrawn: [String: String] = [
+        "AutocompleteFloatingList.swift": "the child window of AutocompleteField; its entry draws the floating list",
         "FrameProbe.swift": "reports a control's frame to a test",
         "GenRenderSwap.swift": "swaps content when it is ready",
         "GenResize.swift": "the state of a resize drag",

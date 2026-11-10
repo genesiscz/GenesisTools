@@ -93,18 +93,21 @@ public struct AutocompleteFolderField: View {
     private let label: String?
     private let identifier: String?
     private let preview: AutocompletePreview?
+    private let presentation: AutocompletePresentation
     private let home: String
     private let onChoose: (String) -> Void
 
+    /// - Parameter presentation: the list floats over the page (`.floating`, the default) or opens in it (`.inPage`).
     public init(_ placeholder: String = "A folder, ~/ for home", text: Binding<String>, label: String? = nil,
                 identifier: String? = nil, home: String = NSHomeDirectory(), preview: AutocompletePreview? = nil,
-                onChoose: @escaping (String) -> Void) {
+                presentation: AutocompletePresentation = .floating, onChoose: @escaping (String) -> Void) {
         _text = text
         self.placeholder = placeholder
         self.label = label
         self.identifier = identifier
         self.home = home
         self.preview = preview
+        self.presentation = presentation
         self.onChoose = onChoose
     }
 
@@ -119,7 +122,7 @@ public struct AutocompleteFolderField: View {
             }
         AutocompleteField<AutocompleteValue>(
             placeholder, text: $text, source: source,
-            allowsFreeText: true, label: label, identifier: identifier, preview: preview
+            allowsFreeText: true, label: label, identifier: identifier, preview: preview, presentation: presentation
         ) { choice in
             if choice.key == .tab, let item = choice.item {
                 text = item.title + "/"
