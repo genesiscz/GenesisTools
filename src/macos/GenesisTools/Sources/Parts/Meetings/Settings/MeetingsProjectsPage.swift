@@ -5,6 +5,8 @@ import SwiftUI
 struct MeetingsProjectsPage: View {
     @Bindable var model: MeetingsSettingsModel
     @State private var newProject = ""
+    /// Read here once, not in each card: a link to a card hands that card its own request count.
+    @ObservedObject private var anchors = NativeSettingsHighlightCenter.shared
 
     var body: some View {
         MeetingsSettingsFrame(model: model, reads: .preview) { settings in
@@ -56,7 +58,9 @@ struct MeetingsProjectsPage: View {
                 }
             }
             ForEach(settings.projectNames, id: \.self) { name in
-                ProjectCard(model: model, name: name, settings: settings)
+                ProjectCard(model: model, name: name, settings: settings,
+                            linkRequest: anchors.anchor == ProjectCard.anchor(name) ? anchors.token : 0,
+                            linked: ProjectCard.linked(name, center: anchors))
                     .nativeSettingsAnchor("project-\(name)")
             }
 
@@ -103,23 +107,25 @@ private struct ProjectCard: View {
     @Bindable var model: MeetingsSettingsModel
     let name: String
     let settings: MeetingsSettings
+    /// Changes only when a link names this card (the window's "Edit rules…"), which opens it.
+    let linkRequest: Int
     @State private var open: Bool
     @Environment(\.nativeSettingsIndexing) private var indexing
-    @ObservedObject private var anchors = NativeSettingsHighlightCenter.shared
 
-    init(model: MeetingsSettingsModel, name: String, settings: MeetingsSettings) {
+    /// `linked`: a link named this card a moment ago, before the card existed (the page opens on it).
+    init(model: MeetingsSettingsModel, name: String, settings: MeetingsSettings, linkRequest: Int, linked: Bool) {
         _model = Bindable(model)
         self.name = name
         self.settings = settings
+        self.linkRequest = linkRequest
         // The first frame already has the saved state, so a card does not snap open after the page appears.
-        _open = State(initialValue: MeetingsPreferences.openProjects().contains(name)
-            || Self.linked(name, center: NativeSettingsHighlightCenter.shared))
+        _open = State(initialValue: MeetingsPreferences.openProjects().contains(name) || linked)
     }
 
     static func anchor(_ name: String) -> String { "project-\(name)" }
 
     /// A link to this card arrived a moment ago (the window opens the page on it before the card exists).
-    private static func linked(_ name: String, center: NativeSettingsHighlightCenter) -> Bool {
+    static func linked(_ name: String, center: NativeSettingsHighlightCenter) -> Bool {
         guard center.anchor == anchor(name), let at = center.requestedAt else { return false }
         return Date().timeIntervalSince(at) < 10
     }
@@ -149,8 +155,8 @@ private struct ProjectCard: View {
             }
         }
         .nativeSettingsSearchCard(name, detail: summary)
-        .onChange(of: anchors.token) { _, _ in
-            if anchors.anchor == Self.anchor(name) { setOpen(true, unsaved: unsaved) }
+        .onChange(of: linkRequest) { _, request in
+            if request != 0 { setOpen(true, unsaved: unsaved) }
         }
     }
 
