@@ -22,7 +22,7 @@ import {
     queryEntriesSnapshot,
     readQuestionSnapshot,
 } from "@app/question/lib/read-model";
-import { askedAtOf, INBOX_STALE_MS, inboxSessionFresh, waitsOnHuman } from "@app/question/lib/waiting/set";
+import { askedAtOf, INBOX_STALE_MS, waitingSet, waitsOnHuman } from "@app/question/lib/waiting/set";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { openQuestions, sessionsWithDialogRecords } from "@genesiscz/utils/agents/dialogs/store";
 import { type DialogProvider, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
@@ -277,7 +277,7 @@ export interface WidgetInboxGroup {
     /** The group's newest item. */
     at: number;
     count: number;
-    /** The newest item's own title: an answer's question, a form's first prompt. */
+    /** The newest item's own title: an answer's question. */
     itemTitle?: string | null;
     /** The newest answer's Q→A tag: `message` for an agent message (inbox_send, a tools rm request notice). */
     itemTag?: string | null;
@@ -303,9 +303,12 @@ export function inboxWindowCounts(
         recentAfterClear: afterClear.filter((at) => at >= window.staleBefore).length,
     };
 }
+/**
+ * The unread answers the badges count. The waiting items (decisions, forms, dialogs) are not here: the waiting set
+ * (`waitingSet`) counts them from the rows the snapshot already read.
+ */
 export interface WidgetInboxData {
     answers: WidgetInboxGroup[];
-    forms: WidgetInboxGroup[];
     complete: boolean;
     truncated: boolean;
 }
@@ -425,36 +428,10 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                   FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
             `)
                 .all(...bounds);
-            const hasForms = db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='qa_pending'").get();
-            const forms = hasForms
-                ? db
-                      .query<WidgetInboxGroup, [number, number]>(`
-                WITH pending AS (
-                    SELECT id, COALESCE(NULLIF(session_hint,''),id) AS sessionId,
-                        CASE WHEN json_valid(poster_json) THEN NULLIF(json_extract(poster_json,'$.agent'),'unknown') END AS poster,
-                        CASE WHEN json_valid(transcript_anchor_json) THEN json_extract(transcript_anchor_json,'$.provider') END AS anchor,
-                        COALESCE(source,'Question') AS title, project_path AS project, cwd, created_at AS at,
-                        CASE WHEN json_valid(items_json) THEN substr(json_extract(items_json,'$[0].promptMarkdown'),1,400) END AS itemTitle
-                    FROM qa_pending WHERE status='pending'
-                ), normalized AS (
-                    SELECT *, CASE WHEN COALESCE(poster,anchor) IN ('claude','claude-code') THEN 'claude'
-                        WHEN COALESCE(poster,anchor) IN ('codex','grok') THEN COALESCE(poster,anchor)
-                        ELSE 'unknown' END AS provider FROM pending
-                ), ranked AS (
-                    SELECT *, COUNT(*) OVER (PARTITION BY sessionId,provider) AS count,
-                        ${INBOX_WINDOW_COUNTS},
-                        ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
-                    FROM normalized
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,itemTitle,afterClear,recentAfterClear,recentAfterClearTotal
-                  FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
-            `)
-                      .all(...bounds)
-                : [];
             return {
                 answers: answers.slice(0, 256),
-                forms: forms.slice(0, 256),
                 complete: true,
-                truncated: answers.length > 256 || forms.length > 256,
+                truncated: answers.length > 256,
             };
         },
     });
@@ -935,10 +912,13 @@ export async function widgetSnapshot({
      * running agent that asks something is still live, and its older items still count.
      */
     const live = new Set<string>();
-    /** An item still matters while it is recent or its session worked lately; a live session can have old items. */
+    /**
+     * An agent result still matters while it is recent or its session worked lately; a live session can have old
+     * ones. The waiting items (decisions, forms, dialogs) count by the waiting set's rule instead.
+     */
     const inboxFresh = (session: WidgetSession, at: number) =>
         live.has(session.key) || Math.max(at, session.activityAt) >= now - INBOX_STALE_MS;
-    /** Counted in the badges: fresh, and newer than the user's last "Mark all read". Every item stays in its session. */
+    /** An unread result counts: fresh, and newer than the user's last "Mark all read". */
     const inboxCounted = (session: WidgetSession, at: number) =>
         at > (state.inboxClearedAt ?? 0) && inboxFresh(session, at);
     const errors: string[] = [];
@@ -975,22 +955,13 @@ export async function widgetSnapshot({
     };
     const inboxSource = sources.inboxData;
     const rosterUnread = inboxSource ? [] : answerRoster.filter((row) => row.readAt === null);
-    const rosterRecent = {
-        answers: inboxWindowCounts(
-            rosterUnread.map((row) => row.ts),
-            inboxWindow
-        ).recentAfterClear,
-        forms: inboxSource
-            ? 0
-            : inboxWindowCounts(
-                  waitingForms.map((form) => form.createdAt),
-                  inboxWindow
-              ).recentAfterClear,
-    };
-    const inboxData = inboxSource
+    const rosterRecentAnswers = inboxWindowCounts(
+        rosterUnread.map((row) => row.ts),
+        inboxWindow
+    ).recentAfterClear;
+    const inboxData: WidgetInboxData = inboxSource
         ? await read("inbox metadata", () => inboxSource(inboxWindow), {
               answers: [],
-              forms: [],
               complete: false,
               truncated: false,
           })
@@ -1007,21 +978,7 @@ export async function widgetSnapshot({
                   itemTitle: row.question,
                   itemTag: row.tag,
                   ...inboxWindowCounts([row.ts], inboxWindow),
-                  recentAfterClearTotal: rosterRecent.answers,
-              })),
-              forms: waitingForms.map((form) => ({
-                  id: form.id,
-                  sessionId: form.sessionHint || form.id,
-                  provider: formProvider(form) ?? "unknown",
-                  title: form.source ?? "Question",
-                  project: form.projectPath,
-                  cwd: form.cwd,
-                  at: form.createdAt,
-                  count: 1,
-                  itemTitle: form.items[0]?.promptMarkdown,
-                  itemTag: null,
-                  ...inboxWindowCounts([form.createdAt], inboxWindow),
-                  recentAfterClearTotal: rosterRecent.forms,
+                  recentAfterClearTotal: rosterRecentAnswers,
               })),
               complete: false,
               truncated: true,
@@ -1219,14 +1176,27 @@ export async function widgetSnapshot({
     for (const node of agents.orphans) {
         addWorker(node);
     }
+    /**
+     * Per session id, what the waiting set's freshness reads: the roster's last activity, and whether its agent runs.
+     * Taken here, before the item loops add sessions whose "activity" is only an item's own time.
+     */
+    const rosterActivity = new Map<string, number>();
+    const liveIds = new Set<string>();
     for (const session of sessions.values()) {
+        const id = session.target.sessionId;
+        rosterActivity.set(id, Math.max(rosterActivity.get(id) ?? 0, session.activityAt));
         if (session.status === "working") {
             live.add(session.key);
+            liveIds.add(id);
         }
     }
-    /** Per session, its newest waiting decision's ask: with the session's activity, `inboxSessionFresh` (the hub's rule). */
-    const newestAsk = new Map<string, number>();
+    /** The sessions with a waiting decision: they show "waiting" while the waiting set calls them fresh. */
     const waitingIn = new Set<WidgetSession>();
+    /**
+     * Each decision's session, so its card lands in the row this loop gave it. A second `findSession` finds no row for
+     * an id that several rows share ("unknown" from several folders), and the badge would count a card no row shows.
+     */
+    const decisionSessions = new Map<string, WidgetSession>();
     for (const decision of decisions) {
         const session =
             findSession(decision.sessionId, decision.provider) ??
@@ -1238,18 +1208,13 @@ export async function widgetSnapshot({
                 // hub. Its last update would let a stage on an old decision count the session as active again.
                 askedAtOf(decision)
             );
+        decisionSessions.set(decision.id, session);
         if (kindOf(decision) === "decision" && waitsOnHuman(decision)) {
-            newestAsk.set(session.key, Math.max(newestAsk.get(session.key) ?? 0, askedAtOf(decision)));
             waitingIn.add(session);
         }
     }
-    const decisionsCount = (session: WidgetSession) =>
-        inboxSessionFresh({ activityAt: session.activityAt, newestAskAt: newestAsk.get(session.key) ?? 0, now });
-    for (const session of waitingIn) {
-        if (decisionsCount(session)) {
-            session.status = "waiting";
-        }
-    }
+    /** Each pending form's session, so its card lands where its session row is. */
+    const formSessions = new Map<string, WidgetSession>();
     for (const form of waitingForms) {
         const session = form.sessionHint ? findSession(form.sessionHint, formProvider(form)) : undefined;
         const current =
@@ -1261,6 +1226,7 @@ export async function widgetSnapshot({
                 form.createdAt
             );
         current.status = "waiting";
+        formSessions.set(form.id, current);
     }
     for (const row of answerRoster) {
         if (!findSession(row.sessionId, row.agent === "unknown" ? undefined : row.agent)) {
@@ -1310,7 +1276,6 @@ export async function widgetSnapshot({
         inboxSessions.set(session.key, entry);
     };
     const dialogBySession = new Map<string, OpenQuestion[]>();
-    let pendingDialogs = 0;
     if (sources.dialogs) {
         // One timer for the loop, not one per session: 1,450 lines per snapshot were most of the profiling log.
         const stopDialogs = prof.start("dialogs");
@@ -1337,86 +1302,138 @@ export async function widgetSnapshot({
                 false
             );
             dialogBySession.set(session.key, dialogs);
-            for (const dialog of dialogs) {
-                const sourceId = openQuestionKey(dialog);
-                pendingDialogs++;
+            if (dialogs.length > 0) {
                 session.status = "waiting";
-                putInbox(
-                    session,
-                    {
-                        id: `dialog:${sourceId}`,
-                        sourceId,
-                        kind: "dialog",
-                        key: session.key,
-                        at: timeOf(dialog.askedAt),
-                        needsAnswer: true,
-                        title: widgetTitle(dialog.question),
-                        options: dialog.options ?? [],
-                    },
-                    1
-                );
             }
         }
         stopDialogs();
     }
-    // Counted per item: each SQL group carries its session's newest item and how many of its items fall after the
-    // clear watermark and after the stale cut-off. A listed group counts by its session's freshness; the groups past
-    // the row limit count by the session-blind rule (`recentAfterClearTotal` minus what the listed groups hold).
-    const counted = { answer: 0, form: 0 };
-    const listedRecent = { answer: 0, form: 0 };
-    for (const [kind, groups] of [
-        ["answer", inboxData.answers],
-        ["form", inboxData.forms],
-    ] as const) {
-        for (const row of groups) {
-            // "unknown" is the SQL fallback, not evidence: match by session id alone, as the card loops do.
-            const session =
-                findSession(row.sessionId, row.provider === "unknown" ? undefined : row.provider) ??
-                addSession(
-                    targetOf({ sessionId: row.sessionId, provider: row.provider, cwd: row.cwd }, row.id),
-                    row.title,
-                    row.project,
-                    row.at
-                );
-            // `inboxCounted` per item: a working or lately active session counts every item after the watermark,
-            // a quiet one only its recent items.
-            const sessionFresh = live.has(session.key) || session.activityAt >= inboxWindow.staleBefore;
-            const items = sessionFresh ? row.afterClear : row.recentAfterClear;
-            if (kind === "form" && inboxFresh(session, row.at)) {
-                session.status = "waiting";
-            }
-            counted[kind] += items;
-            listedRecent[kind] += row.recentAfterClear;
-            if (items === 0) {
+    // The badge and every session's count are the waiting set's, the rule the hub inbox and the phone queue ask: per
+    // session by its newest ask, a running agent's old items count, nothing asked at or before "Mark all read" counts.
+    // Todos are not cards here, so only decision rows go in, as the phone queue lists only decisions.
+    const waiting = waitingSet({
+        rows: decisions.filter((row) => kindOf(row) === "decision"),
+        forms: waitingForms,
+        dialogs: [...dialogBySession.values()].flat(),
+        activityAt: (id) => rosterActivity.get(id),
+        live: liveIds,
+        clearedAt: state.inboxClearedAt ?? 0,
+        now,
+    });
+    const countedKeys = new Set(waiting.items.filter((item) => item.counted).map((item) => `${item.kind}:${item.key}`));
+    const freshIds = new Set(
+        waiting.sessions.flatMap((entry) => (entry.fresh && entry.session ? [entry.session] : []))
+    );
+    for (const session of waitingIn) {
+        if (freshIds.has(session.target.sessionId)) {
+            session.status = "waiting";
+        }
+    }
+    for (const [key, dialogs] of dialogBySession) {
+        const session = sessions.get(key);
+        for (const dialog of session ? dialogs : []) {
+            const sourceId = openQuestionKey(dialog);
+            if (!session || !countedKeys.has(`dialog:${sourceId}`)) {
                 continue;
             }
-            const title = widgetTitle(row.itemTitle);
             putInbox(
                 session,
                 {
-                    id: `${kind}:${row.id}`,
-                    sourceId: row.id,
-                    kind,
+                    id: `dialog:${sourceId}`,
+                    sourceId,
+                    kind: "dialog",
                     key: session.key,
-                    at: row.at,
-                    needsAnswer: kind === "form",
-                    ...(title ? { title } : {}),
-                    ...(row.itemTag === "message" ? { tag: "message" as const } : {}),
+                    at: timeOf(dialog.askedAt),
+                    needsAnswer: true,
+                    title: widgetTitle(dialog.question),
+                    options: dialog.options ?? [],
                 },
-                items
+                1
             );
         }
     }
-    /** What the listed groups counted, plus the recent items of the groups past the row limit. */
-    const inboxCount = (kind: "answer" | "form", groups: WidgetInboxGroup[]) =>
-        counted[kind] + Math.max(0, (groups[0]?.recentAfterClearTotal ?? 0) - listedRecent[kind]);
-    let pendingDecisions = 0;
+    // One entry per session for its counted forms: the newest one stands for them, with their count.
+    const formGroups = new Map<WidgetSession, { newest: AskForm; count: number }>();
+    for (const form of waitingForms) {
+        const session = formSessions.get(form.id);
+        if (!session || !countedKeys.has(`form:${form.id}`)) {
+            continue;
+        }
+        const group = formGroups.get(session);
+        if (!group) {
+            formGroups.set(session, { newest: form, count: 1 });
+            continue;
+        }
+        group.count += 1;
+        if (form.createdAt > group.newest.createdAt) {
+            group.newest = form;
+        }
+    }
+    for (const [session, { newest, count }] of formGroups) {
+        const title = widgetTitle(newest.items[0]?.promptMarkdown);
+        putInbox(
+            session,
+            {
+                id: `form:${newest.id}`,
+                sourceId: newest.id,
+                kind: "form",
+                key: session.key,
+                at: newest.createdAt,
+                needsAnswer: true,
+                ...(title ? { title } : {}),
+            },
+            count
+        );
+    }
+    // Unread answers are not waiting items: each SQL group carries its session's newest answer and how many of its
+    // answers fall after the clear watermark and after the stale cut-off. A listed group counts by its session's
+    // freshness; the groups past the row limit count by the session-blind rule (`recentAfterClearTotal` minus what
+    // the listed groups hold).
+    let countedAnswers = 0;
+    let listedRecentAnswers = 0;
+    for (const row of inboxData.answers) {
+        // "unknown" is the SQL fallback, not evidence: match by session id alone, as the card loops do.
+        const session =
+            findSession(row.sessionId, row.provider === "unknown" ? undefined : row.provider) ??
+            addSession(
+                targetOf({ sessionId: row.sessionId, provider: row.provider, cwd: row.cwd }, row.id),
+                row.title,
+                row.project,
+                row.at
+            );
+        // A working or lately active session counts every answer after the watermark, a quiet one only its recent ones.
+        const sessionFresh = live.has(session.key) || session.activityAt >= inboxWindow.staleBefore;
+        const items = sessionFresh ? row.afterClear : row.recentAfterClear;
+        countedAnswers += items;
+        listedRecentAnswers += row.recentAfterClear;
+        if (items === 0) {
+            continue;
+        }
+        const title = widgetTitle(row.itemTitle);
+        putInbox(
+            session,
+            {
+                id: `answer:${row.id}`,
+                sourceId: row.id,
+                kind: "answer",
+                key: session.key,
+                at: row.at,
+                needsAnswer: false,
+                ...(title ? { title } : {}),
+                ...(row.itemTag === "message" ? { tag: "message" as const } : {}),
+            },
+            items
+        );
+    }
+    /** What the listed answer groups counted, plus the recent answers of the groups past the row limit. */
+    const unreadAnswers =
+        countedAnswers + Math.max(0, (inboxData.answers[0]?.recentAfterClearTotal ?? 0) - listedRecentAnswers);
     const staged: WidgetInboxItem[] = [];
     for (const row of decisions) {
         if (kindOf(row) !== "decision" || !waitsOnHuman(row)) {
             continue;
         }
-        const session = findSession(row.sessionId, row.provider);
+        const session = decisionSessions.get(row.id);
         if (!session) {
             continue;
         }
@@ -1445,11 +1462,9 @@ export async function widgetSnapshot({
         if (item.draftOption || item.draft) {
             staged.push(item);
         }
-        // Freshness is the hub's rule (`inboxSessionFresh`, per session by the newest ask), so the badge and the hub's
-        // header count the same decisions. "Mark all read" is the widget's own mark and compares the time it was
-        // asked: staging an older decision updates the row, and must not count it as new again.
-        if (item.at > (state.inboxClearedAt ?? 0) && decisionsCount(session)) {
-            pendingDecisions += 1;
+        // The waiting set decides: its session is fresh or live, and it was asked after "Mark all read" (the ask, so
+        // staging an older decision, which updates the row, does not count it as new again).
+        if (countedKeys.has(`decision:${row.id}`)) {
             putInbox(session, item, 1);
         }
     }
@@ -1531,8 +1546,8 @@ export async function widgetSnapshot({
         );
     }
     const notifications: WidgetInboxSummary = {
-        unread: inboxCount("answer", inboxData.answers) + unreadResults,
-        needsAnswer: inboxCount("form", inboxData.forms) + pendingDecisions + pendingDialogs,
+        unread: unreadAnswers + unreadResults,
+        needsAnswer: waiting.total,
         complete: inboxData.complete && errors.length === 0,
         truncated: inboxData.truncated || inboxSessions.size > 512,
         sessions: [...inboxSessions.values()]
