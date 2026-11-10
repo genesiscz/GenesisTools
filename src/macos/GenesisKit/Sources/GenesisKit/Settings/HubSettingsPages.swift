@@ -23,7 +23,12 @@ public enum HubSettingsPages {
                     id: panesPageID, title: "Panes", symbol: "rectangle.split.3x1", tint: .teal,
                     subtitle: "Defaults for the diff, the Inbox, the PR overview, Activity, the Agents list, the Agent processes pane and the Worktree cleanup pane."
                 ) {
-                    HubPaneSettings(preferences: preferences)
+                    // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current page.
+                    switch DesignSketch.option("usageSettings") {
+                    case "a": UsageSettingsSketchPanesA(preferences: preferences)
+                    case "b": UsageSettingsSketchPanesB(preferences: preferences)
+                    default: HubPaneSettings(preferences: preferences)
+                    }
                 },
                 NativeSettingsPage(
                     id: historyPageID, title: "History", symbol: "clock.arrow.circlepath", tint: .purple,

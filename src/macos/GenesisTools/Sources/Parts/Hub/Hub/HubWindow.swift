@@ -2836,7 +2836,12 @@ private struct SessionListView: View {
                             proxy: proxy, focused: $listFocused, focusOnClick: true))
                 }
             } else if model.mode == .usage {
-                UsageListView(usage: model.usage, filter: model.filter)
+                // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current list.
+                switch DesignSketch.option("usageSettings") {
+                case "a": UsageSettingsSketchSidebarA(usage: model.usage)
+                case "b": UsageSettingsSketchSidebarB(usage: model.usage, filter: model.filter)
+                default: UsageListView(usage: model.usage, filter: model.filter)
+                }
             } else if model.mode == .agents {
                 AgentsListView(model: model, agents: model.agents)
             } else {

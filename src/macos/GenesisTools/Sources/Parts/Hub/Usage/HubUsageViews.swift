@@ -170,7 +170,13 @@ struct UsageMain: View {
     @ViewBuilder
     private var content: some View {
         switch usage.section {
-        case .limits: UsageLimitsSection(usage: usage, settings: preferences.settings)
+        case .limits:
+            // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current section.
+            switch DesignSketch.option("usageSettings") {
+            case "a": UsageSettingsSketchLimitsA(usage: usage, settings: preferences.settings, filter: model.filter)
+            case "b": UsageSettingsSketchLimitsB(usage: usage, settings: preferences.settings)
+            default: UsageLimitsSection(usage: usage, settings: preferences.settings)
+            }
         case .spend: UsageSpendSection(usage: usage, settings: preferences.settings)
         case .waste: UsageWasteSection(usage: usage)
         case .attribution: UsageAttributionSection(usage: usage)

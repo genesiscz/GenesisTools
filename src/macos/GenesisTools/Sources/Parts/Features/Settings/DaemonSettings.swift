@@ -363,7 +363,12 @@ enum DaemonSettingsPages {
                     id: pageID, title: "Daemon", symbol: "gearshape.2", tint: .gray,
                     subtitle: "The tasks the GenesisTools daemon runs: their schedule, limits, runs and output."
                 ) {
-                    DaemonSettingsView(store: store)
+                    // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current page.
+                    switch DesignSketch.option("usageSettings") {
+                    case "a": UsageSettingsSketchDaemonA(store: store)
+                    case "b": UsageSettingsSketchDaemonB(store: store)
+                    default: DaemonSettingsView(store: store)
+                    }
                 },
             ], order: 37)
     }
