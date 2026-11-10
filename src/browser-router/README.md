@@ -101,10 +101,11 @@ tools browser-router route 'http://127.0.0.1:8787/add/:id' \
   --arg '{qty}' \
   --notify 'Added' \
   --approval allow
-# Remove by the exact saved pattern (read it back with routes --format json)
-tools browser-router route 'https://links\.example\.com/hello/([^/?#&]+)' --delete
+# Try the hello route: explain shows the rewrite to https://example.com/world, open follows it
 tools browser-router explain 'https://links.example.com/hello/world' --json
 tools browser-router open 'https://links.example.com/hello/world'
+# Then remove it by the exact saved pattern (read it back with routes --format json)
+tools browser-router route 'https://links\.example\.com/hello/([^/?#&]+)' --delete
 ```
 
 ### Links for notes, chats and agents
