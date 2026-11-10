@@ -1,5 +1,4 @@
 import { homedir } from "node:os";
-import * as p from "@clack/prompts";
 import { loadSpendAccountsContext } from "@genesiscz/utils/ai/usage/spend/accounts-context";
 import { aggregate } from "@genesiscz/utils/ai/usage/spend/aggregate";
 import { loadPricing } from "@genesiscz/utils/ai/usage/spend/config";
@@ -16,6 +15,7 @@ import { resolveSince } from "@genesiscz/utils/ai/usage/spend/since";
 import type { PricingTable, Report, UsageEvent } from "@genesiscz/utils/ai/usage/spend/types";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
 import { addHarnessOption, harnessSources, parseSources, resolveHarnessFlag } from "./harness-flag";
@@ -293,6 +293,7 @@ async function resolveGrain(raw: string | true | undefined): Promise<TranscriptG
     const picked = await p.select({
         message: "Bucket width",
         options: TRANSCRIPT_GRAINS.map((value) => ({ value, label: value })),
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
