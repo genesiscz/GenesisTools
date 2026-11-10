@@ -125,6 +125,45 @@ final class MeetingsReviewFixTests: XCTestCase {
         XCTAssertTrue(MeetingDetailModel(id: "m", window: nil).defaults === UserDefaults.standard)
     }
 
+    // MARK: Finding 8: Esc closes the History sheet and the Speakers "Review N" sheet
+
+    /// The sheet hosted in an off-screen window, laid out, so its key equivalents are registered.
+    private func hosted<V: View>(_ view: V) -> NSWindow {
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 600, height: 500), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: view)
+        window.contentView?.layoutSubtreeIfNeeded()
+        return window
+    }
+
+    private func escape(in window: NSWindow) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                       windowNumber: window.windowNumber, context: nil, characters: "\u{1b}",
+                                       charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+    }
+
+    func testEscClosesTheHistorySheet() throws {
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        let sheet = MeetingDetailModel.HistorySheet(item: nil, entries: .loaded([]))
+        detail.history = sheet
+        let host = hosted(HistorySheetView(detail: detail, history: sheet))
+        defer { host.close() }
+        XCTAssertTrue(host.performKeyEquivalent(with: try escape(in: host)), "the sheet takes Esc")
+        XCTAssertNil(detail.history, "Esc closes the History sheet")
+    }
+
+    func testEscClosesTheSpeakersReviewSheet() throws {
+        var closed = 0
+        let sheet = HintRangesSheet(label: "Speaker 1", names: [:], ranges: [], longestClipSec: 30,
+                                    play: { _, _ in }, zoom: { _, _ in }, close: { closed += 1 })
+        let host = hosted(sheet)
+        defer { host.close() }
+        XCTAssertTrue(host.performKeyEquivalent(with: try escape(in: host)), "the sheet takes Esc")
+        XCTAssertEqual(closed, 1, "Esc closes the Review sheet")
+    }
+
     // MARK: Finding 3: a stored 0 is a value when the setting offers it
 
     func testAStoredZeroIsTheValueWhenTheChoicesOfferIt() {
