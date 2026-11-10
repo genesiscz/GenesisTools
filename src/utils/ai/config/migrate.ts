@@ -26,8 +26,8 @@ import { CONFIG_VERSION } from "./schema";
  * What is still missing is the visible half: those variables never become
  * reviewable entries in the user's config.
  *
- * Both entry points (`AiConfigStore.load` and the deprecated `AIConfig.load`)
- * run this, so reaching the config through either one cannot land on a shape the
+ * `AiConfigStore.load` runs this (the retired v3 facade did too), so reaching the
+ * config through any entry point cannot land on a shape the
  * reader does not understand. Each migration is individually idempotent and
  * guarded, so running it on every load costs a stat and nothing else.
  */

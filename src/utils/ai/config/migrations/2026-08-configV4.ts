@@ -243,7 +243,7 @@ export function convertConfig(v3: V3ConfigData): AiConfigData {
 
         const id = slugifyAccountId(account.name, taken);
 
-        // First wins, because v3 `getAccount(name)` was a `find()` (AIConfig.ts).
+        // First wins, because v3 `getAccount(name)` was a `find()` (the retired v3 facade).
         // An unconditional set made a migrated default point at the LAST account
         // sharing a name, silently moving which account pays.
         if (idByName.has(account.name)) {

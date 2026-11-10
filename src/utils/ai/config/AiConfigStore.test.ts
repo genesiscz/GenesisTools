@@ -197,7 +197,7 @@ describe("AiConfigStore freshness", () => {
 
         const same = await AiConfigStore.load();
         expect(same).toBe(store);
-        // v3's AIConfig returned the stale snapshot here; that is the daemon bug.
+        // The retired v3 facade returned the stale snapshot here; that is the daemon bug.
         expect(same.account("acc_late")?.name).toBe("late-arrival");
     });
 

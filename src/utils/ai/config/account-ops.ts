@@ -253,7 +253,7 @@ export interface ApplyLoginOutcomeInput {
     apps?: string[];
     /**
      * Apps whose `chat.model` default should point at this account when they have
-     * none. Mirrors `addAccountWithDefaults` (`AIConfig.ts:180-196`), which is how
+     * none. Mirrors the retired v3 `addAccountWithDefaults`, which is how
      * a first `tools claude login` made itself the default for `claude` and `ask`.
      */
     defaultForApps?: string[];
@@ -329,7 +329,7 @@ function assertUnchangedSinceGuard(
  * so a re-login could use neither. A plain overwrite is not an option either:
  * a flow returns only the credentials it obtained, so writing them wholesale
  * dropped `longLivedToken`, `secondary`, `label` and `apps` — the bug
- * `mergeAccountEntry` (`AIConfig.ts:64-73`) exists to prevent. A provider switch
+ * the retired v3 `mergeAccountEntry` existed to prevent. A provider switch
  * still replaces the credentials outright, since the stored ones mean nothing to
  * the new vendor.
  */
