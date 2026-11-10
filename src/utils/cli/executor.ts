@@ -5,6 +5,7 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { type Command, Help, type Option } from "commander";
 import pc from "picocolors";
+import type { DeadlineExpiry } from "./failures/record";
 
 export { isInteractive } from "./is-interactive";
 
@@ -614,6 +615,29 @@ export interface ExecCallOptions {
     timeout?: number | ExecDeadline;
 }
 
+/**
+ * Writes the failure record of an expiry (failures/deadline.ts), loaded only here so no tool pays for it at startup.
+ * Bounded by `deadlineRecording.boundMs`: the thrown error never waits longer, and a record that fails is a debug line.
+ * The record step starts no process through an Executor, so an expiry cannot recurse.
+ */
+async function recordExpiry(expiry: DeadlineExpiry): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, deadlineRecording.boundMs);
+    });
+    const record = import("./failures/deadline")
+        .then((deadline) => deadline.recordDeadline(expiry))
+        .then(
+            () => undefined,
+            (error: unknown) => {
+                logger.debug({ error }, "exec: the deadline record was not written");
+            }
+        );
+
+    await Promise.race([record, bound]);
+    clearTimeout(timer);
+}
+
 export class Executor {
     private prefix: string | undefined;
     private cwd: string;
@@ -672,12 +696,15 @@ export class Executor {
         const cwd = options?.cwd ?? this.cwd;
         const env = this.buildEnv(options?.env);
         const deadline = resolveExecDeadline(options?.timeout, this.timeout);
+        // Taken before the first await, while the caller is still on the stack: an expiry record names the call site.
+        const callSite = new Error("exec call site").stack ?? null;
 
         if (this.verbose) {
             out.println(pc.gray(`  $ ${cmd.join(" ")}`));
         }
 
         const stopTimer = spawnProf.start(spawnLabel(cmd));
+        const started = performance.now();
         const bounded = await boundedCommand({
             command: cmd,
             timeoutMs: deadline.ms === 0 ? NO_DEADLINE_MS : deadline.ms,
@@ -700,6 +727,18 @@ export class Executor {
                     },
                     message
                 );
+                await recordExpiry({
+                    child: {
+                        command: maskedArgv(cmd),
+                        cwd,
+                        timeoutMs: deadline.ms,
+                        defaulted: deadline.source === "default",
+                        reason: deadline.reason,
+                    },
+                    message,
+                    durationMs: performance.now() - started,
+                    stack: callSite,
+                });
                 throw new Error(message);
             }
 
