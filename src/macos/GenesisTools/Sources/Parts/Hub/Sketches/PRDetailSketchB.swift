@@ -260,7 +260,11 @@ struct PRDetailSketchB: View {
             }
         case .threads:
             if let review = prs.review, let store = review.pr {
+                // A thread's text stops at a width a reader can follow: at the pane's full width (about 1,600 pt at the
+                // shot size) one line of a comment held some 250 characters.
                 PRThreadsList(model: review, store: store)
+                    .frame(maxWidth: Self.threadsMeasure)
+                    .frame(maxWidth: .infinity)
             } else {
                 EmptyState(symbol: "bubble.left.and.bubble.right", text: "The review threads arrive with the PR's head")
             }
@@ -294,6 +298,10 @@ struct PRDetailSketchB: View {
             }
         }
     }
+
+    /// The widest the Threads page runs: the cards keep their header controls on one line and the comment text stays
+    /// near 150 characters a line.
+    private static let threadsMeasure: CGFloat = 1040
 
     /// A list in a column a reader can follow (about 900 pt), centred in a wide window.
     private func readable<Content: View>(@ViewBuilder _ content: @escaping () -> Content) -> some View {
@@ -368,7 +376,12 @@ private struct ChangesControls: View {
     @State private var pickingCommit = false
     @State private var pickingAgent = false
 
-    private var wholePR: Bool { review.prScope.map { review.scope == $0 } ?? false }
+    /// The scope the hub opens a PR with: the PR's base against its head, under the hub's own label (`PRsModel.scope`).
+    /// `review.prScope` describes the same range under another label, so the two never compare equal as values.
+    private var wholePR: Bool {
+        guard case .range(_, _, let label, _) = review.scope else { return false }
+        return label == "\(pr.label) vs \(pr.baseBranch)"
+    }
 
     var body: some View {
         HStack(spacing: 10) {
