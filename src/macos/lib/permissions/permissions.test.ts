@@ -18,6 +18,7 @@ import {
     isGenesisToolsBinary,
     retiredAtOf,
 } from "@genesiscz/utils/genesis-tools/app-binary";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import { skip } from "@genesiscz/utils/test/skip";
@@ -29,6 +30,7 @@ import {
     pickCodesignIdentity,
     preferredFirst,
     readSourceInfo,
+    reapedFaceLines,
     retiredStampsToDelete,
     signByHashes,
     signStagedBundle,
@@ -461,6 +463,38 @@ function processRows(text: string): Array<{ pid: number; command: string }> {
         return match ? [{ pid: Number(match[1]), command: match[2] }] : [];
     });
 }
+
+describe("reapedFaceLines", () => {
+    it("writes one lifecycle line per face a build closes, with the face and who closed it", () => {
+        const launcher = "/Users/alice/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
+        const lines = reapedFaceLines({
+            stale: ["111", "333"],
+            processes: [
+                { pid: 111, command: `${launcher} --hub --mode inbox --resume` },
+                { pid: 222, command: `${launcher} bun run dev` },
+                { pid: 333, command: launcher },
+            ],
+            at: new Date("2026-11-10T17:34:43Z"),
+            by: "pid 42, /repo",
+        });
+        expect(lines.map((line) => SafeJSON.parse(line, { strict: true }))).toEqual([
+            {
+                detail: "closed by an app build (pid 42, /repo); the build opens it again, not activated",
+                event: "reaped",
+                face: "--hub",
+                pid: 111,
+                t: 1794332083,
+            },
+            {
+                detail: "closed by an app build (pid 42, /repo); the build opens it again, not activated",
+                event: "reaped",
+                face: "--window",
+                pid: 333,
+                t: 1794332083,
+            },
+        ]);
+    });
+});
 
 describe("staleAppFacePids", () => {
     const launcher = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
