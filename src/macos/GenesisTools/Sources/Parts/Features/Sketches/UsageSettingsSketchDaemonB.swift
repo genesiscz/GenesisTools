@@ -111,7 +111,7 @@ struct UsageSettingsSketchDaemonB: View {
                 Text(last.map { DaemonFormat.status($0.status).label } ?? "no run").font(.system(size: 11.5))
             }
             .frame(width: 92, alignment: .leading)
-            Text(problems == 0 ? "none" : "\(problems) of \(stats?.runs ?? 0)")
+            Text(verbatim: problems == 0 ? "none" : "\(problems) of \(stats?.runs ?? 0)")
                 .font(.system(size: 11.5)).monospacedDigit()
                 .foregroundStyle(problems == 0 ? Color.secondary : Color.orange)
                 .frame(width: 78, alignment: .leading)
