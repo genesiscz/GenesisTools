@@ -494,6 +494,14 @@ extension ReviewRow {
     }
 
     /// The text its MomentButton shows: the `when` part's times ("05:09", "05:09–05:31").
+    /// The second the row's time starts at (its `when` part).
+    var whenSec: Double? {
+        for part in parts {
+            if case .when(let from, _, _) = part { return from.sec }
+        }
+        return nil
+    }
+
     var whenText: String? {
         for part in parts {
             if case .when(let from, let to, _) = part { return to.map { "\(from.text)–\($0.text)" } ?? from.text }

@@ -337,6 +337,34 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertTrue(PinCard.shownChoices(decided).isEmpty, "a decided row's choices made it read as open: \(decided.id)")
     }
 
+    func testTheBarAboveTheRowsSaysWhatWaitsOnOneLine() {
+        XCTAssertEqual(ItemsTab.barWords(open: 430, atLine: 348, line: "50 %", compact: false),
+                       "430 rows wait for you · 348 suggestions at 50 % or more")
+        XCTAssertEqual(ItemsTab.barWords(open: 430, atLine: 348, line: "50 %", compact: true), "430 wait · 348 at 50 % or more",
+                       "a narrow column keeps both counts")
+        XCTAssertEqual(ItemsTab.barWords(open: 1, atLine: 0, line: "50 %", compact: false), "1 row waits for you · none at 50 % or more")
+        XCTAssertEqual(ItemsTab.barWords(open: 0, atLine: 0, line: "50 %", compact: false), "No suggestion at 50 % or more")
+        XCTAssertEqual(ItemsTab.waitingWords(open: 0), "Nothing waits for you in this meeting")
+    }
+
+    /// A transcript line at the row's own time, whose words the row already quotes, is the header's time button again.
+    func testTheFromLineLeavesOutTheRowsOwnTime() throws {
+        let row = try JSONDecoder().decode(ReviewRow.self, from: Data("""
+        {"id":"i9","label":"i9","kind":"term","status":"suggested","what":"OMP → EMP","edit":"spelling","choices":[],
+         "target":{"kind":"item","id":"i9"},
+         "parts":[{"kind":"when","from":{"sec":600,"text":"10:00"},"target":{"kind":"item","id":"i9"}},
+                  {"kind":"said","text":"We ship the OMP today.","speaker":"Bob Example"}],
+         "sources":[{"kind":"line","at":{"sec":600,"text":"10:00"},"index":4,"text":"We ship the OMP today."},
+                    {"kind":"line","at":{"sec":630,"text":"10:30"},"index":7,"text":"We ship the OMP today."},
+                    {"kind":"document","path":"/tmp/notes.md","line":3}]}
+        """.utf8))
+        XCTAssertEqual(row.whenSec, 600)
+        XCTAssertEqual(ReviewRowView.shownSources(row).count, 2, "the line at 10:00 is the header's time; the line at 10:30 and the document stay")
+        XCTAssertTrue(ItemsTab.ruleAbove(row, first: "q1", held: false), "an open row that is not the first gets a hairline")
+        XCTAssertFalse(ItemsTab.ruleAbove(row, first: "i9", held: false), "the first row has the bar above it")
+        XCTAssertFalse(ItemsTab.ruleAbove(row, first: "q1", held: true), "a row that keeps its place after an answer does not move by a line")
+    }
+
     func testASpeakerRangeDoesNotSayItsTwoNamesTwice() {
         XCTAssertTrue(ReviewRowView.whoRepeatsTitle("Speaker 2 → Alice Example", title: "Speaker 2 01:12 → Alice Example", when: "01:12"),
                       "the title holds both names: the who line under it said them again")

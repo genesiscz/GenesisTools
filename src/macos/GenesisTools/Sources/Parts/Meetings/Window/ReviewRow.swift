@@ -72,7 +72,7 @@ struct ReviewRowView: View {
                     revertButton(words: true)
                 }
             }
-            if !row.sources.isEmpty { sources }
+            if !Self.shownSources(row).isEmpty { sources }
         }
     }
 
@@ -268,7 +268,7 @@ struct ReviewRowView: View {
     private var sources: some View {
         HStack(spacing: 8) {
             Text("From").font(.system(size: 11)).foregroundStyle(.tertiary)
-            ForEach(Array(row.sources.enumerated()), id: \.offset) { _, source in
+            ForEach(Array(Self.shownSources(row).enumerated()), id: \.offset) { _, source in
                 switch source {
                 case .line(let at, _, let text):
                     HStack(spacing: 4) {
@@ -418,6 +418,15 @@ struct ReviewRowView: View {
     /// one-line text. The one-line text of a question starts with its time and ends in its answer.
     static func title(_ row: ReviewRow) -> String {
         row.isQuestion ? asked(row) ?? row.what : row.what
+    }
+
+    /// The sources a row's "From" line shows. A transcript line at the row's own time whose words the row already
+    /// quotes is left out: it was the header's time button again, on a line of its own, on most rows of a long meeting.
+    static func shownSources(_ row: ReviewRow) -> [RowSource] {
+        row.sources.filter { source in
+            guard case .line(let at, _, let text) = source else { return true }
+            return sourceQuote(text, in: row) != nil || at.sec != row.whenSec
+        }
     }
 
     /// True when a row's who line says what its title says: a speaker range's title is "Speaker 2 01:12 → Alice" and
