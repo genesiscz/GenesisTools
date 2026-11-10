@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { focusRunningSession } from "@app/claude/commands/cmux/focus";
 import { CLAUDE_WHO_SOURCE } from "@app/claude/lib/active-sessions";
-import * as p from "@clack/prompts";
 import { warnUnresolvedIdentities } from "@genesiscz/utils/agent-sessions/history-cli";
 import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
 import {
@@ -31,6 +30,7 @@ import { out } from "@genesiscz/utils/logger";
 import { canonicalPath } from "@genesiscz/utils/paths";
 import { profiler } from "@genesiscz/utils/profile";
 import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
+import * as p from "@genesiscz/utils/prompts/p";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import type { Command } from "commander";
