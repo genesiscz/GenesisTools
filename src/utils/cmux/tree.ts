@@ -5,7 +5,7 @@ import {
     fetchCmuxLiveSnapshot,
 } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { buildCmuxHierarchy } from "@genesiscz/utils/cmux/lib/tree";
-import { type CmuxTree as CmuxTreeAnswer, type CmuxTreeRead, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
+import { type CmuxTreeRead, type ParsedCmuxTree, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -69,7 +69,7 @@ export interface CmuxTree<S extends CmuxTreeSurface = CmuxTreeSurface> {
 
 export interface CmuxTreeDeps {
     /** The geometry snapshot, given the tree already read; a test that injects it reads no tree unless `readTree` is injected too. */
-    fetchSnapshot?: (tree: CmuxTreeAnswer | undefined) => Promise<CmuxLiveSnapshot>;
+    fetchSnapshot?: (tree: ParsedCmuxTree | undefined) => Promise<CmuxLiveSnapshot>;
     /** The tree read that gates the snapshot (`tree-read.ts`, which owns the bound, the probe and the backoff). */
     readTree?: () => Promise<CmuxTreeRead>;
 }
@@ -122,7 +122,7 @@ export async function fetchCmuxTree(deps: CmuxTreeDeps = {}): Promise<CmuxTree> 
     const tree = read?.ok ? read.tree : undefined;
     const fetchSnapshot =
         deps.fetchSnapshot ??
-        ((known: CmuxTreeAnswer | undefined) =>
+        ((known: ParsedCmuxTree | undefined) =>
             fetchCmuxLiveSnapshot({ previews: "none", allWindows: true, ...(known ? { tree: known } : {}) }));
     const snapshot = await prof.measureAsync("tree.snapshot", () => fetchSnapshot(tree));
 

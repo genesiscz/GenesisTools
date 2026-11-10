@@ -17,6 +17,7 @@ import * as processScan from "@genesiscz/utils/ai/active-processes";
 import {
     assignSessionIds,
     buildSessionHints,
+    CmuxDidNotAnswerError,
     countSessionInstances,
     invertSurfaceTtys,
     listActiveAgentSessions,
@@ -26,6 +27,7 @@ import {
     withoutHelpers,
 } from "@genesiscz/utils/ai/active-sessions";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
+import { CmuxCommandError } from "@genesiscz/utils/cmux/lib/command-error";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import * as journalRefs from "@genesiscz/utils/cmux/session-refs";
 import * as treeRead from "@genesiscz/utils/cmux/tree-read";
@@ -1110,6 +1112,33 @@ describe("a session resumed inside a running TUI", () => {
         proxyTarget: null,
         host: null,
         cwd,
+    });
+
+    test("running processes with a cmux that did not answer are unknown, not 'none in a tab'", async () => {
+        const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
+            tui(202, "ttys004", Date.now() - 60_000, "/bin/claude --settings {}"),
+        ]);
+        const timedOut = async (): Promise<string> => {
+            throw new CmuxCommandError(["tree", "--all"], {
+                code: -1,
+                stdout: "",
+                stderr: "timed out",
+                timedOut: true,
+            });
+        };
+        const refused = async (): Promise<string> => {
+            throw new Error("cmux is not running");
+        };
+
+        try {
+            await expect(listRunningCmuxSessions(source, { runner: timedOut })).rejects.toBeInstanceOf(
+                CmuxDidNotAnswerError
+            );
+            // A cmux that answered with an error (not running) is an answer: no tab runs anything.
+            expect(await listRunningCmuxSessions(source, { runner: refused })).toEqual([]);
+        } finally {
+            scan.mockRestore();
+        }
     });
 
     test("the tab runs the session it resumed last, not the one it started with", async () => {

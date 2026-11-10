@@ -70,20 +70,38 @@ export interface CmuxTreeReadWindow {
 }
 
 /** The parsed `cmux --json --id-format both tree --all`. */
-export interface CmuxTree {
+export interface ParsedCmuxTree {
     /** The surface the reading process runs in, when cmux named it. */
     caller: { surfaceId: string | null; surfaceRef: string | null } | null;
     windows: CmuxTreeReadWindow[];
 }
 
 export type CmuxTreeRead =
-    | { ok: true; tree: CmuxTree }
+    | { ok: true; tree: ParsedCmuxTree }
     | {
           ok: false;
           reason: "timeout" | "failed" | "backoff";
           /** What went wrong, for a log or a user: the probe's diagnosis when it found one. */
           error: string;
+          /** The probe's verdict after a failed call, when a probe ran. */
+          state?: CmuxHealthState;
       };
+
+/** cmux states in which it takes calls and does not answer them. */
+const SILENT_STATES: ReadonlySet<CmuxHealthState> = new Set(["socket-dead", "ui-starved"]);
+
+/**
+ * Whether a failed read means cmux did not answer (it timed out, it is backed off after not answering, or the probe
+ * found it hung), as opposed to an answer: not running, access denied, or an error it printed. Only after no answer
+ * is it unknown which tabs exist.
+ */
+export function cmuxDidNotAnswer(read: CmuxTreeRead): boolean {
+    if (read.ok) {
+        return false;
+    }
+
+    return read.reason !== "failed" || (read.state !== undefined && SILENT_STATES.has(read.state));
+}
 
 export interface ReadCmuxTreeOptions {
     timeoutMs?: number;
@@ -159,6 +177,7 @@ async function readOnce(options: ReadCmuxTreeOptions, run: TreeRunner, timeoutMs
                 ? undefined
                 : (context: string) => ensureCmuxResponsive(context, { identifyTimeoutMs: 1_000 }));
         let error = answer.error;
+        let state: CmuxHealthState | undefined;
 
         try {
             await probe?.("cmux tree");
@@ -166,12 +185,13 @@ async function readOnce(options: ReadCmuxTreeOptions, run: TreeRunner, timeoutMs
             error = probeError instanceof Error ? probeError.message : String(probeError);
 
             if (probeError instanceof CmuxUnresponsiveError) {
-                const { state, appPid } = probeError.health;
+                const { appPid } = probeError.health;
+                state = probeError.health.state;
                 unresponsive = { state, ...(appPid !== undefined ? { appPid } : {}) };
             }
         }
 
-        result = { ok: false, reason: answer.timedOut ? "timeout" : "failed", error };
+        result = { ok: false, reason: answer.timedOut ? "timeout" : "failed", error, ...(state ? { state } : {}) };
         log.debug({ reason: result.reason, error }, "cmux tree read failed");
     }
 
@@ -258,7 +278,7 @@ function surfaceOf(raw: Record<string, unknown>): CmuxTreeReadSurface {
 }
 
 /** The one parse of a `tree` answer; null when it is not an object. Strings stay as cmux sent them (an empty one too). */
-export function cmuxTreeFromJson(value: unknown): CmuxTree | null {
+export function cmuxTreeFromJson(value: unknown): ParsedCmuxTree | null {
     if (!isRecord(value)) {
         return null;
     }

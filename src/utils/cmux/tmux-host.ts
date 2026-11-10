@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeSessionsDir } from "@genesiscz/utils/claude/peer-message";
-import { type CmuxTree, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
+import { type ParsedCmuxTree, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { tmuxSessionAttachCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -347,7 +347,7 @@ export function ttyName(tty: string | null | undefined): string {
 }
 
 /** Every terminal tab of a cmux tree read that has a tty. */
-export function cmuxTerminals(tree: CmuxTree): CmuxTerminal[] {
+export function cmuxTerminals(tree: ParsedCmuxTree): CmuxTerminal[] {
     const terminals: CmuxTerminal[] = [];
 
     for (const window of tree.windows) {

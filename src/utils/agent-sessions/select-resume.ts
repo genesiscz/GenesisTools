@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import * as p from "@clack/prompts";
-import type { RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
+import { CmuxDidNotAnswerError, type RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { readCmuxTerminal } from "@genesiscz/utils/cmux/caller-enricher";
 import { env } from "@genesiscz/utils/env";
@@ -194,17 +194,40 @@ function processState(pid: number): string | null {
     return readProcessRow(pid)?.state ?? null;
 }
 
-/** The running sessions are an offer on top of the resume, never a reason it fails. */
-export async function readRunning(
-    kind: string,
-    load: () => Promise<RunningCmuxSession[]>
-): Promise<RunningCmuxSession[]> {
+/** The running scan as a resume guard reads it: the sessions, or why it is unknown which sessions run. */
+export interface RunningScan {
+    sessions: RunningCmuxSession[];
+    /** Set when cmux did not answer: no session can be called "not running" then. */
+    unknown: string | null;
+}
+
+/**
+ * The running sessions are an offer on top of the resume, never a reason it fails, with one exception: when cmux
+ * did not answer, the scan says it does not know, and a guard that resumes a lone match without asking refuses
+ * (`unknownRunningError`) instead of reading the empty list as "it does not run".
+ */
+export async function readRunning(kind: string, load: () => Promise<RunningCmuxSession[]>): Promise<RunningScan> {
     try {
-        return await profiler.scope("agent-sessions").measureAsync(`resume.running.${kind}`, load);
+        return {
+            sessions: await profiler.scope("agent-sessions").measureAsync(`resume.running.${kind}`, load),
+            unknown: null,
+        };
     } catch (error) {
         logger.debug({ error, kind }, "[agent-sessions] running cmux sessions unavailable; offering history only");
-        return [];
+        return { sessions: [], unknown: error instanceof CmuxDidNotAnswerError ? error.detail : null };
     }
+}
+
+/** The refusal of a resume that would start without asking while cmux cannot say whether the session runs. */
+export function unknownRunningError(kind: string, unknown: string): Error {
+    return new Error(
+        `cmux did not answer, so it is unknown whether this ${kind} session already runs in a tab; not resuming a possible second copy. Retry when cmux answers (\`tools cmux doctor\` names the fault). cmux said: ${unknown}`
+    );
+}
+
+/** The warning above a picker that cannot mark the running sessions: the user still chooses. */
+export function warnUnknownRunning(unknown: string): void {
+    p.log.warn(`cmux did not answer, so sessions that already run in a tab are not marked (${unknown}).`);
 }
 
 /**
@@ -286,7 +309,7 @@ async function resolveResume(
     options: SelectResumeOptions,
     interactive: boolean,
     spinner: SearchSpinner | undefined,
-    runningScan: Promise<RunningCmuxSession[]> | undefined
+    runningScan: Promise<RunningScan> | undefined
 ): Promise<ResumeChoice | undefined> {
     const { adapter, query, filters = {} } = options;
     const DEFAULT_RESUME_MATCHES = 20;
@@ -341,7 +364,8 @@ async function resolveResume(
     }
 
     matches = preferHomeCopies(matches, options.preferredHome);
-    const allRunning = focusableRunning((await runningScan) ?? [], options.stillRunning);
+    const scan = await runningScan;
+    const allRunning = focusableRunning(scan?.sessions ?? [], options.stillRunning);
     const named = fullNativeId
         ? allRunning.filter((entry) => entry.sessionId.toLowerCase() === normalized)
         : runningResumeHits(allRunning, trimmed);
@@ -363,6 +387,11 @@ async function resolveResume(
     // A lone match is resumed without asking, unless it already runs: then the picker offers its tab first.
     if (matches.length === 1 && !running.length) {
         spinner?.stop("1 matching session");
+
+        if (scan?.unknown) {
+            throw unknownRunningError(adapter.kind, scan.unknown);
+        }
+
         return { action: "resume", session: matches[0] };
     }
     // Claude's resume has always printed the candidates before refusing, and the shared path
@@ -378,6 +407,10 @@ async function resolveResume(
         throw new Error(
             `Ambiguous ${adapter.kind} resume (${matches.length} matches). Pass a session id from the table above, or use an interactive terminal.`
         );
+    }
+
+    if (scan?.unknown) {
+        warnUnknownRunning(scan.unknown);
     }
 
     // The same column-aligned picker Claude uses, not a one-line `p.select`: the rows differ by

@@ -7,7 +7,7 @@ import {
     type TreeBackoffStore,
     treeBackoffDelayMs,
 } from "./lib/tree-backoff";
-import { CMUX_TREE_TIMEOUT_MS, readCmuxTree } from "./tree-read";
+import { CMUX_TREE_TIMEOUT_MS, cmuxDidNotAnswer, readCmuxTree } from "./tree-read";
 
 /** A `cmux --json --id-format both tree --all` answer, trimmed to the fields the readers use. */
 const FIXTURE = {
@@ -139,14 +139,17 @@ describe("readCmuxTree", () => {
         });
 
         expect(performance.now() - started).toBeLessThan(1_000);
-        expect(read).toMatchObject({ ok: false, reason: "timeout" });
+        expect(read).toMatchObject({ ok: false, reason: "timeout", state: "socket-dead" });
         expect(read.ok ? "" : read.error).toContain("its socket does not answer");
+        expect(cmuxDidNotAnswer(read)).toBe(true);
     });
 
     test("a probe that finds cmux healthy leaves the command's own error standing", async () => {
         const read = await readCmuxTree({ run: failing, probe: async () => undefined });
 
         expect(read).toEqual({ ok: false, reason: "failed", error: "cmux tree --all failed (1): timed out" });
+        // An error cmux printed is an answer: which tabs exist is not in doubt the way it is after silence.
+        expect(cmuxDidNotAnswer(read)).toBe(false);
     });
 
     test("callers in flight at the same moment share one cmux call", async () => {
@@ -203,6 +206,7 @@ describe("readCmuxTree backoff after cmux does not answer", () => {
         const skipped = await readCmuxTree(options);
         expect(calls).toBe(1);
         expect(skipped).toMatchObject({ ok: false, reason: "backoff" });
+        expect(cmuxDidNotAnswer(skipped)).toBe(true);
         expect(skipped.ok ? "" : skipped.error).toContain("its socket does not answer");
         expect(skipped.ok ? "" : skipped.error).toContain("the next try is after");
 
@@ -255,7 +259,7 @@ describe("readCmuxTree backoff after cmux does not answer", () => {
 
     test("a failure that is not cmux hanging leaves no memory", async () => {
         const backoff = memoryStore();
-        await readCmuxTree({
+        const read = await readCmuxTree({
             backoff,
             run: failing,
             probe: async () => {
@@ -264,6 +268,8 @@ describe("readCmuxTree backoff after cmux does not answer", () => {
         });
 
         expect(backoff.record).toBeNull();
+        expect(read).toMatchObject({ ok: false, reason: "failed", state: "not-running" });
+        expect(cmuxDidNotAnswer(read)).toBe(false);
     });
 
     test("the delay doubles from 20 s and stops at 5 min", () => {

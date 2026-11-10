@@ -1,4 +1,4 @@
-import { type CmuxTree, cmuxTreeFromJson, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
+import { cmuxTreeFromJson, type ParsedCmuxTree, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
@@ -38,7 +38,7 @@ function text(value: string | null): string | null {
 }
 
 /** The terminal surfaces of a tree read, keyed by ref, with their UUID, tty, workspace and window. */
-export function cmuxTreeView(tree: CmuxTree): CmuxTreeView {
+export function cmuxTreeView(tree: ParsedCmuxTree): CmuxTreeView {
     const surfaces = new Map<string, LiveSurface>();
 
     for (const window of tree.windows) {
