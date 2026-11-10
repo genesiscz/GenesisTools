@@ -253,14 +253,7 @@ const RETIRED_AI_CONFIG_MODULE = /["'](?:[^"']*\/)?(?:AIConfig|store-bridge|v3-a
  * only the three modules themselves and their four test files, which C23 deletes. Every consumer moved to
  * AiConfigStore and account-ops. A ratchet: no file joins, and the list empties with the deletion.
  */
-export const AI_CONFIG_IMPORT_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/utils/ai/AIConfig.ts",
-    "src/utils/ai/config/store-bridge.ts",
-    "src/utils/ai/__tests__/AIConfig.characterization.test.ts",
-    "src/utils/ai/__tests__/AIConfig.test.ts",
-    "src/utils/ai/config/store-bridge.test.ts",
-    "src/utils/ai/config/v3-adapter.test.ts",
-]);
+export const AI_CONFIG_IMPORT_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
 /** An import, a re-export or a dynamic `import()` of the retired AIConfig facade or its projection. */
 export function importsRetiredAiConfig(text: string, node: SgNode): boolean {
