@@ -30,11 +30,10 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         }
         // Every bridge the widget builds asks the resident hub server first, which answers `hub widget call`, `hub
         // widget context` and `hub widget tasks list` without a process each (src/hub/server/doors/widget.ts); an argv
-        // with no door goes to the process at once. The preview build and `GENESIS_HUB_SERVER=0` keep processes only.
-        if !NativePreview.enabled, ProcessInfo.processInfo.environment["GENESIS_HUB_SERVER"] != "0" {
-            let binary = ToolsBridge.defaultBinaryPath()
-            ToolsServerClient.shared = ToolsServerClient(startServer: { ToolsServerClient.startHubServer(binaryPath: binary) })
-        }
+        // with no door goes to the process at once. `ToolsServerClient.allowsResidentServer` decides: a sandbox home, a
+        // worktree's `tools`, the preview build and `GENESIS_HUB_SERVER=0` keep processes only.
+        let serverBinary = ToolsBridge.defaultBinaryPath()
+        ToolsServerClient.shared = ToolsServerClient.resident(startServer: { ToolsServerClient.startHubServer(binaryPath: serverBinary) })
         let tools = URL(fileURLWithPath: ToolsBridge.defaultBinaryPath()).resolvingSymlinksInPath()
         let wrapper = tools.deletingLastPathComponent().appendingPathComponent("widget-tools").path
         let stateRoot = value("--state-root") ?? Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String

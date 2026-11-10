@@ -28,11 +28,9 @@ extension MonitorSessionRow {
 
 enum HubSource {
     /// The resident hub server (`tools hub serve`, src/hub/server): the hub asks it first and runs a `tools`
-    /// process only when it cannot answer. Started on demand; `GENESIS_HUB_SERVER=0` turns it off.
-    static let server: ToolsServerClient? = {
-        guard !NativePreview.enabled, ProcessInfo.processInfo.environment["GENESIS_HUB_SERVER"] != "0" else { return nil }
-        return ToolsServerClient(startServer: { HubServerStarter.start() })
-    }()
+    /// process only when it cannot answer. Started on demand. `ToolsServerClient.allowsResidentServer` decides: a
+    /// sandbox home, a worktree's `tools`, the preview build and `GENESIS_HUB_SERVER=0` keep processes only.
+    static let server: ToolsServerClient? = ToolsServerClient.resident(startServer: { HubServerStarter.start() })
 
     static let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath(), server: server)
 
