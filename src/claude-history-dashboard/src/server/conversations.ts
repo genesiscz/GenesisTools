@@ -3,7 +3,11 @@
  * Using TanStack Start's createServerFn for type-safe server/client data fetching
  */
 
+import { basename } from "node:path";
 import type { DateRange, SearchFilters } from "@app/claude/lib/history/search";
+import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-types";
+import type { AgentSearchFilters } from "@genesiscz/utils/agent-sessions/types";
+import { resolveProjectDir } from "@genesiscz/utils/claude/projects";
 import { createServerFn } from "@tanstack/react-start";
 import { history } from "./history";
 import {
@@ -29,33 +33,47 @@ export type {
 } from "./serializers";
 
 /**
+ * Claude's sessions off the shared history index, newest first, as the serializers read them. Loaded on the first
+ * call for the reason `history` is (see `./history`): the catalog reaches the provider registry too.
+ */
+async function claudeSessions(filters: AgentSearchFilters): Promise<SessionMetadataRecord[]> {
+	const [{ catalogHistory }, { toSessionMetadataRecord }] = await Promise.all([
+		import("@genesiscz/utils/agent-sessions/open-service"),
+		import("@genesiscz/utils/agent-sessions/cache-repository"),
+	]);
+	const { metadata } = await catalogHistory({ provider: "claude", filters });
+	return metadata.map(toSessionMetadataRecord);
+}
+
+/**
  * Get conversations with optional search/filtering
  */
 export const getConversations = createServerFn({ method: "GET" })
 	.inputValidator((filters: Omit<SearchFilters, "onProgress">) => filters)
 	.handler(async ({ data: filters }) => {
-		const { getSessionListing, searchConversations } = await history();
-
 		if (filters.query) {
+			const { searchConversations } = await history();
 			const results = await searchConversations(filters);
 			return results.map(serializeResult);
 		}
 
-		const listing = await getSessionListing({
-			project: filters.project,
-			excludeSubagents: filters.agentsOnly ? false : filters.excludeAgents !== false,
+		// A project name lists the one Claude project folder it resolves to; a name that resolves to none lists
+		// every project.
+		const projectDir = filters.project ? resolveProjectDir(filters.project) : undefined;
+		const sessions = await claudeSessions({
+			project: projectDir ? basename(projectDir) : undefined,
+			excludeAgents: !filters.agentsOnly && filters.excludeAgents !== false,
 			limit: filters.limit || 50,
 		});
 
-		return listing.sessions.map(serializeSessionMetadata);
+		return sessions.map(serializeSessionMetadata);
 	});
 
 /**
  * Lightweight session list for sidebar tree (no message content)
  */
 export const getSidebarSessions = createServerFn({ method: "GET" }).handler(async () => {
-	const { getSessionListing } = await history();
-	const { sessions } = await getSessionListing({ limit: 200, excludeSubagents: false });
+	const sessions = await claudeSessions({ limit: 200 });
 
 	const seen = new Set<string>();
 	const sidebar: SidebarSession[] = [];

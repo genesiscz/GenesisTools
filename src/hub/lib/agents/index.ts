@@ -4,9 +4,10 @@ import {
     listAgentSessionRows,
     POLLED_LISTING_REUSE_MS,
 } from "@app/ai/lib/sessions/agent-session-rows";
-import { getSessionListing } from "@app/claude/lib/history/search";
 import { teamsRoot } from "@app/claude/lib/teams/discover";
+import { toSessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-repository";
 import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-types";
+import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { claudeSubagentLead } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { resolveTranscripts } from "@genesiscz/utils/ai/transcripts/resolve";
 import { isFunctionPart, toolParts } from "@genesiscz/utils/harness/tool-parts";
@@ -257,13 +258,13 @@ async function recentAgentRecords({
     since: number;
     refresh?: boolean;
 }): Promise<SessionMetadataRecord[]> {
-    const listing = await getSessionListing({
-        subagentsOnly: true,
+    const { metadata } = await catalogHistory({
+        provider: "claude",
+        filters: { agentsOnly: true, mtimeFrom: since },
         refresh,
-        mtimeFrom: since,
         maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
     });
-    return listing.sessions;
+    return metadata.map(toSessionMetadataRecord);
 }
 
 /**

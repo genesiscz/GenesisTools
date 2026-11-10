@@ -219,6 +219,42 @@ test("service initializes a cached listing, reports unchanged refreshes, and wor
     }
 });
 
+test("a fourth provider's catalog applies each agent flag and the limit to the rows it returns", async () => {
+    const world = await createFixtureWorld();
+    const reader = createReader({ kind: "fixture-fourth", roots: [world.sources.claude] });
+    const { database, service } = createService({
+        providerId: "fixture-fourth-provider",
+        reader,
+        roots: [world.sources.claude],
+        now: () => world.now,
+    });
+    try {
+        await generateHistoryCorpus({
+            root: world.root,
+            seed: 59,
+            sessionCount: 3,
+            recordCount: 3,
+            distribution: { main: 2, subagent: 1 },
+        });
+        const all = (await service.catalog({})).metadata;
+        const main = (await service.catalog({ excludeAgents: true }, { refresh: false })).metadata;
+        const agents = (await service.catalog({ agentsOnly: true }, { refresh: false })).metadata;
+        const limited = (await service.catalog({ limit: 2 }, { refresh: false })).metadata;
+
+        expect(all.map((row) => row.isSubagent).sort()).toEqual([false, false, true]);
+        expect(main.map((row) => row.isSubagent)).toEqual([false, false]);
+        expect(agents.map((row) => row.isSubagent)).toEqual([true]);
+        expect(limited.map((row) => row.sourceKey)).toEqual(all.slice(0, 2).map((row) => row.sourceKey));
+        expect(await service.catalogCounts({ agentsOnly: true, limit: 1 }, { refresh: false })).toEqual({
+            total: 3,
+            subagents: 1,
+        });
+    } finally {
+        database.close();
+        await world.dispose();
+    }
+});
+
 /**
  * An untitled Claude SUBAGENT rendered as 120 characters of directory in every table, picker
  * and menu-bar row, because the title fell back to the native id and a subagent's native id is
