@@ -2,7 +2,7 @@ import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { resolveGrokAuthPath } from "@app/ai-proxy/lib/providers/account-paths";
 import { mapGrokError } from "@app/ai-proxy/lib/providers/grok-errors";
 import { listGrokProxyModels } from "@app/ai-proxy/lib/providers/grok-subscription.models";
-import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
+import { exchange, relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type {
     OpenAiModel,
     ProviderInspectionOptions,
@@ -487,114 +487,89 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         /** Extra abort source (the emulation stream's), composed with the client's. */
         signal?: AbortSignal;
     }): Promise<Response> {
-        const started = performance.now();
-
-        try {
-            const upstream = await this.client.fetch(path, {
-                method: "POST",
-                body: bodyText,
-                modelOverride,
-                signal: signal === undefined ? req.signal : AbortSignal.any([req.signal, signal]),
-                headers: {
-                    Accept: req.headers.get("Accept") ?? "application/json",
-                    ...headers,
+        const fields = { upstreamModel: modelOverride, requestedModel, imageRouted };
+        const relayed = await exchange({
+            // The client's own fetch carries the Grok login and its one reload or refresh on 401.
+            fetch: (input, init) => this.client.fetch(String(input), { ...init, modelOverride }),
+            request: {
+                url: path,
+                init: {
+                    method: "POST",
+                    body: bodyText,
+                    headers: { Accept: req.headers.get("Accept") ?? "application/json", ...headers },
                 },
-            });
+            },
+            signal: signal === undefined ? req.signal : AbortSignal.any([req.signal, signal]),
+            log: { provider: "grok", account: this.account.name, route: path, fields },
+            mapNonOk: (upstream) => grokErrorResponse(upstream, { account: this.account.name, path, ...fields }),
+            mapThrown: (err) => grokAuthExpiredResponse(err, { account: this.account.name, path, ...fields }),
+            failureCode: "grok_fetch_failed",
+        });
 
-            const elapsedMs = Math.round(performance.now() - started);
-
-            if (!upstream.ok) {
-                const retryAfter = upstream.headers.get("retry-after");
-                const errorBody = await upstream.text();
-                logger.warn(
-                    {
-                        account: this.account.name,
-                        upstreamModel: modelOverride,
-                        requestedModel,
-                        imageRouted,
-                        path,
-                        status: upstream.status,
-                        elapsedMs,
-                        retryAfter,
-                        body: errorBody.slice(0, 500),
-                    },
-                    "ai-proxy: upstream request failed"
-                );
-
-                // Grok's `{"code":…,"error":"…"}` shape doesn't match the OpenAI
-                // error envelope, so SDK clients would only surface the bare
-                // statusText ("Bad Request") — re-wrap so the real message survives.
-                const envelope = mapGrokError({
-                    status: upstream.status,
-                    bodyText: errorBody,
-                    retryAfterSec: parseRetryAfterSeconds(upstream.headers),
-                });
-                const headers = new Headers({ "Content-Type": "application/json" });
-                if (retryAfter) {
-                    headers.set("retry-after", retryAfter);
-                }
-
-                return new Response(SafeJSON.stringify(envelope), {
-                    status: upstream.status,
-                    headers,
-                });
-            }
-
-            logger.debug(
-                {
-                    account: this.account.name,
-                    upstreamModel: modelOverride,
-                    requestedModel,
-                    imageRouted,
-                    path,
-                    status: upstream.status,
-                    elapsedMs,
-                },
-                "ai-proxy: upstream request ok"
-            );
-
-            // Responses clients chain the next turn by item_reference id, which
-            // xAI cannot resolve; the proxy is the store (see wham-item-store.ts).
-            const body =
-                path === "/responses" ? await harvestResponsesOutput(whamItemScope(req), upstream) : upstream.body;
-
-            return new Response(body, {
-                status: upstream.status,
-                headers: relayHeaders(upstream),
-            });
-        } catch (err) {
-            if (err instanceof GrokAuthExpiredError) {
-                logger.warn(
-                    {
-                        account: this.account.name,
-                        upstreamModel: modelOverride,
-                        requestedModel,
-                        imageRouted,
-                        path,
-                        elapsedMs: Math.round(performance.now() - started),
-                        authPath: err.authPath,
-                    },
-                    "ai-proxy: synthesizing 502 from GrokAuthExpiredError (upstream said 401/403 — see prior 'grok: upstream returned auth-status' log for body)"
-                );
-
-                return new Response(
-                    SafeJSON.stringify({
-                        error: {
-                            message: `Upstream Grok auth expired or invalid — the ai-proxy host must refresh its Grok login. ${err.message}`,
-                            type: "upstream_auth_error",
-                            code: "grok_auth_expired",
-                        },
-                    }),
-                    {
-                        status: 502,
-                        headers: { "Content-Type": "application/json" },
-                    }
-                );
-            }
-
-            throw err;
+        // Responses clients chain the next turn by item_reference id, which
+        // xAI cannot resolve; the proxy is the store (see wham-item-store.ts).
+        if (path !== "/responses") {
+            return relayed;
         }
+
+        return new Response(await harvestResponsesOutput(whamItemScope(req), relayed), {
+            status: relayed.status,
+            headers: relayed.headers,
+        });
     }
+}
+
+/**
+ * Grok's `{"code":…,"error":"…"}` shape doesn't match the OpenAI error envelope, so SDK clients would only surface
+ * the bare statusText ("Bad Request"); re-wrap so the real message survives. The upstream body goes to the warn log,
+ * because it is the only clue about why the upstream refused.
+ */
+async function grokErrorResponse(upstream: Response, fields: Record<string, unknown>): Promise<Response> {
+    const retryAfter = upstream.headers.get("retry-after");
+    const errorBody = await upstream.text();
+    logger.warn(
+        { ...fields, status: upstream.status, retryAfter, body: errorBody.slice(0, 500) },
+        "ai-proxy: grok upstream error body"
+    );
+
+    const envelope = mapGrokError({
+        status: upstream.status,
+        bodyText: errorBody,
+        retryAfterSec: parseRetryAfterSeconds(upstream.headers),
+    });
+    const headers = new Headers({ "Content-Type": "application/json" });
+
+    if (retryAfter) {
+        headers.set("retry-after", retryAfter);
+    }
+
+    return new Response(SafeJSON.stringify(envelope), { status: upstream.status, headers });
+}
+
+/**
+ * The Grok client throws `GrokAuthExpiredError` once the upstream still answers 401/403 after its own reload and
+ * refresh, so the expiry reaches the exchange as a throw, not as a non-OK answer.
+ */
+function grokAuthExpiredResponse(err: unknown, fields: Record<string, unknown>): Response | undefined {
+    if (!(err instanceof GrokAuthExpiredError)) {
+        return undefined;
+    }
+
+    logger.warn(
+        { ...fields, authPath: err.authPath },
+        "ai-proxy: synthesizing 502 from GrokAuthExpiredError (upstream said 401/403 — see prior 'grok: upstream returned auth-status' log for body)"
+    );
+
+    return new Response(
+        SafeJSON.stringify({
+            error: {
+                message: `Upstream Grok auth expired or invalid — the ai-proxy host must refresh its Grok login. ${err.message}`,
+                type: "upstream_auth_error",
+                code: "grok_auth_expired",
+            },
+        }),
+        { status: 502, headers: { "Content-Type": "application/json" } }
+    );
 }
 
 /**
