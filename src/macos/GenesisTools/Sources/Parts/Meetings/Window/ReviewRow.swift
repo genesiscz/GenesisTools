@@ -181,10 +181,13 @@ struct ReviewRowView: View {
             WrapLayout(spacing: 0, lineSpacing: 2) {
                 ForEach(Array(Self.units(Self.flow(pieces)).enumerated()), id: \.offset) { _, unit in
                     HStack(spacing: 0) {
-                        ForEach(Array(unit.enumerated()), id: \.offset) { _, token in
+                        ForEach(Array(unit.enumerated()), id: \.offset) { index, token in
                             if let target = token.piece.target, let player {
+                                // Room only toward a word. Toward "(" or ";" the pill gives up most of its own inner room:
+                                // its ground is faint, so that room read as a space ("( 1:49:48 ; the answer").
                                 MomentButton(player: player, meeting: detail.id, target: target, label: token.piece.text, source: .questionTime)
-                                    .padding(.horizontal, 2)
+                                    .padding(.leading, index == 0 ? 2 : -Self.pillGive)
+                                    .padding(.trailing, index == unit.count - 1 ? 2 : -Self.pillGive)
                             } else if let url = Self.link(token.piece) {
                                 Link(token.piece.text, destination: url).font(font)
                             } else {
@@ -206,6 +209,9 @@ struct ReviewRowView: View {
 
     /// A word space as a part of the font size (the system font's space is about a quarter em).
     private static let wordSpace: CGFloat = 0.25
+
+    /// How much of a time pill's inner side room (6 pt) a mark that touches it takes.
+    private static let pillGive: CGFloat = 4
 
     /// The items between two spaces, which stay on one line as a word does: "(" keeps the time after it, and a time
     /// keeps the ";" after it. A line breaks only where the text has a space.
@@ -347,6 +353,14 @@ struct ReviewRowView: View {
             Text(verbatim: row.label).font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(.secondary)
                 .lineLimit(1).fixedSize()
                 .frame(idealWidth: FoldedShape.Nominal.label, alignment: .leading)
+            if !shape.words, let glyph = Self.actorGlyph(row) {
+                // The words that say who decided it are gone in this shape; a decision the reader did not make keeps a
+                // mark. It stands after the label, so the labels of the rows keep one column.
+                Image(systemName: glyph).font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.secondary)
+                    .padding(.horizontal, -2)
+                    .instantTooltip(Self.decidedWords(row))
+                    .accessibilityLabel(Self.decidedWords(row))
+            }
             if let width = shape.textWidth {
                 // Above the spacer's priority: beside a spacer of its own priority a one-line text gets half the free
                 // room and truncates with room to spare. The ideal width is the room this shape asks for its text.
@@ -366,7 +380,18 @@ struct ReviewRowView: View {
     private var decidedMark: some View {
         Image(systemName: row.status == "confirmed" ? "checkmark.circle.fill" : "xmark.circle")
             .foregroundStyle(row.status == "confirmed" ? KitPalette.added : KitPalette.faint)
+            .instantTooltip(Self.decidedWords(row))
             .accessibilityHidden(true)
+    }
+
+    /// The mark of a decision the reader did not make: an agent or a rule. A person's own decision has none, so a row
+    /// that something else decided stands out where the line has no room for "Confirmed by an agent (…)".
+    static func actorGlyph(_ row: ReviewRow) -> String? {
+        switch row.decision?.actor.kind {
+        case "agent": return "sparkles"
+        case "rule": return "gearshape"
+        default: return nil
+        }
     }
 
     /// What the row was decided as, then who decided it and why. The answer never truncates: the question before it

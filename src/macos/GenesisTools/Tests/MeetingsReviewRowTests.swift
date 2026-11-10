@@ -131,6 +131,8 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(rows[2].whenText, "00:12–00:30")
         XCTAssertEqual(ReviewRowView.decidedWords(rows[2]), "Confirmed by an agent (Claude Code, session 11111111): the calendar says so",
                        "R35: who decided it and why")
+        XCTAssertEqual(ReviewRowView.actorGlyph(rows[2]), "sparkles", "a narrow folded row still marks a decision an agent made")
+        XCTAssertNil(ReviewRowView.actorGlyph(rows[1]), "a row nobody decided, or the reader decided, has no mark")
     }
 
     func testTheNextOpenRowWrapsAndTheQueueEndsWhenNoneIsLeft() throws {
