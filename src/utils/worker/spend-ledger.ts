@@ -14,7 +14,7 @@ import { dirname } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { DEFAULT_PRICING } from "@genesiscz/utils/ai/usage/spend/pricing";
 import type { PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { aiSpendCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -193,9 +193,7 @@ export function isStalePrice(row: WorkerCostRow): boolean {
 /** A booked row's cost line, saying so when its price predates today's rules. */
 export function bookedCostLine(row: WorkerCostRow): string {
     const line = formatCostLine(row.cost, row.backend);
-    return isStalePrice(row)
-        ? `${line} · priced under older rules, see: ${toolCommand("ai-spend workers")} --reprice`
-        : line;
+    return isStalePrice(row) ? `${line} · priced under older rules, see: ${aiSpendCommand("workers")} --reprice` : line;
 }
 
 /**
