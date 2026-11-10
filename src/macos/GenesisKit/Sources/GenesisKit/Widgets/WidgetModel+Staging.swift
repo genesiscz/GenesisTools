@@ -304,7 +304,7 @@ extension WidgetModel {
         let recommendedSet = card.choices.filter(\.recommended).map(\.id).joined()
         let recommended = card.takesSeveral ? (recommendedSet.isEmpty ? nil : recommendedSet)
             : card.choices.first(where: \.recommended)?.id
-        return WidgetInboxItem(id: card.id, sourceId: card.sourceId, kind: card.kind, key: card.sessionKey, at: card.at,
+        return WidgetInboxItem(id: card.id, sourceId: card.sourceId, kind: card.kind.rawValue, key: card.sessionKey, at: card.at,
                                needsAnswer: card.needsAnswer, title: card.title, number: card.number,
                                options: card.choices.map(\.title), recommended: recommended,
                                revision: card.revision, draftOption: card.draftOption, draft: card.draft,

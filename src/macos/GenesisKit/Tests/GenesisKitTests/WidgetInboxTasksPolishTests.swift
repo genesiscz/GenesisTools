@@ -760,7 +760,7 @@ final class WidgetInboxPolishTests: XCTestCase {
 
     func testTheSessionInboxFilterSplitsInboxEntriesFromDecisions() {
         let cards = ["answer", "result", "form", "decision", "todo"].map { kind in
-            WidgetCard(id: kind, kind: kind, sessionKey: "k", sourceId: kind, at: 1, title: kind, body: "",
+            WidgetCard(id: kind, kind: WidgetCardKind(rawValue: kind), sessionKey: "k", sourceId: kind, at: 1, title: kind, body: "",
                        status: "open", choices: [], attachments: [], refs: [], read: true)
         }
         XCTAssertEqual(LiveWidgetView.filtered(cards, by: "inbox").map(\.kind), ["answer", "result", "form"])
