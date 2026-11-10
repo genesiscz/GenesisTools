@@ -102,13 +102,10 @@ struct TranscriptBlocksPane: View {
             } else {
                 Spacer(minLength: 6)
             }
-            Toggle(isOn: Binding(get: { isFollowing }, set: { following = $0; if $0 { jump += 1 } })) {
-                Label("Follows playback", systemImage: "arrow.down.to.line")
-            }
-            .toggleStyle(.button)
-            .controlSize(.small)
-            .instantTooltip("The heard line stays in view while a Moment plays; scrolling away stops it")
-            .accessibilityIdentifier("meetings.transcript.follows")
+            KitToggleChip("Follows playback", isOn: Binding(get: { isFollowing }, set: { following = $0; if $0 { jump += 1 } }),
+                          hue: .play, size: .small,
+                          tooltip: "The heard line stays in view while a Moment plays; scrolling away stops it",
+                          identifier: "meetings.transcript.follows")
             if !isFollowing, detail.window?.player.top?.meeting == detail.id {
                 GhostButton("Jump to now", symbol: "scope", tooltip: "Scroll to the heard line and follow the playback again",
                             identifier: "meetings.transcript.jump") {

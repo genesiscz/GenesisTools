@@ -19,6 +19,10 @@ struct ReviewRowView: View {
     /// This window just decided the row and it still keeps its place (G33): it stays readable, with how it was decided
     /// where its choices were, until the reader scrolls. A folded line over the row's old height read as a blank gap.
     var held = false
+    @Environment(\.kitLook) private var look
+
+    /// A question draws in the ask hue (not in the classic look).
+    private var asks: Bool { row.isQuestion && look != .classic }
 
     var body: some View {
         Group {
@@ -80,11 +84,13 @@ struct ReviewRowView: View {
         HStack(spacing: 6) {
             Text(verbatim: row.label).font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .lineLimit(1).fixedSize()
+                .foregroundStyle(asks ? AnyShapeStyle(KitHue.ask.ink) : AnyShapeStyle(.primary))
                 .padding(.horizontal, 5).padding(.vertical, 1)
-                .background(Color.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                .background(asks ? KitHue.ask.ink.opacity(0.18) : Color.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
             // The label, the kind and the score never break: the playing bar takes only the room they leave. Beside it at
             // 900 pt "Question" broke into "Questi" and "on", then "Q15" into "Q1" and "5", then "30 %".
-            Text(verbatim: Self.kindWord(row.kind)).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            Text(verbatim: Self.kindWord(row.kind)).font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(asks ? AnyShapeStyle(KitHue.ask.ink) : AnyShapeStyle(.secondary))
                 .lineLimit(1).fixedSize()
             if let player {
                 MomentButton(player: player, meeting: detail.id, target: row.target, label: row.whenText, source: .row)
@@ -151,7 +157,8 @@ struct ReviewRowView: View {
         case .when:
             EmptyView() // the header's MomentButton is the row's time (R13)
         case .asks(let pieces):
-            pieceLine(pieces, symbol: "questionmark.bubble", size: 13, weight: row.isQuestion ? .medium : .regular)
+            pieceLine(pieces, symbol: "questionmark.bubble", size: 13, weight: row.isQuestion ? .medium : .regular,
+                      glyph: asks ? KitHue.ask.ink : nil)
         case .settles(let text, let items):
             settlesLine(text, items: items)
         case .reason(let pieces):
@@ -179,10 +186,11 @@ struct ReviewRowView: View {
     /// Text with its times as MomentButtons (R17): a time in a question pushes on the context stack (R38). The text
     /// between two times flows word by word, so a time sits inside its sentence instead of starting a line of its own.
     private func pieceLine(_ pieces: [TextPiece], symbol: String, size: CGFloat, weight: Font.Weight = .regular,
-                           secondary: Bool = false) -> some View {
+                           secondary: Bool = false, glyph: Color? = nil) -> some View {
         let font = Font.system(size: size, weight: weight)
         return HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: symbol).font(.system(size: 10)).foregroundStyle(.tertiary).frame(width: 14).accessibilityHidden(true)
+            Image(systemName: symbol).font(.system(size: glyph == nil ? 10 : 11, weight: glyph == nil ? .regular : .semibold))
+                .foregroundStyle(glyph.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.tertiary)).frame(width: 14).accessibilityHidden(true)
             WrapLayout(spacing: 0, lineSpacing: 2) {
                 ForEach(Array(Self.units(Self.flow(pieces)).enumerated()), id: \.offset) { _, unit in
                     HStack(spacing: 0) {
@@ -575,6 +583,19 @@ private struct ChoiceButton: View {
     let number: Int?
     let enabled: Bool
     let action: () -> Void
+    @Environment(\.kitLook) private var look
+
+    /// The chip's ground: in a look, the suggestion is a tint of the play hue and the others are quiet fills.
+    @ViewBuilder
+    private var ground: some View {
+        let suggested = choice.role == "suggested"
+        if look == .classic {
+            RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(suggested ? 0.18 : 0.08))
+        } else {
+            KitSurfaceBackground(look.surface(suggested ? .tinted : .soft, hue: suggested ? .play : .neutral),
+                                 radius: look.radius(.soft, height: 22, legacy: 6), corners: look.corners)
+        }
+    }
 
     var body: some View {
         // lint-rules-ignore: short list (a row's two to four answer choices; LiveButton reads the review row's liveness)
@@ -589,8 +610,9 @@ private struct ChoiceButton: View {
                     Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
+            .foregroundStyle(look != .classic && choice.role == "suggested" ? AnyShapeStyle(KitHue.play.ink) : AnyShapeStyle(.primary))
             .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Color.secondary.opacity(choice.role == "suggested" ? 0.18 : 0.08), in: RoundedRectangle(cornerRadius: 6))
+            .background(ground)
         }
         .accessibilityLabel(choice.confidence.map { "\(choice.label), \(Int(($0 * 100).rounded())) percent" } ?? choice.label)
     }

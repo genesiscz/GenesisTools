@@ -39,6 +39,8 @@ struct MeetingsRootView: View {
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.player.isActive)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
+            // Last, so the dock and the sheets above take the look too.
+            .meetingsLook()
     }
 
     /// The settings panel takes 320 pt of the meeting's column (`MeetingDetailView.paneWidth`). Below this window width
@@ -147,7 +149,7 @@ private struct SidePanelToggle: View {
 
     var body: some View {
         Toggle(isOn: $model.sidePanelOpen) {
-            Label("Settings", systemImage: "sidebar.trailing")
+            Label("Settings", systemImage: "gearshape")
         }
         .toggleStyle(.button)
         .keyboardShortcut("i", modifiers: [.command, .option])
@@ -438,7 +440,7 @@ struct MeetingBadgesView: View {
         // A list row only: under the header's badges the project picker says "No project" itself.
         if badges.noProject, open == nil { Badge("No project", color: KitPalette.modified) }
         if badges.openQuestions > 0 {
-            badge(Badge(Plural.count(badges.openQuestions, "question"), color: KitPalette.renamed, symbol: "ear"),
+            badge(Badge(Plural.count(badges.openQuestions, "question"), color: KitHue.ask.ink, symbol: "ear"),
                   opens: .items, tooltip: "Answer them in Items")
         }
         if badges.unclearSpeakers > 0 {

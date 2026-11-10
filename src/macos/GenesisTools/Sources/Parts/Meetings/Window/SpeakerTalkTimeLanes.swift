@@ -128,6 +128,7 @@ struct SpeakerTalkTimeLanes: View {
     var names: [String: String] = [:]
     /// A click on one stretch: play only that span (R20).
     let playSpan: (Double, Double) -> Void
+    @Environment(\.kitLook) private var look
     /// A click on a joined block: zoom the timeline to it (G-SPK-8).
     let zoom: (Double, Double) -> Void
     /// A click on a banner: the question ids under it.
@@ -210,7 +211,11 @@ struct SpeakerTalkTimeLanes: View {
             TranscriptAvatar(speaker: displayName(speaker), size: 22)
             Text(verbatim: displayName(speaker)).font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
         }
+        .environment(\.meetingSpeakerNames, shownNames)
     }
+
+    /// The shown names of every lane: a speaker's colour is its own among these.
+    private var shownNames: [String] { speakers.map(displayName).sorted() }
 
     private func displayName(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker) -> String {
         names[speaker.label] ?? (speaker.label.isEmpty ? "Unknown voice" : speaker.label)
@@ -222,13 +227,16 @@ struct SpeakerTalkTimeLanes: View {
         let blocks = TalkTimeLayout.blocks(speaker.talkSpans, durationSec: durationSec, width: width)
         let selected = speaker.label == selectedLabel
         let active = activeRange
+        // In a look a lane has its speaker's colour; what plays stays the accent, which no person has.
+        let own: Color? = look == .classic || speaker.label.isEmpty ? nil : KitPersonColor.color(for: displayName(speaker), among: shownNames)
         return Canvas { context, size in
             let track = Path(roundedRect: CGRect(x: 0, y: (size.height - 10) / 2, width: size.width, height: 10), cornerRadius: 5)
             context.fill(track, with: .color(Color.secondary.opacity(selected ? 0.22 : 0.12)))
             for block in blocks {
                 let rect = CGRect(x: block.x, y: (size.height - 10) / 2, width: block.width, height: 10)
                 let isActive = active.map { $0.overlaps(block.fromSec...block.toSec) } ?? false
-                let color: Color = isActive ? .accentColor : Color.secondary.opacity(selected ? 0.75 : 0.5)
+                let rest = own.map { $0.opacity(selected ? 1 : 0.8) } ?? Color.secondary.opacity(selected ? 0.75 : 0.5)
+                let color: Color = isActive ? .accentColor : rest
                 context.fill(Path(roundedRect: rect, cornerRadius: 2.5), with: .color(color))
                 for tick in TalkTimeLayout.shownTicks(block) {
                     let line = Path(CGRect(x: tick, y: rect.minY + 1.5, width: 1, height: rect.height - 3))

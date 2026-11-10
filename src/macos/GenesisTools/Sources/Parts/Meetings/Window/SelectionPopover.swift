@@ -112,7 +112,7 @@ struct SelectionPopover: View {
                 Button("Stage", action: submit)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(trimmed.isEmpty)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.genPrimary())
             }
         }
         .onAppear { fieldFocused = true }
@@ -233,7 +233,7 @@ struct StagedCommentsBar: View {
                 Button(action: send) {
                     Label(Self.sendTitle(count: comments.count, listeners: listeners.count), systemImage: "paperplane")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.genPrimary())
                 .disabled(comments.isEmpty || listeners.isEmpty || isSending)
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
                 .instantTooltip(listeners.isEmpty

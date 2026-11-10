@@ -156,6 +156,7 @@ struct TranscriptBlocksList: View {
     var select: (TranscriptBlockLine, TranscriptLineClick) -> Void = { _, _ in }
 
     var body: some View {
+        let speakerNames = Set(blocks.map(\.speaker)).sorted()
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(blocks) { block in
                 TranscriptBlockView(
@@ -168,6 +169,7 @@ struct TranscriptBlocksList: View {
                     select: select
                 )
                 .equatable()
+                .environment(\.meetingSpeakerNames, speakerNames)
                 .popover(isPresented: Binding(get: { holdsPopover(block) }, set: { if !$0 { closePopover() } }),
                          arrowEdge: .leading) { popover() }
                 .id(block.id)
@@ -250,17 +252,28 @@ struct TranscriptBlockView: View, Equatable {
     }
 }
 
-/// The round initials badge of a block. Neutral on purpose: identity colours would read as state (G-SPK-6).
+/// The round initials badge of a block. In a look it has the person's own colour, from a palette without the play
+/// blue, so a colour is never read as "this plays" (G-SPK-6 kept the badge neutral for that reason; the classic look
+/// still does). A voice without a name stays neutral.
 struct TranscriptAvatar: View {
     let speaker: String
     var size: CGFloat = 26
+    @Environment(\.kitLook) private var look
+    @Environment(\.meetingSpeakerNames) private var names
 
     var body: some View {
+        let coloured = look != .classic && !speaker.isEmpty
         Text(verbatim: Self.initials(speaker))
-            .font(.system(size: size * 0.42, weight: .semibold))
-            .foregroundStyle(.secondary)
+            .font(.system(size: size * 0.42, weight: coloured ? .bold : .semibold))
+            .foregroundStyle(coloured ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
             .frame(width: size, height: size)
-            .background(Circle().fill(Color.secondary.opacity(0.18)))
+            .background {
+                if coloured {
+                    Circle().fill(KitPersonColor.color(for: speaker, among: names).gradient)
+                } else {
+                    Circle().fill(Color.secondary.opacity(0.18))
+                }
+            }
             .accessibilityHidden(true)
     }
 

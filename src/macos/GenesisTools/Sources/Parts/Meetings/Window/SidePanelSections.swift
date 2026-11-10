@@ -368,6 +368,11 @@ enum SidePanelCatalog {
             row(Panes.screenHeight, value: Panes.screenHeight.value(defaults))
                 .requiring(Panes.screenBesidePlayback.key, [.flag(true)], "Off while the screen is not beside the sound."),
             row(Panes.transcriptPane, value: Panes.transcriptPane.value(defaults)),
+            SidePanelRow(store: .window(key: MeetingsPreferences.lookKey), title: "Look of tabs and buttons",
+                         detail: "Aurora: raised dark surfaces and a colour per meaning. Candy: capsules and gradients. Glass: hairlines, colour on state only. Classic: the grey tabs and buttons.",
+                         choices: KitLook.allCases.map { SidePanelChoice(value: .text($0.rawValue), title: $0.title) },
+                         value: .text(MeetingsPreferences.look(defaults).rawValue),
+                         defaultValue: .text(MeetingsPreferences.defaultLook.rawValue)),
         ])
         let transcript = SidePanelSection(id: "transcript", title: "Transcript and Speakers", rows: [
             row(Transcript.dimPast, value: Transcript.dimPast.value(defaults)),

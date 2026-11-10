@@ -117,43 +117,63 @@ struct TimelineDockBody<Trailing: View>: View {
         .accessibilityIdentifier("meetings.dock")
     }
 
-    private var playPause: some View {
-        IconButton(systemName: state.isPlaying ? "pause.fill" : "play.fill", tooltip: state.isPlaying ? "Pause (Space)" : "Play (Space)",
-                   size: 13, action: actions.togglePause)
-            .accessibilityIdentifier("meetings.dock.playPause")
+    /// The one main action of the dock. With its word in the open dock, one glyph in the one-line dock; the word
+    /// changes with the state, so the button keeps one width.
+    @ViewBuilder
+    private func playPause(words: Bool) -> some View {
+        let symbol = state.isPlaying ? "pause.fill" : "play.fill"
+        let tooltip = state.isPlaying ? "Pause (Space)" : "Play (Space)"
+        if words {
+            KitButton(state.isPlaying ? "Pause" : "Play", symbol: symbol, kind: .primary, hue: .play, minWidth: 84,
+                      tooltip: tooltip, identifier: "meetings.dock.playPause", action: actions.togglePause)
+        } else {
+            KitButton(symbol: symbol, tooltip: tooltip, kind: .primary, hue: .play, identifier: "meetings.dock.playPause",
+                      action: actions.togglePause)
+        }
     }
 
-    private var skipButtons: some View {
+    /// Back and forward by the skip setting. The open dock writes the seconds as text beside the glyph; the one-line
+    /// dock keeps the two glyphs.
+    @ViewBuilder
+    private func skipButtons(words: Bool) -> some View {
+        let seconds = Int(state.skipSec)
         HStack(spacing: 4) {
-            IconButton(systemName: "gobackward.5", tooltip: "Back \(Int(state.skipSec)) s (←)") { actions.skip(-state.skipSec) }
-                .accessibilityIdentifier("meetings.dock.back")
-            IconButton(systemName: "goforward.5", tooltip: "Forward \(Int(state.skipSec)) s (→)") { actions.skip(state.skipSec) }
-                .accessibilityIdentifier("meetings.dock.forward")
+            if words {
+                KitButton("\(seconds) s", symbol: "gobackward", tooltip: "Back \(seconds) s (←)", identifier: "meetings.dock.back") {
+                    actions.skip(-state.skipSec)
+                }
+                .accessibilityLabel("Back \(seconds) seconds")
+                KitButton("\(seconds) s", trailingSymbol: "goforward", tooltip: "Forward \(seconds) s (→)", identifier: "meetings.dock.forward") {
+                    actions.skip(state.skipSec)
+                }
+                .accessibilityLabel("Forward \(seconds) seconds")
+            } else {
+                IconButton(systemName: "gobackward.5", tooltip: "Back \(seconds) s (←)") { actions.skip(-state.skipSec) }
+                    .accessibilityIdentifier("meetings.dock.back")
+                IconButton(systemName: "goforward.5", tooltip: "Forward \(seconds) s (→)") { actions.skip(state.skipSec) }
+                    .accessibilityIdentifier("meetings.dock.forward")
+            }
         }
     }
 
     private var buttons: some View {
         HStack(spacing: 8) {
-            playPause
-            skipButtons
+            playPause(words: true)
+            skipButtons(words: true)
             if let span = state.span {
                 GhostButton("Asked point", symbol: "flag.fill", tooltip: "Play from the asked spot, with its tone",
-                            identifier: "meetings.dock.asked") { actions.flag(span.flagSeekTarget) }
+                            hue: .play, identifier: "meetings.dock.asked") { actions.flag(span.flagSeekTarget) }
                 GhostButton("Replay clip", symbol: "arrow.counterclockwise", tooltip: "Play this clip again from its start",
                             identifier: "meetings.dock.replay", action: actions.playAgain)
             }
             PositionClock(position: position)
             Spacer(minLength: 8)
-            Picker("Zoom", selection: Binding(get: { state.zoom }, set: { actions.setZoom($0) })) {
-                ForEach(DockZoom.allCases) { zoom in
-                    Text(zoom.title).tag(zoom).disabled(zoom != .meeting && state.span == nil)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .instantTooltip("What the timeline shows; the sound goes on (⌘+ ⌘- ⌘0)")
-            .accessibilityIdentifier("meetings.dock.zoom")
+            GenSegmentedTabs("Zoom", items: DockZoom.allCases.map { zoom in
+                                 GenSegmentedTabs.Item(zoom, zoom.title, isEnabled: zoom == .meeting || state.span != nil)
+                             },
+                             selection: Binding(get: { state.zoom }, set: { actions.setZoom($0) }), minSegmentWidth: 58,
+                             identifier: "meetings.dock.zoom")
+                .instantTooltip("What the timeline shows; the sound goes on (⌘+ ⌘- ⌘0)")
             stopButton
         }
     }
@@ -165,8 +185,8 @@ struct TimelineDockBody<Trailing: View>: View {
 
     private var collapsedLine: some View {
         HStack(spacing: 10) {
-            playPause
-            skipButtons
+            playPause(words: false)
+            skipButtons(words: false)
             StackBreadcrumb(meeting: state.meetingTitle, moments: state.moments, isPlaying: state.isPlaying,
                             onMeeting: actions.showMeeting, onPop: actions.popTo)
                 .frame(maxWidth: 340, alignment: .leading)

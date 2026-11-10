@@ -141,9 +141,9 @@ struct MeetingDetailView: View {
                                if unread.source == .proposals { detail.loadProposals() } else { window.loadSettings() }
                            }])
             }
-            GenSegmentedTabs("Meeting tab", items: MeetingDetailModel.Tab.allCases.map { GenSegmentedTabs.Item($0, tabTitle($0, record)) },
+            GenSegmentedTabs("Meeting tab", items: MeetingDetailModel.Tab.allCases.map { tabItem($0, record) },
                              selection: Binding(get: { detail.tab }, set: { detail.show($0) }), minSegmentWidth: narrow ? 0 : 84,
-                             identifier: "meetings.detail.tabs", fillsWidth: narrow)
+                             identifier: "meetings.detail.tabs", fillsWidth: narrow, size: narrow ? .regular : .large)
                 .frameProbe("meetings.detail.tabs")
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
@@ -177,15 +177,21 @@ struct MeetingDetailView: View {
         return "Write the polished transcript as a markdown note; it asks for the \(project) folder once"
     }
 
-    private func tabTitle(_ tab: MeetingDetailModel.Tab, _ record: MeetingRecordView?) -> String {
-        guard let record else { return tab.title }
-        switch tab {
-        case .items:
-            let open = detail.rows.value?.rows.filter(\.isOpen).count ?? record.items.filter { $0.status == "suggested" }.count
-            return open > 0 ? "Items \(open)" : "Items"
-        case .context: return record.context.isEmpty ? "Context" : "Context \(record.context.count)"
-        default: return tab.title
+    /// A tab with its glyph (a wide header only) and its count: the open rows of Items in the colour of a question,
+    /// the files of Context without one.
+    private func tabItem(_ tab: MeetingDetailModel.Tab, _ record: MeetingRecordView?) -> GenSegmentedTabs<MeetingDetailModel.Tab>.Item {
+        var count: Int?
+        var hue = KitHue.neutral
+        if let record {
+            switch tab {
+            case .items:
+                count = detail.rows.value?.rows.filter(\.isOpen).count ?? record.items.filter { $0.status == "suggested" }.count
+                hue = .ask
+            case .context: count = record.context.count
+            default: break
+            }
         }
+        return .init(tab, tab.title, symbol: narrow ? nil : tab.symbol, count: count == 0 ? nil : count, hue: hue)
     }
 
     private func projectPicker(_ record: MeetingRecordView?) -> some View {

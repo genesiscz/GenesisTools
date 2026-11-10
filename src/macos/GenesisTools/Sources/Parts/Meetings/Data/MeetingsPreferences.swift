@@ -35,6 +35,14 @@ enum MeetingsPreferences {
     /// R15 asked for, longer than any old choice. `migrate` removes it.
     static let legacyUndoSecondsKey = "meetings.items.undoSeconds"
 
+    /// The look of the window's tabs, buttons and chips: a `KitLook` by its raw value.
+    static let lookKey = "meetings.window.look"
+    static let defaultLook = KitLook.aurora
+
+    static func look(_ defaults: UserDefaults = .standard) -> KitLook {
+        defaults.string(forKey: lookKey).flatMap(KitLook.init(rawValue:)) ?? defaultLook
+    }
+
     static let dayChoices = [7, 14, 30, 90]
     static let noticeChoices = [8, 15, 30, 60]
     static let plainNoticeChoices = [4, 6, 10, 15]
