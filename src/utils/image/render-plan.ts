@@ -41,6 +41,12 @@ export function validateAnnotations(annotations: unknown): asserts annotations i
     }
 
     for (const [i, a] of annotations.entries()) {
+        if (a !== null && typeof a === "object" && "target" in a && !("rect" in a)) {
+            throw new Error(
+                `annotations[${i}] names a target (a page locator), which only a live page resolves: draw it with the page-shot command of chrome-devtools (shot --annotate)`
+            );
+        }
+
         if (a === null || typeof a !== "object" || typeof (a as { kind?: unknown }).kind !== "string") {
             throw new Error(`annotations[${i}] must be an object with a "kind" — kinds: ${KNOWN_KINDS.join(", ")}`);
         }

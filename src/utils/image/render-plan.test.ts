@@ -368,6 +368,12 @@ describe("renderAnnotationPlan", () => {
         ]);
     });
 
+    test("an item with a page target is refused: only a live page can resolve it", async () => {
+        await expect(
+            render([{ kind: "box", target: "testid=usages-button" }] as unknown as Annotation[])
+        ).rejects.toThrow(/names a target \(a page locator\)/);
+    });
+
     test("an unknown label position or shape preset throws with the valid list", async () => {
         await expect(
             render([

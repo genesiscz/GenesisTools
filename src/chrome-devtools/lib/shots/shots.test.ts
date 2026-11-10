@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CdpLike } from "@genesiscz/utils/chrome-devtools/cdp-like";
 import { evaluateExpression } from "@genesiscz/utils/chrome-devtools/evaluate";
 import {
@@ -32,6 +34,7 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { attach, type Page } from "../cdp";
 import { cdpLikeOf } from "../cdp-like-adapter";
 import { type HeadlessChrome, launchHeadlessChrome } from "../headless";
+import { imageFormatOf, loadWebPlan, shotFilesFor, takeQuickShot } from "./quick";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const HAS_CHROME = process.platform === "darwin" && existsSync(CHROME);
@@ -330,4 +333,68 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         });
         expect(await evaluateExpression(cdp, `!!document.getElementById("${SHOT_OVERLAY_ID}")`)).toBe(false);
     }, 30_000);
+
+    test("a quick shot writes the annotated image, the raw one and the marks, from a .jsonc web plan", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "quick-shot-"));
+        const planPath = join(dir, "plan.jsonc");
+        writeFileSync(
+            planPath,
+            `{
+  // a mark on the page, and a pixel arrow on top of the final image
+  "preset": "review-dashed",
+  "clip": { "around": "testid=panel", "pad": 10 },
+  "annotations": [
+    { "target": "testid=usages-button", "at": "below", "label": "Kde je použitý" },
+    { "kind": "arrow", "from": { "x": 200, "y": 20 }, "to": { "x": 120, "y": 60 } },
+  ],
+}`
+        );
+        const plan = await loadWebPlan(planPath);
+        expect([plan.marks.length, plan.pixels.length, plan.clip?.pad]).toEqual([1, 1, 10]);
+
+        const result = await takeQuickShot({ cdp, plan, out: join(dir, "usages.webp"), setup: SETUP });
+        if (!result.ok) {
+            throw new Error(result.problems.join("; "));
+        }
+
+        expect(result.files).toEqual({
+            annotated: join(dir, "usages.webp"),
+            raw: join(dir, "usages.original.webp"),
+            marks: join(dir, "usages.marks.json"),
+        });
+        expect([existsSync(result.files.annotated), existsSync(result.files.raw)]).toEqual([true, true]);
+        const marks: unknown = SafeJSON.parse(readFileSync(result.files.marks, "utf8"), { strict: true });
+        const annotations =
+            marks && typeof marks === "object" && "annotations" in marks ? marks.annotations : undefined;
+        validateAnnotations(annotations);
+        expect(annotations.map((annotation) => annotation.kind)).toEqual(["highlight", "arrow"]);
+    }, 30_000);
+
+    test("a .ts web plan imports the locator helpers from @genesis-tools/shots", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "quick-plan-"));
+        const planPath = join(dir, "plan.ts");
+        writeFileSync(
+            planPath,
+            [
+                'import { defineAnnotations, id, union } from "@genesis-tools/shots";',
+                'export default defineAnnotations({ annotations: [{ target: union(id("panel"), id("row-1")), label: "x" }] });',
+            ].join("\n")
+        );
+        const plan = await loadWebPlan(planPath);
+
+        expect(plan.marks).toEqual([{ target: ["testid=panel", "testid=row-1"], label: "x" }]);
+    });
+});
+
+describe("the quick shot's output names", () => {
+    test("only .png and .webp are image outputs, and the raw and marks files sit beside the annotated one", () => {
+        expect([imageFormatOf("a/shot.PNG"), imageFormatOf("shot.webp"), imageFormatOf("proposal.shots.json")]).toEqual(
+            ["png", "webp", null]
+        );
+        expect(shotFilesFor("/out/18-usages.1110.webp")).toEqual({
+            annotated: "/out/18-usages.1110.webp",
+            raw: "/out/18-usages.1110.original.webp",
+            marks: "/out/18-usages.1110.marks.json",
+        });
+    });
 });
