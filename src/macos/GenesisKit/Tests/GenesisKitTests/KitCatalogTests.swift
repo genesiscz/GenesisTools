@@ -51,8 +51,12 @@ final class KitCatalogTests: XCTestCase {
     }
 
     func testEveryControlHasAnEntryOrAReason() throws {
-        let controls = Self.kitRoot.appendingPathComponent("Sources/GenesisKit/Controls")
-        let files = try FileManager.default.contentsOfDirectory(atPath: controls.path).filter { $0.hasSuffix(".swift") }.sorted()
+        // The base's controls (GenesisKitBase/Controls) are held to the same rule.
+        let folders = ["Sources/GenesisKit/Controls", "Sources/GenesisKitBase/Controls"].map { Self.kitRoot.appendingPathComponent($0) }
+        let controls = folders[0]
+        let files = try folders.flatMap { folder in
+            try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.hasSuffix(".swift") }
+        }.sorted()
         XCTAssertGreaterThan(files.count, 20, "the Controls folder was not read: \(controls.path)")
         let catalogued = Set(KitCatalog.entries.flatMap { $0.source.components(separatedBy: " · ") }.map { ($0 as NSString).lastPathComponent })
 
