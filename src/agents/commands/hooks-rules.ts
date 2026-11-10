@@ -380,6 +380,7 @@ export function registerRulePicker(configCommand: Command): void {
                 })),
                 initialValues: ids.filter((id) => ruleEnabled(config, id)),
                 required: false,
+                cancel: "back",
             });
 
             if (p.isCancel(picked)) {
