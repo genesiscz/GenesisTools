@@ -1138,6 +1138,22 @@ describe("no-bare-require-in-utils", () => {
     });
 });
 
+describe("no-pricing-steps-outside-priced-usage", () => {
+    const rule = "no-pricing-steps-outside-priced-usage";
+
+    test("flags a pricing step outside the priced-usage module, and passes its owners, tests and priceUsage", () => {
+        expect(rules("const e = priceFor(model, table);", "src/hub/lib/x.ts")).toContain(rule);
+        expect(rules("const p = resolvePrice(entry, {});", "src/utils/agent-sessions/x.ts")).toContain(rule);
+        expect(rules("const f = priceForCandidates(models, table);", "src/ai-spend/lib/x.ts")).toContain(rule);
+        expect(rules("const p = resolvePrice(entry, {});", "src/utils/ai/usage/spend/priced-usage.ts")).not.toContain(
+            rule
+        );
+        expect(rules("const e = priceFor(model, table);", "src/utils/ai/usage/spend/pricing.ts")).not.toContain(rule);
+        expect(rules("const e = priceFor(model, table);", "src/utils/ai/usage/spend/x.test.ts")).not.toContain(rule);
+        expect(rules("const q = priceUsage(usage);", "src/hub/lib/x.ts")).not.toContain(rule);
+    });
+});
+
 describe("no-transcript-format-outside-readers", () => {
     const rule = "no-transcript-format-outside-readers";
 

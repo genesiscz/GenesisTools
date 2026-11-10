@@ -744,6 +744,25 @@ const RULES: Rule[] = [
         allowedFiles: BARE_REQUIRE_RATCHET,
     },
     {
+        name: "no-pricing-steps-outside-priced-usage",
+        severity: "error",
+        kinds: ["call_expression"],
+        matcher: {
+            rule: {
+                kind: "call_expression",
+                has: { field: "function", regex: "^(?:resolvePrice|priceFor|priceForCandidates)$" },
+            },
+        },
+        message:
+            "Price a usage record with `priceUsage` (or `priceUsageAs` for a what-if model) from " +
+            "@genesiscz/utils/ai/usage/spend/priced-usage. It owns the harness's candidate ladder, the dated, banded and " +
+            "service-tier rules, one-hour writes and the recorded-cost rule; a caller that composes " +
+            "`priceFor` / `priceForCandidates` / `resolvePrice` itself drops some of them (the hub insights pricer did).",
+        test: (_text, node) =>
+            /^(?:resolvePrice|priceFor|priceForCandidates)$/.test(node.field("function")?.text() ?? ""),
+        allowedIn: /(?:^|\/)src\/utils\/ai\/usage\/spend\/(?:pricing|priced-usage)\.ts$|\.test\.tsx?$/,
+    },
+    {
         name: "no-transcript-format-outside-readers",
         severity: "error",
         kinds: LITERAL_KINDS,
