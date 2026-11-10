@@ -2377,11 +2377,21 @@ struct HubRootView: View {
                     .flexiblePane(neighbourOf: "hub.sidebar")
             } else if model.mode == .inbox {
                 // InboxMain with its ⌘F find (Hub/HubInboxFind.swift).
+                switch DesignSketch.option("lists") {
+                case "a": ListsSketchA.InboxFocus(model: model, inbox: model.inbox).flexiblePane(neighbourOf: "hub.sidebar")
+                case "b": ListsSketchB.InboxTable(model: model, inbox: model.inbox).flexiblePane(neighbourOf: "hub.sidebar")
+                default:
                 InboxFindHost(model: model, inbox: model.inbox)
                     .flexiblePane(neighbourOf: "hub.sidebar")
+                }
             } else if model.mode == .timeline {
+                switch DesignSketch.option("lists") {
+                case "a": ListsSketchA.ActivityRuns(model: model, timeline: model.timeline).flexiblePane(neighbourOf: "hub.sidebar")
+                case "b": ListsSketchB.ActivityByProject(model: model, timeline: model.timeline).flexiblePane(neighbourOf: "hub.sidebar")
+                default:
                 TimelineMain(model: model, timeline: model.timeline)
                     .flexiblePane(neighbourOf: "hub.sidebar")
+                }
             } else if model.mode == .usage {
                 UsageMain(model: model, usage: model.usage)
                     .flexiblePane(neighbourOf: "hub.sidebar")
@@ -2390,8 +2400,13 @@ struct HubRootView: View {
                 AgentsMain(model: model, agents: model.agents)
             } else if model.mode == .worktrees {
                 if let path = model.selectedWorktree, let worktree = model.worktrees.first(where: { $0.path == path }) {
+                    switch DesignSketch.option("lists") {
+                    case "a": ListsSketchA.WorktreeDetail(model: model, worktree: worktree).flexiblePane(neighbourOf: "hub.sidebar")
+                    case "b": ListsSketchB.WorktreeDetail(model: model, worktree: worktree).flexiblePane(neighbourOf: "hub.sidebar")
+                    default:
                     WorktreeDetailView(model: model, worktree: worktree)
                         .flexiblePane(neighbourOf: "hub.sidebar")
+                    }
                 } else if model.selectedWorktree == WorktreeCleanup.selectionID, !model.loadingWorktrees {
                     WorktreeCleanupView(model: model)
                         .flexiblePane(neighbourOf: "hub.sidebar")
@@ -2776,7 +2791,12 @@ private struct SessionListView: View {
             .padding(.bottom, 8)
 
             if model.mode == .worktrees {
+                switch DesignSketch.option("lists") {
+                case "a": ListsSketchA.WorktreeList(model: model)
+                case "b": ListsSketchB.WorktreeList(model: model)
+                default:
                 WorktreeListView(model: model)
+                }
             } else if model.mode == .prs {
                 PRListView(model: model, prs: model.prs)
             } else if model.mode == .inbox {
@@ -2784,7 +2804,14 @@ private struct SessionListView: View {
                 // view does not observe the Inbox.
                 let sort = inboxSort
                 ScrollViewReader { proxy in
+                    Group {
+                        switch DesignSketch.option("lists") {
+                        case "a": ListsSketchA.InboxQueue(model: model, inbox: model.inbox)
+                        case "b": ListsSketchB.InboxTriage(model: model, inbox: model.inbox)
+                        default:
                     InboxListView(model: model, inbox: model.inbox)
+                        }
+                    }
                         .modifier(SidebarArrowKeys(
                             ids: { Self.inboxKeyOrder(model.inbox, sort: sort, filter: model.filter) },
                             selection: { model.inbox.selectedID },
