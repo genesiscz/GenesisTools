@@ -24,7 +24,7 @@ final class MeetingsSettingsModel {
     /// The settings as JSON from the same read, so each write names the value it replaces.
     private(set) var settingsRaw: JSONValue?
     private(set) var cost: Loadable<CaptureCost> = .idle
-    private(set) var preview: Loadable<[MatchPreviewRow]> = .idle
+    internal(set) var preview: Loadable<[MatchPreviewRow]> = .idle
     private(set) var dictionary: Loadable<DictionaryShow> = .idle
     private(set) var phraseResult: PhraseTest?
     /// Per project, the people of its meetings not paired with it yet (`projects.meetingPeople`); read when its card

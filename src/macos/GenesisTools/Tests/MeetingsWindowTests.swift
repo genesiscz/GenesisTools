@@ -305,6 +305,21 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(ProjectCardSummary.line(projects["empty"], folders: 0), "no rules yet")
     }
 
+    func testAWouldMatchRowOffersWhatItsRulesAndItsProjectCallFor() {
+        func row(_ project: String?, _ draft: [String]) -> MatchPreviewRow {
+            MatchPreviewRow(id: "m", title: "Sync", start: "2026-11-10T08:00:00.000Z", project: project, now: draft, draft: draft, changed: false)
+        }
+        XCTAssertEqual(WouldMatchAction.of(row(nil, ["shop"])), .confirm("shop"))
+        XCTAssertEqual(WouldMatchAction.of(row("side", ["shop"])), .update(from: "side", to: "shop"))
+        XCTAssertEqual(WouldMatchAction.of(row("shop", ["shop"])), .matches("shop"))
+        XCTAssertEqual(WouldMatchAction.of(row("shop", ["side", "shop"])), .matches("shop"), "its project is among the matches")
+        XCTAssertEqual(WouldMatchAction.of(row(nil, ["side", "shop"])), .choose(["side", "shop"]))
+        XCTAssertEqual(WouldMatchAction.of(row("shop", [])), .none, "matches none: only the project menu")
+        XCTAssertEqual(row(nil, ["shop"]).with(project: "shop").project, "shop")
+        XCTAssertEqual(MeetingsSettingsModel.projectNote("Sync", to: "shop"), "“Sync” is in shop now")
+        XCTAssertEqual(MeetingsSettingsModel.projectNote("", to: nil), "“Untitled meeting” has no project now")
+    }
+
     func testAPairingFromTheMeetingsNamesWhoItPaired() throws {
         let paired = try JSONDecoder().decode([MeetingsAPI.ProjectsPairFromMeetings.Paired].self, from: Data("""
         [{"name":"Alice Example","email":"alice@example.com","by":{"kind":"calendar","entryId":"e1","title":"Sync","at":"2026-11-10T08:00:00.000Z"}},
