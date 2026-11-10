@@ -1,139 +1,121 @@
 import { getConfig } from "@app/dev-dashboard/config";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
 import { listPublished, publishNote, unpublishNote } from "@app/dev-dashboard/lib/obsidian/publish";
 import { listVault, mkdirInVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
+import { bindHandler } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { resolveWikilinkToVaultPath } from "@genesiscz/utils/obsidian/wikilink-resolve";
 
 export function obsidianRoutes(): RouteDef[] {
     return [
-        {
-            method: "GET",
-            pattern: "/api/obsidian/tree",
-            handler: async () => {
-                try {
-                    const { obsidianVault } = await getConfig();
+        bindHandler(ENDPOINTS.obsidianTree, async () => {
+            try {
+                const { obsidianVault } = await getConfig();
 
-                    if (!obsidianVault) {
-                        return { kind: "json", status: 500, body: { error: "obsidian vault not configured" } };
-                    }
-
-                    const entries = await listVault(obsidianVault);
-
-                    return { kind: "json", status: 200, body: { entries } };
-                } catch (err) {
-                    return errorResult(err);
-                }
-            },
-        },
-        {
-            method: "POST",
-            pattern: "/api/obsidian/mkdir",
-            handler: async (ctx) => {
-                try {
-                    const { relativeDir } = await ctx.readJson<{ relativeDir?: string }>();
-
-                    if (!relativeDir?.trim()) {
-                        return { kind: "json", status: 400, body: { error: "relativeDir required" } };
-                    }
-
-                    const { obsidianVault } = await getConfig();
-
-                    if (!obsidianVault) {
-                        return { kind: "json", status: 500, body: { error: "obsidian vault not configured" } };
-                    }
-
-                    await mkdirInVault(obsidianVault, relativeDir.trim());
-
-                    return { kind: "json", status: 200, body: { ok: true, relativeDir: relativeDir.trim() } };
-                } catch (err) {
-                    return errorResult(err);
-                }
-            },
-        },
-        {
-            method: "GET",
-            pattern: "/api/obsidian/note",
-            handler: async (ctx) => {
-                const path = ctx.query.get("path");
-
-                if (!path) {
-                    return { kind: "json", status: 400, body: { error: "missing ?path=" } };
+                if (!obsidianVault) {
+                    return { kind: "json", status: 500, body: { error: "obsidian vault not configured" } };
                 }
 
-                try {
-                    const { obsidianVault } = await getConfig();
+                const entries = await listVault(obsidianVault);
 
-                    if (!obsidianVault) {
-                        return { kind: "json", status: 500, body: { error: "obsidian vault not configured" } };
-                    }
+                return { kind: "json", status: 200, body: { entries } };
+            } catch (err) {
+                return errorResult(err);
+            }
+        }),
+        bindHandler(ENDPOINTS.obsidianMkdir, async (ctx) => {
+            try {
+                const { relativeDir } = await ctx.readJson<{ relativeDir?: string }>();
 
-                    const source = await readNote(obsidianVault, path);
-                    const vaultEntries = await listVault(obsidianVault);
-                    const published = await listPublished();
-                    const publishedSlug = published.find((note) => note.vaultPath === path)?.slug ?? null;
-                    const rendered = renderMarkdown(source, {
-                        resolveWikilink: (name) => {
-                            const match = published.find((note) => {
-                                const base = note.vaultPath.split("/").pop() ?? note.vaultPath;
-
-                                return base.replace(/\.md$/, "") === name;
-                            });
-
-                            return match?.slug ?? null;
-                        },
-                        resolveVaultNotePath: (name) => resolveWikilinkToVaultPath(vaultEntries, name, path),
-                        // In NFC: a vault path from the disk may keep its accents decomposed, the request's is composed.
-                        isCurrentNote: (name) =>
-                            resolveWikilinkToVaultPath(vaultEntries, name, path)?.normalize("NFC") ===
-                            path.normalize("NFC"),
-                    });
-
-                    return { kind: "json", status: 200, body: { source, html: rendered.html, publishedSlug } };
-                } catch (err) {
-                    return errorResult(err, 404);
+                if (!relativeDir?.trim()) {
+                    return { kind: "json", status: 400, body: { error: "relativeDir required" } };
                 }
-            },
-        },
-        {
-            method: "POST",
-            pattern: "/api/obsidian/publish",
-            handler: async (ctx) => {
-                try {
-                    const { path } = await ctx.readJson<{ path: string }>();
 
-                    if (!path?.trim()) {
-                        return { kind: "json", status: 400, body: { error: "path required" } };
-                    }
+                const { obsidianVault } = await getConfig();
 
-                    const note = await publishNote(path);
-
-                    return { kind: "json", status: 200, body: { note } };
-                } catch (err) {
-                    return errorResult(err);
+                if (!obsidianVault) {
+                    return { kind: "json", status: 500, body: { error: "obsidian vault not configured" } };
                 }
-            },
-        },
-        {
-            method: "POST",
-            pattern: "/api/obsidian/unpublish",
-            handler: async (ctx) => {
-                try {
-                    const { slug } = await ctx.readJson<{ slug: string }>();
 
-                    if (!slug?.trim()) {
-                        return { kind: "json", status: 400, body: { error: "slug required" } };
-                    }
+                await mkdirInVault(obsidianVault, relativeDir.trim());
 
-                    await unpublishNote(slug);
-                    const remaining = await listPublished();
+                return { kind: "json", status: 200, body: { ok: true, relativeDir: relativeDir.trim() } };
+            } catch (err) {
+                return errorResult(err);
+            }
+        }),
+        bindHandler(ENDPOINTS.obsidianNote, async (ctx) => {
+            const path = ctx.query.get("path");
 
-                    return { kind: "json", status: 200, body: { remaining } };
-                } catch (err) {
-                    return errorResult(err);
+            if (!path) {
+                return { kind: "json", status: 400, body: { error: "missing ?path=" } };
+            }
+
+            try {
+                const { obsidianVault } = await getConfig();
+
+                if (!obsidianVault) {
+                    return { kind: "json", status: 500, body: { error: "obsidian vault not configured" } };
                 }
-            },
-        },
+
+                const source = await readNote(obsidianVault, path);
+                const vaultEntries = await listVault(obsidianVault);
+                const published = await listPublished();
+                const publishedSlug = published.find((note) => note.vaultPath === path)?.slug ?? null;
+                const rendered = renderMarkdown(source, {
+                    resolveWikilink: (name) => {
+                        const match = published.find((note) => {
+                            const base = note.vaultPath.split("/").pop() ?? note.vaultPath;
+
+                            return base.replace(/\.md$/, "") === name;
+                        });
+
+                        return match?.slug ?? null;
+                    },
+                    resolveVaultNotePath: (name) => resolveWikilinkToVaultPath(vaultEntries, name, path),
+                    // In NFC: a vault path from the disk may keep its accents decomposed, the request's is composed.
+                    isCurrentNote: (name) =>
+                        resolveWikilinkToVaultPath(vaultEntries, name, path)?.normalize("NFC") ===
+                        path.normalize("NFC"),
+                });
+
+                return { kind: "json", status: 200, body: { source, html: rendered.html, publishedSlug } };
+            } catch (err) {
+                return errorResult(err, 404);
+            }
+        }),
+        bindHandler(ENDPOINTS.obsidianPublish, async (ctx) => {
+            try {
+                const { path } = await ctx.readJson<{ path: string }>();
+
+                if (!path?.trim()) {
+                    return { kind: "json", status: 400, body: { error: "path required" } };
+                }
+
+                const note = await publishNote(path);
+
+                return { kind: "json", status: 200, body: { note } };
+            } catch (err) {
+                return errorResult(err);
+            }
+        }),
+        bindHandler(ENDPOINTS.obsidianUnpublish, async (ctx) => {
+            try {
+                const { slug } = await ctx.readJson<{ slug: string }>();
+
+                if (!slug?.trim()) {
+                    return { kind: "json", status: 400, body: { error: "slug required" } };
+                }
+
+                await unpublishNote(slug);
+                const remaining = await listPublished();
+
+                return { kind: "json", status: 200, body: { remaining } };
+            } catch (err) {
+                return errorResult(err);
+            }
+        }),
     ];
 }

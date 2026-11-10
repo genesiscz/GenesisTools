@@ -1,73 +1,48 @@
 import { describe, expect, it } from "bun:test";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
+import { isBoundFromRow } from "@app/dev-dashboard/server/bind";
 import { createDashboardRouter } from "@app/dev-dashboard/server/registry";
 
-const EXPECTED = [
-    "GET /api/system/pulse",
-    "GET /api/system/pulse/history",
-    "GET /api/tmux/sessions",
-    "POST /api/tmux/create",
-    "POST /api/tmux/rename",
-    "GET /api/ttyd/list",
-    "POST /api/ttyd/spawn",
-    "POST /api/ttyd/kill",
-    "POST /api/ttyd/rename",
-    "GET /api/cmux/snapshot",
-    "GET /api/cmux/layout",
-    "POST /api/cmux/create-terminal",
-    "POST /api/cmux/create-workspace",
-    "POST /api/cmux/send-session",
-    "POST /api/cmux/remove-session",
-    "POST /api/cmux/attach",
-    "POST /api/cmux/rename",
-    "GET /api/weather",
-    "GET /api/ai/accounts",
-    "GET /api/ai/usage",
-    "POST /api/ai/usage/refresh",
-    "GET /api/ai/usage/series",
-    "GET /api/ai/spend/totals",
-    "GET /api/ai/spend/series",
-    "GET /api/ai/daemon",
-    "POST /api/ai/daemon/register",
-    "GET /api/claude/usage",
-    "GET /api/claude/usage/totals",
-    "GET /api/claude/usage/history",
-    "GET /api/daemon/status",
-    "GET /api/daemon/runs",
-    "GET /api/daemon/runs/log",
-    "GET /api/containers",
-    "GET /api/qa/log",
-    "POST /api/qa/read",
-    "GET /api/qa/audio-library",
-    "GET /api/qa/sound",
-    "POST /api/qa/config",
-    "GET /api/qa/stream",
-    "POST /api/qa/save-to-obsidian",
-    "GET /api/attention",
-    "GET /api/todos",
-    "POST /api/todos/request-access",
-    "POST /api/todos",
-    "POST /api/todos/complete",
-    "PATCH /api/todos",
-    "DELETE /api/todos",
-    "GET /api/obsidian/tree",
-    "POST /api/obsidian/mkdir",
-    "GET /api/obsidian/note",
-    "POST /api/obsidian/publish",
-    "POST /api/obsidian/unpublish",
-    "GET /share/:slug",
-    "POST /api/e2e/pair",
-];
+/** Not table rows on purpose: the 57 board routes, and the public shared-note page (`routes/share.ts`). */
+function outsideTable(pattern: string): boolean {
+    return pattern.startsWith("/api/boards") || pattern === "/share/:slug";
+}
 
-describe("createDashboardRouter", () => {
-    it("registers every known route", () => {
-        const router = createDashboardRouter();
-        const missing = EXPECTED.filter((route) => {
-            const [method, pattern] = route.split(" ");
-            const probe = pattern.replace(":slug", "tok");
+describe("the endpoint table is the only declaration of a dashboard route", () => {
+    const router = createDashboardRouter();
+    const defs = router.list();
 
-            return router.match(method, probe) === null;
-        });
+    it("binds every row by exactly one route, and no earlier pattern shadows it", () => {
+        const problems: string[] = [];
 
-        expect(missing).toEqual([]);
+        for (const [name, row] of Object.entries(ENDPOINTS)) {
+            const same = defs.filter((def) => def.method === row.method && def.pattern === row.path);
+            const bound = same.filter(isBoundFromRow);
+
+            if (bound.length !== 1 || same.length !== 1) {
+                problems.push(`${name}: ${bound.length} bound and ${same.length - bound.length} hand routes`);
+                continue;
+            }
+
+            const probe = row.path.replace(/:[^/]+/g, "sample");
+
+            if (router.match(row.method, probe)?.def !== bound[0]) {
+                problems.push(`${name}: ${row.method} ${probe} reaches another route first`);
+            }
+        }
+
+        expect(problems).toEqual([]);
+    });
+
+    it("has no hand-written pattern outside the boards and the shared-note page", () => {
+        const hand = defs
+            .filter((def) => !isBoundFromRow(def) && !outsideTable(def.pattern))
+            .map((def) => `${def.method} ${def.pattern}`);
+
+        expect(hand).toEqual([]);
+    });
+
+    it("still serves the shared-note page", () => {
+        expect(router.match("GET", "/share/tok")).not.toBeNull();
     });
 });
