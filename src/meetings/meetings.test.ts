@@ -7,6 +7,7 @@ import {
     readdirSync,
     readFileSync,
     statSync,
+    utimesSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,7 +27,13 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
-import { buildPidRecord, clearPidFile, serializePidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
+import {
+    buildPidRecord,
+    clearPidFile,
+    EMPTY_HOLDER_GRACE_MS,
+    serializePidRecord,
+    writePidFile,
+} from "@genesiscz/utils/process/pidfile";
 import type { RecordingMarker } from "@genesiscz/utils/screen-recorder/control";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import {
@@ -4169,6 +4176,9 @@ test("a recycled pid's claim and an unreadable pid file are both taken over, as 
     expect(existsSync(files.pid)).toBe(false);
 
     writeFileSync(files.pid, "not a pid");
+    // An unreadable claim is an orphan only past the shared grace (EMPTY_HOLDER_GRACE_MS in pidfile.ts).
+    const created = new Date(Date.now() - EMPTY_HOLDER_GRACE_MS - 1_000);
+    utimesSync(files.pid, created, created);
 
     // Taken over, then released when the blocked frames directory ends the start.
     await expect(runRecorder({ store, meetingId: record.id, capture })).rejects.toThrow();

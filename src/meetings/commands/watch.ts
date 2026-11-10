@@ -67,7 +67,10 @@ export async function askProjectAtEnd(store: MeetingStore, meetingId: string): P
     );
 }
 
-/** Claims the watcher's pidfile: a dead or foreign owner is taken over, a live one is refused. */
+/**
+ * Claims the watcher's pidfile: a dead or foreign owner is taken over, a live one is refused. An empty file follows the
+ * shared claim's one rule (`EMPTY_HOLDER_GRACE_MS` in pidfile.ts), so one a SIGKILL left behind no longer blocks.
+ */
 export async function claimWatcher(store: MeetingStore): Promise<void> {
     const file = watcherPidPath(store);
     const claim = await claimPidFile(file, {
