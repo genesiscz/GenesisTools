@@ -1,5 +1,4 @@
 import { existsSync, statSync } from "node:fs";
-import { sessionChangesPath } from "@app/agents/lib/changes/log";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
 import { decisionOptionLabels, shownDecisionText, takesSeveral } from "@app/question/lib/decisions/option-labels";
 import { decisionFiles } from "@app/question/lib/decisions/read";
@@ -24,6 +23,7 @@ import {
 } from "@app/question/lib/read-model";
 import { askedAtOf, INBOX_STALE_MS, waitingSet, waitsOnHuman } from "@app/question/lib/waiting/set";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
+import { changeLogPath, readChangeLogFile } from "@genesiscz/utils/agents/change-log";
 import { openQuestions, sessionsWithDialogRecords } from "@genesiscz/utils/agents/dialogs/store";
 import { type DialogProvider, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
@@ -798,7 +798,7 @@ const CHANGES_CACHE_LIMIT = 16;
 
 export function readWidgetChanges({
     target,
-    path = sessionChangesPath(target.sessionId),
+    path = changeLogPath(target.sessionId),
 }: {
     target: WidgetTarget;
     path?: string;
@@ -832,22 +832,11 @@ export function readWidgetChanges({
 }
 
 function parseWidgetChanges(path: string, target: WidgetTarget): WidgetChanges {
-    const rows = readJsonlRows<unknown>(path).rows;
     const files = new Map<string, { path: string; at: string; source: string }>();
-    for (const row of rows) {
-        if (
-            typeof row !== "object" ||
-            !row ||
-            !("session" in row) ||
-            row.session !== target.sessionId ||
-            !("path" in row) ||
-            typeof row.path !== "string" ||
-            !("ts" in row) ||
-            typeof row.ts !== "string"
-        ) {
-            continue;
+    for (const row of readChangeLogFile(path).rows) {
+        if (row.session === target.sessionId) {
+            files.set(row.path, { path: row.path, at: row.ts, source: row.source });
         }
-        files.set(row.path, { path: row.path, at: row.ts, source: "source" in row ? String(row.source) : "recorded" });
     }
     return { available: true, files: [...files.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 100) };
 }

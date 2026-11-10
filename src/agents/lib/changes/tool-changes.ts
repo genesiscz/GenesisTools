@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import type { ChangeLogRow } from "@genesiscz/utils/agents/change-log";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -12,7 +13,6 @@ import {
     type TurnFile,
 } from "@genesiscz/utils/session-changes";
 import { type FileDiff, fileDiff, readBlobs } from "./diff";
-import type { ChangeEvent } from "./log";
 import { gitObjectSink, objectsDir } from "./objects";
 
 const { log } = logger.scoped("agents-changes");
@@ -194,9 +194,9 @@ export interface SessionTurnChanges {
  */
 export async function sessionTurnChanges(input: {
     session: string;
-    /** The change log path and its rows, read by the caller (`sessionChangesPath`, `readJsonlRows`). */
+    /** The change log path and its rows, read by the caller (`changeLogPath`, `readChangeLogFile`). */
     file: string;
-    rows: ChangeEvent[];
+    rows: ChangeLogRow[];
     options: ChangesOptions;
     count?: number;
 }): Promise<SessionTurnChanges | { error: string }> {
@@ -256,9 +256,9 @@ export function turnChangesJson(
 export async function toolChangesJson(input: {
     session: string;
     toolIds: readonly string[];
-    /** The change log path and its rows, read by the caller (`sessionChangesPath`, `readJsonlRows`). */
+    /** The change log path and its rows, read by the caller (`changeLogPath`, `readChangeLogFile`). */
     file: string;
-    rows: ChangeEvent[];
+    rows: ChangeLogRow[];
     storeBlobs: boolean;
 }): Promise<{ result: Record<string, unknown> } | { error: string }> {
     const { session, toolIds, file } = input;

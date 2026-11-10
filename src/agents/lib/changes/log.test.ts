@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { readChangeLog } from "@genesiscz/utils/agents/change-log";
 import {
     CHANGE_LOG_CHUNK_BYTES,
     countObjects,
@@ -264,6 +265,31 @@ describe("session change log path", () => {
         for (const bad of ["../../x", "a/b", "..", "", "."]) {
             expect(() => sessionChangesPath(bad)).toThrow(/not a session id/);
         }
+    });
+
+    test("what the writer appends, the utils read side reads back as the same row", () => {
+        const session = `round-trip-${process.pid}`;
+        const sink = { hash: (bytes: Buffer) => `oid-${bytes.toString("utf8")}`, log: () => undefined };
+        const event = { provider: "codex", session, turn: "t1", tool: "Bash", cwd: "/w", path: "/w/big.bin" };
+        recordChange(
+            sessionChangesPath(session),
+            { ...event, ts: "2026-11-01T10:00:00.000Z", source: "bash", began: "2026-11-01T09:59:59.000Z" },
+            { before: Buffer.from("old"), afterSkipped: "large" },
+            sink
+        );
+
+        expect(readChangeLog(session)).toEqual([
+            {
+                ...event,
+                ts: "2026-11-01T10:00:00.000Z",
+                source: "bash",
+                began: "2026-11-01T09:59:59.000Z",
+                beforeOid: "oid-old",
+                afterOid: null,
+                skipped: "large",
+                afterSkipped: "large",
+            },
+        ]);
     });
 });
 
