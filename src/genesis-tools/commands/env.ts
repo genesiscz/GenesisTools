@@ -4,8 +4,9 @@ import { environmentMarkdown, gatherEnvironment, issueEnvironmentValues, readBug
 
 /**
  * `tools genesis-tools env`: the environment an issue or an agent needs (build commit and age, branch, dirty, build
- * time, the tools checkout, Bun, macOS, chip, the recorder's grants and processes). The app's failure notice reads
- * `--json` and puts its `markdown` into "Copy context for agents" and "Draft an issue". Reads only.
+ * time, the tools checkout, Bun, macOS, chip, the recorder's grants and processes). `tools genesis-tools triage` adds
+ * the state of the Mac at this moment and answers `--json` in the same shape; the app's failure notice reads that one
+ * for "Copy context for agents" and "Draft an issue", and this one from a checkout that has no `triage`. Reads only.
  */
 export function registerEnvCommand(program: Command): void {
     program

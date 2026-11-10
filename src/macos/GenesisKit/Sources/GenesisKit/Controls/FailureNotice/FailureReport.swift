@@ -84,7 +84,7 @@ public struct FailureReport: Equatable, Sendable {
     public var expected: String?
     /// The bug form's "Affected tool" ("recorder").
     public var area: String?
-    /// The environment `tools genesis-tools env --json` reported, nil until it answered (or when it could not).
+    /// The environment `tools genesis-tools triage --json` reported, nil until it answered (or when it could not).
     public var environment: FailureEnvironment?
 
     public init(title: String = "Failed", headline: String, summary: String? = nil, nextStep: String? = nil,
@@ -328,7 +328,7 @@ public struct FailureReport: Equatable, Sendable {
     }
 }
 
-/// What `tools genesis-tools env --json` answered: the environment bullets, the bug form's fields in order (empty when
+/// What `tools genesis-tools triage --json` (or `env --json`) answered: the environment bullets, the bug form's fields in order (empty when
 /// the checkout has no `.github/ISSUE_TEMPLATE/bug_report.yml`), and the environment answers by field id.
 public struct FailureEnvironment: Equatable, Sendable {
     public struct Field: Equatable, Sendable {
@@ -367,10 +367,17 @@ public struct FailureEnvironment: Equatable, Sendable {
                                   values: issue?["values"] as? [String: String] ?? [:])
     }
 
-    /// Runs `tools genesis-tools env --json`; nil when it fails.
+    /// Runs `tools genesis-tools triage --json`: the build facts of `env` and the state of the Mac at this moment
+    /// (load, memory pressure, top CPU and memory, whether the hub server answers, the app faces, the commands that
+    /// failed and the calls that were slow just before). A checkout without `triage` answers through `env --json`,
+    /// which has the same shape without the state. Nil when both fail.
     public static func load(bridge: ToolsBridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())) async -> FailureEnvironment? {
-        guard let run = try? await bridge.run(subcommand: "genesis-tools", args: ["env", "--json"], timeoutSeconds: 20),
-              run.exitCode == 0 else { return nil }
-        return parse(json: run.stdout)
+        for command in ["triage", "env"] {
+            if let run = try? await bridge.run(subcommand: "genesis-tools", args: [command, "--json"], timeoutSeconds: 20),
+               run.exitCode == 0, let environment = parse(json: run.stdout) {
+                return environment
+            }
+        }
+        return nil
     }
 }
