@@ -134,8 +134,8 @@ async function withBinding<T>(
  *
  * It also makes "no model named" work: `callLLM` refuses a call with no ref at
  * all, whereas `resolveModel(undefined, …)` walks the config ladder, which is
- * what `AI.summarize(text)` did before the facade and what `tools ai summarize`
- * still calls with nothing but the text.
+ * what the old single-string summarize did before the facade, and what
+ * `tools ai summarize` still asks for when no flag names a provider or model.
  */
 async function withLanguageBinding<T>(
     opts: { task: TaskName; model?: ModelRef; provider?: string; app?: string },
@@ -185,7 +185,7 @@ export const ai = {
     },
 
     /**
-     * Batch-first, unlike the `AI.embed(text)` it replaces: every caller that
+     * Batch-first, unlike the deleted single-string embed it replaced: every caller that
      * embedded more than one thing was already looping, and a provider that can
      * embed 2048 vectors per request should not be asked 2048 times.
      */
