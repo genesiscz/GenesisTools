@@ -941,6 +941,30 @@ describe("no-process-tool-spawn", () => {
         expect(rules(source, "scripts/benchmarks/process/process-child.ts")).toEqual([]);
         expect(rules(`// lint-rules-ignore: Linux fallback\n${source}`)).toEqual([]);
     });
+
+    test("flags an import of the ps adapter outside the process layer, in every import shape", () => {
+        for (const source of [
+            'import { batchPsInfo } from "@genesiscz/utils/process/ps";',
+            'import type { PsRow } from "@genesiscz/utils/process/ps";',
+            'import * as ps from "@app/utils/process/ps";',
+            'import { listPsTable } from "../process/ps.ts";',
+            'export { parseCpuTime } from "@genesiscz/utils/process/ps";',
+            'const { listPsRows } = await import("@genesiscz/utils/process/ps");',
+        ]) {
+            expect({ source, rules: rules(source) }).toEqual({ source, rules: ["no-process-tool-spawn"] });
+        }
+    });
+
+    test("the process layer, the benchmarks and tests may import the ps adapter, and another ps module is not it", () => {
+        const source = 'import { batchPsInfo } from "@genesiscz/utils/process/ps";';
+        expect(rules(source, "src/utils/process/processes.ts")).toEqual([]);
+        expect(rules('import { batchPsInfo } from "./ps";', "src/utils/process/processes.ts")).toEqual([]);
+        expect(rules(source, "scripts/benchmarks/process/process-child.ts")).toEqual([]);
+        expect(rules(source, "src/port/__tests__/scanner.test.ts")).toEqual([]);
+        expect(rules('import { runningTurnPids } from "./ps";', "src/utils/worker/turns.ts")).toEqual([]);
+        expect(rules('import { readProcessRows } from "@genesiscz/utils/process/processes";')).toEqual([]);
+        expect(rules('import { captureSync } from "@genesiscz/utils/process/capture";')).toEqual([]);
+    });
 });
 
 /**

@@ -264,6 +264,27 @@ export function importsRetiredAiConfig(text: string, node: SgNode): boolean {
     return RETIRED_AI_CONFIG_MODULE.test(text);
 }
 
+/**
+ * The `ps` adapter of the process layer, by module specifier (`@genesiscz/utils/process/ps`, an `@app` alias, or a
+ * relative path ending in `process/ps`). `src/utils/worker/ps.ts` is another module and does not match.
+ */
+const PS_ADAPTER_MODULE = /["'](?:[^"']*\/)?process\/ps(?:\.ts)?["']/;
+/**
+ * Where importing the `ps` adapter is the implementation: the process layer itself, and the benchmarks that measure
+ * a `ps` read against the kernel read (the same files `no-process-tool-spawn` exempts). Test files are never scanned
+ * by that rule.
+ */
+const PS_ADAPTER_IMPORT_ALLOWED = /^(?:src\/utils\/process\/|scripts\/benchmarks\/)/;
+
+/** An import, a re-export or a dynamic `import()` of `src/utils/process/ps.ts`. */
+export function importsPsAdapter(text: string, node: SgNode): boolean {
+    if (node.kind() === "call_expression" && node.field("function")?.text() !== "import") {
+        return false;
+    }
+
+    return PS_ADAPTER_MODULE.test(text);
+}
+
 // ─── The ratchet rules of 2026-10-25 (❓ DECISION 22 b) ────────────────────────────────────────────────────────────────
 // no-transcript-format-outside-readers, no-hand-built-claude-home, no-hand-built-codex-grok-home,
 // no-model-id-literal-outside-catalog, no-model-price-table, no-effort-vocabulary-list, no-harness-name-branch,
@@ -831,6 +852,28 @@ const RULES: Rule[] = [
         allowedFiles: AI_CONFIG_IMPORT_RATCHET,
     },
     {
+        // The second half of `no-process-tool-spawn` (C49, 2026-11-10): the batched `ps` readers in `ps.ts` are the
+        // process layer's fallback, so a caller that imports them spawns `ps` where the kernel would answer.
+        name: "no-process-tool-spawn",
+        severity: "error",
+        kinds: ["import_statement", "export_statement", "call_expression"],
+        matcher: {
+            rule: {
+                any: [
+                    { kind: "import_statement" },
+                    { kind: "export_statement", has: { kind: "string" } },
+                    { kind: "call_expression", has: { field: "function", regex: "^import$" } },
+                ],
+            },
+        },
+        message:
+            "`@genesiscz/utils/process/ps` is the `ps` fallback of the process layer, private to src/utils/process/. " +
+            "Ask `@genesiscz/utils/process/processes` (readProcessRows, listProcessRows and the other readers read the " +
+            "kernel first), `process/cwd` for working directories, or `process/capture` to run a program.",
+        test: importsPsAdapter,
+        allowedIn: PS_ADAPTER_IMPORT_ALLOWED,
+    },
+    {
         name: "no-pricing-steps-outside-priced-usage",
         severity: "error",
         kinds: ["call_expression"],
@@ -1345,7 +1388,7 @@ const PROCESS_TOOL_SPAWN_RULE = {
     severity: "error" as const,
     message:
         "Spawning ps, lsof or pgrep costs tens to hundreds of ms of CPU per call. Read the kernel through " +
-        "`@genesiscz/utils/process` (libproc-table, socket-owner, ps.ts), which owns the fallbacks, or " +
+        "`@genesiscz/utils/process` (processes.ts, sockets.ts, cwd.ts), which owns the fallbacks, or " +
         "`// lint-rules-ignore: <why the kernel read does not fit>`.",
 };
 const PROCESS_TOOLS = new Set(["ps", "lsof", "pgrep"]);
