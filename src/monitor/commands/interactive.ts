@@ -6,10 +6,10 @@ import type { Monitor } from "@app/monitor/lib/monitor";
 import { WATCHER_PRESETS } from "@app/monitor/lib/presets";
 import { DEFAULT_INTERVAL_SEC, WATCHER_KINDS, type WatcherInput, type WatcherKind } from "@app/monitor/lib/types";
 import { normalizeTarget, parseWatcherInput, WatcherValidationError } from "@app/monitor/lib/validate";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 const KIND_HINTS: Record<WatcherKind, { label: string; hint: string; placeholder: string }> = {
@@ -64,6 +64,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
             { value: "", label: "No, custom watcher" },
             ...WATCHER_PRESETS.map((entry) => ({ value: entry.id, label: entry.name, hint: entry.description })),
         ],
+        cancel: "back",
     });
 
     if (cancelled(preset)) {
@@ -82,6 +83,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
                 hint: KIND_HINTS[value].hint,
             })),
             initialValue: kind,
+            cancel: "back",
         });
 
         if (cancelled(picked)) {
@@ -104,6 +106,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
                 return error instanceof Error ? error.message : String(error);
             }
         },
+        cancel: "back",
     });
 
     if (cancelled(target)) {
@@ -115,6 +118,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
         message: "Name",
         initialValue: chosen?.name ?? defaultName(kind, normalizedTarget),
         validate: (value) => (value?.trim() ? undefined : "a name is required"),
+        cancel: "back",
     });
 
     if (cancelled(name)) {
@@ -125,6 +129,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
         message: "Check every",
         options: INTERVALS,
         initialValue: String(chosen?.intervalSec ?? DEFAULT_INTERVAL_SEC),
+        cancel: "back",
     });
 
     if (cancelled(interval)) {
@@ -137,6 +142,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
         const jsonPath = await p.text({
             message: "JSON path (empty = whole document)",
             placeholder: "status.indicator",
+            cancel: "back",
         });
 
         if (cancelled(jsonPath)) {
@@ -146,6 +152,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
         const expect = await p.text({
             message: "Expected value (empty = path only has to exist)",
             placeholder: "none",
+            cancel: "back",
         });
 
         if (cancelled(expect)) {
@@ -161,6 +168,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
             message: "Only these components (comma-separated, empty = whole page)",
             placeholder: "Claude API",
             initialValue: chosen?.config?.components?.join(", ") ?? "",
+            cancel: "back",
         });
 
         if (cancelled(components)) {
@@ -175,6 +183,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
             message: "Degraded above (ms, empty = never)",
             placeholder: "2000",
             initialValue: chosen?.config?.degradedAboveMs?.toString() ?? "",
+            cancel: "back",
         });
 
         if (cancelled(degraded)) {
@@ -196,6 +205,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
                 hint: entry.enabled ? undefined : "paused",
             })),
             required: false,
+            cancel: "back",
         });
 
         if (cancelled(picked)) {
@@ -205,7 +215,7 @@ export async function runAddWizard(monitor: Monitor, initialTarget?: string): Pr
         targetIds = (picked as string[]).map((value) => Number(value));
     }
 
-    const notify = await p.confirm({ message: "Notify on state changes?", initialValue: true });
+    const notify = await p.confirm({ message: "Notify on state changes?", initialValue: true, cancel: "back" });
 
     if (cancelled(notify)) {
         return false;
@@ -281,6 +291,7 @@ export async function runInteractiveMenu(): Promise<void> {
                 { value: "open", label: "Open the dashboard" },
                 { value: "exit", label: "Exit" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "exit") {
@@ -313,6 +324,7 @@ export async function runInteractiveMenu(): Promise<void> {
                                 label: `#${watcher.id} ${watcher.name}`,
                                 hint: `${watcher.kind} · ${watcher.lastStatus}`,
                             })),
+                            cancel: "back",
                         });
 
                         if (p.isCancel(id)) {
