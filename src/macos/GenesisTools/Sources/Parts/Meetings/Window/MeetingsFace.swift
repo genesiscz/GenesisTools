@@ -5,8 +5,11 @@ import SwiftUI
 //   The Meetings window: meetings by day with what each needs, one meeting with its transcript, screen, items,
 //   speakers and context, the meetings that need you, and each project. One per login session: a later launch hands
 //   its request to the running one and exits.
-// GenesisTools --meetings … --snapshot <png> [--width <pt>] [--height <pt>] [--play <target json>]
+// GenesisTools --meetings … --snapshot <png> [--width <pt>] [--height <pt>] [--play <target json>] [--place contacts]
+//                         [--side-panel] [--select <row id>] [--edit <row id>]
 //   Draws the window off screen into a PNG once its data has loaded, then exits (verification without a screen).
+//   `--select` selects a review row of the Items tab (its number keys show) and `--edit` opens its editor, so a
+//   picture can show the states that a click or a key makes.
 //   `--play '{"kind":"item","id":"i2"}'` (a Moment target as the engine writes it) starts that Moment of the meeting
 //   without sound first, so the picture shows the dock, the timeline and the playing row.
 
@@ -37,6 +40,9 @@ struct MeetingsRequest {
     var snapshot: String?
     /// `--play <target json>`: the Moment a snapshot starts, silently, before the picture.
     var play: MomentTarget?
+    /// `--select <row id>` and `--edit <row id>`: a snapshot's selected review row, and the row whose editor is open.
+    var select: String?
+    var edit: String?
     var width: CGFloat = 1280
     var height: CGFloat = 820
 
@@ -62,6 +68,8 @@ struct MeetingsRequest {
             case "--tab": request.tab = value().flatMap(MeetingDetailModel.Tab.init(rawValue:))
             case "--no-focus", "--no-activate": request.focus = false
             case "--side-panel": request.sidePanel = true
+            case "--select": request.select = value()
+            case "--edit": request.edit = value()
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
             case "--play": request.play = value().flatMap { try? JSONDecoder().decode(MomentTarget.self, from: Data($0.utf8)) }
             case "--width": request.width = value().flatMap(Double.init).map { CGFloat($0) } ?? request.width
@@ -231,6 +239,17 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             }
             if model.place == .contacts {
                 _ = await waitUntil(30) { model.people.known.value != nil || model.people.known.failure != nil }
+            }
+            if let detail = model.detail, detail.tab == .items {
+                // The rows are read when the tab shows; a picture taken before they land shows "Reading the items…".
+                if case .idle = detail.rows { detail.loadRows() }
+                _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
+                if let id = request.edit, let row = detail.rows.value?.rows.first(where: { $0.id == id }) {
+                    detail.selectedRow = id
+                    detail.edit(row)
+                } else if let id = request.select {
+                    detail.selectedRow = id
+                }
             }
             if let target = request.play {
                 guard let meeting = model.detail?.id else {
