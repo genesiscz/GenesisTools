@@ -6,11 +6,14 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import {
     LISTEN_PLAYERS,
+    type ListenPads,
+    listenPads,
     type MeetingsConfig,
     MeetingsConfigStore,
     resolveDictionary,
 } from "@genesiscz/utils/meetings/config";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
+import { type DecisionActor, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { type ChoiceRow, choiceChip, choiceSelect, heardMark } from "@genesiscz/utils/prompts/clack/choice-select";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
@@ -19,7 +22,15 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
 import { clipPlayer, cutClip, playClip } from "../lib/audio";
-import { type ListenSettings, questionClip, writeQuestionClips } from "../lib/listen-clips";
+import { MeetingComments } from "../lib/comments";
+import { callerActor } from "../lib/decision-journal";
+import {
+    type ClipSettings,
+    clipSettings,
+    type ListenSettings,
+    questionClip,
+    writeQuestionClips,
+} from "../lib/listen-clips";
 import {
     type AskedQuestion,
     type ListenAdapter,
@@ -39,6 +50,8 @@ import {
     questionLabel,
     questionView,
 } from "../lib/questions";
+import { speakerAnswerScores } from "../lib/review-rows";
+import { openMeetingsClient } from "../lib/service/client";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 const PAD_CHOICES = [5, 10] as const;
@@ -50,16 +63,19 @@ const SPLIT = "\u0000split";
 const DEFAULT_SUBSCRIBE_MINUTES = 120;
 const SAID_MAX_CHARS = 240;
 
-/** The first `listen` asks how much audio to hear around a range and keeps the answer. */
-async function padSeconds(config: MeetingsConfigStore): Promise<number | undefined> {
-    const saved = (await config.read()).global.playback.listen.padSec;
+/**
+ * The first `listen` asks how much audio to hear around a range and keeps the answer on both sides; each side is its
+ * own setting afterwards (`playback.listen.padBeforeSec`, `padAfterSec`).
+ */
+async function askedPads(config: MeetingsConfigStore): Promise<ListenPads | undefined> {
+    const saved = listenPads((await config.read()).global.playback.listen);
 
-    if (saved !== undefined) {
+    if (saved) {
         return saved;
     }
 
     const picked = await clack.select({
-        message: "How much audio around each question? (saved as playback.listen.padSec)",
+        message: "How much audio around each question? (saved as playback.listen.padBeforeSec and padAfterSec)",
         options: PAD_CHOICES.map((sec) => ({ value: sec, label: `${sec} seconds` })),
     });
 
@@ -67,8 +83,9 @@ async function padSeconds(config: MeetingsConfigStore): Promise<number | undefin
         return undefined;
     }
 
-    await config.setListenPad(Number(picked));
-    return Number(picked);
+    const pads = { beforeSec: Number(picked), afterSec: Number(picked) };
+    await config.setListenPads(pads);
+    return pads;
 }
 
 /**
@@ -96,19 +113,31 @@ function contextLines(context: HeardContext): string[] {
     ].filter((line) => line !== undefined);
 }
 
-/** The asked question's rows: its answers first, then the actions, each with its glyph and colour. */
+/**
+ * The asked question's rows: its answers first, then the actions, each with its glyph and colour. An answer the engine
+ * scored shows its confidence ("72 %", R49), as the window's row does.
+ */
 function choiceRows(options: {
     question: QuestionItem;
     choices: string[];
     earlier?: { answer: string; atSec: number };
+    scores?: Map<string, number>;
 }): ChoiceRow<string>[] {
     const { question, earlier } = options;
+    const hintOf = (choice: string) => {
+        const score = options.scores?.get(choice);
+        const hints = [
+            ...(score === undefined ? [] : [`${Math.round(score * 100)} %`]),
+            ...(earlier && choice === earlier.answer ? [`as at ${formatClock(earlier.atSec)}`] : []),
+        ];
+        return hints.length > 0 ? { hint: hints.join(" · ") } : {};
+    };
     return [
         ...options.choices.map((choice) => ({
             value: choice,
             label: choice,
             kind: "answer" as const,
-            ...(earlier && choice === earlier.answer ? { hint: `as at ${formatClock(earlier.atSec)}` } : {}),
+            ...hintOf(choice),
         })),
         {
             value: AGAIN,
@@ -176,6 +205,8 @@ async function ask(options: {
     context?: HeardContext;
     /** The answer this round gave the same heard words at another time: offered first. */
     earlier?: { answer: string; atSec: number };
+    /** The confidence of each answer the engine scored (a speaker question's candidates, G31). */
+    scores?: Map<string, number>;
     /** The styled header line: question number, progress and time range. */
     header?: string;
 }): Promise<ListenOutcome> {
@@ -201,7 +232,12 @@ async function ask(options: {
                 ...(options.header ? { header: options.header } : {}),
                 context: shown,
                 ...(earlierNote ? { note: earlierNote } : {}),
-                rows: choiceRows({ question, choices, ...(earlier ? { earlier } : {}) }),
+                rows: choiceRows({
+                    question,
+                    choices,
+                    ...(earlier ? { earlier } : {}),
+                    ...(options.scores ? { scores: options.scores } : {}),
+                }),
                 formatSubmitted: (row) => row.label,
             });
 
@@ -248,7 +284,8 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
     const path = join(store.folder(meeting.id), ANSWER_LOG_FILE);
     const roundRunning = runningRound(readAnswerEvents(path)).length > 0;
 
-    if (!roundRunning && !opts.fromStart && openQuestions(meeting).length === 0) {
+    // A listener for comments waits for them even with no question open.
+    if (!roundRunning && !opts.fromStart && !opts.withComments && openQuestions(meeting).length === 0) {
         process.stderr.write(`No open questions in ${meeting.id} and no listen round running.\n`);
         return;
     }
@@ -260,20 +297,34 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
         return;
     }
 
-    process.exitCode = await subscribeAnswers({
-        path,
-        fromStart: opts.fromStart === true,
-        timeoutMs: minutes * 60_000,
-        write: (line) => out.print(`${line}\n`),
-        follow: opts.follow === true,
-    });
+    const write = (line: string): void => out.print(`${line}\n`);
+    // `--with-comments`: this process counts as a listener while it runs (a sender names it), and prints each comment.
+    const comments = opts.withComments ? MeetingComments.of(store, meeting.id) : undefined;
+    comments?.join({ pid: process.pid, actor: callerActor() });
+    const following = comments?.follow({ fromStart: opts.fromStart === true, write });
+
+    try {
+        process.exitCode = await subscribeAnswers({
+            path,
+            fromStart: opts.fromStart === true,
+            timeoutMs: minutes * 60_000,
+            write,
+            follow: opts.follow === true,
+            ...(comments ? { typed: true } : {}),
+        });
+    } finally {
+        following?.stop();
+        comments?.leave(process.pid);
+    }
 }
 
 interface ListenOptions {
     item?: string;
     answer?: string;
     comment?: string;
+    reason?: string;
     subscribeAnswers?: boolean;
+    withComments?: boolean;
     follow?: boolean;
     fromStart?: boolean;
     timeout?: string;
@@ -292,13 +343,13 @@ async function clipsOut(options: {
     const { store, meeting } = options;
     const listen = (await new MeetingsConfigStore().read()).global.playback.listen;
     const opened = OpenedMeeting.of(store, meeting);
+    // A file needs no prompt: the saved pads, else the smaller choice the first listen offers.
+    const pads = listenPads(listen) ?? { beforeSec: PAD_CHOICES[0], afterSec: PAD_CHOICES[0] };
     const written = await writeQuestionClips({
         record: meeting,
         questions: options.questions,
         transcript: new TranscriptLines((await opened.meeting()).transcript),
-        listen,
-        // A file needs no prompt: the saved pad, else the smaller choice the first listen offers.
-        padSec: listen.padSec ?? PAD_CHOICES[0],
+        ...(await clipSettings(listen, pads)),
         audioPath: await opened.audioPath(),
         dir: resolve(options.dir),
     });
@@ -324,8 +375,8 @@ class TerminalAdapter implements ListenAdapter {
             player: (typeof LISTEN_PLAYERS)[number];
             vocabulary: string[];
             transcript: TranscriptLines;
-            padSec: number;
             listen: ListenSettings;
+            clips: ClipSettings;
         }
     ) {}
 
@@ -337,7 +388,7 @@ class TerminalAdapter implements ListenAdapter {
         await cutClip({
             audioPath: this.deps.audioPath,
             outPath: clip,
-            ...questionClip({ record: asked.record, question, transcript, listen, padSec: this.deps.padSec }),
+            ...questionClip({ record: asked.record, question, transcript, ...this.deps.clips }),
         });
         const part = asked.part ? ` · part ${asked.part.n}/${asked.part.of}` : "";
         const priority = view.priority === undefined ? "" : ` · priority ${view.priority}`;
@@ -351,6 +402,7 @@ class TerminalAdapter implements ListenAdapter {
             ...(view.said ? { said: view.said } : {}),
             ...(view.context ? { context: view.context } : {}),
             ...(asked.earlier ? { earlier: asked.earlier } : {}),
+            scores: speakerAnswerScores(asked.record, question),
             header: `${choiceChip(view.label)} ${pc.dim(`${asked.position}/${asked.total}${part} · ${view.range}${priority}`)}`,
         });
     }
@@ -396,6 +448,11 @@ class TerminalAdapter implements ListenAdapter {
             return;
         }
 
+        if (note.kind === "not-undone") {
+            ui.warn(`${note.label} keeps its answer: ${note.reason}`);
+            return;
+        }
+
         ui.ok(`${note.decided} decided; ${note.open} open questions stay, marked in ${TOOL} transcript ${meeting.id}.`);
 
         if (note.reason === "budget" && note.open > 0) {
@@ -415,11 +472,15 @@ interface AdapterContext {
     settings: MeetingsConfig;
 }
 
-/** The adapter the session asks through, the budget it gets, and whether it joins a round already running. */
+/**
+ * The adapter the session asks through, the budget it gets, whether it joins a round already running, and who decides:
+ * the person in the terminal, or whoever runs `--answer` (an agent relaying a person, or a person at a command).
+ */
 interface AdapterChoice {
     adapter: ListenAdapter;
     budget: number;
     joinRunningRound?: boolean;
+    actor: DecisionActor;
 }
 
 const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promise<AdapterChoice | undefined>> = {
@@ -431,7 +492,7 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
 
         const answer = { answer: opts.answer, ...(opts.comment ? { comment: opts.comment } : {}) };
         const adapter = new GivenAnswerAdapter(answer, (line, tone) => (tone === "ok" ? ui.ok(line) : ui.dim(line)));
-        return { adapter, budget: 1, joinRunningRound: true };
+        return { adapter, budget: 1, joinRunningRound: true, actor: callerActor() };
     },
     terminal: async ({ store, meeting, opened, first, settings }) => {
         if (!isInteractive()) {
@@ -451,9 +512,9 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
             return undefined;
         }
 
-        const padSec = await padSeconds(new MeetingsConfigStore());
+        const pads = await askedPads(new MeetingsConfigStore());
 
-        if (padSec === undefined) {
+        if (pads === undefined) {
             return undefined;
         }
 
@@ -473,13 +534,14 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
             player,
             vocabulary: answerVocabulary(
                 meeting,
-                dictionary.entries.map((entry) => entry.value)
+                dictionary.entries.map((entry) => entry.value),
+                await meetingPeopleNames({ store, config: settings, meeting: meeting.id })
             ),
             transcript: new TranscriptLines((await opened.meeting()).transcript),
-            padSec,
             listen,
+            clips: await clipSettings(listen, pads),
         });
-        return { adapter, budget: listen.roundCap };
+        return { adapter, budget: listen.roundCap, actor: { kind: "listen" } };
     },
 };
 
@@ -549,6 +611,9 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             return;
         }
 
+        // The round decides through the Meetings service when one runs (the window hears each answer as it lands),
+        // else in this process: the person in this terminal as `listen`, an `--answer` as whoever runs it.
+        const client = await openMeetingsClient({ role: opts.answer === undefined ? "listen" : "cli" });
         const session = new ListenSession({
             store,
             meeting,
@@ -559,6 +624,12 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             minPriority: settings.global.playback.listen.minPriority,
             listenBelow: settings.global.suggest.listenBelow,
             ...(chosen.joinRunningRound ? { joinRunningRound: true } : {}),
+            actor: chosen.actor,
+            ...(opts.reason ? { reason: opts.reason } : {}),
+            decisions: {
+                apply: (request) => client.call("decision.apply", request),
+                revert: (request) => client.call("decision.revert", request),
+            },
             split: {
                 transcript: async () => (await opened.meeting()).transcript,
                 micShare: async () => (await opened.energy()).share,
@@ -575,6 +646,22 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         } finally {
             process.off("exit", onExit);
             process.off("SIGINT", onSigint);
+            client.close();
+        }
+
+        // `--answer --json`: the decision journal entry of the answer, for the agent that relayed it.
+        if (opts.json && opts.answer !== undefined) {
+            const entry = session.applied().at(-1);
+
+            if (!entry) {
+                const why = session.skippedLast()[0]?.reason ?? `${opts.item} is not open any more`;
+                fail(
+                    `${why}; nothing was answered (who decided it: ${TOOL} journal ${meeting.id} --item ${opts.item})`
+                );
+                return;
+            }
+
+            out.result(SafeJSON.stringify(entry, null, 2));
         }
     } catch (err) {
         fail(errorText(err));
@@ -591,9 +678,14 @@ export function registerListenCommand(program: Command): void {
         .option("--item <Q12|id>", "only this question: its number as listen shows it (Q12), or its item id")
         .option("--answer <text>", `answer --item without listening ("${NONE_OF_THESE}" rejects what it decides)`)
         .option("--comment <text>", "with --answer: a note kept on the question")
+        .option("--reason <text>", "why: kept in the decision journal with each answer")
         .option(
             "--subscribe-answers",
             "for an agent: print each answer as one JSON line while the person answers; exit when the round ends"
+        )
+        .option(
+            "--with-comments",
+            'with --subscribe-answers: also print each comment the person sends from the window, one JSON line with type "comment" (every line then has a type)'
         )
         .option("--from-start", "with --subscribe-answers: print every earlier round first")
         .option(
@@ -608,6 +700,9 @@ export function registerListenCommand(program: Command): void {
             "--clip-out <dir>",
             "cut each open question's clip (only --item's with it) into <dir>/<Q12>.wav as listen plays it; plays nothing and changes nothing"
         )
-        .option("--json", "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, toneAtSec }]")
+        .option(
+            "--json",
+            "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, padAfterSec?, toneAtSec }]; with --answer: print the decision journal entry"
+        )
         .action(listen);
 }

@@ -1,5 +1,6 @@
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { voiceRuns } from "@genesiscz/utils/meetings/energy";
+import { nameKey } from "@genesiscz/utils/meetings/people";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { importanceOf } from "@genesiscz/utils/transcribe/importance";
@@ -13,6 +14,7 @@ import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { citesPoint, keyWords, type SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { anchorScores, speakerScoresOf } from "./speaker-scores";
 import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 
 export type { HeardContext } from "@genesiscz/utils/transcribe/lines";
@@ -315,6 +317,17 @@ export function propagateAnswer(
             );
             item.rules = [...new Set([...item.rules, MeetingRule.User])];
             lowest = Math.min(lowest, item.confidence);
+            const scores = speakerScoresOf(item);
+
+            // The answer raised its speaker: the other candidates keep their proportions in the room it leaves.
+            if (scores.length > 0) {
+                item.evidence = {
+                    ...item.evidence,
+                    candidateScores: anchorScores(scores, options.answer, item.confidence, [
+                        { kind: "answer", rule: MeetingRule.User },
+                    ]),
+                };
+            }
         }
 
         question.confidence = lowest;
@@ -552,16 +565,20 @@ export function skipQuestion(record: MeetingRecord, id: string, now: string): vo
     question.decidedAt = now;
 }
 
-/** The names and words an answer may be: the attendees, the participants, the calendar and the dictionary. */
-export function answerVocabulary(record: MeetingRecord, dictionaryValues: string[]): string[] {
-    return [
-        ...new Set([
-            ...(record.attendance?.people.map((person) => person.name) ?? []),
-            ...record.participants.map((person) => person.name),
-            ...(record.calendar?.attendees ?? []),
-            ...dictionaryValues,
-        ]),
-    ].filter((value) => value.trim().length > 0);
+/**
+ * The names and words an answer may be: the attendees, the participants, the calendar, then the people the people
+ * directory knows for the meeting (`known`, ranked: its people first, then everyone else it knows), then the
+ * dictionary. A name the record holds keeps its place, so the terminal's choices only gain names (R10, G3).
+ */
+export function answerVocabulary(record: MeetingRecord, dictionaryValues: string[], known: string[] = []): string[] {
+    const values = [
+        ...(record.attendance?.people.map((person) => person.name) ?? []),
+        ...record.participants.map((person) => person.name),
+        ...(record.calendar?.attendees ?? []),
+    ];
+    const keys = new Set(values.map((value) => nameKey(value)));
+    const others = known.filter((name) => !keys.has(nameKey(name)));
+    return [...new Set([...values, ...others, ...dictionaryValues])].filter((value) => value.trim().length > 0);
 }
 
 /** The `occurrence`-th whole-word occurrence of a word question's heard words in its range. */

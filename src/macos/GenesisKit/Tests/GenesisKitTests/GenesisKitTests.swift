@@ -1538,3 +1538,30 @@ final class WidgetFormDraftRecoveryTests: XCTestCase {
         XCTAssertTrue(defaults.dictionaryRepresentation().keys.allSatisfy { !$0.contains(".undecodable.") })
     }
 }
+
+/// The wrap layout the Meetings question rows lay their text pieces and time links out with.
+@MainActor
+final class WrapLayoutTests: XCTestCase {
+    private final class Measured {
+        var size: CGSize = .zero
+    }
+
+    /// A piece wider than the line (a long question sentence between two time links) wraps inside the line; measured at
+    /// its ideal width it ran past the column's right edge, so the sentence and the choices under it were cut off.
+    func testAPieceWiderThanTheLineWrapsInsideIt() {
+        let measured = Measured()
+        let sentence = String(repeating: "which segment value does the speaker say here ", count: 8)
+        let view = WrapLayout(spacing: 0, lineSpacing: 2) {
+            Text(verbatim: "Q9 ").font(.system(size: 12))
+            Text(verbatim: sentence).font(.system(size: 12))
+            Text(verbatim: " 54:15").font(.system(size: 12))
+        }
+        .onGeometryChange(for: CGSize.self, of: { $0.size }) { measured.size = $0 }
+        .frame(width: 300, alignment: .topLeading)
+        let host = NSHostingView(rootView: view)
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: 600)
+        host.layoutSubtreeIfNeeded()
+        XCTAssertLessThanOrEqual(measured.size.width, 300, "no line is wider than the space it was given")
+        XCTAssertGreaterThan(measured.size.height, 60, "the long piece wraps over several lines")
+    }
+}

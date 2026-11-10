@@ -4,7 +4,6 @@ import { out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import type { Command } from "commander";
 import {
-    applyConfigEdits,
     configValueAt,
     missingMapKey,
     parseConfigEdits,
@@ -14,6 +13,7 @@ import {
     unknownConfigPath,
     unsetConfigValue,
 } from "../lib/config-edit";
+import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail } from "../lib/shared";
 import { configShowRead, windowJson } from "../lib/window-reads";
 
@@ -92,8 +92,6 @@ async function unset(path: string, opts: { expect?: string; json?: boolean }): P
 }
 
 async function edit(text: string, opts: { json?: boolean }): Promise<void> {
-    const store = new MeetingsConfigStore();
-
     try {
         const parsed = parseConfigEdits(text);
 
@@ -103,11 +101,7 @@ async function edit(text: string, opts: { json?: boolean }): Promise<void> {
         }
 
         const { edits } = parsed;
-        const config = await applyConfigEdits(store, edits);
-        const values = edits.map((one) => {
-            const segments = parseConfigPath(one.path);
-            return { path: segments, value: configValueAt(config, segments) ?? null };
-        });
+        const values = await withMeetingsClient((client) => client.call("config.edit", { edits }));
 
         if (opts.json) {
             out.result(SafeJSON.stringify(values, null, 2));

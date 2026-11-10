@@ -1,12 +1,22 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import { connectChildStdio } from "./child-stdio";
-import { RPC_CANCELLED, RpcError } from "./errors";
+import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
 import { LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
+import {
+    readLiveServiceEntry,
+    type ServiceHost,
+    type ServiceHostOptions,
+    serviceEntryPath,
+    serviceSocketPath,
+    startServiceHost,
+    stopService,
+} from "./service-host";
 import { RpcSocketClient, type RpcSocketClientOptions } from "./socket-client";
 import { type RpcConnection, RpcSocketServer } from "./socket-server";
 
@@ -22,13 +32,17 @@ afterEach(() => {
     }
 });
 
-function serve(call: ConstructorParameters<typeof RpcSocketServer<Role>>[0]["call"]) {
+function serve(
+    call: ConstructorParameters<typeof RpcSocketServer<Role>>[0]["call"],
+    supersedes?: (method: string) => string | undefined
+) {
     const socket = join(mkdtempSync(join(tmpdir(), "rpc-")), "s.sock");
     const connections: RpcConnection<Role>[] = [];
     const server = new RpcSocketServer<Role>({
         socket,
         state: () => ({}),
         call,
+        ...(supersedes ? { supersedes } : {}),
         onOpen: (connection) => connections.push(connection),
         logScope: "rpc-test",
         label: "rpc test",
@@ -144,6 +158,37 @@ describe("the JSON-RPC socket server, both directions", () => {
 
         await expect(exporting).rejects.toMatchObject({ code: RPC_CANCELLED });
         expect(await client.call<unknown>("status")).toEqual({ method: "status" });
+    });
+
+    test("a newer call of a supersede lane cancels the older one that runs and the one that waits", async () => {
+        const started: number[] = [];
+        const { socket } = serve(
+            async ({ method, params, context }) => {
+                const n = Number(Reflect.get(Object(params), "n"));
+                started.push(n);
+
+                if (method === "cut" && n < 3) {
+                    await new Promise((resolve) => context.signal.addEventListener("abort", resolve, { once: true }));
+                }
+
+                return { n };
+            },
+            (method) => (method === "cut" ? "cut" : undefined)
+        );
+        const client = await connect(socket);
+        const first = client.call("cut", { n: 1 });
+        await Bun.sleep(10);
+        const second = client.call("cut", { n: 2 });
+        const third = client.call("cut", { n: 3 });
+
+        const outcomes = await Promise.allSettled([first, second, third]);
+        const status = await client.call<unknown>("status", { n: 4 });
+
+        expect(
+            outcomes.map((one) => (one.status === "fulfilled" ? one.value : Reflect.get(one.reason, "code")))
+        ).toEqual([RPC_CANCELLED, RPC_CANCELLED, { n: 3 }]);
+        expect(status).toEqual({ n: 4 });
+        expect(started).toEqual([1, 3, 4]);
     });
 
     test("a client that goes rejects the server's waiting request", async () => {
@@ -395,5 +440,287 @@ describe("a peer on a child's stdio", () => {
         ]);
         expect(pipe.written.join("")).not.toContain("jsonrpc");
         peer.close("done");
+    });
+});
+
+describe("the service host (service-host.ts)", () => {
+    const hosted: Array<ServiceHost<Role>> = [];
+
+    afterEach(() => {
+        for (const host of hosted.splice(0)) {
+            host.stop("test end");
+        }
+    });
+
+    async function host(dir: string, options: Partial<ServiceHostOptions<Role>> = {}) {
+        const start = await startServiceHost<Role>({
+            dir,
+            label: "test service",
+            logScope: "rpc-test",
+            protocol: 7,
+            code: "code-a",
+            state: () => ({}),
+            call: async ({ method, params, connection }) => {
+                if (method === "hello") {
+                    connection.state.role = roleOf(params);
+                }
+
+                return { method };
+            },
+            idleMs: 0,
+            rivalWaitMs: 500,
+            ...options,
+        });
+
+        if (start.status === "started") {
+            hosted.push(start.host);
+        }
+
+        return start;
+    }
+
+    test("a start writes service.json with its protocol and code; a second start in the folder answers running", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const first = await host(dir);
+
+        expect(first.status).toBe("started");
+        expect(readLiveServiceEntry(dir)).toMatchObject({ protocol: 7, code: "code-a", pid: process.pid });
+        expect(await host(dir)).toMatchObject({ status: "running", entry: { pid: process.pid } });
+    });
+
+    test("subscribe reaches onSubscribe with its own params, and emit passes the service's filter", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const seen: unknown[] = [];
+        const start = await host(dir, { onSubscribe: (_connection, params) => seen.push(params) });
+
+        if (start.status !== "started") {
+            throw new Error("the host did not start");
+        }
+
+        const client = await connect(serviceSocketPath(dir));
+        const heard: unknown[] = [];
+        client.onNotification((notification) => heard.push(notification));
+        await client.call("hello", { role: "host" });
+        await client.call("subscribe", { events: ["thing.changed"], meeting: "m1" });
+        start.host.emit("thing.changed", { n: 1 }, (connection) => connection.state.role === "client");
+        start.host.emit("thing.changed", { n: 2 }, (connection) => connection.state.role === "host");
+        await client.call("hello", { role: "host" });
+
+        expect(seen).toEqual([{ events: ["thing.changed"], meeting: "m1" }]);
+        expect(heard).toEqual([{ method: "thing.changed", params: { n: 2 } }]);
+    });
+
+    test("unsubscribe ends the subscription; a filter that does not read is refused and keeps the one before", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const start = await host(dir, {
+            onSubscribe: (_connection, params) => {
+                if (typeof params === "object" && params !== null && Reflect.get(params, "meeting") === "") {
+                    throw new RpcError(JSON_RPC_ERRORS.invalidParams, "subscribe: meeting: too small");
+                }
+            },
+        });
+
+        if (start.status !== "started") {
+            throw new Error("the host did not start");
+        }
+
+        const client = await connect(serviceSocketPath(dir));
+        const heard: unknown[] = [];
+        client.onNotification((notification) => heard.push(notification));
+        await client.call("subscribe", { events: ["thing.changed"] });
+        await expect(client.call("subscribe", { events: "thing.changed" })).rejects.toMatchObject({ code: -32602 });
+        await expect(client.call("subscribe", { meeting: "" })).rejects.toMatchObject({ code: -32602 });
+        start.host.emit("thing.changed", { n: 1 });
+        start.host.emit("other.changed", { n: 2 });
+        expect(await client.call<{ events: string[] }>("unsubscribe", {})).toEqual({ events: [] });
+        start.host.emit("thing.changed", { n: 3 });
+        await client.call("hello", { role: "client" });
+
+        expect(heard).toEqual([{ method: "thing.changed", params: { n: 1 } }]);
+    });
+
+    test("service.json names the source root it was given", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        await host(dir, { sourceRoot: "/checkouts/genesis tools/" });
+
+        expect(readLiveServiceEntry(dir)?.sourceRoot).toBe("/checkouts/genesis tools/");
+    });
+
+    test("a service.json whose pid now runs another command reads as no service, and stop signals nothing", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const entry = {
+            version: 1,
+            protocol: 7,
+            pid: process.pid,
+            pidCommand: "bun meetings serve (a process this pid ran before)",
+            socket: serviceSocketPath(dir),
+            startedAt: "2026-11-09T20:00:00.000Z",
+            codeStamp: 0,
+        };
+        writeFileSync(serviceEntryPath(dir), SafeJSON.stringify(entry, { strict: true }));
+
+        expect(readLiveServiceEntry(dir)).toBeUndefined();
+        expect(await stopService(dir)).toEqual({ status: "none" });
+        writeFileSync(
+            serviceEntryPath(dir),
+            SafeJSON.stringify({ ...entry, pidCommand: readProcessCommand(process.pid) }, { strict: true })
+        );
+        expect(readLiveServiceEntry(dir)?.pid).toBe(process.pid);
+    });
+
+    test("stop signals the verified service process and waits until it is gone", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore", env: process.env });
+        opened.push({ close: () => child.kill() });
+        const pidCommand = readProcessCommand(child.pid);
+        const entry = {
+            version: 1,
+            protocol: 7,
+            pid: child.pid,
+            ...(pidCommand ? { pidCommand } : {}),
+            socket: serviceSocketPath(dir),
+            startedAt: "2026-11-09T20:00:00.000Z",
+            codeStamp: 0,
+        };
+        writeFileSync(serviceEntryPath(dir), SafeJSON.stringify(entry, { strict: true }));
+
+        expect(await stopService(dir, { timeoutMs: 3_000 })).toMatchObject({
+            status: "stopped",
+            entry: { pid: child.pid },
+        });
+        expect(await child.exited).not.toBe(0);
+    });
+
+    test("an idle service with no connection stops and removes its files", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const start = await host(dir, { idleMs: 1, checkEveryMs: 20 });
+
+        if (start.status !== "started") {
+            throw new Error("the host did not start");
+        }
+
+        expect(await start.host.stopped).toBe("idle");
+        expect(readLiveServiceEntry(dir)).toBeUndefined();
+        expect(existsSync(serviceSocketPath(dir))).toBe(false);
+    });
+
+    test("a service with a live connection does not stop for idleness", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const start = await host(dir, { idleMs: 1, checkEveryMs: 20 });
+
+        if (start.status !== "started") {
+            throw new Error("the host did not start");
+        }
+
+        const client = await connect(serviceSocketPath(dir));
+        await client.call("hello", { role: "client" });
+        const outcome = await Promise.race([start.host.stopped, Bun.sleep(120).then(() => "running")]);
+
+        expect(outcome).toBe("running");
+        expect(start.host.connections).toHaveLength(1);
+    });
+
+    /** A module this process loaded under a root of its own, written a minute ago, and a way to change it. */
+    async function loadedModule() {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), "rpc-host-src-")));
+        const module = join(root, "loaded.ts");
+        writeFileSync(module, "export const loaded = true;\n");
+        const earlier = new Date(Date.now() - 60_000);
+        utimesSync(module, earlier, earlier);
+        await import(module);
+        return {
+            root,
+            change: () => {
+                const later = new Date(Date.now() + 60_000);
+                utimesSync(module, later, later);
+            },
+        };
+    }
+
+    async function started(dir: string, options: Partial<ServiceHostOptions<Role>>) {
+        const start = await host(dir, options);
+
+        if (start.status !== "started") {
+            throw new Error("the host did not start");
+        }
+
+        return start.host;
+    }
+
+    const outcome = (stopped: Promise<string>, ms: number) =>
+        Promise.race([stopped, Bun.sleep(ms).then(() => "still running")]);
+
+    test("a socket it is given is where it listens and what service.json names; a stop removes it", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const socket = join(dir, "own.sock");
+        const service = await started(dir, { socket });
+
+        expect(readLiveServiceEntry(dir)?.socket).toBe(socket);
+        expect(existsSync(serviceSocketPath(dir))).toBe(false);
+        const client = await connect(socket);
+        expect(await client.call<{ method: string }>("hello", { role: "client" })).toEqual({ method: "hello" });
+        service.stop("test");
+        expect(existsSync(socket)).toBe(false);
+    });
+
+    test("a source root it does not publish is still watched: service.json leaves it out, and its change stops the service", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const loaded = await loadedModule();
+        const service = await started(dir, { sourceRoot: loaded.root, publishSourceRoot: false, checkEveryMs: 15 });
+
+        expect(readLiveServiceEntry(dir)).not.toHaveProperty("sourceRoot");
+        expect(await outcome(service.stopped, 100)).toBe("still running");
+        loaded.change();
+        expect(await outcome(service.stopped, 1_000)).toBe("code-changed");
+    });
+
+    test("keepAlive.idle holds back only the idle exit, keepAlive.codeChange only the exit on a code change", async () => {
+        let idleKept = true;
+        const idle = await started(mkdtempSync(join(tmpdir(), "rpc-host-")), {
+            idleMs: 1,
+            checkEveryMs: 15,
+            keepAlive: { idle: () => idleKept, codeChange: () => true },
+        });
+        expect(await outcome(idle.stopped, 120)).toBe("still running");
+        idleKept = false;
+        expect(await outcome(idle.stopped, 1_000)).toBe("idle");
+
+        let codeKept = true;
+        const loaded = await loadedModule();
+        const changed = await started(mkdtempSync(join(tmpdir(), "rpc-host-")), {
+            sourceRoot: loaded.root,
+            checkEveryMs: 15,
+            keepAlive: { idle: () => true, codeChange: () => codeKept },
+        });
+        loaded.change();
+        expect(await outcome(changed.stopped, 120)).toBe("still running");
+        codeKept = false;
+        expect(await outcome(changed.stopped, 1_000)).toBe("code-changed");
+    });
+
+    test("onCheck runs at each check, and onStopping runs before the connections end and before onStopped", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        let checks = 0;
+        const order: string[] = [];
+        let connectionsAtStopping = -1;
+        const service = await started(dir, {
+            checkEveryMs: 15,
+            onCheck: () => {
+                checks += 1;
+            },
+            onStopping: (reason) => {
+                order.push(`stopping ${reason}`);
+                connectionsAtStopping = service.connections.filter((connection) => !connection.closed).length;
+            },
+            onStopped: (reason) => order.push(`stopped ${reason}`),
+        });
+        const client = await connect(serviceSocketPath(dir));
+        await client.call("hello", { role: "client" });
+        await Bun.sleep(80);
+        service.stop("test");
+
+        expect(checks).toBeGreaterThanOrEqual(2);
+        expect(order).toEqual(["stopping test", "stopped test"]);
+        expect(connectionsAtStopping).toBe(1);
     });
 });

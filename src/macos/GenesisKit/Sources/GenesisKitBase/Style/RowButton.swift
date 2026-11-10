@@ -20,12 +20,15 @@ private struct RowButtonBody: View {
     let cornerRadius: CGFloat
     @State private var hovering = false
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.kitForcedInteraction) private var forced
 
     var body: some View {
-        configuration.label
+        let pressed = configuration.isPressed || forced == .pressed
+        let hover = hovering || forced == .hover
+        return configuration.label
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.white.opacity(configuration.isPressed ? 0.10 : (hovering ? 0.055 : 0)))
+                    .fill(Color.white.opacity(pressed ? 0.10 : (hover ? 0.055 : 0)))
             )
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .pointerCursor(isEnabled)

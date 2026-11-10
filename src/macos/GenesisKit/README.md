@@ -52,7 +52,7 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | Folder | What |
 |---|---|
 | `Style/` | hover styles (`.genHover*`, `.genHoverEffect`), `.instantTooltip` + `TooltipGuard`, `.rowButton` / `RowButtonStyle`, `KitPalette` / `KitTheme`, `GenesisKitHost`, `.hoverHighlight()` / `.axMarker(_:)`, `SWR` (stale-while-revalidate: `changed`, `fade`, `rowTransition`, `animation`) + `.swrFlash` |
-| `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `NewItemsPill` ("3 new ↓" over a live list while the reader is scrolled up) and `RowArrival` (a new row fades in and rises 8 pt, fade only under Reduce Motion), `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `ForgeBadge` ("GitLab !7528" with the forge's mark, opens the PR/MR), `UserAvatar` (a person's picture on a host, one fetch per URL, initial or person-glyph fallback), `.kicker`, `RefreshingMark` (the spinner over last known data), `AgentTextField` (a one-line AppKit text field whose binding takes an accessibility write, so an agent can fill it) |
+| `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `NoticeStack` (several notices floating over a view, each with its own Undo and time, stopped under the pointer), `NewItemsPill` ("3 new ↓" over a live list while the reader is scrolled up) and `RowArrival` (a new row fades in and rises 8 pt, fade only under Reduce Motion), `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `ForgeBadge` ("GitLab !7528" with the forge's mark, opens the PR/MR), `UserAvatar` (a person's picture on a host, one fetch per URL, initial or person-glyph fallback), `.kicker`, `RefreshingMark` (the spinner over last known data), `AgentTextField` (a one-line AppKit text field whose binding takes an accessibility write, so an agent can fill it) |
 | `Keymap/` | keyboard shortcuts as data: `KeyChord` (a key by position or by character, plus modifiers; labels in the user's layout), `KeymapLibrary` (an app's commands and default keys), `KeymapConfiguration` + `KeymapStore` (the user's keys, JSON), `Keymap` (both together: keys in force, hints, conflicts, menu items), `KeymapDispatcher` + `.keymapAction` (runs a command from its key), `KeyChordRecorder`, `KeymapHelpView` / `KeymapListView` / `KeymapHelpWindow` (the list, with an editor) |
 | `Media/` | `MediaThumbnailView` (the picture of any image, video or document: off-main decode, file-identity cache, Retina pixel buckets, poster frame and length for a video, a named placeholder with Retry on failure, a click previews it) on `MediaThumbnailCache`; `.mediaPreviewHost()` + `MediaPreviewState` (an in-place Quick Look style preview over a surface, ← / → through the set) and `MediaPreviewKeyboard` (Esc / Space / arrows, for a window's key handler); `ImageViewer.present` (a window that grows from the picture's place: pinch / ⌘± / ⌘0 zoom anchored at the pointer, pan, ← / → through the source's pictures, "Compare with…" as a slider or side by side, same table row first; `ImageViewer.prefetch` on the first click; `ImageViewerSnapshot` renders any state off screen) and `MediaDataURL` (an embedded `data:image/` picture as a private temporary file) |
 | `Paths/` | `PathOpener` (folder in Finder by bundle id, file in Cursor at a line), `PathLabel`, `PathActionsMenu`, `Clipboard` + `CopyToast`, `DefaultApp` (a file's default app by name, opened at a line through `cursor://` / `vscode://`), `PathLinkHandler` + `.pathLinks` / `.pathLinkMenu` (a file link in rendered markdown opens by a setting, with a right-click menu) |
@@ -70,15 +70,37 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Window/` | `WindowTitlebar`: `.titlebarZone()`, `.titlebarBackground`, `.titlebarRow()`, the snapshot audit; `HostWindow` + `HostWindowReader` (the window a view is in, without SwiftUI state); `WindowSnapshot` (a `--snapshot` PNG as the window server composes it, Liquid Glass included); `WindowRaise` (one window forward, not the whole app); `SingleInstance` (one process of a kind per login session: a later launch hands its arguments over and exits) |
 | `Permissions/` | `PermissionKind` (every privacy grant: title, reason, exact System Settings pane, request style), `PermissionAccess` (status and in-place request through TCC, with the `GenesisToolsSimulateDeniedPermissions` denial simulation on top), `PermissionCenter` + `PermissionNeed` (the one permission dialog: one per kind at a time, grants in place where macOS allows it, otherwise explains and opens the pane, offers Relaunch for a grant only a new process sees, closes itself when the grant arrives), `PermissionDialogView` / `PermissionPanelPresenter` |
 | `Perf/` | `PerfLog`, `HangWatch`, `MainStackSampler`, `MonitorPerf`, `RenderProbe`, `PerfConfiguration`, `MainBusy` (main-thread busy time after an event, `measureUntilSettled`, and a `Meter` for benches), `SessionOpenBench` (times one open of a session screen for the bench tests of both apps) |
-| `Tools/` | `ToolsBridge` (runs `tools`), `ToolsLineStream` (one long-running `tools` child, stdout as whole lines on the main queue, stdin held open so the child ends with the app), `MonitorJSON`, `TitleFormatter`, `SessionTranscriptClient` (the `tools ai sessions tail` envelope), `TranscriptPromptPart`, `DiskCache` (last answers on disk; `load` / `loadData` read off the main thread), `DirectoryWatcher` (one FSEvents stream over several folders, a path filter, main-queue callback) |
+| `Tools/` | `ToolsBridge` (runs `tools`), `JSONRPCSocketClient` (a `tools` service's JSON-RPC socket), `ToolsLineStream` (one long-running `tools` child, stdout as whole lines on the main queue, stdin held open so the child ends with the app), `MonitorJSON`, `TitleFormatter`, `SessionTranscriptClient` (the `tools ai sessions tail` envelope), `TranscriptPromptPart`, `DiskCache` (last answers on disk; `load` / `loadData` read off the main thread), `DirectoryWatcher` (one FSEvents stream over several folders, a path filter, main-queue callback) |
 | `Providers/` | `AIProviderMeta`, `AIProviders`, `AIProviderGlyph` |
-| `Recording/` | screen recording for any host: `ScreenRecorder` (picker, grant, session, floating controls) with `ScreenRecordingHost`, `RecordingTargetPicker`, `RecordingControlsView`, `RecordingSessionController` (one `tools control capture session`), `RecordingTarget(s)`, `RecordingSettings` + `RecordingSettingsView`; `Live/`: `LiveRecordingStore` (the `recordings/live/` entries other processes write), `LiveRecordingRPCClient` (their JSON-RPC control socket) and `LiveRecordingsStatusItem` (their menu bar item and floating controls) |
+| `Recording/` | screen recording for any host: `ScreenRecorder` (picker, grant, session, floating controls) with `ScreenRecordingHost`, `RecordingTargetPicker`, `RecordingControlsView`, `RecordingSessionController` (one `tools control capture session`), `RecordingTarget(s)`, `RecordingSettings` + `RecordingSettingsView`; `Live/`: `LiveRecordingStore` (the `recordings/live/` entries other processes write), their JSON-RPC control socket through `JSONRPCSocketClient` (`Tools/`) and `LiveRecordingsStatusItem` (their menu bar item and floating controls) |
 | `Sessions/` | `SessionPalette`, `SessionFormat` |
 | `Sessions/Transcript/` | `SessionTranscriptList`, `TranscriptDocument`, prompt parts, `TranscriptScrollAnchor`, `TranscriptBus` / `TranscriptFilters`, `TranscriptMarkdownStyle`, `TranscriptLiveTail` (one `tools ai sessions tail --live` child, or a server subscription, per open screen; its `TranscriptLiveActivity` says what the agent does now, the list's last row through a `TranscriptActivityFeed` only that row observes) |
 | `Sessions/ToolCalls/` | `SessionToolCallView` + `TranscriptServices`, `SessionNativeLog` + `SessionNativeLogStore`, `SessionToolChanges`, `BatchedToolChangeSource` + `ToolChangeBatcher` (rows that ask within 100 ms share one `tools agents changes` run) |
 | `Sessions/Code/` | `CodeBlock`, `CodeBlockText`, `SessionSyntaxHighlighter` |
 | `Sessions/Detail/` | `SessionDetailScreen`, its header and sidebar, `SessionSidebarSplit`, `TranscriptPaging` (first page 12, pages of 150, refresh to the end), `TranscriptBuildQueue` (one document build at a time, newest pending wins) |
 | `Markdown/` | the Genesis Markdown viewer. `Window/`: `MarkdownViewerApp.run(_:)` (a process whose only window is the viewer, its menu and URL queue), `MarkdownDocumentWindowController.shared.show(paths:focus:range:)`, `MarkdownDocumentsModel` + `MarkdownDocumentsView` (tabs, split, sidebar). `Views/`: `MarkdownWebView` (markdown-it, highlight.js, mermaid, offline; `MarkdownWebPage` for a host's own pane), the source editor, `MarkdownPreviewView` / `MarkdownContentView` + `MarkdownStyle` (native), toolbar, status bar, find bar, outline, go to, file tree and its search, conflict view, media and image viewer. `Document/`: links and line ranges, file ops, drop, export, properties, completion, merge, default app, dashboard share, task boxes and their atomic write. `Resources/webview` is the renderer; an installed app copies it to `Contents/Resources/webview`, read first |
+
+## The catalog and the looks
+
+`KitLook` (`GenesisKitBase/Style/KitLook.swift`) says how the kit's controls draw their surfaces. A control names the
+surface it is (`KitSurfaceRole`: well, thumb, primary, tinted, soft, ghost, plain, badge, wash) and its state, and
+the look answers with a fill, a stroke, a shadow and the label colours. A window picks a look with `.kitLook(_:)` on
+its root; the default, `classic`, is what the kit drew before looks existed. A new look is one case and one table
+(`KitLookTables.swift`). `KitHue` names a colour by its meaning (play, ask, done, care, danger, neutral).
+
+The catalog (`Sources/GenesisKitCatalog`) is the kit's picture book: one entry per component with its variants
+(states, sizes, props, hues), drawn once per look. Draw it with
+
+```bash
+bun run kit:catalog -- --out <dir>          # one PNG per component and look, and manifest.json
+bun run kit:catalog -- --probe <png>        # today's controls in a fixed layout
+```
+
+The command shows no window. `\.kitForcedInteraction` in the environment makes a kit button draw as under the
+pointer or pressed, which is how a picture shows those states. Before you change a control's drawing, draw the probe,
+change the code, draw it again and compare the two files: `classic` must not change by a pixel unless the change is
+meant. A control added to `Controls/` gets an entry in `KitCatalogEntries.swift`, or a line with the reason in
+`KitCatalogTests`.
 
 ## Components
 
@@ -1547,7 +1569,7 @@ InfoStrip(
 
 #### `NoticePill`
 
-A status line: an icon, a message, an optional dim detail line, the ways to fix what it reports, and the full message behind "Details". A success notice without fixes calls `dismiss` six seconds after it appears (the timer restarts when `text` changes); an error, a warning, or a notice with a fix stays until the person dismisses it or it no longer applies. The text wraps rather than ending in an ellipsis, and it can be selected and copied.
+A status line: an icon, a message, an optional dim detail line, the ways to fix what it reports, and the full message behind "Details". A success notice without fixes calls `dismiss` six seconds after it appears (the timer restarts when `text` changes); an error, a warning, or a notice with a fix stays until the person dismisses it or it no longer applies. The text wraps rather than ending in an ellipsis, and it can be selected and copied. Inside a `NoticeStack` (the environment's `noticePillPlacement` is `.stacked`) the pill fills the stack's width and has no timer of its own: the stack decides how long it stays. Several notices at once, or a notice that must not push the content, belong in a `NoticeStack`.
 
 - `text: String`: the message.
 - `detail: String? = nil`: a dimmer second line.
@@ -1567,6 +1589,37 @@ if let notice {
         self.notice = nil
     }
 }
+```
+
+#### `NoticeStack`
+
+Several notices that float over a view's content (Controls/NoticeStack.swift). A new notice joins the others and never replaces the one before, so two Undo buttons stay reachable; nothing in the content moves, because the stack is an overlay. Each notice counts its own time; the pointer over the stack stops every clock, and each notice then goes on with the time it had left. An error stays until it is closed. The oldest notices sit at the edge the stack is pinned to and the newest goes to the far side, so a new notice never moves the ones already there. Taller than `maxHeight` (360 pt), the stack scrolls and keeps its newest notice in view. Each push is announced to VoiceOver.
+
+- `NoticeStackModel(clock:timing:announces:)`, `@Observable` and `@MainActor`, one per surface (a pane, a settings page).
+  - `push(_:replacing:) -> StackedNotice.ID`: adds a notice on top; with `replacing:` the notice takes that one's place and id, with a fresh clock (a result replacing its "Undoing…" notice). A `replacing:` id that is gone adds it on top.
+  - `dismiss(_:)`, `dismissAll()`, `press(_:of:)` (what a button does), `release(_:)` (a waiting notice whose action did not start gets its buttons back), `setPaused(_:)`, `remaining(_:)`, `notices` (oldest first), `waiting`.
+  - `timing` is read at each push (`NoticeStackTiming(actionSeconds:plainSeconds:)`, `.standard` is 30 s and 6 s), so a changed setting applies to the next notice.
+  - `clock`: `SystemNoticeClock.shared` by default; a test passes a `ManualNoticeClock` and moves it with `advance(by:)`.
+- `StackedNotice(id:text:detail:more:tone:actions:lasting:)`. `lasting` is `.automatic` (an error stays; a notice with a button stays `actionSeconds`; any other stays `plainSeconds`), `.seconds(x)` or `.untilDismissed`.
+- `StackedNotice.Action(_:symbol:confirm:afterPress:perform:)`; `perform` gets the notice's id. `afterPress` is `.dismiss` (Retry: the notice goes, the new attempt reports on its own), `.keep` (Show in Finder: the notice stays and counts on) or `.wait("Undoing…")` (the notice stays in its place with no buttons and a stopped clock until the result replaces it). Shortcuts: `.undo { id in … }` and `.retry { … }`.
+- `.noticeStack(_ model:, alignment: .bottom)` floats the model's notices over any view; `.top` pins the stack under the view's top edge.
+- `.noticeStackViewport(alignment:)` on the view that holds a scroll view: the stacks of the views inside float over its visible bounds instead of sitting at the end of the scrolled content. The settings window's page scroll has it, so a settings page only adds `.noticeStack`.
+- `NoticeStackView(_:maxWidth:maxHeight:pinnedTo:)` draws one model where a modifier does not fit.
+
+```swift
+@ObservationIgnored let notices = NoticeStackModel(timing: { .init(actionSeconds: 30, plainSeconds: 6) })
+
+func confirmed(_ item: Item, token: String) {
+    notices.push(StackedNotice(text: "Confirmed \(item.title)", actions: [.undo { [weak self] id in
+        self?.reopen(item, token: token) { result in
+            self?.notices.push(StackedNotice(text: result), replacing: id)
+        }
+    }]))
+}
+
+// In the view:
+List(items) { row($0) }
+    .noticeStack(model.notices)
 ```
 
 #### `NewItemsPill`
@@ -6861,17 +6914,13 @@ paused, nil while stopping or when the recorder does not list it in `controls`),
 `displayNames`. `LiveRecordingsWatcher` reads the folder again on each change (a DispatchSource on the folder) and
 once a second, off the main thread, and publishes `recordings`.
 
-#### `LiveRecordingRPCClient`, `LiveRecordingOverlay`
+#### The live recording's socket, `LiveRecordingOverlay`
 
-The control channel of a live recording: the Unix domain socket its entry names (`socket`), JSON-RPC 2.0 with one
-JSON message per line. Methods: `status`, `pause`, `resume`, `stop`, `displays.list`, `displays.add {displayId}`,
-`displays.remove {displayId}`, `displays.switch {displayId}`, `displays.mode {mode}` and `subscribe`, after which the
-connection gets the notifications `state`, `frame` (`{displayId, at, file}`), `displays`, `warning` and `ended`.
-
-- `init(path: String, callbackQueue: DispatchQueue = .main)`; `connect() throws` (a refused socket throws `.connect`).
-- `call(_ method: String, params: [String: Any]?, timeout: TimeInterval = 3)`, async or with a completion: a
-  JSON-RPC error is `.remote(code:message:)`, no answer in time is `.timeout(method:)`, a dropped connection `.closed`.
-- `onNotification: (String, Any?) -> Void`, `onClose: () -> Void`, `close()`.
+The control channel of a live recording: the Unix domain socket its entry names (`socket`), spoken through
+`JSONRPCSocketClient` (see Tools; `LiveRecordingRPCClient` is its old name, kept as a typealias). Methods: `status`,
+`pause`, `resume`, `stop`, `displays.list`, `displays.add {displayId}`, `displays.remove {displayId}`,
+`displays.switch {displayId}`, `displays.mode {mode}` and `subscribe`, after which the connection gets the
+notifications `state`, `frame` (`{displayId, at, file}`), `displays`, `warning` and `ended`.
 
 `LiveRecordingOverlay` is what the socket said (`applyStatus`, `applyFrame`, `applyDisplays`, `applyWarning`), laid
 over the entry by `merged(into:)`: state, frames, the connected displays with `recorded`, the mode and the last error.
@@ -9895,6 +9944,34 @@ let stream = try ToolsLineStream(
     onExit: { exit in print("exit", exit.status, "stopped:", exit.stopped) })
 // later
 stream.stop()
+```
+
+#### `JSONRPCSocketClient`
+
+A JSON-RPC 2.0 peer over a Unix domain socket, one JSON message per line, as every `tools` service speaks it
+(src/utils/rpc): a live recording's control socket, the recorder service and the Meetings service. `LiveRecordingRPCClient`
+is its old name, kept as a typealias.
+
+- `init(path: String, callbackQueue: DispatchQueue = .main, sendTimeout: TimeInterval = 2)`; `connect() throws` (a
+  refused socket throws `.connect`).
+- `call(_ method: String, params: [String: Any]?, timeout: TimeInterval = 3)`, async or with a completion: a
+  JSON-RPC error is `Failure.remote(code:message:)`, no answer in time is `.timeout(method:)`, a dropped connection
+  `.closed`.
+- `request(_:params:timeout:errorData:onProgress:completion:) -> Int`: `call` with the request id for `cancel(_:)`
+  and the peer's `$/progress`. With `errorData: true` an error answer arrives as `RemoteError` (`code`, `message`,
+  `data` as JSON bytes, `decodeData(_:)`), for a service that names its reason in `data` (the Meetings service's
+  `data.code`).
+- `answer(_ method:, with: Handler)`: this side answers the peer's requests; `notify(_:params:)` sends a notification.
+- `onNotification: (String, Any?) -> Void`, `onClose: () -> Void`, `close()`.
+
+```swift
+let client = JSONRPCSocketClient(path: socket, callbackQueue: DispatchQueue(label: "my.service"))
+try client.connect()
+client.request("meeting.show", params: ["ref": id], timeout: 30, errorData: true) { result in
+    if case let .failure(error as JSONRPCSocketClient.RemoteError) = result {
+        print(error.code, error.decodeData([String: String].self)?["code"] ?? "")
+    }
+}
 ```
 
 #### `MonitorJSON`

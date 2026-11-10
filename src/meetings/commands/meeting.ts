@@ -13,14 +13,19 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
 import { linkSource } from "../lib/link";
-import { meetingListRow, selectMeetings } from "../lib/list-rows";
 import { setMeetingFields } from "../lib/meeting-fields";
 import { mergeMeetings } from "../lib/merge";
 import { resolveProject } from "../lib/project";
+import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
-import { revisionsRead, windowJson } from "../lib/window-reads";
+import { windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
+
+/** A row of `meetings.list` with full: true, which answers the whole records. */
+function isRecord(row: object): row is MeetingRecord {
+    return "createdBy" in row;
+}
 
 /** The record a command names, or a message saying how to find one. */
 function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undefined {
@@ -111,10 +116,30 @@ async function list(opts: { project?: string; json?: boolean; full?: boolean; li
         return;
     }
 
-    const records = selectMeetings(new MeetingStore().list(), { project: opts.project, limit });
-
     if (opts.json) {
-        out.result(SafeJSON.stringify(opts.full ? records : records.map(meetingListRow), null, 2));
+        let rows: unknown;
+
+        try {
+            rows = await withMeetingsClient((client) =>
+                client.call("meetings.list", { project: opts.project, limit, full: opts.full === true })
+            );
+        } catch (err) {
+            fail(errorText(err));
+            return;
+        }
+
+        out.result(SafeJSON.stringify(rows, null, 2));
+        return;
+    }
+
+    let records: MeetingRecord[];
+
+    try {
+        records = await withMeetingsClient(async (client) =>
+            (await client.call("meetings.list", { project: opts.project, limit, full: true })).filter(isRecord)
+        );
+    } catch (err) {
+        fail(errorText(err));
         return;
     }
 
@@ -149,15 +174,8 @@ async function list(opts: { project?: string; json?: boolean; full?: boolean; li
 
 /** `meetings revisions <id>`: what each part of the Meetings window reads, as one token per part. */
 async function revisions(ref: string, opts: { json?: boolean }): Promise<void> {
-    const store = new MeetingStore();
-    const record = requireMeeting(store, ref);
-
-    if (!record) {
-        return;
-    }
-
     try {
-        const view = await revisionsRead({ store, record });
+        const view = await withMeetingsClient((client) => client.call("meeting.revisions", { ref }));
 
         if (opts.json) {
             out.result(windowJson(view));
@@ -177,9 +195,12 @@ async function revisions(ref: string, opts: { json?: boolean }): Promise<void> {
 }
 
 async function show(ref: string, opts: { json?: boolean }): Promise<void> {
-    const record = requireMeeting(new MeetingStore(), ref);
+    let record: MeetingRecord;
 
-    if (!record) {
+    try {
+        record = await withMeetingsClient((client) => client.call("meeting.show", { ref }));
+    } catch (err) {
+        fail(errorText(err));
         return;
     }
 

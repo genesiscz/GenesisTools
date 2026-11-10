@@ -89,6 +89,12 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
   clips at real lengths.
 - One control is drawn one way across the app: the kit's version, not a native one beside it.
 - Distinct icons for distinct features (two modules once shared `waveform`).
+- Marks on a lane (pins, banners, count badges) merge by their drawn width, and none overlaps on the densest real
+  data. A merge gap smaller than the mark draws marks over each other (findings.md, 2026-11-10).
+- A size threshold ("fold below", "stack below") lies inside the window's reachable sizes. One at or under the
+  minimum size never fires.
+- Room held so that nothing jumps (a row that keeps its height after an answer) holds content, never a blank.
+- Text with controls in it (a sentence with time links) wraps word by word, with no line that holds one bracket.
 
 ## Widget and panel controls (Martin, 2026-10-23 14:40)
 - A text field inside a padded box: the whole box focuses the field (`.contentShape` + `.onTapGesture { focus = true }`
@@ -195,7 +201,11 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
 - Anything the user waits on shows an error, a reason or a Cancel within about 10 s, not at a 30 s or 120 s process
   timeout.
 - A success note fades after a few seconds (the hub's `NoticePill` is the model): at least 2 s, about 1 s plus 50 ms
-  per word. A new note replaces the old one. An error stays until it is closed.
+  per word. An error stays until it is closed.
+- Notes stack, they do not replace each other: a new note joins GenesisKit `NoticeStack` beside the older ones, each
+  with its own Undo and its own time (two quick answers keep two Undo buttons). Only a note about the same thing (a
+  retry of one failure, a burst of one actor's decisions) takes the old note's place, by its id. Past the visible limit
+  the older notes fold into "+N more".
 - A success never gets a modal alert; a modal is for a decision or a failure the user must act on.
 - The first frame of a window or panel uses the saved setting (size, look, tab), never a default that snaps to the
   saved one.
@@ -300,6 +310,14 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
 - A tooltip or caption says what happens, not which command runs. It is one or two short sentences, never repeats
   the visible label, and never holds something the user needs to finish the task.
 - Truncated text shows its full text on hover; an error is never truncated.
+- In a one-line summary the part the reader came for (an answer, a result, a name) is its own text and never
+  truncates; the context before it gives way first.
+- Sentences that differ only in a time or a count are one sentence with the values as live chips, each under the
+  line it belongs to.
+- A reference to another row is that row's words, never its id ("Speaker range 1:45:15–1:53:22", not "i39"), and a
+  click goes there. This holds for notices, tooltips and history lines, which are built from actions and events.
+- When the nearest data is far from what was asked (the last frame of a capture that ended), the caption says how
+  far.
 - A button names its action in one to three words and keeps the verb through the flow; never OK, Yes or No.
 - No em dash or en dash in a visible string: use a period, a comma, a colon or parentheses.
 - An icon only where a standard glyph exists, in one symbol style and weight; an icon on every row is noise.

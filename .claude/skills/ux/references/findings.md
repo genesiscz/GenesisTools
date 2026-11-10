@@ -3,6 +3,57 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-11-10 04:58 — **Meetings window, a second look at a finished wave: defects that every test and a scored live
+  check had passed.** Each one is a shape that will come back on another surface.
+  - *Marks drew over each other*: the pin counts on the timeline strip, and "? Q7 ? Q9" banners over the speaker
+    lanes. Both merged neighbours closer than a fixed gap (6 pt, 22 pt) that was smaller than the mark itself (16 pt,
+    about 44 pt). Fix: the merge distance is the mark's drawn width; a group is anchored at its first member, so a
+    chain cannot swallow a whole lane into one count; and no mark is placed closer than one width to the mark before
+    it (`PinCluster.clusters`, `TalkTimeLayout.banners`). Rule: a merge threshold is the size of what is drawn, and
+    its test asserts the spacing on a dense fixture, not on three hand-picked pins.
+  - *A threshold that could never fire.* The dock folds "below 560 pt", and 560 pt is the window's minimum height. It
+    never folded, and the smallest window kept about 90 pt of rows above a playing dock. Rule: check every size
+    threshold against the window's reachable sizes; one outside that range is dead code with a setting on top.
+  - *A folded question hid its answer.* The line showed the engine's one-line text, which ends in "→ answer", cut
+    with an ellipsis before the arrow. Fix: the answer is its own field and its own text with a higher layout
+    priority, so the question gives way first. Rule: in a one-line summary, the part the reader came for is its own
+    text and never truncates.
+  - *"Keep its place" drew a blank gap.* A row answered in this window kept its old height so that the next row did
+    not move, but it drew one folded line at the top of that height: 150 to 280 pt of nothing. Fix: while it keeps its
+    place it keeps its content, dimmed, with the decision where the choices were. Rule: room held for stability holds
+    something; an empty hold reads as a rendering fault.
+  - *Each time in a question started a new line.* The sentence was laid out as pieces (text, time, text), and a piece
+    wider than the row got a row of its own, so "(" stood alone at a line's end. Fix: the text between two times flows
+    as words, and a space is the trailing room of the item before it (`ReviewRowView.flow`). Rule: controls inside a
+    sentence need word-level flow; look at the wrap in the narrowest column with a real long sentence.
+  - *Item ids as words*: "It settles 1 item: i39", "Answered i116". Fix: a reference names the row in words ("Speaker
+    range 1:45:15–1:53:22") and selects it on a click; a notice names a question by the label its row shows. The
+    checklist already said "values from the data are mapped to words"; the miss was a string built from an action's
+    payload, not from a view model. Rule: search the strings that notices, tooltips and history lines build from
+    actions and events too.
+  - *A wall of one warning.* Three "Silent from … to … while in the call" lines per speaker, their times plain text,
+    and the chips of every sign after the last line. Fix: signs of one kind are one line with a chip per stretch, and
+    a line's chips sit under that line. Rule: sentences that differ only in a time are one sentence and a list of live
+    times.
+  - *A picture from another time under a current caption.* "Screen at 17:28" beside a Moment at 54:35, because the
+    screen capture had ended. Fix: outside the capture the caption reads "Last frame, 37 min earlier", its tooltip
+    and VoiceOver give the full sentence, and the picture dims. Rule: when the nearest data is far from what was asked,
+    say how far. The first wording ("Last screen frame, 17:28 · 37 min before this") was cut to "…37…" in the 290 pt
+    header: a new caption is checked in its real width before it ships.
+  - *The live check ran on a fallback and did not know.* Its sandbox home made the service's socket path 127 bytes;
+    the window could not connect (the swift skill's gotchas, "Socket paths"), read everything through commands and
+    drew no waveform. Rule: before a live check, read the app's perf log for a fallback line; a window on its fallback
+    path is another product.
+  - *My own first try of the folded line truncated the question at half the free room*: "Who agre…", then a wide
+    blank, then "Revert and edit" on two lines. A one-line `Text` beside a `Spacer` of the same layout priority gets an
+    equal share, not its ideal width, and a label with no `fixedSize` wraps when a neighbour grows. Fix: the text sits
+    above the spacer's priority and below the answer's; the button's label is fixed. Rule: look at a picture of every
+    row state after a layout change, with long and short values.
+  - How they got through: the wave's tests pinned what was built (three pins, one banner, one silence), the live check
+    scored requests, and nobody opened the densest real meeting to look for overlap, truncation and dead text. Rule:
+    after "all green", open the densest real data at the smallest and at the default window size, and read every
+    string and every mark.
+
 - 2026-11-09 21:12 — **A PR commit link showed an empty hub for 20 s, then the whole PR, then the commit (Martin: "it
   shouldnt load the entire PR first ... focus on the commits alone THEN in smaller priority the rest").**
   - *The part a link names waited for the slowest source of the whole.* The pick needed the forge's commit list, which
@@ -544,3 +595,27 @@ checklist.md or motion.md as well.
   click, or place it with a layout (`.padding(.leading:)`, `.position`). A stationary real pointer can also miss
   the hover event when a row opens, scrolls or refreshes, so its first click must work without a mouse move. The
   resting label now handles the same tap (dafe8e779f). Test a click with no preceding move.
+
+- 2026-11-10 07:20 — **A list picks one shape for all its rows, and drops in a stated order what the reader needs least.**
+  The Meetings review rows at the window's smallest size (900 x 600 pt): a decided row was "Q4 2 → Alex Example …"
+  (one character of text, the status an ellipsis), and a playing row's small bar drew its flag over its times while
+  the row's time wrapped. Each was one line squeezed, with every part still present. Now a narrow column drops who
+  decided it (the mark says it is decided), then the words of the button (its glyph stays), then a question's text
+  (its answer stays); the bar drops its times, then itself. Rule: for every one-line row, write down what goes first
+  at half the width, and look at the smallest window before the largest.
+- 2026-11-10 07:20 — **Weigh what you warn about.** The Speakers tab drew every sign as an orange warning that ended in
+  "(weak sign)" or "(strong sign)": eight lines of one colour, so the one strong sign was lost. Now a strong sign is
+  a filled warning and stands first, a weak one is a grey note, and the weight follows the sentence in small text.
+  Rule: a level that exists in the data is a level in the drawing; words in brackets are not a level.
+- 2026-11-10 07:20 — **Say a thing once per view.** Found in one pass over pictures of real meetings: "No project" as a badge
+  and as the picker under it; "Follows playback" alone on a line under the filter; "430 rows wait for you" as a title
+  under a bar that counted the same rows; "From ▶ 23:51" under a header with "▶ 23:51" on most of 430 rows; a
+  speaker range that said its two names on two lines; a "Meetings" chip on every person beside "5 meetings"; four
+  rule lines that each said "none"; a question as the card's title and again under "Asks" (my own change: I made
+  the title the question and did not read what else the card printed). Rule: after a pass over a view, read it for
+  the same fact twice, and when a title changes, read every part under it again.
+- 2026-11-10 07:20 — **A picture mode needs the states a click makes.** The off-screen snapshot showed only the resting
+  window, so the selected row, the open editor, the pin's card and the history sheet had never been looked at as
+  pictures. Each got a flag (`--select`, `--edit`, `--card`, `--sheet`); a popover or a sheet is drawn alone in
+  a window of its own size. The first card picture showed three defects at once. Rule: a state without a picture
+  is a state nobody reviewed.

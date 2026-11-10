@@ -1,10 +1,12 @@
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
+import type { SpeakerAssignment } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { PresenceRange, SpeakerHint, SpeakerStats } from "@genesiscz/utils/transcribe/speakers";
 import pc from "picocolors";
+import { assignmentText } from "./speaker-assign";
 
 const ORIGIN_NOTE: Record<SpeakerHint["strength"], string> = {
     weak: " (a named label: weak)",
@@ -69,7 +71,7 @@ function hintText(hint: SpeakerHint, attendance: string): string {
 
 /** The speaker table and its hints, for any source: `tools meetings speakers` and `tools wisprflow meetings speakers`. */
 export function printSpeakerStats(
-    stats: SpeakerStats,
+    stats: SpeakerStats & { assignments?: SpeakerAssignment[] },
     options: {
         untimedHint?: string;
         /** Where the stays came from, as the hints name it: `Microsoft Teams attendance`. */
@@ -115,6 +117,10 @@ export function printSpeakerStats(
         ui.dim(
             `This source gives no time per line, so only counts are shown${options.untimedHint ? ` (${options.untimedHint})` : ""}.`
         );
+    }
+
+    for (const assignment of stats.assignments ?? []) {
+        ui.info(`${assignmentText(assignment)} → ${assignment.person} (assigned)`);
     }
 
     for (const hint of stats.hints) {

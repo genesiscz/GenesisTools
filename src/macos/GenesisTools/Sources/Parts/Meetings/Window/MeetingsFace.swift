@@ -1,12 +1,21 @@
 import AppKit
 import SwiftUI
 
-// GenesisTools --meetings [--place needs|all|project:<name>] [--meeting <id>] [--tab transcript|screen|items|speakers|context] [--no-focus]
+// GenesisTools --meetings [--place needs|all|project:<name>] [--meeting <id>] [--tab transcript|screen|items|speakers|context] [--no-focus] [--muted]
 //   The Meetings window: meetings by day with what each needs, one meeting with its transcript, screen, items,
 //   speakers and context, the meetings that need you, and each project. One per login session: a later launch hands
-//   its request to the running one and exits.
-// GenesisTools --meetings … --snapshot <png> [--width <pt>] [--height <pt>]
+//   its request to the running one and exits. `--muted` starts a window whose Moments play without sound (a check
+//   of the running window on a Mac that must stay quiet).
+// GenesisTools --meetings … --snapshot <png> [--width <pt>] [--height <pt>] [--play <target json>] [--place contacts]
+//                         [--side-panel] [--select <row id>] [--edit <row id>] [--notice <text>]
 //   Draws the window off screen into a PNG once its data has loaded, then exits (verification without a screen).
+//   `--select` selects a review row of the Items tab (its number keys show) and `--edit` opens its editor, so a
+//   picture can show the states that a click or a key makes. `--notice <text>` floats a notice with an Undo over the
+//   meeting, as an answer or a Skip leaves one.
+//   `--card <row id>` draws that row's pin card alone, and `--sheet history` (or `history:<row id>`) the history
+//   sheet alone: a popover and a sheet are windows of their own, which the window's picture does not hold.
+//   `--play '{"kind":"item","id":"i2"}'` (a Moment target as the engine writes it) starts that Moment of the meeting
+//   without sound first, so the picture shows the dock, the timeline and the playing row.
 
 private let meetingsInstance = SingleInstance(
     name: "meetings",
@@ -30,7 +39,21 @@ struct MeetingsRequest {
     var meeting: String?
     var tab: MeetingDetailModel.Tab?
     var focus = true
+    /// `--muted`: the window's Moments play without sound.
+    var muted = false
+    /// `--side-panel`: the settings side panel opens beside the meeting.
+    var sidePanel = false
     var snapshot: String?
+    /// `--play <target json>`: the Moment a snapshot starts, silently, before the picture.
+    var play: MomentTarget?
+    /// `--select <row id>` and `--edit <row id>`: a snapshot's selected review row, and the row whose editor is open.
+    var select: String?
+    var edit: String?
+    /// `--notice <text>`: a notice with an Undo, as an answer leaves one.
+    var notice: String?
+    /// `--card <row id>` and `--sheet history[:<row id>]`: a snapshot of that part alone.
+    var card: String?
+    var sheet: String?
     var width: CGFloat = 1280
     var height: CGFloat = 820
 
@@ -48,13 +71,22 @@ struct MeetingsRequest {
                 switch value() ?? "" {
                 case "needs": request.place = .needs
                 case "all": request.place = .all
+                case "contacts": request.place = .contacts
                 case let other where other.hasPrefix("project:"): request.place = .project(String(other.dropFirst(8)))
                 default: break
                 }
             case "--meeting": request.meeting = value()
             case "--tab": request.tab = value().flatMap(MeetingDetailModel.Tab.init(rawValue:))
             case "--no-focus", "--no-activate": request.focus = false
+            case "--muted": request.muted = true
+            case "--side-panel": request.sidePanel = true
+            case "--select": request.select = value()
+            case "--edit": request.edit = value()
+            case "--notice": request.notice = value()
+            case "--card": request.card = value()
+            case "--sheet": request.sheet = value()
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
+            case "--play": request.play = value().flatMap { try? JSONDecoder().decode(MomentTarget.self, from: Data($0.utf8)) }
             case "--width": request.width = value().flatMap(Double.init).map { CGFloat($0) } ?? request.width
             case "--height": request.height = value().flatMap(Double.init).map { CGFloat($0) } ?? request.height
             default: break
@@ -76,6 +108,10 @@ package func runMeetings(_ args: [String]) -> Never {
     MainActor.assumeIsolated {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
+        if request.muted {
+            let model = MeetingsWindow.shared.model
+            model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
+        }
         MeetingsMenuTarget.shared.model = MeetingsWindow.shared.model
         MeetingsMenu.install()
         HangWatch.start()
@@ -114,6 +150,7 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
 
     func apply(_ request: MeetingsRequest, to model: MeetingsWindowModel) {
         if let place = request.place { model.go(place) }
+        if request.sidePanel { model.sidePanelOpen = true }
         if let meeting = request.meeting {
             model.select(meeting, tab: request.tab)
         } else if let tab = request.tab {
@@ -131,6 +168,17 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
     }
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize { Self.floored(frameSize) }
+
+    /// A window that holds one part at its own size, for a snapshot of a popover or a sheet.
+    static func partWindow(_ part: AnyView) -> NSWindow {
+        let hosting = NSHostingView(rootView: part.background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: hosting.fittingSize), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        return window
+    }
 
     static func makeWindow(model: MeetingsWindowModel, size: NSSize) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
@@ -158,10 +206,41 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
         model.windowVisible = (notification.object as? NSWindow)?.occlusionState.contains(.visible) ?? true
     }
 
+    /// ⌘Z and Edit → Undo go to the window's undo manager; with no text field in focus it presses the newest notice's
+    /// Undo (G39), and in a field it is the field's own undo.
+    private lazy var noticeUndoManager = MeetingsUndoManager(model: model)
+
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        noticeUndoManager.window = window
+        return noticeUndoManager
+    }
+
     /// The window is the face: closing it ends the process, as the hub's window does.
     func windowWillClose(_ notification: Notification) {
         NSApp.terminate(nil)
     }
+}
+
+/// A part of the window drawn alone for a snapshot (`--card`, `--sheet`), with its data read first.
+@MainActor
+private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWindowModel) async -> AnyView? {
+    guard let detail = model.detail else { return nil }
+    if let id = request.card {
+        if case .idle = detail.rows { detail.loadRows() }
+        _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
+        let rows = detail.rows.value?.rows ?? []
+        return rows.first { $0.id == id }.map { row in
+            AnyView(PinCard(row: row, reference: { id in rows.first { $0.id == id }.map(ReviewRowView.reference) }))
+        }
+    }
+    if let sheet = request.sheet, sheet == "history" || sheet.hasPrefix("history:") {
+        if case .idle = detail.rows { detail.loadRows() }
+        _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
+        detail.openHistory(item: sheet.hasPrefix("history:") ? String(sheet.dropFirst(8)) : nil)
+        _ = await waitUntil(30) { detail.history?.entries.value != nil || detail.history?.entries.failure != nil }
+        return detail.history.map { AnyView(HistorySheetView(detail: detail, history: $0)) }
+    }
+    return nil
 }
 
 /// Waits (up to `seconds`) until `ready` holds, checking every 100 ms; a snapshot needs the data on screen.
@@ -181,6 +260,10 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
         NSApp.setActivationPolicy(.prohibited)
         Task {
             let model = MeetingsWindowModel()
+            // A picture with the panel open must not change what the real window opens with.
+            model.remembersPanel = false
+            // A picture of a playing Moment (`--play`) makes no sound.
+            model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
             // The requested meeting is the selection before the list lands, so the list's first meeting is never read
             // for nothing; the request applies once the list is there, so a recording-only meeting opens on Screen.
             model.selectedMeetingID = request.meeting
@@ -206,7 +289,51 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     exit(1)
                 }
             }
-            let window = MeetingsWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
+            if model.place == .contacts {
+                _ = await waitUntil(30) { model.people.known.value != nil || model.people.known.failure != nil }
+            }
+            if let detail = model.detail, detail.tab == .items {
+                // The rows are read when the tab shows; a picture taken before they land shows "Reading the items…".
+                if case .idle = detail.rows { detail.loadRows() }
+                _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
+                if let id = request.edit, let row = detail.rows.value?.rows.first(where: { $0.id == id }) {
+                    detail.selectedRow = id
+                    detail.edit(row)
+                } else if let id = request.select {
+                    detail.selectedRow = id
+                }
+            }
+            if let text = request.notice, let detail = model.detail {
+                detail.notices.push(StackedNotice(text: text, actions: [.undo { _ in }]))
+            }
+            if let target = request.play {
+                guard let meeting = model.detail?.id else {
+                    FileHandle.standardError.write(Data("meetings snapshot: --play needs --meeting\n".utf8))
+                    exit(1)
+                }
+                model.player.play(target, in: meeting, from: .row)
+                guard await waitUntil(60, { model.player.phase == .playing || model.player.isFailed }) else {
+                    FileHandle.standardError.write(Data("meetings snapshot timed out cutting the Moment\n".utf8))
+                    exit(1)
+                }
+                // A failed cut is pictured too (its pill is part of what the dock shows); stderr names it.
+                if case .failed(let failure) = model.player.phase {
+                    FileHandle.standardError.write(Data("meetings snapshot: the Moment did not play: \(failure.sentence)\n".utf8))
+                }
+            }
+            if model.sidePanelOpen {
+                _ = await waitUntil(30) { model.settingsRaw != nil || model.settings.failure != nil }
+            }
+            let window: NSWindow
+            if request.card != nil || request.sheet != nil {
+                guard let part = await meetingsSnapshotPart(request, model: model) else {
+                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history or history:<row id>)\n".utf8))
+                    exit(1)
+                }
+                window = MeetingsWindow.partWindow(part)
+            } else {
+                window = MeetingsWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
+            }
             window.orderInForSnapshot()
             try? await Task.sleep(for: .milliseconds(900))
             guard let capture = await WindowSnapshot.capture(window),
@@ -226,4 +353,36 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
         NSApp.run()
     }
     exit(0)
+}
+
+/// The Meetings window's undo manager (G39). A text field in focus (the field editor is the first responder) keeps its
+/// own undo; otherwise ⌘Z and Edit → Undo press the newest notice's Undo, and the menu item names it.
+final class MeetingsUndoManager: UndoManager {
+    weak var window: NSWindow?
+    private weak var model: MeetingsWindowModel?
+
+    init(model: MeetingsWindowModel) {
+        self.model = model
+        super.init()
+    }
+
+    private var textHasFocus: Bool {
+        MainActor.assumeIsolated { window?.firstResponder is NSText }
+    }
+
+    private var noticeUndo: String? {
+        MainActor.assumeIsolated { model?.newestUndo }
+    }
+
+    override var canUndo: Bool { textHasFocus ? super.canUndo : noticeUndo != nil }
+
+    override var undoMenuItemTitle: String {
+        guard !textHasFocus else { return super.undoMenuItemTitle }
+        return noticeUndo.map { "Undo \($0)" } ?? "Undo"
+    }
+
+    override func undo() {
+        guard !textHasFocus else { return super.undo() }
+        MainActor.assumeIsolated { _ = model?.undoNewest() }
+    }
 }

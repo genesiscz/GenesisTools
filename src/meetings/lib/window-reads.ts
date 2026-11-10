@@ -5,17 +5,24 @@ import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
-import { MEETING_FILE, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import {
+    MEETING_FILE,
+    type MeetingRecord,
+    MeetingStore,
+    MOMENTS_FOLDER,
+    type SpeakerAssignment,
+} from "@genesiscz/utils/meetings/record";
 import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
 import { type SpeakerStats, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./assign";
 import { captureCost } from "./capture-cost";
 import { configValueAt, parseConfigPath } from "./config-edit";
 import { transcriptMarkdown } from "./export";
-import { type MatchDraft, type MatchPreviewRow, matchDraftSchema, matchPreview } from "./match-preview";
+import { type MatchDraft, matchDraftSchema } from "./match-preview";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingsOverview, meetingsOverview } from "./overview";
-import { meetingSource, sourceRefOf } from "./sources";
+import type { ReviewRows } from "./review-row-schema";
+import { type LinkedSource, meetingSource, sourceRefOf } from "./sources";
 import { type CorrectedTranscript, correctTranscript } from "./transcript-corrections";
 
 const { log } = logger.scoped("meetings-window-reads");
@@ -31,9 +38,15 @@ export function windowJson(value: unknown): string {
 }
 
 /** `meetings overview --days <n>`: the meetings of the last `days`, with what needs the user. */
-export async function overviewRead(options: { days: number; now: Date }): Promise<MeetingsOverview> {
+export async function overviewRead(options: {
+    days: number;
+    now: Date;
+    store?: MeetingStore;
+}): Promise<MeetingsOverview> {
     const { days, now } = options;
-    const bounded = new MeetingStore().listBounded({ since: new Date(now.getTime() - days * 86_400_000) });
+    const bounded = (options.store ?? new MeetingStore()).listBounded({
+        since: new Date(now.getTime() - days * 86_400_000),
+    });
     const view = meetingsOverview({
         records: bounded.records,
         config: await new MeetingsConfigStore().read(),
@@ -85,17 +98,23 @@ export function revisionTokens(facts: RevisionFacts): WindowRevisions {
  * the part reads and its source's revision. Reads no transcript and no frame, so the window can ask it on every
  * return and read again only the parts whose token changed.
  */
-export async function revisionsRead(options: { store: MeetingStore; record: MeetingRecord }): Promise<WindowRevisions> {
-    const { store, record } = options;
+export async function revisionsRead(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    /** The record's source, when the caller holds it already (a test's fake one); else its linked source. */
+    linked?: LinkedSource;
+}): Promise<WindowRevisions> {
+    const { store, record, linked } = options;
     const folder = store.folder(record.id);
     const recordFile = fileIdentity(join(folder, MEETING_FILE));
     const config = fileIdentity(new MeetingsConfigStore().path);
-    const ref = sourceRefOf(record);
+    const ref = linked ? { sourceId: linked.source.id, sourceMeetingId: linked.sourceMeetingId } : sourceRefOf(record);
     let source: string | null = "no source";
 
     if (ref) {
         try {
-            source = await (await meetingSource(ref.sourceId)).revision(ref.sourceMeetingId);
+            const reader = linked?.source ?? (await meetingSource(ref.sourceId));
+            source = await reader.revision(ref.sourceMeetingId);
         } catch (error) {
             log.debug({ error, meeting: record.id }, "the source gave no revision; the window reads it again");
             source = null;
@@ -103,11 +122,12 @@ export async function revisionsRead(options: { store: MeetingStore; record: Meet
     }
 
     // The timeline reads ocr.jsonl and checks each frame file; a frame added or removed changes its folder's identity.
+    // Cut Moment clips are no screen data: a play must not make the window read the Screen tab again.
     const screen = [
         fileIdentity(join(folder, "ocr.jsonl")),
         fileIdentity(folder),
         ...readdirSync(folder, { withFileTypes: true })
-            .filter((entry) => entry.isDirectory())
+            .filter((entry) => entry.isDirectory() && entry.name !== MOMENTS_FOLDER)
             .map((entry) => [entry.name, fileIdentity(join(folder, entry.name))]),
     ];
     return revisionTokens({ meeting: record.id, recordFile, config, source, screen });
@@ -134,26 +154,20 @@ export interface DictionaryShowView {
 }
 
 /**
- * `meetings projects preview [--draft <json>] [--limit n]`: the newest meetings against the saved project rules and
- * the draft. `draft` is the parsed draft (undefined without one), which the table view needs.
+ * `meetings projects preview [--draft <json>] [--limit n]`'s flags: the parsed draft (undefined without one, which the
+ * table view needs) and the newest meetings to check. The Meetings service's `projects.preview` reads the rows.
  */
-export async function matchPreviewRead(flags: {
-    draft?: string;
-    limit?: string;
-}): Promise<{ draft: MatchDraft | undefined; rows: MatchPreviewRow[] }> {
+export function matchPreviewFlags(flags: { draft?: string; limit?: string }): {
+    draft: MatchDraft | undefined;
+    limit: number;
+} {
     const draft = flags.draft ? matchDraftSchema.parse(SafeJSON.parse(flags.draft, { strict: true })) : undefined;
     const limit = Number(flags.limit ?? "20");
     if (!Number.isSafeInteger(limit) || limit < 1) {
         throw new Error("--limit must be a positive integer");
     }
 
-    const rows = matchPreview({
-        records: new MeetingStore().listBounded({ limit }).records,
-        config: await new MeetingsConfigStore().read(),
-        ...(draft ? { draft } : {}),
-        limit,
-    });
-    return { draft, rows };
+    return { draft, limit };
 }
 
 /** `meetings dictionary show [--project p]`: the merged dictionary, each entry with the level it comes from. */
@@ -176,7 +190,7 @@ export function dictionaryShowRead(config: MeetingsConfig, project?: string): Di
     return { project: project ?? null, abbrExpansion: merged.abbrExpansion, entries: rows };
 }
 
-export type SpeakerStatsView = { meeting: string; gapSec: number } & SpeakerStats;
+export type SpeakerStatsView = { meeting: string; gapSec: number; assignments?: SpeakerAssignment[] } & SpeakerStats;
 
 /** `meetings speakers stats <id>`: per label its turns, spoken time and spans, on the stays the record keeps. */
 export async function speakerStatsRead(options: {
@@ -184,16 +198,49 @@ export async function speakerStatsRead(options: {
     record: MeetingRecord;
     gapSec: number;
     attendance?: string;
+    /** The record's source, when the caller holds it already (a test's fake one); else its linked source. */
+    linked?: LinkedSource;
 }): Promise<SpeakerStatsView> {
     const { store, record, gapSec } = options;
-    const opened = OpenedMeeting.of(store, record);
+    const opened = OpenedMeeting.of(store, record, options.linked);
     const meeting = await opened.meeting();
     const stats = speakerStats(meeting.transcript, {
         gapSec,
         participants: meeting.speakers,
         presence: await opened.presence(options.attendance),
     });
-    return { meeting: record.id, gapSec, ...stats };
+    const assignments = record.speakers.assignments ?? [];
+    return { meeting: record.id, gapSec, ...stats, ...(assignments.length > 0 ? { assignments } : {}) };
+}
+
+/**
+ * The review rows of a meeting (`meetings rows --json`, `meeting.rows`). A meeting without a readable transcript still
+ * has rows, without the words said. `minPriority`: the config's `playback.listen.minPriority` when absent.
+ */
+export async function rowsRead(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    linked?: LinkedSource;
+    minPriority?: number;
+    lowPriority?: "hide" | "show";
+}): Promise<ReviewRows> {
+    const { store, record } = options;
+    const opened = OpenedMeeting.of(store, record, options.linked);
+    const transcript = await opened
+        .meeting()
+        .then((meeting) => meeting.transcript)
+        .catch((error: unknown) => {
+            log.debug({ error, meeting: record.id }, "rows without the words said: the transcript does not read");
+            return undefined;
+        });
+    const minPriority = options.minPriority ?? (await opened.config()).global.playback.listen.minPriority;
+    // Loaded here: the row builder reads the decision journal's actor words, which no other window read needs.
+    const { reviewRows } = await import("./review-rows");
+    return reviewRows(record, {
+        ...(transcript ? { transcript } : {}),
+        minPriority,
+        ...(options.lowPriority ? { lowPriority: options.lowPriority } : {}),
+    });
 }
 
 /** The transcript flags that change what `meetings transcript` applies or prints. */
@@ -214,9 +261,11 @@ export async function correctedTranscriptRead(options: {
     record: MeetingRecord;
     format: TranscriptFormat;
     flags: TranscriptReadOptions;
+    /** The record's source, when the caller holds it already (a test's fake one); else its linked source. */
+    linked?: LinkedSource;
 }): Promise<{ markdown?: ReturnType<typeof transcriptMarkdown>; applied: CorrectedTranscript }> {
-    const { store, record, format, flags } = options;
-    const meeting = await OpenedMeeting.of(store, record).meeting();
+    const { store, record, format, flags, linked } = options;
+    const meeting = await OpenedMeeting.of(store, record, linked).meeting();
     const config = await new MeetingsConfigStore().read();
     const markdown =
         format === "md"

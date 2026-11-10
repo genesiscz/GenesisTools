@@ -637,3 +637,47 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
 - **A row moved into the title bar (`.titlebarRow()`) lies outside its view's frame** (a negative top padding), so an
   overlay on that view leaves the row uncovered. Reach the strip with `.titlebarBackground(fill)`: it paints the strip,
   leaves its clicks to the window (double-click, drag), and takes clicks in the view's own frame.
+
+## Socket paths, an edit during a build, a field on a memberwise type — 2026-11-10 04:58
+
+- **A Unix socket path holds 103 bytes on macOS** (`sockaddr_un.sun_path` is 104 with its zero). Bun and Node listen
+  on a longer path without a word, so the service is up and every CLI call reaches it, while a Swift client that
+  fills `sun_path` itself must refuse. The Meetings window then read everything through commands and started the
+  service again every 30 to 60 s. Fix: connect through a short symbolic link in the temporary folder, which the
+  kernel follows (`JSONRPCSocketClient.connectablePath`). A home deep under `/tmp/cc/<project>/<session>/…` is
+  where this shows; a real home's path is short, so only sandboxes and tests saw it. Rule: a client that can fail in
+  a way that will never heal (a path too long, a protocol it does not speak) says so and does not retry on a timer.
+- **An edit while a background `swift build` or `app:test` runs gives a build of two states.** It fails with
+  "type 'X' has no member 'y'" for a member that exists in the file, or it passes on a mix and proves nothing. Wait
+  for the run to end before the next edit; never read such a failure as a real error, and never trust the pass.
+- **`["strong", "normal", "weak"].first { level in items.contains { $0.strength == level } }` returns `String??`**
+  when `strength` is optional: the literal is inferred as `[String?]` to make `==` compile, and a later string
+  interpolation prints `Optional("weak")` into the UI. Give the list its type (`let levels: [String]`). A test that
+  compares the visible sentence catches it; a test that only counts lines does not.
+- **A one-line `Text` beside a `Spacer` truncates with room to spare.** At equal layout priority an `HStack`
+  offers both an equal share of the free width, so the text takes half and shows an ellipsis while the spacer keeps
+  the rest. Give the text a priority above the spacer (`.layoutPriority(0.5)`), and the parts that must never
+  truncate a higher one. A button label that must stay on one line takes `.lineLimit(1).fixedSize()`.
+- **A sentence with controls in it wraps like text only when its layout items are the units between spaces.** One
+  item per text piece starts a new line at every control; one item per word breaks between "(" and the control after
+  it. Group the items with no space between them into one unit (`ReviewRowView.units`).
+- **A new field on a `Decodable` struct that tests build by its memberwise init**: `var answer: String? = nil` keeps
+  every call site compiling and still decodes the key when it is present.
+- **A view with an optional slot** (chips under a line, an accessory) is generic over the slot, with
+  `extension Row where Slot == EmptyView` for the call sites without one. `AnyView` there costs the diffing.
+- **A width on an empty slot is a width on nothing.** `row(name: EmptyView())` with `name.frame(width: 170)` puts
+  no view in the stack, so that row's flexible column is 170 pt (and one spacing) wider than in the rows whose slot
+  holds a view. The Speakers ruler and its question banners had a wider lane than the speakers' rows, and no clock
+  time stood over the second it names. Wrap the slot (`ZStack { name }.frame(width:)`), and compare the columns with
+  a frame probe at two widths (`testTheQuestionsAndTheRulerShareTheSpeakersLane`).
+- **A second view inside one `ForEach` element takes the element's id.** A `Divider()` written before the row in
+  the `ForEach` body made `proxy.scrollTo(row.id)` stop at the divider, with the row below the fold. Draw the rule on
+  the row (`.padding(.top)` and `.overlay(alignment: .top)`), after the row's own `.id`.
+- **`ViewThatFits` picks by each row's own words.** A folded row with a short answer kept its status and the row
+  under it dropped it, so one list had three shapes. When a list's rows must take one shape, give every part a
+  nominal ideal width (`.frame(idealWidth:)` changes only what the unspecified proposal measures), so the choice
+  follows the column and not the content.
+- **A view that follows something scrolls on change only.** `onChange(of: heard)` never fires for a pane that
+  appears while the value is already set. A follower also places itself in `onAppear`, on the next main-queue turn.
+- **A lazy stack places a far row by an estimate.** One `scrollTo` for a row far below lands near it; ask again on
+  the next main-queue turn, when the rows around it are laid out.

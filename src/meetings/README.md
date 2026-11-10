@@ -17,14 +17,21 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `link <meeting> wisprflow:<id>` | Attach a source's meeting to an existing record. A source meeting that another record holds is refused with `[source-linked]` and the `merge` command, because two records would split one call. When the call started before the record (a record made when a screen recording started), the record's start becomes the call's, so its times match the transcript |
 | `merge <meeting> --into <meeting> [--dry-run] [--json]` | Make two records of one call one: the frames, sound and their rows move into the record that stays, the recording blocks, context, labels, people and history merge, the start is the earlier one, and a generated title (`Meeting 14:29`) gives way to the call's. Both folders are cloned into `~/.genesis-tools/backups/meetings/<YYYY-MM-DD-HHMM>-merge-<meeting>/` first, with a `README.md` of restore steps; the record that goes away moves there, its editor files are made again on the next open, and its open project question is withdrawn. Refused for records of two source meetings, a record with items (decide them first), a record being recorded, and frame names in both |
 | `context add <meeting> [file\|url] [--title] [--note]`, `context list`, `context remove` | Reference material; a file is kept as its path, never copied |
-| `speakers stats <meeting> [--attendance <platform>\|<file>]` | Per label: origin, turns, spoken time, spans, with hints |
+| `speakers stats <meeting> [--attendance <platform>\|<file>]` | Per label: origin, turns, spoken time, spans, with hints. A span joins turns up to `--gap` apart (2 minutes): it says when the label was there. `--json` also lists each turn by itself as `talk`, which the Meetings window draws as the talk-time lanes |
 | `speakers rename <meeting> <label> <name>` | Rename a label for this meeting |
+| `people [query] [--meeting <meeting> [--at <time>]] [--limit <n>] [--hidden] [--json]` | The people directory: everyone the meetings, the projects, Contacts and the people book name, one row per person, matched with case and accents ignored and ranked (see [People](#people)). `--json` prints `{ query, people, total, sources }`; a source that is off or refused says why in `sources` |
+| `people add <name> [--email <address>] [--note <text>]`, `people hide <person> [--show]` | Add a person to the people book, or give one it has an email or a note; hide a person from every list, or show them again |
+| `people merge <a> <b> [--name <name>] [--yes]`, `people unmerge <token>` | Show two people as one. Without `--yes` it prints the meetings that name either of them and the speaker labels renamed to them, and writes nothing; with `--yes` it writes the merge and prints its token, which `unmerge` takes. No meeting record changes |
+| `people assign <meeting> <person> --from <time> [--to <time>] [--label <label>] [--line <time>]… [--plan]`, `people unassign <meeting> <token>` | Give lines of one meeting to a person without renaming the whole label: a stretch (one label's lines with `--label`, every voice's without it) or single lines by their start. The corrected transcript, `show` and `speakers stats` show them as that person. `--plan` prints what it would give and the other stretches it may reach, and saves nothing. `unassign` undoes it by the token it printed |
 | `evidence <meeting> [--attendance <platform>\|<file>] [--files] [--json]` | Which voice each label's lines are: audio channel and the platform's speaking indicator, plus the volume check (`--format json`, or its short form `--json`: one row per line) |
 | `suggest <meeting> [--rules speakers,evidence,terms] [--attendance <platform>\|<file>]` | Run the rules and add what they find as suggested items. A second run adds no item it already made and no question while the meeting has `questionCap` open. It first retires (rejects, with `evidence.retired`) the suggested words that a dictionary entry or the slang rule settles now, and the questions that decided only them |
 | `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
-| `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>] [--json]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker`. An item confirmed already is left as it is (`needs: "nothing"` in `--json`, exit 0), so its first Undo token still works; a skip that needs a value or an answer exits 1 |
-| `reject <meeting> <ids…> [--json]`, `--min-confidence 0.9` | Reject items; they are never suggested again. `--json` prints `{ decided, token, skipped }`, as `confirm --json` does; the token is what `reopen --token` takes |
-| `reopen <meeting> <ids…> [--token <token>] [--json]` | Put confirmed or rejected items back to suggested (the Undo of confirm and reject). `--token` undoes one decision, by the token that `confirm --json` or `reject --json` printed; when another decision changed one of its items since, it is refused with `[item-changed]`. A question is reopened only by `listen`, and a confirm's line in the corrections ledger stays |
+| `rows <meeting> [--all] [--json]` | The review rows, as the Meetings window shows them: questions first in the order `listen` asks (priority, then time), then the other items by time; a decided row keeps its place. Each row has its question as parts (who, what was said, when, what it asks, what it settles, the reason), its choices with their role (suggested, presumed, candidate, heard, earlier answer, none of these, several voices, skip) and the engine's confidence where it has one, its edit kind, what it needs, its sources and who decided it last. Open questions below `playback.listen.minPriority` are counted, and `--all` shows them. `--json` prints `{ meeting, rows, hidden }` (REPL: `meetings.open(id).items.rows()`; the Meetings service: `meeting.rows`) |
+| `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>] [--reason <text>] [--json]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker`. An item confirmed already is left as it is (`needs: "nothing"` in `--json`, exit 0), so its first Undo token still works; a skip that needs a value or an answer exits 1. `--reason` is kept in the decision journal and on each item it decided. `--json` prints `{ decided, token, skipped, entry }`; `entry` is the journal entry, with who decided (the actor), the reason and every item before and after |
+| `reject <meeting> <ids…> [--reason <text>] [--json]`, `--min-confidence 0.9` | Reject items; they are never suggested again. `--json` prints `{ decided, token, skipped, entry }`, as `confirm --json` does; the token is what `reopen --token` takes |
+| `journal <meeting> [--item i42\|Q12] [--limit <n>] [--json]` | Who decided what in the meeting, when and why, newest first: one entry per decision (a person in the window, a person in `listen`, a person at the command line, an agent with its harness and session, a rule), with its reason and the items it changed. An Undo names the entry it undid. Comments sent to the listening agent are entries too (kind `comment`). `--json` prints `{ meeting, entries }` |
+| `serve [--detach] [--status] [--stop] [--no-idle]` | The Meetings service: the one owner of the meetings store while it runs, which the window, the CLI and agents reach over `<genesis-tools>/meetings-service/service.sock` (`service.json` beside it names its pid and checkout). A command finds it by itself and answers in its own process when none runs, with the same output. It exits after 10 minutes with no connection and when its code changes. `--stop` stops it (none running is no failure). The settings page's library is on it too: `projects.add`, `projects.rename`, `projects.remove`, `projects.labels`, `projects.unpair`, `projects.preview`, `dictionary.show`, `dictionary.add`, `dictionary.remove`, `dictionary.test` and `config.edit`, which `projects`, `dictionary` and `config edit` call with the same output |
+| `reopen <meeting> <ids…> [--token <token>] [--reason <text>] [--json]` | Put confirmed or rejected items back to suggested (the Undo of confirm and reject). `--token` undoes one decision, by the token that `confirm --json` or `reject --json` printed; when another decision changed one of its items since, it is refused with `[item-changed]`. A question is reopened only by `listen`, and a confirm's line in the corrections ledger stays |
 | `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--json] [--with-suggested] [--timestamps] [--play-links] [--no-frontmatter] [--no-dictionary]` | The transcript with renames, confirmed items and the dictionary. `--json` is the short form of `--format json`. `--timestamps` shows the start time of each paragraph; `--play-links` (md) links each start time to its moment through the router preset `meetings-play`, and implies `--timestamps`; `--no-frontmatter` (md) leaves out the front matter; `--no-dictionary` does not apply the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`languages.<global.language>.render.unclearLabel`); `--with-suggested` applies the top reading instead. Each applied item that did not change the transcript is a warning (`i42 did not apply: no "X" at 37:43`, `… 2 lines start at 37:43`, `… i41 changed "X" first`). In md the front matter's `speakers` maps each person after the corrections to their line count; `unattributed` holds the source labels nobody named |
 | `record start [--meeting <ref> \| --source wisprflow:<id> \| --title <text>] [--project] [--display all\|follow-focus\|main\|<index>]` | Record the screen: a frame when it changes, OCR per frame; creates the meeting (with the calendar event around now) unless one is named |
 | `record pause`, `record resume`, `record stop`, `record status` | Control the running recording over its socket; stop answers after the last frames, the summary and the collect, and lists the frames per display in status |
@@ -37,15 +44,16 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
 | `watch [--once]` | The watcher behind autostart and "ask each time"; the daemon starts it at login when autostart is on or a project question waits |
 | `attendance <meeting> [--from <platform>\|<file>]` | Store who was in the call and when, and the sections derived from it (one per join or leave); suggest, speakers stats and evidence read them when no `--attendance` is given. A file is read in a platform's export format: `teams:<file>` names it, a bare path is read in the meeting's platform's format, else in the one format its text fits (Teams: `tools ms-teams meetings attendance --json` output). Second 0 is the source's transcript clock. A Teams call that lists its people without join or leave times (its call-ended message) counts them present for the whole call, and the note says how many. A fresh home needs `tools ms-teams sync` first |
-| `listen <meeting> [--item Q12]` | Answer the open questions by ear, one at a time: each range is cut with ffmpeg (padding `playback.listen.padSec`, asked on the first run), with a short tone just before the asked words (`beep`, `beepLeadSec`), and played `delaySec` (2) after the question shows, then again after each `repeatGapSec` (1) pause until the question is answered (`repeat`, on by default), also while a "Something else…" answer is typed. A word question shows the line its heard words are in, with the words marked and the lines before and after it. When the round already answered the same heard words at another time, that answer is the first choice and the question says when it was given. Esc goes back one step: from the comment to the choices, from the choices to the previous question, whose answer is undone. "Enough for now", or Esc on the first question, ends the round; the next `listen` goes on from there. Undo reverts only what that answer changed, so an item added meanwhile stays. `--item Q12` (or `12`, or the id `i42`) asks only that question and, after "Several voices", its parts. `--item Q12 --answer "<text>"` answers without audio, in a round of its own, or inside the round a person is listening to |
-| `listen <meeting> --subscribe-answers [--follow] [--from-start] [--timeout 120]` | For an agent: prints the running round's events as JSON lines (`round-start`, `answered`, `skipped`, `split`, `reopened`, `round-end`) while the person answers, from `questions.ndjson` in the meeting folder, and exits 0 at the round's end (an aborted round when the listener is gone), 2 on the timeout in minutes. `--follow` stays up across rounds (the Meetings window answers one question per round) and exits 0 when a round ends with no open question. An `answered` line names the items it confirmed or rejected in `decided`; `settled` lists the other questions the same answer closed. Run it under a Monitor, so each answer wakes the agent |
-| `listen <meeting> --clip-out <dir> [--item Q12] [--json]` | For an agent or a test: cuts each open question's clip (only `--item`'s with it) into `<dir>/<Q12>.wav`, the same clip and tone the terminal plays, and prints one line per clip (`--json`: `[{ question, id, clip, fromSec, toSec, padSec, toneAtSec }]`). It plays nothing, starts no round and changes nothing; without a saved `playback.listen.padSec` it uses 5 s instead of asking |
+| `listen <meeting> [--item Q12] [--reason <text>]` | Answer the open questions by ear, one at a time: each range is cut with ffmpeg (padding `playback.listen.padBeforeSec` before it and `padAfterSec` after it, asked once on the first run for both sides), with a short tone just before the asked words (`playback.listen.tone`: `enabled`, `leadSec`, and its `sound`: a sine `{ hz, sec, volume }`, a preset `{ preset, volume? }` or a sound file `{ file, volume }`, see "The tone's sound"), and played `delaySec` (2) after the question shows, then again after each `repeatGapSec` (1) pause until the question is answered (`repeat`, on by default), also while a "Something else…" answer is typed. A word question shows the line its heard words are in, with the words marked and the lines before and after it. When the round already answered the same heard words at another time, that answer is the first choice and the question says when it was given. A speaker question shows each name's score beside it (`72 %`, see "Speaker candidate scores"); a name without one shows none. Esc goes back one step: from the comment to the choices, from the choices to the previous question, whose answer is undone. "Enough for now", or Esc on the first question, ends the round; the next `listen` goes on from there. Undo reverts only what that answer changed, so an item added meanwhile stays. `--item Q12` (or `12`, or the id `i42`) asks only that question and, after "Several voices", its parts. `--item Q12 --answer "<text>"` answers without audio, in a round of its own, or inside the round a person is listening to. `--reason` is kept in the decision journal with each answer |
+| `listen <meeting> --subscribe-answers [--follow] [--from-start] [--timeout 120]` | For an agent: prints the running round's events as JSON lines (`round-start`, `answered`, `skipped`, `split`, `reopened`, `round-end`) while the person answers, from `questions.ndjson` in the meeting folder, and exits 0 at the round's end (an aborted round when the listener is gone), 2 on the timeout in minutes. `--follow` stays up across rounds (the Meetings window answers one question per round) and exits 0 when a round ends with no open question. `--with-comments` adds the comments the person sends from the window to the same stream: one line per comment with `"type": "comment"` (`id`, `text`, `quote`, the transcript `target`, the journal `token`), and every answer line then starts with `"type": "answer"`. Without the flag the stream is unchanged. While it runs, the window names it as the listener a send reaches. An `answered` line names the items it confirmed or rejected in `decided`; `settled` lists the other questions the same answer closed. Run it under a Monitor, so each answer wakes the agent |
+| `listen <meeting> --clip-out <dir> [--item Q12] [--json]` | For an agent or a test: cuts each open question's clip (only `--item`'s with it) into `<dir>/<Q12>.wav`, the same clip and tone the terminal plays, and prints one line per clip (`--json`: `[{ question, id, clip, fromSec, toSec, padSec, padAfterSec?, toneAtSec }]`; `padSec` is the pad before the range, `padAfterSec` the pad after it when the two differ). It plays nothing, starts no round and changes nothing; without saved pads it uses 5 s on both sides instead of asking |
 | `items add <meeting> --kind speaker-range --from 38:12 --to 38:20 --label "<raw label>" --speaker <name> --confidence 0.85 --reason "…"` | Store an agent's finding (rule `agent`, the reason in `evidence.reason`); it stays suggested until a person confirms it |
 | `items add <meeting> --kind term --at 1:02 --heard <words> [--proposed <spelling>] --confidence 0.4 --reason "…"` | The same for a term; without `--proposed` it is asked as free text when it matters |
 | `items add <meeting> --listen --from 37:43 --to 37:51 --question "…" [--choices "A,B"] [--decides i7] [--priority 2]` | Add a question of your own for `listen`; `--priority` is on the scale suggest scores its own questions with (below), and one under `playback.listen.minPriority` (0.5) is asked only with `--item` |
 | `items add <meeting> --from-file findings.json` | A batch in one write: an array (or `{ "findings": [...] }`) of objects with the flags' names (`kind`, `from`, `to`, `at`, `label`, `speaker`, `heard`, `proposed`, `scope`, `joined`, `question`, `choices`, `decides`, `priority`, `confidence`, `reason`), plus `meaning` or `quote` on a term, and `line` (the line's index, as an `items add` warning names it) on a join or a term when two lines start in one second; times as seconds or "37:43". Kinds: `speaker-range`, `label` (`label`, `from`, `to`, `"meaningless": true`, `reason`: the label tracks no one person in that stretch, so its lines there count as unlabeled for the rules and render as `[nejasné: "<label>"]` unless a range or join gives them a voice), `join`, `term`, `question`. A finding may carry a `ref`, and a question's `decides` may list the refs of its own batch: they become the new ids. A term's `proposed` fixes the words everywhere unless `"scope": "line"`. One bad entry adds nothing. Each join and each term bound to a line is anchored to its line (`evidence.transcriptLine`); a time where no line, or two lines, start is a warning, and so is each new item that would not apply |
 | `evidence <meeting> --raw [--word-check hunspell\|hunspell-cc0\|macos\|off]` | The facts per line as JSON for an agent: label, text, channel, speaking, muted, present, the people, the silent call stretches (`meeting.callSilent`), the term part and the summary; no rule and no confidence. Reads existing evidence and cached energy without writing. `new`, `link` and `record stop` collect the platform and attendance facts and calibrate the channel energy, and `suggest` does both when they are missing; neither step has a command of its own |
 | `play <meeting> --at 1:23:50 [--before 5] [--player vlc\|ffplay] [--json] [--no-start]` | Play the meeting's audio from a moment in VLC (`playback.player`, ffplay as fallback), to hear a voice before `confirm`. `--player` picks the player for one call and is refused when it is not installed (never replaced by another). `--json` prints `{ audioPath, startSec, player, pid }` after the player started; the Meetings window starts ffplay this way (`-nodisp -autoexit`, no window) and pauses, resumes and stops it through `pid`. `--no-start` resolves the file, the start and the player and starts nothing, so an agent or a test checks a moment without sound (with `--json`: the same object without `pid`). A time more than 30 s after the last speech the source keeps is refused with that speech's time. Errors exit 1 with the sentence on stderr |
+| `play <meeting> --item Q12\|i42 \| --at 1:49:48 [--to 1:50:02] \| --target '<json>' [--clip] [--no-start] [--tone <sound>] [--json]` | The Moment of a target: the bounded clip `listen` would play, with its pads and the tone before the asked spot (`playback.listen.padBeforeSec`, `padAfterSec`, `playback.listen.tone`). `--tone` plays this call with another tone: a preset's name (`soft`, `tink`), a sound file's path, or a tone setting as JSON (`{"hz":440,"sec":0.2}`), and it sounds even when `playback.listen.tone.enabled` is off; it needs a Moment, so `--at` alone refuses it. `--item` takes an item id or a question's number, `--at` with `--to` a range, `--at` with `--clip` a time (the rest of its line, 4 to 15 s), and `--target` any target as JSON: `{"kind":"item","id":"Q12"}`, `{"kind":"time","atSec":90}`, `{"kind":"range","fromSec":60,"toSec":75}`, `{"kind":"selection","from":{"atSec":60,"fraction":0.5},"to":{"atSec":70}}` (words picked in the transcript: a line's start and how far into its text) or `{"kind":"stretch","atSec":600}` (one speaker's turn, `speaker` to pick whose). `--clip` cuts it into the clip cache, `<genesis-tools>/meetings-cache/moments/<meeting>/<label>-<key>.wav` (at most 500 MB; the clips used longest ago go first, and the same Moment of the same recording is cut once), and plays nothing; `--no-start` only plans it; without either the clip plays once in `playback.listen.player`. `--json` prints the Moment: `{ meeting, target, label, fromSec, toSec, padSec, padAfterSec?, startSec, endSec, spotSec, tone?: { atSec, sound: { hz, sec, volume, file?, preset? } }, delaySec, repeatGapSec?, screen?: [{ file, path, at, meetingSec, displayId? }], path?, player?, pid? }`; `screen` names the frame on each display at the spot when the screen was recorded then. A target the meeting does not have exits 1 with `[unknown-item]`, `[no-time]`, `[bad-range]`, `[unknown-line]`, `[no-speech]` or `[past-the-end]` leading the sentence |
 | `projects list` | The known projects, with their dictionary size, labels and match rules (`--json`) |
 | `projects add <name>` | Add a known project |
 | `projects rename <name> <new-name> [--json]` | Rename a project everywhere it is named: its block (dictionary, labels, match rules, export folder), its source folder pairings and the project of its meetings. Refused when the new name is taken |
@@ -337,6 +345,9 @@ answer settles compatible look-alikes. A speaker answer requires the same single
 and an offered answer; its items gain +0.3 up to 0.9, closing questions that reach the threshold. A word answer
 propagates only between questions with the same heard words and choices that decide exclusively global terms ("settled by the answer to i7"); the `answered` event lists them in `settled`, and an undo
 reopens them (`reopened` with `also`). "Enough for now" ends the round; the rest stay marked in the transcript.
+Through the service an answer can leave its look-alikes open: `decision.apply` with
+`{ kind: "answer", question, answer, lookAlikes: "leave" }` decides the question and what it decides, nothing more
+(the window's "Only this question" in its "This also affects" sheet). `listen` always settles them.
 
 The round is one module, `ListenSession` in `lib/listen-session.ts`: which question comes next, the budget, each
 decision as per-item changes with their inverse, look-alikes, the answer log and the ledger. A `ListenAdapter` asks
@@ -350,6 +361,31 @@ A word question finds its heard words as whole words (`TranscriptLines` in `src/
 same words over the same range take the first and the second occurrence, each with its own time and line.
 
 A confirmed term or join is also written to `~/.genesis-tools/meetings/corrections.jsonl`.
+
+### Speaker candidate scores
+
+Each speaker range the rules make carries `evidence.candidateScores`: one entry per person the voice could be,
+`{ speaker, confidence, lines?, evidence: [{ kind, rule?, lines?, against? }] }`, best first (`lib/speaker-scores.ts`).
+A speaker question's choices show them: `rows` and the Meetings window as each choice's `confidence`, `listen` as
+`72 %` beside the name. A term keeps its own `evidence.candidateScores` (`{ term, confidence }`).
+
+- The range's speaker keeps the rule's confidence, so one choice never shows two numbers. A range without a speaker
+  gives its confidence to its candidates; the label's own person gets no score there, because the rule says the voice
+  is not theirs.
+- The other people share what is left by weight, per share of the range's lines: the user's microphone holds the line
+  (1), E3 shows them speaking (0.5), E4 names them (0.1), they are in the call (0.2, never for the user, who is always
+  in their own call), they talk under their own label within 10 s (2, the turn timing: one voice cut into two
+  labels), an agent's range over the same lines names them (2 times its confidence and overlap, the polish). A voice
+  the roster does not list keeps 0.2, or 0.05 when attendance is known.
+- The evidence kinds are `voice`, `roster`, `timing`, `polish`, `directory` (the people directory folded two names of
+  one person into one candidate) and `answer` (an answer raised the range; the others then keep their proportions).
+- A person with no evidence gets no score. A question over several ranges shows a name's lowest score, and none when
+  one range does not score it. A range suggested before the scores existed shows a number on its speaker only.
+- Checked on 2026-11-10 on the two recorded meetings with answers: 62 fresh engine ranges whose lines an agent's
+  confirmed range or an answered question names. The suggested speaker was right in 26 of 36 (mean confidence 0.69).
+  The top-scored name is right in 39 of 62, and in 14 of the 26 ranges without a speaker, which had no number before.
+  The other names' scores hit about as often as they say: a mean of 0.04 hit 7 %, 0.18 hit 26 %, 0.36 hit 31 %.
+  Change a weight only after the same check.
 
 ### Context documents: quotes and meanings
 
@@ -365,6 +401,32 @@ bound to its line (`atSec`), so it never changes the same words elsewhere.
   `employeesOnly`, "administration CMS schema" for `/administration/cms/schema`), or one path segment after "lomeno"
   or a slash (`/{type}`). A comma between the words ends the run. The words stay; `meaning` names the identifier,
   shown after them. An identifier is marked at its first mention and again after two minutes without one.
+
+## People
+
+The people directory answers "who do we know" from every place a person is named: a meeting's participants,
+attendance, calendar attendees, speaker renames and assignments; the projects' paired people (`projects.<p>.match.people`);
+Contacts (`contacts.search`, under GenesisTools.app's Contacts grant); and the people book,
+`~/.genesis-tools/meetings/people.json` (`{ version: 1, entries, merges, hidden }`: people added by hand, merges,
+hidden people). One person is the same email, or, when either side has no email, the same name tokens (`nameKey`:
+"Dana Exámple" and "dana example" are one person). A record is read again only when its file changed.
+
+- **Ranking** for a meeting and a moment (`people --meeting <m> --at <time>`, the Meetings service's `people.known`):
+  the people in the call at that moment, then that meeting's people, then other meetings by count and recency, then
+  Contacts, then the people book. Nothing is preselected.
+- **Merges** are aliases in the people book. No meeting record changes, so `unmerge` undoes a merge fully.
+- **Assignments** (`people assign`, the decision journal's `assign`) live in the record as `speakers.assignments`,
+  one per source label and stretch. A later assignment over the same lines wins over an earlier one and over a
+  confirmed speaker range. The journal keeps each one's before and after, so its token undoes it; one changed since is
+  refused with `[item-changed]`. Its plan names the other stretches it may reach: the same label inside the hint range
+  around it, or in the sections with the same people present, never "sounds the same".
+- A rename to a name another label holds already is planned with the warning that both labels become one person.
+- `listen`'s typed answer completes from the record's people, then the directory's people for the meeting, then the
+  dictionary. It never reads Contacts.
+- Settings: `global.people.sources.contacts` and `global.people.sources.calendar` (both `true`). A refused Contacts
+  grant is a reason in `sources`, never an empty list.
+- A `people.json` that is not JSON reads as empty, and the next write moves it aside to `people.json.broken-<time>`.
+  A value this build cannot read (a newer build's) is kept and written back.
 
 ## The dictionary
 
@@ -391,7 +453,7 @@ that varies by recorder, source or language sits under that axis:
 
 ```jsonc
 {
-    "version": 3,
+    "version": 4,
     "global": {
         "dictionary": { "abbrExpansion": "every", "entries": [] },
         "language": "cs",
@@ -401,7 +463,8 @@ that varies by recorder, source or language sits under that axis:
         "assign": {
             "ask": true, "lookbackHours": 48, "maxProposals": 5, "calendarSlackMin": 15,
             "calendarLookbehindHours": 3, "folderWaitDays": 14, "retryFailedMin": 10
-        }
+        },
+        "people": { "sources": { "contacts": true, "calendar": true } }
     },
     "projects": {
         "work": {
@@ -447,7 +510,22 @@ A version 1 file is rewritten once on the first read: `global.render` moves to `
 `playback.listen.budget` to both `global.suggest.questionCap` and `playback.listen.roundCap`, and
 `projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. A version 2 file moves
 `projects.<p>.match.calendar.titles` to `projects.<p>.match.title.words`, since the words test the meeting title from
-any source. The code reads only the new places. A file of a newer version still reads (the keys this code knows).
+any source. A version 3 file moves `playback.listen.beep` to `playback.listen.tone.enabled` and `beepLeadSec` to
+`tone.leadSec`, since the tone gained its sound and belongs to every Moment. A version 4 file moves
+`playback.listen.padSec` to both `padBeforeSec` and `padAfterSec`, since a clip may hear more before the asked words
+than after them. The code reads only the new places. A file of a newer version still reads (the keys this code knows).
+
+### The tone's sound
+
+`playback.listen.tone.sound` is one of three shapes. A sine `{ hz, sec, volume }` (880 Hz, 0.15 s, 0.6 when unset; the
+version 4 shape). A preset `{ preset, volume? }`: `beep`, `soft` and `click` are sines (the Meetings window's Beep, Soft
+and Click), and `tink`, `pop`, `ping`, `glass`, `purr`, `bottle`, `morse`, `frog`, `funk`, `hero`, `blow`, `basso`,
+`submarine` and `sosumi` are the alert sounds in /System/Library/Sounds; without `volume` a preset plays at its own. A
+sound file `{ file, volume }` with an absolute path ffmpeg reads (wav, aiff, mp3, m4a). A file tone is cut to 2 s, and
+its length is read once per version of the file. A file that is gone stops the cut with the command that picks another
+sound. A Moment's `tone.sound` names what it played: a file answers `hz` 0, its `file` and its length in `sec`. The
+service's `tone.presets` lists the presets (each with its volume, a sine's `hz` and `sec`, a file's path, and whether
+this Mac has it), and `tone.preview { sound? }` cuts any of the three shapes alone for a Play button.
 
 `languages.<code>.wordCheck` names the word check provider of a language (`hunspell`, `hunspell-cc0`, `macos` or
 `off`). Without `--word-check`, suggest and `evidence --raw` check each language's lines with its own provider, and a

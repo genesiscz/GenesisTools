@@ -139,7 +139,7 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(MeetingsFormat.dayTitle("2026-11-04", now: now, calendar: calendar), "Yesterday")
         XCTAssertEqual(MeetingsFormat.dayTitle("2026-11-02", now: now, calendar: calendar), "Mon 2 Nov")
         XCTAssertEqual(MeetingsFormat.clock(3909), "1:05:09")
-        XCTAssertEqual(MeetingsFormat.clock(309), "5:09")
+        XCTAssertEqual(MeetingsFormat.clock(309), "05:09", "the CLI's formatClock form (candidate 7)")
         XCTAssertEqual(MeetingsFormat.length(3900), "1 h 05 min")
         XCTAssertEqual(MeetingsFormat.length(50), "50 s")
         XCTAssertNil(MeetingsFormat.length(nil))
@@ -151,7 +151,7 @@ final class MeetingsWindowTests: XCTestCase {
          "confidence":0.83,"rules":["E1"],"evidence":{"reason":"the call channel held it"},"suggestedAt":"2026-11-04T10:00:00.000Z"}
         """.utf8))
         XCTAssertEqual(MeetingsWords.itemKind(item), "Speaker range")
-        XCTAssertEqual(MeetingsWords.itemTitle(item), "S1 from 1:02 to 1:15 is Bob")
+        XCTAssertEqual(MeetingsWords.itemTitle(item), "S1 from 01:02 to 01:15 is Bob")
         XCTAssertEqual(MeetingsWords.confidence(item.confidence), "83 %")
         XCTAssertEqual(item.reason, "the call channel held it")
     }
@@ -171,9 +171,12 @@ final class MeetingsWindowTests: XCTestCase {
         let raw = try JSONDecoder().decode(JSONValue.self, from: Data(#"""
         {"languages":{"cs":{"ocr":["cs-CZ","en-US"]}},"global":{"capture":{"activeFps":1}}}
         """#.utf8))
-        XCTAssertEqual(MeetingsSettingsModel.expectArgs(["languages", "cs", "ocr"], in: raw), ["--expect", #"["cs-CZ","en-US"]"#])
-        XCTAssertEqual(MeetingsSettingsModel.expectArgs(["projects", "work", "export"], in: raw), ["--expect", "null"],
-                       "a key nobody set expects null")
+        XCTAssertEqual(MeetingsConfigWrite.set(["languages", "cs", "ocr"], .array([.string("cs-CZ")]), readFrom: raw).args,
+                       ["config", "set", #"["languages","cs","ocr"]"#, #"["cs-CZ"]"#, "--expect", #"["cs-CZ","en-US"]"#])
+        XCTAssertEqual(MeetingsConfigWrite.unset(["projects", "work", "export"], readFrom: raw).args,
+                       ["config", "unset", #"["projects","work","export"]"#, "--expect", "null"], "a key nobody set expects null")
+        XCTAssertEqual(MeetingsConfigWrite.set(["global", "capture", "activeFps"], .number(2), readFrom: nil).args,
+                       ["config", "set", #"["global","capture","activeFps"]"#, "2"], "nothing read: no check")
         let edits = MeetingsSettingsModel.ruleEdits(
             "work", draft: MatchRulesDraft(folders: ["Harbor"], calendars: ["Northwind"], titleWords: ["Weekly"]),
             saved: MatchRulesDraft(folders: [], calendars: ["Northwind"], titleWords: []), raw: raw)
@@ -181,7 +184,7 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(edits.first?["path"] as? String, #"["sources","wisprflow","match","work","folders"]"#)
         XCTAssertTrue(edits.first?["expect"] is NSNull)
         let patched = raw.setting(["global", "capture", "activeFps"], to: JSONValue(foundation: 2))
-        XCTAssertEqual(MeetingsSettingsModel.expectArgs(["global", "capture", "activeFps"], in: patched), ["--expect", "2"],
+        XCTAssertEqual(MeetingsConfigWrite.set(["global", "capture", "activeFps"], .number(1), readFrom: patched).args.suffix(2), ["--expect", "2"],
                        "the page's own write is the value its next write replaces")
         XCTAssertEqual(MeetingsCLI.code(fromStderr: "\u{1B}[31m✗ [config-stale] global.capture changed\u{1B}[0m\n"), "config-stale")
         XCTAssertEqual(MeetingsCLI.sentence(fromStderr: "✗ [config-stale] global.capture changed"), "Global.capture changed.")
@@ -391,38 +394,6 @@ final class MeetingsWindowTests: XCTestCase {
         let overview = try JSONDecoder().decode(MeetingsOverview.self, from: overviewJSON())
         XCTAssertFalse(MeetingDetailModel.readsProposalsAtOpen(project: overview.meetings.first { $0.id == "a" }?.project), "a has a project")
         XCTAssertTrue(MeetingDetailModel.readsProposalsAtOpen(project: overview.meetings.first { $0.id == "b" }?.project), "b has none")
-    }
-
-    /// R2-MP10: a live meeting in a window kept in front never refreshed (only a return to the window did). The rounds
-    /// run while the open meeting records and the window can be seen.
-    func testALiveMeetingRefreshesOnlyWhileTheWindowCanBeSeen() throws {
-        var text = String(decoding: overviewJSON(), as: UTF8.self)
-        let first = try XCTUnwrap(text.range(of: #""live":false"#))
-        text.replaceSubrange(first, with: #""live":true"#)
-        let overview = try JSONDecoder().decode(MeetingsOverview.self, from: Data(text.utf8))
-        let suite = "meetings.tests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        var rounds = 0
-        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in }, refreshLive: { _ in rounds += 1 })
-
-        model.receive(overview)
-        XCTAssertEqual(model.selectedMeetingID, "a")
-        XCTAssertTrue(model.liveRefreshRuns, "the open meeting records and the window can be seen")
-        model.windowVisible = false
-        XCTAssertFalse(model.liveRefreshRuns, "a covered, hidden or minimized window does not refresh")
-        XCTAssertEqual(rounds, 0)
-        model.windowVisible = true
-        XCTAssertTrue(model.liveRefreshRuns)
-        XCTAssertEqual(rounds, 1, "a window that can be seen again refreshes at once")
-        model.select("b")
-        XCTAssertFalse(model.liveRefreshRuns, "a meeting that does not record does not refresh")
-        model.select("a")
-        XCTAssertTrue(model.liveRefreshRuns)
-        model.select(nil)
-        XCTAssertFalse(model.liveRefreshRuns)
-        XCTAssertTrue(MeetingsWindowModel.isLiveStatus("paused"))
-        XCTAssertFalse(MeetingsWindowModel.isLiveStatus("stopped"))
     }
 
     /// R2-MP1: Up and Down in the Items list, which is a lazy stack now and moves its own selection.

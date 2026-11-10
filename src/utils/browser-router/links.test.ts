@@ -520,12 +520,12 @@ describe("probeGenesisTools", () => {
         expect(decision).toMatchObject({ kind: "run", argv: ["/usr/bin/open", "-R", "/tmp/My Notes"] });
     });
 
-    test("the meetings-play preset plays the meeting from the time it is given", () => {
+    test("the meetings-play preset plays the bounded Moment at the time it is given", () => {
         const decision = route(`https://${linkHost}/meetings/play?meeting=2026-01-01_10-00&at=1%3A02%3A03`, config);
 
         expect(decision).toMatchObject({
             kind: "run",
-            argv: ["tools", "meetings", "play", "2026-01-01_10-00", "--at", "1:02:03"],
+            argv: ["tools", "meetings", "play", "2026-01-01_10-00", "--at", "1:02:03", "--moment"],
         });
     });
 });

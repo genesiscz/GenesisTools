@@ -37,7 +37,7 @@ export const projectNameSchema = z
 const strings = z.array(z.string().trim().min(1)).default([]);
 
 /** The config shape this code writes. Older files are migrated on the first read (`migrateMeetingsConfig`). */
-export const MEETINGS_CONFIG_VERSION = 3;
+export const MEETINGS_CONFIG_VERSION = 5;
 
 /**
  * How a meeting finds its project, by the facts every meeting has: its calendar entry, its title and its people. A
@@ -166,25 +166,147 @@ export const MEETING_PLAYERS = ["vlc", "ffplay"] as const;
 /** The players `tools meetings listen` can play a cut clip with, in the order it tries them. */
 export const LISTEN_PLAYERS = ["afplay", "vlc", "ffplay"] as const;
 
+/** The tone's sound when nothing else is set: a short 880 Hz sine, quieter than speech. */
+export const DEFAULT_TONE_SOUND = { hz: 880, sec: 0.15, volume: 0.6 } as const;
+
+/** A tone longer than this is cut to it: a tone marks a spot, it is not a second sound to listen to. */
+export const TONE_MAX_SEC = 2;
+
+/** Where a named tone's sound comes from: a sine of `hz` for `sec`, or a sound file. */
+export type TonePresetSound = { kind: "sine"; hz: number; sec: number } | { kind: "file"; path: string };
+
+/** A preset of one of the alert sounds every Mac keeps in /System/Library/Sounds, at the default volume. */
+function macAlertSound(name: string): { label: string; volume: number; sound: TonePresetSound } {
+    return {
+        label: name,
+        volume: DEFAULT_TONE_SOUND.volume,
+        sound: { kind: "file", path: `/System/Library/Sounds/${name}.aiff` },
+    };
+}
+
+/**
+ * The named tones a sound picker offers (decision 8): three sines, and the Mac's alert sounds. `beep` is the default
+ * sine. A preset plays at its own `volume` unless the setting names one; the sines are the Meetings window's presets
+ * (Beep, Soft, Click).
+ */
+export const TONE_PRESETS = {
+    beep: {
+        label: "Beep",
+        volume: DEFAULT_TONE_SOUND.volume,
+        sound: { kind: "sine", hz: DEFAULT_TONE_SOUND.hz, sec: DEFAULT_TONE_SOUND.sec },
+    },
+    soft: { label: "Soft", volume: 0.35, sound: { kind: "sine", hz: 523, sec: 0.3 } },
+    click: { label: "Click", volume: 0.7, sound: { kind: "sine", hz: 2000, sec: 0.03 } },
+    tink: macAlertSound("Tink"),
+    pop: macAlertSound("Pop"),
+    ping: macAlertSound("Ping"),
+    glass: macAlertSound("Glass"),
+    purr: macAlertSound("Purr"),
+    bottle: macAlertSound("Bottle"),
+    morse: macAlertSound("Morse"),
+    frog: macAlertSound("Frog"),
+    funk: macAlertSound("Funk"),
+    hero: macAlertSound("Hero"),
+    blow: macAlertSound("Blow"),
+    basso: macAlertSound("Basso"),
+    submarine: macAlertSound("Submarine"),
+    sosumi: macAlertSound("Sosumi"),
+} as const satisfies Record<string, { label: string; volume: number; sound: TonePresetSound }>;
+export type TonePresetName = keyof typeof TONE_PRESETS;
+export const TONE_PRESET_NAMES = Object.keys(TONE_PRESETS) as [TonePresetName, ...TonePresetName[]];
+
+const toneVolume = z.number().min(0).max(1).default(DEFAULT_TONE_SOUND.volume);
+
+/**
+ * What the tone sounds like (version 5 added the file and the preset): a sound file at `volume`, a named preset at
+ * `volume` (else the preset's own), or a sine of `hz`, `sec` long, at `volume` (1 is the speech's level). The sine is
+ * version 4's shape, so a version 4 file reads as it is.
+ */
+export const toneSoundSettingSchema = z
+    .union(
+        [
+            z
+                .object({
+                    /** An absolute path to a sound ffmpeg reads (wav, aiff, mp3, m4a); cut to `TONE_MAX_SEC`. */
+                    file: z.string().trim().min(1),
+                    volume: toneVolume,
+                })
+                .strict(),
+            // A preset without a volume plays at the preset's own (`TONE_PRESETS[name].volume`). The name is a soft
+            // check first, so a misspelt one reads as the union's sentence with the names, not as an unknown key.
+            z
+                .object({
+                    preset: z
+                        .string()
+                        .refine((name) => Object.hasOwn(TONE_PRESETS, name))
+                        .pipe(z.enum(TONE_PRESET_NAMES)),
+                    volume: z.number().min(0).max(1).optional(),
+                })
+                .strict(),
+            // Strict, as the other two: a misspelt preset or a sine key beside a preset is refused, never read as the beep.
+            z
+                .object({
+                    hz: z.number().min(50).max(8000).default(DEFAULT_TONE_SOUND.hz),
+                    sec: z.number().min(0.02).max(TONE_MAX_SEC).default(DEFAULT_TONE_SOUND.sec),
+                    volume: toneVolume,
+                })
+                .strict(),
+        ],
+        {
+            error: `a tone's sound is { hz, sec, volume }, { preset, volume } with a preset of ${TONE_PRESET_NAMES.join(", ")}, or { file, volume } with an absolute path`,
+        }
+    )
+    // Checked after the union, so a relative path reads as its own sentence instead of the union's "Invalid input".
+    .superRefine((setting, context) => {
+        if ("file" in setting && !setting.file.startsWith("/")) {
+            context.addIssue({
+                code: "custom",
+                path: ["file"],
+                message: `the tone's sound file needs an absolute path, not ${setting.file}`,
+            });
+        }
+    });
+export type ToneSoundSetting = z.output<typeof toneSoundSettingSchema>;
+
+/**
+ * The short tone a Moment's clip carries just before its asked spot (the heard words of a term, the start of a voice),
+ * so the listener knows what the question is about. The terminal and the Meetings window both hear it.
+ */
+const toneSchema = z.object({
+    enabled: z.boolean().default(true),
+    /** How long before the asked spot the tone sounds (version 3 kept it as `beepLeadSec`). */
+    leadSec: z.number().min(0).max(3).default(0.4),
+    sound: toneSoundSettingSchema.prefault({}),
+});
+export type ToneSettings = z.infer<typeof toneSchema>;
+
 const listenSchema = z.object({
     /** Plays the cut clip; a clip needs no seeking, so macOS's own afplay is enough. */
     player: z.enum(LISTEN_PLAYERS).default("afplay"),
-    /** Seconds of audio around the question's range. No default: the first `listen` asks and saves it. */
-    padSec: z.number().min(0).max(60).optional(),
+    /**
+     * Seconds of audio before a question's range (version 4 kept one `padSec` for both sides). No default: the first
+     * `listen` asks and saves both sides; with one side set, the other is the same.
+     */
+    padBeforeSec: z.number().min(0).max(60).optional(),
+    /** Seconds of audio after it. */
+    padAfterSec: z.number().min(0).max(60).optional(),
     /** Questions one `listen` round asks at most; the next round asks the rest. */
     roundCap: z.number().int().min(1).max(500).default(12),
     /** A question under this priority is not worth a person's time; it stays a marked suggestion. */
     minPriority: z.number().min(0).default(0.5),
     /** Seconds between showing a question and playing its clip, so the question is read before the audio starts. */
     delaySec: z.number().min(0).max(10).default(2),
-    /** A short tone in the clip just before the asked spot: the heard words of a term, the start of a speaker range. */
-    beep: z.boolean().default(true),
-    /** How long before the asked spot the tone sounds. */
-    beepLeadSec: z.number().min(0).max(3).default(0.4),
+    /** The tone before the asked spot (version 3 kept `beep` and `beepLeadSec` flat here). */
+    tone: toneSchema.prefault({}),
     /** Plays the clip again each time it ends, until the question is answered, so it can be heard while typing. */
     repeat: z.boolean().default(true),
     /** The pause between two plays of a repeated clip. */
     repeatGapSec: z.number().min(0).max(10).default(1),
+    /**
+     * The longest stretch a Moment of an item or a speaker's turn plays (a 51-minute hint range is shown, not played):
+     * a longer one is refused with `too-long`. A range or a selection the caller bounds itself is not capped.
+     */
+    longestClipSec: z.number().min(1).max(600).default(30),
 });
 
 const playbackSchema = z.object({
@@ -194,6 +316,21 @@ const playbackSchema = z.object({
     beforeSec: z.number().min(0).max(60).default(5),
     listen: listenSchema.prefault({}),
 });
+
+/** The audio a clip keeps before and after the heard stretch. */
+export interface ListenPads {
+    beforeSec: number;
+    afterSec: number;
+}
+
+/** The saved pads, each side the other's when only one is set; undefined until the first `listen` saved them. */
+export function listenPads(
+    listen: Pick<z.output<typeof listenSchema>, "padBeforeSec" | "padAfterSec">
+): ListenPads | undefined {
+    const beforeSec = listen.padBeforeSec ?? listen.padAfterSec;
+    const afterSec = listen.padAfterSec ?? listen.padBeforeSec;
+    return beforeSec === undefined || afterSec === undefined ? undefined : { beforeSec, afterSec };
+}
 
 /** The summary headings whose bullets are action items or decisions, in the languages summaries are written in. */
 const summarySchema = z.object({
@@ -346,6 +483,20 @@ const storedConfigSchema = z
                     })
                     .prefault({}),
                 assign: assignSchema.prefault({}),
+                people: z
+                    .object({
+                        /**
+                         * Where the people directory looks besides the meetings, the projects and the people book:
+                         * Contacts (GenesisTools.app's Contacts grant), and the meetings' calendar attendees.
+                         */
+                        sources: z
+                            .object({
+                                contacts: z.boolean().default(true),
+                                calendar: z.boolean().default(true),
+                            })
+                            .prefault({}),
+                    })
+                    .prefault({}),
                 export: z
                     .object({
                         /**
@@ -447,6 +598,51 @@ function migrateToV3(raw: Record<string, unknown>): void {
 }
 
 /**
+ * Version 3 to 4: `global.playback.listen.beep` to `listen.tone.enabled` and `beepLeadSec` to `listen.tone.leadSec`,
+ * since the tone gained its sound and belongs to every Moment, not only the terminal's. A key already in its new place
+ * wins.
+ */
+function migrateToV4(raw: Record<string, unknown>): void {
+    const global = isObject(raw.global) ? raw.global : undefined;
+    const playback = global && isObject(global.playback) ? global.playback : undefined;
+    const listen = playback && isObject(playback.listen) ? playback.listen : undefined;
+
+    if (!listen || (listen.beep === undefined && listen.beepLeadSec === undefined)) {
+        return;
+    }
+
+    const tone = objectAt(listen, "tone");
+
+    if (listen.beep !== undefined) {
+        tone.enabled ??= listen.beep;
+        delete listen.beep;
+    }
+
+    if (listen.beepLeadSec !== undefined) {
+        tone.leadSec ??= listen.beepLeadSec;
+        delete listen.beepLeadSec;
+    }
+}
+
+/**
+ * Version 4 to 5: `global.playback.listen.padSec` to `padBeforeSec` and `padAfterSec`, the same on both sides, since a
+ * clip may hear more before the asked words than after them. A key already in its new place wins.
+ */
+function migrateToV5(raw: Record<string, unknown>): void {
+    const global = isObject(raw.global) ? raw.global : undefined;
+    const playback = global && isObject(global.playback) ? global.playback : undefined;
+    const listen = playback && isObject(playback.listen) ? playback.listen : undefined;
+
+    if (!listen || listen.padSec === undefined) {
+        return;
+    }
+
+    listen.padBeforeSec ??= listen.padSec;
+    listen.padAfterSec ??= listen.padSec;
+    delete listen.padSec;
+}
+
+/**
  * Moves an older config to the current places, in place, one version step at a time. A file without a version is
  * version 1. Returns whether anything changed; a current config is left alone, so a second run changes nothing.
  */
@@ -461,7 +657,12 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
         migrateToV2(raw);
     }
 
-    migrateToV3(raw);
+    if (version < 3) {
+        migrateToV3(raw);
+    }
+
+    migrateToV4(raw);
+    migrateToV5(raw);
     raw.version = MEETINGS_CONFIG_VERSION;
     return true;
 }
@@ -728,10 +929,12 @@ export class MeetingsConfigStore {
         });
     }
 
-    /** Saves the padding `tools meetings listen` cuts around a question's range. */
-    async setListenPad(padSec: number): Promise<MeetingsConfig> {
+    /** Saves the audio `tools meetings listen` cuts before and after a question's range. */
+    async setListenPads(pads: ListenPads): Promise<MeetingsConfig> {
         return this.update((raw) => {
-            objectAt(objectAt(objectAt(raw, "global"), "playback"), "listen").padSec = padSec;
+            const listen = objectAt(objectAt(objectAt(raw, "global"), "playback"), "listen");
+            listen.padBeforeSec = pads.beforeSec;
+            listen.padAfterSec = pads.afterSec;
         });
     }
 

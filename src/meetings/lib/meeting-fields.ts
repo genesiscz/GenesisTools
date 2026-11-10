@@ -1,5 +1,6 @@
-import { type MeetingsConfigStore, mergeLabels } from "@genesiscz/utils/meetings/config";
-import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { callerActor, type Decided, DecisionJournal } from "./decision-journal";
 import { resolveProject } from "./project";
 
 /** What `set` changes on a meeting; a field left out stays as it is. */
@@ -25,7 +26,10 @@ export async function setMeetingFields(options: {
     change: MeetingFieldsChange;
     /** Never prompt for a near-miss project name (an agent, `--yes`). */
     quiet?: boolean;
-}): Promise<{ record: MeetingRecord; changes: string[] }> {
+    /** Who sets them; this process's caller (an agent, else a person at the command line) when absent. */
+    actor?: DecisionActor;
+    reason?: string;
+}): Promise<{ record: MeetingRecord; changes: string[]; decided: Decided }> {
     const { store, config, record, change } = options;
     const labels = change.labels ?? [];
     const unlabel = change.unlabel ?? [];
@@ -57,14 +61,21 @@ export async function setMeetingFields(options: {
         labels.length > 0 ? `labels + ${labels.join(", ")}` : "",
         unlabel.length > 0 ? `labels - ${unlabel.join(", ")}` : "",
     ].filter(Boolean);
-    const removed = new Set(unlabel.map((label) => label.toLowerCase()));
-    const updated = await store.update(record.id, { command: "set", change: changes.join(", ") }, (current) => {
-        current.project = project ?? current.project;
-        current.title = change.title ?? current.title;
-        current.labels = mergeLabels(current.labels, labels).filter((label) => !removed.has(label.toLowerCase()));
+    // Through the decision journal, so the history says who set them and an Undo puts the old values back (G42, G64).
+    const decided = await new DecisionJournal({ store }).apply({
+        meeting: record.id,
+        action: {
+            kind: "set",
+            ...(project ? { project } : {}),
+            ...(change.title ? { title: change.title } : {}),
+            ...(labels.length > 0 ? { labels } : {}),
+            ...(unlabel.length > 0 ? { unlabel } : {}),
+        },
+        actor: options.actor ?? callerActor(),
+        ...(options.reason ? { reason: options.reason } : {}),
     });
 
-    return { record: updated, changes };
+    return { record: store.read(record.id) ?? record, changes, decided };
 }
 
 /**

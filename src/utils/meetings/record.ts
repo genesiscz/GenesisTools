@@ -15,6 +15,11 @@ import { MEETING_PLATFORM_IDS } from "./platform";
 const { log } = logger.scoped("meetings-record");
 
 export const MEETING_FILE = "meeting.json";
+/**
+ * The folder in a meeting's folder that holds its cut Moment clips (src/meetings/lib/moment.ts): a cache of WAVs cut
+ * from the recording, never screen data, so the window's revision tokens do not count it.
+ */
+export const MOMENTS_FOLDER = "moments";
 /** A meeting folder name: no separator and no leading dot, so it names a folder of the store and nothing else. */
 const FOLDER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
@@ -66,6 +71,47 @@ export type QuestionTopic = (typeof QUESTION_TOPICS)[number];
 
 const itemIdSchema = z.string().regex(/^i\d+$/);
 
+/**
+ * Who made a decision, one variant per kind of decider: a person in the Meetings window, in a `listen` round or at a
+ * `tools meetings` command; an agent with its harness and session; a rule of the suggest pipeline. `unknown` is a
+ * decision made before decisions kept their actor.
+ */
+export const decisionActorSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("window") }),
+    z.object({ kind: z.literal("listen") }),
+    z.object({ kind: z.literal("cli") }),
+    z.object({ kind: z.literal("agent"), harness: z.string().min(1), session: z.string().nullable() }),
+    z.object({ kind: z.literal("rule"), rule: z.string().min(1) }),
+    z.object({ kind: z.literal("unknown") }),
+]);
+export type DecisionActor = z.infer<typeof decisionActorSchema>;
+
+/** What a decision did, as the decision journal names its actions (src/meetings/lib/decision-journal.ts). */
+export const DECISION_ACTIONS = [
+    "confirm",
+    "reject",
+    "respell",
+    "answer",
+    "skip",
+    "split",
+    "rename",
+    "assign",
+    "reopen",
+    "revert",
+    "add",
+    "set",
+] as const;
+export type DecisionActionKind = (typeof DECISION_ACTIONS)[number];
+
+/**
+ * An actor as a saved record reads it: a kind a newer build wrote (one this build does not know) reads as `unknown`,
+ * so the record still loads here instead of failing whole (WaveB-Plan decision 17).
+ */
+export const savedDecisionActorSchema = decisionActorSchema.catch({ kind: "unknown" });
+
+/** A decision's action as a saved record reads it: an action a newer build added reads as `unknown`. */
+export const savedDecisionActionSchema = z.enum([...DECISION_ACTIONS, "unknown"]).catch("unknown");
+
 const itemBase = {
     id: itemIdSchema,
     status: z.enum(ITEM_STATUSES),
@@ -77,8 +123,10 @@ const itemBase = {
     suggestedAt: isoTime,
     decidedAt: isoTime.optional(),
     /**
-     * The confirm or reject that decided the item: its token, which an Undo names (`reopen --token`), and the fields
-     * it changed as they were before, which the Undo puts back.
+     * The decision that decided the item last: its token, which names its decision journal entry and which an Undo
+     * names (`reopen --token`), and the fields it changed as they were before (`previous`, also what a decision made
+     * before the journal puts back). `actor` and `entry` say who decided and how, so a row can say "Confirmed by an
+     * agent" without reading the journal; a decision older than them reads as by `unknown`.
      */
     decision: z
         .object({
@@ -89,9 +137,34 @@ const itemBase = {
                 speaker: z.string().optional(),
                 proposed: z.string().optional(),
             }),
+            actor: savedDecisionActorSchema.optional(),
+            entry: z
+                .object({
+                    action: savedDecisionActionSchema,
+                    reason: z.string().optional(),
+                    /** The question whose answer, skip or split decided this item. */
+                    question: itemIdSchema.optional(),
+                })
+                .optional(),
         })
         .optional(),
 };
+
+/**
+ * The lines of one source label from `fromSec` to `toSec` (inclusive, transcript seconds) given to a person for this
+ * meeting (R21, R44): the corrected transcript, its speaker list and the speaker stats show them as `person`. A later
+ * assignment over the same lines wins; the decision journal keeps each one's before and after, so its Undo removes it.
+ */
+export const speakerAssignmentSchema = z.object({
+    id: z.string().regex(/^a\d+$/),
+    label: z.string().min(1),
+    fromSec: z.number().min(0),
+    toSec: z.number().min(0),
+    person: z.string().trim().min(1),
+    email: z.string().trim().min(1).optional(),
+    at: isoTime,
+});
+export type SpeakerAssignment = z.infer<typeof speakerAssignmentSchema>;
 
 /** A suggestion a rule made and a person decides: confirm or reject. */
 export const meetingItemSchema = z.discriminatedUnion("kind", [
@@ -280,8 +353,17 @@ export const meetingRecordSchema = z.object({
     calendar: calendarSchema.optional(),
     participants: z.array(participantSchema).default([]),
     context: z.array(contextSchema).default([]),
-    /** Renames for this meeting. A rename is a person's act, so it has no status. */
-    speakers: z.object({ labels: z.record(z.string(), z.string()).default({}) }).prefault({}),
+    /**
+     * Renames for this meeting, and stretches given to a person (the decision journal's `assign`). Both are a
+     * person's act, so they have no status. `assignments` is absent until the first one, so older records write as
+     * they were.
+     */
+    speakers: z
+        .object({
+            labels: z.record(z.string(), z.string()).default({}),
+            assignments: z.array(speakerAssignmentSchema).optional(),
+        })
+        .prefault({}),
     /** The meeting's own dictionary level, over the project's and the global one. */
     dictionary: dictionaryLevelSchema.optional(),
     items: z.array(meetingItemSchema).default([]),
@@ -594,8 +676,18 @@ export class MeetingStore {
         return record;
     }
 
-    /** Changes one record under its lock. The result must validate, or nothing is written. */
-    async update(id: string, change: MeetingChange, mutate: (record: MeetingRecord) => void): Promise<MeetingRecord> {
+    /**
+     * Changes one record under its lock. The result must validate, or nothing is written. `mutate` returns false when
+     * it found nothing to change: the record stays as it was, with no history line. `change` is read after `mutate`, so
+     * `mutate` may fill in its words. `afterWrite` runs under the same lock once the record is written, so a file kept
+     * beside it (the decision journal, the answer log) follows the order of the record's writes.
+     */
+    async update(
+        id: string,
+        change: MeetingChange,
+        mutate: (record: MeetingRecord) => unknown,
+        afterWrite?: (record: MeetingRecord) => void
+    ): Promise<MeetingRecord> {
         return this.storage.withFileLock({
             file: this.path(id),
             fn: async () => {
@@ -605,11 +697,15 @@ export class MeetingStore {
                     throw new Error(`No meeting ${id} (or its ${MEETING_FILE} does not validate): ${this.path(id)}`);
                 }
 
-                mutate(current);
+                if (mutate(current) === false) {
+                    return current;
+                }
+
                 current.history.push({ at: new Date().toISOString(), command: change.command, change: change.change });
                 const record = meetingRecordSchema.parse(current);
                 this.write(record);
                 log.debug({ id, command: change.command }, "meeting updated");
+                afterWrite?.(record);
                 return record;
             },
         });
@@ -643,8 +739,8 @@ export class MeetingStore {
     }
 }
 
-/** The next free id in a list: `c1`, `c2` … or `i1`, `i2` …. */
-export function nextId(prefix: "c" | "i", taken: Array<{ id: string }>): string {
+/** The next free id in a list: `c1`, `c2` …, `i1`, `i2` … or (speaker assignments) `a1`, `a2` …. */
+export function nextId(prefix: "a" | "c" | "i", taken: Array<{ id: string }>): string {
     const highest = taken.reduce((max, entry) => Math.max(max, Number(entry.id.slice(1)) || 0), 0);
     return `${prefix}${highest + 1}`;
 }

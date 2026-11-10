@@ -166,6 +166,13 @@ extension NSWindow {
         alphaValue = 0
         ignoresMouseEvents = true
         collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
+        // The window server draws a window at the scale of the screen it is on, and a new window is on the screen
+        // with the keyboard focus. With a 1x display beside a Retina one the same command wrote a picture of 1400 or
+        // of 2800 px, by where the reader typed. The sharpest screen gives one size every time.
+        if let sharpest = NSScreen.screens.max(by: { $0.backingScaleFactor < $1.backingScaleFactor }) {
+            let area = sharpest.visibleFrame
+            setFrameOrigin(NSPoint(x: area.midX - frame.width / 2, y: area.midY - frame.height / 2))
+        }
         orderFrontRegardless()
     }
 }

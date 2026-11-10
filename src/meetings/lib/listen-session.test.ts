@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
+import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
 import type { cutClip } from "./audio";
+import { decideItems } from "./decide";
 import { findingItems, findingsFileSchema } from "./findings";
 import { SPEAKER_PAD_SEC, writeQuestionClips } from "./listen-clips";
 import {
@@ -17,7 +19,16 @@ import {
     type SessionNote,
 } from "./listen-session";
 import { GivenAnswerAdapter } from "./listen-session-answer";
-import { askedSpotSec, heardClip, openQuestions, type QuestionItem, questionView, questionWarnings } from "./questions";
+import {
+    answerVocabulary,
+    askedSpotSec,
+    heardClip,
+    openQuestions,
+    type QuestionItem,
+    questionView,
+    questionWarnings,
+} from "./questions";
+import { sineToneSound } from "./tone-sound";
 
 const now = "2026-11-02T15:00:00.000Z";
 let stores = 0;
@@ -114,22 +125,27 @@ async function fixture(items: Record<string, unknown>[]) {
 }
 
 describe("listen session", () => {
-    test("ledger failure closes the round and can be retried without duplicate round-end", async () => {
-        const fx = await fixture([]);
+    // The decision journal writes the ledger as each answer lands (an Esc writes the retraction), not at the round's
+    // end: a ledger failure fails that answer's write, which stays saved, and the round ends as aborted once.
+    test("a ledger failure at an answer aborts the round once and keeps the saved answer", async () => {
+        const fx = await fixture([
+            term("i1", 50, { proposed: "ADA" }),
+            question("i2", { about: "term", heard: "Ada", fromSec: 50, toSec: 54, decides: ["i1"] }),
+        ]);
         let calls = 0;
-        const session = fx.session(new ScriptedAdapter([]), {
+        const session = fx.session(new ScriptedAdapter([{ answer: "ADO" }]), {
             ledger: () => {
-                if (++calls === 1) {
-                    throw new Error("ledger full");
-                }
+                calls += 1;
+                throw new Error("ledger full");
             },
         });
         await expect(session.run()).rejects.toThrow("ledger full");
-        expect(fx.events()).toEqual(["round-start", "round-end"]);
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        expect(readAnswerEvents(fx.logPath).at(-1)).toMatchObject({ event: "round-end", reason: "aborted" });
         session.end("done");
         session.end("done");
-        expect(calls).toBe(2);
-        expect(fx.events()).toEqual(["round-start", "round-end"]);
+        expect(calls).toBe(1);
+        expect(fx.events()).toEqual(["round-start", "answered", "round-end"]);
     });
 
     test("ledger failure does not replace the adapter error", async () => {
@@ -257,6 +273,32 @@ describe("listen session", () => {
         expect(fx.item("i2")).not.toHaveProperty("answer");
         expect(fx.events()).toEqual(["round-start", "answered", "reopened", "round-end"]);
         expect(fx.ledger).toEqual([]);
+    });
+
+    test("Esc after another process decided the answered item again keeps that decision and says so", async () => {
+        const fx = await fixture([
+            term("i1", 50, { proposed: "ADA" }),
+            question("i2", { about: "term", heard: "Ada", fromSec: 50, toSec: 54, decides: ["i1"], priority: 2 }),
+            question("i3", { fromSec: 60, toSec: 70, priority: 1 }),
+        ]);
+        const rejectElsewhere = async (): Promise<ListenOutcome> => {
+            await decideItems({
+                store: fx.store,
+                record: fx.read(),
+                status: "rejected",
+                ids: ["i1"],
+                actor: { kind: "cli" },
+            });
+            return "back";
+        };
+        const adapter = new ScriptedAdapter([{ answer: "ADO" }, rejectElsewhere, "stop"]);
+
+        expect(await fx.session(adapter).run()).toBe("stopped");
+        expect(adapter.asked.map((asked) => asked.question.id)).toEqual(["i2", "i3", "i3"]);
+        expect(fx.item("i1")).toMatchObject({ status: "rejected" });
+        expect(fx.item("i2")).toMatchObject({ status: "confirmed", answer: "ADO" });
+        expect(adapter.notes).toContainEqual(expect.objectContaining({ kind: "not-undone", label: "Q1" }));
+        expect(fx.events()).toEqual(["round-start", "answered", "round-end"]);
     });
 
     test("Esc on the first question asks to leave; staying asks it again", async () => {
@@ -468,7 +510,7 @@ describe("listen --clip-out (MC22)", () => {
             questions: openQuestions(record),
             transcript: words,
             listen,
-            padSec: 5,
+            pads: { beforeSec: 5, afterSec: 5 },
             audioPath: "/clips/call.ogg",
             dir: "/clips/out",
             cut: async (options) => {
@@ -485,12 +527,51 @@ describe("listen --clip-out (MC22)", () => {
                 audioPath: "/clips/call.ogg",
                 outPath: clip,
                 ...plan,
+                toneSound: sineToneSound(listen.tone.sound),
             }))
         );
         const spot = askedSpotSec(asQuestion(record.items[0]), words);
-        expect(written[0]).toMatchObject({ padSec: 5, toneAtSec: spot - listen.beepLeadSec });
+        expect(written[0]).toMatchObject({ padSec: 5, toneAtSec: spot - listen.tone.leadSec });
         expect(written[0]!.fromSec).toBeLessThan(spot);
-        expect(written[1]).toMatchObject({ fromSec: 60, toSec: 61, padSec: listen.beepLeadSec + SPEAKER_PAD_SEC });
+        expect(written[1]).toMatchObject({ fromSec: 60, toSec: 61, padSec: listen.tone.leadSec + SPEAKER_PAD_SEC });
         expect(fx.read()).toEqual(record);
+    });
+});
+
+describe("the typed answer's names (answerVocabulary, R10)", () => {
+    test("the record's people keep their places, the directory adds the other people it knows, then the dictionary", async () => {
+        const store = new MeetingStore(new Storage(`meetings-vocabulary-${process.pid}`));
+        const here = await store.create(
+            {
+                title: "Harbor sync",
+                start: "2026-11-02T14:00:00.000Z",
+                createdBy: "new",
+                participants: [{ name: "Dana Example", self: true, from: [] }],
+                calendar: { from: "apple-calendar", attendees: ["Alex Example"] },
+            },
+            { command: "test", change: "fixture" }
+        );
+        await store.create(
+            {
+                title: "Crane review",
+                start: "2026-11-01T14:00:00.000Z",
+                createdBy: "new",
+                participants: [
+                    { name: "Blake Example", from: [] },
+                    { name: "Dana Exámple", from: [] },
+                ],
+            },
+            { command: "test", change: "fixture" }
+        );
+        const config = meetingsConfigSchema.parse({});
+        const known = await meetingPeopleNames({ store, config, meeting: here.id });
+
+        expect(answerVocabulary(here, ["ADA"], known)).toEqual([
+            "Dana Example",
+            "Alex Example",
+            "Blake Example",
+            "ADA",
+        ]);
+        expect(answerVocabulary(here, ["ADA"])).toEqual(["Dana Example", "Alex Example", "ADA"]);
     });
 });

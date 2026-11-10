@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { logger, out } from "@genesiscz/utils/logger";
 import { passStartGate, releaseStartGate } from "@genesiscz/utils/process/start-gate";
@@ -58,7 +59,8 @@ async function serve(flags: ServeFlags): Promise<void> {
                 const { prewarmAxTool } = await import("@app/control/lib/runner");
                 const start = await startRecorderService({
                     idleMs: flags.idle === false ? 0 : undefined,
-                    sourceRoot: new URL("../../", import.meta.url).pathname,
+                    // fileURLToPath, not `.pathname`: a checkout path with a space would stay `%20` and match no loaded module.
+                    sourceRoot: fileURLToPath(new URL("../../", import.meta.url)),
                     prewarmNative: (trigger) => {
                         const outcome = prewarmAxTool({ trigger });
 

@@ -1,19 +1,23 @@
 import SwiftUI
 
 /// One choice of a `NativeSettingsSegmented` or a `NativeSettingsPicker`: a value, its title, and optionally a sentence
-/// that says what it does and a symbol. The selected option's `detail` shows under the row.
+/// that says what it does and a symbol. The selected option's `detail` shows under the row. A `NativeSettingsPicker`
+/// lists an option that is not `isEnabled` greyed out and never picks it (a sound this Mac does not have); its
+/// `detail` says why.
 public struct NativeSettingsOption<Value: Hashable>: Identifiable {
     public let value: Value
     public let title: String
     public let detail: String?
     public let symbol: String?
+    public let isEnabled: Bool
     public var id: Value { value }
 
-    public init(_ value: Value, _ title: String, detail: String? = nil, symbol: String? = nil) {
+    public init(_ value: Value, _ title: String, detail: String? = nil, symbol: String? = nil, enabled: Bool = true) {
         self.value = value
         self.title = title
         self.detail = detail
         self.symbol = symbol
+        self.isEnabled = enabled
     }
 }
 
@@ -58,7 +62,8 @@ public struct NativeSettingsSegmented<Value: Hashable>: View {
 /// A settings row that picks one of several options, each with a title and a sentence that says what it does: the
 /// button shows the selected title, a click opens a list of every option with its description (built only while it
 /// is open), and the selected option's description stays under the row. Up and Down move in the open list, Return
-/// picks, Escape closes. Each option's identifier is `<identifier>.option.<value>`.
+/// picks, Escape closes. Each option's identifier is `<identifier>.option.<value>`. `trailing` sits right of the button,
+/// centred with it (a Play button beside a sound picker).
 public struct NativeSettingsPicker<Value: Hashable>: View {
     private let title: String
     private let detail: String?
@@ -66,11 +71,12 @@ public struct NativeSettingsPicker<Value: Hashable>: View {
     private let options: [NativeSettingsOption<Value>]
     @Binding private var selection: Value
     private let width: CGFloat
+    private let trailing: AnyView?
     @State private var open = false
 
     public init(
         _ title: String, detail: String? = nil, identifier: String, options: [NativeSettingsOption<Value>],
-        selection: Binding<Value>, width: CGFloat = 220
+        selection: Binding<Value>, width: CGFloat = 220, trailing: AnyView? = nil
     ) {
         self.title = title
         self.detail = detail
@@ -78,6 +84,7 @@ public struct NativeSettingsPicker<Value: Hashable>: View {
         self.options = options
         _selection = selection
         self.width = width
+        self.trailing = trailing
     }
 
     private var selected: NativeSettingsOption<Value>? { options.first { $0.value == selection } }
@@ -85,43 +92,50 @@ public struct NativeSettingsPicker<Value: Hashable>: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             NativeSettingsRow(title, detail: detail) {
-                Button {
-                    open.toggle()
-                } label: {
-                    HStack(spacing: 7) {
-                        if let symbol = selected?.symbol {
-                            Image(systemName: symbol).font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary)
-                        }
-                        Text(verbatim: selected?.title ?? "Choose…")
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1).truncationMode(.tail)
-                        Spacer(minLength: 4)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(width: width, height: 28)
-                    .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .strokeBorder(Color.white.opacity(open ? 0.24 : 0.09), lineWidth: 0.5))
-                    .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                }
-                .buttonStyle(.genHoverPlain(brighten: 0.12))
-                .accessibilityLabel(title)
-                .accessibilityValue(selected?.title ?? "")
-                .accessibilityIdentifier(identifier)
-                .popover(isPresented: $open, arrowEdge: .bottom) {
-                    NativeSettingsPickerList(options: options, selection: selection, identifier: identifier) { value in
-                        if selection != value { selection = value }
-                        open = false
-                    }
+                HStack(spacing: 8) {
+                    pickerButton
+                    if let trailing { trailing }
                 }
             }
             if let selected, let note = selected.detail {
                 NativeSettingsOptionNote(text: note, symbol: selected.symbol, identifier: identifier)
+            }
+        }
+    }
+
+    private var pickerButton: some View {
+        Button {
+            open.toggle()
+        } label: {
+            HStack(spacing: 7) {
+                if let symbol = selected?.symbol {
+                    Image(systemName: symbol).font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                Text(verbatim: selected?.title ?? "Choose…")
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .frame(width: width, height: 28)
+            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Color.white.opacity(open ? 0.24 : 0.09), lineWidth: 0.5))
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.genHoverPlain(brighten: 0.12))
+        .accessibilityLabel(title)
+        .accessibilityValue(selected?.title ?? "")
+        .accessibilityIdentifier(identifier)
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            NativeSettingsPickerList(options: options, selection: selection, identifier: identifier) { value in
+                if selection != value { selection = value }
+                open = false
             }
         }
     }
@@ -160,15 +174,21 @@ struct NativeSettingsPickerList<Value: Hashable>: View {
             return .handled
         }
         .onKeyPress(.return) {
-            choose(highlighted ?? selection)
+            let value = highlighted ?? selection
+            if options.first(where: { $0.value == value })?.isEnabled != false { choose(value) }
             return .handled
         }
     }
 
+    /// Moves the highlight by `delta` rows, over the options that cannot be picked.
     private func move(_ delta: Int) {
         guard !options.isEmpty else { return }
         let current = options.firstIndex { $0.value == (highlighted ?? selection) } ?? 0
-        let next = min(options.count - 1, max(0, current + delta))
+        var next = current
+        repeat {
+            next += delta
+        } while options.indices.contains(next) && !options[next].isEnabled
+        guard options.indices.contains(next) else { return }
         highlighted = options[next].value
     }
 
@@ -192,6 +212,7 @@ struct NativeSettingsPickerList<Value: Hashable>: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(verbatim: option.title)
                         .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(option.isEnabled ? .primary : .secondary)
                     if let detail = option.detail {
                         Text(verbatim: detail)
                             .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -208,6 +229,7 @@ struct NativeSettingsPickerList<Value: Hashable>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(RowButtonStyle(cornerRadius: 7))
+        .disabled(!option.isEnabled)
         .accessibilityLabel(option.title)
         .accessibilityHint(option.detail ?? "")
         .accessibilityIdentifier("\(identifier).option.\(GenAccessibilityID.suffix(option.value))")

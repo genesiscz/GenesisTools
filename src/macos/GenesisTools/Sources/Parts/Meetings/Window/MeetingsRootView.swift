@@ -1,39 +1,214 @@
 import SwiftUI
 
-/// The pane map: full-height sidebar (Needs you, All meetings, Projects) | the meetings of that place | one meeting.
+/// The pane map: full-height sidebar (Needs you, All meetings, Projects, Contacts) | the meetings of that place | one
+/// meeting. Contacts is sidebar | the people, since it lists people and needs the width of both meeting columns.
 struct MeetingsRootView: View {
     @Bindable var model: MeetingsWindowModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The playback dock's height: the columns keep that much room at their bottom (`meetingsDockInset`), so their
+    /// last rows scroll above the dock instead of under it.
+    @State private var dockHeight: CGFloat = 0
+    /// The window's width: below `panelHidesListBelow` the open settings panel hides the meetings list (G53).
+    @State private var windowWidth: CGFloat = 0
 
     var body: some View {
-        VStack(spacing: 0) {
-            panes
-            MeetingsPlayerBar(playback: model.playback,
-                              title: model.playback.meeting.flatMap { model.meeting($0)?.displayTitle })
+        // The dock floats over the columns with a bottom inset (G-LAYOUT-1). As the second child of a VStack it took its
+        // height from the columns, so starting a Moment shrank the list under the pointer.
+        Group {
+            if model.place == .contacts {
+                contactsPanes
+            } else if Self.panelHidesList(width: windowWidth, panelOpen: model.sidePanelOpen && model.detail != nil) {
+                meetingWithPanel
+            } else {
+                panes
+            }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.playback.state == .idle)
+            .environment(\.meetingsDockInset, dockHeight)
+            .sheet(item: Bindable(model.people).pendingAssign) { pending in
+                AssignReachSheet(pending: pending, window: model)
+            }
+            .overlay(alignment: .bottom) {
+                ZStack(alignment: .bottom) {
+                    Color.clear.frame(height: 0)
+                    MeetingsPlayerBar(player: model.player,
+                                      title: model.player.meeting.flatMap { model.meeting($0)?.displayTitle },
+                                      window: model)
+                }
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { dockHeight = $0 }
+                .frameProbe("meetings.dock")
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.player.isActive)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
+            // Last, so the dock and the sheets above take the look too.
+            .meetingsLook()
+    }
+
+    /// The settings panel takes 320 pt of the meeting's column (`MeetingDetailView.paneWidth`). Below this window width
+    /// the three columns left the meeting about 120 pt at the 900 pt minimum, so the list steps aside while the panel is
+    /// open: sidebar | meeting | panel, the meeting about 400 pt there. The sidebar's own button still hides it too.
+    /// (A split view's column visibility did not hide a column in the snapshot window, so the layout is two columns.)
+    static let panelHidesListBelow: CGFloat = 1320
+
+    static func panelHidesList(width: CGFloat, panelOpen: Bool) -> Bool {
+        panelOpen && width > 0 && width < panelHidesListBelow
+    }
+
+    /// Sidebar | the open meeting with the settings panel, for a window too narrow for the list beside them.
+    private var meetingWithPanel: some View {
+        NavigationSplitView {
+            MeetingsSidebar(model: model)
+                .safeAreaPadding(.bottom, dockHeight)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 190, max: 300)
+        } detail: {
+            Group {
+                if let detail = model.detail {
+                    MeetingDetailView(detail: detail, window: model)
+                        .environment(\.meetingDetail, detail)
+                        .id(detail.id)
+                }
+            }
+            .heightFromWindow()
+            // The list that takes the title out of the toolbar is not in this layout, so the meeting's header title
+            // stood in the toolbar again, cut to "Backend DTO Desi…" over the sidebar.
+            .modifier(NoToolbarTitle())
+            .toolbar { SidePanelToolbar(model: model) }
+        }
+    }
+
+    private var contactsPanes: some View {
+        NavigationSplitView {
+            MeetingsSidebar(model: model)
+                .safeAreaPadding(.bottom, dockHeight)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
+        } detail: {
+            MeetingsContactsPane(people: model.people)
+                .safeAreaPadding(.bottom, dockHeight)
+                .heightFromWindow()
+                .noticeStack(model.notices, alignment: model.noticePlace.alignment)
+                .navigationTitle("Contacts")
+        }
     }
 
     private var panes: some View {
         NavigationSplitView {
             MeetingsSidebar(model: model)
+                .safeAreaPadding(.bottom, dockHeight)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } content: {
             MeetingsListPane(model: model)
+                .safeAreaPadding(.bottom, dockHeight)
                 .heightFromWindow()
                 .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 480)
         } detail: {
             Group {
                 if let detail = model.detail {
                     MeetingDetailView(detail: detail, window: model)
+                        .environment(\.meetingDetail, detail)
                         .id(detail.id)
                 } else {
                     EmptyState(symbol: "person.2.wave.2", text: "Choose a meeting", detail: "Its transcript, screen and items show here.")
                 }
             }
             .heightFromWindow()
+            .toolbar {
+                if model.detail != nil { SidePanelToolbar(model: model) }
+            }
         }
         // ⌘1 Needs you, ⌘2 All meetings and ⌘R Reload are View menu items (MeetingsMenu), so they work wherever focus is.
+    }
+}
+
+/// Takes the window's title out of the toolbar (macOS 15 and later); the window keeps it.
+private struct NoToolbarTitle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content
+        }
+    }
+}
+
+/// The settings panel's switch at the toolbar's trailing end, above the panel it opens. Without the flexible space
+/// the toolbar put it at the leading edge of the detail column, between the list and the meeting.
+private struct SidePanelToolbar: ToolbarContent {
+    let model: MeetingsWindowModel
+
+    var body: some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.flexible)
+        }
+        ToolbarItem(placement: .primaryAction) { SidePanelToggle(model: model) }
+    }
+}
+
+/// The toolbar's switch for the settings side panel (R26): on, the panel replaces the transcript pane beside the open
+/// meeting. ⌥⌘I, the key Mac apps give an inspector.
+private struct SidePanelToggle: View {
+    @Bindable var model: MeetingsWindowModel
+
+    var body: some View {
+        Toggle(isOn: $model.sidePanelOpen) {
+            Label("Settings", systemImage: "gearshape")
+        }
+        .toggleStyle(.button)
+        .keyboardShortcut("i", modifiers: [.command, .option])
+        .instantTooltip(model.sidePanelOpen ? "Hide the settings panel (\(MeetingsSidePanel.shortcutText))"
+                                            : "Show the settings panel: playback, rows, notices and panes (\(MeetingsSidePanel.shortcutText))")
+        .accessibilityLabel("Settings panel")
+        .accessibilityIdentifier("meetings.sidePanel.toggle")
+    }
+}
+
+/// The Contacts view on the window's people model (R24): every person with where each was seen, search, add, hide,
+/// merge after a confirmation that names the meetings, the source switches and the Contacts grant.
+private struct MeetingsContactsPane: View {
+    @Bindable var people: MeetingsPeopleModel
+
+    var body: some View {
+        let answer = people.known.value
+        VStack(spacing: 0) {
+            if let failure = people.known.failure {
+                NoticePill(text: "The people did not load: \(failure.sentence)", more: failure.detail, tone: .error,
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { people.load() }])
+                    .padding(10)
+            }
+            MeetingsContactsView(
+                people: answer?.people ?? [], total: answer?.total, query: $people.query, showHidden: $people.showHidden,
+                sources: answer?.sources ?? [], switches: people.switches, mergePlan: people.mergePlan, lastMerge: people.lastMerge,
+                add: { people.add(name: $0, email: $1) },
+                setHidden: { people.setHidden($0, hidden: $1) },
+                requestMerge: { people.requestMerge($0, $1) },
+                confirmMerge: { people.confirmMerge($0, name: $1) },
+                cancelMerge: { people.mergePlan = nil },
+                unmerge: { people.unmerge($0) },
+                setSource: { people.setSource($0, on: $1) },
+                grantContacts: { people.grantContacts() })
+                .overlay {
+                    if answer == nil, people.known.failure == nil {
+                        VStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Reading the people…").font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.background)
+                    }
+                }
+        }
+        .onAppear { people.ensure() }
+    }
+}
+
+private struct MeetingsDockInsetKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    /// The playback dock's height over the window's bottom edge: a scrolling pane keeps that much room below its last
+    /// row (`.safeAreaPadding(.bottom, inset)`), so nothing it lists hides under the dock.
+    var meetingsDockInset: CGFloat {
+        get { self[MeetingsDockInsetKey.self] }
+        set { self[MeetingsDockInsetKey.self] = newValue }
     }
 }
 
@@ -63,6 +238,10 @@ private struct MeetingsSidebar: View {
                     tooltip: "Meetings without a project, questions to answer and suggestions ready to confirm (⌘1)")
                 row("All meetings", symbol: "calendar", count: overview?.meetings.count, place: .all,
                     tooltip: "Every meeting of the last \(Plural.count(model.days, "day")) (⌘2)")
+            }
+            Section("People") {
+                row("Contacts", symbol: "person.crop.circle", count: nil, place: .contacts,
+                    tooltip: "Everyone from your meetings, calendars, Contacts and the people you added: search, add, hide and merge")
             }
             Section("Projects") {
                 if let overview, overview.projects.isEmpty {
@@ -117,9 +296,10 @@ private struct MeetingsListPane: View {
             }
             content
         }
-        // The window's title is the open meeting, so the title bar, Mission Control and the Window menu name it.
+        // The window's title is the open meeting, so Mission Control and the Window menu name it. The toolbar does
+        // not draw it: it stood over the sidebar, cut to about 20 characters, above a header that says it in full.
         .navigationTitle(openTitle ?? title)
-        .navigationSubtitle(openTitle == nil ? "" : title)
+        .modifier(NoToolbarTitle())
         .toolbar {
             ToolbarItem {
                 MenuButton(items: {
@@ -143,6 +323,7 @@ private struct MeetingsListPane: View {
         switch model.place {
         case .needs: return "Needs you"
         case .all: return "All meetings"
+        case .contacts: return "Contacts"
         case .project(let name): return name
         }
     }
@@ -205,6 +386,19 @@ private struct MeetingsByDayList: View {
     }
 }
 
+/// A meeting's name in a list row. A meeting without a title reads "Untitled meeting" as a placeholder (secondary,
+/// italic) in both lists: All meetings drew it grey and upright, which looked like a disabled row, and Needs you drew
+/// it as a name.
+struct MeetingTitleText: View {
+    let meeting: OverviewMeeting
+
+    var body: some View {
+        let untitled = meeting.title.trimmingCharacters(in: .whitespaces).isEmpty
+        Text(verbatim: meeting.displayTitle).font(.system(size: 13, weight: .medium)).italic(untitled).lineLimit(1)
+            .foregroundStyle(untitled ? .secondary : .primary)
+    }
+}
+
 /// One meeting in a list: a value row, so a publish elsewhere does not draw it again.
 struct MeetingRow: View, Equatable {
     let meeting: OverviewMeeting
@@ -212,8 +406,7 @@ struct MeetingRow: View, Equatable {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(verbatim: meeting.displayTitle).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    .foregroundStyle(meeting.title.isEmpty ? .secondary : .primary)
+                MeetingTitleText(meeting: meeting)
                 Spacer(minLength: 4)
                 Text(verbatim: [MeetingsFormat.time(meeting.start), MeetingsFormat.length(meeting.durationSec)]
                     .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
@@ -244,9 +437,10 @@ struct MeetingBadgesView: View {
     var body: some View {
         let badges = meeting.badges
         if meeting.live { Badge("Recording", color: KitPalette.removed, symbol: "record.circle") }
-        if badges.noProject { Badge("No project", color: KitPalette.modified) }
+        // A list row only: under the header's badges the project picker says "No project" itself.
+        if badges.noProject, open == nil { Badge("No project", color: KitPalette.modified) }
         if badges.openQuestions > 0 {
-            badge(Badge(Plural.count(badges.openQuestions, "question"), color: KitPalette.renamed, symbol: "ear"),
+            badge(Badge(Plural.count(badges.openQuestions, "question"), color: KitHue.ask.ink, symbol: "ear"),
                   opens: .items, tooltip: "Answer them in Items")
         }
         if badges.unclearSpeakers > 0 {
@@ -285,29 +479,11 @@ private struct NeedsYouList: View {
         } else {
             List(selection: Binding(get: { needs.row(for: model.needsSelection) },
                                     set: { tag in Task { @MainActor in model.select(needsTag: tag) } })) {
-                if !needs.noProject.isEmpty {
-                    Section("Without a project") {
-                        ForEach(needs.noProject, id: \.self) { id in
-                            if let meeting = model.meeting(id) {
-                                NeedsRow(meeting: meeting, reason: "Choose its project").tag(id)
-                            }
-                        }
-                    }
-                }
-                if !needs.questions.isEmpty {
-                    Section("Questions to answer") {
-                        ForEach(needs.questions, id: \.id) { entry in
-                            if let meeting = model.meeting(entry.id) {
-                                NeedsRow(meeting: meeting, reason: "\(Plural.count(entry.count, "question")) to answer by ear").tag("q:" + entry.id)
-                            }
-                        }
-                    }
-                }
-                if !needs.suggestions.isEmpty {
-                    Section("Ready to confirm") {
-                        ForEach(needs.suggestions, id: \.id) { entry in
-                            if let meeting = model.meeting(entry.id) {
-                                NeedsRow(meeting: meeting, reason: "\(Plural.count(entry.count, "suggestion")) at \(Int(overview.applyAbove * 100)) % or more").tag("s:" + entry.id)
+                ForEach(needs.groups, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.rows, id: \.id) { row in
+                            if let meeting = model.meeting(row.id) {
+                                NeedsRow(meeting: meeting, reason: row.reason(applyAbove: overview.applyAbove)).tag(row.tag)
                             }
                         }
                     }
@@ -324,11 +500,55 @@ private struct NeedsYouList: View {
 }
 
 extension MeetingsOverview.NeedsYou {
-    /// The row of the open meeting. A meeting with questions or suggestions has rows tagged "q:<id>" and "s:<id>", and
-    /// a meeting opened by its id (a link, a launch from a terminal) named none of them, so no row was selected.
+    /// A meeting in the list, once, with everything it waits for. Listed under each need, a meeting with questions and
+    /// suggestions stood twice, both rows opened the same tab, and the list had more rows than the sidebar counts.
+    struct Row: Equatable {
+        let id: String
+        let noProject: Bool
+        let questions: Int
+        let suggestions: Int
+
+        /// The selection tag: "q:<id>" and "s:<id>" open Items, a bare id opens the meeting's first tab.
+        var tag: String { questions > 0 ? "q:" + id : suggestions > 0 ? "s:" + id : id }
+
+        /// The row's second line. One need reads in full; several read short, so the line fits the column.
+        func reason(applyAbove: Double) -> String {
+            let above = "at \(Int(applyAbove * 100)) % or more"
+            let needs = [noProject, questions > 0, suggestions > 0].filter { $0 }.count
+            var parts: [String] = []
+            if noProject { parts.append("Choose its project") }
+            if questions > 0 { parts.append(Plural.count(questions, "question") + (needs == 1 ? " to answer by ear" : "")) }
+            if suggestions > 0 { parts.append(Plural.count(suggestions, "suggestion") + (needs == 3 ? "" : " " + above)) }
+            return parts.joined(separator: " · ")
+        }
+    }
+
+    struct Group: Equatable {
+        let title: String
+        let rows: [Row]
+    }
+
+    /// The list's groups in its order. A meeting stands in the first group it belongs to.
+    var groups: [Group] {
+        let questionCount = Dictionary(questions.map { ($0.id, $0.count) }, uniquingKeysWith: { first, _ in first })
+        let suggestionCount = Dictionary(suggestions.map { ($0.id, $0.count) }, uniquingKeysWith: { first, _ in first })
+        let withoutProject = Set(noProject)
+        var seen = Set<String>()
+        func rows(_ ids: [String]) -> [Row] {
+            ids.filter { seen.insert($0).inserted }.map {
+                Row(id: $0, noProject: withoutProject.contains($0), questions: questionCount[$0] ?? 0, suggestions: suggestionCount[$0] ?? 0)
+            }
+        }
+        return [Group(title: "Without a project", rows: rows(noProject)),
+                Group(title: "Questions to answer", rows: rows(questions.map(\.id))),
+                Group(title: "Ready to confirm", rows: rows(suggestions.map(\.id)))].filter { !$0.rows.isEmpty }
+    }
+
+    /// The row of the open meeting. A row is tagged "q:<id>", "s:<id>" or the bare id, and a meeting opened by its id
+    /// (a link, a launch from a terminal) named none of them, so no row was selected.
     func row(for selection: String?) -> String? {
         guard let selection else { return nil }
-        let tags = noProject + questions.map { "q:" + $0.id } + suggestions.map { "s:" + $0.id }
+        let tags = groups.flatMap(\.rows).map(\.tag)
         if tags.contains(selection) { return selection }
         let id = selection.hasPrefix("q:") || selection.hasPrefix("s:") ? String(selection.dropFirst(2)) : selection
         return tags.first { $0 == id || $0 == "q:" + id || $0 == "s:" + id }
@@ -367,7 +587,7 @@ private struct NeedsRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
-                Text(verbatim: meeting.displayTitle).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                MeetingTitleText(meeting: meeting)
                 Spacer(minLength: 4)
                 Text(verbatim: "\(MeetingsFormat.dayTitle(meeting.day)) \(MeetingsFormat.time(meeting.start))")
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
@@ -382,38 +602,51 @@ private struct NeedsRow: View {
 // MARK: - A project
 
 /// The project's rules, labels and people above its meetings, each with a way to the Settings card that edits it.
-private struct ProjectSummary: View {
+struct ProjectSummary: View {
     let name: String
     let settings: ProjectSettings?
     let wispr: MeetingsSettings.Source?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            line("Wispr folders", wispr?.match[name]?.folders ?? [])
-            line("Calendars", settings?.match?.calendar?.calendars ?? [])
-            line("Title words", settings?.match?.title?.words ?? [])
-            line("Labels", settings?.labels ?? [])
+        let rules = Self.rules(folders: wispr?.match[name]?.folders ?? [], calendars: settings?.match?.calendar?.calendars ?? [],
+                               words: settings?.match?.title?.words ?? [], labels: settings?.labels ?? [])
+        return VStack(alignment: .leading, spacing: 6) {
+            if rules.isEmpty {
+                // One sentence for a project without a rule: four lines that each said "none" pushed its meetings
+                // 80 pt down and told the reader nothing.
+                Text("No rule finds this project's meetings yet. A meeting joins it when you choose the project.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(rules, id: \.title) { rule in line(rule.title, rule.values) }
             // The counts take their own line: beside the two buttons they wrapped in the list's width.
             Text(verbatim: "\(Plural.count(settings?.match?.people.count ?? 0, "paired person", "paired people")) · \(Plural.count(settings?.dictionary?.entries.count ?? 0, "dictionary entry", "dictionary entries"))")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
-            HStack(spacing: 10) {
-                Button("Edit rules…") { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.projectsPage + "#project-\(name)") }
-                    .buttonStyle(.genHoverPlain()).font(.system(size: 12))
-                    .instantTooltip("Open Settings → Meetings → Projects at this project")
-                Button("Dictionary…") { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.dictionaryPage) }
-                    .buttonStyle(.genHoverPlain()).font(.system(size: 12))
-                    .instantTooltip("Open Settings → Meetings → Dictionary")
+            HStack(spacing: 8) {
+                GhostButton("Edit rules…", symbol: "slider.horizontal.3", tooltip: "Open Settings → Meetings → Projects at this project",
+                            identifier: "meetings.project.rules") {
+                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.projectsPage + "#project-\(name)")
+                }
+                GhostButton("Dictionary…", symbol: "character.book.closed", tooltip: "Open Settings → Meetings → Dictionary",
+                            identifier: "meetings.project.dictionary") {
+                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.dictionaryPage)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14).padding(.vertical, 10)
     }
 
+    /// The rules that hold a value, in the order Settings lists them. A rule without one is left out.
+    static func rules(folders: [String], calendars: [String], words: [String], labels: [String]) -> [(title: String, values: [String])] {
+        [("Wispr folders", folders), ("Calendars", calendars), ("Title words", words), ("Labels", labels)]
+            .filter { !$0.1.isEmpty }
+            .map { (title: $0.0, values: $0.1) }
+    }
+
     private func line(_ title: String, _ values: [String]) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(title).font(.system(size: 11.5)).foregroundStyle(.secondary).frame(width: 92, alignment: .leading)
-            Text(verbatim: values.isEmpty ? "none" : values.joined(separator: ", "))
-                .font(.system(size: 12)).foregroundStyle(values.isEmpty ? .tertiary : .primary).lineLimit(2)
+            Text(verbatim: values.joined(separator: ", ")).font(.system(size: 12)).lineLimit(2)
         }
     }
 }

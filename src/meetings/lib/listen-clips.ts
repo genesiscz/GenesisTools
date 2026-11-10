@@ -1,72 +1,85 @@
 import { join } from "node:path";
-import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import type { ListenPads } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import type { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
-import { cutClip } from "./audio";
-import { askedSpotSec, heardClip, type QuestionItem, questionLabel, questionOccurrence } from "./questions";
+import { type ClipPlan, cutClip, probeAudio } from "./audio";
+import { clipPlan, itemMoment, type ListenSettings } from "./moment";
+import { type QuestionItem, questionLabel } from "./questions";
+import { resolveToneSound, type ToneSound } from "./tone-sound";
 
-export type ListenSettings = MeetingsConfig["global"]["playback"]["listen"];
+export type { ClipPlan } from "./audio";
+export { type ListenSettings, SPEAKER_PAD_SEC } from "./moment";
 
-/** Audio after a speaker question's span, and before it besides the tone's lead. */
-export const SPEAKER_PAD_SEC = 0.3;
-
-/** The audio a question plays: the heard stretch, the audio around it, and where the tone sounds. */
-export interface ClipPlan {
-    fromSec: number;
-    toSec: number;
-    padSec: number;
-    toneAtSec?: number;
+/** What every clip of one `listen` run shares: the settings, the pads, and the tone's sound read once. */
+export interface ClipSettings {
+    listen: ListenSettings;
+    pads: ListenPads;
+    /** The tone's sound (`resolveToneSound`); absent when the tone is off. */
+    toneSound?: ToneSound;
 }
 
-/**
- * The clip of one question, the same for the terminal and for `listen --clip-out`. A word question plays the spot of its
- * own occurrence, so a word late in a long line is in the clip; a speaker question plays only the asked voice, from the
- * tone on, and a word keeps `padSec` of audio around it.
- */
-export function questionClip(options: {
-    record: MeetingRecord;
-    question: QuestionItem;
-    transcript: readonly TranscriptEntry[] | TranscriptLines;
-    listen: ListenSettings;
-    padSec: number;
-}): ClipPlan {
-    const { record, question, transcript, listen } = options;
-    const occurrence = questionOccurrence(record, question);
-    const heard = (question.about === "speaker" ? undefined : heardClip(question, transcript, occurrence)) ??
-        question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
-    const spotSec = askedSpotSec(question, transcript, occurrence);
-    const pad = question.about === "speaker" ? listen.beepLeadSec + SPEAKER_PAD_SEC : options.padSec;
-    const inClip = spotSec >= heard.fromSec - pad && spotSec <= heard.toSec + pad;
+/** The clip settings of a run: a sound file's length is read here once, not for each question. */
+export async function clipSettings(listen: ListenSettings, pads: ListenPads): Promise<ClipSettings> {
     return {
-        fromSec: heard.fromSec,
-        toSec: heard.toSec,
-        padSec: pad,
-        ...(listen.beep ? { toneAtSec: (inClip ? spotSec : heard.fromSec) - listen.beepLeadSec } : {}),
+        listen,
+        pads,
+        ...(listen.tone.enabled ? { toneSound: await resolveToneSound(listen.tone.sound, { probe: probeAudio }) } : {}),
     };
 }
 
-export interface WrittenClip extends ClipPlan {
+/**
+ * The clip of one question, the same for the terminal and for `listen --clip-out`: the question's Moment (moment.ts)
+ * as `cutClip` takes it. A word question plays the spot of its own occurrence, a speaker question only the asked
+ * voice from the tone on, and a word keeps the pads of audio before and after it.
+ */
+export function questionClip(
+    options: {
+        record: MeetingRecord;
+        question: QuestionItem;
+        transcript: readonly TranscriptEntry[] | TranscriptLines;
+    } & ClipSettings
+): ClipPlan {
+    const { question, pads, toneSound, ...input } = options;
+    return clipPlan(
+        itemMoment({
+            ...input,
+            item: question,
+            padSec: pads.beforeSec,
+            padAfterSec: pads.afterSec,
+            ...(toneSound ? { toneSound } : {}),
+        })
+    );
+}
+
+/** One line of `listen --clip-out --json`. Its keys are a contract: new ones may be added, none removed or renamed. */
+export interface WrittenClip {
     /** The question's number as `listen` and `items` show it (Q12). */
     question: string;
     id: string;
     clip: string;
+    fromSec: number;
+    toSec: number;
+    padSec: number;
+    /** The pad after the stretch, only when it differs from `padSec` (`playback.listen.padAfterSec`). */
+    padAfterSec?: number;
+    toneAtSec?: number;
 }
 
 /**
  * `listen --clip-out <dir>`: each question's clip as `<dir>/<Q12>.wav`, cut as the terminal would play it. Nothing plays,
  * no round starts and the record is not changed, so an agent or a test can check a clip without sound (MC22).
  */
-export async function writeQuestionClips(options: {
-    record: MeetingRecord;
-    questions: QuestionItem[];
-    transcript: readonly TranscriptEntry[] | TranscriptLines;
-    listen: ListenSettings;
-    padSec: number;
-    audioPath: string;
-    dir: string;
-    cut?: typeof cutClip;
-}): Promise<WrittenClip[]> {
+export async function writeQuestionClips(
+    options: {
+        record: MeetingRecord;
+        questions: QuestionItem[];
+        transcript: readonly TranscriptEntry[] | TranscriptLines;
+        audioPath: string;
+        dir: string;
+        cut?: typeof cutClip;
+    } & ClipSettings
+): Promise<WrittenClip[]> {
     const cut = options.cut ?? cutClip;
     const written: WrittenClip[] = [];
 
@@ -75,7 +88,16 @@ export async function writeQuestionClips(options: {
         const plan = questionClip({ ...options, question });
         const clip = join(options.dir, `${label}.wav`);
         await cut({ audioPath: options.audioPath, outPath: clip, ...plan });
-        written.push({ question: label, id: question.id, clip, ...plan });
+        written.push({
+            question: label,
+            id: question.id,
+            clip,
+            fromSec: plan.fromSec,
+            toSec: plan.toSec,
+            padSec: plan.padSec,
+            ...(plan.padAfterSec === undefined ? {} : { padAfterSec: plan.padAfterSec }),
+            ...(plan.toneAtSec === undefined ? {} : { toneAtSec: plan.toneAtSec }),
+        });
     }
 
     return written;

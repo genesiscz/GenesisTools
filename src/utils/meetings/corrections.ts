@@ -8,8 +8,11 @@ import { z } from "zod";
 
 const { log } = logger.scoped("meetings-corrections");
 
-/** A correction a person confirmed. `dictionary suggest` proposes a fix seen twice. */
-const correctionSchema = z.object({
+/**
+ * A correction a person confirmed. `dictionary suggest` proposes a fix seen twice. The decision journal
+ * (src/meetings/lib/decision-journal.ts) is the one writer of the ledger, and keeps the lines each decision wrote.
+ */
+export const correctionSchema = z.object({
     at: z.string(),
     meeting: z.string(),
     project: z.string().optional(),

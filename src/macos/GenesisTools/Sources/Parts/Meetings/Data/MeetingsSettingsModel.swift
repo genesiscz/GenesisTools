@@ -13,8 +13,10 @@ struct MatchRulesDraft: Equatable {
     }
 }
 
-/// The Settings → Meetings pages: the meetings config (read with `config show`, written with `config set` and the
-/// projects and dictionary commands), the cost of each capture choice, the match preview and the phrase test.
+/// The Settings → Meetings pages: the meetings config (read with `config.read` and written with `config.set` and
+/// `config.unset` through the Meetings service, or `config show`, `config set` and `config unset` when no service
+/// answers; the projects and dictionary commands stay commands, WaveB-Plan.md decision 13), the cost of each capture
+/// choice, the match preview and the phrase test.
 @Observable
 @MainActor
 final class MeetingsSettingsModel {
@@ -28,7 +30,10 @@ final class MeetingsSettingsModel {
     /// Paths with a write in flight, so their control waits and a second change does not race the first.
     private(set) var writing: Set<String> = []
     var drafts: [String: MatchRulesDraft] = [:]
-    var notice: MeetingsNotice?
+    /// The notices of the pages' actions, floating over the visible page.
+    @ObservationIgnored let notices: NoticeStackModel
+    /// The phrase test runs as the reader types: its failure replaces the one before instead of piling up.
+    @ObservationIgnored private let phraseFailureID = StackedNotice.ID()
     /// The dictionary page's scope: nil is the global dictionary.
     var dictionaryScope: String? {
         didSet { if oldValue != dictionaryScope { loadDictionary(); testPhrase(phrase) } }
@@ -36,11 +41,16 @@ final class MeetingsSettingsModel {
     var phrase = ""
     /// False in a snapshot: nothing is written.
     let writes: Bool
+    /// The Meetings service the config reads and writes go through; nil runs them as commands (XCTest, the preview).
+    @ObservationIgnored let service: MeetingsService?
     private var previewTask: Task<Void, Never>?
     private var phraseTask: Task<Void, Never>?
 
-    init(writes: Bool = true) {
+    /// `service` nil is the shared one (`MeetingsService.shared`, itself nil under XCTest and in the preview).
+    init(writes: Bool = true, notices: NoticeStackModel? = nil, service: MeetingsService? = nil) {
         self.writes = writes
+        self.service = service ?? MeetingsService.shared
+        self.notices = notices ?? NoticeStackModel(timing: { MeetingsPreferences.noticeTiming() })
     }
 
     /// Every read has ended, with data or with its error (a snapshot waits for this).
@@ -86,7 +96,7 @@ final class MeetingsSettingsModel {
         settings = .loading(previous: settings.value)
         Task {
             do {
-                let shown = try await MeetingsCLI.json(ConfigShow.self, ["config", "show", "--json"])
+                let shown = try await MeetingsWindowModel.settingsRead.run(service: service)
                 let value = shown.value
                 let previous = settings.value
                 let dirty = Set(drafts.keys.filter { name in
@@ -154,13 +164,6 @@ final class MeetingsSettingsModel {
 
     // MARK: Writes
 
-    /// The `--expect` arguments of a write at `path`: the value this page read there. Another editor's change since then
-    /// makes the CLI refuse the write (`config-stale`) instead of overwriting it.
-    static func expectArgs(_ path: [String], in raw: JSONValue?) -> [String] {
-        guard let raw else { return [] }
-        return ["--expect", MeetingsCLI.jsonArgument(raw.at(path).foundation)]
-    }
-
     /// One `config edit` change: the new value (nil unsets the key) and the value this page read there.
     static func editJSON(_ path: [String], _ value: Any?, in raw: JSONValue?) -> [String: Any] {
         var edit: [String: Any] = ["path": MeetingsCLI.jsonArgument(path)]
@@ -169,14 +172,31 @@ final class MeetingsSettingsModel {
         return edit
     }
 
-    /// Writes one config value (`config set`) and reads the settings again. A refused value shows the schema's
-    /// sentence; the control goes back to the saved value with the reload.
+    /// Writes one config value (`config.set`, or `config set`) and reads the settings again. A refused value shows the
+    /// schema's sentence; the control goes back to the saved value with the reload.
     func set(_ path: [String], _ value: Any, done: String? = nil) {
-        run(key: path.joined(separator: "."),
-            ["config", "set", MeetingsCLI.jsonArgument(path), MeetingsCLI.jsonArgument(value)] + Self.expectArgs(path, in: settingsRaw),
+        run(key: path.joined(separator: "."), .config(.set(path, JSONValue(foundation: value), readFrom: settingsRaw)),
             done: done, saved: { $0.settingsRaw = $0.settingsRaw?.setting(path, to: JSONValue(foundation: value)) }) {
             $0.loadSettings()
             if path.first == "global", path.dropFirst().first == "capture" { $0.loadCost() }
+        }
+    }
+
+    /// Puts one config value back to its default (`config.unset`, or `config unset`) and reads the settings again.
+    func unset(_ path: [String], done: String? = nil) {
+        run(key: path.joined(separator: "."), .config(.unset(path, readFrom: settingsRaw)), done: done) { $0.loadSettings() }
+    }
+
+    /// The Window page's tone Play button (`tone.preview`).
+    func previewTone(_ sound: MeetingsAPI.ToneSoundSetting) {
+        Task {
+            do {
+                try await TonePreviewPlayer.play(sound, service: service)
+            } catch is MeetingsService.Unavailable {
+                notices.push(StackedNotice(text: TonePreviewPlayer.unavailableText))
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.previewTone(sound) })
+            }
         }
     }
 
@@ -221,8 +241,7 @@ final class MeetingsSettingsModel {
     }
 
     func clearExportFolder(_ project: String) {
-        run(key: "projects.\(project).export",
-            ["config", "unset", MeetingsCLI.path("projects", project, "export")] + Self.expectArgs(["projects", project, "export"], in: settingsRaw),
+        run(key: "projects.\(project).export", .config(.unset(["projects", project, "export"], readFrom: settingsRaw)),
             done: "\(project) exports ask for a folder again") { $0.loadSettings() }
     }
 
@@ -252,12 +271,12 @@ final class MeetingsSettingsModel {
             defer { writing.remove("rules.\(project)") }
             do {
                 _ = try await MeetingsCLI.run(["config", "edit", MeetingsCLI.jsonArgument(edits)])
-                notice = MeetingsNotice(text: "Saved the \(project) rules", tone: .success)
+                notices.push(StackedNotice(text: "Saved the \(project) rules"))
             } catch let failure as MeetingsCLI.Failure where failure.code == "config-stale" {
                 // The draft stays: the reload brings the other editor's rules into the saved side to compare with.
-                notice = Self.staleNotice(failure)
+                notices.push(Self.staleNotice(failure))
             } catch {
-                notice = .failure(error) { [weak model = self] in model?.saveRules(project) }
+                notices.push(.meetingsFailure(error) { [weak model = self] in model?.saveRules(project) })
             }
             loadSettings()
             loadPreview()
@@ -369,7 +388,7 @@ final class MeetingsSettingsModel {
                 phraseResult = result
             } catch {
                 guard !Task.isCancelled else { return }
-                notice = .failure(error)
+                notices.push(.meetingsFailure(error, id: phraseFailureID))
             }
         }
     }
@@ -377,16 +396,27 @@ final class MeetingsSettingsModel {
     // MARK: Runner
 
     /// Another editor changed the setting after this page read it: nothing was written, and the page reads it again.
-    static func staleNotice(_ failure: MeetingsCLI.Failure) -> MeetingsNotice {
-        MeetingsNotice(text: "Not saved: this setting changed in another window or the terminal. The page shows its new value now.",
-                       more: failure.detail, tone: .error)
+    static func staleNotice(_ failure: MeetingsCLI.Failure) -> StackedNotice {
+        StackedNotice(text: "Not saved: this setting changed in another window or the terminal. The page shows its new value now.",
+                      more: failure.detail, tone: .error)
     }
 
     func isWriting(_ key: String) -> Bool { writing.contains(key) }
 
+    /// What a write runs: a command (the projects and dictionary ones), or a config change through the service.
+    enum Step {
+        case command([String])
+        case config(MeetingsConfigWrite)
+    }
+
+    private func run(key: String, _ args: [String], done: String?, undo: (@MainActor () -> Void)? = nil,
+                     saved: ((MeetingsSettingsModel) -> Void)? = nil, then: @escaping (MeetingsSettingsModel) -> Void) {
+        run(key: key, .command(args), done: done, undo: undo, saved: saved, then: then)
+    }
+
     /// `saved` runs after a write succeeded, before the reload: this page's next write then names its own value, not
     /// the one before it.
-    private func run(key: String, _ args: [String], done: String?, undo: (@MainActor () -> Void)? = nil,
+    private func run(key: String, _ step: Step, done: String?, undo: (@MainActor () -> Void)? = nil,
                      saved: ((MeetingsSettingsModel) -> Void)? = nil, then: @escaping (MeetingsSettingsModel) -> Void) {
         guard writes else { return }
         guard !writing.contains(key) else { return }
@@ -394,19 +424,28 @@ final class MeetingsSettingsModel {
         Task {
             defer { writing.remove(key) }
             do {
-                _ = try await MeetingsCLI.run(args)
+                switch step {
+                case .command(let args): _ = try await MeetingsCLI.run(args)
+                case .config(let write): try await write.run(service: service)
+                }
                 saved?(self)
                 if let done {
-                    notice = MeetingsNotice(text: done, tone: .success, actionTitle: undo == nil ? nil : "Undo", actionSymbol: "arrow.uturn.backward", action: undo)
+                    // The Undo closes this notice; what it undid reports as a notice of its own.
+                    let actions = undo.map { undo in
+                        [StackedNotice.Action("Undo", symbol: "arrow.uturn.backward") { _ in undo() }]
+                    } ?? []
+                    notices.push(StackedNotice(text: done, actions: actions))
                 }
             } catch let failure as MeetingsCLI.Failure where failure.code == "config-stale" {
-                notice = Self.staleNotice(failure)
+                notices.push(Self.staleNotice(failure))
                 loadSettings()
             } catch let failure as MeetingsCLI.Failure where failure.code == "dictionary-exists" {
                 // An Undo found the entry made again: a retry would be refused the same way.
-                notice = MeetingsNotice(text: failure.sentence, more: failure.detail, tone: .error)
+                notices.push(StackedNotice(text: failure.sentence, more: failure.detail, tone: .error))
             } catch {
-                notice = .failure(error) { [weak model = self] in model?.run(key: key, args, done: done, undo: undo, saved: saved, then: then) }
+                notices.push(.meetingsFailure(error) { [weak model = self] in
+                    model?.run(key: key, step, done: done, undo: undo, saved: saved, then: then)
+                })
             }
             then(self)
         }
@@ -459,15 +498,15 @@ extension MeetingsSettingsModel {
             defer { writing.remove(key) }
             do {
                 let removal = try await MeetingsCLI.json(ProjectRemoval.self, Self.removeArgs(name, unassign: unassign))
-                notice = MeetingsNotice(text: Self.removalNote(removal),
-                                        detail: "Its settings are kept in \((removal.backup as NSString).abbreviatingWithTildeInPath)",
-                                        tone: .success)
+                notices.push(StackedNotice(text: Self.removalNote(removal),
+                                           detail: "Its settings are kept in \((removal.backup as NSString).abbreviatingWithTildeInPath)"))
             } catch let failure as MeetingsCLI.Failure where !unassign && Self.offersUnassign(failure) {
-                notice = MeetingsNotice(text: failure.sentence, more: failure.detail, tone: .error,
-                                        actionTitle: "Remove and leave them without a project", actionSymbol: "trash",
-                                        action: { [weak self] in self?.removeProject(name, unassign: true) })
+                notices.push(StackedNotice(text: failure.sentence, more: failure.detail, tone: .error,
+                                           actions: [.init("Remove and leave them without a project", symbol: "trash") { [weak self] _ in
+                                               self?.removeProject(name, unassign: true)
+                                           }]))
             } catch {
-                notice = .failure(error) { [weak self] in self?.removeProject(name, unassign: unassign) }
+                notices.push(.meetingsFailure(error) { [weak self] in self?.removeProject(name, unassign: unassign) })
             }
             loadSettings()
         }

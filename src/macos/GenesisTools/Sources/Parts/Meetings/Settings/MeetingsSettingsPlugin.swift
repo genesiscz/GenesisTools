@@ -19,7 +19,11 @@ package final class MeetingsSettingsPlugin: FeatureSettingsPlugin {
 
     package func settingsReady(page: String?) -> Bool {
         guard let page, page.hasPrefix("meetings.") else { return true }
-        if page == MeetingsSettingsPages.windowPage { return true }
+        // The Window page shows the engine's clip and tone from the config: a snapshot waits for that read only.
+        if page == MeetingsSettingsPages.windowPage {
+            guard let model else { return true }
+            return model.settings.value != nil || model.settings.failure != nil
+        }
         return model?.settled ?? true
     }
 
@@ -43,6 +47,17 @@ enum MeetingsSettingsPages {
     static let windowPage = "meetings.window"
     /// The card on the Window page that picks where a transcript time plays.
     static let playbackAnchor = "playback"
+    /// The card on the Window page that sets how long notices stay and where they float.
+    static let noticesAnchor = "notices"
+    /// The Window page's card for a side panel section: the section's id ("rows", "panes", "engine"), and the two
+    /// older anchors for playback and notices, so a link written before the panel still lands on its card.
+    static func anchor(forSection id: String) -> String {
+        switch id {
+        case "playback": return playbackAnchor
+        case "notices": return noticesAnchor
+        default: return id
+        }
+    }
 
     static func section(model: MeetingsSettingsModel, defaults: UserDefaults) -> NativeSettingsSection {
         NativeSettingsSection(id: "meetings", title: "Meetings", pages: [
@@ -60,13 +75,14 @@ enum MeetingsSettingsPages {
             },
             NativeSettingsPage(id: windowPage, title: "Window", symbol: "macwindow", tint: .gray,
                                subtitle: "How the Meetings window opens and what it shows.") {
-                MeetingsWindowPage(defaults: defaults)
+                MeetingsWindowPage(defaults: defaults, model: model)
             },
         ], order: 40)
     }
 }
 
-/// The page's read state, the last action's note, and the content once the settings are there.
+/// The page's read state, the notices of its actions (floating over the visible page), and the content once the
+/// settings are there.
 struct MeetingsSettingsFrame<Content: View>: View {
     @Bindable var model: MeetingsSettingsModel
     /// What the page shows beside the settings; only these read when it appears.
@@ -76,13 +92,6 @@ struct MeetingsSettingsFrame<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if let notice = model.notice, !indexing {
-                NoticePill(text: notice.text, detail: notice.detail, more: notice.more, tone: notice.tone,
-                           fixes: notice.actionTitle.map { title in
-                               [NoticeFix.button(title, symbol: notice.actionSymbol) { model.notice = nil; notice.action?() }]
-                           } ?? []) { model.notice = nil }
-                    .id(notice.id)
-            }
             if let failure = model.settings.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
                            fixes: [.button("Retry", symbol: "arrow.clockwise") { model.load(reads) }])
@@ -98,7 +107,18 @@ struct MeetingsSettingsFrame<Content: View>: View {
                 }
             }
         }
+        .modifier(PageNotices(model: model.notices, shown: !indexing))
         .onAppear { model.ensure(reads) }
+    }
+}
+
+/// The settings pages' notices over the visible page; none while the search index draws the page off screen.
+private struct PageNotices: ViewModifier {
+    let model: NoticeStackModel
+    let shown: Bool
+
+    func body(content: Content) -> some View {
+        if shown { content.noticeStack(model) } else { content }
     }
 }
 
@@ -255,33 +275,47 @@ private struct OcrLanguagesCard: View {
 
 // MARK: - Window
 
+/// The Window page: how the window opens, then one card per group of the side panel (`SidePanelCatalog`), with the same
+/// words, choices and "Reset to Defaults" as the panel (G55), and the engine's clip and tone from the meetings config.
 struct MeetingsWindowPage: View {
     let defaults: UserDefaults
+    @Bindable var model: MeetingsSettingsModel
     @State private var openOn: String
     @State private var days: Int
     @State private var timeline: String
     @State private var afterExport: String
-    @State private var undoSeconds: Int
-    @State private var typedAnswer: String
-    @State private var player: String
+    /// A catalog row was written: the cards read the defaults again.
+    @State private var revision = 0
+    /// The named tones of the Clip and Tone card's sound row (`tone.presets`).
+    @State private var tonePresets: TonePresetList = .loading
+    @Environment(\.nativeSettingsIndexing) private var indexing
 
     /// The first frame shows the saved choices, never a default that snaps to them.
-    init(defaults: UserDefaults) {
+    init(defaults: UserDefaults, model: MeetingsSettingsModel) {
         self.defaults = defaults
+        self.model = model
         _openOn = State(initialValue: MeetingsPreferences.openOn(defaults).rawValue)
         _days = State(initialValue: MeetingsPreferences.days(defaults))
         _timeline = State(initialValue: MeetingsPreferences.timelineLines(defaults).rawValue)
         _afterExport = State(initialValue: MeetingsPreferences.afterExport(defaults).rawValue)
-        _undoSeconds = State(initialValue: MeetingsPreferences.undoSeconds(defaults))
-        _typedAnswer = State(initialValue: MeetingsPreferences.typedAnswer(defaults).rawValue)
-        _player = State(initialValue: MeetingsPreferences.player(defaults).rawValue)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             windowCard
-            audioCard
+            engineCard
+            ForEach(sections) { section in
+                MeetingsCatalogCard(section: section, change: changeWindow, reset: resetWindow)
+                    .nativeSettingsAnchor(MeetingsSettingsPages.anchor(forSection: section.id))
+            }
         }
+        .modifier(PageNotices(model: model.notices, shown: !indexing))
+        .onAppear { model.ensure([]) }
+    }
+
+    private var sections: [SidePanelSection] {
+        _ = revision
+        return SidePanelCatalog.windowSections(defaults)
     }
 
     private var windowCard: some View {
@@ -307,32 +341,160 @@ struct MeetingsWindowPage: View {
                                      NativeSettingsOption(MeetingsPreferences.AfterExport.finder.rawValue, "Show it in Finder"),
                                      NativeSettingsOption(MeetingsPreferences.AfterExport.nothing.rawValue, "Nothing"),
                                  ], selection: binding($afterExport, key: MeetingsPreferences.afterExportKey))
-            Divider()
-            NativeSettingsPicker("Undo stays for", detail: "After a confirm or a reject, the Undo button waits this long.",
-                                 identifier: "meetings.window.undoSeconds",
-                                 options: MeetingsPreferences.undoChoices.map { NativeSettingsOption($0, "\($0) s") },
-                                 selection: Binding(get: { undoSeconds }, set: { undoSeconds = $0; defaults.set($0, forKey: MeetingsPreferences.undoSecondsKey) }))
-            Divider()
-            NativeSettingsSegmented("Type an answer", identifier: "meetings.window.typedAnswer", options: [
-                NativeSettingsOption(MeetingsPreferences.TypedAnswer.always.rawValue, "On every question", detail: "A field beside the choices takes the word you heard."),
-                NativeSettingsOption(MeetingsPreferences.TypedAnswer.noChoices.rawValue, "Without choices", detail: "Only a question with no choices gets the field."),
-            ], selection: binding($typedAnswer, key: MeetingsPreferences.typedAnswerKey))
         }
     }
 
-    private var audioCard: some View {
-        NativeSettingsCard("Audio") {
-            NativeSettingsSegmented("Play a transcript time", identifier: "meetings.window.player", options: [
-                NativeSettingsOption(MeetingsPreferences.Player.window.rawValue, "In this window",
-                                     detail: "ffplay plays with no window of its own; the bar under the Meetings window pauses and stops it."),
-                NativeSettingsOption(MeetingsPreferences.Player.app.rawValue, "In the meetings player",
-                                     detail: "The player the meetings config names (VLC first) plays in its own window; the bar stops it."),
-            ], selection: binding($player, key: MeetingsPreferences.playerKey))
+    /// The engine's clip and tone (`global.playback.listen`), written with `config.set` like the side panel's rows.
+    @ViewBuilder
+    private var engineCard: some View {
+        if let raw = model.settingsRaw {
+            MeetingsCatalogCard(section: SidePanelCatalog.engineSection(listen: raw.at(SidePanelCatalog.segments(SidePanelCatalog.listenPath)),
+                                                                        presets: tonePresets),
+                                change: changeEngine, reset: resetEngine, playTone: { model.previewTone($0) })
+                .nativeSettingsAnchor(MeetingsSettingsPages.anchor(forSection: "engine"))
+                .task {
+                    let presets = await TonePresetList.load(service: model.service)
+                    if presets != .loading { tonePresets = presets }
+                }
+        } else if let failure = model.settings.failure {
+            NoticePill(text: "The clip and tone settings did not load: \(failure.sentence)", more: failure.detail, tone: .error,
+                       fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadSettings() }])
+        } else {
+            NativeSettingsCard("Clip and Tone") {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Reading the meetings settings…").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
         }
-        .nativeSettingsAnchor(MeetingsSettingsPages.playbackAnchor)
+    }
+
+    private func changeWindow(_ row: SidePanelRow, _ value: SidePanelValue) {
+        guard case .window(let key) = row.store else { return }
+        SidePanelCatalog.write(value, key: key, to: defaults)
+        revision += 1
+    }
+
+    private func resetWindow(_ section: SidePanelSection) {
+        for key in section.windowKeys { defaults.removeObject(forKey: key) }
+        revision += 1
+    }
+
+    private func changeEngine(_ row: SidePanelRow, _ value: SidePanelValue) {
+        guard case .engine(let path) = row.store else { return }
+        SidePanelCatalog.applyEngine(value, for: row) { json in
+            if let json {
+                model.set(SidePanelCatalog.segments(path), json.foundation)
+            } else {
+                model.unset(SidePanelCatalog.segments(path))
+            }
+        }
+    }
+
+    private func resetEngine(_ section: SidePanelSection) {
+        for path in section.enginePaths { model.unset(SidePanelCatalog.segments(path)) }
     }
 
     private func binding(_ state: Binding<String>, key: String) -> Binding<String> {
         Binding(get: { state.wrappedValue }, set: { state.wrappedValue = $0; defaults.set($0, forKey: key) })
+    }
+}
+
+/// One side panel section as a Settings card: a switch, a picker or a slider per row with its detail, a problem with the
+/// saved value under it, the section's footnote and "Reset to Defaults" under the rows.
+struct MeetingsCatalogCard: View {
+    let section: SidePanelSection
+    let change: (SidePanelRow, SidePanelValue) -> Void
+    let reset: (SidePanelSection) -> Void
+    var playTone: ((MeetingsAPI.ToneSoundSetting) -> Void)?
+
+    var body: some View {
+        NativeSettingsCard(section.title) {
+            ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                if index > 0 { Divider() }
+                rowView(row)
+            }
+            Divider()
+            HStack(spacing: 8) {
+                if let footnote = section.footnote {
+                    Label(footnote, systemImage: "clock.arrow.circlepath").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 6)
+                // lint-rules-ignore: short list (one card per window settings section, about six)
+                Button("Reset to Defaults") { reset(section) }
+                    .controlSize(.small)
+                    .disabled(section.isDefault)
+                    .instantTooltip(section.isDefault ? "Every \(section.title.lowercased()) setting is at its default"
+                                                      : "Put every \(section.title.lowercased()) setting back to its default")
+                    .accessibilityIdentifier("meetings.window.\(section.id).reset")
+            }
+        }
+    }
+
+    /// A row whose parent is off is disabled and says why (`SidePanelSection.isEnabled`, the same rule as the panel).
+    @ViewBuilder
+    private func rowView(_ row: SidePanelRow) -> some View {
+        rowControl(row, detail: section.detail(row))
+            .disabled(!section.isEnabled(row))
+    }
+
+    @ViewBuilder
+    private func rowControl(_ row: SidePanelRow, detail: String) -> some View {
+        if let slider = row.slider, case .number(let saved) = row.value {
+            MeetingsCatalogSlider(row: row, detail: detail, saved: saved, slider: slider) { change(row, .number($0)) }
+        } else if case .flag(let on) = row.value {
+            NativeSettingsToggle(row.title, detail: detail, identifier: row.id,
+                                 isOn: Binding(get: { on }, set: { change(row, .flag($0)) }))
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                NativeSettingsPicker(row.title, detail: detail, identifier: row.id,
+                                     options: row.choices.map { NativeSettingsOption($0.value, $0.title, detail: $0.note, enabled: $0.available) },
+                                     selection: Binding(get: { row.value }, set: { change(row, $0) }),
+                                     trailing: playButton(row))
+                    .help(row.valueHelp ?? "")
+                if let problem = row.problem {
+                    SidePanelProblem(text: problem)
+                        .accessibilityIdentifier("meetings.window.problem.\(row.id)")
+                }
+            }
+        }
+    }
+
+    /// The tone row's Play button beside its picker; off while the saved sound cannot play.
+    private func playButton(_ row: SidePanelRow) -> AnyView? {
+        guard let playTone, let sound = row.tone else { return nil }
+        return AnyView(
+            IconButton(systemName: "play.circle",
+                       tooltip: row.problem == nil ? "Play the tone" : "The tone cannot play: \(row.problem ?? "")") { playTone(sound) }
+                .disabled(row.problem != nil)
+                .accessibilityIdentifier("meetings.window.playTone"))
+    }
+}
+
+/// A slider row of a Settings card (the tone's volume): the kit's slider, which writes once per gesture, key step or
+/// VoiceOver step. The draft stays until the saved value arrives, or 5 s after a write that did not land.
+struct MeetingsCatalogSlider: View {
+    let row: SidePanelRow
+    let detail: String
+    let saved: Double
+    let slider: SidePanelRow.Slider
+    let commit: (Double) -> Void
+    @State private var draft: Double?
+    @State private var written = 0
+
+    var body: some View {
+        NativeSettingsSlider(row.title, detail: detail, identifier: row.id,
+                             value: Binding(get: { draft ?? saved }, set: { draft = $0 }),
+                             in: slider.range, step: slider.step, format: SidePanelWords.percent,
+                             onCommit: { value in
+                                 commit(value)
+                                 written += 1
+                             })
+            .onChange(of: saved) { draft = nil }
+            .task(id: written) {
+                guard written > 0 else { return }
+                try? await Task.sleep(for: .seconds(5))
+                if !Task.isCancelled { draft = nil }
+            }
     }
 }

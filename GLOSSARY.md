@@ -27,3 +27,29 @@ these names.
   restarts and keeps its own socket the whole time.
 - **Recorder face**: the recorder part of GenesisTools.app, started with `--recorder`: the menu bar item, the editor and
   library windows, and the headless render modes.
+
+## Meetings
+
+- **Moment**: a bounded span of a meeting's audio, with its asked spot, the pads before and after it
+  (`playback.listen.padBeforeSec`, `padAfterSec`) and the tone just before the spot. Any target has one: an item or a question, a time, a range, words picked in the transcript, one speaker's
+  turn. The Moment engine (`src/meetings/lib/moment.ts`) computes it and cuts it to a WAV; it never plays sound. The
+  terminal `listen`, `listen --clip-out`, `tools meetings play` and the Meetings window all ask it, so the span, pad,
+  spot and tone policy lives in one place. A Moment also names the screen frame on each display at its spot when the
+  screen was recorded then.
+- **Tone**: the short sound a Moment's clip carries just before its asked spot, so the listener knows what the question
+  is about (`playback.listen.tone`). Its sound is a sine, a named preset (three sines and the Mac's alert sounds) or a
+  sound file cut to 2 s.
+- **Review row**: one thing to review in a meeting: an item or a question, with its Moment, its answer choices and its
+  state. The window and the terminal show the same rows in the same order (`src/meetings/lib/review-rows.ts`,
+  `tools meetings rows`).
+- **Presumed**: the choice of a term that is the best candidate the engine scored, other than its suggested spelling
+  and the words as heard. A term with no such candidate has no presumed choice. A review row offers it as a respelling.
+- **Decision journal**: the append-only record of who decided what in a meeting, when and why: each confirm, reject,
+  respell, answer, skip or rename, with its actor (the window, `listen`, an agent and its session, a rule), its reason,
+  and the items it changed before and after under one token that an Undo reverts. Comments sent to the listening agent
+  are entries too, which no Undo reverts. An agent that drives the Meetings window through accessibility (macos-control)
+  clicks as the window, so the journal records it as the window actor ("you"): the service knows a caller only by the
+  hello of its connection.
+- **Reason**: why a decision was made, in the decider's words: the window's comment field, `--reason` on a command,
+  `listen --comment` on an answer, an agent's stated reason. The decision journal keeps it on the entry, and each item it
+  decided keeps it too.

@@ -1,13 +1,18 @@
 import Darwin
 import Foundation
 
-/// A JSON-RPC 2.0 peer over a Unix domain socket, one JSON message per line: the control channel of a live recording,
-/// and the recorder host's connection to the recorder service. Calls carry an id and a timeout; a message with a
+/// The name this client had while only recordings used it. The recorder's code still says it; new code says
+/// `JSONRPCSocketClient`.
+public typealias LiveRecordingRPCClient = JSONRPCSocketClient
+
+/// A JSON-RPC 2.0 peer over a Unix domain socket, one JSON message per line, as every `tools` service speaks it
+/// (src/utils/rpc): the control channel of a live recording, the recorder host's connection to the recorder service,
+/// and the Meetings window's connection to the Meetings service. Calls carry an id and a timeout; a message with a
 /// `method` and no `id` is a notification. The peer may also send requests: a registered handler (`answer`) answers
 /// each on the same connection, an unknown method gets -32601. Long work reports `$/progress { id, fraction?, label? }`
 /// and stops on `$/cancel { id }` (the LSP shape), in both directions. All socket work runs on one private queue;
 /// results, notifications, handlers and the close arrive on `callbackQueue`.
-public final class LiveRecordingRPCClient: @unchecked Sendable {
+public final class JSONRPCSocketClient: @unchecked Sendable {
     /// The JSON-RPC error codes this transport answers by itself.
     public enum Code {
         public static let invalidRequest = -32600
@@ -31,12 +36,12 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
         public let params: Any?
         fileprivate let id: Any
         fileprivate let key: String
-        private weak var client: LiveRecordingRPCClient?
+        private weak var client: JSONRPCSocketClient?
         private let lock = NSLock()
         private var cancelled = false
         private var cancelHandlers: [() -> Void] = []
 
-        fileprivate init(method: String, params: Any?, id: Any, key: String, client: LiveRecordingRPCClient) {
+        fileprivate init(method: String, params: Any?, id: Any, key: String, client: JSONRPCSocketClient) {
             self.method = method
             self.params = params
             self.id = id
@@ -86,8 +91,10 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
     /// `Failure.remote(code:message:)` goes out with its code, a `CancellationError` as 1013, anything else as -32603.
     public typealias Handler = (Incoming, @escaping (Result<Any?, Error>) -> Void) -> Void
 
+    /// Why a call failed. The texts still name the recorder, its first peer, and its windows show them; a caller of
+    /// another service words its own.
     public enum Failure: Error, Equatable, LocalizedError {
-        /// The recorder answered with a JSON-RPC error.
+        /// The peer answered with a JSON-RPC error.
         case remote(code: Int, message: String)
         case connect(errno: Int32)
         case pathTooLong
@@ -109,13 +116,38 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
         }
     }
 
+    /// A JSON-RPC error answer in full: its code, its message and its `data` member as JSON bytes (nil when it sent
+    /// none). A call made with `errorData: true` fails with this instead of `Failure.remote`, so a service that names
+    /// its reason in `data` (the Meetings service's `data.code`) reaches the caller whole.
+    public struct RemoteError: Error, Equatable, Sendable, LocalizedError {
+        public let code: Int
+        public let message: String
+        public let data: Data?
+
+        public init(code: Int, message: String, data: Data? = nil) {
+            self.code = code
+            self.message = message
+            self.data = data
+        }
+
+        public var errorDescription: String? { message }
+
+        /// The `data` member decoded as `type`; nil when there is none or it has another shape.
+        public func decodeData<T: Decodable>(_ type: T.Type) -> T? {
+            data.flatMap { try? JSONDecoder().decode(T.self, from: $0) }
+        }
+
+        /// The error as `Failure.remote`, without its data.
+        public var failure: Failure { .remote(code: code, message: message) }
+    }
+
     public let path: String
     /// `(method, params)` of each notification.
     public var onNotification: ((String, Any?) -> Void)?
     /// Once, when the connection ends for any reason after a successful `connect`.
     public var onClose: (() -> Void)?
 
-    private let queue = DispatchQueue(label: "genesis.live-recording.rpc")
+    private let queue = DispatchQueue(label: "genesis.jsonrpc.socket")
     private let callbackQueue: DispatchQueue
     /// How long one write may wait for a peer that stopped reading; past it the connection ends and its calls fail.
     private let sendTimeout: TimeInterval
@@ -150,14 +182,36 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
         if descriptor >= 0 { source?.cancel() }
     }
 
+    /// The path `connect` hands to the kernel. A Unix socket address holds `limit` bytes with its ending zero (104 on
+    /// macOS), and a service that listens through Bun is not held to it: a home deep in a temporary folder (a test
+    /// sandbox) gave a 127-byte socket path that every CLI call reached and no window could, so the window fell back
+    /// to commands and started the service again every minute. A longer path connects through a short symbolic link
+    /// in `linkFolder`, which the kernel follows. Nil when even the link's path is too long.
+    static func connectablePath(_ path: String, limit: Int,
+                                linkFolder: URL = FileManager.default.temporaryDirectory) -> String? {
+        guard path.utf8.count >= limit else { return path }
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in path.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3 }
+        let link = linkFolder.appendingPathComponent("gt-sock-" + String(hash, radix: 16)).path
+        guard link.utf8.count < limit else { return nil }
+        let files = FileManager.default
+        if (try? files.destinationOfSymbolicLink(atPath: link)) != path {
+            try? files.removeItem(atPath: link)
+            guard (try? files.createSymbolicLink(atPath: link, withDestinationPath: path)) != nil else { return nil }
+        }
+        return link
+    }
+
     /// Synchronous: a Unix socket connects or refuses at once.
     public func connect() throws {
         try queue.sync {
             guard descriptor < 0 else { return }
             var address = sockaddr_un()
             address.sun_family = sa_family_t(AF_UNIX)
-            let bytes = Array(path.utf8)
-            guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { throw Failure.pathTooLong }
+            guard let reachable = Self.connectablePath(path, limit: MemoryLayout.size(ofValue: address.sun_path)) else {
+                throw Failure.pathTooLong
+            }
+            let bytes = Array(reachable.utf8)
             withUnsafeMutableBytes(of: &address.sun_path) { raw in
                 raw.copyBytes(from: bytes)
                 raw[bytes.count] = 0
@@ -203,10 +257,20 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
     }
 
     /// `call` with the request id, which `cancel(_:)` takes, and the peer's `$/progress` for it on `onProgress`.
+    /// `errorData: true` delivers a JSON-RPC error answer as `RemoteError`, with its `data`, instead of `Failure.remote`.
     @discardableResult
     public func request(_ method: String, params: [String: Any]? = nil, timeout: TimeInterval = 3,
+                        errorData: Bool = false,
                         onProgress: ((CallProgress) -> Void)? = nil,
                         completion: @escaping (Result<Any?, Error>) -> Void) -> Int {
+        // The socket queue makes every error answer a `RemoteError`; a caller that did not ask for its data gets the
+        // `Failure.remote` it always got.
+        let completion: (Result<Any?, Error>) -> Void = errorData ? completion : { result in
+            completion(result.mapError { error -> Error in
+                guard let remote = error as? RemoteError else { return error }
+                return remote.failure
+            })
+        }
         idLock.lock()
         let id = nextID
         nextID += 1
@@ -322,8 +386,11 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
             deadlines[id] = nil
             guard let waiting = pending.removeValue(forKey: id) else { return }
             if let error = object["error"] as? [String: Any] {
-                let failure = Failure.remote(code: (error["code"] as? NSNumber)?.intValue ?? 0,
-                                             message: error["message"] as? String ?? "the recorder refused")
+                let data = error["data"].flatMap { value in
+                    value is NSNull ? nil : try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
+                }
+                let failure = RemoteError(code: (error["code"] as? NSNumber)?.intValue ?? 0,
+                                          message: error["message"] as? String ?? "the recorder refused", data: data)
                 deliver(waiting, .failure(failure))
             } else {
                 deliver(waiting, .success(object["result"].flatMap { $0 is NSNull ? nil : $0 }))
@@ -399,6 +466,7 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
     private static func coded(_ error: Error) -> (Int, String) {
         switch error {
         case let Failure.remote(code, message): return (code, message)
+        case let remote as RemoteError: return (remote.code, remote.message)
         case is CancellationError: return (Code.cancelled, "cancelled")
         default: return (Code.internalError, error.localizedDescription)
         }

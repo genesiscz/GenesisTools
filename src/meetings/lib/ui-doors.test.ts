@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { readCorrections } from "@genesiscz/utils/meetings/corrections";
@@ -24,6 +24,7 @@ import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
 import { matchPreview } from "./match-preview";
 import { projectLabels, setMeetingFields } from "./meeting-fields";
+import { momentClipPath, planMoment } from "./moment";
 import { meetingBadges, meetingsOverview } from "./overview";
 import { removeProject, renameProject } from "./project-admin";
 import { screenTimeline } from "./screen-timeline";
@@ -334,6 +335,37 @@ describe("window revisions", () => {
         expect(changed.show).not.toBe(added.show);
         expect(changed.transcript).not.toBe(added.transcript);
         expect(changed.speakers).not.toBe(added.speakers);
+    });
+
+    // A play in the window or `play --clip` cuts its Moment into the meeting folder; that clip is no screen data, so
+    // it must not make the window read the Screen tab again (nor F5's folder watch report the timeline changed).
+    test("a Moment clip cut into the meeting folder changes no token", async () => {
+        const { meetings } = stores();
+        const created = await meetings.create(
+            { title: "Clips", start: "2026-11-05T09:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const folder = meetings.folder(created.id);
+        const listen = meetingsConfigSchema.parse({}).global.playback.listen;
+        const transcript = [{ startSec: 0, speaker: "Dana Example", text: "We ship the harbor build on Friday." }];
+        const clip = (fromSec: number, toSec: number): void => {
+            const moment = planMoment({
+                record: created,
+                transcript,
+                listen,
+                target: { kind: "range", fromSec, toSec },
+            });
+            const path = momentClipPath(folder, moment);
+            mkdirSync(dirname(path), { recursive: true });
+            writeFileSync(path, "RIFF");
+        };
+
+        // An earlier play made the folder; this read is the window's last one.
+        clip(0, 2);
+        const before = await revisionsRead({ store: meetings, record: created });
+        clip(1, 3);
+
+        expect(await revisionsRead({ store: meetings, record: created })).toEqual(before);
     });
 
     test("the timeline token holds the source's revision, which sets the timeline's clock", () => {
