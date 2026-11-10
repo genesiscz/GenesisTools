@@ -6,9 +6,9 @@ import type { CatalogEntry } from "@genesiscz/utils/ai/catalog/types";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { ResolvedBinding, ResolvedModel } from "@genesiscz/utils/ai/core/types";
 import type { ProviderBinding, ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
-import { toModelInfo } from "@genesiscz/utils/ai/resolvers/resolve-models";
 import type { AiSdkProvider, DetectedProvider, ModelInfo, ProviderChoice, ProviderConfig } from "../types";
 import { getProviderConfig } from "./compat";
+import { toModelInfo } from "./model-info";
 
 /**
  * The bridge from the new provider layer back to `ask`'s `DetectedProvider`.
