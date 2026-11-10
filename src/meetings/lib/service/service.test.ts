@@ -1225,6 +1225,24 @@ async function captureExamples(): Promise<Example[]> {
     );
     await ask(
         window,
+        "tone.preview",
+        { sound: { preset: "click" } },
+        "A named tone without a volume: its own volume; the answer is its sine and names the preset."
+    );
+    await ask(
+        window,
+        "moment.plan",
+        {
+            meeting: REVIEW.id,
+            target: { kind: "range", fromSec: 10, toSec: 12 },
+            padSec: 1,
+            padAfterSec: 3,
+            toneSound: { preset: "soft" },
+        },
+        "Two pads and a tone for this call: padAfterSec shows where it differs from padSec; the tone names its preset."
+    );
+    await ask(
+        window,
         "tone.presets",
         {},
         "The sound picker's named tones: three sines and the Mac's alert sounds; available is false where this Mac lacks the file."
