@@ -19,12 +19,12 @@ struct StuckCheckEnvelope: Decodable {
 
 enum HubStuck {
     static func decode(_ data: Data) throws -> StuckCheckEnvelope {
-        try JSONDecoder().decode(StuckCheckEnvelope.self, from: MonitorJSON.dataByDroppingPreamble(data))
+        try JSONDecoder().decode(StuckCheckEnvelope.self, from: data)
     }
 
     /// Blocking: call off the main thread.
     static func check(_ sessionIds: [String]) throws -> StuckCheckEnvelope {
-        try decode(ToolsCLIRunner.run(arguments(sessionIds)))
+        try decode(HubSource.bridge.json(arguments(sessionIds)))
     }
 
     static func arguments(_ sessionIds: [String]) -> [String] {
@@ -36,7 +36,7 @@ enum HubStuck {
         var args = ["hub", "stuck", "config", "--json"]
         if let toolMinutes { args += ["--tool-minutes", String(toolMinutes)] }
         if let repeats { args += ["--repeats", String(repeats)] }
-        _ = try ToolsCLIRunner.run(args)
+        _ = try HubSource.bridge.output(args)
     }
 
     /// The sessions worth watching: live now, or held by a cmux pane (a long tool call stops the file

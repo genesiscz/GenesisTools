@@ -251,7 +251,7 @@ final class HubNotifyStore: ObservableObject {
         let generation = statusGeneration
         Task {
             let span = HubPerf.begin("prs.\(label)", awaits: true)
-            let result = await Task.detached(priority: .userInitiated) { Result { try ToolsCLIRunner.run(args) } }.value
+            let result = await Task.detached(priority: .userInitiated) { Result { try HubSource.bridge.output(args) } }.value
             inFlight -= 1
             switch result {
             case .success(let data):
