@@ -188,6 +188,45 @@ describe("AiConfigStore singleton", () => {
     });
 });
 
+describe("AiConfigStore follows a moved home", () => {
+    /**
+     * `SecretStore` rebinds when its resolved vault path changes; the config store does the same. A store
+     * cached under one GENESIS_TOOLS_HOME kept reading, migrating and writing that home after the variable
+     * moved, which is how a test's sandbox config and the real one got mixed up.
+     */
+    test("load() after GENESIS_TOOLS_HOME moves reads, migrates and writes the new home's config", async () => {
+        expect((await AiConfigStore.load()).account("acc_max")?.name).toBe("martin-max");
+
+        const second = mkdtempSync(join(tmpdir(), "gt-store-second-"));
+        mkdirSync(join(second, ".genesis-tools", "ai"), { recursive: true });
+        writeFileSync(
+            configPath(second),
+            SafeJSON.stringify(
+                { _schemaVersion: 3, accounts: [{ name: "legacy", provider: "openai", tokens: { apiKey: "sk-old" } }] },
+                null,
+                2
+            )
+        );
+        env.testing.set("GENESIS_TOOLS_HOME", second);
+
+        const moved = await AiConfigStore.load();
+
+        expect(moved.account("acc_max")).toBeUndefined();
+        expect(moved.account("legacy")?.id).toBe("acc_legacy");
+        const migrated = SafeJSON.parse(readFileSync(configPath(second), "utf8"), { strict: true }) as AiConfigData;
+        expect(migrated.version).toBe(CONFIG_VERSION);
+
+        await moved.mutate((data) => {
+            data.accounts.push(account("acc_second", "second-home"));
+        });
+
+        const written = SafeJSON.parse(readFileSync(configPath(second), "utf8"), { strict: true }) as AiConfigData;
+        expect(written.accounts.map((entry) => entry.id)).toContain("acc_second");
+        const first = SafeJSON.parse(readFileSync(configPath(home), "utf8"), { strict: true }) as AiConfigData;
+        expect(first.accounts.map((entry) => entry.id)).toEqual(SEED.accounts.map((entry) => entry.id));
+    });
+});
+
 describe("AiConfigStore freshness", () => {
     test("load() re-reads when another process wrote the file", async () => {
         const store = await AiConfigStore.load();
