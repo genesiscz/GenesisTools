@@ -1,5 +1,4 @@
 export type { AIConfigData, AppConfig, AppDefaults, ProviderConfig } from "@genesiscz/utils/config/ai.types";
-export { AIAccount } from "./AIAccount";
 export type { AIAccountEntry, AIAccountTokens, AIProvider } from "./account-types";
 export type { EmbeddingProviderOption, EmbeddingSelection } from "./embedding-selection";
 export {
@@ -25,8 +24,6 @@ export {
     taskPrefix as getTaskPrefix,
 } from "./local/descriptors";
 export { ModelManager } from "./ModelManager";
-export type { AccountResolver } from "./resolvers";
-export { ensureResolversInitialized, getResolver, registerResolver, resetResolvers } from "./resolvers";
 export { Embedder } from "./tasks/Embedder";
 export { ai, type TaskCommonOptions, type TextTaskOptions } from "./tasks/facade";
 export type { ProviderSelector, SpeakOptions, VoicesByProvider } from "./tasks/Synthesizer";

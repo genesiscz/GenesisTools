@@ -1,15 +1,6 @@
-import { providerManager } from "@ask/providers/ProviderManager";
-import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
-import { getLanguageModel } from "@ask/types";
-import type { AIAccount } from "@genesiscz/utils/ai/AIAccount";
+import type { ChatConfig, ChatMessage, ProviderChoice } from "@ask/types";
 import { costForCall } from "@genesiscz/utils/ai/catalog/pricing";
 import { type CoreChatResult, coreChat } from "@genesiscz/utils/ai/core/call";
-import {
-    type AnthropicModelCategory,
-    type OpenAIModelCategory,
-    resolveModel as resolveModelByName,
-} from "@genesiscz/utils/ask/providers/ModelResolver";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatTokens } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import { estimateTokens } from "@genesiscz/utils/tokens";
@@ -23,24 +14,6 @@ export interface ChatResponse {
     responseMessages?: ModelMessage[];
 }
 
-export interface OneShotOptions {
-    /**
-     * AIAccount instance — use `AIAccount.chooseClaude("hello")` or `await AIAccount.defaultClaude()`.
-     * If omitted, falls back to detecting the Anthropic provider configured in ask config.
-     */
-    account?: AIAccount;
-    /** Model: category enum (AnthropicModelCategory / OpenAIModelCategory) or raw model ID string. */
-    model: AnthropicModelCategory | OpenAIModelCategory | string;
-    /** The message to send. */
-    message: string;
-    systemPrompt?: string;
-    maxTokens?: number;
-    temperature?: number;
-    tools?: ToolSet;
-    /** Default: false (non-streaming for one-shot). */
-    streaming?: boolean;
-}
-
 export class ChatEngine {
     private config: ChatConfig;
     private conversationHistory: ChatMessage[] = [];
@@ -49,48 +22,6 @@ export class ChatEngine {
 
     constructor(config: ChatConfig) {
         this.config = { ...config };
-    }
-
-    static async oneShot(options: OneShotOptions): Promise<ChatResponse> {
-        let provider: DetectedProvider;
-
-        if (options.account) {
-            provider = await options.account.provider();
-        } else {
-            const providers = await providerManager.detectProviders("anthropic");
-            const found = providers.find((p) => p.name === "anthropic");
-
-            if (!found) {
-                throw new Error(`No Claude subscription configured. Run \`${toolCommand("ask config")}\` first.`);
-            }
-
-            provider = found;
-        }
-
-        // `resolveModelByName` is ask's fuzzy matcher over an already-detected
-        // provider's list, NOT the config-wide ladder in `utils/ai/core/resolve`.
-        // Both are called `resolveModel`; this one never touches the AI config.
-        const selection = resolveModelByName(options.model, provider.models);
-
-        if (!selection.model) {
-            const accountHint = options.account ? ` for account "${options.account.name}"` : "";
-            throw new Error(`No "${selection.request}" model available${accountHint}`);
-        }
-
-        const config: ChatConfig = {
-            model: getLanguageModel(provider.provider, selection.model.id, provider.type),
-            provider: provider.name,
-            modelName: selection.model.id,
-            streaming: options.streaming ?? false,
-            systemPrompt: options.systemPrompt,
-            maxTokens: options.maxTokens,
-            temperature: options.temperature,
-            providerChoice: { provider, model: selection.model },
-            providerType: provider.type,
-        };
-
-        const engine = new ChatEngine(config);
-        return engine.sendMessage(options.message, options.tools);
     }
 
     /**

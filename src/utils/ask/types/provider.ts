@@ -82,7 +82,7 @@ export interface DetectedProvider {
      * The account used to create this provider, set at resolution time. `id` is the
      * immutable account id that usage rows key on; `name` is the renameable handle.
      */
-    account?: { id?: string; name: string; label?: string };
+    account?: { id: string; name: string; label?: string };
 }
 
 export interface PricingInfo {
