@@ -1,3 +1,4 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import {
@@ -12,7 +13,7 @@ import {
     GlassDialogTitle,
 } from "@ui/components/glass-dialog";
 import { useEffect, useState } from "react";
-import { cmuxApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 interface PaneChoice {
     workspaceId: string;
@@ -49,14 +50,15 @@ export function QaCmuxPickerDialog({
 
     const snapshotQuery = useQuery({
         queryKey: ["cmux", "snapshot"],
-        queryFn: () => cmuxApi.snapshot().then((r) => r.snapshot),
+        queryFn: () => dashboard.call(ENDPOINTS.cmuxSnapshot, {}).then((r) => r.snapshot),
         enabled: open,
         staleTime: 5_000,
         retry: false,
     });
 
     const attach = useMutation({
-        mutationFn: (choice: PaneChoice) => cmuxApi.attach({ workspaceId: choice.workspaceId, paneId: choice.paneId }),
+        mutationFn: (choice: PaneChoice) =>
+            dashboard.call(ENDPOINTS.cmuxAttach, { workspaceId: choice.workspaceId, paneId: choice.paneId }),
         onSuccess: () => {
             setError(null);
             onOpenChange(false);

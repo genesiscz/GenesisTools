@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createDashboardClient, type EventSourceLike } from "@app/dev-dashboard/contract/client";
+import { createDashboardClient, DashboardHttpError, type EventSourceLike } from "@app/dev-dashboard/contract/client";
 import { ENDPOINTS, type EndpointInput } from "@app/dev-dashboard/contract/endpoint-table";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -35,6 +35,41 @@ describe("createDashboardClient", () => {
         const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl });
 
         await expect(client.system.pulse()).rejects.toThrow(/500/);
+    });
+
+    it("call sends a DELETE row's input as its JSON body, as the dashboard's DELETE routes read it", async () => {
+        const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
+        const fetchImpl = (async (url: string, init?: RequestInit) => {
+            calls.push({ url, method: init?.method, body: init?.body });
+            return new Response('{"removed":1}', { status: 200 });
+        }) as unknown as typeof fetch;
+        const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl });
+
+        await client.call(ENDPOINTS.commandsDelete, { id: "c1" });
+
+        expect(calls).toEqual([{ url: "http://h/api/commands", method: "DELETE", body: '{"id":"c1"}' }]);
+    });
+
+    it("answerOnRefusal returns a refusal that carries the row's answer, and a plain refusal keeps its status", async () => {
+        const miss = { ok: false as const, error: "no pane", remedy: "open cmux" };
+        const fetchImpl = (async (url: string) =>
+            url.endsWith("focus-session")
+                ? new Response(SafeJSON.stringify(miss), { status: 409 })
+                : new Response("down", { status: 503 })) as unknown as typeof fetch;
+        const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl });
+
+        const answer = await client.call(ENDPOINTS.cmuxFocusSession, { sessionId: "s1" }, { answerOnRefusal: true });
+        expect(answer).toEqual(miss);
+
+        const refused = await client.call(ENDPOINTS.todos, {}).catch((err: unknown) => err);
+        expect(refused).toBeInstanceOf(DashboardHttpError);
+        expect(refused).toMatchObject({ status: 503, body: "down", message: "/api/todos -> 503: down" });
+    });
+
+    it("url builds a non-JSON row's address with its query", () => {
+        const client = createDashboardClient({ baseUrl: "http://h", fetch });
+
+        expect(client.url(ENDPOINTS.qaSound, { id: "bundled:a b" })).toBe("http://h/api/qa/sound?id=bundled%3Aa+b");
     });
 
     // The server skips the cmux-layout RPC unless `?include=cmux` is present, and answers with

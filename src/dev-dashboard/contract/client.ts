@@ -40,6 +40,18 @@ import { paths } from "@app/dev-dashboard/contract/endpoints";
 import type { LiveChannel, LiveDataFrame, LiveFrame, LiveSubscribeBody } from "@app/dev-dashboard/contract/live";
 import { SafeJSON } from "@genesiscz/utils/json";
 
+/** A refused request: the message is `<path> -> <status>: <body>`, and the status and the body stay readable. */
+export class DashboardHttpError extends Error {
+    constructor(
+        readonly path: string,
+        readonly status: number,
+        readonly body: string
+    ) {
+        super(`${path} -> ${status}: ${body}`);
+        this.name = "DashboardHttpError";
+    }
+}
+
 /** Per-call headers of the generic `call`. */
 export interface CallOptions {
     /** Makes a write safe to retry: the server answers a repeat with the first answer. */
@@ -48,6 +60,11 @@ export interface CallOptions {
     actToken?: string;
     /** Bytes sent as they are, with their own content type, in place of the JSON body (the upload row). */
     rawBody?: { data: string | ArrayBuffer | Blob; contentType: string };
+    /**
+     * A refusal whose body is the row's own answer shape (the focus miss is a 409, an incomplete form a 400) is
+     * returned instead of thrown. A body that is not JSON still throws.
+     */
+    answerOnRefusal?: boolean;
 }
 
 /** A query string from the input left over after the path params: arrays as comma lists, undefined dropped. */
@@ -118,7 +135,7 @@ function sameChannels(a: readonly LiveChannel[], b: readonly LiveChannel[]): boo
 export function createDashboardClient(opts: DashboardClientOptions) {
     const { baseUrl, fetch: fetchImpl } = opts;
 
-    async function get<T>(path: string, init?: RequestInit): Promise<T> {
+    async function get<T>(path: string, init?: RequestInit, answerOnRefusal = false): Promise<T> {
         const auth = opts.authHeader?.();
         const res = await fetchImpl(`${baseUrl}${path}`, {
             ...init,
@@ -131,7 +148,16 @@ export function createDashboardClient(opts: DashboardClientOptions) {
 
         if (!res.ok) {
             const text = await res.text().catch(() => "");
-            throw new Error(`${path} -> ${res.status}: ${text}`);
+
+            if (answerOnRefusal) {
+                try {
+                    return SafeJSON.parse(text, { strict: true }) as T;
+                } catch {
+                    // Not an answer: fall through to the plain refusal.
+                }
+            }
+
+            throw new DashboardHttpError(path, res.status, text);
         }
 
         return SafeJSON.parse(await res.text(), { strict: true }) as T;
@@ -158,24 +184,45 @@ export function createDashboardClient(opts: DashboardClientOptions) {
             ...(options.actToken ? { "X-GT-Act-Token": options.actToken } : {}),
         };
 
+        const refusal = options.answerOnRefusal ?? false;
+
         if (endpoint.method === "GET") {
-            return get<EndpointOutput<E>>(`${path}${queryOf(rest)}`, { method: endpoint.method, headers });
+            return get<EndpointOutput<E>>(`${path}${queryOf(rest)}`, { method: endpoint.method, headers }, refusal);
         }
 
         if (options.rawBody) {
-            // The headers spread after get's JSON default, so this content type wins.
-            return get<EndpointOutput<E>>(path, {
-                method: endpoint.method,
-                headers: { ...headers, "Content-Type": options.rawBody.contentType },
-                body: options.rawBody.data,
-            });
+            // The input left over is the query of an upload; the headers spread after get's JSON default, so this
+            // content type wins.
+            return get<EndpointOutput<E>>(
+                `${path}${queryOf(rest)}`,
+                {
+                    method: endpoint.method,
+                    headers: { ...headers, "Content-Type": options.rawBody.contentType },
+                    body: options.rawBody.data,
+                },
+                refusal
+            );
         }
 
-        return get<EndpointOutput<E>>(path, { method: endpoint.method, headers, body: SafeJSON.stringify(rest) });
+        return get<EndpointOutput<E>>(
+            path,
+            { method: endpoint.method, headers, body: SafeJSON.stringify(rest) },
+            refusal
+        );
+    }
+
+    /**
+     * The URL of a row whose answer is not JSON (a sound, an attachment file), for an `<audio>` or a link. Path params
+     * come out of the input and the rest is the query, as `call` builds a GET.
+     */
+    function url<E extends Endpoint>(endpoint: E, input: EndpointInput<E>): string {
+        const { path, rest } = fillPath(endpoint.path, (input ?? {}) as Record<string, unknown>);
+        return `${baseUrl}${path}${queryOf(rest)}`;
     }
 
     return {
         call,
+        url,
         // Escape hatch — any route is callable with a caller-specified type. Deferred
         // features (claude/daemon/containers/todos) use these until precisely typed.
         get,

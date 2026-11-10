@@ -1,7 +1,8 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { useQuery } from "@tanstack/react-query";
 import { useLive } from "@/hooks/useLive";
-import { portsApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 /**
  * Ports list + progressive classify via the unified `/api/live` bus.
@@ -14,7 +15,7 @@ export function usePorts(opts?: { refetchIntervalMs?: number; enableLive?: boole
 
     return useQuery<PortsResult>({
         queryKey: ["ports"],
-        queryFn: () => portsApi.list(),
+        queryFn: () => dashboard.call(ENDPOINTS.ports, {}),
         // Live bus owns refresh when enabled; rare fallback poll if stream is down.
         refetchInterval: enableLive ? false : (opts?.refetchIntervalMs ?? 12_000),
         staleTime: enableLive ? 60_000 : 0,

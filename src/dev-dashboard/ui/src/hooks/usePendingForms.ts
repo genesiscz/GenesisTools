@@ -1,10 +1,11 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import type { LiveAskForm } from "@app/dev-dashboard/contract/live";
 import { applyPendingFrame, mergePendingSnapshot, nextPendingSequence } from "@app/dev-dashboard/lib/qa-pending-merge";
 import type { AskForm } from "@app/question/lib/pending/types";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLive } from "@/hooks/useLive";
-import { qaPendingApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 /**
  * The live contract keeps `poster` and `transcriptAnchor` opaque for the phone's type check. The web reads its own
@@ -34,7 +35,8 @@ export interface PendingSnapshot {
  * The fetcher is a parameter so the ordering can be tested without a browser or a server.
  */
 export async function fetchPendingSnapshot(
-    list: () => Promise<{ forms: AskForm[] }> = qaPendingApi.list
+    list: () => Promise<{ forms: AskForm[] }> = () =>
+        dashboard.call(ENDPOINTS.qaPending, {}).then((answer) => ({ forms: answer.forms.map(asAskForm) }))
 ): Promise<PendingSnapshot> {
     const requestedAt = nextPendingSequence();
 

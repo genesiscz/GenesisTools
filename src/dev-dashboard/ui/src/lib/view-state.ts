@@ -1,5 +1,5 @@
+import type { TmuxHubSession } from "@app/dev-dashboard/contract/dto";
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { TmuxHubSession } from "@/lib/api";
 
 export const TTYD_TAB_SEARCH_KEY = "tab";
 
