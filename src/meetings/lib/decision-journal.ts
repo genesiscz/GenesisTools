@@ -622,7 +622,10 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 ...(action.comment ? { comment: action.comment } : {}),
                 now,
             });
-            const alike = settleLookAlikes(record, question, { answer: action.answer, listenBelow, now });
+            const alike =
+                action.lookAlikes === "leave"
+                    ? { settled: [], corrections: [] }
+                    : settleLookAlikes(record, question, { answer: action.answer, listenBelow, now });
             return {
                 history: { command: "listen", change: `${question.id} → ${action.answer}` },
                 settled: alike.settled,

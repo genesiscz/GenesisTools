@@ -31,7 +31,17 @@ export const DECISION_ACTION_OPTIONS = [
     z.object({ kind: z.literal("reject"), items: z.array(itemRef), minConfidence: z.number().optional() }),
     /** The item's value edited in place (a term's spelling, a range's speaker, a join's word): it is confirmed so. */
     z.object({ kind: z.literal("respell"), item: itemRef, text: z.string() }),
-    z.object({ kind: z.literal("answer"), question: itemRef, answer: z.string(), comment: z.string().optional() }),
+    z.object({
+        kind: z.literal("answer"),
+        question: itemRef,
+        answer: z.string(),
+        comment: z.string().optional(),
+        /**
+         * `leave`: the questions that look alike stay open (the window's "Only this question", R22). The default
+         * settles them with the same answer, as `listen` does.
+         */
+        lookAlikes: z.enum(["settle", "leave"]).optional(),
+    }),
     z.object({ kind: z.literal("skip"), question: itemRef }),
     /** "Several voices": the question is cut into one question per line and voice. */
     z.object({ kind: z.literal("split"), question: itemRef }),

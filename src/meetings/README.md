@@ -345,6 +345,9 @@ answer settles compatible look-alikes. A speaker answer requires the same single
 and an offered answer; its items gain +0.3 up to 0.9, closing questions that reach the threshold. A word answer
 propagates only between questions with the same heard words and choices that decide exclusively global terms ("settled by the answer to i7"); the `answered` event lists them in `settled`, and an undo
 reopens them (`reopened` with `also`). "Enough for now" ends the round; the rest stay marked in the transcript.
+Through the service an answer can leave its look-alikes open: `decision.apply` with
+`{ kind: "answer", question, answer, lookAlikes: "leave" }` decides the question and what it decides, nothing more
+(the window's "Only this question" in its "This also affects" sheet). `listen` always settles them.
 
 The round is one module, `ListenSession` in `lib/listen-session.ts`: which question comes next, the budget, each
 decision as per-item changes with their inverse, look-alikes, the answer log and the ledger. A `ListenAdapter` asks
