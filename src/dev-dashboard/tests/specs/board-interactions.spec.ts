@@ -769,7 +769,7 @@ test.describe("reading width", () => {
                 },
             })
         );
-        await page.route("**/api/qa/stream", (route) => route.fulfill({ status: 204 }));
+        await page.route("**/api/live?*", (route) => route.fulfill({ status: 204 }));
         await page.goto("/");
         await page.evaluate(() => localStorage.removeItem("dd:reading-width"));
         await page.goto("/qa");

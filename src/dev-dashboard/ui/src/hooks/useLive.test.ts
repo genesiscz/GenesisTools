@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { LiveChannel } from "@app/dev-dashboard/lib/live/types";
+import type { LiveChannel, LiveDataFrame } from "@app/dev-dashboard/lib/live/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { QueryClient } from "@tanstack/react-query";
 import {
@@ -194,5 +194,32 @@ describe("openLiveConnection", () => {
 
         expect(cleanup).toBeUndefined();
         expect(created).toHaveLength(0);
+    });
+
+    test("a caller's onFrame gets every data frame and no system frame", () => {
+        const created: FakeEventSource[] = [];
+        const frames: LiveDataFrame[] = [];
+        const deps = { ...fakeDeps(created), onFrame: (frame: LiveDataFrame) => frames.push(frame) };
+
+        openLiveConnection("handoffs,pending", true, deps);
+        created[0]?.hello("conn-1");
+        const pending = { v: 1, channel: "pending", type: "snapshot", payload: { forms: [] } };
+        const handoff = { v: 1, channel: "handoffs", type: "event", payload: { id: "h1", ev: "claim", ts: "t" } };
+        created[0]?.onmessage?.({ data: SafeJSON.stringify(pending) } as MessageEvent);
+        created[0]?.onmessage?.({ data: SafeJSON.stringify(handoff) } as MessageEvent);
+
+        expect(frames).toEqual([pending, handoff] as LiveDataFrame[]);
+    });
+
+    test("onStatus says down on an error and up again on the next frame", () => {
+        const created: FakeEventSource[] = [];
+        const statuses: boolean[] = [];
+        const deps = { ...fakeDeps(created), onStatus: (down: boolean) => statuses.push(down) };
+
+        openLiveConnection("qa", true, deps);
+        created[0]?.onerror?.();
+        created[0]?.hello("conn-2");
+
+        expect(statuses).toEqual([true, false]);
     });
 });

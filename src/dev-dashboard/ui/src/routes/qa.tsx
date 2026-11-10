@@ -29,8 +29,8 @@ import { QaSessionActions } from "@/components/QaSessionActions";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { QaTopBar } from "@/components/QaTopBar";
 import { ReadingColumn } from "@/components/ReadingColumn";
+import { useLive } from "@/hooks/useLive";
 import { usePendingForms } from "@/hooks/usePendingForms";
-import { useQaStream } from "@/hooks/useQaStream";
 import { qaLogApi, qaPendingApi } from "@/lib/api";
 import { prependQaLiveEntry } from "./qa-live-cap";
 
@@ -694,13 +694,14 @@ function QaFeed() {
         readAtByIdRef.current = readAtById;
     }, [readAtById]);
 
-    useQaStream(
-        (frame) => {
-            if (frame.type !== "qa") {
+    useLive(["qa"], {
+        onFrame: (frame) => {
+            if (frame.channel !== "qa") {
                 return;
             }
 
-            const entry = frame as unknown as QaRow;
+            // The producer sends the whole enriched log line; the contract types only the three HTML fields.
+            const entry = frame.payload as unknown as QaRow;
 
             if (seen.current.has(entry.id)) {
                 return;
@@ -714,8 +715,8 @@ function QaFeed() {
                 return evicted.live;
             });
         },
-        { onStatus: setSseDown }
-    );
+        onStatus: setSseDown,
+    });
 
     const persisted = (logQuery.data ?? []).filter((r) => !seen.current.has(r.id));
     const all = [...live, ...persisted];
