@@ -1,43 +1,18 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import type {
     HandoffActionInput,
-    HandoffActionResponse,
     HandoffGetResponse,
-    HandoffListResponse,
-    HandoffPostResponse,
     HandoffTarget,
     HandoffTaskInput,
     PublicHandoff,
 } from "@app/dev-dashboard/lib/handoff-types";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(url, init);
-    const text = await res.text();
-
-    if (!res.ok) {
-        let message = text;
-
-        try {
-            const body = SafeJSON.parse(text, { strict: true }) as { error?: string };
-
-            if (typeof body.error === "string") {
-                message = body.error;
-            }
-        } catch {
-            /* non-JSON error body — use raw text */
-        }
-
-        throw new Error(message || `${res.status}`);
-    }
-
-    return SafeJSON.parse(text, { strict: true }) as T;
-}
+import { dashboard, withServerMessage } from "@/lib/dashboard-client";
 
 export function useHandoffList() {
     return useQuery({
         queryKey: ["handoff-log"],
-        queryFn: () => fetchJson<HandoffListResponse>("/api/handoff/log?limit=200"),
+        queryFn: () => withServerMessage(dashboard.call(ENDPOINTS.handoffLog, { limit: 200 })),
         retry: false,
     });
 }
@@ -46,7 +21,7 @@ export function useHandoffDetail(id: string | null) {
     return useQuery({
         queryKey: ["handoff", id],
         enabled: id !== null,
-        queryFn: () => fetchJson<HandoffGetResponse>(`/api/handoff/get?id=${encodeURIComponent(id ?? "")}`),
+        queryFn: () => withServerMessage(dashboard.call(ENDPOINTS.handoffGet, { id: id ?? "" })),
         retry: false,
     });
 }
@@ -60,11 +35,7 @@ export function useHandoffAction(id: string) {
 
     return useMutation({
         mutationFn: (actions: HandoffActionInput[]) =>
-            fetchJson<HandoffActionResponse>("/api/handoff/action", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify({ id, actions }, { strict: true }),
-            }),
+            withServerMessage(dashboard.call(ENDPOINTS.handoffAction, { id, actions })),
         onSuccess: (res) => {
             queryClient.setQueryData<HandoffGetResponse>(["handoff", id], (prev) => ({
                 editId: prev?.editId,
@@ -87,12 +58,7 @@ export function useHandoffCreate() {
             tasks: HandoffTaskInput[];
             target?: HandoffTarget;
             refs?: string[];
-        }) =>
-            fetchJson<HandoffPostResponse>("/api/handoff/post", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify(input, { strict: true }),
-            }),
+        }) => withServerMessage(dashboard.call(ENDPOINTS.handoffPost, input)),
         onSuccess: () => {
             void queryClient.invalidateQueries({ queryKey: ["handoff-log"] });
         },
@@ -104,38 +70,15 @@ export async function uploadHandoffAttachment(input: {
     file: File;
     taskId?: string;
 }): Promise<{ attachmentId: string; handoff: PublicHandoff }> {
-    const params = new URLSearchParams({ id: input.id, filename: input.file.name || "pasted.png" });
-
-    if (input.taskId !== undefined) {
-        params.set("taskId", input.taskId);
-    }
-
-    const res = await fetch(`/api/handoff/attach?${params.toString()}`, {
-        method: "POST",
-        headers: { "Content-Type": input.file.type || "application/octet-stream" },
-        body: input.file,
-    });
-    const text = await res.text();
-
-    if (!res.ok) {
-        let message = text;
-
-        try {
-            const body = SafeJSON.parse(text, { strict: true }) as { error?: string };
-
-            if (typeof body.error === "string") {
-                message = body.error;
-            }
-        } catch {
-            /* raw text */
-        }
-
-        throw new Error(message || `${res.status}`);
-    }
-
-    return SafeJSON.parse(text, { strict: true }) as { attachmentId: string; handoff: PublicHandoff };
+    return withServerMessage(
+        dashboard.call(
+            ENDPOINTS.handoffAttach,
+            { id: input.id, filename: input.file.name || "pasted.png", taskId: input.taskId },
+            { rawBody: { data: input.file, contentType: input.file.type || "application/octet-stream" } }
+        )
+    );
 }
 
 export function attachmentUrl(attachmentId: string): string {
-    return `/api/handoff/attachment?id=${encodeURIComponent(attachmentId)}`;
+    return dashboard.url(ENDPOINTS.handoffAttachment, { id: attachmentId });
 }

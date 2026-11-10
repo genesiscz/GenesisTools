@@ -1,10 +1,11 @@
+import { DashboardHttpError } from "@app/dev-dashboard/contract/client";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { isQaAnswerTruncated, QA_ANSWER_PREVIEW_LINES } from "@app/dev-dashboard/lib/qa-preview";
 import { renderQaAnswerHtml, renderQaQuestionHtml } from "@app/dev-dashboard/lib/qa-render";
 import { searchQa } from "@app/dev-dashboard/lib/qa-search";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
 import { worktreeLabel } from "@app/question/lib/worktree-label";
 import { formatNumber } from "@genesiscz/utils/format";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { highlightMatchesInHtml } from "@genesiscz/utils/ui/helpers/highlight-matches.client";
 import { useScrollProgress } from "@genesiscz/utils/ui/hooks/useScrollProgress.client";
 import { hasNonEmptySelection } from "@genesiscz/utils/ui/hooks/useSelectionAware.client";
@@ -31,21 +32,18 @@ import { QaTopBar } from "@/components/QaTopBar";
 import { ReadingColumn } from "@/components/ReadingColumn";
 import { useLive } from "@/hooks/useLive";
 import { usePendingForms } from "@/hooks/usePendingForms";
-import { qaLogApi, qaPendingApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 import { prependQaLiveEntry } from "./qa-live-cap";
 
 const READ_PERSIST_DEBOUNCE_MS = 400;
 
 async function fetchQaLog(): Promise<QaRow[]> {
-    const res = await fetch("/api/qa/log?limit=100");
-
-    if (!res.ok) {
-        throw new Error(`Failed to load Q&A: ${res.status}`);
+    try {
+        const body = await dashboard.call(ENDPOINTS.qaLog, { limit: 100 });
+        return body.entries.reverse();
+    } catch (err) {
+        throw err instanceof DashboardHttpError ? new Error(`Failed to load Q&A: ${err.status}`) : err;
     }
-
-    const body = SafeJSON.parse(await res.text(), { strict: true }) as { entries: QaRow[] };
-
-    return body.entries.reverse();
 }
 
 function tagClass(tag: string): string {
@@ -219,8 +217,8 @@ const QaCard = memo(function QaCard({
     const loadFull = useCallback(() => {
         setFullLoading(true);
         setFullError(null);
-        qaLogApi
-            .entry(listEntry.id)
+        dashboard
+            .call(ENDPOINTS.qaEntry, { id: listEntry.id })
             .then((res) => {
                 setFullEntry(res.entry);
                 setOpen(true);
@@ -542,19 +540,12 @@ function QaFeed() {
                 return;
             }
 
-            void fetch("/api/qa/read", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify({ ids, unread: unread || undefined }),
-            })
-                .then((res) => {
-                    if (res.status === 404) {
-                        readApiDisabledRef.current = true;
-                    }
-                })
-                .catch(() => {
-                    /* best-effort */
-                });
+            dashboard.call(ENDPOINTS.qaRead, { ids, unread: unread || undefined }).catch((err: unknown) => {
+                // Best-effort; a server without the read route answers 404, and the page stops asking.
+                if (err instanceof DashboardHttpError && err.status === 404) {
+                    readApiDisabledRef.current = true;
+                }
+            });
         };
 
         post(readIds, false);
@@ -758,8 +749,8 @@ function QaFeed() {
 
         deepLinkTried.current.add(pinnedId);
         let cancelled = false;
-        qaPendingApi
-            .get(pinnedId)
+        dashboard
+            .call(ENDPOINTS.qaPendingGet, { id: pinnedId })
             .then(({ form }) => {
                 if (!cancelled && form.entryId) {
                     setPinnedId(form.entryId);

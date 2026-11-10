@@ -1,3 +1,5 @@
+import { DashboardHttpError } from "@app/dev-dashboard/contract/client";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
 import type { LiveChannel, LiveDataFrame, LiveFrame } from "@app/dev-dashboard/lib/live/types";
 import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
@@ -5,6 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePageVisible } from "@/hooks/usePageVisible";
+import { dashboard } from "@/lib/dashboard-client";
 
 function portKey(p: PortInfo): string {
     return `${p.pid}:${p.port}:${p.proto}`;
@@ -198,14 +201,10 @@ export function useLive(
             throw new Error("live stream not connected");
         }
 
-        const res = await fetch(paths.liveSubscribe(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: SafeJSON.stringify({ connId: id, channels: ch }),
-        });
-
-        if (!res.ok) {
-            throw new Error(`subscribe failed: ${res.status}`);
+        try {
+            await dashboard.call(ENDPOINTS.liveSubscribe, { connId: id, channels: ch });
+        } catch (err) {
+            throw err instanceof DashboardHttpError ? new Error(`subscribe failed: ${err.status}`) : err;
         }
     }, []);
 

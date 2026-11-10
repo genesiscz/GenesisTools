@@ -68,7 +68,6 @@ import type {
     ProcessesRes,
     PulseHistoryRes,
     PulseRes,
-    QaLogRes,
     TimelineRes,
     TmuxPresetRestoreRes,
     TmuxPresetSaveRes,
@@ -328,6 +327,14 @@ export interface PendingAnswerDto {
     freeText?: string;
 }
 
+/**
+ * The answer of `POST /api/qa/pending/:id/answer`. A refusal carries the same shape with its status (404 unknown, 409
+ * not pending, 400 incomplete with the missing items), so a caller may read it with `answerOnRefusal`.
+ */
+export type PendingAnswerResultDto =
+    | { ok: true; form: LiveAskForm; entryId: string }
+    | { ok: false; code: "not_found" | "not_pending" | "incomplete"; error: string; missing?: string[] };
+
 export const ENDPOINTS = {
     // Decisions (the hub inbox), the same doors as `tools question inbox`.
     qaDecisions: row<{ hours?: number }, unknown>("GET", "/api/qa/decisions", "read"),
@@ -383,7 +390,7 @@ export const ENDPOINTS = {
     // Pending ask forms.
     qaPending: row<{ ids?: string }, { forms: LiveAskForm[] }>("GET", "/api/qa/pending", "read"),
     qaPendingGet: row<{ id: string }, { form: LiveAskForm }>("GET", "/api/qa/pending/:id", "read"),
-    qaPendingAnswer: row<{ id: string; answers: PendingAnswerDto[] }, { ok: boolean; entryId?: string }>(
+    qaPendingAnswer: row<{ id: string; answers: PendingAnswerDto[] }, PendingAnswerResultDto>(
         "POST",
         "/api/qa/pending/:id/answer",
         "keyed-write"
@@ -624,7 +631,7 @@ export const ENDPOINTS = {
     processes: row<{ sort?: ProcessSort; limit?: number }, ProcessesRes>("GET", "/api/processes", "read"),
     /** `command` is required: the server compares it with the live name, so a reissued pid is never signalled. */
     processesKill: row<{ pid: number; command: string }, { ok: boolean }>("POST", "/api/processes/kill", "keyed-write"),
-    qaLog: row<{ project?: string; tag?: string; unread?: "1"; limit?: number }, QaLogRes>(
+    qaLog: row<{ project?: string; tag?: string; unread?: "1"; limit?: number }, { entries: QaRow[] }>(
         "GET",
         "/api/qa/log",
         "read"

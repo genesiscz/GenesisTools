@@ -1,9 +1,19 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { formatQaAsHtml, formatQaAsMarkdown } from "@app/dev-dashboard/lib/qa-clipboard";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
 import { IconButton } from "@ui/components/icon-button";
 import { FileText, FileType2, NotebookPen } from "lucide-react";
 import { useState } from "react";
-import { fullQaEntry } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
+
+/** The entry as stored: fetched only when the log clipped its answer. */
+async function fullQaEntry(entry: QaRow): Promise<QaRow> {
+    if (entry.answerFullChars === undefined) {
+        return entry;
+    }
+
+    return (await dashboard.call(ENDPOINTS.qaEntry, { id: entry.id })).entry;
+}
 
 export function QaCopyButtons({ entry, onSaveToObsidian }: { entry: QaRow; onSaveToObsidian: () => void }) {
     const [copied, setCopied] = useState<"md" | "html" | "error" | null>(null);
