@@ -15,13 +15,7 @@ import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider
 import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as storage from "@genesiscz/utils/storage/storage";
-import {
-    attachCodexAgents,
-    buildCodexParent,
-    type CodexAgentRecord,
-    codexAgentHeadOf,
-    codexAgentStatus,
-} from "./codex-agents";
+import { attachCodexAgents, buildCodexParent, type CodexAgentRecord, codexAgentStatus } from "./codex-agents";
 import type { ParentRow } from "./tree";
 
 const NOW = Date.parse("2026-10-05T18:00:00.000Z");
@@ -99,65 +93,15 @@ function rollout(dir: string, id: string, text: string, ageMs: number): { filePa
 }
 
 function record(id: string, file: { filePath: string; mtime: number }): CodexAgentRecord {
-    return { id, rootId: ROOT, filePath: file.filePath, mtime: file.mtime, cwd: "/work/app" };
+    return {
+        id,
+        rootId: ROOT,
+        filePath: file.filePath,
+        mtime: file.mtime,
+        cwd: "/work/app",
+        startedAt: "2026-10-05T10:00:00.000Z",
+    };
 }
-
-describe("codexAgentHeadOf", () => {
-    test("reads the link and the names from the first kilobyte, whatever follows", () => {
-        const file = rollout(
-            temp(),
-            CHILD_A,
-            meta({
-                id: CHILD_A,
-                parent: ROOT,
-                depth: 1,
-                nickname: "Cicero",
-                role: "worker",
-                path: "/root/astra1_runtime",
-            }),
-            60_000
-        );
-
-        expect(codexAgentHeadOf(file.filePath)).toEqual({
-            parentId: ROOT,
-            depth: 1,
-            nickname: "Cicero",
-            role: "worker",
-            agentPath: "/root/astra1_runtime",
-            startedAt: "2026-10-05T10:00:00.000Z",
-        });
-    });
-
-    test("reads the native header shape: source.subagent.thread_spawn with no thread_source field", () => {
-        const native = line({
-            timestamp: "2026-10-05T10:00:00.000Z",
-            type: "session_meta",
-            payload: {
-                id: CHILD_A,
-                session_id: ROOT,
-                cwd: "/work/app",
-                source: { subagent: { thread_spawn: { parent_thread_id: ROOT, depth: 1, agent_nickname: "Ada" } } },
-            },
-        });
-        const file = rollout(temp(), CHILD_A, native, 60_000);
-
-        expect(codexAgentHeadOf(file.filePath)).toMatchObject({ parentId: ROOT, depth: 1, nickname: "Ada" });
-    });
-
-    test("a rollout that is not a sub-agent has no head", () => {
-        const file = rollout(
-            temp(),
-            ROOT,
-            line({
-                type: "session_meta",
-                payload: { id: ROOT, session_id: ROOT, cwd: "/work/app", thread_source: "user" },
-            }),
-            60_000
-        );
-
-        expect(codexAgentHeadOf(file.filePath)).toBeNull();
-    });
-});
 
 describe("codexAgentStatus", () => {
     const stateOf = (text: string, ageMs: number) => {
@@ -289,27 +233,27 @@ describe("attachCodexAgents", () => {
         };
     }
 
-    test("hangs each agent under the thread that spawned it, and a nested one under its spawner", () => {
+    test("hangs each agent under the thread that spawned it, and a nested one under its spawner", async () => {
         const { records, cache } = family();
-        const tops = attachCodexAgents(records, { now: NOW, cachePath: cache, model: "gpt-lead" });
+        const tops = await attachCodexAgents(records, { now: NOW, cachePath: cache, model: "gpt-lead" });
         const children = tops.get(ROOT) ?? [];
 
         expect(children.map((node) => node.id)).toEqual([CHILD_B, CHILD_A]);
         expect(children.find((node) => node.id === CHILD_B)?.children.map((node) => node.id)).toEqual([GRANDCHILD]);
     });
 
-    test("an active grandchild whose spawner fell out of the window still hangs under the lead", () => {
+    test("an active grandchild whose spawner fell out of the window still hangs under the lead", async () => {
         const { records, cache } = family();
         const onlyGrandchild = records.filter((r) => r.id === GRANDCHILD);
-        const tops = attachCodexAgents(onlyGrandchild, { now: NOW, cachePath: cache, model: null });
+        const tops = await attachCodexAgents(onlyGrandchild, { now: NOW, cachePath: cache, model: null });
 
         expect([...tops.keys()]).toEqual([ROOT]);
         expect((tops.get(ROOT) ?? []).map((node) => node.id)).toEqual([GRANDCHILD]);
     });
 
-    test("a node carries what the Agents tab shows: harness, task name, role, own model, status, tool calls", () => {
+    test("a node carries what the Agents tab shows: harness, task name, role, own model, status, tool calls", async () => {
         const { records, cache } = family();
-        const tops = attachCodexAgents(records, { now: NOW, cachePath: cache, model: "gpt-lead" });
+        const tops = await attachCodexAgents(records, { now: NOW, cachePath: cache, model: "gpt-lead" });
         const children = tops.get(ROOT) ?? [];
         const a = children.find((node) => node.id === CHILD_A);
         const b = children.find((node) => node.id === CHILD_B);
@@ -333,42 +277,42 @@ describe("attachCodexAgents", () => {
         expect(b?.model).toBe("gpt-lead");
     });
 
-    test("a running agent sorts first, and the tool count grows by the appended bytes only", () => {
+    test("a running agent sorts first, and the tool count grows by the appended bytes only", async () => {
         const { records, cache } = family();
         const options = { now: NOW, cachePath: cache, model: null };
 
-        attachCodexAgents(records, options);
+        await attachCodexAgents(records, options);
         writeFileSync(records[0]?.filePath ?? "", call("custom_tool_call"), { flag: "a" });
 
-        const again = attachCodexAgents(records, options);
+        const again = await attachCodexAgents(records, options);
         const a = (again.get(ROOT) ?? []).find((node) => node.id === CHILD_A);
 
         expect(a?.toolCalls).toBe(3);
         expect(again.get(ROOT)?.[0]?.id).toBe(CHILD_B);
     });
 
-    test("an agent that starts a turn on another model shows the new model on the next poll", () => {
+    test("an agent that starts a turn on another model shows the new model on the next poll", async () => {
         const { records, cache } = family();
         const options = { now: NOW, cachePath: cache, model: null };
-        const modelOf = () =>
-            (attachCodexAgents(records, options).get(ROOT) ?? []).find((node) => node.id === CHILD_A)?.model;
+        const modelOf = async () =>
+            ((await attachCodexAgents(records, options)).get(ROOT) ?? []).find((node) => node.id === CHILD_A)?.model;
 
-        expect(modelOf()).toBe("gpt-6.1-sol");
+        expect(await modelOf()).toBe("gpt-6.1-sol");
         writeFileSync(
             records[0]?.filePath ?? "",
             line({ type: "turn_context", payload: { turn_id: "t2", model: "gpt-6-luna", cwd: "/work/app" } }),
             { flag: "a" }
         );
-        expect(modelOf()).toBe("gpt-6-luna");
+        expect(await modelOf()).toBe("gpt-6-luna");
     });
 
-    test("a rollout replaced by a larger file is counted again from its start, not from the old file's count", () => {
+    test("a rollout replaced by a larger file is counted again from its start, not from the old file's count", async () => {
         const { records, cache } = family();
         const options = { now: NOW, cachePath: cache, model: null };
         const path = records[0]?.filePath ?? "";
 
         expect(
-            (attachCodexAgents(records, options).get(ROOT) ?? []).find((node) => node.id === CHILD_A)?.toolCalls
+            ((await attachCodexAgents(records, options)).get(ROOT) ?? []).find((node) => node.id === CHILD_A)?.toolCalls
         ).toBe(2);
 
         const replacement = `${path}.new`;
@@ -383,12 +327,12 @@ describe("attachCodexAgents", () => {
         );
         renameSync(replacement, path);
 
-        const again = attachCodexAgents(records, options);
+        const again = await attachCodexAgents(records, options);
 
         expect((again.get(ROOT) ?? []).find((node) => node.id === CHILD_A)?.toolCalls).toBe(1);
     });
 
-    test("read-only codex roster reads no memo writes while intentional refreshes still publish them", () => {
+    test("read-only codex roster reads no memo writes while intentional refreshes still publish them", async () => {
         const { records, cache } = family();
         const publish = storage.atomicWriteFileSync;
         let allowWrite = false;
@@ -399,17 +343,22 @@ describe("attachCodexAgents", () => {
             return publish(...args);
         });
         try {
-            const before = attachCodexAgents(records, { now: NOW, cachePath: cache, model: null, readOnly: true });
+            const before = await attachCodexAgents(records, {
+                now: NOW,
+                cachePath: cache,
+                model: null,
+                readOnly: true,
+            });
             expect(before.get(ROOT)).toHaveLength(2);
             expect(write).not.toHaveBeenCalled();
             expect(existsSync(cache)).toBe(false);
             allowWrite = true;
-            attachCodexAgents(records, { now: NOW, cachePath: cache, model: null, readOnly: false });
+            await attachCodexAgents(records, { now: NOW, cachePath: cache, model: null, readOnly: false });
             allowWrite = false;
             expect(write).toHaveBeenCalledTimes(1);
             const bytes = readFileSync(cache);
             writeFileSync(records[0].filePath, call("custom_tool_call"), { flag: "a" });
-            const after = attachCodexAgents(records, { now: NOW, cachePath: cache, model: null, readOnly: true });
+            const after = await attachCodexAgents(records, { now: NOW, cachePath: cache, model: null, readOnly: true });
             expect(after.get(ROOT)?.find((node) => node.id === CHILD_A)?.toolCalls).toBe(3);
             expect(readFileSync(cache)).toEqual(bytes);
             expect(write).toHaveBeenCalledTimes(1);
@@ -418,7 +367,7 @@ describe("attachCodexAgents", () => {
         }
     });
 
-    test("a head that cannot be read leaves the agent out instead of failing the list", () => {
+    test("a head that cannot be read leaves the agent out instead of failing the list", async () => {
         const { records, cache } = family();
         const broken: CodexAgentRecord = {
             id: "ghost",
@@ -426,15 +375,16 @@ describe("attachCodexAgents", () => {
             filePath: "/nonexistent/x.jsonl",
             mtime: NOW,
             cwd: "/",
+            startedAt: null,
         };
-        const tops = attachCodexAgents([broken, ...records], { now: NOW, cachePath: cache, model: null });
+        const tops = await attachCodexAgents([broken, ...records], { now: NOW, cachePath: cache, model: null });
 
         expect((tops.get(ROOT) ?? []).map((node) => node.id)).toEqual([CHILD_B, CHILD_A]);
     });
 });
 
 describe("a compressed rollout (.jsonl.zst, one zstd frame as Codex 0.164 writes it)", () => {
-    test("reads the head, model and tool calls of its content, and a closed rollout is never running", () => {
+    test("reads the head, model and tool calls of its content, and a closed rollout is never running", async () => {
         const dir = temp();
         const plain = rollout(
             dir,
@@ -451,22 +401,21 @@ describe("a compressed rollout (.jsonl.zst, one zstd frame as Codex 0.164 writes
         writeFileSync(zst.filePath, compressBytes(readFileSync(plain.filePath)));
         utimesSync(zst.filePath, zst.mtime / 1000, zst.mtime / 1000);
 
-        expect(codexAgentHeadOf(zst.filePath)).toEqual(codexAgentHeadOf(plain.filePath));
-        expect(codexAgentHeadOf(zst.filePath)?.nickname).toBe("Cicero");
         expect(codexAgentModel(zst.filePath)).toBe("gpt-6.1-sol");
         // Fresh and mid-turn: the plain rollout runs; the compressed one was closed by Codex.
         expect(codexAgentStatus({ filePath: plain.filePath, now: NOW })).toBe("running");
         expect(codexAgentStatus({ filePath: zst.filePath, now: NOW })).toBe("killed");
 
         const cache = join(dir, "cache.json");
-        const nodeOf = () =>
-            (attachCodexAgents([record(CHILD_A, zst)], { now: NOW, cachePath: cache, model: null }).get(ROOT) ?? [])[0];
+        const nodeOf = async () =>
+            ((await attachCodexAgents([record(CHILD_A, zst)], { now: NOW, cachePath: cache, model: null })).get(ROOT) ??
+                [])[0];
 
-        expect(nodeOf()).toMatchObject({ name: "Cicero", model: "gpt-6.1-sol", status: "killed", toolCalls: 2 });
+        expect(await nodeOf()).toMatchObject({ name: "Cicero", model: "gpt-6.1-sol", status: "killed", toolCalls: 2 });
         // Counted to its end once: the entry's offset is its size on disk, so the next read answers from the entry.
         const saved: unknown = SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true });
         expect(saved).toMatchObject({ [zst.filePath]: { offset: statSync(zst.filePath).size, calls: 2 } });
-        expect(nodeOf()?.toolCalls).toBe(2);
+        expect((await nodeOf())?.toolCalls).toBe(2);
     });
 });
 
@@ -483,7 +432,7 @@ describe("buildCodexParent", () => {
         mtime: NOW - 30_000,
     };
 
-    test("is a codex parent whose running child makes it live even when its own file went quiet", () => {
+    test("is a codex parent whose running child makes it live even when its own file went quiet", async () => {
         const quiet = buildCodexParent({ ...row, mtime: NOW - 3_600_000 }, [], NOW, "2026-10-04T23:50:07.467Z");
         const { records, cache } = (() => {
             const file = rollout(
@@ -496,7 +445,8 @@ describe("buildCodexParent", () => {
 
             return { records: [record(CHILD_B, file)], cache: join(temp(), "cache.json") };
         })();
-        const children = attachCodexAgents(records, { now: NOW, cachePath: cache, model: null }).get(ROOT) ?? [];
+        const children =
+            (await attachCodexAgents(records, { now: NOW, cachePath: cache, model: null })).get(ROOT) ?? [];
         const withRunning = buildCodexParent({ ...row, mtime: NOW - 3_600_000 }, children, NOW, null);
 
         expect(quiet).toMatchObject({

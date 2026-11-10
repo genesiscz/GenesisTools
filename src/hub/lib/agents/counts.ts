@@ -54,13 +54,14 @@ async function codexCounts(session: string, ids: string[], now: number): Promise
                 filePath: found.filePath,
                 mtime: statSync(found.filePath).mtimeMs,
                 cwd: "",
+                startedAt: null,
             });
         } catch (error) {
             logger.debug({ error, id }, "[hub agents] counts: codex agent not found");
         }
     }
 
-    const nodes = flatten([...attachCodexAgents(records, { now, model: null }).values()].flat());
+    const nodes = flatten([...(await attachCodexAgents(records, { now, model: null })).values()].flat());
     const agents = nodes.map((node) => ({
         id: node.id,
         toolCalls: node.toolCalls,

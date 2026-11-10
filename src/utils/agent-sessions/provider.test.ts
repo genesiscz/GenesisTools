@@ -30,6 +30,7 @@ import {
     noRecordScan,
     noRowAnchors,
     noSessionChanges,
+    noSpawnLink,
     noStatistics,
 } from "./testing/no-backward-read";
 
@@ -63,6 +64,7 @@ test("a registered fourth history provider can be resolved without an account al
             continuedIn: noContinuedIn,
             currentModel: noCurrentModel,
             midWork: noMidWork,
+            readSpawnLink: noSpawnLink,
             scanInsights: () => ({ native: null, defaultModel: null }),
             classifyPath: classifiesNoPath,
             readChanges: noSessionChanges,

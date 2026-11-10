@@ -5,7 +5,7 @@ import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { CODEX_MODEL_HEAD_BYTES } from "@genesiscz/utils/agent-sessions/readers/codex-model";
 import { countCodexToolCalls } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
-import { readHead } from "@genesiscz/utils/ai/transcripts/native-scan";
+import type { NativeSessionSource, SpawnLink } from "@genesiscz/utils/agent-sessions/types";
 import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
@@ -26,8 +26,6 @@ import type { AgentNode, AgentParent, AgentStatus } from "./types";
  * in the child's first `agent_message` alike, so the tab shows the agent's task name instead.
  */
 
-/** The link fields all sit in the first kilobyte of a rollout whose first line is 20 KB of instructions. */
-const HEAD_BYTES = 4096;
 const SCAN_CHUNK_BYTES = 16 * 1024 * 1024;
 /** A turn with no end record is `running` until its file is this quiet, then `killed`. */
 const TURN_STALE_MS = 15 * 60 * 1000;
@@ -44,15 +42,7 @@ export interface CodexAgentRecord {
     filePath: string;
     mtime: number;
     cwd: string;
-}
-
-export interface CodexAgentHead {
-    /** The thread that spawned it: a root thread, or another sub-agent. */
-    parentId: string;
-    depth: number;
-    nickname: string | null;
-    role: string | null;
-    agentPath: string | null;
+    /** When the rollout began (its header's timestamp), as the session index recorded it. */
     startedAt: string | null;
 }
 
@@ -89,6 +79,7 @@ export async function recentCodexAgentRecords({
                       filePath: record.filePath,
                       mtime: record.mtime,
                       cwd: record.cwd ?? "",
+                      startedAt: record.firstTimestamp,
                   },
               ]
             : []
@@ -109,42 +100,28 @@ function readBytes(path: string, position: number, length: number): Buffer {
     }
 }
 
-function field(head: string, key: string): string | null {
-    return new RegExp(`"${key}":"([^"]*)"`).exec(head)?.[1] ?? null;
-}
-
 /**
- * The spawn link of a sub-agent rollout, read from its first kilobyte with no JSON parse (the line
- * is 20 KB). Null for a rollout that is not a sub-agent or cannot be read.
+ * The spawn link of a sub-agent rollout, from the Codex reader (`readSpawnLink` reads its header). Null for a rollout
+ * that is not a sub-agent or cannot be read.
  */
-export function codexAgentHeadOf(path: string): CodexAgentHead | null {
-    let head: string;
+async function spawnLinkOf(record: CodexAgentRecord): Promise<SpawnLink | null> {
+    // The Codex spawn link is read from the rollout alone, so its folder stands in for the session root and home.
+    const folder = dirname(record.filePath);
+    const source: NativeSessionSource<"codex"> = {
+        kind: "codex",
+        root: folder,
+        sourceHome: folder,
+        filePath: record.filePath,
+        dataPaths: [record.filePath],
+        metadataPaths: [],
+    };
 
     try {
-        head = readHead(path, HEAD_BYTES).toString("utf8");
+        return await resolveHistoryProvider("codex").reader.readSpawnLink(source);
     } catch (error) {
-        logger.debug({ error, path }, "[hub agents] unreadable codex agent head");
+        logger.debug({ error, path: record.filePath }, "[hub agents] unreadable codex agent header");
         return null;
     }
-
-    const parentId = field(head, "parent_thread_id");
-
-    // Native rollouts mark a sub-agent with `source.subagent` (the shape the shared Codex reader
-    // checks); some also carry `thread_source`. Either one counts.
-    const isSubagent = /"subagent":\{/.test(head) || head.includes('"thread_source":"subagent"');
-
-    if (!parentId || !isSubagent) {
-        return null;
-    }
-
-    return {
-        parentId,
-        depth: Number(/"depth":(\d+)/.exec(head)?.[1] ?? 1),
-        nickname: field(head, "agent_nickname"),
-        role: field(head, "agent_role"),
-        agentPath: field(head, "agent_path"),
-        startedAt: field(head, "timestamp"),
-    };
 }
 
 /**
@@ -283,7 +260,7 @@ function iso(ms: number): string {
 
 function nodeOf(
     record: CodexAgentRecord,
-    head: CodexAgentHead,
+    link: SpawnLink,
     context: CodexAgentsContext,
     cache: ScanCache
 ): { node: AgentNode; changed: boolean } {
@@ -341,13 +318,13 @@ function nodeOf(
             id: record.id,
             harness: "codex",
             kind: "worker",
-            name: head.nickname,
-            description: head.agentPath ? basename(head.agentPath) : null,
-            agentType: head.role,
+            name: link.nickname ?? null,
+            description: link.agentPath ? basename(link.agentPath) : null,
+            agentType: link.role ?? null,
             model: model ?? context.model,
             account: null,
             status: codexAgentStatus({ filePath: record.filePath, now: context.now }),
-            startedAt: head.startedAt,
+            startedAt: record.startedAt,
             lastAt: iso(record.mtime),
             toolCalls: scanned.calls,
             unreadMail: 0,
@@ -357,7 +334,7 @@ function nodeOf(
             spawnPrompt: null,
             spawnPromptPreview: null,
             toolUseId: null,
-            spawnDepth: head.depth,
+            spawnDepth: link.depth ?? 1,
             children: [],
         },
     };
@@ -368,7 +345,11 @@ function nodeOf(
  * them in its `children`; the map's keys are the threads at the top, normally the lead sessions.
  * An agent whose rollout cannot be read is left out, never an error for the whole list.
  */
-export function attachCodexAgents(records: CodexAgentRecord[], context: CodexAgentsContext): Map<string, AgentNode[]> {
+export async function attachCodexAgents(
+    records: CodexAgentRecord[],
+    context: CodexAgentsContext
+): Promise<Map<string, AgentNode[]>> {
+    const links = await Promise.all(records.map(spawnLinkOf));
     const cachePath = context.cachePath ?? defaultCachePath();
     const cache = loadCache(cachePath);
     const byId = new Map<string, AgentNode>();
@@ -376,19 +357,19 @@ export function attachCodexAgents(records: CodexAgentRecord[], context: CodexAge
     const roots = new Map<string, string>();
     let changed = false;
 
-    for (const record of records) {
-        const head = codexAgentHeadOf(record.filePath);
+    for (const [index, record] of records.entries()) {
+        const link = links[index];
 
-        if (!head) {
+        if (!link) {
             continue;
         }
 
         let built: { node: AgentNode; changed: boolean };
 
-        // The head read above is not the only one: the tool-call scan reads the rest of the file,
+        // The header read above is not the only one: the tool-call scan reads the rest of the file,
         // and a rollout removed or truncated in between must not take the whole list down.
         try {
-            built = nodeOf(record, head, context, cache);
+            built = nodeOf(record, link, context, cache);
         } catch (error) {
             logger.debug({ error, path: record.filePath }, "[hub agents] unreadable codex agent rollout");
             continue;
@@ -396,7 +377,7 @@ export function attachCodexAgents(records: CodexAgentRecord[], context: CodexAge
 
         changed = changed || built.changed;
         byId.set(record.id, built.node);
-        parents.set(record.id, head.parentId);
+        parents.set(record.id, link.parentSessionId);
         roots.set(record.id, record.rootId);
     }
 
