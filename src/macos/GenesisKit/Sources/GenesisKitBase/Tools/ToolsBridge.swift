@@ -261,7 +261,11 @@ public struct ToolsBridge: Sendable {
         let argv = [subcommand] + args
         let traceId = ToolsCallTrace.newId()
         let started = Date()
-        if let server, let result = await server.call(argv: argv, timeoutSeconds: timeoutSeconds, traceId: traceId) {
+        // The server gets a part of the call's limit (`serverPatience`), so a server that is busy or starved costs a
+        // wait and then a process, never the whole limit and an error. Its own "exceeded" answer is no answer.
+        let patience = Self.serverPatience(timeoutSeconds: timeoutSeconds)
+        if let server, let result = await server.call(argv: argv, timeoutSeconds: patience, traceId: traceId),
+           !Self.isServerDeadline(result) {
             // Same span name as the process path with `.srv`, so app-perf.log shows which path answered.
             MonitorPerf.record(Self.spanLabel(subcommand: subcommand, args: args) + ".srv", ms: Double(result.wallMs))
             ToolsCallTrace.record(
@@ -274,6 +278,10 @@ public struct ToolsBridge: Sendable {
 
         // A task cancelled while the server had the call never starts the process fallback.
         try Task.checkCancellation()
+        let waited = Date().timeIntervalSince(started)
+        if waited >= Double(patience) {
+            MonitorPerf.mark("\(Self.spanLabel(subcommand: subcommand, args: args)) the hub server did not answer in \(patience)s; running the process")
+        }
 
         // The server had the call for its whole limit, and the process shares that limit: it would be started and
         // killed in the same moment. Five days of app-perf.log had 41 such starts (31 of `ai sessions tail`, each
@@ -346,6 +354,24 @@ public struct ToolsBridge: Sendable {
             stderr.stop(CancellationError())
             ToolsProcessExit.terminate(process)
         }
+    }
+
+    /// The seconds the hub server may hold a call before the same argv runs as a process: a third of the call's
+    /// limit and at least 5 s, so the process keeps two thirds. A limit of 5 s or less goes to the server whole (a
+    /// process started with nothing left is killed at once).
+    ///
+    /// The server answers in milliseconds to a few seconds. When it does not, it is blocked or starved (2026-11-10:
+    /// its event loop answered nobody for 248 to 330 s while the Mac ran at a load of 200), and a call that waited
+    /// its whole limit for it ended as "tools call exceeded 30s" on screen, although the same argv as a process
+    /// took 0.4 s.
+    static func serverPatience(timeoutSeconds: Int) -> Int {
+        min(timeoutSeconds, max(5, timeoutSeconds / 3))
+    }
+
+    /// True for the answer the server gives when a door ran past the limit the call named (exit 124 and the
+    /// server's own sentence): the door did not finish, so the process runs.
+    static func isServerDeadline(_ result: ToolsRunResult) -> Bool {
+        result.exitCode == 124 && result.stderr.hasPrefix("hub server: ")
     }
 
     /// The seconds a process may still run after `waited` seconds went to the hub server, or nil when none is

@@ -66,7 +66,10 @@ public final class ToolsServerClient: @unchecked Sendable {
         process.arguments = plan.arguments
         process.currentDirectoryURL = plan.workingDirectory
         process.environment = serverEnvironment()
-        process.qualityOfService = .utility
+        // The server answers the windows the user looks at, so it runs at their priority. At `.utility` it was
+        // the first thing a busy Mac stopped scheduling: at a load of 200 its doors took 248 to 330 s for 8 to 12 s
+        // of work, while the same argv as a process of the hub took 9 s (2026-11-10).
+        process.qualityOfService = .userInitiated
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice

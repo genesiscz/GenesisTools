@@ -221,6 +221,17 @@ final class ToolsBridgeTests: XCTestCase {
     /// A hub server that kept a call for its whole limit (the limit plus 1 s) leaves the process nothing: it is
     /// not started. It was started and killed at once before, 41 times in five days.
     func testNoProcessBudgetIsLeftAfterTheServerUsedTheWholeLimit() {
+        // The server holds a call for a third of its limit, so the process keeps the rest.
+        XCTAssertEqual(ToolsBridge.serverPatience(timeoutSeconds: 30), 10)
+        XCTAssertEqual(ToolsBridge.serverPatience(timeoutSeconds: 300), 100)
+        XCTAssertEqual(ToolsBridge.serverPatience(timeoutSeconds: 12), 5, "at least 5 s for the server")
+        XCTAssertEqual(ToolsBridge.serverPatience(timeoutSeconds: 4), 4, "a short limit goes to the server whole")
+        XCTAssertNotNil(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 11.1), "the process runs after the server's part")
+        XCTAssertTrue(ToolsBridge.isServerDeadline(
+            ToolsRunResult(stdout: "", stderr: "hub server: ai sessions tail --json exceeded 10000 ms\n", exitCode: 124, wallMs: 10_001)))
+        XCTAssertFalse(ToolsBridge.isServerDeadline(
+            ToolsRunResult(stdout: "", stderr: "timeout: the command ran too long", exitCode: 124, wallMs: 5)),
+                       "a command's own exit 124 is its answer")
         XCTAssertNil(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 31.1))
         XCTAssertNil(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 30))
         XCTAssertEqual(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 0.2) ?? 0, 29.8, accuracy: 0.001)
