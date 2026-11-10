@@ -2,7 +2,7 @@ import type { ToolEntry } from "@genesiscz/utils/mcp/tool-entry";
 import type { LoadedToolGroup } from "@genesiscz/utils/mcp/tool-group";
 import { z } from "zod";
 import { Fetcher } from "../lib/fetcher";
-import { FETCH_TOOLS, toolText } from "./tools";
+import { FETCH_TOOLS, toolAnswer } from "./tools";
 
 /** A resident server ends its idle Chrome worker after a minute; the next chrome request starts a new one. */
 const IDLE_CLOSE_MS = 60_000;
@@ -29,7 +29,7 @@ export function toolGroup(): LoadedToolGroup {
                     inputSchema: z.toJSONSchema(tool.schema, { io: "input" }),
                     annotations: FETCH_ANNOTATIONS,
                     handler: async (args, context) =>
-                        toolText(await tool.run({ fetcher, args, signal: context?.signal })),
+                        toolAnswer(await tool.run({ fetcher, args, signal: context?.signal })),
                 },
             ])
         ),
