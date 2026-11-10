@@ -26,7 +26,8 @@ public struct GitFailure: Equatable, Sendable {
             self.init(message: "\(error)")
             return
         }
-        let raw = "\(error)".trimmed
+        // A `tools` call's description is only its `✗` or `error:` line; git's `fatal:` text is in the summary.
+        let raw = ((error as? ToolsFailure)?.summary ?? "\(error)").trimmed
         let message = Self.sentence(for: raw) ?? fallback
         self.init(message: message, detail: raw.isEmpty || raw == message ? nil : raw)
     }
