@@ -49,6 +49,29 @@ public final class ToolsServerClient: @unchecked Sendable {
     /// bridge (the widget face, for its `tools hub widget …` calls); nil, the default, keeps those bridges processes.
     nonisolated(unsafe) public static var shared: ToolsServerClient?
 
+    /// The one rule for whether a face asks the resident server: the hub (`HubSource.server`) and the widget
+    /// (`shared`) both call it. The server runs the main checkout's code against the real home (its socket is
+    /// `defaultSocketPath()` under the real home), so a face on a sandbox home (`GENESIS_TOOLS_HOME`) or on a
+    /// worktree's `tools` (`GENESIS_TOOLS_BIN`) runs every call as a process: before 2026-11-10 a hub on a sandbox home
+    /// was answered with the real home's data. The preview build and `GENESIS_HUB_SERVER=0` keep processes too.
+    public static func allowsResidentServer(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        preview: Bool = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true
+    ) -> Bool {
+        !preview && environment["GENESIS_HUB_SERVER"] != "0"
+            && environment["GENESIS_TOOLS_HOME"] == nil && environment["GENESIS_TOOLS_BIN"] == nil
+    }
+
+    /// A client of the resident server when `allowsResidentServer` says this face may use one, else nil.
+    public static func resident(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        preview: Bool = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true,
+        startServer: @escaping @Sendable () -> Void
+    ) -> ToolsServerClient? {
+        guard allowsResidentServer(environment: environment, preview: preview) else { return nil }
+        return ToolsServerClient(startServer: startServer)
+    }
+
     /// Starts `tools hub serve` once, detached from any call: it outlives the call that found no server, exits by
     /// itself after 10 minutes with no connection, and restarts when its code changes (src/hub/server/server.ts).
     /// It runs through the same `tools` launcher chain as every per-call child, so its macOS privacy identity is
