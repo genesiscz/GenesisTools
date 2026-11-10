@@ -387,6 +387,26 @@ describe("one undo and redo journal for the session and the file", () => {
         expect(redone.project.audio.volume).toBe(0.4);
     });
 
+    // Regression test: 2026-11-08 architecture review, C05 — a redo the file path kept was lost to a session's save
+    test("a redo the file path kept survives a session that undoes once more and closes", async () => {
+        const path = editFixture("gt-es-redo-kept-");
+        await editProject(path, [{ op: "volume", volume: 0.4 }]);
+        await editProject(path, [{ op: "text", from: 1, to: 2, text: "A" }]);
+        await undoEdit(path);
+        const { session } = await openSession(path);
+        await session.undo({ by: "editor" });
+        expect(session.redoDepth).toBe(2);
+        session.close();
+
+        expect((await redoEdit(path)).redone).toEqual(["volume"]);
+        const again = await redoEdit(path);
+        expect(again.redone).toEqual(["text"]);
+        expect({ volume: again.project.audio.volume, texts: again.project.texts?.map((text) => text.text) }).toEqual({
+            volume: 0.4,
+            texts: ["A"],
+        });
+    });
+
     test("an undo in the session can be redone from the file after the session closes", async () => {
         const path = editFixture("gt-es-redo-out-");
         const { session } = await openSession(path);
