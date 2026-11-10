@@ -11,6 +11,7 @@ import {
     parsePidRecord,
     serializePidRecord,
 } from "@genesiscz/utils/process/pidfile";
+import { isProcessAliveSince } from "@genesiscz/utils/process-identity";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;
@@ -327,8 +328,8 @@ const QUEUE_POLL_MS = 100;
 const QUEUE_TICKET_GRACE_MS = 60_000;
 let queueTickets = 0;
 
-/** A queue ticket: the waiting process, and the moment it stops waiting (its timeout). */
-function parseTicket(raw: string): { pid: number; until: number } | null {
+/** A queue ticket: the waiting process, when it wrote the ticket, and the moment it stops waiting (its timeout). */
+function parseTicket(raw: string): { pid: number; at: number; until: number } | null {
     try {
         const parsed: unknown = SafeJSON.parse(raw, { strict: true });
 
@@ -336,27 +337,19 @@ function parseTicket(raw: string): { pid: number; until: number } | null {
             typeof parsed === "object" &&
             parsed !== null &&
             "pid" in parsed &&
+            "at" in parsed &&
             "until" in parsed &&
             typeof parsed.pid === "number" &&
+            typeof parsed.at === "number" &&
             typeof parsed.until === "number"
         ) {
-            return { pid: parsed.pid, until: parsed.until };
+            return { pid: parsed.pid, at: parsed.at, until: parsed.until };
         }
     } catch (error) {
         logger.debug({ error }, "file-lock queue: a ticket does not parse");
     }
 
     return null;
-}
-
-function processAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        // EPERM: the process exists but belongs to another user.
-        return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "EPERM";
-    }
 }
 
 /**
@@ -389,7 +382,12 @@ function firstInQueue(queue: string, own: string): boolean {
 
         const ticket = parseTicket(raw);
 
-        if (ticket && processAlive(ticket.pid) && Date.now() <= ticket.until + QUEUE_TICKET_GRACE_MS) {
+        // A process that started after its ticket was written is another program on a recycled pid.
+        if (
+            ticket &&
+            isProcessAliveSince(ticket.pid, ticket.at) &&
+            Date.now() <= ticket.until + QUEUE_TICKET_GRACE_MS
+        ) {
             return false;
         }
 
@@ -427,7 +425,7 @@ export async function withQueuedFileLock<T>(
     const ticket = join(queue, name);
     // Written whole under a hidden name first, so a reader never meets half a ticket.
     const draft = join(queue, `.${name}`);
-    writeFileSync(draft, SafeJSON.stringify({ pid: process.pid, until: deadline }));
+    writeFileSync(draft, SafeJSON.stringify({ pid: process.pid, at: started, until: deadline }));
     renameSync(draft, ticket);
 
     try {

@@ -242,11 +242,11 @@ describe("file-lock: the arrival-order queue", () => {
         mkdirSync(`${lockPath}.queue`, { recursive: true });
         writeFileSync(
             join(`${lockPath}.queue`, "000000000000001-000000001-2147483000"),
-            '{"pid":2147483000,"until":9e15}'
+            `{"pid":2147483000,"at":${Date.now()},"until":9e15}`
         );
         writeFileSync(
             join(`${lockPath}.queue`, "000000000000002-000000001-1"),
-            `{"pid":${process.pid},"until":${Date.now() - 120_000}}`
+            `{"pid":${process.pid},"at":${Date.now()},"until":${Date.now() - 120_000}}`
         );
         writeFileSync(join(`${lockPath}.queue`, "000000000000003-000000001-1"), "not a ticket");
 
@@ -259,7 +259,7 @@ describe("file-lock: the arrival-order queue", () => {
         mkdirSync(`${lockPath}.queue`, { recursive: true });
         writeFileSync(
             join(`${lockPath}.queue`, "000000000000001-000000001-1"),
-            `{"pid":${process.pid},"until":${Date.now() + 60_000}}`
+            `{"pid":${process.pid},"at":${Date.now()},"until":${Date.now() + 60_000}}`
         );
 
         await expect(withQueuedFileLock(lockPath, async () => "never", 300)).rejects.toBeInstanceOf(LockTimeoutError);
