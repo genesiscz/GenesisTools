@@ -1,7 +1,6 @@
-import { type AgentId, spendDriver } from "@genesiscz/utils/ai/usage/spend/drivers";
-import { costOf, DEFAULT_PRICING, priceForCandidates, resolvePrice } from "@genesiscz/utils/ai/usage/spend/pricing";
-import { chooseCost } from "@genesiscz/utils/ai/usage/spend/reports/cost";
-import type { ModelPrice, ModelPriceEntry, PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
+import type { AgentId } from "@genesiscz/utils/ai/usage/spend/drivers";
+import { type PricedUsage, priceUsage } from "@genesiscz/utils/ai/usage/spend/priced-usage";
+import type { ModelPrice, PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
 import type { SessionCall } from "../analysis-types";
 
 /**
@@ -13,64 +12,42 @@ export interface CallPricing {
     table?: PricingTable;
 }
 
-/** The catalog entry of a model through its harness's candidate ladder, the one the spend reports walk. */
-function entryOf(model: string, pricing: CallPricing): ModelPriceEntry | null {
-    const candidates = spendDriver(pricing.agent).priceCandidates(model);
-    return priceForCandidates(candidates, pricing.table ?? DEFAULT_PRICING)?.entry ?? null;
+/** One call through the priced-usage module, the one the spend reports ask. */
+function priceOf(call: SessionCall, pricing: CallPricing): PricedUsage {
+    return priceUsage(
+        {
+            source: pricing.agent,
+            model: call.model,
+            at: call.t,
+            tokens: {
+                input: call.input,
+                output: call.output,
+                cacheWrite: call.cacheWrite,
+                cacheRead: call.cacheRead,
+                cacheWrite1h: call.cacheWrite1h,
+            },
+            aggregate: call.aggregate,
+            serviceTier: call.serviceTier,
+            recordedCostUsd: call.recordedCostUsd,
+        },
+        { table: pricing.table }
+    );
 }
 
 /**
- * The catalog price of one call's model at the call's own moment and size; null for a model with no known rate. An
- * aggregate row sums requests whose own sizes are unknown, so it takes no context band (as the spend reports do).
+ * The catalog price of one call's model at the call's own moment, size and service tier; null for a model with no
+ * known rate. An aggregate row sums requests whose own sizes are unknown, so it takes no context band.
  */
 export function priceOfCall(call: SessionCall, pricing: CallPricing): ModelPrice | null {
-    const entry = entryOf(call.model, pricing);
-
-    if (!entry) {
-        return null;
-    }
-
-    const contextTokens = call.aggregate ? undefined : call.input + call.cacheRead + call.cacheWrite;
-
-    // The service tier too, as the spend reports price it: a priority call is not billed at the standard rate.
-    return resolvePrice(entry, { at: new Date(call.t), contextTokens, serviceTier: call.serviceTier });
+    return priceOf(call, pricing).price;
 }
 
 /**
- * One call's list-price cost, by the spend reports' recorded-cost rule (`chooseCost`, the harness's
- * `MonitorDriver.recordedCost`): a recorded list price stands, else the catalog rate through the one cost function
- * (`costOf` over `calculateCallCostUsd`), else a recorded metering figure; null when nothing prices the call.
+ * One call's list-price cost, by the spend reports' recorded-cost rule (the harness's `MonitorDriver.recordedCost`):
+ * a recorded list price stands, else the catalog rate, else a recorded metering figure; null when nothing prices it.
  */
 export function callCostUsd(call: SessionCall, pricing: CallPricing): number | null {
-    return chooseCost({
-        source: pricing.agent,
-        recorded: call.recordedCostUsd,
-        mode: "auto",
-        catalog: () => {
-            const costUSD = catalogCostUsd(call, pricing);
-            return { costUSD, longContext: false, basis: costUSD === null ? "unpriced" : "catalog" };
-        },
-    }).costUSD;
-}
-
-/** The catalog rate of one call through the one cost function; null for a model with no known rate. */
-function catalogCostUsd(call: SessionCall, pricing: CallPricing): number | null {
-    const price = priceOfCall(call, pricing);
-
-    if (!price) {
-        return null;
-    }
-
-    return costOf(
-        {
-            input: call.input,
-            output: call.output,
-            cacheWrite: call.cacheWrite,
-            cacheRead: call.cacheRead,
-            ...(call.cacheWrite1h === undefined ? {} : { cacheWrite1h: call.cacheWrite1h }),
-        },
-        price
-    );
+    return priceOf(call, pricing).costUSD;
 }
 
 /**
@@ -86,17 +63,22 @@ export function coldRebuildUsd(input: {
     serviceTier?: string;
     pricing: CallPricing;
 }): number | null {
-    const entry = entryOf(input.model, input.pricing);
+    // The context as one request's input, so the rate resolves at the band of that context size.
+    const { price } = priceUsage(
+        {
+            source: input.pricing.agent,
+            model: input.model,
+            at: input.at,
+            tokens: { input: input.contextTokens, output: 0, cacheWrite: 0, cacheRead: 0 },
+            serviceTier: input.serviceTier,
+        },
+        { table: input.pricing.table }
+    );
 
-    if (!entry) {
+    if (!price) {
         return null;
     }
 
-    const price = resolvePrice(entry, {
-        at: input.at,
-        contextTokens: input.contextTokens,
-        serviceTier: input.serviceTier,
-    });
     const write = input.oneHour ? (price.cacheWrite1h ?? price.cacheWrite) : price.cacheWrite;
     return (input.contextTokens * (write - price.cacheRead)) / 1_000_000;
 }

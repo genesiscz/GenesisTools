@@ -1,6 +1,7 @@
 import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
-import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@genesiscz/utils/ai/usage/spend/pricing";
-import { eventCostEstimate } from "@genesiscz/utils/ai/usage/spend/reports/cost";
+import { priceUsageAs } from "@genesiscz/utils/ai/usage/spend/priced-usage";
+import { DEFAULT_PRICING } from "@genesiscz/utils/ai/usage/spend/pricing";
+import { eventCostEstimate, spendEventUsage } from "@genesiscz/utils/ai/usage/spend/reports/cost";
 import { candidatesFor } from "@genesiscz/utils/ai/usage/spend/reports/load";
 import type { SpendEvent } from "@genesiscz/utils/ai/usage/spend/reports/types";
 import type { PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
@@ -144,38 +145,25 @@ export function priceSpendEvents(events: readonly SpendEvent[], pricing: Pricing
     return { usd, basis, pricedAs: [...pricedAs], longContextRequests };
 }
 
-/** The same events at one Claude model's list price, request by request. */
+/**
+ * The same events at one Claude model's list price, request by request (`priceUsageAs`). It takes no service tier on
+ * purpose: a what-if price is the standard rate of the other model, whatever tier the worker's own calls ran at.
+ */
 export function priceAsClaude(
     events: readonly SpendEvent[],
     model: string,
     pricing: PricingTable = DEFAULT_PRICING
 ): number | null {
-    const entry = priceFor(model, pricing);
-
-    if (!entry) {
-        return null;
-    }
-
     let usd = 0;
 
     for (const event of events) {
-        const at = new Date(event.timestamp);
-        const price = resolvePrice(entry, {
-            at: Number.isNaN(at.getTime()) ? undefined : at,
-            contextTokens: event.aggregate
-                ? undefined
-                : event.inputTokens + event.cacheReadTokens + event.cacheCreationTokens,
-        });
-        usd += costOf(
-            {
-                input: event.inputTokens,
-                output: event.outputTokens,
-                cacheWrite: event.cacheCreationTokens,
-                cacheRead: event.cacheReadTokens,
-                cacheWrite1h: event.cacheCreation1hTokens,
-            },
-            price
-        );
+        const { costUSD } = priceUsageAs(spendEventUsage(event), model, { table: pricing });
+
+        if (costUSD === null) {
+            return null;
+        }
+
+        usd += costUSD;
     }
 
     return usd;
