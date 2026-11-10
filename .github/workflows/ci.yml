@@ -580,6 +580,12 @@ jobs:
         timeout-minutes: 1
         run: bun scripts/ci/check-plugin-standalone.ts
 
+      # The plugin files that src writes (harness facts, scratch dirs, host markers, mods defaults, and the whole
+      # copies of process-basics.ts, process-alive.ts and option-labels.ts) must be what the generator writes today.
+      - name: Plugin vendored files are current
+        timeout-minutes: 1
+        run: bun scripts/gen-harness-plugin.ts --check
+
       # Biome reads only the root's JSON files, so a nested manifest that does not parse passed every gate
       # (d9687720a, 2026-10-14: the genesis-tools plugin failed to load for 12 hours).
       - name: JSON files parse
