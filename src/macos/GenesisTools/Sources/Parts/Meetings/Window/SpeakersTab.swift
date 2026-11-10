@@ -131,7 +131,7 @@ private struct ReviewLabel: Identifiable {
 }
 
 /// "Review N" (G-SPK-1): every range of a label's hints, each with its chip.
-private struct HintRangesSheet: View {
+struct HintRangesSheet: View {
     let label: String
     let names: [String: String]
     let ranges: [SpeakerHint.Range]
@@ -155,5 +155,6 @@ private struct HintRangesSheet: View {
         }
         .padding(18)
         .frame(width: 460)
+        .closesOnEscape(close)
     }
 }

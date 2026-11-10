@@ -87,6 +87,7 @@ struct HistorySheetView: View {
         }
         .padding(18)
         .frame(width: 560, height: 460)
+        .closesOnEscape { detail.history = nil }
     }
 }
 
@@ -119,5 +120,31 @@ private struct HistoryRow: View {
     private var sentence: String {
         let who = MeetingsWords.actor(entry.actor)
         return who.prefix(1).uppercased() + who.dropFirst() + " " + MeetingsWords.entryAction(entry)
+    }
+}
+
+/// Esc closes a sheet whose only button is a default-action Done: a SwiftUI sheet hears Esc only through a
+/// `.cancelAction` key equivalent (which works with no focused view), and the exit command covers a focused one. The hub's
+/// sheets use the same pair (`HubInbox.swift`, F16).
+private struct ClosesOnEscape: ViewModifier {
+    let close: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                Button("Close", action: close)
+                    .keyboardShortcut(.cancelAction)
+                    .opacity(0)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            .onExitCommand(perform: close)
+    }
+}
+
+extension View {
+    /// Esc runs `close` (see `ClosesOnEscape`).
+    func closesOnEscape(_ close: @escaping () -> Void) -> some View {
+        modifier(ClosesOnEscape(close: close))
     }
 }
