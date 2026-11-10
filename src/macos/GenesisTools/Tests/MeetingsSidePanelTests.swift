@@ -17,7 +17,7 @@ final class MeetingsSidePanelTests: XCTestCase {
         let (defaults, suite) = try defaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let sections = SidePanelCatalog.windowSections(defaults)
-        XCTAssertEqual(sections.map(\.id), ["playback", "rows", "notices", "panes"])
+        XCTAssertEqual(sections.map(\.id), ["playback", "rows", "notices", "panes", "people"])
         let keys = Set(sections.flatMap(\.windowKeys))
         for key in ["meetings.rows.typedAnswer", "meetings.rows.returnKey", "meetings.rows.choiceKeys", "meetings.rows.decided",
                     "meetings.rows.order", "meetings.rows.lowPriority", "meetings.rows.askReach", "meetings.rows.autoplayNext",
@@ -27,7 +27,7 @@ final class MeetingsSidePanelTests: XCTestCase {
                     "meetings.playback.contextSec", "meetings.playback.rewindSec", "meetings.playback.stack.clickInQuestion",
                     "meetings.playback.stack.onTopEnd", "meetings.playback.stack.depth", "meetings.timeline.shown",
                     "meetings.timeline.hoverDelayMs", "meetings.transcript.followPlayback", "meetings.screen.besidePlayback",
-                    "meetings.items.transcriptPane"] {
+                    "meetings.items.transcriptPane", "meetings.people.renameBlur", "meetings.people.offerNew"] {
             XCTAssertTrue(keys.contains(key), "the panel has a row for \(key)")
         }
         XCTAssertTrue(sections.allSatisfy(\.isDefault), "fresh defaults: every section is at its defaults")
@@ -89,6 +89,57 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertNil(SidePanelCatalog.configValue(.text(""), for: pad))
         let custom = SidePanelCatalog.engineSection(listen: .object(["tone": .object(["sound": .object(["hz": .number(440)])])]))
         XCTAssertEqual(custom.rows.first { $0.id.hasSuffix(".tone.sound") }?.valueTitle, "Custom")
+    }
+
+    /// F8: a window row writes the type its reader reads, so `integer(forKey:)` and the typed accessors see it.
+    func testAWindowRowWritesTheTypeItsReaderReads() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        SidePanelCatalog.write(.number(5), key: MeetingsPreferences.Notices.maxVisible.key, to: defaults)
+        XCTAssertTrue(defaults.object(forKey: MeetingsPreferences.Notices.maxVisible.key) is Int)
+        XCTAssertEqual(MeetingsPreferences.Notices.maxVisible.value(defaults), 5)
+        SidePanelCatalog.write(.number(1.25), key: MeetingsPreferences.Playback.speed.key, to: defaults)
+        XCTAssertEqual(MeetingsPreferences.Playback.speed.value(defaults), 1.25)
+        SidePanelCatalog.write(.text("top"), key: MeetingsPreferences.noticePlaceKey, to: defaults)
+        XCTAssertEqual(MeetingsPreferences.noticePlace(defaults), .top)
+        SidePanelCatalog.write(.flag(false), key: MeetingsPreferences.Panes.timelineShown.key, to: defaults)
+        XCTAssertFalse(MeetingsPreferences.Panes.timelineShown.value(defaults))
+        SidePanelCatalog.write(.text("commit"), key: MeetingsPreferences.People.renameBlur.key, to: defaults)
+        XCTAssertEqual(MeetingsPreferences.People.renameBlur.value(defaults), .commit)
+        XCTAssertEqual(SidePanelCatalog.segments("global.playback.listen.tone.sound"), ["global", "playback", "listen", "tone", "sound"])
+    }
+
+    /// F8, G55, a-review-fix-swift open question 4: the panel's open state and folds are remembered (not settings), and
+    /// the notice placement is an observed value the panel changes at once.
+    func testThePanelStateIsRememberedAndTheNoticePlaceIsObserved() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        XCTAssertFalse(model.sidePanelOpen)
+        model.sidePanelOpen = true
+        model.sidePanelFolded = ["panes"]
+        let again = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        XCTAssertTrue(again.sidePanelOpen, "the next window opens with the panel")
+        XCTAssertEqual(again.sidePanelFolded, ["panes"])
+        XCTAssertEqual(again.noticePlace, .bottom)
+        SidePanelCatalog.write(.text("top"), key: MeetingsPreferences.noticePlaceKey, to: defaults)
+        again.windowSettingsChanged()
+        XCTAssertEqual(again.noticePlace, .top, "the panel's change moves the stack without a relaunch")
+        again.remembersPanel = false
+        again.sidePanelOpen = false
+        XCTAssertTrue(defaults.bool(forKey: MeetingsWindowModel.sidePanelOpenKey), "a snapshot run keeps the saved state")
+    }
+
+    /// F8: a config write names the value it replaces, the same on the service and the command (decision 13).
+    func testAnEngineWriteNamesTheValueItReplaces() {
+        let raw = JSONValue.object(["global": .object(["playback": .object(["listen": .object(["padSec": .number(3)])])])])
+        let path = ["global", "playback", "listen", "padSec"]
+        let set = MeetingsConfigWrite.set(path, .number(5), readFrom: raw)
+        XCTAssertEqual(set, .set(path: path, value: .number(5), expect: .number(3)))
+        XCTAssertEqual(set.args, ["config", "set", #"["global","playback","listen","padSec"]"#, "5", "--expect", "3"])
+        XCTAssertEqual(set.pathArgument, #"["global","playback","listen","padSec"]"#, "the service reads the same JSON path")
+        let unset = MeetingsConfigWrite.unset(["global", "playback", "listen", "longestClipSec"], readFrom: raw)
+        XCTAssertEqual(unset.args, ["config", "unset", #"["global","playback","listen","longestClipSec"]"#, "--expect", "null"])
     }
 
     func testTonePresetsMatchTheEngineDefault() {

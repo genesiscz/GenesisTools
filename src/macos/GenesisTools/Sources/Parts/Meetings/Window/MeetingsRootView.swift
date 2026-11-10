@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The pane map: full-height sidebar (Needs you, All meetings, Projects) | the meetings of that place | one meeting.
+/// The pane map: full-height sidebar (Needs you, All meetings, Projects, Contacts) | the meetings of that place | one
+/// meeting. Contacts is sidebar | the people, since it lists people and needs the width of both meeting columns.
 struct MeetingsRootView: View {
     @Bindable var model: MeetingsWindowModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -11,8 +12,13 @@ struct MeetingsRootView: View {
     var body: some View {
         // The dock floats over the columns with a bottom inset (G-LAYOUT-1). As the second child of a VStack it took its
         // height from the columns, so starting a Moment shrank the list under the pointer.
-        panes
+        Group {
+            if model.place == .contacts { contactsPanes } else { panes }
+        }
             .environment(\.meetingsDockInset, dockHeight)
+            .sheet(item: Bindable(model.people).pendingAssign) { pending in
+                AssignReachSheet(pending: pending, window: model)
+            }
             .overlay(alignment: .bottom) {
                 ZStack(alignment: .bottom) {
                     Color.clear.frame(height: 0)
@@ -22,6 +28,20 @@ struct MeetingsRootView: View {
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { dockHeight = $0 }
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.player.isActive)
+    }
+
+    private var contactsPanes: some View {
+        NavigationSplitView {
+            MeetingsSidebar(model: model)
+                .safeAreaPadding(.bottom, dockHeight)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
+        } detail: {
+            MeetingsContactsPane(people: model.people)
+                .safeAreaPadding(.bottom, dockHeight)
+                .heightFromWindow()
+                .noticeStack(model.notices, alignment: model.noticePlace.alignment)
+                .navigationTitle("Contacts")
+        }
     }
 
     private var panes: some View {
@@ -38,14 +58,77 @@ struct MeetingsRootView: View {
             Group {
                 if let detail = model.detail {
                     MeetingDetailView(detail: detail, window: model)
+                        .environment(\.meetingDetail, detail)
                         .id(detail.id)
                 } else {
                     EmptyState(symbol: "person.2.wave.2", text: "Choose a meeting", detail: "Its transcript, screen and items show here.")
                 }
             }
             .heightFromWindow()
+            .toolbar {
+                if model.detail != nil {
+                    ToolbarItem(placement: .primaryAction) { SidePanelToggle(model: model) }
+                }
+            }
         }
         // ⌘1 Needs you, ⌘2 All meetings and ⌘R Reload are View menu items (MeetingsMenu), so they work wherever focus is.
+    }
+}
+
+/// The toolbar's switch for the settings side panel (R26): on, the panel replaces the transcript pane beside the open
+/// meeting. ⌥⌘I, the key Mac apps give an inspector.
+private struct SidePanelToggle: View {
+    @Bindable var model: MeetingsWindowModel
+
+    var body: some View {
+        Toggle(isOn: $model.sidePanelOpen) {
+            Label("Settings", systemImage: "sidebar.trailing")
+        }
+        .toggleStyle(.button)
+        .keyboardShortcut("i", modifiers: [.command, .option])
+        .instantTooltip(model.sidePanelOpen ? "Hide the settings panel (\(MeetingsSidePanel.shortcutText))"
+                                            : "Show the settings panel: playback, rows, notices and panes (\(MeetingsSidePanel.shortcutText))")
+        .accessibilityLabel("Settings panel")
+        .accessibilityIdentifier("meetings.sidePanel.toggle")
+    }
+}
+
+/// The Contacts view on the window's people model (R24): every person with where each was seen, search, add, hide,
+/// merge after a confirmation that names the meetings, the source switches and the Contacts grant.
+private struct MeetingsContactsPane: View {
+    @Bindable var people: MeetingsPeopleModel
+
+    var body: some View {
+        let answer = people.known.value
+        VStack(spacing: 0) {
+            if let failure = people.known.failure {
+                NoticePill(text: "The people did not load: \(failure.sentence)", more: failure.detail, tone: .error,
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { people.load() }])
+                    .padding(10)
+            }
+            MeetingsContactsView(
+                people: answer?.people ?? [], total: answer?.total, query: $people.query, showHidden: $people.showHidden,
+                sources: answer?.sources ?? [], switches: people.switches, mergePlan: people.mergePlan, lastMerge: people.lastMerge,
+                add: { people.add(name: $0, email: $1) },
+                setHidden: { people.setHidden($0, hidden: $1) },
+                requestMerge: { people.requestMerge($0, $1) },
+                confirmMerge: { people.confirmMerge($0, name: $1) },
+                cancelMerge: { people.mergePlan = nil },
+                unmerge: { people.unmerge($0) },
+                setSource: { people.setSource($0, on: $1) },
+                grantContacts: { people.grantContacts() })
+                .overlay {
+                    if answer == nil, people.known.failure == nil {
+                        VStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Reading the people…").font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.background)
+                    }
+                }
+        }
+        .onAppear { people.ensure() }
     }
 }
 
@@ -88,6 +171,10 @@ private struct MeetingsSidebar: View {
                     tooltip: "Meetings without a project, questions to answer and suggestions ready to confirm (⌘1)")
                 row("All meetings", symbol: "calendar", count: overview?.meetings.count, place: .all,
                     tooltip: "Every meeting of the last \(Plural.count(model.days, "day")) (⌘2)")
+            }
+            Section("People") {
+                row("Contacts", symbol: "person.crop.circle", count: nil, place: .contacts,
+                    tooltip: "Everyone from your meetings, calendars, Contacts and the people you added: search, add, hide and merge")
             }
             Section("Projects") {
                 if let overview, overview.projects.isEmpty {
@@ -168,6 +255,7 @@ private struct MeetingsListPane: View {
         switch model.place {
         case .needs: return "Needs you"
         case .all: return "All meetings"
+        case .contacts: return "Contacts"
         case .project(let name): return name
         }
     }

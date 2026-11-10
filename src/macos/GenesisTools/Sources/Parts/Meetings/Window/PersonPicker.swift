@@ -375,3 +375,80 @@ struct PersonNameField: View {
         focused = false
     }
 }
+
+// MARK: - The reach of an assignment (R22, the speaker version)
+
+/// "Assign this stretch" reaches more of the same label: the sheet gives this stretch alone ("Just this"), or with the
+/// ones ticked, each playable first. Nothing is written until the button; Cancel and Esc write nothing.
+struct AssignReachSheet: View {
+    let pending: PendingAssign
+    let window: MeetingsWindowModel
+    @State private var chosen: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Give \(MeetingsFormat.clock(pending.stretch.fromSec)) to \(MeetingsFormat.clock(pending.stretch.toSec)) to \(pending.person)")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(Self.subtitle(pending))
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(pending.more) { stretch in
+                        HStack(spacing: 8) {
+                            Toggle(isOn: Binding(get: { chosen.contains(stretch.id) },
+                                                 set: { on in if on { chosen.insert(stretch.id) } else { chosen.remove(stretch.id) } })) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(verbatim: "\(MeetingsFormat.clock(stretch.fromSec)) to \(MeetingsFormat.clock(stretch.toSec))")
+                                        .font(.system(size: 12).monospacedDigit())
+                                    Text(Self.why(stretch)).font(.system(size: 11)).foregroundStyle(.secondary)
+                                }
+                            }
+                            .toggleStyle(.checkbox)
+                            Spacer(minLength: 6)
+                            IconButton(systemName: "play.fill", tooltip: "Play \(MeetingsFormat.clock(stretch.fromSec)) to \(MeetingsFormat.clock(stretch.toSec))") {
+                                window.player.play(.range(from: stretch.fromSec, to: stretch.toSec), in: pending.meeting, from: .speakerChip)
+                            }
+                        }
+                        .padding(.vertical, 5)
+                        Divider()
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+            HStack {
+                Button("Cancel") { window.people.pendingAssign = nil }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(chosen.isEmpty ? "Just this" : "Give \(Plural.count(chosen.count + 1, "stretch", "stretches"))") { give() }
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("meetings.assignReach.give")
+            }
+        }
+        .padding(18)
+        .frame(width: 420)
+    }
+
+    static func subtitle(_ pending: PendingAssign) -> String {
+        let label = pending.stretch.label ?? "This voice"
+        return "\(label) also speaks in \(Plural.count(pending.more.count, "stretch", "stretches")) the engine links to this one. "
+            + "Play one to check it, and tick the ones that are \(pending.person) too."
+    }
+
+    static func why(_ stretch: MeetingsAPI.AssignStretch) -> String {
+        let lines = Plural.count(stretch.lines, "line")
+        switch stretch.why {
+        case .hintRange: return "\(lines), in the range the hint names"
+        case .presentSet: return "\(lines), with the same people present"
+        }
+    }
+
+    private func give() {
+        let extra = pending.more.filter { chosen.contains($0.id) }
+            .map { DecisionAction.Stretch(label: $0.label, fromSec: $0.fromSec, toSec: $0.toSec) }
+        window.people.pendingAssign = nil
+        guard let detail = window.detail, detail.id == pending.meeting else { return }
+        detail.assign([pending.stretch] + extra, to: pending.person, email: pending.email)
+    }
+}

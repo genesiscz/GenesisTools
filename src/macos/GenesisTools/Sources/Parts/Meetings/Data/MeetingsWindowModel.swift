@@ -67,6 +67,8 @@ final class MeetingsWindowModel {
         case needs
         case all
         case project(String)
+        /// Every person the directory knows (R24, G-PPL-5): a view of the window, not of a meeting.
+        case contacts
     }
 
     var place: Place
@@ -76,11 +78,30 @@ final class MeetingsWindowModel {
     /// (the perf tests read this).
     @ObservationIgnored private(set) var overviewSets = 0
     private(set) var settings: Loadable<MeetingsSettings> = .idle
+    /// The same config read as JSON: the side panel's engine rows and the Contacts view's source switches read their
+    /// values here, and each write names the value it replaces (`expect`).
+    private(set) var settingsRaw: JSONValue?
     private(set) var detail: MeetingDetailModel?
     var days: Int
-    /// The settings side panel is open in the meeting's trailing pane slot (it replaces the transcript pane there).
-    /// b-swift-settings-contacts adds its toggle and remembers it.
-    var sidePanelOpen = false
+    /// The settings side panel is open in the meeting's trailing pane slot (it replaces the transcript pane there). The
+    /// open state is remembered, not a setting (G55).
+    var sidePanelOpen = false {
+        didSet { if remembersPanel, oldValue != sidePanelOpen { defaults.set(sidePanelOpen, forKey: Self.sidePanelOpenKey) } }
+    }
+    /// The side panel's folded sections by id, remembered the same way.
+    var sidePanelFolded: Set<String> = [] {
+        didSet { if remembersPanel, oldValue != sidePanelFolded { defaults.set(sidePanelFolded.sorted(), forKey: Self.sidePanelFoldedKey) } }
+    }
+    /// False in a snapshot run: opening the panel for a picture must not change what the real window opens with.
+    @ObservationIgnored var remembersPanel = true
+    /// The window's people: the Contacts view and an assignment's reach sheet.
+    @ObservationIgnored private(set) lazy var people = MeetingsPeopleModel(window: self)
+    static let sidePanelOpenKey = "meetings.window.sidePanelOpen"
+    static let sidePanelFoldedKey = "meetings.window.sidePanelFolded"
+    /// The edge of a pane its notices float at (`meetings.notices.place`): an observed value, so a change in the side
+    /// panel moves the stack at once. The Settings page runs in another process; its change lands when this window
+    /// becomes key again (`refreshAfterReturn`).
+    private(set) var noticePlace: MeetingsPreferences.NoticePlace
     /// The Moment player: every Moment of the window plays here, one at a time, with its context stack (F1b).
     var player = MomentPlayer()
     /// The window's one notice stack (R31): every meeting's notices, so a notice of a meeting that is not open stays on
@@ -93,7 +114,8 @@ final class MeetingsWindowModel {
     private(set) var liveUpdatesOff = false
     private var overviewGeneration = 0
     private let loadDetail: @MainActor (MeetingDetailModel) -> Void
-    @ObservationIgnored private let defaults: UserDefaults
+    /// The app defaults the window settings live in (`.standard` in the app; a test passes its own suite).
+    @ObservationIgnored let defaults: UserDefaults
     /// The clock the panes' notices count on; nil is the real one (a test passes a `ManualNoticeClock`).
     @ObservationIgnored private let noticeClock: NoticeClock?
     /// The window's Meetings service; nil in the preview build, under XCTest and when it is turned off.
@@ -119,6 +141,9 @@ final class MeetingsWindowModel {
         MeetingsPreferences.migrate(defaults)
         place = MeetingsPreferences.openOn(defaults) == .needs ? .needs : .all
         days = MeetingsPreferences.days(defaults)
+        noticePlace = MeetingsPreferences.noticePlace(defaults)
+        sidePanelOpen = defaults.bool(forKey: Self.sidePanelOpenKey)
+        sidePanelFolded = Set(defaults.stringArray(forKey: Self.sidePanelFoldedKey) ?? [])
         notices = NoticeStackModel(clock: noticeClock, timing: { [defaults] in MeetingsPreferences.noticeTiming(defaults) },
                                    maxVisible: { [defaults] in MeetingsPreferences.Notices.maxVisible.value(defaults) })
     }
@@ -144,14 +169,19 @@ final class MeetingsWindowModel {
         return true
     }
 
-    /// The edge of a pane its notices float at (Settings → Meetings → Window).
-    var noticePlace: MeetingsPreferences.NoticePlace { MeetingsPreferences.noticePlace(defaults) }
+    /// A window setting changed (the side panel wrote one, or the window came back after the Settings page): the values
+    /// the window model holds read again. The views read every other window setting from the defaults themselves.
+    func windowSettingsChanged() {
+        let place = MeetingsPreferences.noticePlace(defaults)
+        if place != noticePlace { noticePlace = place }
+    }
 
     /// The meetings the sidebar's place shows, newest first.
     var visibleMeetings: [OverviewMeeting] {
         guard let overview = overview.value else { return [] }
         switch place {
         case .all: return overview.meetings
+        case .contacts: return []
         case .project(let name): return overview.meetings.filter { $0.project == name }
         case .needs:
             let waiting = Set(overview.needsYou.noProject + overview.needsYou.questions.map(\.id) + overview.needsYou.suggestions.map(\.id))
@@ -233,11 +263,49 @@ final class MeetingsWindowModel {
         Task {
             let next: Loadable<MeetingsSettings>
             do {
-                next = .loaded(try await Self.settingsRead.run(service: service).value)
+                let shown = try await Self.settingsRead.run(service: service)
+                if settingsRaw != shown.raw { settingsRaw = shown.raw }
+                next = .loaded(shown.value)
             } catch {
                 next = .failed(asFailure(error), previous: settings.value)
             }
             if settings != next { settings = next }
+        }
+    }
+
+    // MARK: Config writes from the window (the side panel's engine rows, the Contacts view's sources)
+
+    /// Sets one meetings config value, or puts it back to its default when `value` is nil (`config.set`, `config.unset`,
+    /// else the command), naming the value the window read there, then reads the config again. A refusal is a notice
+    /// with Retry; the control shows the saved value again after the read.
+    func setConfig(_ path: [String], _ value: JSONValue?, done: String? = nil) {
+        let write: MeetingsConfigWrite = value.map { .set(path, $0, readFrom: settingsRaw) } ?? .unset(path, readFrom: settingsRaw)
+        Task {
+            do {
+                try await write.run(service: service)
+                // The next write at this path names this value, not the one before it, even before the read lands.
+                if let value { settingsRaw = settingsRaw?.setting(path, to: value) }
+                if let done { notices.push(StackedNotice(text: done)) }
+            } catch let failure as MeetingsCLI.Failure where failure.code == "config-stale" {
+                notices.push(MeetingsSettingsModel.staleNotice(failure))
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.setConfig(path, value, done: done) })
+            }
+            loadSettings(quiet: true)
+        }
+    }
+
+    /// Plays the tone alone with `sound` (`tone.preview` cuts it; the side panel's Play button). Only the service cuts a
+    /// preview; without one a notice says so, since a second tone maker would be a second engine (R7).
+    func previewTone(_ sound: ToneSound) {
+        Task {
+            do {
+                try await TonePreviewPlayer.play(sound, service: service)
+            } catch is MeetingsService.Unavailable {
+                notices.push(StackedNotice(text: TonePreviewPlayer.unavailableText))
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.previewTone(sound) })
+            }
         }
     }
 
@@ -248,6 +316,11 @@ final class MeetingsWindowModel {
 
     func go(_ place: Place) {
         self.place = place
+        // The Contacts view lists people, not meetings: the open meeting stays open for the way back.
+        if place == .contacts {
+            people.ensure()
+            return
+        }
         if let id = selectedMeetingID, visibleMeetings.contains(where: { $0.id == id }) { return }
         select(visibleMeetings.first?.id)
     }
@@ -306,6 +379,7 @@ final class MeetingsWindowModel {
     /// nothing reads; without it (no service, a lost subscription) what changed outside the window (a confirm in a
     /// terminal, a new meeting) reads now, quietly: what is on screen stays until an answer differs.
     func refreshAfterReturn() {
+        windowSettingsChanged()
         guard !liveUpdates else { return }
         HubMainBusy.measure("meetings.refresh", window: 1.5)
         loadOverview(quiet: true)

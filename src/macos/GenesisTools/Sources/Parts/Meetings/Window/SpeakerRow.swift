@@ -54,6 +54,6 @@ struct SpeakerRow: View {
     }
 
     private var field: some View {
-        SpeakerNameField(label: speaker.label, rename: rename, commit: commit)
+        SpeakerNameField(label: speaker.label, rename: rename, atSec: speaker.firstSec, commit: commit)
     }
 }
