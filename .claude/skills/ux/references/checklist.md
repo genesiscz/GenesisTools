@@ -338,6 +338,12 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
 - Settings pages are flat: a sidebar or tabs with sections, no push navigation.
 - A group holds about seven rows and a page a handful of groups; per-event toggles fold into one choice.
 - A text field commits on Return and on focus loss, and validates on commit, not on every keystroke.
+- A number shows its unit in its control ("48 hours", "± 15 min": `KitNumberField`), so the row's sentence says only
+  what the number decides, in one line. A card of more than four rows gives each row a glyph
+  (`.nativeSettingsIcon`) and groups the rows under short headings; two numbers that work together get one small
+  picture that follows them.
+- A control that steps (a number field, a slider) writes once for each gesture, and two quick changes of one
+  setting both arrive: press plus twice fast, then read the saved value.
 
 ## Real time and state
 - New data appears without a reload; the view does not jump when it arrives.

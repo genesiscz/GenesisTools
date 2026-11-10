@@ -648,3 +648,12 @@ checklist.md or motion.md as well.
   pictures. Each got a flag (`--select`, `--edit`, `--card`, `--sheet`); a popover or a sheet is drawn alone in
   a window of its own size. The first card picture showed three defects at once. Rule: a state without a picture
   is a state nobody reviewed.
+- 2026-11-10 18:45 — **A unit in a sentence is a unit nobody sees, and a dropped write is a dead click.** The Meetings
+  "Ask each time" card was seven rows of two-line sentences, each beside the system's text field and a stepper 13 pt
+  wide; the field said "48" and the sentence had to say "hours". Two more things were wrong under it: the system
+  stepper wrote the setting at every repeat of a held button, and the settings model dropped a write that arrived
+  while the write before it of the same key still ran, so the second of two quick presses did nothing. Now the
+  number, its unit and its steps are one control (`KitNumberField`: one write for each gesture), every row has a
+  glyph, the rows stand in two groups, the two calendar numbers have one picture, and the model keeps the newest
+  value and writes it next. Rule: put the unit in the control; when a control can fire faster than its host saves,
+  test two quick changes and read the saved value, not the screen.
