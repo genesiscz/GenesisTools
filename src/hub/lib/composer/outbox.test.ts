@@ -6049,12 +6049,15 @@ describe("background Widget roster", () => {
     });
 });
 
+/** A 2x1 PNG; encodeRgbaToPng is async (it loads the canvas addon lazily) and png() below is not. */
+const CARD_PNG = await encodeRgbaToPng(new Uint8ClampedArray([30, 60, 90, 255, 200, 120, 40, 255]), 2, 1);
+
 describe("inbox card images and agent messages", () => {
     const quiet = { sinks: { obsidian: false, sound: false, notify: false } };
     const noAgents = async () => ({ generatedAt: "", parents: [], orphans: [] });
 
     function png(path: string): string {
-        writeFileSync(path, encodeRgbaToPng(new Uint8ClampedArray([30, 60, 90, 255, 200, 120, 40, 255]), 2, 1));
+        writeFileSync(path, CARD_PNG);
         return path;
     }
 

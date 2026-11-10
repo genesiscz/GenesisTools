@@ -2,8 +2,8 @@
  * Finishing an annotated page shot: the overlay's pixels onto the raw image, parts stacked into one image, PNG or
  * WebP out. In-process with @napi-rs/canvas, so a shot needs no ImageMagick and no cwebp.
  */
-import { createCanvas, loadImage } from "@napi-rs/canvas";
 import type { AnnotationRect } from "./annotation-plan";
+import { loadCanvas } from "./canvas";
 
 /**
  * The final annotated image: the raw screenshot everywhere, and the annotated screenshot only inside `painted` (the
@@ -15,6 +15,7 @@ export async function composeOverlay(input: {
     annotated: Buffer;
     painted: readonly AnnotationRect[];
 }): Promise<Buffer> {
+    const { createCanvas, loadImage } = await loadCanvas();
     const [raw, annotated] = await Promise.all([loadImage(input.raw), loadImage(input.annotated)]);
     if (raw.width !== annotated.width || raw.height !== annotated.height) {
         throw new Error(
@@ -38,6 +39,7 @@ export async function stackImages(images: readonly Buffer[], background = "#ffff
         return images[0];
     }
 
+    const { createCanvas, loadImage } = await loadCanvas();
     const loaded = await Promise.all(images.map((image) => loadImage(image)));
     const width = Math.max(...loaded.map((image) => image.width));
     const height = loaded.reduce((sum, image) => sum + image.height, 0);
@@ -67,6 +69,7 @@ export async function encodeImage(png: Buffer, format: "png" | "webp", options: 
         return png;
     }
 
+    const { createCanvas, loadImage } = await loadCanvas();
     const image = await loadImage(png);
     const maxWidth = options.maxWidth ?? 0;
     const scale = maxWidth > 0 && image.width > maxWidth ? maxWidth / image.width : 1;
