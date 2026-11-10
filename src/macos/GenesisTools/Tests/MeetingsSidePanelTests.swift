@@ -28,7 +28,8 @@ final class MeetingsSidePanelTests: XCTestCase {
                     "meetings.playback.repeat", "meetings.playback.afterClip", "meetings.playback.moreSec",
                     "meetings.playback.contextSec", "meetings.playback.rewindSec", "meetings.playback.stack.clickInQuestion",
                     "meetings.playback.stack.onTopEnd", "meetings.playback.stack.depth", "meetings.timeline.shown",
-                    "meetings.timeline.hoverDelayMs", "meetings.transcript.followPlayback", "meetings.screen.besidePlayback",
+                    "meetings.timeline.hoverDelayMs", "meetings.timeline.pinLanes", "meetings.timeline.waveform",
+                    "meetings.transcript.followPlayback", "meetings.screen.besidePlayback",
                     "meetings.items.transcriptPane", "meetings.people.renameBlur", "meetings.people.offerNew"] {
             XCTAssertTrue(keys.contains(key), "the panel has a row for \(key)")
         }

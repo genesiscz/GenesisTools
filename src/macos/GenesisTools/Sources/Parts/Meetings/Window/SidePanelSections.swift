@@ -208,6 +208,7 @@ enum SidePanelWords {
         "bottom": "Bottom", "top": "Top",
         "keepDraft": "Keep it", "commit": "Save it",
         "noExactMatch": "No one has the name", "noResults": "No one matches",
+        "speakers": "By speaker", "plain": "One colour",
     ]
 
     /// Choices whose words depend on the key ("always" of the typed answer is "On every question").
@@ -363,6 +364,10 @@ enum SidePanelCatalog {
                 .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off."),
             row(Panes.collapseHeight, value: Panes.collapseHeight.value(defaults))
                 .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off: the dock is one line."),
+            row(Panes.pinLanes, value: Panes.pinLanes.value(defaults))
+                .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off."),
+            row(Panes.waveform, value: Panes.waveform.value(defaults))
+                .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off."),
             row(Panes.followPlayback, value: Panes.followPlayback.value(defaults)),
             row(Panes.screenBesidePlayback, value: Panes.screenBesidePlayback.value(defaults)),
             row(Panes.screenHeight, value: Panes.screenHeight.value(defaults))
@@ -396,6 +401,7 @@ enum SidePanelCatalog {
         MeetingsPreferences.Notices.maxVisible.key, MeetingsPreferences.Playback.stackDepth.key,
         MeetingsPreferences.Panes.hoverDelayMs.key, MeetingsPreferences.Panes.collapseHeight.key,
         MeetingsPreferences.Panes.screenHeight.key, MeetingsPreferences.Speakers.hintChips.key,
+        MeetingsPreferences.Panes.pinLanes.key,
     ]
 
     /// Writes a window row's value into `defaults` as the type its reader reads (the side panel and the Settings page).

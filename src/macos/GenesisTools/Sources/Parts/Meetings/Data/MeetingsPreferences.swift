@@ -316,5 +316,15 @@ extension MeetingsPreferences {
         static let screenHeight = MeetingsWindowSetting(
             key: "meetings.screen.height", defaultValue: 150, choices: [100, 150, 200],
             title: "Screen height in the dock", detail: "Points the frame beside the sound takes.")
+
+        enum Waveform: String, CaseIterable { case speakers, plain }
+
+        /// Two rows: with one, two items a second apart were a count that no zoom took apart.
+        static let pinLanes = MeetingsWindowSetting(
+            key: "meetings.timeline.pinLanes", defaultValue: 2, choices: [1, 2, 3],
+            title: "Rows of marks", detail: "Rows the whole-meeting timeline has for items that are close in time, before it joins them into a count.")
+        static let waveform = MeetingsWindowSetting(
+            key: "meetings.timeline.waveform", defaultValue: Waveform.speakers, choices: Waveform.allCases,
+            title: "Waveform colours", detail: "Each speaker's colour where that speaker talks, or one colour. The classic look has one colour.")
     }
 }
