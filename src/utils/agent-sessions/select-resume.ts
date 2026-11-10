@@ -4,6 +4,7 @@ import { CmuxDidNotAnswerError, type RunningCmuxSession } from "@genesiscz/utils
 import { isInteractive } from "@genesiscz/utils/cli";
 import { readCmuxTerminal } from "@genesiscz/utils/cmux/caller-enricher";
 import { env } from "@genesiscz/utils/env";
+import { cmuxDoctorCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { canonicalPath } from "@genesiscz/utils/paths";
 import { readProcessRow } from "@genesiscz/utils/process/libproc-table";
@@ -221,7 +222,7 @@ export async function readRunning(kind: string, load: () => Promise<RunningCmuxS
 /** The refusal of a resume that would start without asking while cmux cannot say whether the session runs. */
 export function unknownRunningError(kind: string, unknown: string): Error {
     return new Error(
-        `cmux did not answer, so it is unknown whether this ${kind} session already runs in a tab; not resuming a possible second copy. Retry when cmux answers (\`tools cmux doctor\` names the fault). cmux said: ${unknown}`
+        `cmux did not answer, so it is unknown whether this ${kind} session already runs in a tab; not resuming a possible second copy. Retry when cmux answers (\`${cmuxDoctorCommand()}\` names the fault). cmux said: ${unknown}`
     );
 }
 
