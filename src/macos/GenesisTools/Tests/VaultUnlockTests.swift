@@ -474,6 +474,37 @@ final class VaultUnlockTests: XCTestCase {
                        "one grant per runtime and script, not one per launcher")
     }
 
+    func testAHardLinkOfBunInAnotherHomeIsBunAndACopyIsNot() throws {
+        // The kernel names a running hard link by the path looked up last: the real home's daemon was named as the
+        // launcher of a scratch home, and its remembered approval did not match.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vault-runtime-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appendingPathComponent("home").path
+        let bun = "\(home)/.bun/bin/bun"
+        let scratchLauncher = root.appendingPathComponent("scratch/.genesis-tools/bin/gt-hub").path
+        let copy = root.appendingPathComponent("evil/bun").path
+        for path in [bun, scratchLauncher, copy] {
+            try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        }
+        try Data("runtime".utf8).write(to: URL(fileURLWithPath: bun))
+        try FileManager.default.linkItem(atPath: bun, toPath: scratchLauncher)
+        try FileManager.default.copyItem(atPath: bun, toPath: copy)
+
+        XCTAssertEqual(VaultGrants.runtime(of: scratchLauncher, home: home), "bun", "the same file under another name")
+        XCTAssertEqual(VaultGrants.runtime(of: copy, home: home), copy, "a copy is another file")
+        XCTAssertEqual(VaultGrants.runtime(of: "\(root.path)/gone/gt-hub", home: home), "\(root.path)/gone/gt-hub", "a path that names no file")
+        XCTAssertEqual(VaultGrants.runtime(of: "\(home)/.bun/bin", home: home), "\(home)/.bun/bin", "a folder is no runtime")
+
+        let daemon = "/repo/src/ai/commands/usage/poll-daemon.ts"
+        let grant = VaultGrant(key: "k", tool: "ai", executable: bun, script: daemon, grantedAt: 1_000, until: nil, method: "touch-id")
+        let file = VaultGrants.remember(grant, now: 1_000, in: VaultGrantsFile(version: 1, grants: []), home: home)
+        XCTAssertNotNil(VaultGrants.live(executable: scratchLauncher, script: daemon, now: 2_000, in: file, home: home),
+                        "the approval for bun holds for its hard link")
+        XCTAssertNil(VaultGrants.live(executable: copy, script: daemon, now: 2_000, in: file, home: home))
+        XCTAssertNil(VaultGrants.live(executable: scratchLauncher, script: "/repo/src/other.ts", now: 2_000, in: file, home: home),
+                     "the script still decides")
+    }
+
     func testAGrantWithoutAScriptForAnInterpreterMatchesNothingAndGoesOnTheNextWrite() {
         let broad = VaultGrant(key: "vault|bun|/Users/alice/.bun/bin/bun|", tool: "bun", executable: "/Users/alice/.bun/bin/bun",
                                script: nil, grantedAt: 1_000, until: nil, method: "touch-id")

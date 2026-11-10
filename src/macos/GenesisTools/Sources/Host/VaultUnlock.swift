@@ -357,6 +357,19 @@ enum VaultSession {
     }
 }
 
+/// The file a path names: its volume and its file number. Two paths with one identity are one file (hard links).
+struct VaultFileIdentity: Equatable {
+    let volume: UInt64
+    let file: UInt64
+
+    /// Nil for a path that names no regular file (gone, a folder, not readable).
+    static func of(_ path: String) -> VaultFileIdentity? {
+        var info = stat()
+        guard stat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
+        return VaultFileIdentity(volume: UInt64(UInt32(bitPattern: info.st_dev)), file: UInt64(info.st_ino))
+    }
+}
+
 /// One remembered approval: this executable, this script. `tool` is for display and `revoke <tool>` only.
 struct VaultGrant: Codable, Equatable {
     var key: String
@@ -410,13 +423,21 @@ enum VaultGrants {
     /// The runtime a grant is keyed by. Bun and GenesisTools' `gt-<tool>` launchers are one program: every launcher is
     /// a hard link of `~/.bun/bin/bun`, and which one starts a script depends on the tool that spawned it. The usage
     /// daemon ran as bun, gt-services, gt-claude and gt-codex on one morning (2026-10-15), and each asked again for the
-    /// same script after "Always". Only these paths count, so a binary elsewhere that calls itself bun still asks.
-    static func runtime(of executable: String, home: String = genesisHome()) -> String {
+    /// same script after "Always". A binary elsewhere that calls itself bun still asks.
+    ///
+    /// A path that is the same file as one of the bun paths (one volume, one file number) is bun too. The kernel names
+    /// a running hard link by the path that was looked up last, so the usage daemon of the real home was named as the
+    /// `gt-hub` of a test home that had just started, and asked again after "Always" (2026-11-10: 30 remembered
+    /// approvals of one script, each for a launcher in another scratch home). A copy of bun is another file and asks.
+    static func runtime(of executable: String, home: String = genesisHome(),
+                        fileIdentity: (String) -> VaultFileIdentity? = VaultFileIdentity.of) -> String {
         let bun = ["\(home)/.bun/bin/bun", "/opt/homebrew/bin/bun", "/usr/local/bin/bun"]
         let launchers = "\(home)/.genesis-tools/bin/"
         let isLauncher = executable.hasPrefix(launchers) && (executable as NSString).lastPathComponent.hasPrefix("gt-")
             && !executable.dropFirst(launchers.count).contains("/")
-        return bun.contains(executable) || isLauncher ? "bun" : executable
+        if bun.contains(executable) || isLauncher { return "bun" }
+        guard let own = fileIdentity(executable) else { return executable }
+        return bun.contains { fileIdentity($0) == own } ? "bun" : executable
     }
 
     static func sameProgram(_ grant: VaultGrant, executable: String, script: String?, home: String = genesisHome()) -> Bool {
