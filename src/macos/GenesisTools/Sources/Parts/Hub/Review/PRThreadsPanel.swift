@@ -508,6 +508,7 @@ struct PRThreadsList: View {
                             AgentDraftsList(model: model)
                             emptyThreads.padding(.vertical, 24)
                         }
+                        .genScrollBars()
                     }
                 } else {
                     emptyThreads.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -553,6 +554,7 @@ struct PRThreadsList: View {
                     .coordinateSpace(name: PRListAnchor.space)
                     // The reader's place survives a width change (a panel drag's release, a window resize).
                     .background(PRScrollViewFinder { anchor.attach($0) })
+                    .genScrollBars()
                 }
             }
         }

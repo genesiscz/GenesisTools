@@ -1,6 +1,8 @@
+import SwiftUI
 import XCTest
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
+import GenesisKit
 
 /// The operations features decode what their `tools` doors print and keep their small pure rules:
 /// the agent process pane (`tools hub procs --json`, src/hub/lib/procs/), the prompt library
@@ -176,6 +178,48 @@ final class HubOpsFeaturesTests: XCTestCase {
         stored = PRDescriptionChoices.set(stored, pr: "https://example.org/pr/1", whole: false)
         XCTAssertEqual(PRDescriptionChoices.whole(stored, pr: "https://example.org/pr/1"), false)
         XCTAssertEqual(stored.split(separator: "\n").count, 2, "one line per PR")
+    }
+
+    /// A hub `ScrollView` whose content carries `.genScrollBars()` draws GenesisKit's thin overlay scroller, which takes
+    /// no layout width; the System setting gives the scroll view back its own scroller (annotation 2391, 2026-11-10).
+    @MainActor
+    func testAScrollViewWithGenScrollBarsGetsTheOverlayScroller() throws {
+        _ = NSApplication.shared
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "gen-scrollbars-test"))
+        defaults.removePersistentDomain(forName: "gen-scrollbars-test")
+        func host(_ style: GenScrollBarStyle) throws -> NSScrollView {
+            defaults.set(style.rawValue, forKey: GenScrollBarStyle.key)
+            let view = ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(0..<200, id: \.self) { Text(verbatim: "row \($0)").frame(height: 20) }
+                }
+                .genScrollBars()
+            }
+            .frame(width: 300, height: 200)
+            .defaultAppStorage(defaults)
+            let hosting = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 300, height: 200),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.alphaValue = 0
+            window.contentView = hosting
+            window.order(.below, relativeTo: 0)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            hosting.layoutSubtreeIfNeeded()
+            func find(_ view: NSView) -> NSScrollView? {
+                if let scroll = view as? NSScrollView { return scroll }
+                for child in view.subviews { if let found = find(child) { return found } }
+                return nil
+            }
+            let scroll = try XCTUnwrap(find(hosting), "an NSScrollView behind the SwiftUI ScrollView")
+            window.close()
+            return scroll
+        }
+        let genesis = try host(.genesis)
+        XCTAssertTrue(genesis.verticalScroller is GenScroller, "\(String(describing: genesis.verticalScroller))")
+        XCTAssertEqual(genesis.scrollerStyle, .overlay)
+        let system = try host(.system)
+        XCTAssertFalse(system.verticalScroller is GenScroller)
     }
 
     /// The PR row's meta line: the author is whole, then truncated to at least 48 pt, then hidden with its dot.

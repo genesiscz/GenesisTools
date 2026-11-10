@@ -1353,6 +1353,7 @@ struct AgentsListView: View {
                             }
                         }
                         .padding(.bottom, 12)
+                        .genScrollBars()
                     }
                     // Reorders wait while the pointer is over the list, and happen when it leaves.
                     .onHover { agents.holdOrder = $0 }
@@ -1877,6 +1878,7 @@ struct AgentChildDetails: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
+                    .genScrollBars()
                 }
                 .frame(maxHeight: 200)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))
@@ -1918,6 +1920,7 @@ struct AgentChildDetails: View {
                         }
                     }
                     .padding(6)
+                    .genScrollBars()
                 }
                 .frame(maxHeight: 150)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))

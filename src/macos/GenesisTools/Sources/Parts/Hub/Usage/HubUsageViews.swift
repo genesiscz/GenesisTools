@@ -46,6 +46,7 @@ struct UsageListView: View {
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 8)
+            .genScrollBars()
         }
     }
 }
@@ -156,6 +157,7 @@ struct UsageMain: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .genScrollBars()
             }
         }
         .hubSurface(.content)

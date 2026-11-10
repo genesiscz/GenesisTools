@@ -1439,6 +1439,7 @@ struct InboxListView: View {
                     }
                 }
                 .padding(.bottom, 12)
+                .genScrollBars()
             }
             // Sessions quiet for three days fold under one row; a pick of one of them (a link) opens the fold. Keyed on
             // the selected row being a quiet one, not on the selection alone: a reveal can select a session before the
@@ -1612,6 +1613,7 @@ struct InboxMain: View {
                     .frame(maxWidth: HubInboxCards.readingWidth, alignment: .leading)
                     .padding(18)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .genScrollBars()
                 }
                 .focusable()
                 .focusEffectDisabled()
@@ -2777,6 +2779,7 @@ private struct InboxReplySheet: View {
             ScrollView {
                 MarkdownContentView(markdown: markdown, style: .hub)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                .genScrollBars()
             }
         }
         .padding(16)
@@ -2849,6 +2852,7 @@ private struct SessionInfoPopover: View {
             }
             .padding(14)
             .frame(width: 360, alignment: .leading)
+            .genScrollBars()
         }
         .frame(maxHeight: 560)
         .onAppear(perform: loadSpend)

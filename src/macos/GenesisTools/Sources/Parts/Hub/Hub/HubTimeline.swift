@@ -984,6 +984,7 @@ struct TimelineListView: View {
                 }
             }
             .padding(.bottom, 12)
+            .genScrollBars()
         }
     }
 
@@ -1348,6 +1349,7 @@ struct TimelineMain: View {
                     footer(shown: events.count)
                 }
                 .padding(.bottom, 16)
+                .genScrollBars()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

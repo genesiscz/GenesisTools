@@ -133,6 +133,7 @@ private struct ReviewCommitsList: View {
                 }
             }
             .padding(8)
+            .genScrollBars()
         }
     }
 
