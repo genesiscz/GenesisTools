@@ -17,6 +17,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { cameraMoviePath } from "@genesiscz/utils/recording-editor/camera";
 import {
     applyOp,
+    type EditOp,
     editOpSchema,
     readProject,
     wholeProject,
@@ -44,8 +45,8 @@ import screenOpsFixture from "./__fixtures__/screen-hit-ops.json";
 import fixture from "./__fixtures__/service-protocol.json";
 import schemasFixture from "./__fixtures__/service-protocol.schemas.json";
 import * as edits from "./edit";
-import { editProject, readUndoSteps, redoEdit, undoEdit } from "./edit";
-import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
+import { editProject, type OwnedEdit, readUndoSteps, setEditOwner } from "./edit";
+import { EditSession, EditSessions, type ProjectChanged, withEditSession } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS, editorWindowKeyOf, shortRecordingId } from "./library";
 import { chaptersOfPart } from "./moments";
@@ -125,6 +126,24 @@ function holdComputations(count = 1) {
     };
 }
 
+/** The CLI's undo and redo with no service: each on a short-lived session of the edit file. */
+const undoEdit = (path: string) => withEditSession(path, (session) => session.undo({ by: "agent" }));
+const redoEdit = (path: string) => withEditSession(path, (session) => session.redo({ by: "agent" }));
+
+/**
+ * `withEditSession` on an edit, as each kind of session runs it: a resident one that this process holds (the service's
+ * for a window) and that every call finds, or a short-lived one per call, which keeps the history in the undo file.
+ */
+async function sessionOfKind(kind: "resident" | "short-lived", path: string) {
+    if (kind === "resident") {
+        const { session } = await openSession(path);
+        setEditOwner({ sessionOf: (editPath) => (editPath === path ? session : undefined) });
+        closing.push(() => setEditOwner(undefined));
+    }
+
+    return <T>(work: (session: OwnedEdit) => Promise<T> | T) => withEditSession(path, work);
+}
+
 async function openSession(path: string, saveDelayMs = 10_000) {
     const changes: ProjectChanged[] = [];
     const session = await EditSession.open(path, { onChange: (change) => changes.push(change), saveDelayMs });
@@ -158,24 +177,42 @@ describe("an edit session", () => {
         expect((await undoEdit(path)).project.texts?.map((text) => text.text)).toEqual(["A"]);
     });
 
-    test("undo and redo step through the session's history; a new change ends the redo", async () => {
-        const path = editFixture("gt-es-undo-");
-        const { session } = await openSession(path);
-        await session.apply([{ op: "text", from: 1, to: 2, text: "A" }], { by: "agent" });
-        await session.apply([{ op: "text", from: 3, to: 4, text: "B" }], { by: "agent" });
+    test.each(["resident", "short-lived"] as const)(
+        "undo and redo step through a %s session's history, collapse makes one step, a new change ends the redo",
+        async (kind) => {
+            const path = editFixture(`gt-es-undo-${kind}-`);
+            const edit = await sessionOfKind(kind, path);
+            const apply = (ops: EditOp[], options: { by: string; baseRevision?: number } = { by: "agent" }) =>
+                edit((session) => session.apply(ops, options));
+            await apply([{ op: "text", from: 1, to: 2, text: "A" }]);
+            await apply([{ op: "text", from: 3, to: 4, text: "B" }]);
 
-        const undone = await session.undo({ by: "editor" });
-        expect(undone.undone).toEqual(["text"]);
-        expect(undone.project.texts?.map((text) => text.text)).toEqual(["A"]);
-        expect((await session.redo({ by: "editor" })).project.texts?.map((text) => text.text)).toEqual(["A", "B"]);
-        await session.undo({ by: "editor" });
-        await session.apply([{ op: "volume", volume: 0.5 }], { by: "agent" });
-        await expect(session.redo({ by: "editor" })).rejects.toMatchObject({ code: RPC_ERRORS.nothingToRedo });
-        expect(session.current.revision).toBe(7);
-        await expect(
-            session.apply([{ op: "volume", volume: 0.4 }], { by: "editor", baseRevision: 6 })
-        ).rejects.toMatchObject({ code: RPC_ERRORS.staleRevision });
-    });
+            const undone = await edit((session) => session.undo({ by: "editor" }));
+            expect(undone.undone).toEqual(["text"]);
+            expect(undone.project.texts?.map((text) => text.text)).toEqual(["A"]);
+            const redone = await edit((session) => session.redo({ by: "editor" }));
+            expect(redone.project.texts?.map((text) => text.text)).toEqual(["A", "B"]);
+            await edit((session) => session.undo({ by: "editor" }));
+            await apply([{ op: "volume", volume: 0.5 }]);
+            await expect(edit((session) => session.redo({ by: "editor" }))).rejects.toMatchObject({
+                code: RPC_ERRORS.nothingToRedo,
+            });
+            expect(await edit((session) => session.current.revision)).toBe(7);
+            expect(readProject(path).revision).toBe(7);
+            await expect(
+                apply([{ op: "volume", volume: 0.4 }], { by: "editor", baseRevision: 6 })
+            ).rejects.toMatchObject({ code: RPC_ERRORS.staleRevision });
+
+            const depth = await edit((session) => session.undoDepth);
+            await apply([{ op: "marker", at: 1, label: "one" }]);
+            await apply([{ op: "marker", at: 2, label: "two" }]);
+            await edit((session) => session.collapseUndo(depth));
+            expect(await edit((session) => session.undoDepth)).toBe(depth + 1);
+            const collapsed = await edit((session) => session.undo({ by: "editor" }));
+            expect(collapsed.undone).toEqual(["marker", "marker"]);
+            expect(readProject(path).markers ?? []).toEqual([]);
+        }
+    );
 
     test("a save after another writer's save keeps both edits, and refuses with staleRevision when they clash", async () => {
         const path = editFixture("gt-es-stale-");
@@ -405,6 +442,30 @@ describe("one undo and redo journal for the session and the file", () => {
             volume: 0.4,
             texts: ["A"],
         });
+    });
+
+    test("a short-lived session waits while another process saves, and refuses with staleRevision when it never ends", async () => {
+        const path = editFixture("gt-es-busy-");
+        await editProject(path, [{ op: "volume", volume: 0.4 }]);
+        const busy = Object.assign(new Error("Lock file is already being held"), { code: "ELOCKED" });
+        const real = EditSession.prototype.flush;
+        let refusals = 2;
+        const spy = spyOn(EditSession.prototype, "flush").mockImplementation(function (this: EditSession) {
+            if (this.dirty && refusals-- > 0) {
+                throw busy;
+            }
+
+            return real.call(this);
+        });
+        closing.push(() => spy.mockRestore());
+
+        expect((await undoEdit(path)).project.audio.volume).toBe(1);
+        expect(readProject(path).audio.volume).toBe(1);
+
+        refusals = Number.POSITIVE_INFINITY;
+        const revision = readProject(path).revision;
+        await expect(redoEdit(path)).rejects.toMatchObject({ code: RPC_ERRORS.staleRevision });
+        expect(readProject(path).revision).toBe(revision);
     });
 
     test("an undo in the session can be redone from the file after the session closes", async () => {
