@@ -137,7 +137,8 @@ public enum HubPROverview {
     public static let descriptionWholeKey = "hub.prs.descriptionWhole"
     /// The PRs whose description the reader opened or closed by hand, newest last, one id per line.
     public static let descriptionChoicesKey = "hub.prs.descriptionChoices"
-    /// The commit list opens folded. A new key: the old `hub.prs.fold.commits` was stored as open by every first fold.
+    /// The commit list is folded. One value for every PR; unset reads as open (Martin, 2026-11-10: "commits list
+    /// unfolded by default, and fold / unfold remembers that in all PRs").
     public static let commitsFoldedKey = "hub.prs.fold.commitList"
 }
 
