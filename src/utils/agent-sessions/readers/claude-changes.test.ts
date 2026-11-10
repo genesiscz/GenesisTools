@@ -8,7 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { applyReplacement, computeSessionChanges } from "@genesiscz/utils/session-changes";
 import { readClaudeTranscriptFolded } from "./claude-changes";
 import { emptyParseState, parseClaudeTranscript, parseLines, readClaudeTranscript } from "./claude-changes-parse";
-import { canonicalClaudeTranscript, canonicalClaudeTranscriptSync } from "./claude-locate";
+import { AmbiguousSessionIdError, canonicalClaudeTranscript, canonicalClaudeTranscriptSync } from "./claude-locate";
 
 const REPO = "/tmp/fixture-repo";
 
@@ -288,6 +288,44 @@ describe("readChanges finds the canonical copy of a duplicated id", () => {
         expect(canonicalClaudeTranscriptSync(id.slice(0, 7), { native: [root] })).toBeUndefined();
         expect(await canonicalClaudeTranscript(id, { native: [root] }, { projectFolder: "-a-moved" })).toBe(
             join(root, "-a-moved", `${id}.jsonl`)
+        );
+    });
+
+    it("answers an ambiguous prefix in both forms, and an exact id still wins over the ids it prefixes", async () => {
+        const root = join(mkdtempSync(join(tmpdir(), "gt-claude-ambiguous-")), "projects");
+        const first = "abcdef12-0000-4000-8000-000000000001";
+        const second = "abcdef12-0000-4000-8000-000000000002";
+        mkdirSync(join(root, "-work-repo"), { recursive: true });
+        mkdirSync(join(root, "-work-other"), { recursive: true });
+        writeFileSync(join(root, "-work-repo", `${first}.jsonl`), `${jsonl(realLines)}\n`);
+        writeFileSync(join(root, "-work-other", `${second}.jsonl`), `${jsonl(realLines)}\n`);
+        const caught = (() => {
+            try {
+                canonicalClaudeTranscriptSync("ABCDEF12", { native: [root] });
+            } catch (error) {
+                return error;
+            }
+        })();
+        expect(caught).toBeInstanceOf(AmbiguousSessionIdError);
+        expect(caught instanceof AmbiguousSessionIdError ? caught.ids : []).toEqual([first, second]);
+        expect(caught instanceof Error ? caught.message : "").toContain(`${first}, ${second}`);
+        await expect(canonicalClaudeTranscript("abcdef12", { native: [root] })).rejects.toBeInstanceOf(
+            AmbiguousSessionIdError
+        );
+
+        expect(canonicalClaudeTranscriptSync(first, { native: [root] })).toBe(
+            join(root, "-work-repo", `${first}.jsonl`)
+        );
+        // A file whose whole name is the query: the exact id wins over the two ids it also starts.
+        writeFileSync(join(root, "-work-repo", "abcdef12-0000.jsonl"), `${jsonl(realLines)}\n`);
+        expect(await canonicalClaudeTranscript("abcdef12-0000", { native: [root] })).toBe(
+            join(root, "-work-repo", "abcdef12-0000.jsonl")
+        );
+        expect(canonicalClaudeTranscriptSync("abcdef12-0000", { native: [root] })).toBe(
+            join(root, "-work-repo", "abcdef12-0000.jsonl")
+        );
+        expect(canonicalClaudeTranscriptSync("abcdef12", { native: [root] }, { projectFolder: "-work-other" })).toBe(
+            join(root, "-work-other", `${second}.jsonl`)
         );
     });
 
