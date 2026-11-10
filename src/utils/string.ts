@@ -318,3 +318,8 @@ export function matchesSpec(haystack: string, spec: string): boolean {
         .filter((token) => token.length > 0)
         .every((token) => target.includes(token));
 }
+
+/** A string with at least one character, else null: a field of parsed JSON that must name something. */
+export function nonEmptyString(value: unknown): string | null {
+    return typeof value === "string" && value.length > 0 ? value : null;
+}

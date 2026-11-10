@@ -24,6 +24,7 @@ import {
     noSessionChanges,
     noSpawnLink,
     noStatistics,
+    noWorkflows,
 } from "./testing/no-backward-read";
 import type { NativeSessionSource } from "./types";
 
@@ -76,6 +77,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
             readChanges: noSessionChanges,
             rowAnchors: noRowAnchors,
             analysis: noAnalysis,
+            workflows: noWorkflows,
             readTurnBoundary: async () => null,
             readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
             roots: () => [root],

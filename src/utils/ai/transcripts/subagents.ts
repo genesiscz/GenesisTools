@@ -1,23 +1,26 @@
 /**
  * The sub-agents of one Claude session, read from its `<session>/subagents/` directory: one
- * `agent-<id>.jsonl` transcript per agent, most with an `agent-<id>.meta.json` beside it.
+ * `agent-<id>.jsonl` transcript per agent, most with an `agent-<id>.meta.json` beside it. The agents of a
+ * Workflow tool run sit one level deeper (`subagents/workflows/<runId>/`) and are listed too.
  *
  * A session's Agent tool calls only name the agents its loaded turns started, and a tool call's
  * return says nothing about a background agent or a teammate that still works. The directory has
  * every agent, and each transcript's last record says whether that agent is still working.
  */
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import {
     claudeSubagentFiles,
     claudeSubagentIdOf,
-    claudeSubagentsDir,
+    claudeSubagentTranscripts,
+    claudeWorkflowRunOf,
 } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { nonEmptyString as text } from "@genesiscz/utils/string";
 import { scanClaudeToolCalls } from "./file-scan";
 import type { ResolvedTranscript } from "./resolve";
 
@@ -29,9 +32,20 @@ import type { ResolvedTranscript } from "./resolve";
  */
 export type SubagentState = "running" | "done" | "stopped";
 
+/** What a sub-agent's own files say about the Workflow tool run that started it. */
+export interface SubagentWorkflow {
+    /** The run folder's name (`wf_…`). `tools ai sessions workflows` reads the run itself. */
+    runId: string;
+    /** The agent's label in the run (the meta file's description). */
+    label: string | null;
+    phase: string | null;
+}
+
 export interface SessionSubagent {
     /** The agent id from the file name (`agent-<id>.jsonl`). */
     id: string;
+    /** The Workflow tool run that started it; null for an agent the session or another agent started. */
+    workflow: SubagentWorkflow | null;
     /** A teammate's name; null for a plain sub-agent. */
     name: string | null;
     description: string | null;
@@ -93,10 +107,6 @@ type JsonRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is JsonRecord {
     return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function text(value: unknown): string | null {
-    return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function readSlice(fd: number, position: number, length: number): string {
@@ -299,8 +309,10 @@ function readAgentFresh(
         const meta = readMeta(claudeSubagentFiles(dir, id).meta);
         const working = resolveHistoryProvider("claude").reader.midWork(records);
         const scanned = scan ? scanClaudeToolCalls(filePath) : null;
+        const runId = claudeWorkflowRunOf(filePath);
         const agent: Omit<SessionSubagent, "state"> = {
             id,
+            workflow: runId ? { runId, label: text(meta.description), phase: text(meta.workflowPhase) } : null,
             name: text(meta.name),
             description: text(meta.description),
             agentType: text(meta.agentType),
@@ -331,7 +343,10 @@ function readAgentFresh(
     }
 }
 
-/** Every sub-agent of a Claude session, oldest first. Other providers have none on disk: an empty list. */
+/**
+ * Every sub-agent of a Claude session, oldest first: the agents the session and its agents started, and the agents
+ * of its Workflow tool runs (each with `workflow.runId`). Other providers have none on disk: an empty list.
+ */
 export function listSubagents(resolved: ResolvedTranscript, options: ListSubagentsOptions = {}): SessionSubagents {
     const now = options.now ?? Date.now();
     const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_MS;
@@ -339,29 +354,12 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
         return { sessionId: resolved.sessionId, subagents: [] };
     }
 
-    const dir = claudeSubagentsDir(resolved.filePath);
-    let entries: string[];
-    try {
-        entries = readdirSync(dir);
-    } catch (error) {
-        // Most sessions never spawn a sub-agent, so a missing directory is the normal case. Logging it with its
-        // stack on every hub poll wrote hundreds of MB a day into the day log.
-        const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
-        if (!missing) {
-            logger.debug({ error, dir }, "[transcripts] sub-agent directory unreadable");
-        }
-
-        return { sessionId: resolved.sessionId, subagents: [] };
-    }
-
+    // Most sessions never spawn a sub-agent: a missing folder lists as nothing and is not logged.
     const wanted = options.ids ? new Set(options.ids) : null;
-    const subagents = entries
-        .filter((entry) => {
-            const id = claudeSubagentIdOf(entry);
-            return id !== null && (wanted ? wanted.has(id) : true);
-        })
-        .map((entry) =>
-            readAgent(dir, entry, {
+    const subagents = claudeSubagentTranscripts(resolved.filePath)
+        .filter((file) => (wanted ? wanted.has(file.agentId) : true))
+        .map((file) =>
+            readAgent(file.dir, basename(file.transcript), {
                 now,
                 staleAfterMs,
                 scan: options.scan === true,
@@ -370,6 +368,6 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
         )
         .filter((agent): agent is SessionSubagent => agent !== null)
         .sort((a, b) => (a.startedAt ?? a.lastAt).localeCompare(b.startedAt ?? b.lastAt));
-    logger.trace({ dir, count: subagents.length }, "[transcripts] listed sub-agents");
+    logger.trace({ session: resolved.filePath, count: subagents.length }, "[transcripts] listed sub-agents");
     return { sessionId: resolved.sessionId, subagents };
 }

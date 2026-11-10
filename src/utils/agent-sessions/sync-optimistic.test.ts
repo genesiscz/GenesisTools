@@ -19,6 +19,7 @@ import {
     noSessionChanges,
     noSpawnLink,
     noStatistics,
+    noWorkflows,
 } from "./testing/no-backward-read";
 import type { HistoryMetadataRead, NativeSessionReader, NativeSessionSource, NativeSourceIssue } from "./types";
 
@@ -70,6 +71,7 @@ function fixture() {
         scan: noRecordScan,
         readRecords: noRecordRead,
         readStatistics: noStatistics,
+        workflows: noWorkflows,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],
