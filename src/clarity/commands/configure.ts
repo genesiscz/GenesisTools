@@ -2,9 +2,9 @@ import { saveSignIn } from "@app/clarity/lib/auth/client";
 import { authDriverIds, chooseAuthDriver, DEFAULT_AUTH_DRIVER } from "@app/clarity/lib/auth/drivers";
 import { claritySessionStore } from "@app/clarity/lib/auth/session-store";
 import type { ClarityAuthDriver } from "@app/clarity/lib/auth/types";
-import * as clack from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
+import * as clack from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import type { ClarityConfig } from "../config.js";
@@ -52,6 +52,7 @@ async function runInteractiveSetup(driverFlag?: string): Promise<void> {
         const shouldReconfigure = await clack.confirm({
             message: "Existing configuration found. Reconfigure?",
             initialValue: false,
+            cancel: "back",
         });
 
         if (clack.isCancel(shouldReconfigure) || !shouldReconfigure) {
@@ -178,6 +179,7 @@ export function registerConfigureCommand(program: Command): void {
                     { value: "update-auth", label: "Update auth credentials (sign in again)" },
                     { value: "reconfigure", label: "Full reconfigure (reset everything)" },
                 ],
+                cancel: "back",
             });
 
             if (clack.isCancel(action) || action === "done") {
@@ -211,6 +213,7 @@ export function registerConfigureCommand(program: Command): void {
                         value: i,
                         label: `ADO #${m.adoWorkItemId} (${m.adoWorkItemTitle}) → ${m.clarityTaskName}`,
                     })),
+                    cancel: "back",
                 });
 
                 // Esc goes back to menu
