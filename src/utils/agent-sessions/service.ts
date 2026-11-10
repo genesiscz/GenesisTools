@@ -256,7 +256,7 @@ export class HistoryService {
         const issues = [...synchronized.report.issues];
         const metadata = repository.metadata.getMetadataBySessionId({ providerId, sessionId });
 
-        if (!metadata || !reader.scan) {
+        if (!metadata) {
             return { results: [], issues };
         }
 
@@ -326,10 +326,6 @@ export class HistoryService {
         filters.signal?.throwIfAborted();
 
         try {
-            if (!reader.readRecords) {
-                throw new Error(`${reader.kind} does not implement original record hydration`);
-            }
-
             const locators = [...new Set([...candidate.match.matchedLocators, ...candidate.match.contextLocators])];
             const selected = new Map(candidate.match.selectedRecords.map((record) => [record.locator, record]));
             const canReuse = locators.every((locator) => selected.has(locator));
@@ -783,7 +779,7 @@ export class HistoryService {
                     ? sources[0]
                     : sources.find((candidate) => candidate.metadata?.sessionId === cached.nativeId);
 
-            if (!source || !reader.readMetadata) {
+            if (!source) {
                 continue;
             }
 

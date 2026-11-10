@@ -9,7 +9,11 @@ function line(record: object): string {
     return `${SafeJSON.stringify(record, { strict: true })}\n`;
 }
 
-test("uncached Claude statistics count undated original records without inventing dated tokens", async () => {
+// The uncached full scan (getConversationStats) is gone; the dashboard's fallbacks read the cached pipeline, so this
+// fixture of undated, sub-agent and empty transcripts now pins what the cached facade answers for it. Its daily
+// contributions keep the provider's semantics: a transcript's tokens land on its first dated day, and an undated
+// record adds tokens but no message.
+test("cached Claude statistics count undated, sub-agent and empty transcripts with provider daily semantics", async () => {
     const world = await createFixtureWorld();
     const main = join(world.sources.claude, "-projects-shop", "11111111-2222-4333-8444-555555555555.jsonl");
     const subagent = join(
@@ -87,20 +91,20 @@ test("uncached Claude statistics count undated original records without inventin
 
         expect(result).toEqual({
             totalConversations: 2,
-            totalMessages: 4,
-            projectCounts: { shop: 2 },
+            totalMessages: 3,
+            projectCounts: { shop: 3 },
             toolCounts: { Read: 1, Bash: 1, Edit: 1 },
             dailyActivity: { "2026-09-01": 2, "2026-09-02": 1 },
-            hourlyActivity: { "10": 1, "12": 1, "11": 1 },
+            hourlyActivity: { "10": 1, "11": 1, "12": 1 },
             subagentCount: 1,
             tokenUsage: { inputTokens: 22, outputTokens: 2, cacheCreateTokens: 0, cacheReadTokens: 3 },
             dailyTokens: {
-                "2026-09-01": { inputTokens: 10, outputTokens: 0, cacheCreateTokens: 0, cacheReadTokens: 0 },
-                "2026-09-02": { inputTokens: 5, outputTokens: 2, cacheCreateTokens: 0, cacheReadTokens: 0 },
+                "2026-09-01": { inputTokens: 22, outputTokens: 2, cacheCreateTokens: 0, cacheReadTokens: 3 },
+                "2026-09-02": { inputTokens: 0, outputTokens: 0, cacheCreateTokens: 0, cacheReadTokens: 0 },
             },
             modelCounts: { opus: 1, sonnet: 1, haiku: 1 },
             branchCounts: { main: 1, feature: 1, undated: 1, sub: 1 },
-            conversationLengths: [3, 1],
+            conversationLengths: [1, 3],
         });
     } finally {
         await world.dispose();

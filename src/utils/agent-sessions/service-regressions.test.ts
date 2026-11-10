@@ -17,6 +17,7 @@ import {
     noMidWork,
     noRowAnchors,
     noSessionChanges,
+    noStatistics,
 } from "./testing/no-backward-read";
 import type { HistoryMetadataRecord, HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
 
@@ -151,6 +152,7 @@ function fixtureReader(options: {
         readChanges: noSessionChanges,
         rowAnchors: noRowAnchors,
         analysis: noAnalysis,
+        readStatistics: noStatistics,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [...new Set(options.fixtures.map((fixture) => fixture.source.root))],

@@ -1,4 +1,4 @@
-import type { HistoryReadOptions, HistoryStatisticsRead, NativeSessionSource } from "../types";
+import type { HistoryReadOptions, NativeSessionSource, SupportedHistoryStatistics } from "../types";
 import { readCodexMetadata, scanCodexRecords } from "./codex";
 import { createCodexUsageParser } from "./codex-usage";
 import { createIssueCollector, NativeStatisticsAccumulator, parseUsagePath } from "./native-statistics";
@@ -6,7 +6,7 @@ import { createIssueCollector, NativeStatisticsAccumulator, parseUsagePath } fro
 export async function readCodexStatistics(
     source: NativeSessionSource<"codex">,
     options: HistoryReadOptions = {}
-): Promise<HistoryStatisticsRead> {
+): Promise<SupportedHistoryStatistics> {
     const collector = createIssueCollector({ onIssue: options.onIssue });
     const metadata = await readCodexMetadata(source, { signal: options.signal, onIssue: collector.add });
     if (!metadata.complete) {

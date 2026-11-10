@@ -8,13 +8,17 @@ import { initializeCompactHistorySchema } from "./migrations";
 import { HistoryRepository } from "./repository";
 import { HistoryStatisticsRepository } from "./statistics-repository";
 import { HistorySyncRepository } from "./sync-repository";
-import type { HistoryStatisticsRead } from "./types";
+import type { SupportedHistoryStatistics } from "./types";
 
 const PROVIDER = "fixture-provider";
 
-function statistics(options: { days: HistoryStatisticsRead["days"]; complete?: boolean }): HistoryStatisticsRead {
+function statistics(options: {
+    days: SupportedHistoryStatistics["days"];
+    complete?: boolean;
+}): SupportedHistoryStatistics {
     const messages = options.days.reduce((total, day) => total + day.messages, 0);
     return {
+        supported: true,
         complete: options.complete ?? true,
         issues: [],
         summary: {
@@ -105,7 +109,7 @@ function seed(options: { db: Database; providerId?: string; nativeId: string; ge
 function replace(options: {
     repository: HistoryStatisticsRepository;
     expected: ReturnType<typeof seed>;
-    statistics: HistoryStatisticsRead;
+    statistics: SupportedHistoryStatistics;
     revision?: string;
     verifyRevision?: () => boolean;
 }) {

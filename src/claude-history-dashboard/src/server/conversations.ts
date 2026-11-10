@@ -120,11 +120,11 @@ export const getConversation = createServerFn({ method: "GET" })
 	});
 
 /**
- * Get conversation statistics (legacy - full scan)
+ * Get conversation statistics from the cached statistics pipeline
  */
 export const getStats = createServerFn({ method: "GET" }).handler(async () => {
-	const { getConversationStats } = await history();
-	const stats = await getConversationStats();
+	const { getConversationStatsWithCache } = await history();
+	const stats = await getConversationStatsWithCache({ forceRefresh: false });
 	return stats as SerializableStats;
 });
 
@@ -133,7 +133,7 @@ export const getStats = createServerFn({ method: "GET" }).handler(async () => {
  * Returns cached totals without scanning files
  */
 export const getQuickStats = createServerFn({ method: "GET" }).handler(async () => {
-	const { getConversationStats, getConversationStatsWithCache, getQuickStatsFromCache } = await history();
+	const { getConversationStatsWithCache, getQuickStatsFromCache } = await history();
 	const cached = getQuickStatsFromCache();
 
 	if (cached) {
@@ -146,8 +146,8 @@ export const getQuickStats = createServerFn({ method: "GET" }).handler(async () 
 		};
 	}
 
-	// No cache yet — warm incremental stats cache instead of full legacy scan
-	await getConversationStatsWithCache({ forceRefresh: false });
+	// No cache yet: warm the incremental statistics cache
+	const stats = await getConversationStatsWithCache({ forceRefresh: false });
 	const warmed = getQuickStatsFromCache();
 
 	if (warmed) {
@@ -160,7 +160,6 @@ export const getQuickStats = createServerFn({ method: "GET" }).handler(async () 
 		};
 	}
 
-	const stats = await getConversationStats();
 	return {
 		totalConversations: stats.totalConversations,
 		totalMessages: stats.totalMessages,
