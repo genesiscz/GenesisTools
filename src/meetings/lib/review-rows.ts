@@ -1,12 +1,14 @@
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
+import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { actorText } from "./decision-journal";
 import { itemWhat } from "./item-text";
 import { momentsInText } from "./moment-schema";
 import { inputNeeded, NONE_OF_THESE, type QuestionItem, questionLabel, questionView } from "./questions";
 import type { ClockTime, ReviewRow, ReviewRows, RowChoice, RowPart, RowSource, TextPiece } from "./review-row-schema";
+import { speakerChoiceScores } from "./speaker-scores";
 
 export * from "./review-row-schema";
 
@@ -256,8 +258,14 @@ function termChoices(item: TermItem): RowChoice[] {
     ]);
 }
 
+/** A choice's score among a speaker range's typed candidate scores (G31), by the identity rules. */
+function scoreOf(scores: Map<string, number>, name: string): number | undefined {
+    return [...scores].find(([speaker]) => sameName(speaker, name))?.[1];
+}
+
 function rangeChoices(item: Extract<MeetingItem, { kind: "speaker-range" }>): RowChoice[] {
     const others = (item.candidates ?? []).filter((name) => name !== item.speaker);
+    const scores = speakerChoiceScores([item]);
     return [
         ...(item.speaker
             ? [
@@ -270,12 +278,15 @@ function rangeChoices(item: Extract<MeetingItem, { kind: "speaker-range" }>): Ro
                   },
               ]
             : []),
-        ...others.map((name) => ({
-            value: name,
-            label: name,
-            role: "candidate" as const,
-            action: { kind: "confirm" as const, speaker: name },
-        })),
+        ...ordered(
+            others.map((name) => ({
+                value: name,
+                label: name,
+                role: "candidate" as const,
+                action: { kind: "confirm" as const, speaker: name },
+                ...confidenceOf(scoreOf(scores, name)),
+            }))
+        ),
         { value: NONE_OF_THESE, label: "None of these", role: "none" as const, action: { kind: "reject" as const } },
     ];
 }
@@ -296,7 +307,8 @@ function plainChoices(item: MeetingItem, label: string): RowChoice[] {
 /**
  * A question's choices (G1, G2, G31, G32): the engine's answers with their roles and confidence (a term's suggestion
  * the term's own, its candidates their scores; a speaker question's suggested speaker the range's confidence and the
- * other names none), then "None of these", "Several voices" for a speaker question, and "Skip".
+ * other names their typed candidate scores over the ranges it decides, none for a name without one), then "None of
+ * these", "Several voices" for a speaker question, and "Skip".
  */
 function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoice[] {
     const decided = record.items.filter((item) => question.decides.includes(item.id));
@@ -306,6 +318,14 @@ function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoi
     );
     const suggested = question.about === "speaker" ? range?.speaker : term ? termValue(term) : undefined;
     const scores = term ? candidateScores(term) : [];
+    const speakerScores =
+        question.about === "speaker"
+            ? speakerChoiceScores(
+                  decided.filter(
+                      (item): item is Extract<MeetingItem, { kind: "speaker-range" }> => item.kind === "speaker-range"
+                  )
+              )
+            : new Map<string, number>();
     const presumed = term ? presumedOf(term, suggested) : undefined;
     const earlier = earlierAnswer(record, question);
     const answer = (value: string) => ({ kind: "answer" as const, answer: value });
@@ -331,7 +351,7 @@ function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoi
             role === "suggested"
                 ? (question.about === "speaker" ? range : term)?.confidence
                 : question.about === "speaker"
-                  ? undefined
+                  ? scoreOf(speakerScores, value)
                   : scores.find((score) => score.term.toLowerCase() === lower)?.confidence;
         return {
             value,
@@ -364,6 +384,25 @@ function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoi
 }
 
 /** When an item is: a span or a time on the transcript clock, with its Moment. */
+/**
+ * The confidence of each answer of a speaker question as its row shows it (R49, G31): `listen` prints it beside the
+ * name. Empty for other questions and for answers without a score.
+ */
+export function speakerAnswerScores(record: MeetingRecord, question: QuestionItem): Map<string, number> {
+    if (question.about !== "speaker") {
+        return new Map();
+    }
+
+    return new Map(
+        questionChoices(record, question).flatMap(
+            (choice): Array<[string, number]> =>
+                choice.action.kind === "answer" && choice.confidence !== undefined
+                    ? [[choice.value, choice.confidence]]
+                    : []
+        )
+    );
+}
+
 function whenPart(item: MeetingItem): Extract<RowPart, { kind: "when" }> {
     const target = { kind: "item" as const, id: item.id };
 

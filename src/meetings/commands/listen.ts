@@ -42,6 +42,7 @@ import {
     questionLabel,
     questionView,
 } from "../lib/questions";
+import { speakerAnswerScores } from "../lib/review-rows";
 import { openMeetingsClient } from "../lib/service/client";
 import { errorText, fail, TOOL } from "../lib/shared";
 
@@ -100,19 +101,31 @@ function contextLines(context: HeardContext): string[] {
     ].filter((line) => line !== undefined);
 }
 
-/** The asked question's rows: its answers first, then the actions, each with its glyph and colour. */
+/**
+ * The asked question's rows: its answers first, then the actions, each with its glyph and colour. An answer the engine
+ * scored shows its confidence ("72 %", R49), as the window's row does.
+ */
 function choiceRows(options: {
     question: QuestionItem;
     choices: string[];
     earlier?: { answer: string; atSec: number };
+    scores?: Map<string, number>;
 }): ChoiceRow<string>[] {
     const { question, earlier } = options;
+    const hintOf = (choice: string) => {
+        const score = options.scores?.get(choice);
+        const hints = [
+            ...(score === undefined ? [] : [`${Math.round(score * 100)} %`]),
+            ...(earlier && choice === earlier.answer ? [`as at ${formatClock(earlier.atSec)}`] : []),
+        ];
+        return hints.length > 0 ? { hint: hints.join(" · ") } : {};
+    };
     return [
         ...options.choices.map((choice) => ({
             value: choice,
             label: choice,
             kind: "answer" as const,
-            ...(earlier && choice === earlier.answer ? { hint: `as at ${formatClock(earlier.atSec)}` } : {}),
+            ...hintOf(choice),
         })),
         {
             value: AGAIN,
@@ -180,6 +193,8 @@ async function ask(options: {
     context?: HeardContext;
     /** The answer this round gave the same heard words at another time: offered first. */
     earlier?: { answer: string; atSec: number };
+    /** The confidence of each answer the engine scored (a speaker question's candidates, G31). */
+    scores?: Map<string, number>;
     /** The styled header line: question number, progress and time range. */
     header?: string;
 }): Promise<ListenOutcome> {
@@ -205,7 +220,12 @@ async function ask(options: {
                 ...(options.header ? { header: options.header } : {}),
                 context: shown,
                 ...(earlierNote ? { note: earlierNote } : {}),
-                rows: choiceRows({ question, choices, ...(earlier ? { earlier } : {}) }),
+                rows: choiceRows({
+                    question,
+                    choices,
+                    ...(earlier ? { earlier } : {}),
+                    ...(options.scores ? { scores: options.scores } : {}),
+                }),
                 formatSubmitted: (row) => row.label,
             });
 
@@ -370,6 +390,7 @@ class TerminalAdapter implements ListenAdapter {
             ...(view.said ? { said: view.said } : {}),
             ...(view.context ? { context: view.context } : {}),
             ...(asked.earlier ? { earlier: asked.earlier } : {}),
+            scores: speakerAnswerScores(asked.record, question),
             header: `${choiceChip(view.label)} ${pc.dim(`${asked.position}/${asked.total}${part} · ${view.range}${priority}`)}`,
         });
     }
