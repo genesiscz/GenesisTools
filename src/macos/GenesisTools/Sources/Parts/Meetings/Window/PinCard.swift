@@ -255,21 +255,23 @@ struct PinCardPresenter<Card: View>: ViewModifier {
     var openDelayMs: Int = 300
     var closeDelayMs: Int = 300
     var anchorX: (String) -> CGFloat? = { _ in nil }
+    /// The anchor's edge the arrow points from: `.bottom` puts the card above a view at the window's bottom (the dock).
+    var arrowEdge: Edge = .top
     let card: (String) -> Card
 
     @State private var timing = PinCardTiming()
     @State private var pending: Task<Void, Never>?
 
+    // No GeometryReader around the content: it takes every point it is offered, and the dock floats over the window
+    // with only the height it needs.
     func body(content: Content) -> some View {
-        GeometryReader { proxy in
-            content
-                .popover(isPresented: Binding(get: { timing.shown != nil }, set: { if !$0 { close() } }),
-                         attachmentAnchor: anchor(in: proxy.size), arrowEdge: .top) {
-                    if let row = timing.shown {
-                        card(row).onHover { inside in schedule(timing.cardHover(inside)) }
-                    }
+        content
+            .popover(isPresented: Binding(get: { timing.shown != nil }, set: { if !$0 { close() } }),
+                     attachmentAnchor: anchor, arrowEdge: arrowEdge) {
+                if let row = timing.shown {
+                    card(row).onHover { inside in schedule(timing.cardHover(inside)) }
                 }
-        }
+            }
         .onAppear { timing = PinCardTiming(openDelayMs: openDelayMs, closeDelayMs: closeDelayMs) }
         .onChange(of: openDelayMs) { _, delay in timing.openDelayMs = delay }
         .onChange(of: hovered) { _, row in schedule(timing.pinChanged(row)) }
@@ -280,7 +282,7 @@ struct PinCardPresenter<Card: View>: ViewModifier {
         }
     }
 
-    private func anchor(in size: CGSize) -> PopoverAttachmentAnchor {
+    private var anchor: PopoverAttachmentAnchor {
         guard let row = timing.shown, let x = anchorX(row) else { return .rect(.bounds) }
         return .rect(.rect(CGRect(x: x - 1, y: 0, width: 2, height: 18)))
     }

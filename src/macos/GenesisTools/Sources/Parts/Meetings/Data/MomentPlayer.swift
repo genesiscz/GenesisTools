@@ -175,6 +175,8 @@ final class MomentPlayer {
     /// Why a Moment cannot play: per meeting for a state (no-audio, recording, no-ffmpeg), per target otherwise.
     private(set) var cannot: [String: MomentCannot] = [:]
 
+    /// What the dock's timeline shows and draws (F9); the keys reach it through the player.
+    @ObservationIgnored let timeline: TimelineDockModel
     @ObservationIgnored private let engine: Engine
     @ObservationIgnored private let load: MomentSoundLoader
     @ObservationIgnored private let defaults: UserDefaults
@@ -192,7 +194,8 @@ final class MomentPlayer {
     static let keptClips = 12
 
     init(engine: Engine = .live, load: @escaping MomentSoundLoader = { try AVMomentSound(url: $0) },
-         defaults: UserDefaults = .standard) {
+         defaults: UserDefaults = .standard, timeline: TimelineDockModel? = nil) {
+        self.timeline = timeline ?? TimelineDockModel(defaults: defaults)
         self.engine = engine
         self.load = load
         self.defaults = defaults
@@ -354,6 +357,14 @@ final class MomentPlayer {
         seek(to: max(top.startSec, (moment.tone?.atSec ?? moment.spotSec) - 0.3))
     }
 
+    /// Left and Right, and the dock's 5 s buttons: inside the loaded clip a seek, outside it the Moment at that time takes
+    /// the top's place (G-PLAY-1). Never before the meeting's start.
+    func skip(by delta: Double) {
+        guard let top else { return }
+        let now = position ?? top.pausedAt ?? top.startSec
+        playTime(max(0, now + delta), in: top.meeting, from: .outside)
+    }
+
     /// "Play 30 s more" after a clip's end: the next stretch takes the top's place.
     func playMore() {
         guard let top else { return }
@@ -380,6 +391,17 @@ final class MomentPlayer {
         } else {
             cut(below.id, MeetingsAPI.MomentParams(meeting: below.meeting, target: below.target))
         }
+    }
+
+    /// The breadcrumb's click on a Moment below the top: every Moment above it leaves in one step, and it plays again
+    /// from where it stopped (announced as one "Back to …").
+    func pop(to index: Int) {
+        guard index >= 0, index < stack.count - 1 else { return }
+        while stack.count > index + 2, let top {
+            drop(top.id)
+            stack.removeLast()
+        }
+        pop()
     }
 
     /// Ends every Moment and empties the stack.

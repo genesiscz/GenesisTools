@@ -6,7 +6,7 @@ import SwiftUI
 /// asks, one `ReviewRowView` each. A decided row folds in place (R16) or leaves the list (`meetings.rows.decided`).
 /// The keyboard reaches every row (G11): Up and Down select, Return edits or confirms (`meetings.rows.returnKey`), a
 /// second Return in the editor saves (R11), 1 to 9 pick a choice (`meetings.rows.choiceKeys`, G23), Delete picks
-/// "none of these", Esc closes the editor.
+/// "none of these", Esc closes the editor, else clears the selection.
 struct ItemsTab: View {
     @Bindable var detail: MeetingDetailModel
     @FocusState private var focused: Bool
@@ -82,11 +82,19 @@ struct ItemsTab: View {
             .onKeyPress(.return) { returnPressed(shown) }
             .onKeyPress(.delete) { pickRole("none", in: shown) }
             .onKeyPress(.escape) {
-                guard detail.editingRow != nil else { return .ignored }
-                detail.closeEditor()
+                // G-STACK-2: the editor closes first; the player's stack pops before this view hears Esc
+                // (MeetingsPlaybackKeys); the selection clears last.
+                if detail.editingRow != nil {
+                    detail.closeEditor()
+                    return .handled
+                }
+                guard detail.selectedRow != nil else { return .ignored }
+                detail.selectedRow = nil
                 return .handled
             }
             .onKeyPress(characters: .decimalDigits) { press in pickNumber(press.characters, in: shown) }
+            // A pin's click on a meeting that was not open selects its row before the rows land (G-PLAY-6).
+            .onAppear { if let id = detail.selectedRow { proxy.scrollTo(id) } }
             .onChange(of: detail.selectedRow) { _, id in
                 guard let id else { return }
                 proxy.scrollTo(id)

@@ -31,9 +31,24 @@ enum MeetingsMenu {
         needs.target = target
         let all = view.addItem(withTitle: "All Meetings", action: #selector(MeetingsMenuTarget.showAll(_:)), keyEquivalent: "2")
         all.target = target
+        let contacts = view.addItem(withTitle: "Contacts", action: #selector(MeetingsMenuTarget.showContacts(_:)), keyEquivalent: "3")
+        contacts.target = target
+        view.addItem(.separator())
+        // The toolbar's toggle answers ⌥⌘I too; the item names what a press does (validateMenuItem).
+        let panel = view.addItem(withTitle: "Show Settings Panel", action: #selector(MeetingsMenuTarget.toggleSidePanel(_:)), keyEquivalent: "i")
+        panel.keyEquivalentModifierMask = [.command, .option]
+        panel.target = target
         view.addItem(.separator())
         let reload = view.addItem(withTitle: "Reload", action: #selector(MeetingsMenuTarget.reload(_:)), keyEquivalent: "r")
         reload.target = target
+        // The dock's timeline (G-KEY-1): a view change only, the sound goes on (R4).
+        view.addItem(.separator())
+        let zoomIn = view.addItem(withTitle: "Zoom In on the Timeline", action: #selector(MeetingsMenuTarget.zoomIn(_:)), keyEquivalent: "+")
+        zoomIn.target = target
+        let zoomOut = view.addItem(withTitle: "Zoom Out on the Timeline", action: #selector(MeetingsMenuTarget.zoomOut(_:)), keyEquivalent: "-")
+        zoomOut.target = target
+        let fit = view.addItem(withTitle: "Fit the Clip", action: #selector(MeetingsMenuTarget.fitClip(_:)), keyEquivalent: "0")
+        fit.target = target
         bar.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = view
 
         let window = NSMenu(title: "Window")
@@ -47,21 +62,132 @@ enum MeetingsMenu {
         let bar = build()
         NSApp.mainMenu = bar
         NSApp.windowsMenu = bar.item(withTitle: "Window")?.submenu
+        MeetingsPlaybackKeys.install()
+    }
+}
+
+/// The player's plain keys in the Meetings window (G-KEY-1, G-STACK-2): Space plays or pauses, Left and Right go 5 s,
+/// `[` and `]` step to the previous and next pin, Esc pops the context stack (announced) before the views get it. A text
+/// field, a sheet or a popover keeps every key; a key the player has no use for goes on to the views (Up and Down,
+/// Return, the number keys, Esc that closes an editor or clears the selection).
+@MainActor
+enum MeetingsPlaybackKeys {
+    enum Key: Equatable { case space, left, right, previousPin, nextPin, escape }
+
+    /// The window the keys belong to (MeetingsWindow saves its frame under this name).
+    static let windowName = "GenesisToolsMeetings"
+    /// Left and Right: the dock's skip length.
+    static let skipSec: Double = 5
+    private static var monitor: Any?
+
+    static func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            MainActor.assumeIsolated { handle(event) ? nil : event }
+        }
+    }
+
+    /// The key a plain key press names; none with ⌘, ⌃ or ⌥ held.
+    static func key(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags) -> Key? {
+        guard modifiers.intersection([.command, .control, .option]).isEmpty else { return nil }
+        switch keyCode {
+        case 49: return .space
+        case 123: return .left
+        case 124: return .right
+        case 53: return .escape
+        default: break
+        }
+        switch characters {
+        case "[": return .previousPin
+        case "]": return .nextPin
+        default: return nil
+        }
+    }
+
+    private static func handle(_ event: NSEvent) -> Bool {
+        guard let window = event.window, window.frameAutosaveName == windowName, window.attachedSheet == nil,
+              !(window.firstResponder is NSText),
+              let key = key(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags),
+              let model = MeetingsMenuTarget.shared.model else { return false }
+        return perform(key, model: model)
+    }
+
+    /// Runs `key` on the window's player; false lets the views have it.
+    @discardableResult
+    static func perform(_ key: Key, model: MeetingsWindowModel) -> Bool {
+        let player = model.player
+        switch key {
+        case .space:
+            if player.isActive {
+                player.togglePause()
+                return true
+            }
+            guard let detail = model.detail, detail.tab == .items, let id = detail.selectedRow,
+                  let row = detail.rows.value?.rows.first(where: { $0.id == id }) else { return false }
+            player.play(row.target, in: detail.id, from: .row)
+            return true
+        case .left, .right:
+            guard player.top != nil else { return false }
+            player.skip(by: key == .left ? -skipSec : skipSec)
+            return true
+        case .previousPin, .nextPin:
+            return stepPin(forward: key == .nextPin, model: model)
+        case .escape:
+            if player.timeline.hoveredPin != nil {
+                player.timeline.hoveredPin = nil
+                return true
+            }
+            guard player.stack.count > 1 else { return false }
+            player.pop()
+            return true
+        }
+    }
+
+    /// `[` and `]`: the pin before or after the selected row (or the playhead) in the playing meeting, else in the open
+    /// one; it is selected as a pin click selects it.
+    private static func stepPin(forward: Bool, model: MeetingsWindowModel) -> Bool {
+        guard let meeting = model.player.meeting ?? model.detail?.id else { return false }
+        let rows = model.detail?.id == meeting ? (model.detail?.rows.value?.rows ?? []) : (model.player.timeline.otherRows[meeting] ?? [])
+        let pins = rows.compactMap { row in row.startSec.map { (id: row.id, sec: $0) } }.sorted { $0.sec < $1.sec }
+        let from = model.detail?.id == meeting ? model.detail?.selectedRow.flatMap { id in pins.first { $0.id == id }?.sec } : nil
+        guard let next = nextPin(pins.map(\.sec), from: from ?? model.player.position, forward: forward) else { return false }
+        model.revealRow(pins[next].id, in: meeting)
+        return true
+    }
+
+    /// The index of the next pin after `from` (or the first), or the one before it (or the last).
+    static func nextPin(_ seconds: [Double], from: Double?, forward: Bool) -> Int? {
+        guard !seconds.isEmpty else { return nil }
+        guard let from else { return forward ? 0 : seconds.count - 1 }
+        if forward { return seconds.firstIndex { $0 > from + 0.001 } }
+        return seconds.lastIndex { $0 < from - 0.001 }
     }
 }
 
 /// The menu's actions on the one Meetings window.
 @MainActor
-final class MeetingsMenuTarget: NSObject {
+final class MeetingsMenuTarget: NSObject, NSMenuItemValidation {
     static let shared = MeetingsMenuTarget()
     /// The window's model; the face sets it before the menu is used, a test sets its own.
     var model: MeetingsWindowModel?
 
     @objc func showNeeds(_ sender: Any?) { model?.go(.needs) }
     @objc func showAll(_ sender: Any?) { model?.go(.all) }
+    @objc func showContacts(_ sender: Any?) { model?.go(.contacts) }
+    @objc func toggleSidePanel(_ sender: Any?) { model?.sidePanelOpen.toggle() }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(toggleSidePanel(_:)) {
+            menuItem.title = model?.sidePanelOpen == true ? "Hide Settings Panel" : "Show Settings Panel"
+        }
+        return true
+    }
     @objc func reload(_ sender: Any?) {
         model?.load()
         model?.detail?.refreshLoaded(force: true)
     }
     @objc func openSettings(_ sender: Any?) { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.windowPage) }
+    @objc func zoomIn(_ sender: Any?) { model?.player.timeline.stepZoom(out: false) }
+    @objc func zoomOut(_ sender: Any?) { model?.player.timeline.stepZoom(out: true) }
+    @objc func fitClip(_ sender: Any?) { model?.player.timeline.setZoom(.clip) }
 }

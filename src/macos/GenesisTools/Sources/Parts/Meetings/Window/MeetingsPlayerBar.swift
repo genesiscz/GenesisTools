@@ -1,27 +1,41 @@
 import SwiftUI
 
-/// The Moment that plays: which meeting and which Moment (R18), where it is, the Moments under it on the context stack
-/// (R38), and its controls: Pause or Play, Play again, Back to the Moment below, Stop. It floats over the whole window
-/// (MeetingsRootView), so it stays while the reader opens another meeting, and it is gone while nothing plays.
-/// b-swift-timeline builds the dock (the timeline and the strip) around it.
+/// The dock (R48): the Moment that plays, which meeting and which Moment (R18), the context stack (R38), the controls,
+/// the whole-conversation strip and the zoomed timeline (`TimelineDock`), with the cutting line and a failure above
+/// them. It floats over the whole window (MeetingsRootView), so it stays while the reader opens another meeting, and it
+/// is gone while nothing plays. At a short window, or with `meetings.timeline.shown` off, it folds to one line
+/// (G-LAYOUT-1).
 struct MeetingsPlayerBar: View {
     let player: MomentPlayer
     /// The playing meeting's title, when the overview knows it.
     let title: String?
+    /// The window, for the pins' rows and a pin's click; the menu's model when the root view does not pass it.
+    var window: MeetingsWindowModel? = nil
+
+    @AppStorage(MeetingsPreferences.Panes.timelineShown.key) private var timelineShown =
+        MeetingsPreferences.Panes.timelineShown.defaultValue
+    @State private var windowHeight: CGFloat = 0
+
+    /// Below this window height the dock folds to one line: the full dock is about 280 pt, and the rows keep the rest.
+    static let collapseHeight: CGFloat = 560
+
+    static func collapses(timelineShown: Bool, windowHeight: CGFloat) -> Bool {
+        !timelineShown || (windowHeight > 0 && windowHeight < collapseHeight)
+    }
 
     var body: some View {
         if player.isActive {
             VStack(spacing: 0) {
                 Divider()
-                VStack(alignment: .leading, spacing: 4) {
-                    if player.stack.count > 1 { stackLine }
-                    content
-                }
-                .padding(.horizontal, 14).padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                TimelineDock(player: player, title: title, window: window ?? MeetingsMenuTarget.shared.model,
+                             collapsed: Self.collapses(timelineShown: timelineShown, windowHeight: windowHeight))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Over the breadcrumb line, not above it: a cut or a failure never changes the dock's height.
+                    .overlay(alignment: .top) { status }
             }
             // It floats over the columns (MeetingsRootView), so it carries its own bar material.
             .background(.bar)
+            .background(WindowHeightProbe(height: $windowHeight))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Player")
             .accessibilityIdentifier("meetings.player")
@@ -29,40 +43,18 @@ struct MeetingsPlayerBar: View {
         }
     }
 
+    /// The cut in progress or the failure, over the dock's first line; nothing while the Moment plays.
     @ViewBuilder
-    private var content: some View {
+    private var status: some View {
         switch player.phase {
-        case .idle:
-            EmptyView()
         case .cutting(let since):
-            CuttingLine(since: since, name: name, cancel: { player.cancelCut() }, stop: { player.stop() })
-        case .playing, .paused:
-            HStack(spacing: 10) {
-                playPause
-                IconButton(systemName: "gobackward", tooltip: "Play this Moment again from its start, with its tone") { player.playAgain() }
-                    .accessibilityIdentifier("meetings.player.again")
-                PlayerClock(player: player)
-                line(name)
-                Spacer(minLength: 8)
-                backButton
-                stopButton
-            }
-        case .ended(let offerMore):
-            HStack(spacing: 10) {
-                IconButton(systemName: "play.fill", tooltip: "Play this Moment again from its start") { player.playAgain() }
-                    .accessibilityIdentifier("meetings.player.again")
-                line("Played \(name)")
-                Spacer(minLength: 8)
-                if offerMore {
-                    GhostButton("Play \(Int(MeetingsPreferences.Playback.moreSec.value())) s more", symbol: "forward.end",
-                                tooltip: "Play on after this Moment, as its own Moment",
-                                identifier: "meetings.player.more") { player.playMore() }
-                }
-                backButton
-                stopButton
-            }
+            CuttingLine(since: since, name: name, cancel: { player.cancelCut() })
+                .padding(.horizontal, 16).padding(.top, 8)
         case .failed(let failure):
             NoticePill(text: failure.sentence, more: failure.detail, tone: .error, dismiss: { player.dismissFailure() })
+                .padding(.horizontal, 16).padding(.top, 6)
+        default:
+            EmptyView()
         }
     }
 
@@ -72,79 +64,71 @@ struct MeetingsPlayerBar: View {
         guard let title else { return moment }
         return moment.isEmpty ? title : "\(title) · \(moment)"
     }
+}
 
-    /// The Moments under the top, oldest first: each comes back when the one above it ends (R38).
-    private var stackLine: some View {
-        let below = player.stack.dropLast().map(\.label)
-        return Text(verbatim: "Then back to: \(below.reversed().joined(separator: " › "))")
-            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
-            .accessibilityLabel("Then back to \(below.reversed().joined(separator: ", then "))")
+/// The height of the window the dock floats in, kept up to date on resizes (the dock folds below `collapseHeight`).
+private struct WindowHeightProbe: NSViewRepresentable {
+    @Binding var height: CGFloat
+
+    func makeNSView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.report = { height = $0 }
+        return view
     }
 
-    @ViewBuilder
-    private var playPause: some View {
-        if player.phase == .playing {
-            IconButton(systemName: "pause.fill", tooltip: "Pause") { player.pause() }
-                .accessibilityIdentifier("meetings.player.pause")
-        } else {
-            IconButton(systemName: "play.fill",
-                       tooltip: "Play on, \(MeetingsFormat.seconds(MeetingsPreferences.Playback.rewindSec.value())) earlier") { player.resume() }
-                .accessibilityIdentifier("meetings.player.resume")
+    func updateNSView(_ view: ProbeView, context: Context) {
+        view.report = { height = $0 }
+    }
+
+    final class ProbeView: NSView {
+        var report: ((CGFloat) -> Void)?
+        private var observer: NSObjectProtocol?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
+            guard let window else { return }
+            send(window)
+            observer = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] note in
+                guard let window = note.object as? NSWindow else { return }
+                MainActor.assumeIsolated { self?.send(window) }
+            }
         }
-    }
 
-    @ViewBuilder
-    private var backButton: some View {
-        if player.stack.count > 1, let below = player.stack.dropLast().last {
-            IconButton(systemName: "arrow.uturn.backward", tooltip: "Back to \(below.label), where it stopped") { player.pop() }
-                .accessibilityIdentifier("meetings.player.back")
+        private func send(_ window: NSWindow) {
+            let height = window.contentLayoutRect.height.rounded()
+            DispatchQueue.main.async { [weak self] in self?.report?(height) }
         }
-    }
 
-    private var stopButton: some View {
-        IconButton(systemName: "stop.fill", tooltip: "Stop every Moment") { player.stop() }
-            .accessibilityIdentifier("meetings.player.stop")
-    }
-
-    private func line(_ text: String) -> some View {
-        Text(verbatim: text).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+        deinit {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
     }
 }
 
 /// "Cutting the clip" only after 200 ms (most clips are cut by then, G-PLAY-11), with Cancel from 5 s.
+/// The dock's own Stop stays reachable under it.
 private struct CuttingLine: View {
     let since: Date
     let name: String
     let cancel: () -> Void
-    let stop: () -> Void
 
     var body: some View {
         TimelineView(.periodic(from: since, by: 0.1)) { context in
             let shows = MomentPlayer.cuttingShows(elapsed: context.date.timeIntervalSince(since))
-            HStack(spacing: 10) {
-                if shows.words {
+            if shows.words {
+                HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
                     Text(verbatim: "Cutting the clip of \(name)").font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                    if shows.cancel {
+                        GhostButton("Cancel", symbol: "xmark", tooltip: "Stop cutting this clip", identifier: "meetings.player.cancel", action: cancel)
+                    }
                 }
-                Spacer(minLength: 8)
-                if shows.cancel {
-                    GhostButton("Cancel", symbol: "xmark", tooltip: "Stop cutting this clip", identifier: "meetings.player.cancel", action: cancel)
-                }
-                IconButton(systemName: "stop.fill", tooltip: "Stop every Moment", action: stop)
-                    .accessibilityIdentifier("meetings.player.stop")
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(.bar, in: RoundedRectangle(cornerRadius: 6))
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-    }
-}
-
-/// Where the top is on the meeting clock. Only this label reads the player's position, so the bar and the window above
-/// it never draw again per tick.
-private struct PlayerClock: View {
-    let player: MomentPlayer
-
-    var body: some View {
-        Text(verbatim: MeetingsFormat.clock(player.position ?? player.top?.startSec ?? 0))
-            .font(.system(size: 12).monospacedDigit())
-            .accessibilityLabel("At \(MeetingsFormat.clock(player.position ?? 0))")
     }
 }

@@ -59,6 +59,8 @@ struct TimelineDockActions {
     var setView: (ClosedRange<Double>) -> Void = { _ in }
     var popTo: (Int) -> Void = { _ in }
     var showMeeting: () -> Void = {}
+    /// Ends every Moment; the dock goes.
+    var stop: () -> Void = {}
     var pins: TimelinePinsRow.Actions = .init()
 }
 
@@ -152,7 +154,13 @@ struct TimelineDockBody<Trailing: View>: View {
             .fixedSize()
             .instantTooltip("What the timeline shows; the sound goes on (⌘+ ⌘- ⌘0)")
             .accessibilityIdentifier("meetings.dock.zoom")
+            stopButton
         }
+    }
+
+    private var stopButton: some View {
+        IconButton(systemName: "stop.fill", tooltip: "Stop every Moment", size: 13, action: actions.stop)
+            .accessibilityIdentifier("meetings.dock.stop")
     }
 
     private var collapsedLine: some View {
@@ -170,6 +178,7 @@ struct TimelineDockBody<Trailing: View>: View {
                 Spacer(minLength: 8)
                 PositionClock(position: position)
             }
+            stopButton
         }
     }
 }
