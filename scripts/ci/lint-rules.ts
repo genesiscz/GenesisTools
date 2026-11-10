@@ -276,6 +276,52 @@ const PS_ADAPTER_MODULE = /["'](?:[^"']*\/)?process\/ps(?:\.ts)?["']/;
  */
 const PS_ADAPTER_IMPORT_ALLOWED = /^(?:src\/utils\/process\/|scripts\/benchmarks\/)/;
 
+/** `@clack/prompts` by module specifier, in an import, a re-export or a dynamic `import()`. */
+const RAW_CLACK_MODULE = /["']@clack\/prompts["']/;
+/**
+ * Files that still import @clack/prompts while another session owns their folder (a ratchet: an entry only ever
+ * leaves). Exact paths, never a folder: a new meetings file starts on the facade.
+ */
+const RAW_CLACK_RATCHET: ReadonlySet<string> = new Set([
+    // src/meetings belongs to the meetings session (2026-11-10); C10 left its raw clack import in place.
+    "src/meetings/commands/listen.ts",
+]);
+
+export function importsRawClack(text: string, node: SgNode): boolean {
+    if (node.kind() === "call_expression" && node.field("function")?.text() !== "import") {
+        return false;
+    }
+
+    return RAW_CLACK_MODULE.test(text);
+}
+
+/**
+ * C10 (2026-11-10): prompts go through the facade, which owns the cancel outcome (`cancel: "exit" | "back"`) on every
+ * backend. A raw clack import brings back a per-file cancel policy and a prompt no test backend can answer. Test files
+ * are checked too: a test spies on or scripts the facade, never clack.
+ */
+const RAW_CLACK_IMPORT_RULE: Rule = {
+    name: "no-raw-clack-import",
+    severity: "error",
+    kinds: ["import_statement", "export_statement", "call_expression"],
+    matcher: {
+        rule: {
+            any: [
+                { kind: "import_statement" },
+                { kind: "export_statement", has: { kind: "string" } },
+                { kind: "call_expression", has: { field: "function", regex: "^import$" } },
+            ],
+        },
+    },
+    message:
+        "Import prompts from the facade, `@genesiscz/utils/prompts/p` (`import * as p`), not from @clack/prompts. " +
+        'A call whose cancel the caller handles passes `cancel: "back"` and checks `p.isCancel(answer)`; the default ' +
+        "ends the process. A clack function the facade lacks is added there as a pass-through (.claude/rules/tools.md).",
+    test: importsRawClack,
+    allowedIn: /^src\/utils\/prompts\//,
+    allowedFiles: RAW_CLACK_RATCHET,
+};
+
 /** An import, a re-export or a dynamic `import()` of `src/utils/process/ps.ts`. */
 export function importsPsAdapter(text: string, node: SgNode): boolean {
     if (node.kind() === "call_expression" && node.field("function")?.text() !== "import") {
@@ -873,6 +919,7 @@ const RULES: Rule[] = [
         test: importsPsAdapter,
         allowedIn: PS_ADAPTER_IMPORT_ALLOWED,
     },
+    RAW_CLACK_IMPORT_RULE,
     {
         name: "no-pricing-steps-outside-priced-usage",
         severity: "error",
@@ -1962,7 +2009,7 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
     };
 
     if (testFile) {
-        // Test files get exactly one rule. The literal rules below stay off for them.
+        // Test files get two rules: a spawn needs an env, and no raw clack import. The literal rules stay off for them.
         const importsChildProcess = CHILD_PROCESS_IMPORT.test(source);
 
         for (const node of root.findAll(SPAWN_CALL_MATCHER)) {
@@ -1970,6 +2017,14 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
 
             if (verdict.violates && (!verdict.needsChildProcessImport || importsChildProcess)) {
                 record(node, SPAWN_ENV_RULE);
+            }
+        }
+
+        if (RAW_CLACK_IMPORT_RULE.matcher && ruleApplies(RAW_CLACK_IMPORT_RULE, file, ratchets)) {
+            for (const node of root.findAll(RAW_CLACK_IMPORT_RULE.matcher)) {
+                if (RAW_CLACK_IMPORT_RULE.test(node.text(), node)) {
+                    record(node, RAW_CLACK_IMPORT_RULE);
+                }
             }
         }
 
@@ -2518,6 +2573,22 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
 
     // Test files and Swift sources carry other rules only.
     for (const [lang, paths] of options.processToolOnly ? [] : testsByLang) {
+        const clackScoped = paths.filter((path) => ruleApplies(RAW_CLACK_IMPORT_RULE, path));
+
+        if (RAW_CLACK_IMPORT_RULE.matcher && clackScoped.length > 0) {
+            await findInFiles(
+                lang,
+                { paths: clackScoped, matcher: RAW_CLACK_IMPORT_RULE.matcher },
+                guard((nodes) => {
+                    for (const node of nodes) {
+                        if (RAW_CLACK_IMPORT_RULE.test(node.text(), node)) {
+                            push(node, RAW_CLACK_IMPORT_RULE);
+                        }
+                    }
+                })
+            );
+        }
+
         await findInFiles(
             lang,
             { paths, matcher: SPAWN_CALL_MATCHER },
