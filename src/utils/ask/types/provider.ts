@@ -78,8 +78,11 @@ export interface DetectedProvider {
     systemPromptPrefix?: string;
     /** True when calls bill a subscription plan (Claude Max/Pro, Codex, SuperGrok) instead of pay-per-token API spend. */
     subscription: boolean;
-    /** The account used to create this provider, set at resolution time. */
-    account?: { name: string; label?: string };
+    /**
+     * The account used to create this provider, set at resolution time. `id` is the
+     * immutable account id that usage rows key on; `name` is the renameable handle.
+     */
+    account?: { id?: string; name: string; label?: string };
 }
 
 export interface PricingInfo {

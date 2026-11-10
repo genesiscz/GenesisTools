@@ -156,7 +156,7 @@ export class ProviderManager {
             const detected = toDetectedProvider({
                 binding,
                 pluginId: account.provider,
-                account: { name: account.name, ...(account.label ? { label: account.label } : {}) },
+                account: { id: account.id, name: account.name, ...(account.label ? { label: account.label } : {}) },
                 models,
                 credentialSource: credential.detail,
             });
@@ -260,7 +260,7 @@ export class ProviderManager {
             return toDetectedProvider({
                 binding,
                 pluginId: account.provider,
-                account: { name: account.name, ...(account.label ? { label: account.label } : {}) },
+                account: { id: account.id, name: account.name, ...(account.label ? { label: account.label } : {}) },
                 models: await modelsForProvider(account.provider),
             });
         } catch (err) {
