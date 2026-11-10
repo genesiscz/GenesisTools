@@ -1,8 +1,7 @@
-import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
-import { requireTimeLogConfig } from "@app/azure-devops/utils";
 import { getConfig, getMappingForWorkItem, requireConfig } from "@app/clarity/config";
 import { getClarityApi } from "@app/clarity/lib/api";
 import { MappingStore } from "@app/clarity/lib/mapping-store";
+import { connectTimeLog } from "@app/clarity/lib/month-fill";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
 import { getTimelogWorkItems, type TimelogWorkItemGroup } from "@app/clarity/lib/timelog-workitems";
 import { type IdentifiedTimesheetWeek, loadTimesheetPeriods } from "@app/clarity/lib/timesheet-weeks";
@@ -46,8 +45,7 @@ export async function runInteractiveLinking(): Promise<void> {
     clack.intro(pc.bgCyan(pc.black(" Link ADO Work Items to Clarity Tasks ")));
 
     const api = getClarityApi();
-    const adoConfig = requireTimeLogConfig();
-    const adoApi = getTimeLogApi({ config: adoConfig });
+    const { api: adoApi, config: adoConfig } = connectTimeLog();
     const adoUser = adoApi.user;
 
     const now = new Date();
