@@ -946,7 +946,7 @@ describe("no-process-tool-spawn", () => {
         for (const source of [
             'import { batchPsInfo } from "@genesiscz/utils/process/ps";',
             'import type { PsRow } from "@genesiscz/utils/process/ps";',
-            'import * as ps from "@app/utils/process/ps";',
+            `import * as ps from "${["@app", "utils/process/ps"].join("/")}";`,
             'import { listPsTable } from "../process/ps.ts";',
             'export { parseCpuTime } from "@genesiscz/utils/process/ps";',
             'const { listPsRows } = await import("@genesiscz/utils/process/ps");',
