@@ -1,8 +1,9 @@
 export type { RunToolOpts, RunToolResult, ToolErrorReport } from "./commander";
 export { getVerbosity, isVerbose, runTool } from "./commander";
-export type { ExecResult, ExecutorOptions } from "./executor";
+export type { ExecDeadline, ExecResult, ExecutorOptions } from "./executor";
 export {
     buildCommand,
+    DEFAULT_EXEC_TIMEOUT_MS,
     Executor,
     enhanceHelp,
     formatMissingEnumHelp,
