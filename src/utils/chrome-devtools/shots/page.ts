@@ -1,20 +1,52 @@
 /**
  * The page side of annotated shots over any CDP session (`CdpLike`): GenesisTools' own `Conn` through `cdpLikeOf`,
- * or a Playwright `CDPSession` in a project that vendors this folder.
+ * or a Playwright `CDPSession` in a project that vendors this folder. Buffers out, no files.
  */
+import { Buffer } from "node:buffer";
+import { setTimeout as sleep } from "node:timers/promises";
+import {
+    ANNOTATION_PRESETS,
+    type Annotation,
+    type AnnotationPreset,
+    type AnnotationRect,
+    type PresetName,
+} from "@genesiscz/utils/image/annotation-plan";
+import { checkImageDimensions } from "@genesiscz/utils/image/dimensions";
+import { type LabelRequest, type PlacedLabel, placeLabel, rectsOverlap } from "@genesiscz/utils/image/mark-layout";
 import type { CdpLike } from "../cdp-like.ts";
-import { callInPage } from "../evaluate.ts";
-import { collectTextRects, type DocBox, resolveShotLocators, type WireResolution } from "../in-page/shot-agent.ts";
+import { callInPage, evaluateExpression } from "../evaluate.ts";
+import {
+    clearShotOverlay,
+    collectTextRects,
+    type DocBox,
+    freezeShotPage,
+    measureShotChips,
+    paintShotOverlay,
+    readShotPageMetrics,
+    resolveShotLocators,
+    type ShotChipPaint,
+    type ShotChipStyle,
+    type ShotFramePaint,
+    type ShotLeaderPaint,
+    type ShotPageMetrics,
+    type WireResolution,
+} from "../in-page/shot-agent.ts";
 import type { Locator } from "./locator.ts";
+import type { Mark, ShotPart } from "./part.ts";
 
 export type { DocBox } from "../in-page/shot-agent.ts";
 export type Resolution = WireResolution;
 
 /** The overlay root's id; the text collector skips it. */
 export const SHOT_OVERLAY_ID = "genesis-shot-overlay";
+const FREEZE_STYLE_ID = "genesis-shot-freeze";
 /** The attribute `testid=` reads. */
 export const TEST_ID_ATTRIBUTE = "data-testid";
 const TEXT_RECT_LIMIT = 5000;
+/** A frame stands this far off its element, as the first shot script drew it. */
+const FRAME_PAD = 4;
+const LABEL_GAP = 4;
+const POLL_MS = 250;
 
 /** All locators of a part in one round trip, in order. */
 export async function resolveLocators(cdp: CdpLike, locators: readonly Locator[]): Promise<Resolution[]> {
@@ -30,4 +62,429 @@ export async function textRects(cdp: CdpLike, clip: DocBox): Promise<DocBox[]> {
 export function describeMiss(resolution: Extract<Resolution, { ok: false }>): string {
     const what = resolution.member ? `${resolution.source} (member ${resolution.member})` : resolution.source;
     return resolution.reason === "none" ? `${what} matched nothing` : `${what} matched only hidden or empty elements`;
+}
+
+/** How every part of a run prepares the page. */
+export interface PageSetup {
+    /** Joined with a part's `url`. */
+    base?: string;
+    /** Applied with Emulation.setDeviceMetricsOverride; leave it out to keep the tab's own size. */
+    viewport?: { width: number; height: number; scale: number };
+    /** Banners to click away when present (a cookie dialog). */
+    dismiss: Locator[];
+    settleMs: number;
+    freeze: boolean;
+    readyTimeoutMs: number;
+    /** The look of a mark that names no preset. */
+    preset: PresetName;
+}
+
+export const DEFAULT_SETUP: PageSetup = {
+    dismiss: [],
+    settleMs: 1500,
+    freeze: true,
+    readyTimeoutMs: 90_000,
+    preset: "review-dashed",
+};
+
+export interface PartImages {
+    /** PNG, the page as it is. */
+    raw: Buffer;
+    /** PNG, the same clip with the overlay; compose it with `painted` (image/stack.ts) for the final image. */
+    annotated: Buffer;
+    /** Image-pixel areas the overlay drew on; outside them the final annotated image takes the raw pixels. */
+    painted: AnnotationRect[];
+    /** The marks in image pixels with the label positions used: an annotate_image / control draw plan. */
+    annotations: Annotation[];
+    /** The clip in document pixels, and image pixels per CSS pixel. */
+    clip: DocBox;
+    scale: number;
+    width: number;
+    height: number;
+    /** The font family the labels were drawn in (the page's body font). */
+    font: string;
+}
+
+export type PartCapture = { ok: true; images: PartImages; notes: string[] } | { ok: false; problems: string[] };
+
+async function untilResolved(cdp: CdpLike, locator: Locator, timeoutMs: number): Promise<Resolution> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+        const [resolution] = await resolveLocators(cdp, [locator]);
+        if (resolution.ok || Date.now() >= deadline) {
+            return resolution;
+        }
+
+        await sleep(Math.min(POLL_MS, Math.max(0, deadline - Date.now())));
+    }
+}
+
+async function act(cdp: CdpLike, locator: Locator, action: "click" | "scroll"): Promise<Resolution> {
+    const [resolution] = await callInPage(cdp, resolveShotLocators, {
+        locators: [locator],
+        testIdAttribute: TEST_ID_ATTRIBUTE,
+        act: action,
+    });
+
+    return resolution;
+}
+
+async function untilLoaded(cdp: CdpLike, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if ((await evaluateExpression(cdp, "document.readyState").catch(() => "loading")) !== "loading") {
+            return;
+        }
+
+        await sleep(POLL_MS);
+    }
+}
+
+function grow(box: DocBox, by: number): DocBox {
+    return { x: box.x - by, y: box.y - by, w: box.w + 2 * by, h: box.h + 2 * by };
+}
+
+function unionOf(boxes: readonly DocBox[]): DocBox {
+    const left = Math.min(...boxes.map((box) => box.x));
+    const top = Math.min(...boxes.map((box) => box.y));
+    const right = Math.max(...boxes.map((box) => box.x + box.w));
+    const bottom = Math.max(...boxes.map((box) => box.y + box.h));
+    return { x: left, y: top, w: right - left, h: bottom - top };
+}
+
+function intersect(a: DocBox, b: DocBox): DocBox {
+    const x = Math.max(a.x, b.x);
+    const y = Math.max(a.y, b.y);
+    return { x, y, w: Math.min(a.x + a.w, b.x + b.w) - x, h: Math.min(a.y + a.h, b.y + b.h) - y };
+}
+
+/** Whole CSS pixels, so the screenshot and the overlay agree to the pixel. */
+function snap(box: DocBox): DocBox {
+    const x = Math.floor(box.x);
+    const y = Math.floor(box.y);
+    return { x, y, w: Math.ceil(box.x + box.w) - x, h: Math.ceil(box.y + box.h) - y };
+}
+
+function clipOf(part: ShotPart, around: DocBox, metrics: ShotPageMetrics): DocBox {
+    const [top, right, bottom, left] = part.clip.pad;
+    const page = part.clip.viewport
+        ? { x: metrics.scrollX, y: metrics.scrollY, w: metrics.viewport.w, h: metrics.viewport.h }
+        : { x: 0, y: 0, w: metrics.document.w, h: metrics.document.h };
+    const padded = { x: around.x - left, y: around.y - top, w: around.w + left + right, h: around.h + top + bottom };
+    const wide = part.clip.wide ? { ...padded, x: page.x, w: page.w } : padded;
+
+    return snap(intersect(wide, page));
+}
+
+function presetOf(mark: Mark, setup: PageSetup): AnnotationPreset {
+    return ANNOTATION_PRESETS[mark.preset ?? setup.preset];
+}
+
+function chipStyleOf(mark: Mark, preset: AnnotationPreset): ShotChipStyle {
+    return {
+        bg: mark.label?.style?.bg ?? preset.labelChip.bg,
+        fg: mark.label?.style?.fg ?? preset.labelChip.fg,
+        fontSize: mark.label?.style?.fontSize ?? preset.labelChip.fontSize,
+    };
+}
+
+function frameOf(mark: Mark, box: DocBox, preset: AnnotationPreset): ShotFramePaint {
+    return {
+        shape: mark.kind === "ellipse" ? "ellipse" : "rect",
+        box,
+        stroke: mark.style?.stroke ?? preset.shape.stroke,
+        strokeWidth: mark.style?.strokeWidth ?? preset.shape.strokeWidth,
+        dash: [...(mark.style?.dash ?? preset.shape.dash ?? [])],
+        radius: mark.style?.radius ?? (mark.kind === "box" ? 0 : preset.shape.radius),
+        fill: mark.style?.fill ?? preset.shape.fill,
+    };
+}
+
+/**
+ * The areas a frame draws on: its four stroke bands plus its corners (a rounded corner's stroke curves in past the
+ * straight bands), or the whole box when it is filled.
+ */
+function frameArea(frame: ShotFramePaint): DocBox[] {
+    if (frame.fill) {
+        return [grow(frame.box, 1)];
+    }
+
+    if (frame.strokeWidth <= 0) {
+        return [];
+    }
+
+    const band = frame.strokeWidth + 2;
+    const corner = Math.min(Math.ceil(frame.radius + frame.strokeWidth) + 2, frame.box.w / 2, frame.box.h / 2);
+    const { x, y, w, h } = grow(frame.box, 1);
+    return [
+        { x, y, w, h: band },
+        { x, y: y + h - band, w, h: band },
+        { x, y, w: band, h },
+        { x: x + w - band, y, w: band, h },
+        { x, y, w: corner, h: corner },
+        { x: x + w - corner, y, w: corner, h: corner },
+        { x, y: y + h - corner, w: corner, h: corner },
+        { x: x + w - corner, y: y + h - corner, w: corner, h: corner },
+    ];
+}
+
+function leaderArea(leader: ShotLeaderPaint): DocBox {
+    return grow(
+        unionOf([
+            { ...leader.from, w: 0, h: 0 },
+            { ...leader.to, w: 0, h: 0 },
+        ]),
+        2
+    );
+}
+
+function toImage(box: DocBox, clip: DocBox, scale: number): AnnotationRect {
+    const x = Math.max(0, Math.floor((box.x - clip.x) * scale));
+    const y = Math.max(0, Math.floor((box.y - clip.y) * scale));
+    return {
+        x,
+        y,
+        w: Math.min(Math.ceil((box.x + box.w - clip.x) * scale), Math.round(clip.w * scale)) - x,
+        h: Math.min(Math.ceil((box.y + box.h - clip.y) * scale), Math.round(clip.h * scale)) - y,
+    };
+}
+
+async function screenshot(cdp: CdpLike, clip: DocBox, beyondViewport: boolean): Promise<Buffer> {
+    const reply = await cdp.send("Page.captureScreenshot", {
+        format: "png",
+        clip: { x: clip.x, y: clip.y, width: clip.w, height: clip.h, scale: 1 },
+        captureBeyondViewport: beyondViewport,
+        fromSurface: true,
+    });
+    const data = reply && typeof reply === "object" && "data" in reply ? reply.data : undefined;
+    if (typeof data !== "string") {
+        throw new Error("Page.captureScreenshot returned no image");
+    }
+
+    return Buffer.from(data, "base64");
+}
+
+/** Brings the page to the part's state: navigation, ready, banners, fonts, settle, freeze, steps. */
+async function prepare(cdp: CdpLike, part: ShotPart, setup: PageSetup): Promise<string[]> {
+    if (setup.viewport) {
+        await cdp.send("Emulation.setDeviceMetricsOverride", {
+            width: setup.viewport.width,
+            height: setup.viewport.height,
+            deviceScaleFactor: setup.viewport.scale,
+            mobile: false,
+        });
+    }
+
+    if (part.url !== undefined) {
+        const url = setup.base ? new URL(part.url, setup.base).toString() : part.url;
+        await cdp.send("Page.navigate", { url });
+        await untilLoaded(cdp, setup.readyTimeoutMs);
+    }
+
+    if (part.ready) {
+        const ready = await untilResolved(cdp, part.ready, setup.readyTimeoutMs);
+        if (!ready.ok) {
+            return [`ready: ${describeMiss(ready)} within ${setup.readyTimeoutMs} ms`];
+        }
+    }
+
+    for (const banner of setup.dismiss) {
+        await act(cdp, banner, "click");
+    }
+
+    await evaluateExpression(cdp, "document.fonts.ready.then(() => true)");
+    await sleep(setup.settleMs);
+    if (setup.freeze) {
+        await callInPage(cdp, freezeShotPage, { styleId: FREEZE_STYLE_ID });
+    }
+
+    for (const [index, step] of part.steps.entries()) {
+        if ("wait" in step) {
+            await sleep(step.wait);
+            continue;
+        }
+
+        const resolution =
+            "until" in step
+                ? await untilResolved(cdp, step.until, setup.readyTimeoutMs)
+                : await act(cdp, "click" in step ? step.click : step.scroll, "click" in step ? "click" : "scroll");
+        if (!resolution.ok) {
+            return [`step ${index}: ${describeMiss(resolution)}`];
+        }
+    }
+
+    return [];
+}
+
+interface PlacedMark {
+    mark: Mark;
+    frame: ShotFramePaint;
+    chip?: { spec: ShotChipPaint; placed: PlacedLabel };
+}
+
+/**
+ * Takes the raw and the annotated PNG of one part. A locator that matches nothing, or a label with no free spot
+ * inside the clip, fails the part with its name, and nothing is drawn. The overlay and the freeze style are removed
+ * also when something throws.
+ */
+export async function capturePart(
+    cdp: CdpLike,
+    part: ShotPart,
+    setup: PageSetup = DEFAULT_SETUP
+): Promise<PartCapture> {
+    const problems = await prepare(cdp, part, setup);
+    if (problems.length > 0) {
+        return { ok: false, problems };
+    }
+
+    try {
+        const [aroundHit, ...markHits] = await resolveLocators(cdp, [
+            part.clip.around,
+            ...part.marks.map((mark) => mark.target),
+        ]);
+        const misses = [
+            ...(aroundHit.ok ? [] : [`clip: ${describeMiss(aroundHit)}`]),
+            ...markHits.flatMap((hit, index) => (hit.ok ? [] : [`mark ${index}: ${describeMiss(hit)}`])),
+        ];
+        if (!aroundHit.ok || misses.length > 0) {
+            return { ok: false, problems: misses };
+        }
+
+        const metrics = await callInPage(cdp, readShotPageMetrics, undefined);
+        let clip = clipOf(part, aroundHit.box, metrics);
+        // every hit is ok here (a miss returned above), so `boxes` lines up with `part.marks`
+        const boxes = markHits.flatMap((hit) => (hit.ok ? [grow(hit.box, FRAME_PAD)] : []));
+        const labelled = part.marks.flatMap((mark, index) => (mark.label?.text ? [{ mark, index }] : []));
+        const styles = labelled.map(({ mark }) => chipStyleOf(mark, presetOf(mark, setup)));
+        const sizes = await callInPage(cdp, measureShotChips, {
+            chips: labelled.map(({ mark }, i) => ({ text: mark.label?.text ?? "", style: styles[i] })),
+            font: metrics.font,
+        });
+        const page = { x: 0, y: 0, w: metrics.document.w, h: metrics.document.h };
+        const text = await textRects(cdp, part.clip.fitLabels ? page : clip);
+        const taken: DocBox[] = [];
+        const placed: PlacedMark[] = part.marks.map((mark, index) => ({
+            mark,
+            frame: frameOf(mark, boxes[index], presetOf(mark, setup)),
+        }));
+        const notes: string[] = [];
+
+        for (const [i, { mark, index }] of labelled.entries()) {
+            const own = boxes[index];
+            const others = boxes.filter((_, other) => other !== index);
+            const request: LabelRequest = {
+                rect: own,
+                size: sizes[i],
+                position: mark.label?.position ?? "top-left",
+                gap: LABEL_GAP,
+                offset: mark.label?.offset,
+                leader: mark.label?.leader,
+            };
+            const obstacles = [
+                ...text.filter(
+                    (rect) =>
+                        !(
+                            rect.x >= own.x &&
+                            rect.y >= own.y &&
+                            rect.x + rect.w <= own.x + own.w &&
+                            rect.y + rect.h <= own.y + own.h
+                        )
+                ),
+                ...others,
+                ...taken,
+            ];
+            const placement = placeLabel({ request, bounds: part.clip.fitLabels ? page : clip, obstacles });
+            if (!placement.ok) {
+                problems.push(
+                    `mark ${index} label "${mark.label?.text.split("\n")[0]}": no free spot ${part.clip.fitLabels ? "on the page" : "inside the clip"} (tried ${placement.tried.join(", ")})`
+                );
+                continue;
+            }
+
+            if (placement.label.moved) {
+                notes.push(`mark ${index} label moved from ${request.position} to ${placement.label.position}`);
+            }
+
+            taken.push(placement.label.chip);
+            const { x, y } = placement.label.chip;
+            placed[index].chip = {
+                spec: { text: mark.label?.text ?? "", style: styles[i], at: { x, y } },
+                placed: placement.label,
+            };
+        }
+
+        if (problems.length > 0) {
+            return { ok: false, problems };
+        }
+
+        if (part.clip.fitLabels) {
+            clip = snap(intersect(unionOf([clip, ...taken.map((chip) => grow(chip, 4))]), page));
+        }
+
+        const raw = await screenshot(cdp, clip, !part.clip.viewport);
+        const leaders: ShotLeaderPaint[] = placed.flatMap((entry) =>
+            entry.chip?.placed.leader ? [{ ...entry.chip.placed.leader, color: entry.chip.spec.style.bg }] : []
+        );
+        const chips = placed.flatMap((entry) => (entry.chip ? [entry.chip.spec] : []));
+        const painted = await callInPage(cdp, paintShotOverlay, {
+            overlayId: SHOT_OVERLAY_ID,
+            font: metrics.font,
+            frames: placed.map((entry) => entry.frame),
+            chips,
+            leaders,
+        });
+        const annotated = await screenshot(cdp, clip, !part.clip.viewport);
+        const size = checkImageDimensions({ data: raw, maxPixels: 400_000_000 });
+        const scale = size.width / clip.w;
+        const areas = [
+            ...placed.flatMap((entry) => frameArea(entry.frame)),
+            ...placed.flatMap((entry) => (entry.chip ? [grow(entry.chip.placed.chip, 1)] : [])),
+            ...leaders.map(leaderArea),
+        ]
+            .map((box) => toImage(box, clip, scale))
+            .filter(
+                (rect) => rect.w > 0 && rect.h > 0 && rectsOverlap(rect, { x: 0, y: 0, w: size.width, h: size.height })
+            );
+
+        return {
+            ok: true,
+            notes,
+            images: {
+                raw,
+                annotated,
+                painted: areas,
+                annotations: placed.map((entry) => annotationOf(entry, clip, scale)),
+                clip,
+                scale,
+                width: size.width,
+                height: size.height,
+                font: painted.font,
+            },
+        };
+    } finally {
+        await callInPage(cdp, clearShotOverlay, { overlayId: SHOT_OVERLAY_ID, styleId: FREEZE_STYLE_ID }).catch(
+            () => undefined
+        );
+    }
+}
+
+/** One mark as a pixel annotation of the final image, with the label where it was drawn. */
+function annotationOf(entry: PlacedMark, clip: DocBox, scale: number): Annotation {
+    const rect = toImage(entry.frame.box, clip, scale);
+    const own = entry.mark.label;
+    const label = entry.chip
+        ? {
+              text: entry.chip.spec.text,
+              position: entry.chip.placed.position,
+              ...(own?.style ? { style: own.style } : {}),
+              ...(own?.leader !== undefined ? { leader: own.leader } : {}),
+          }
+        : undefined;
+    return {
+        kind: entry.mark.kind,
+        rect,
+        ...(entry.mark.preset ? { preset: entry.mark.preset } : {}),
+        ...(entry.mark.style ? { style: entry.mark.style } : {}),
+        ...(label ? { label } : {}),
+    };
 }
