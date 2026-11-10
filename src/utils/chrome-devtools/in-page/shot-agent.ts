@@ -21,7 +21,12 @@ export type WireResolution =
  * the chain named (`member`), and matches that are all hidden or empty fail as `zero-size`: nothing is ever boxed at
  * 0,0.
  */
-export function resolveShotLocators(arg: { locators: Locator[]; testIdAttribute: string }): WireResolution[] {
+export function resolveShotLocators(arg: {
+    locators: Locator[];
+    testIdAttribute: string;
+    /** Clicks, or scrolls into view, the first element each locator found (a step), before measuring. */
+    act?: "click" | "scroll";
+}): WireResolution[] {
     const SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "HEAD", "TITLE", "META", "LINK"]);
     const normalize = (value: string): string => value.replace(/\s+/g, " ").trim();
     const texts = new Map<Element, string>();
@@ -239,6 +244,14 @@ export function resolveShotLocators(arg: { locators: Locator[]; testIdAttribute:
             elements.push(...found);
         }
 
+        if (arg.act) {
+            const target = elements[0];
+            target.scrollIntoView({ block: "center", inline: "nearest" });
+            if (arg.act === "click" && target instanceof HTMLElement) {
+                target.click();
+            }
+        }
+
         const rects = unique(elements)
             .map((element) => element.getBoundingClientRect())
             .filter((rect) => rect.width > 0 && rect.height > 0);
@@ -258,6 +271,176 @@ export function resolveShotLocators(arg: { locators: Locator[]; testIdAttribute:
             box: { x: left + scrollX, y: top + scrollY, w: right - left, h: bottom - top },
         };
     });
+}
+
+export interface ShotPageMetrics {
+    scrollX: number;
+    scrollY: number;
+    viewport: { w: number; h: number };
+    document: { w: number; h: number };
+    dpr: number;
+    /** The body's font family: the labels are drawn in it. */
+    font: string;
+}
+
+export function readShotPageMetrics(): ShotPageMetrics {
+    const root = document.documentElement;
+    return {
+        scrollX,
+        scrollY,
+        viewport: { w: root.clientWidth, h: root.clientHeight },
+        document: { w: root.scrollWidth, h: root.scrollHeight },
+        dpr: devicePixelRatio,
+        font: getComputedStyle(document.body ?? root).fontFamily,
+    };
+}
+
+export interface ShotChipStyle {
+    bg: string;
+    fg: string;
+    fontSize: number;
+}
+
+/** The CSS of one label chip; measure and paint must agree, so both build it from this one rule. */
+export interface ShotChipSpec {
+    text: string;
+    style: ShotChipStyle;
+}
+
+/** Each chip's size in the page's font, measured off screen. */
+export function measureShotChips(arg: { chips: ShotChipSpec[]; font: string }): Array<{ w: number; h: number }> {
+    const holder = document.createElement("div");
+    holder.style.cssText = "position:absolute;left:-10000px;top:0;visibility:hidden";
+    document.documentElement.appendChild(holder);
+    try {
+        return arg.chips.map((chip) => {
+            const element = document.createElement("div");
+            const size = chip.style.fontSize;
+            element.textContent = chip.text;
+            element.style.cssText = `position:absolute;white-space:pre;font:700 ${size}px/1.3 ${arg.font};padding:${Math.round(size / 7)}px ${Math.round((size * 3) / 7)}px;border-radius:3px`;
+            holder.appendChild(element);
+            return { w: Math.ceil(element.offsetWidth), h: Math.ceil(element.offsetHeight) };
+        });
+    } finally {
+        holder.remove();
+    }
+}
+
+export interface ShotFramePaint {
+    shape: "rect" | "ellipse";
+    /** The outer box, document pixels; the stroke lies inside it. */
+    box: DocBox;
+    stroke: string;
+    strokeWidth: number;
+    dash: number[];
+    radius: number;
+    fill: string;
+}
+
+export interface ShotChipPaint extends ShotChipSpec {
+    at: { x: number; y: number };
+}
+
+export interface ShotLeaderPaint {
+    from: { x: number; y: number };
+    to: { x: number; y: number };
+    color: string;
+}
+
+/**
+ * Draws the overlay into the page, in document coordinates, above everything: frames and leader lines as one SVG,
+ * label chips as HTML in the page's font. Returns the family the chips really use.
+ */
+export function paintShotOverlay(arg: {
+    overlayId: string;
+    font: string;
+    frames: ShotFramePaint[];
+    chips: ShotChipPaint[];
+    leaders: ShotLeaderPaint[];
+}): { font: string } {
+    document.getElementById(arg.overlayId)?.remove();
+    const root = document.createElement("div");
+    root.id = arg.overlayId;
+    root.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none";
+    const svgNs = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNs, "svg");
+    const docW = document.documentElement.scrollWidth;
+    const docH = document.documentElement.scrollHeight;
+    svg.setAttribute("width", String(docW));
+    svg.setAttribute("height", String(docH));
+    svg.setAttribute("style", "position:absolute;left:0;top:0;overflow:visible");
+    root.appendChild(svg);
+    // attached first: a detached element has no computed style, so the font read below would be empty
+    document.documentElement.appendChild(root);
+
+    for (const frame of arg.frames) {
+        const inset = frame.strokeWidth / 2;
+        const shape = document.createElementNS(svgNs, frame.shape === "ellipse" ? "ellipse" : "rect");
+        if (frame.shape === "ellipse") {
+            shape.setAttribute("cx", String(frame.box.x + frame.box.w / 2));
+            shape.setAttribute("cy", String(frame.box.y + frame.box.h / 2));
+            shape.setAttribute("rx", String(Math.max(0, frame.box.w / 2 - inset)));
+            shape.setAttribute("ry", String(Math.max(0, frame.box.h / 2 - inset)));
+        } else {
+            shape.setAttribute("x", String(frame.box.x + inset));
+            shape.setAttribute("y", String(frame.box.y + inset));
+            shape.setAttribute("width", String(Math.max(0, frame.box.w - frame.strokeWidth)));
+            shape.setAttribute("height", String(Math.max(0, frame.box.h - frame.strokeWidth)));
+            shape.setAttribute("rx", String(frame.radius));
+        }
+
+        shape.setAttribute("fill", frame.fill || "none");
+        shape.setAttribute("stroke", frame.strokeWidth > 0 ? frame.stroke : "none");
+        shape.setAttribute("stroke-width", String(frame.strokeWidth));
+        if (frame.dash.length > 0) {
+            shape.setAttribute("stroke-dasharray", frame.dash.join(" "));
+        }
+
+        svg.appendChild(shape);
+    }
+
+    for (const leader of arg.leaders) {
+        const line = document.createElementNS(svgNs, "line");
+        line.setAttribute("x1", String(leader.from.x));
+        line.setAttribute("y1", String(leader.from.y));
+        line.setAttribute("x2", String(leader.to.x));
+        line.setAttribute("y2", String(leader.to.y));
+        line.setAttribute("stroke", leader.color);
+        line.setAttribute("stroke-width", "2");
+        svg.appendChild(line);
+    }
+
+    let used = arg.font;
+    for (const chip of arg.chips) {
+        const element = document.createElement("div");
+        const size = chip.style.fontSize;
+        element.textContent = chip.text;
+        element.style.cssText = `position:absolute;left:${chip.at.x}px;top:${chip.at.y}px;white-space:pre;background:${chip.style.bg};color:${chip.style.fg};font:700 ${size}px/1.3 ${arg.font};padding:${Math.round(size / 7)}px ${Math.round((size * 3) / 7)}px;border-radius:3px`;
+        root.appendChild(element);
+        used = getComputedStyle(element).fontFamily;
+    }
+
+    return { font: used };
+}
+
+/** No animations, transitions or caret, so two screenshots a moment apart show the same page. */
+export function freezeShotPage(arg: { styleId: string }): void {
+    if (document.getElementById(arg.styleId)) {
+        return;
+    }
+
+    const style = document.createElement("style");
+    style.id = arg.styleId;
+    style.textContent =
+        "*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}";
+    document.documentElement.appendChild(style);
+}
+
+export function clearShotOverlay(arg: { overlayId: string; styleId?: string }): void {
+    document.getElementById(arg.overlayId)?.remove();
+    if (arg.styleId) {
+        document.getElementById(arg.styleId)?.remove();
+    }
 }
 
 /**

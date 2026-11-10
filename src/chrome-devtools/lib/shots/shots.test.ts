@@ -16,13 +16,19 @@ import {
 } from "@genesiscz/utils/chrome-devtools/shots/kit";
 import { LocatorSyntaxError, parseLocator } from "@genesiscz/utils/chrome-devtools/shots/locator";
 import {
+    capturePart,
+    DEFAULT_SETUP,
     describeMiss,
+    type PageSetup,
     type Resolution,
     resolveLocators,
     SHOT_OVERLAY_ID,
     textRects,
 } from "@genesiscz/utils/chrome-devtools/shots/page";
+import { parseShotPart } from "@genesiscz/utils/chrome-devtools/shots/part";
+import { type AnnotationRect, composeOverlay, validateAnnotations } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { attach, type Page } from "../cdp";
 import { cdpLikeOf } from "../cdp-like-adapter";
 import { type HeadlessChrome, launchHeadlessChrome } from "../headless";
@@ -41,8 +47,9 @@ describe("the locator grammar", () => {
         expect(hasText(id("row"), "Šablona")).toBe("testid=row >> has-text=Šablona");
         expect(role("heading", { name: "Elektřina" })).toBe('role=heading[name="Elektřina"]');
         expect(role("heading", { name: "Elektřina", exact: true })).toBe('role=heading[name="Elektřina"s]');
-        // a regex literal's source may come back with \u escapes (Bun writes á as á); both forms match the same
-        expect(label(/^Název/)).toBe("label=/^Název/");
+        // built from a string: Bun prints a regex literal's non-ASCII letters as escapes, which match the same
+        const named = "^Název";
+        expect(label(new RegExp(named))).toBe("label=/^Název/");
     });
 
     test("a chain parses into steps, and a union keeps each member's source", () => {
@@ -57,6 +64,27 @@ describe("the locator grammar", () => {
         const both = parseLocator(union(id("a"), idPrefix("row-")));
         expect(both.source).toBe("testid=a | testid^=row-");
         expect(both.chains.map((chain) => chain.source)).toEqual(["testid=a", "testid^=row-"]);
+    });
+
+    test("a mark in the first script's words becomes an annotation with a locator", () => {
+        const part = parseShotPart({
+            marks: [
+                { target: id("x"), at: "below", dy: 22, color: "amber", quiet: true, label: "Kde je použitý" },
+                { target: union(id("a"), id("b")) },
+            ],
+        });
+
+        expect(part.marks[0]).toEqual({
+            kind: "highlight",
+            target: parseLocator("testid=x"),
+            label: { text: "Kde je použitý", position: "bottom-left", offset: { x: 0, y: 22 } },
+            preset: "callout-amber-dashed",
+            style: { strokeWidth: 0, fill: "" },
+        });
+        // no clip: the union of every mark's target, 20 px around it
+        expect(part.clip.around.chains.map((chain) => chain.source)).toEqual(["testid=x", "testid=a", "testid=b"]);
+        expect(part.clip.pad).toEqual([20, 20, 20, 20]);
+        expect(() => parseShotPart({ marks: [{ target: id("x"), at: "under" as "below" }] })).toThrow(/unknown side/);
     });
 
     test("a malformed locator fails at the boundary and names itself", () => {
@@ -192,4 +220,114 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         expect(boxes.every((rect) => rect.x >= 380 && rect.y < 160)).toBe(true);
         expect(boxes.some((rect) => rect.y >= 125)).toBe(false);
     });
+
+    const SETUP: PageSetup = {
+        ...DEFAULT_SETUP,
+        settleMs: 0,
+        readyTimeoutMs: 2_000,
+        viewport: { width: 1000, height: 800, scale: 1 },
+    };
+
+    async function pixels(png: Buffer): Promise<{ width: number; height: number; data: Uint8ClampedArray }> {
+        const image = await loadImage(png);
+        const canvas = createCanvas(image.width, image.height);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(image, 0, 0);
+        return {
+            width: image.width,
+            height: image.height,
+            data: ctx.getImageData(0, 0, image.width, image.height).data,
+        };
+    }
+
+    /** Pixels where a and b differ, split by whether they lie inside one of `areas`. */
+    async function differences(a: Buffer, b: Buffer, areas: readonly AnnotationRect[]) {
+        const [left, right] = await Promise.all([pixels(a), pixels(b)]);
+        let inside = 0;
+        let outside = 0;
+        const outsideAt: Array<[number, number]> = [];
+        for (let y = 0; y < left.height; y += 1) {
+            for (let x = 0; x < left.width; x += 1) {
+                const i = (y * left.width + x) * 4;
+                const same =
+                    left.data[i] === right.data[i] &&
+                    left.data[i + 1] === right.data[i + 1] &&
+                    left.data[i + 2] === right.data[i + 2];
+                if (same) {
+                    continue;
+                }
+
+                const covered = areas.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+                if (covered) {
+                    inside += 1;
+                } else {
+                    outside += 1;
+                    if (outsideAt.length < 12) {
+                        outsideAt.push([x, y]);
+                    }
+                }
+            }
+        }
+
+        return { inside, outside, outsideAt };
+    }
+
+    test("the annotated shot differs from the raw one only under the overlay, drawn in the page's font", async () => {
+        const part = parseShotPart({
+            clip: { around: union(id("panel"), role("dialog")), fit: "labels" },
+            marks: [
+                { target: id("usages-button"), at: "below", label: "Kde je použitý: GET …/usages" },
+                { target: role("dialog"), at: "bottom-right", color: "amber", label: "dialog\nsecond line" },
+            ],
+        });
+        const capture = await capturePart(cdp, part, SETUP);
+        if (!capture.ok) {
+            throw new Error(capture.problems.join("; "));
+        }
+
+        const { images } = capture;
+        // the dialog's label hangs below the 440 px of the clip's union, so fit: "labels" grew the clip to hold it
+        expect(images.clip.h).toBeGreaterThan(440);
+        expect([images.width, images.height]).toEqual([images.clip.w, images.clip.h]);
+
+        // every pixel the overlay changed lies in a painted area, so the composed image keeps all of the overlay
+        const direct = await differences(images.raw, images.annotated, images.painted);
+        expect(direct.outsideAt).toEqual([]);
+        expect(direct.inside).toBeGreaterThan(500);
+        const composed = await composeOverlay(images);
+        expect((await differences(composed, images.annotated, [])).outside).toBe(0);
+
+        expect(images.font).toBe(String(await evaluateExpression(cdp, "getComputedStyle(document.body).fontFamily")));
+        validateAnnotations(images.annotations);
+        expect(images.annotations[1]).toMatchObject({ kind: "highlight", preset: "callout-amber-dashed" });
+        expect(images.annotations[1].kind === "highlight" && images.annotations[1].label?.position).toBe(
+            "bottom-right"
+        );
+        expect(await evaluateExpression(cdp, `!!document.getElementById("${SHOT_OVERLAY_ID}")`)).toBe(false);
+    }, 30_000);
+
+    test("a label with no free spot inside the clip fails the part and names the label", async () => {
+        const part = parseShotPart({
+            clip: { around: id("usages-button"), pad: 0 },
+            marks: [
+                { target: id("usages-button"), at: "below", label: "Kde je použitý: a label wider than its button" },
+            ],
+        });
+        const capture = await capturePart(cdp, part, SETUP);
+
+        expect(capture.ok).toBe(false);
+        expect(!capture.ok && capture.problems[0]).toMatch(
+            /^mark 0 label "Kde je použitý: a label wider than its button": no free spot inside the clip/
+        );
+    }, 30_000);
+
+    test("a target that matches nothing fails the part before anything is drawn", async () => {
+        const capture = await capturePart(cdp, parseShotPart({ marks: [{ target: id("usages-buton") }] }), SETUP);
+
+        expect(capture).toEqual({
+            ok: false,
+            problems: ["clip: testid=usages-buton matched nothing", "mark 0: testid=usages-buton matched nothing"],
+        });
+        expect(await evaluateExpression(cdp, `!!document.getElementById("${SHOT_OVERLAY_ID}")`)).toBe(false);
+    }, 30_000);
 });
