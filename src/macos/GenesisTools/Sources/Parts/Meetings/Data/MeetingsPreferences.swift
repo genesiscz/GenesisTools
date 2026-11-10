@@ -119,11 +119,13 @@ extension MeetingsWindowSetting where Value: RawRepresentable, Value.RawValue ==
     }
 }
 
+/// A stored number is the value when it is above 0 or one of the choices (the hover delay offers 0 ms); 0 or less that
+/// the setting does not offer (an old or a hand-written value) reads as the default.
 extension MeetingsWindowSetting where Value == Double {
     func value(_ defaults: UserDefaults = .standard) -> Double {
         guard defaults.object(forKey: key) != nil else { return defaultValue }
         let stored = defaults.double(forKey: key)
-        return stored > 0 ? stored : defaultValue
+        return stored > 0 || choices.contains(stored) ? stored : defaultValue
     }
 }
 
@@ -131,7 +133,7 @@ extension MeetingsWindowSetting where Value == Int {
     func value(_ defaults: UserDefaults = .standard) -> Int {
         guard defaults.object(forKey: key) != nil else { return defaultValue }
         let stored = defaults.integer(forKey: key)
-        return stored > 0 ? stored : defaultValue
+        return stored > 0 || choices.contains(stored) ? stored : defaultValue
     }
 }
 

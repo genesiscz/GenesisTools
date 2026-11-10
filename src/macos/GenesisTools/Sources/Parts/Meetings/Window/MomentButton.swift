@@ -17,7 +17,9 @@ struct MomentButton: View {
         let reason = player.reason(target, in: meeting)
         let top = player.isTop(target, in: meeting)
         let playing = player.isPlaying(target, in: meeting)
-        LiveButton(tooltip: reason?.message ?? tooltip(top: top, playing: playing), enabled: reason == nil, action: press) {
+        // Pressable at rest: inside a resting row (`.liveRow`) a plain LiveButton draws only its label, so a pointer
+        // already over the row, VoiceOver and `tools control` could not press it.
+        LiveButton(tooltip: reason?.message ?? tooltip(top: top, playing: playing), enabled: reason == nil, pressable: true, action: press) {
             HStack(spacing: 4) {
                 Image(systemName: playing ? "pause.fill" : "play.fill")
                     .font(.system(size: 8.5, weight: .bold))

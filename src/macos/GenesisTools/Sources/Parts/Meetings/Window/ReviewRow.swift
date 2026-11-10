@@ -229,7 +229,8 @@ struct ReviewRowView: View {
                 .instantTooltip(row.decision?.reason.map { "Why: \($0)" } ?? "")
             Spacer(minLength: 6)
             if busy { ProgressView().controlSize(.small) }
-            LiveButton(tooltip: "Take this decision back for this row and edit it", enabled: !busy, action: { detail.revertAndEdit(row) }) {
+            LiveButton(tooltip: "Take this decision back for this row and edit it", enabled: !busy, pressable: true,
+                       action: { detail.revertAndEdit(row) }) {
                 Text("Revert and edit").font(.system(size: 12)).foregroundStyle(.secondary)
             }
             IconButton(systemName: "clock.arrow.circlepath", tooltip: "This row's history") { detail.openHistory(item: row.id) }
@@ -295,7 +296,7 @@ private struct ChoiceButton: View {
     let action: () -> Void
 
     var body: some View {
-        LiveButton(tooltip: choice.hint ?? tooltip, enabled: enabled, action: action) {
+        LiveButton(tooltip: choice.hint ?? tooltip, enabled: enabled, pressable: true, action: action) {
             HStack(spacing: 5) {
                 if let number {
                     Text(verbatim: "\(number)").font(.system(size: 10, weight: .semibold).monospacedDigit()).foregroundStyle(.tertiary)
