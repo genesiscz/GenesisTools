@@ -1,33 +1,21 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
-import {
-    claudeSubagentFiles,
-    claudeSubagentIdOf,
-    claudeSubagentsDir,
-} from "@genesiscz/utils/agent-sessions/readers/claude-paths";
-import { CLAUDE_DIR, PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
+import { CLAUDE_DIR } from "@genesiscz/utils/claude/projects";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import type { SessionToolCall, SessionTranscript, SessionTurn } from "./types";
+import { applyReplacement, fileToolVia, isShellTool } from "@genesiscz/utils/session-changes/tool-calls";
+import type { SessionToolCall, SessionTranscript, SessionTurn } from "@genesiscz/utils/session-changes/types";
+import { claudeSubagentFiles, claudeSubagentIdOf, claudeSubagentsDir } from "./claude-paths";
 
 const { log } = logger.scoped("session-changes");
 
-/** The harness file tools, by the `via` they produce. Codex/Grok names are folded in lower case. */
-const FILE_TOOLS: Readonly<Record<string, "edit" | "write" | "notebook">> = {
-    edit: "edit",
-    multiedit: "edit",
-    write: "write",
-    notebookedit: "notebook",
-};
-
-export function fileToolVia(name: string): "edit" | "write" | "notebook" | null {
-    return FILE_TOOLS[name.toLowerCase().replace(/_/g, "")] ?? null;
-}
-
-export function isShellTool(name: string): boolean {
-    const normalized = name.toLowerCase();
-    return normalized === "bash" || normalized === "shell" || normalized === "exec_command";
+/**
+ * The line of a Claude transcript where the turn `promptId` starts, as a fixed string to search the raw file for: the
+ * prompt row is the first line that carries it (`tools agents blame` reads a turn's prompt this way).
+ */
+export function claudeTurnPromptProbe(promptId: string): string {
+    return `"promptId":"${promptId}"`;
 }
 
 type Json = Record<string, unknown>;
@@ -47,20 +35,6 @@ function epoch(value: unknown): number | null {
 
     const ms = Date.parse(value);
     return Number.isNaN(ms) ? null : ms;
-}
-
-/** `old` replaced by `next` without `String.replace`, whose `$&` patterns would corrupt the text. */
-export function applyReplacement(source: string, old: string, next: string, all: boolean): string | null {
-    if (old.length === 0) {
-        return null;
-    }
-
-    if (all) {
-        return source.includes(old) ? source.split(old).join(next) : null;
-    }
-
-    const at = source.indexOf(old);
-    return at === -1 ? null : source.slice(0, at) + next + source.slice(at + old.length);
 }
 
 interface EditSpec {
@@ -240,7 +214,7 @@ export interface UnmatchedResult {
 }
 
 /**
- * What one file's lines leave for the merge to repeat (session-changes/fold.ts): a full parse reads the main file and
+ * What one file's lines leave for the merge to repeat (`claude-changes.ts`): a full parse reads the main file and
  * every sub-agent file into one state, and a file folded on its own cannot see the others.
  */
 export interface ParseHooks {
@@ -593,23 +567,6 @@ export function parseClaudeTranscript(sessionId: string, source: TranscriptSourc
     }
 
     return finishTranscript(sessionId, state, source.readBackup);
-}
-
-/** The main transcript of a Claude session, searched across every project directory. */
-export function findClaudeTranscript(sessionId: string, projectsDir: string = PROJECTS_DIR): string | null {
-    if (!/^[A-Za-z0-9-]+$/.test(sessionId) || !existsSync(projectsDir)) {
-        return null;
-    }
-
-    for (const dir of readdirSync(projectsDir)) {
-        const candidate = join(projectsDir, dir, `${sessionId}.jsonl`);
-
-        if (existsSync(candidate)) {
-            return candidate;
-        }
-    }
-
-    return null;
 }
 
 /** Read a Claude session's main and subagent transcripts from disk. */

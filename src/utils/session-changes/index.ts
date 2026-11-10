@@ -26,15 +26,7 @@ export {
 } from "./compute";
 export type { PathRuleContext } from "./rules";
 export { defaultTempDirs, pathExclusion, rootOf } from "./rules";
-export type { TranscriptSource } from "./transcript";
-export {
-    applyReplacement,
-    fileToolVia,
-    findClaudeTranscript,
-    isShellTool,
-    parseClaudeTranscript,
-    readClaudeTranscript,
-} from "./transcript";
+export { applyReplacement, fileToolVia, isShellTool } from "./tool-calls";
 export type {
     BlobStore,
     ChangeConfidence,

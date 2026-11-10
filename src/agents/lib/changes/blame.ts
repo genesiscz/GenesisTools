@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { claudeTurnPromptProbe } from "@genesiscz/utils/agent-sessions/readers/claude-changes-parse";
+import { canonicalClaudeTranscriptSync } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
 import { OBJECT_RETENTION_DAYS } from "@genesiscz/utils/agents/objects/maintain";
 import { listWorktrees } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { findClaudeTranscript } from "@genesiscz/utils/session-changes";
 import { Storage } from "@genesiscz/utils/storage";
 import { diffArrays } from "diff";
 import { harnessHookFacts } from "../hooks/payload";
@@ -324,8 +325,13 @@ export function changeEventsFor({
     return { events, logs: chosen.length };
 }
 
+/** The session's Claude transcript, the copy the Claude locator ranks first (never a title-only stub). */
+function claudeTranscriptOf(session: string): string | null {
+    return canonicalClaudeTranscriptSync(session) ?? null;
+}
+
 /** The prompts of these turns (user message uuids), from the session's Claude transcript, read once. */
-export function turnPrompts(session: string, turns: string[], find = findClaudeTranscript): Map<string, string> {
+export function turnPrompts(session: string, turns: string[], find = claudeTranscriptOf): Map<string, string> {
     const found = new Map<string, string>();
     const file = find(session);
 
@@ -342,7 +348,7 @@ export function turnPrompts(session: string, turns: string[], find = findClaudeT
             // The change log's turn is the prompt's `promptId`; its first row is the prompt itself.
             // The search stops there, where a JS read would load the whole transcript (often 100 MB+).
             // rg, when installed: macOS's BSD grep took 674 ms for one late turn in a 134 MB file, rg 40 ms.
-            const grep = spawnSync(SEARCH[0], [...SEARCH.slice(1), `"promptId":"${turn}"`, file], {
+            const grep = spawnSync(SEARCH[0], [...SEARCH.slice(1), claudeTurnPromptProbe(turn), file], {
                 timeout: GREP_TIMEOUT_MS,
                 maxBuffer: 16 * 1024 * 1024,
                 encoding: "utf8",
