@@ -6,10 +6,8 @@ import {
     newestPerLiveSurface,
     type ResolvedEntry,
     type TmuxPaneSurface,
-    ttyName,
 } from "@genesiscz/utils/cmux/live-surfaces";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
-import type { TmuxClientInfo, TmuxPaneInfo } from "@genesiscz/utils/tmux/sessions";
 import { isSessionAgentId, type SessionAgentId } from "./session-agents";
 import type { AdoptedSession } from "./session-close";
 import { commandRunsAgent } from "./tab-process";
@@ -20,6 +18,7 @@ export {
     type LiveAgentSurface,
     matchLiveAgentSurfaces,
     type TmuxPaneSurface,
+    tmuxPaneStillShown,
 } from "@genesiscz/utils/cmux/live-surfaces";
 
 /** The live-surface join (`@genesiscz/utils/cmux/live-surfaces`), with each harness's tab-title keys. */
@@ -131,39 +130,4 @@ export function ttyProcessesShowAgent(
 /** Do these command lines, one per line, show the agent? Its binary, or the `tools <agent>` launcher. */
 export function ttyRunsAgent(psArgs: string, agent: SessionAgentId): boolean {
     return psArgs.split("\n").some((line) => commandRunsAgent(line.trim(), agent));
-}
-
-/**
- * Does the surface still display the agent's tmux pane? Its tmux client must still show the pane's session, and
- * the pane must still be the session's visible pane on the same tty. The user may switch tmux windows or panes
- * at any time, and keystrokes into the surface go to whatever pane it shows then.
- */
-export function tmuxPaneStillShown(input: {
-    joined: TmuxPaneSurface;
-    surfaceTty: string | null;
-    panes: readonly TmuxPaneInfo[];
-    clients: readonly TmuxClientInfo[];
-}): { ok: true } | { ok: false; reason: string } {
-    const { joined } = input;
-    const surfaceTty = ttyName(input.surfaceTty);
-    const client = input.clients.find((entry) => surfaceTty !== null && ttyName(entry.tty) === surfaceTty);
-
-    if (!client || client.session !== joined.session) {
-        return { ok: false, reason: `the surface no longer shows the tmux session ${joined.session}` };
-    }
-
-    const pane = input.panes.find((entry) => entry.pane === joined.pane);
-
-    if (!pane || pane.session !== joined.session || ttyName(pane.tty) !== joined.paneTty) {
-        return { ok: false, reason: `tmux pane ${joined.pane} is no longer the agent's pane in ${joined.session}` };
-    }
-
-    if (!pane.visible) {
-        return {
-            ok: false,
-            reason: `tmux shows another pane of ${joined.session} now, not the agent's ${joined.pane}`,
-        };
-    }
-
-    return { ok: true };
 }

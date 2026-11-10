@@ -76,7 +76,8 @@ export interface LiveSessionReads {
     titles(query: string, provider: AccountProviderAlias): TitledSession[];
 }
 
-const EMPTY_TREE: CmuxTreeView = { caller: null, callerId: null, surfaces: new Map() };
+/** No surfaces: the tree when cmux answered that it has none, or did not answer a read that may go without it. */
+export const EMPTY_TREE: CmuxTreeView = { caller: null, callerId: null, surfaces: new Map() };
 
 /**
  * Which cmux surface shows each tmux pane. The listings are bounded; when tmux does not answer, no tmux-only session
