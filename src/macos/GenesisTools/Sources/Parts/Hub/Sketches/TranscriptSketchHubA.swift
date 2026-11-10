@@ -62,8 +62,8 @@ struct TranscriptSketchModeList: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 6))
-        // A dense row says its name itself; `.help` holds the longer description without an instant tooltip per row.
-        .help(mode.tooltip(waiting: waiting))
+        // The app's own tooltip (`.help` alone shows after a long delay and is easy to miss).
+        .instantTooltip("\(mode.tooltip(waiting: waiting)) (⌘\(index + 1))")
         .accessibilityLabel(Text(mode.title))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
@@ -86,13 +86,29 @@ enum TranscriptSketchModes {
 
 /// One subject header for the whole session detail (C17, Opus's "one subject header"): the title, status, model and
 /// account sit in the window's title bar row across every pane, where the PR detail already puts its header. The
-/// title gets the width left of the pane buttons (about 1,300 pt in a 2,056 pt window) instead of the transcript
-/// column's 716 pt; the transcript pane keeps only a slim row with the folder, branch, counters and actions.
+/// transcript pane keeps only a slim row with the folder, branch, counters and actions.
+///
+/// A title bar row starts right of the window's own title, and the hub's title ("Agents") is centred, so the row had
+/// only the right half of the window: the subject got less room than the pane's 716 pt and the forecast and a pane
+/// button were cut. Under this option the hub hides the window's title (the hook is in `runHub`, Hub/HubWindow.swift),
+/// so the row starts at the sidebar's edge and the title has about 1,300 pt in a 2,056 pt window.
 struct TranscriptSketchSubjectHeader<Trailing: View>: View {
     var model: HubModel
     let session: HubSession
     let trailing: Trailing
     @ObservedObject private var stuck = HubStuckStore.shared
+    /// What the open session does now, from its live tail: the same source as the session list's dot.
+    @ObservedObject private var live = HubLiveActivityStore.shared
+
+    /// The status in the pane header's own words (Working, Waiting for you, Idle, Ended), not "live" for every
+    /// running process: a session that waits for an answer must say so in the one header the window has.
+    private var status: (word: String, color: Color) {
+        switch live.work[session.sessionId] {
+        case .working: return ("Working", ReviewPalette.added)
+        case .waiting: return ("Waiting for you", ReviewPalette.modified)
+        case nil: return session.isLive ? ("Idle", Color.white.opacity(0.45)) : ("Ended", Color.white.opacity(0.25))
+        }
+    }
 
     init(model: HubModel, session: HubSession, @ViewBuilder trailing: () -> Trailing) {
         self.model = model
@@ -111,18 +127,20 @@ struct TranscriptSketchSubjectHeader<Trailing: View>: View {
                         // The ending tells similar sessions apart ("… wave 1" and "… wave 1b").
                         .truncationMode(.middle)
                         .layoutPriority(1)
+                    let status = status
                     Circle()
-                        .fill(session.isLive ? ReviewPalette.added : Color.white.opacity(0.25))
+                        .fill(status.color)
                         .frame(width: 7, height: 7)
+                        .accessibilityHidden(true)
                     Group {
                         if session.isLive {
-                            Text("live")
+                            Text(verbatim: status.word)
                         } else {
-                            LiveAgo(date: session.lastActivity, style: .brief) { "idle · \($0)" }
+                            LiveAgo(date: session.lastActivity, style: .brief) { "\(status.word) · \($0)" }
                         }
                     }
-                    .font(.system(size: 11.5))
-                    .foregroundColor(ReviewPalette.dim)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(session.isLive && live.work[session.sessionId] != nil ? status.color : ReviewPalette.dim)
                     .fixedSize()
                     if let sessionModel = session.model, !sessionModel.isEmpty {
                         SessionPill(text: sessionModel).fixedSize()
