@@ -66,8 +66,8 @@ export interface PostIssueDeps {
 
 /**
  * Opens an issue: the title and body as given, or with `redact` first run through the personal-data list and the
- * secrets redactor (what was replaced is counted, never printed). `dryRun` returns what would be posted and never
- * reaches GitHub.
+ * secrets redactor (what was replaced is counted, never printed). With `redact`, a marker JavaScript cannot compile
+ * stops the post before GitHub is called. `dryRun` returns what would be posted and never reaches GitHub.
  */
 export async function postIssue(input: PostIssueInput, deps: PostIssueDeps = {}): Promise<PostIssueResult> {
     const [owner, name, ...rest] = input.repo.split("/");
@@ -89,6 +89,14 @@ export async function postIssue(input: PostIssueInput, deps: PostIssueDeps = {})
         const options = { markers, homeDir: deps.homeDir ?? homedir(), counts: replaced, skipped };
         title = redactIssueText(title, options);
         body = redactIssueText(body, options);
+
+        // A marker JavaScript cannot compile was not applied, so its personal data is still in the text: refuse to
+        // post. A dry run still returns `skippedMarkers`, so the list can be fixed first.
+        if (skipped.size > 0 && !input.dryRun) {
+            throw new Error(
+                `--redact cannot apply these personal-data markers, so nothing was posted: ${[...skipped].join(", ")}`
+            );
+        }
     }
 
     const labels = input.labels ?? [];

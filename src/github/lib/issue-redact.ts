@@ -61,8 +61,8 @@ export function emptyCounts(): RedactionCounts {
 }
 
 /**
- * Replaces the personal-data markers (`[PRIVATE_n]`), then the secrets redactor's kinds (keys, tokens, emails, IP
- * addresses, the home folder) in `text`, adding what it replaced to `counts`.
+ * Replaces the personal-data markers (`[PRIVATE_n]`), then the kinds in `ISSUE_TYPES` (keys, tokens, emails, the home
+ * folder) in `text`, adding what it replaced to `counts`. IP addresses and phone numbers are not redacted.
  */
 export function redactIssueText(
     text: string,

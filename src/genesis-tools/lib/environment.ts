@@ -96,11 +96,11 @@ export function gatherEnvironment(sources: EnvironmentSources = realSources()): 
             commit: manifest.sourceCommit,
             shortCommit: manifest.sourceCommit.slice(0, 12),
             commitDate,
-            commitAge: commitDate ? `${age(now, commitDate, false)} old` : null,
+            commitAge: commitDate ? `${age({ now, iso: commitDate, minutes: false })} old` : null,
             branch: manifest.sourceBranch ?? null,
             dirty: manifest.sourceDirty === true,
             builtAt: manifest.builtAt ?? null,
-            builtAge: manifest.builtAt ? `${age(now, manifest.builtAt, true)} ago` : null,
+            builtAge: manifest.builtAt ? `${age({ now, iso: manifest.builtAt, minutes: true })} ago` : null,
             checkout: manifest.sourceRoot ?? null,
         };
     }
@@ -133,6 +133,7 @@ export function environmentMarkdown(report: EnvironmentReport): string {
         const branch = app.branch ? ` on \`${app.branch}\`` : "";
         const committed = app.commitDate ? `, committed ${time(app.commitDate)} (${app.commitAge})` : "";
         lines.push(`- **GenesisTools build:** ${build}${branch}${committed}`);
+
         if (app.builtAt) {
             lines.push(`- **Built:** ${time(app.builtAt)} (${app.builtAge})`);
         }
@@ -150,6 +151,7 @@ export function environmentMarkdown(report: EnvironmentReport): string {
         .filter(Boolean)
         .join(" ");
     lines.push(`- **macOS:** ${[macos, report.machine.chip, report.machine.arch].filter(Boolean).join(", ")}`);
+
     if (report.grants.length > 0) {
         lines.push(`- **Privacy grants:** ${report.grants.map((g) => `${g.name} ${g.state}`).join(", ")}`);
     }
@@ -232,6 +234,7 @@ export function issueEnvironmentValues(report: EnvironmentReport): Record<string
         build.push(
             `commit ${app.shortCommit}${app.dirty ? " with uncommitted Swift changes (+dirty)" : ""} on ${app.branch ?? "?"}`
         );
+
         if (app.builtAt) {
             build.push(`built ${time(app.builtAt)} (${app.builtAge})`);
         }
@@ -266,7 +269,7 @@ export function issueEnvironmentValues(report: EnvironmentReport): Record<string
 }
 
 /** "3 h", "2 d", "12 min"; with `minutes`, "1 h 27 min". */
-function age(now: Date, iso: string, minutes: boolean): string {
+function age({ now, iso, minutes }: { now: Date; iso: string; minutes: boolean }): string {
     const ms = Math.max(0, now.getTime() - new Date(iso).getTime());
     const totalMinutes = Math.floor(ms / 60_000);
     const hours = Math.floor(totalMinutes / 60);

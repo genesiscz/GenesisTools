@@ -47,7 +47,7 @@ Use `bun run test`, never bare `bun test`. The wrapper repairs the dependency tr
 
 1. Branch from `origin/master`.
 2. Keep one problem per pull request.
-3. Run `bash scripts/ci/placeholder-check.sh`. It scans for personal data and secrets, and the pre-push hook runs it too.
+3. Run `bash scripts/ci/placeholder-check.sh`. It scans the tracked files for the patterns in a local marker list that you supply: one `label<TAB>pattern` line per name, host or value that must not be published, in `~/.genesis-tools/placeholder-check/markers.txt` or the file that `$PLACEHOLDER_MARKERS_FILE` names. Without that list it scans nothing and still exits 0. The pre-push hook runs it too. It finds only what the list names, so also read your diff yourself for personal data and secrets.
 4. Fill in the pull request template: what changed and why, how you tested it, screenshots for UI changes.
 5. Answer review comments with a fix or a reason.
 

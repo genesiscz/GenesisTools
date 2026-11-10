@@ -32,8 +32,10 @@ const BODY = [
 const MARKERS = [
     { label: "real-name", pattern: "\\bWile E\\. Coyote\\b" },
     { label: "host", pattern: "acme-corp\\.example" },
-    { label: "broken", pattern: "(unclosed" },
 ];
+
+/** A marker JavaScript cannot compile (the list is PCRE, so `(?i)` and the like fail). */
+const BROKEN = { label: "broken", pattern: "(unclosed" };
 
 describe("tools github issues post", () => {
     test("posts the title, body and labels to the repository and returns the issue's number and URL", async () => {
@@ -73,7 +75,25 @@ describe("tools github issues post", () => {
         expect(String(sent?.body)).toContain("at 12:50:46");
         expect(result.replaced).toMatchObject({ paths: 1, emails: 1, markers: 3 });
         expect(result.replaced.tokens + result.replaced.keys).toBeGreaterThanOrEqual(1);
-        expect(result.skippedMarkers).toEqual(["broken"]);
+        expect(result.skippedMarkers).toEqual([]);
+    });
+
+    test("--redact with a marker JavaScript cannot compile posts nothing, and a dry run names the marker", async () => {
+        const posted: Posted[] = [];
+        const deps = { client: () => client(posted), markers: () => [...MARKERS, BROKEN], homeDir: "/Users/alice" };
+
+        await expect(
+            postIssue({ repo: "shop/storefront", title: "T", body: BODY, redact: true }, deps)
+        ).rejects.toThrow("nothing was posted: broken");
+        expect(posted).toEqual([]);
+
+        const dry = await postIssue(
+            { repo: "shop/storefront", title: "T", body: BODY, redact: true, dryRun: true },
+            deps
+        );
+        expect(dry.posted).toBe(false);
+        expect(dry.skippedMarkers).toEqual(["broken"]);
+        expect(posted).toEqual([]);
     });
 
     test("--dry-run returns what would be posted and never calls GitHub", async () => {

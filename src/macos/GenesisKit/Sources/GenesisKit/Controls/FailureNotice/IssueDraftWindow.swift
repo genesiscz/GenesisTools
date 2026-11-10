@@ -166,9 +166,14 @@ public final class IssueDraftWindow: NSObject, NSWindowDelegate {
     public let panel: IssueDraftPanel
     public let model: IssueDraftModel
 
-    /// Opens the draft beside `near` (the failure notice), or centred on the pointer's screen.
+    /// Opens the draft beside `near` (the failure notice), or centred on the pointer's screen. A window that holds work
+    /// (a post in flight, or an edited draft) comes to the front instead of being replaced; its Cancel discards it.
     @discardableResult
     public static func show(_ draft: IssueDraft, poster: IssuePosting, near: NSWindow? = nil) -> IssueDraftWindow {
+        if let current, current.model.holdsWork {
+            current.panel.makeKeyAndOrderFront(nil)
+            return current
+        }
         current?.panel.orderOut(nil)
         let window = IssueDraftWindow(model: IssueDraftModel(draft: draft, poster: poster))
         current = window
