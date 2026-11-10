@@ -1,10 +1,10 @@
 import { enhanceHelp, isInteractive } from "@genesiscz/utils/cli";
 import { configureLogger, logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
-import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { clackBackend } from "@genesiscz/utils/prompts/p/clack-backend";
 
 // Use inquirer backend for this tool
-p.setBackend(inquirerBackend);
+p.setBackend(clackBackend);
 
 import { runTool } from "@genesiscz/utils/cli";
 import { Command, Option } from "commander";

@@ -3,10 +3,10 @@ import { runTool } from "@genesiscz/utils/cli";
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
-import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { clackBackend } from "@genesiscz/utils/prompts/p/clack-backend";
 
 // Use inquirer backend for this tool
-p.setBackend(inquirerBackend);
+p.setBackend(clackBackend);
 
 import { Command } from "commander";
 import { CLAUDE_REGISTRARS } from "./registrars";
