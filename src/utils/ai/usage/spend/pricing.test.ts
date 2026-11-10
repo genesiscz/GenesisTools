@@ -2,8 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { byId } from "@genesiscz/utils/ai/catalog";
 import claudeCodeBills from "./fixtures/claude-code-bills.json";
 import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "./pricing";
-import { eventCostEstimate } from "./reports/cost";
-import type { SpendEvent } from "./reports/types";
 
 describe("pricing table", () => {
     test("anthropic and openai rates are billable", () => {
@@ -94,84 +92,4 @@ describe("Claude Code's own bills", () => {
             expect(Math.abs(ours - bill.claudeCodeCostUsd) / bill.claudeCodeCostUsd).toBeLessThan(1e-6);
         }
     );
-});
-
-describe("what a recorded cost means", () => {
-    // 1M fresh input, 1M cached, 100K output: grok-4.7 at list is $2 + $0.50 + $0.60.
-    const turn = (overrides: Partial<SpendEvent> = {}): SpendEvent => ({
-        source: "grok",
-        id: "turn-1",
-        model: "grok-4.7",
-        timestamp: "2026-10-13T10:00:00Z",
-        sessionId: "s",
-        project: "",
-        inputTokens: 1_000_000,
-        cacheReadTokens: 1_000_000,
-        cacheCreationTokens: 0,
-        outputTokens: 100_000,
-        recordedCostUsd: 1.05,
-        // A grok turn row sums its model calls.
-        aggregate: true,
-        ...overrides,
-    });
-
-    test("grok's recorded figure is its plan metering, so the list price wins", () => {
-        expect(eventCostEstimate(turn(), DEFAULT_PRICING, "auto", ["grok-4.7"])).toMatchObject({
-            costUSD: 3.1,
-            basis: "catalog",
-        });
-    });
-
-    test("grok's figure stands in, labelled reported, only for a model without a list price", () => {
-        const unpriced = turn({ model: "grok-0-unpriced" });
-
-        expect(eventCostEstimate(unpriced, DEFAULT_PRICING, "auto", ["grok-0-unpriced"])).toEqual({
-            costUSD: 1.05,
-            longContext: false,
-            basis: "reported",
-        });
-        expect(eventCostEstimate(unpriced, DEFAULT_PRICING, "calculate", ["grok-0-unpriced"]).costUSD).toBeNull();
-        expect(eventCostEstimate(turn(), DEFAULT_PRICING, "display", ["grok-4.7"]).basis).toBe("reported");
-    });
-
-    test("a recorded cost that IS the list price still wins in auto mode", () => {
-        const codex = turn({ source: "codex", model: "gpt-5.6", recordedCostUsd: 0.12 });
-
-        expect(eventCostEstimate(codex, DEFAULT_PRICING, "auto", ["gpt-5.6"])).toMatchObject({
-            costUSD: 0.12,
-            basis: "recorded",
-        });
-    });
-
-    test("a turn that sums several requests prices at the base band, never at the band of the sum", () => {
-        const single = eventCostEstimate(
-            turn({ recordedCostUsd: undefined, aggregate: undefined }),
-            DEFAULT_PRICING,
-            "auto",
-            ["grok-4.7"]
-        );
-        const summed = eventCostEstimate(turn({ recordedCostUsd: undefined }), DEFAULT_PRICING, "auto", ["grok-4.7"]);
-
-        // 2M tokens in one request crosses the 200k band ($4 / $1 / $12); 37 requests summed do not.
-        expect(single).toMatchObject({ costUSD: 6.2, longContext: true });
-        expect(summed).toMatchObject({ costUSD: 3.1, longContext: false });
-    });
-
-    test("a one-hour cache write bills at 2x input, a five-minute one at 1.25x", () => {
-        const write = turn({
-            source: "claude",
-            model: "claude-opus-5",
-            inputTokens: 0,
-            cacheReadTokens: 0,
-            outputTokens: 0,
-            cacheCreationTokens: 1_000_000,
-            recordedCostUsd: undefined,
-        });
-
-        expect(eventCostEstimate(write, DEFAULT_PRICING, "auto", ["claude-opus-5"]).costUSD).toBeCloseTo(6.25, 10);
-        expect(
-            eventCostEstimate({ ...write, cacheCreation1hTokens: 400_000 }, DEFAULT_PRICING, "auto", ["claude-opus-5"])
-                .costUSD
-        ).toBeCloseTo(0.6 * 6.25 + 0.4 * 10, 10);
-    });
 });

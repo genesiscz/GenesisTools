@@ -21,6 +21,10 @@ export interface NativeCall extends CallTokens {
     at: string | null;
     /** `fast` for a Claude fast-mode call, which bills above the standard rates; absent for a standard call. */
     serviceTier?: string;
+    /** The one-hour share of `cacheWrite` (billed at 2x input, not 1.25x); absent when there is none. */
+    cacheWrite1h?: number;
+    /** The cost the file recorded for the call, when it recorded one. */
+    recordedCostUsd?: number;
 }
 
 /** When a tool call started and when its result arrived, from the native file's timestamps. */

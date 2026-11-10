@@ -10,10 +10,11 @@ import { ClaudeWorkerStore } from "@app/claude/lib/worker/store";
 import { turnLogPath } from "@app/grok/lib/paths";
 import { GrokSessionStore } from "@app/grok/lib/store";
 import { findCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
-import { aggregate } from "@genesiscz/utils/ai/usage/spend/aggregate";
+import { aggregate, toUsage } from "@genesiscz/utils/ai/usage/spend/aggregate";
 import { loadPricing } from "@genesiscz/utils/ai/usage/spend/config";
 import { isolateAgentHomeEnv } from "@genesiscz/utils/ai/usage/spend/drivers/test-env";
 import { parseTranscriptLine } from "@genesiscz/utils/ai/usage/spend/parse";
+import { priceUsage } from "@genesiscz/utils/ai/usage/spend/priced-usage";
 import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@genesiscz/utils/ai/usage/spend/pricing";
 import { loadEvents } from "@genesiscz/utils/ai/usage/spend/reports/load";
 import { loadEventsParallel } from "@genesiscz/utils/ai/usage/spend/reports/load-parallel";
@@ -27,7 +28,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
-import { toUsageEvent, transcriptCutoffMs } from "./lib/register";
+import { toUsageEvents, transcriptCutoffMs } from "./lib/register";
 import { renderSummary } from "./lib/render";
 import { resolveSessionFlag } from "./lib/reports/commands";
 import { planWorkerBackfill, planWorkerReprice } from "./lib/workers/backfill";
@@ -100,7 +101,7 @@ describe("parseTranscriptLine", () => {
         expect(ev?.cacheCreationTokens).toBe(106_816);
         expect(ev?.cacheCreation1hTokens).toBe(106_816);
         // claude-opus-5 at $5 / $25 / $0.50 read / $10 one-hour write: Claude Code's own $1.861528.
-        expect(ev && aggregate({ events: [ev], pricing: DEFAULT_PRICING, now: new Date() }).total.cost).toBeCloseTo(
+        expect(ev && aggregate({ events: [ev], price: claudePrice, now: new Date() }).total.cost).toBeCloseTo(
             1.861528,
             6
         );
@@ -214,6 +215,11 @@ describe("resolveSince", () => {
     });
 });
 
+/** The aggregate's pricer for these Claude transcript events. */
+function claudePrice(event: UsageEvent): number | null {
+    return priceUsage(toUsage(event, "claude")).costUSD;
+}
+
 function ev(over: Partial<UsageEvent>): UsageEvent {
     return {
         messageId: "m",
@@ -234,7 +240,7 @@ describe("aggregate", () => {
 
     it("dedups by messageId — identical triplicate events count once", () => {
         const dup = ev({ messageId: "dup", inputTokens: 100, outputTokens: 10 });
-        const report = aggregate({ events: [dup, { ...dup }, { ...dup }], pricing: DEFAULT_PRICING, now });
+        const report = aggregate({ events: [dup, { ...dup }, { ...dup }], price: claudePrice, now });
         expect(report.total.tokens.input).toBe(100);
         expect(report.total.tokens.output).toBe(10);
     });
@@ -260,7 +266,7 @@ describe("aggregate", () => {
                 cacheReadTokens: 0,
             }),
         ];
-        const report = aggregate({ events, pricing: DEFAULT_PRICING, now });
+        const report = aggregate({ events, price: claudePrice, now });
         // opus: 5+25+6.25+0.5 = 36.75 ; sonnet: 3 ; total 39.75
         expect(report.total.cost).toBeCloseTo(39.75, 6);
         expect(report.days.map((d) => d.day)).toEqual(["2026-06-01", "2026-06-02"]);
@@ -270,7 +276,7 @@ describe("aggregate", () => {
     it("computes cache-hit rate = cacheRead / (input + cacheRead)", () => {
         const report = aggregate({
             events: [ev({ messageId: "c", inputTokens: 100, cacheReadTokens: 900 })],
-            pricing: DEFAULT_PRICING,
+            price: claudePrice,
             now,
         });
         expect(report.total.cacheHitRate).toBeCloseTo(0.9, 6);
@@ -279,7 +285,7 @@ describe("aggregate", () => {
     it("counts tokens but $0 for an unpriced model, marked priced=false", () => {
         const report = aggregate({
             events: [ev({ messageId: "u", model: "glm-4.6", inputTokens: 5000 })],
-            pricing: DEFAULT_PRICING,
+            price: claudePrice,
             now,
         });
         const m = report.models.find((x) => x.model === "glm-4.6");
@@ -298,7 +304,7 @@ describe("aggregate", () => {
         ];
         const r = aggregate({
             events,
-            pricing: DEFAULT_PRICING,
+            price: claudePrice,
             now,
             sinceDay: "2026-05-15",
             project: "foo",
@@ -316,7 +322,7 @@ describe("aggregate", () => {
         withTimeZone("Pacific/Kiritimati", () => {
             const r = aggregate({
                 events: [ev({ messageId: "tz", timestamp: "2026-06-01T23:30:00.000Z", inputTokens: 1 })],
-                pricing: DEFAULT_PRICING,
+                price: claudePrice,
                 now,
             });
             expect(r.days[0].day).toBe("2026-06-01");
@@ -565,7 +571,7 @@ describe("renderSummary", () => {
                 ev({ messageId: "r1", model: "claude-opus-4-8", inputTokens: 1_000_000, outputTokens: 1_000_000 }),
                 ev({ messageId: "r2", model: "glm-4.6", project: "/p/Bar", inputTokens: 1000 }),
             ],
-            pricing: DEFAULT_PRICING,
+            price: claudePrice,
             now: new Date("2026-06-02T00:00:00.000Z"),
         });
         const text = renderSummary(report);
@@ -644,7 +650,7 @@ describe("session --id prefix", () => {
     });
 });
 
-describe("toUsageEvent", () => {
+describe("toUsageEvents", () => {
     const now = new Date("2026-06-02T00:00:00.000Z");
     const grok: SpendEvent = {
         source: "grok",
@@ -663,15 +669,14 @@ describe("toUsageEvent", () => {
     const opus = (1000 * 5 + 500 * 25) / 1_000_000;
 
     it("keeps a recorded cost for a model no rate table lists", () => {
-        const report = aggregate({ events: [toUsageEvent(grok, DEFAULT_PRICING)], pricing: DEFAULT_PRICING, now });
+        const report = aggregate({ ...toUsageEvents([grok], DEFAULT_PRICING), now });
 
         expect(report.total.cost).toBeCloseTo(0.42, 9);
         expect(report.models[0].priced).toBe(true);
     });
 
     it("keeps the same id from two sources apart", () => {
-        const events = [toUsageEvent(grok, DEFAULT_PRICING), toUsageEvent(claude, DEFAULT_PRICING)];
-        const report = aggregate({ events, pricing: DEFAULT_PRICING, now });
+        const report = aggregate({ ...toUsageEvents([grok, claude], DEFAULT_PRICING), now });
 
         expect(report.total.totalTokens).toBe(3000);
         expect(report.total.cost).toBeCloseTo(0.42 + opus, 9);
@@ -680,8 +685,7 @@ describe("toUsageEvent", () => {
     it("prices an event with no recorded cost from the table, and leaves an unlisted model unpriced", () => {
         const unlisted = { ...claude, id: "u", model: "unlisted-model" };
         const report = aggregate({
-            events: [toUsageEvent(claude, DEFAULT_PRICING), toUsageEvent(unlisted, DEFAULT_PRICING)],
-            pricing: DEFAULT_PRICING,
+            ...toUsageEvents([claude, unlisted], DEFAULT_PRICING),
             now,
         });
 

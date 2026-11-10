@@ -6,9 +6,9 @@ import { loadPricing } from "@genesiscz/utils/ai/usage/spend/config";
 import { AGENT_IDS, spendAccountRowId } from "@genesiscz/utils/ai/usage/spend/drivers";
 import { collectSeriesEvents } from "@genesiscz/utils/ai/usage/spend/events-cache";
 import { buildMonitorReport, localDayString, type MonitorReport } from "@genesiscz/utils/ai/usage/spend/monitor";
+import { priceUsage } from "@genesiscz/utils/ai/usage/spend/priced-usage";
 import { prof } from "@genesiscz/utils/ai/usage/spend/prof";
-import { eventCostEstimate } from "@genesiscz/utils/ai/usage/spend/reports/cost";
-import { candidatesFor } from "@genesiscz/utils/ai/usage/spend/reports/load";
+import { spendEventUsage } from "@genesiscz/utils/ai/usage/spend/reports/cost";
 import { loadEventsParallel } from "@genesiscz/utils/ai/usage/spend/reports/load-parallel";
 import { SOURCE_IDS, type SourceId, type SpendEvent } from "@genesiscz/utils/ai/usage/spend/reports/types";
 import { buildSpendSeries, type TranscriptGrain } from "@genesiscz/utils/ai/usage/spend/series";
@@ -47,11 +47,7 @@ const DEFAULT_SINCE = "30d";
  * forking the aggregator — which is what kept `discover.ts` alive as a second
  * discovery stack that missed `~/.config/claude/projects` and `CLAUDE_CONFIG_DIR`.
  */
-export function toUsageEvent(event: SpendEvent, pricing: PricingTable): UsageEvent {
-    // Priced like the ccusage reports: a recorded charge wins, then the source's own candidate
-    // ladder and service tier. Grok records `costUsdTicks` and is in no rate table, so without this it reads $0.
-    const estimate = eventCostEstimate(event, pricing, "auto", candidatesFor(event));
-
+export function toUsageEvent(event: SpendEvent): UsageEvent {
     return {
         // The loader keeps the same id from two sources apart, so the aggregator must too.
         messageId: `${event.source}:${event.id}`,
@@ -63,8 +59,29 @@ export function toUsageEvent(event: SpendEvent, pricing: PricingTable): UsageEve
         outputTokens: event.outputTokens,
         cacheCreationTokens: event.cacheCreationTokens,
         cacheReadTokens: event.cacheReadTokens,
-        costUsd: estimate.costUSD ?? undefined,
     };
+}
+
+/**
+ * The aggregate's events and their pricer. Each event is priced from the spend event it came from, as the ccusage
+ * reports price it (`priceUsage`): its harness's ladder, service tier, one-hour writes and recorded-cost rule.
+ */
+export function toUsageEvents(
+    loaded: readonly SpendEvent[],
+    pricing: PricingTable
+): { events: UsageEvent[]; price: (event: UsageEvent) => number | null } {
+    const spendOf = new Map<UsageEvent, SpendEvent>();
+    const events = loaded.map((spend) => {
+        const event = toUsageEvent(spend);
+        spendOf.set(event, spend);
+        return event;
+    });
+    const price = (event: UsageEvent): number | null => {
+        const spend = spendOf.get(event);
+        return spend ? priceUsage(spendEventUsage(spend), { table: pricing }).costUSD : null;
+    };
+
+    return { events, price };
 }
 
 /** Oldest transcript mtime that can still hold an event on `sinceDay`, with the same 3-day margin as the ccusage reports. */
@@ -96,12 +113,12 @@ async function buildReport(opts: SpendOpts, view: SpendView, sources: SourceId[]
     const loaded = await prof.measureAsync("load-events", () =>
         loadEventsParallel({ home: homedir(), sources, minMtimeMs: transcriptCutoffMs(sinceDay) })
     );
-    const events = loaded.map((event) => toUsageEvent(event, pricing));
+    const { events, price } = toUsageEvents(loaded, pricing);
 
     const parsedTop = opts.top ? Number.parseInt(opts.top, 10) : 10;
     const top = Number.isInteger(parsedTop) && parsedTop > 0 ? parsedTop : 10;
     return prof.measure("aggregate", () =>
-        aggregate({ events, pricing, now, sinceDay, model: opts.model, project: opts.project, top })
+        aggregate({ events, price, now, sinceDay, model: opts.model, project: opts.project, top })
     );
 }
 
