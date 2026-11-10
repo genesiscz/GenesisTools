@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Storage } from "@genesiscz/utils/storage";
 import { Command } from "commander";
 import { registerConfigCommand, runConfigurationMenu } from "./commands/config";
@@ -47,6 +47,7 @@ program.action(async () => {
             { value: "send", label: "Send raw magic packet" },
         ],
         initialValue: "wake",
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {
