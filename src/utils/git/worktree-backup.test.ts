@@ -38,6 +38,8 @@ describe("worktree backup", () => {
         repo.write({ file: "src/feature.txt", content: "one\nstaged only\n", cwd: dirty });
         await repo.git(["add", "src/feature.txt"], { cwd: dirty });
         repo.write({ file: "src/feature.txt", content: "one\n", cwd: dirty });
+        // A split index names a sharedindex.<hash> file beside it: the staged proof must still read it.
+        await repo.git(["update-index", "--split-index"], { cwd: dirty });
         repo.write({ file: "notes.txt", content: "untracked\n", cwd: dirty });
         repo.write({ file: ".env.local", content: "TOKEN=fixture\n", cwd: dirty });
         repo.write({ file: "node_modules/x/index.js", content: "module.exports = 1;\n", cwd: dirty });

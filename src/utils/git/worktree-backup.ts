@@ -1023,6 +1023,24 @@ async function proveUncommitted({
 }
 
 /**
+ * A split index (`core.splitIndex`, `git update-index --split-index`) keeps most entries in a `sharedindex.<hash>`
+ * file beside it, and the copied index names that file. Git looks for it next to the index file and in the
+ * repository's git folder, so each one is copied to both places in the scratch repository; without it `write-tree`
+ * on the copy fails even for a valid staged patch. The user's files are only read.
+ */
+function copySharedIndexes({ gitdir, tmp }: { gitdir: string; tmp: string }): void {
+    for (const name of readdirSync(gitdir)) {
+        if (!name.startsWith("sharedindex.")) {
+            continue;
+        }
+
+        for (const folder of [tmp, join(tmp, ".git")]) {
+            copyFileSync(join(gitdir, name), join(folder, name));
+        }
+    }
+}
+
+/**
  * Applies the staged patch to a clean index of HEAD and compares its tree with the tree of a copy of the worktree's
  * real index. Both trees are written in the scratch repository, so the user's object store gets nothing.
  */
@@ -1040,6 +1058,7 @@ async function proveStaged({
     const built = { GIT_INDEX_FILE: join(tmp, "staged-index") };
     const real = { GIT_INDEX_FILE: join(tmp, "real-index") };
     copyFileSync(join(gitdir, "index"), real.GIT_INDEX_FILE);
+    copySharedIndexes({ gitdir, tmp });
     const read = await proofGit({ cwd: tmp, args: ["read-tree", head], env: built });
 
     if (!read.success) {
