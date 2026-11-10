@@ -611,7 +611,10 @@ export function registerItemCommands(program: Command): void {
             "--word-check <provider>",
             `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
         )
-        .option("--json", "print the new items")
+        .option(
+            "--json",
+            "print the new items as a JSON array (the retired ids are not in it; items --json shows them)"
+        )
         .action(suggest);
 
     program

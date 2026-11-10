@@ -91,6 +91,25 @@ describe("link: one source meeting, one record (MC1)", () => {
         ).not.toThrow();
     });
 
+    test("a refresh reaches a record that holds the source meeting already, even beside another holder", async () => {
+        const { store, first, second } = await twoRecords();
+        await store.update(second, { command: "test", change: "second link" }, (record) => {
+            record.sources.wisprflow = { meetingId: "7e900336-aaaa" };
+        });
+        const guard = (targetId: string, refresh?: boolean) => () =>
+            assertSourceFree({ store, sourceId: "wisprflow", sourceMeetingId: "7e900336-aaaa", targetId, refresh });
+
+        expect(guard(first, true)).not.toThrow();
+        expect(guard(second, true)).not.toThrow();
+        expect(guard(second)).toThrow(MeetingsConflictError);
+
+        const third = await store.create(
+            { title: "Other", start: "2026-11-05T15:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "created" }
+        );
+        expect(guard(third.id, true)).toThrow(MeetingsConflictError);
+    });
+
     test("a holder is matched by the whole id, never by a prefix", async () => {
         const { store } = await twoRecords();
 
@@ -288,5 +307,19 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
             mergeMeetings({ store: same.store, fromId: same.from, intoId: same.into, inbox: same.inbox })
         ).rejects.toThrow("frames/14-03-00-000-d1.jpg is in both records");
         expect(readdirSync(join(same.store.folder(same.from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
+    });
+
+    test("a row file with a half-written line is refused before any frame moves, naming the file and line", async () => {
+        const { store, from, into, inbox, backupRoot } = await call();
+        const ocr = join(store.folder(from), "ocr.jsonl");
+        appendFileSync(ocr, '{"file":"frames/cut');
+
+        await expect(mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot })).rejects.toThrow(
+            `${ocr}:2 is not a JSON row`
+        );
+        expect(readdirSync(join(store.folder(from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
+        expect(readdirSync(join(store.folder(into), "frames"))).toEqual(["14-29-25-000-d1.jpg"]);
+        expect(store.read(from)?.id).toBe(from);
+        expect(existsSync(backupRoot)).toBe(false);
     });
 });

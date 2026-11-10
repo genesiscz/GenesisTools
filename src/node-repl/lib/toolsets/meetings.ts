@@ -112,9 +112,9 @@ const suggest = defineMethod({
     name: "items.suggest",
     params: z.object({ rules: z.array(z.string()).optional() }).strict(),
     result: z.unknown(),
-    resultName: "{ fresh: items.list rows, warnings }",
+    resultName: "{ fresh: items.list rows, retired: string[], warnings }",
     effect: "reversible",
-    doc: `Run the rules on the transcript and add what they find as suggested items, in one save. rules: any of ${SUGGEST_RULES.join(", ")} (default all). A word check that cannot run is a warning.`,
+    doc: `Run the rules on the transcript and add what they find as suggested items, in one save. rules: any of ${SUGGEST_RULES.join(", ")} (default all). \`retired\` names the suggested items the dictionary or the slang rule settles now (rejected in the same save). A word check that cannot run is a warning.`,
 });
 const decide = {
     result: z.unknown(),
@@ -749,13 +749,13 @@ export class MeetingsToolset extends ReplToolset {
                         throw new Error(`Unknown rule set ${unknown.join(", ")}. Known: ${SUGGEST_RULES.join(", ")}`);
                     }
 
-                    const { fresh, warnings } = await runSuggest({
+                    const { fresh, retired, warnings } = await runSuggest({
                         store,
                         record: current(),
                         rules: asked.filter(isSuggestRule),
                     });
                     const record = current();
-                    return { fresh: fresh.map((item) => itemRow(record, item)), warnings };
+                    return { fresh: fresh.map((item) => itemRow(record, item)), retired, warnings };
                 },
                 confirm: decideWith("confirmed"),
                 reject: decideWith("rejected"),

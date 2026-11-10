@@ -15,6 +15,18 @@ enum MeetingsPreferences {
     }
     /// Where a transcript time plays: in this window (ffplay with no window of its own, which the window's player bar
     /// pauses and stops), or in the player the meetings config names (VLC first, with its own window and controls).
+    /// The Speakers tab's order: the most spoken first (in the CLI's order a label with 7 turns stood above one with
+    /// 427), or the order the transcript first names them, as `tools meetings speakers stats` lists them.
+    enum SpeakerOrder: String, CaseIterable {
+        case spoken, transcript
+
+        func ordered(_ speakers: [SpeakerStat]) -> [SpeakerStat] {
+            switch self {
+            case .spoken: speakers.sorted { $0.spokenSec > $1.spokenSec }
+            case .transcript: speakers
+            }
+        }
+    }
     enum Player: String, CaseIterable {
         case window, app
         /// The `--player` the window passes to `tools meetings play`; nil leaves the config's choice.
@@ -28,6 +40,7 @@ enum MeetingsPreferences {
     static let undoSecondsKey = "meetings.items.undoSeconds"
     static let typedAnswerKey = "meetings.questions.typedAnswer"
     static let playerKey = "meetings.playback.player"
+    static let speakerOrderKey = "meetings.speakers.order"
 
     static let dayChoices = [7, 14, 30, 90]
     static let undoChoices = [4, 8, 15]
@@ -55,6 +68,10 @@ enum MeetingsPreferences {
 
     static func player(_ defaults: UserDefaults = .standard) -> Player {
         defaults.string(forKey: playerKey).flatMap(Player.init(rawValue:)) ?? .window
+    }
+
+    static func speakerOrder(_ defaults: UserDefaults = .standard) -> SpeakerOrder {
+        defaults.string(forKey: speakerOrderKey).flatMap(SpeakerOrder.init(rawValue:)) ?? .spoken
     }
 
     static func undoSeconds(_ defaults: UserDefaults = .standard) -> Int {

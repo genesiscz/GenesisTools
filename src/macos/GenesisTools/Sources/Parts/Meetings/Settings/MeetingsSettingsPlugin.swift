@@ -264,6 +264,7 @@ struct MeetingsWindowPage: View {
     @State private var undoSeconds: Int
     @State private var typedAnswer: String
     @State private var player: String
+    @State private var speakerOrder: String
 
     /// The first frame shows the saved choices, never a default that snaps to them.
     init(defaults: UserDefaults) {
@@ -275,6 +276,7 @@ struct MeetingsWindowPage: View {
         _undoSeconds = State(initialValue: MeetingsPreferences.undoSeconds(defaults))
         _typedAnswer = State(initialValue: MeetingsPreferences.typedAnswer(defaults).rawValue)
         _player = State(initialValue: MeetingsPreferences.player(defaults).rawValue)
+        _speakerOrder = State(initialValue: MeetingsPreferences.speakerOrder(defaults).rawValue)
     }
 
     var body: some View {
@@ -317,6 +319,11 @@ struct MeetingsWindowPage: View {
                 NativeSettingsOption(MeetingsPreferences.TypedAnswer.always.rawValue, "On every question", detail: "A field beside the choices takes the word you heard."),
                 NativeSettingsOption(MeetingsPreferences.TypedAnswer.noChoices.rawValue, "Without choices", detail: "Only a question with no choices gets the field."),
             ], selection: binding($typedAnswer, key: MeetingsPreferences.typedAnswerKey))
+            Divider()
+            NativeSettingsSegmented("Speakers in order of", identifier: "meetings.window.speakerOrder", options: [
+                NativeSettingsOption(MeetingsPreferences.SpeakerOrder.spoken.rawValue, "Most spoken", detail: "The speaker who talked longest first."),
+                NativeSettingsOption(MeetingsPreferences.SpeakerOrder.transcript.rawValue, "Transcript", detail: "The order the transcript first names them."),
+            ], selection: binding($speakerOrder, key: MeetingsPreferences.speakerOrderKey))
         }
     }
 

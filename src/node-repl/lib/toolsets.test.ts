@@ -1758,6 +1758,28 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(Object.keys(answer as object).sort()).toEqual(["added", "warnings"]);
     });
 
+    test("meetings: items.suggest names the items it retired beside the fresh ones", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Suggest", start: "2026-11-02T17:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const runner = await import("@app/meetings/lib/suggest-run");
+        const run = spyOn(runner, "runSuggest").mockResolvedValue({ fresh: [], retired: ["i7"], warnings: [] });
+
+        try {
+            const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+                meetings: { open(ref: string): { items: { suggest(input?: unknown): Promise<unknown> } } };
+            };
+            expect(await meetings.open(record.id).items.suggest()).toEqual({
+                fresh: [],
+                retired: ["i7"],
+                warnings: [],
+            });
+        } finally {
+            run.mockRestore();
+        }
+    });
+
     // NR20: the handle had no id, a confirm's token had no door back, and an unknown config path printed nothing.
     // NR33: meetings.list() gave the start only, so an agent that wanted a short meeting opened each one.
     test("meetings: list gives each meeting's length in seconds, null while it has no end", async () => {

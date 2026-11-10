@@ -197,28 +197,56 @@ export function mergedRecording(
     };
 }
 
-/** The rows of both files in time order (`at`), so `screen` and the timeline read one recording. */
-function mergeRows(intoFile: string, fromFile: string): number {
-    if (!existsSync(fromFile)) {
-        return 0;
+/** One line of a row file with the wall time it carries (`at`; NaN when it has none). */
+interface Row {
+    line: string;
+    at: number;
+}
+
+/**
+ * Every row of one row file, parsed. A recorder cut short can leave a half-written last line, so a line that is not
+ * JSON throws with the file and its line number: the merge reads both files before it moves anything, and a refusal
+ * then leaves both records as they were.
+ */
+function readRows(path: string): Row[] {
+    if (!existsSync(path)) {
+        return [];
     }
 
-    const rows = (path: string) =>
-        existsSync(path)
-            ? readFileSync(path, "utf8")
-                  .split("\n")
-                  .filter((line) => line.trim() !== "")
-            : [];
-    const added = rows(fromFile);
-    const all = [...rows(intoFile), ...added].map((line, index) => ({
-        line,
-        index,
-        at: Date.parse(rowTime.safeParse(SafeJSON.parse(line, { strict: true })).data?.at ?? ""),
-    }));
+    const rows: Row[] = [];
+
+    for (const [index, line] of readFileSync(path, "utf8").split("\n").entries()) {
+        if (line.trim() === "") {
+            continue;
+        }
+
+        let parsed: unknown;
+
+        try {
+            parsed = SafeJSON.parse(line, { strict: true });
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            throw new Error(
+                `${path}:${index + 1} is not a JSON row (${reason}); fix or remove that line and merge again.`
+            );
+        }
+
+        rows.push({ line, at: Date.parse(rowTime.safeParse(parsed).data?.at ?? "") });
+    }
+
+    return rows;
+}
+
+/** The rows of both files in time order (`at`), so `screen` and the timeline read one recording. */
+function mergeRows(intoFile: string, rows: { into: Row[]; from: Row[] }): void {
+    if (rows.from.length === 0) {
+        return;
+    }
+
+    const all = [...rows.into, ...rows.from].map((row, index) => ({ ...row, index }));
     all.sort((a, b) => a.at - b.at || a.index - b.index);
     writeFileSync(`${intoFile}.merge-tmp`, `${all.map((row) => row.line).join("\n")}\n`);
     renameSync(`${intoFile}.merge-tmp`, intoFile);
-    return added.length;
 }
 
 function backupReadme(options: { from: MeetingRecord; into: MeetingRecord; root: string; folder: string }): string {
@@ -270,17 +298,13 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
     const intoFolder = store.folder(into.id);
     const count = (name: string) =>
         existsSync(join(fromFolder, name)) ? readdirSync(join(fromFolder, name)).length : 0;
-    const rowCount = ROW_FILES.reduce((total, name) => {
-        const path = join(fromFolder, name);
-        return (
-            total +
-            (existsSync(path)
-                ? readFileSync(path, "utf8")
-                      .split("\n")
-                      .filter((line) => line.trim()).length
-                : 0)
-        );
-    }, 0);
+    const rows = new Map(
+        ROW_FILES.map((name) => [
+            name,
+            { into: readRows(join(intoFolder, name)), from: readRows(join(fromFolder, name)) },
+        ])
+    );
+    const rowCount = [...rows.values()].reduce((total, file) => total + file.from.length, 0);
     const start = earliest([from.start, into.start]) ?? into.start;
     const end = latest([from.end, into.end]);
     const derived = DERIVED_FILES.filter((name) => existsSync(join(intoFolder, name)));
@@ -339,7 +363,7 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
     }
 
     for (const name of ROW_FILES) {
-        mergeRows(join(intoFolder, name), join(fromFolder, name));
+        mergeRows(join(intoFolder, name), rows.get(name) ?? { into: [], from: [] });
         const moved = join(fromFolder, name);
 
         if (existsSync(moved)) {

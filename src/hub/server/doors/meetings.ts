@@ -68,6 +68,18 @@ async function requireLocalSource(record: MeetingRecord): Promise<void> {
     }
 }
 
+/**
+ * A screen timeline counts its times from the linked source's clock (`CallTimeline.forRecord` loads the source's
+ * meeting), so the server builds one only for a record with no source or with a local one; a remote source would
+ * reach Wispr's MCP from here.
+ */
+async function requireLocalClock(record: MeetingRecord): Promise<void> {
+    const { sourceRefOf } = await import("@app/meetings/lib/sources");
+    if (sourceRefOf(record)) {
+        await requireLocalSource(record);
+    }
+}
+
 /** `meetings overview --days <n> --json`. */
 export const meetingsOverviewDoor: CallDoor<{ days: number }> = {
     kind: "call",
@@ -218,6 +230,7 @@ export const meetingsScreenTimelineDoor: CallDoor<{ ref: string; all: boolean }>
     async run({ ref, all }, { signal }) {
         return answer(signal, async () => {
             const { store, record } = await exactRecord(ref);
+            await requireLocalClock(record);
             const token = (await (await reads()).revisionsRead({ store, record })).timeline;
             const key = token === null ? null : `${record.id}\0${all}\0${token}`;
             const kept = key === null ? undefined : timelines.get(key);

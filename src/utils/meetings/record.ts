@@ -413,8 +413,18 @@ export class MeetingStore {
 
     /** Folder dates bound discovery before JSON hydration. A record whose start is edited after creation keeps
      * its folder date for this bound. One day of margin covers local/UTC time-zone differences. Undated folders
-     * are treated as today and read. `olderMeetings` counts excluded record folders without parsing their JSON. */
-    listBounded({ since, limit }: { since?: Date; limit?: number }): {
+     * are treated as today and read. `olderMeetings` counts excluded record folders without parsing their JSON.
+     * `where` keeps only the records it accepts, and only those count toward `limit`, so a filtered list stops
+     * reading once it has `limit` matches. */
+    listBounded({
+        since,
+        limit,
+        where,
+    }: {
+        since?: Date;
+        limit?: number;
+        where?: (record: MeetingRecord) => boolean;
+    }): {
         records: MeetingRecord[];
         olderMeetings: number;
     } {
@@ -440,7 +450,7 @@ export class MeetingStore {
                 continue;
             }
             const record = this.read(folder.id);
-            if (record) {
+            if (record && (!where || where(record))) {
                 records.push(record);
             }
         }

@@ -87,7 +87,7 @@ import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from ".
 import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./lib/screen-boxes";
 import { showText } from "./lib/show-text";
 import { printSpeakerStats } from "./lib/speakers-view";
-import { settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
+import { knownRoot, settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { transcriptDocument } from "./lib/transcript-document";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
@@ -697,6 +697,9 @@ describe("itemWhat", () => {
 
         expect(itemWhat(range(279, 279))).toBe("Speaker 1 04:39 → Alice Example");
         expect(itemWhat(range(279, 301))).toBe("Speaker 1 04:39–05:01 → Alice Example");
+        // The decision follows the printed clocks, which floor: never "04:39–04:39", never a hidden end.
+        expect(itemWhat(range(279.4, 279.6))).toBe("Speaker 1 04:39 → Alice Example");
+        expect(itemWhat(range(278.6, 279.2))).toBe("Speaker 1 04:38–04:39 → Alice Example");
     });
 });
 
@@ -5128,6 +5131,9 @@ describe("suggest: words said on purpose", () => {
         expect(wordFamily("mobilce")).toBe(wordFamily("mobilkou"));
         expect([...spokenOnPurpose(["mokovat"], (root) => root === "mock")]).toEqual(["mokovat"]);
         expect([...spokenOnPurpose(["kvapímu"], () => false)]).toEqual([]);
+        // Without a word check only English roots are known; a missing check never makes every root known.
+        expect(knownRoot()("kvapimu")).toBe(false);
+        expect(knownRoot()("mock")).toBe(true);
         expect([...spokenOnPurpose(["mobilce", "mobilkou", "kvapímu"], () => false)].sort()).toEqual([
             "mobilce",
             "mobilkou",

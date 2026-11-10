@@ -22,7 +22,14 @@ private let meetingsInstance = SingleInstance(
 /// home keeps the old name, so a window from an older build still takes the request.
 func meetingsNotificationPrefix(home: String = genesisHome(), realHome: String = NSHomeDirectory()) -> String {
     let base = NativePreview.namespace + ".meetings"
-    return home == realHome ? base : base + ".home:" + home
+    let canonical = canonicalHome(home)
+    return canonical == canonicalHome(realHome) ? base : base + ".home:" + canonical
+}
+
+/// A home as one spelling: a trailing slash, `.` and `..` parts and symlinks (`/tmp` is `/private/tmp`) name the same
+/// folder, so they give the same notification name and a later launch reaches the window that holds the lock.
+func canonicalHome(_ path: String) -> String {
+    URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
 }
 
 struct MeetingsRequest {

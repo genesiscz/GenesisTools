@@ -291,11 +291,17 @@ final class MeetingsSettingsModel {
 
     private func changedDrafts() -> [String: Any] {
         guard let settings = settings.value else { return [:] }
+        let sent = Self.previewDrafts(drafts, exists: { settings.projects[$0] != nil }, saved: { savedRules($0, in: settings) })
         var out: [String: Any] = [:]
-        for (name, draft) in drafts where draft != savedRules(name, in: settings) {
-            out[name] = draft.json
-        }
+        for (name, draft) in sent { out[name] = draft.json }
         return out
+    }
+
+    /// The drafts a preview sends: changed ones of projects that still exist. A draft of a project renamed or removed
+    /// since stays in the model (its edits are not lost) but would preview a match for a name the config no longer has.
+    static func previewDrafts(_ drafts: [String: MatchRulesDraft], exists: (String) -> Bool,
+                              saved: (String) -> MatchRulesDraft) -> [String: MatchRulesDraft] {
+        drafts.filter { name, draft in exists(name) && draft != saved(name) }
     }
 
     // MARK: Dictionary
@@ -431,8 +437,11 @@ extension MeetingsSettingsModel {
         ["projects", "remove", name, "--json"] + (unassign ? ["--unassign"] : [])
     }
 
-    /// The CLI refuses to remove a project meetings still have, and names `--unassign` as the way to go on.
-    static func offersUnassign(_ failure: MeetingsCLI.Failure) -> Bool { failure.sentence.contains("--unassign") }
+    /// The CLI refuses to remove a project meetings still have with `[project-in-use]`
+    /// (src/utils/meetings/conflict.ts); `--unassign` is then the way to go on.
+    static let projectInUse = "project-in-use"
+
+    static func offersUnassign(_ failure: MeetingsCLI.Failure) -> Bool { failure.code == projectInUse }
 
     static func removalNote(_ removal: ProjectRemoval) -> String {
         removal.unassigned.isEmpty

@@ -2,11 +2,11 @@ import type { MeetingItem } from "@genesiscz/utils/meetings/record";
 import type { CorrectionsApplied } from "@genesiscz/utils/transcribe/apply";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 
-/** One time for a range of one line ("04:39", not "04:39–04:39"), else the range. */
+/** One time when both ends print the same ("04:39", not "04:39–04:39"), else the range. */
 function span(fromSec: number, toSec: number): string {
-    return Math.round(fromSec) === Math.round(toSec)
-        ? formatClock(fromSec)
-        : `${formatClock(fromSec)}–${formatClock(toSec)}`;
+    const from = formatClock(fromSec);
+    const to = formatClock(toSec);
+    return from === to ? from : `${from}–${to}`;
 }
 
 export function itemWhat(item: MeetingItem): string {

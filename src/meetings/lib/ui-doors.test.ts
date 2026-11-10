@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { HUB_SERVER_DOORS } from "@app/hub/server/doors";
+import { MEETINGS_DOORS, meetingsScreenTimelineDoor } from "@app/hub/server/doors/meetings";
+import { DoorUnsupported } from "@app/hub/server/doors/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { readCorrections } from "@genesiscz/utils/meetings/corrections";
@@ -297,6 +300,32 @@ describe("screen timeline", () => {
             ["Item two"],
         ]);
         expect(view.frames[1]).toMatchObject({ meetingSec: 20, width: 400, height: 200, lineCount: 2 });
+    });
+});
+
+describe("screen timeline door", () => {
+    test("the hub server answers every meetings door", () => {
+        for (const door of MEETINGS_DOORS) {
+            expect(HUB_SERVER_DOORS).toContain(door);
+        }
+    });
+
+    test("a meeting linked to a source the server cannot read locally goes to the process", async () => {
+        const store = new MeetingStore();
+        const signal = new AbortController().signal;
+        const build = async (sources: Record<string, { meetingId: string }>) => {
+            const created = await store.create(
+                { title: "Timeline", start: "2026-11-05T08:00:00.000Z", createdBy: "record", sources },
+                { command: "test", change: "fixture" }
+            );
+            const row = { file: "frames/gone-d1.png", at: "2026-11-05T08:00:10.000Z", displayId: 1, text: "x" };
+            writeFileSync(join(store.folder(created.id), "ocr.jsonl"), `${SafeJSON.stringify(row)}\n`);
+            return meetingsScreenTimelineDoor.run({ ref: created.id, all: false }, { signal });
+        };
+
+        await expect(build({ remote: { meetingId: "call-1" } })).rejects.toBeInstanceOf(DoorUnsupported);
+        // No source: the stored clock needs nothing remote, so the server still builds it.
+        expect(await build({})).toMatchObject({ exit: 0 });
     });
 });
 
@@ -739,6 +768,10 @@ describe("projects rename and remove", () => {
         const backupRoot = join(meetings.root, "..", "backups");
 
         await expect(removeProject({ config, store: meetings, name: "wrok", backupRoot })).rejects.toThrow(used);
+        // The window offers the unassigning removal on this code, never on the sentence's words.
+        await expect(removeProject({ config, store: meetings, name: "wrok", backupRoot })).rejects.toMatchObject({
+            code: "project-in-use",
+        });
 
         const result = await removeProject({ config, store: meetings, name: "wrok", unassign: true, backupRoot });
         const kept = SafeJSON.parse(readFileSync(result.backup, "utf8"));
@@ -750,6 +783,44 @@ describe("projects rename and remove", () => {
             block: { labels: ["Checkout 2.0"] },
             sources: { wisprflow: { folders: ["Work"] } },
         });
+    });
+
+    test("a rename checks both names inside the config lock, so a name taken meanwhile is never overwritten", async () => {
+        const { config, meetings } = await withProject();
+        await config.addProject("work");
+        await config.setProjectLabels("work", { add: ["Kept"] });
+        const before = await config.read();
+        // What the caller saw before another process added "work": the rename must not trust it.
+        const seen = { ...before, projects: { wrok: before.projects.wrok } };
+        const stale = new (class extends MeetingsConfigStore {
+            override async read() {
+                return seen;
+            }
+        })(config.storage);
+
+        await expect(renameProject({ config: stale, store: meetings, from: "wrok", to: "work" })).rejects.toThrow(
+            "exists already"
+        );
+        expect((await config.read()).projects.work?.labels).toEqual(["Kept"]);
+        await expect(renameProject({ config, store: meetings, from: "gone", to: "other" })).rejects.toThrow(
+            "No project gone"
+        );
+    });
+
+    test("removing a project twice in one minute keeps both removed blocks", async () => {
+        const { config, meetings } = stores();
+        const backupRoot = join(meetings.root, "..", "backups");
+        const now = new Date(2026, 10, 9, 10, 15);
+        await config.addProject("side");
+        await config.setProjectLabels("side", { add: ["First"] });
+        const first = await removeProject({ config, store: meetings, name: "side", backupRoot, now });
+        await config.addProject("side");
+        await config.setProjectLabels("side", { add: ["Second"] });
+        const second = await removeProject({ config, store: meetings, name: "side", backupRoot, now });
+
+        expect(second.backup).not.toBe(first.backup);
+        expect(SafeJSON.parse(readFileSync(first.backup, "utf8"))).toMatchObject({ block: { labels: ["First"] } });
+        expect(SafeJSON.parse(readFileSync(second.backup, "utf8"))).toMatchObject({ block: { labels: ["Second"] } });
     });
 });
 

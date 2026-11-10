@@ -119,6 +119,14 @@ function englishRoots(word: string): string[] {
  * slang or a new term, not a mistake, so they get no item and no question (MC3, 2026-11-06: the latest meeting had 40
  * such items at 30 %, and 8 of its 12 questions asked about them).
  */
+/**
+ * Whether a word root is known: an English word, or a word the language's word check does not call unknown. Without a
+ * word check only English words are known, so a missing check never makes every root known.
+ */
+export function knownRoot(wordCheck?: WordCheck): (word: string) => boolean {
+    return (word) => isEnglishWord(word) || (wordCheck !== undefined && wordCheck.verdict(word).class !== "unknown");
+}
+
 export function spokenOnPurpose(words: string[], known: (word: string) => boolean): Set<string> {
     const families = new Map<string, Set<string>>();
 
@@ -526,7 +534,7 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
     const keptFamilies = new Set([...keep].map(wordFamily));
     const onPurpose = spokenOnPurpose(
         heardUnknown.map((word) => word.heard),
-        (root) => isEnglishWord(root) || wordCheck?.verdict(root).class !== "unknown"
+        knownRoot(wordCheck)
     );
     const unknown = heardUnknown.filter(
         (word) => !onPurpose.has(word.heard.toLowerCase()) && !keptFamilies.has(wordFamily(word.heard))

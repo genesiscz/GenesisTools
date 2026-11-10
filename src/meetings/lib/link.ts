@@ -63,7 +63,19 @@ export function assertSourceFree(options: {
     sourceId: string;
     sourceMeetingId: string;
     targetId: string;
+    /**
+     * The source ended a meeting the target is linked to already: its title and end land there even when another record
+     * holds the same source meeting too, since the refresh adds no second link (the watcher retried until its deadline).
+     */
+    refresh?: boolean;
 }): void {
+    if (
+        options.refresh &&
+        options.store.read(options.targetId)?.sources[options.sourceId]?.meetingId === options.sourceMeetingId
+    ) {
+        return;
+    }
+
     const holders = sourceHolders({ ...options, exceptId: options.targetId });
     const holder = holders[0];
 
@@ -149,6 +161,7 @@ export async function linkSource(options: {
             sourceId: ref.source,
             sourceMeetingId: meeting.sourceMeetingId,
             targetId: existing.id,
+            refresh: options.refresh,
         });
     }
 

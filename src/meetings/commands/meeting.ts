@@ -111,7 +111,7 @@ async function list(opts: { project?: string; json?: boolean; full?: boolean; li
         return;
     }
 
-    const records = selectMeetings(new MeetingStore().list(), { project: opts.project, limit });
+    const records = selectMeetings(new MeetingStore(), { project: opts.project, limit });
 
     if (opts.json) {
         out.result(SafeJSON.stringify(opts.full ? records : records.map(meetingListRow), null, 2));

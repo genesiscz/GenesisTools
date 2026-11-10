@@ -1,4 +1,4 @@
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 
 /** One meeting as `list --json` prints it: what a list needs. `show <meeting> --json` prints the whole record. */
 export interface MeetingListRow {
@@ -46,11 +46,11 @@ export function meetingListRow(record: MeetingRecord): MeetingListRow {
     };
 }
 
-/** The meetings `list` shows, newest first as the store lists them: one project's, then at most `limit`. */
-export function selectMeetings(
-    records: MeetingRecord[],
-    options: { project?: string; limit?: number }
-): MeetingRecord[] {
-    const picked = records.filter((record) => !options.project || record.project === options.project);
-    return options.limit === undefined ? picked : picked.slice(0, options.limit);
+/**
+ * The meetings `list` shows, newest first as the store lists them: one project's, then at most `limit`. The project
+ * filter and the limit reach the store's read, so `list --limit 5` parses five matching records, not the whole store.
+ */
+export function selectMeetings(store: MeetingStore, options: { project?: string; limit?: number }): MeetingRecord[] {
+    const { project, limit } = options;
+    return store.listBounded({ limit, ...(project ? { where: (record) => record.project === project } : {}) }).records;
 }
