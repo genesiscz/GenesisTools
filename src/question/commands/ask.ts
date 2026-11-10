@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { type SourceMessage, sourceMessageSchema } from "@genesiscz/utils/agent/source-anchor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -7,29 +8,16 @@ import { formatTransclusionHelp } from "@genesiscz/utils/transclude";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import { agentNote } from "../lib/agent-note";
-import {
-    checkDecisionItems,
-    isDecisionId,
-    postDecisionItems,
-    type QuestionItemInput,
-    splitItems,
-    validateQuestionItems,
-} from "../lib/decisions/items";
+import { isDecisionId, type QuestionItemInput, validateQuestionItems } from "../lib/decisions/items";
 import { decisionFiles } from "../lib/decisions/read";
-import { updateDecisions } from "../lib/decisions/store";
-import {
-    answerAskForm,
-    cancelAskForm,
-    explainCancelRefusal,
-    getAskForm,
-    listPendingForms,
-    pollAskForms,
-    postAskForm,
-    waitForAskForm,
-} from "../lib/pending/ask";
+import { type DecisionRecord, updateDecisions } from "../lib/decisions/store";
+import { answerInboxDecisions } from "../lib/inbox/answer";
+import { waitingBlock } from "../lib/inbox/load";
+import { answerAskForm, cancelAskForm, explainCancelRefusal, getAskForm, waitForAskForm } from "../lib/pending/ask";
 import { summarizeForm } from "../lib/pending/render";
 import { type AskAnswer, type AskForm, DEFAULT_WAIT_BUDGET_MS, type WaiterStatus } from "../lib/pending/types";
-import { prepareQuestionItems, questionTokenRegistry, transclusionReport } from "../lib/transclude";
+import { questionTokenRegistry } from "../lib/transclude";
+import { type PostQuestionResult, pollQuestions, postQuestion, type QuestionVerbDeps } from "../lib/verbs";
 import { collect } from "./options";
 
 const { log } = logger.scoped("question-ask");
@@ -82,7 +70,8 @@ const ASK_HELP_HINT = `Run ${toolCommand("question ask")} --help for the item sh
 
 /** `ask --help`: the `--json` item fields and one example, so an agent never guesses the names. */
 const ASK_JSON_HELP = `
---json items (an array, or a question_post payload { items, projectPath?, source?, sessionHint?, timeoutMs? }):
+--json items (an array, or a question_post payload { items, projectPath?, source?, sessionHint?, sourceMessage?,
+  timeoutMs?, wait?, waitTimeoutMs?, transclude? }):
   promptMarkdown   required. The question, markdown ok. (Not "prompt" or "question".)
   choices          answer options: labels, or { id, label } objects. (Not "options".)
   type             question (default: a pending form) | decision (numbered ❓ DECISION N) | todo (TODO N)
@@ -118,7 +107,25 @@ interface PostPayloadFields {
     projectPath?: string;
     source?: string;
     sessionHint?: string;
+    sourceMessage?: SourceMessage;
     timeoutMs?: number;
+    wait?: boolean;
+    waitTimeoutMs?: number;
+    transclude?: boolean;
+}
+
+function msField(payload: Record<string, unknown>, key: "timeoutMs" | "waitTimeoutMs"): number | undefined {
+    const value = payload[key];
+
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        throw new Error(`question_post payload: ${key} must be a number of milliseconds. ${ASK_HELP_HINT}`);
+    }
+
+    return value;
 }
 
 /** Only the known payload fields, each checked for its type: a bad value fails here, not deep in the post. */
@@ -139,14 +146,38 @@ function payloadFields(payload: Record<string, unknown>): PostPayloadFields {
         fields[key] = value;
     }
 
-    if (payload.timeoutMs !== undefined) {
-        const timeoutMs = payload.timeoutMs;
+    for (const key of ["wait", "transclude"] as const) {
+        const value = payload[key];
 
-        if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs < 0) {
-            throw new Error(`question_post payload: timeoutMs must be a number of milliseconds. ${ASK_HELP_HINT}`);
+        if (value === undefined) {
+            continue;
         }
 
-        fields.timeoutMs = timeoutMs;
+        if (typeof value !== "boolean") {
+            throw new Error(`question_post payload: ${key} must be true or false. ${ASK_HELP_HINT}`);
+        }
+
+        fields[key] = value;
+    }
+
+    for (const key of ["timeoutMs", "waitTimeoutMs"] as const) {
+        const value = msField(payload, key);
+
+        if (value !== undefined) {
+            fields[key] = value;
+        }
+    }
+
+    if (payload.sourceMessage !== undefined) {
+        const source = sourceMessageSchema.safeParse(payload.sourceMessage);
+
+        if (!source.success) {
+            throw new Error(
+                `question_post payload: sourceMessage takes messageId, turnId or toolCallId strings. ${ASK_HELP_HINT}`
+            );
+        }
+
+        fields.sourceMessage = source.data;
     }
 
     return fields;
@@ -154,8 +185,8 @@ function payloadFields(payload: Record<string, unknown>): PostPayloadFields {
 
 /**
  * `--json <items>` is an array of items. `--json -` reads stdin, and there it may also be the
- * whole question_post payload (`{ items, projectPath?, source?, sessionHint?, timeoutMs? }`), so an
- * agent pipes the same JSON it would send the MCP tool.
+ * whole question_post payload (`{ items, projectPath?, source?, sessionHint?, sourceMessage?, timeoutMs?, wait?,
+ * waitTimeoutMs?, transclude? }`), so an agent pipes the same JSON it would send the MCP tool.
  */
 export function parseItems(opts: Record<string, unknown>): { items: QuestionItemInput[]; fields: PostPayloadFields } {
     const raw = opts.json === "-" ? readFileSync(0, "utf8") : opts.json;
@@ -314,6 +345,62 @@ function renderPendingList(forms: AskForm[]): void {
     out.println(table.toString());
 }
 
+function decisionLine(id: string, row: DecisionRecord | null): string {
+    if (!row) {
+        return `${pc.red("✖")} ${id} ${pc.dim("unknown")}`;
+    }
+
+    return `${pc.green("●")} ${id} ${pc.cyan(row.state)} ${pc.dim(truncateDisplay((row.title ?? row.prompt).replace(/\s+/g, " "), 56))}`;
+}
+
+function renderAnswered(rows: DecisionRecord[]): void {
+    if (rows.length === 0) {
+        return;
+    }
+
+    renderCliHeader("Answered decisions not yet acknowledged", `mark them with ${toolCommand("question update")}`);
+
+    for (const row of rows) {
+        out.println(decisionLine(row.id, row));
+    }
+}
+
+/**
+ * The CLI door of a post: parse the flags and the `--json` items or payload, then post through the verb. A flag
+ * wins over the same payload field. Exported so a test posts through this door over a scratch store.
+ */
+export async function postFromCli(
+    opts: Record<string, unknown>,
+    deps: QuestionVerbDeps = {}
+): Promise<{ result: PostQuestionResult; wait: boolean }> {
+    const parsed = parseItems(opts);
+    const items = withSupersedes(parsed.items, flag(opts.supersedes));
+    const { fields } = parsed;
+    const wait = opts.wait === true || fields.wait === true;
+    const result = await postQuestion(
+        {
+            items,
+            projectPath: flag(opts.project) ?? fields.projectPath,
+            source: flag(opts.source) ?? fields.source ?? "cli",
+            sessionHint: flag(opts.session) ?? fields.sessionHint,
+            sourceMessage: fields.sourceMessage,
+            timeoutMs: typeof opts.timeout === "number" ? opts.timeout : fields.timeoutMs,
+            waitTimeoutMs: typeof opts.waitTimeout === "number" ? opts.waitTimeout : fields.waitTimeoutMs,
+            transclude: opts.transclude !== false && fields.transclude !== false,
+        },
+        { wait },
+        { ...deps, notify: opts.notify !== false, transclude: { callerReports: true, ...deps.transclude } }
+    );
+
+    return { result, wait };
+}
+
+/** `d_<n>_<session>`: the number and the session a decision id names. */
+function decisionAddress(id: string): { number: number; session: string } | null {
+    const match = /^d_(\d+)_(.+)$/.exec(id);
+    return match ? { number: Number(match[1]), session: match[2]! } : null;
+}
+
 export function registerAskCommand(program: Command): void {
     program
         .command("ask")
@@ -345,77 +432,46 @@ export function registerAskCommand(program: Command): void {
         .option("--format <fmt>", "human|json", "human")
         .addHelpText("after", () => `${ASK_JSON_HELP}${formatTransclusionHelp(questionTokenRegistry())}\n`)
         .action(async (opts: Record<string, unknown>) => {
-            let parsed: ReturnType<typeof parseItems>;
+            let posted: Awaited<ReturnType<typeof postFromCli>>;
 
             try {
-                parsed = parseItems(opts);
-                parsed.items = withSupersedes(parsed.items, flag(opts.supersedes));
+                posted = await postFromCli(opts);
             } catch (err) {
                 out.error(pc.red(err instanceof Error ? err.message : String(err)));
                 process.exit(1);
             }
 
-            const projectPath = flag(opts.project) ?? parsed.fields.projectPath;
-            let transcluded: Awaited<ReturnType<typeof prepareQuestionItems>>;
-
-            try {
-                transcluded = await prepareQuestionItems({
-                    items: parsed.items,
-                    cwd: projectPath,
-                    transclude: opts.transclude !== false,
-                    options: { callerReports: true },
-                });
-            } catch (err) {
-                out.error(pc.red(err instanceof Error ? err.message : String(err)));
-                process.exit(1);
-            }
-
-            printTransclusionReport(transclusionReport(transcluded.tokens));
-            const { questions, decisions } = splitItems(transcluded.items);
-            const transclusions = transcluded.tokens.length > 0 ? { transclusions: transcluded.tokens } : {};
-            const sessionHint = flag(opts.session) ?? parsed.fields.sessionHint;
-            const { file, events } = decisionFiles();
-            const hint = { sessionId: sessionHint, cwd: projectPath };
-
-            const notify = opts.notify !== false;
+            const { result } = posted;
+            printTransclusionReport(result.report);
+            const transclusions = result.tokens.length > 0 ? { transclusions: result.tokens } : {};
             // The agent reads this: whether the widget is on screen, and what it still owes in the chat.
             const note = agentNote();
 
-            if (questions.length === 0) {
-                const posted = await postDecisionItems({ file, events, items: decisions, hint, notify });
-
+            if (!result.form) {
                 if (opts.format === "json") {
-                    out.result(SafeJSON.stringify({ ...posted, ...transclusions, agentNote: note }, null, 2));
+                    out.result(SafeJSON.stringify({ ...result.posted, ...transclusions, agentNote: note }, null, 2));
                 } else {
-                    out.print(posted.markdown);
+                    out.print(result.posted.markdown);
                     out.printlnErr(pc.yellow(`Note for the agent: ${note}`));
                 }
 
                 process.exit(0);
             }
 
-            // Both halves are checked before either is written; see `checkDecisionItems`.
-            checkDecisionItems(decisions, hint);
-            const form = await postAskForm(
-                {
-                    projectPath,
-                    items: questions,
-                    timeoutMs: typeof opts.timeout === "number" ? opts.timeout : parsed.fields.timeoutMs,
-                    source: flag(opts.source) ?? parsed.fields.source ?? "cli",
-                    sessionHint,
-                },
-                { notify }
-            );
-            const posted = await postDecisionItems({ file, events, items: decisions, hint, notify });
-
-            if (opts.wait !== true) {
+            if (!result.wait) {
                 if (opts.format === "json") {
-                    out.result(SafeJSON.stringify({ form, ...posted, ...transclusions, agentNote: note }, null, 2));
+                    out.result(
+                        SafeJSON.stringify(
+                            { form: result.form, ...result.posted, ...transclusions, agentNote: note },
+                            null,
+                            2
+                        )
+                    );
                 } else {
-                    renderForm(form);
+                    renderForm(result.form);
 
-                    if (posted.markdown) {
-                        out.print(posted.markdown);
+                    if (result.posted.markdown) {
+                        out.print(result.posted.markdown);
                     }
 
                     out.printlnErr(pc.yellow(`Note for the agent: ${note}`));
@@ -424,21 +480,20 @@ export function registerAskCommand(program: Command): void {
                 process.exit(0);
             }
 
-            const budget = typeof opts.waitTimeout === "number" ? opts.waitTimeout : DEFAULT_WAIT_BUDGET_MS;
-            const result = await waitForAskForm(form.id, budget);
-            log.debug({ id: form.id, waiter: result.waiter }, "ask --wait finished");
+            const waited = result.wait;
+            log.debug({ id: result.form.id, waiter: waited.waiter }, "ask --wait finished");
 
             if (opts.format === "json") {
-                out.result(SafeJSON.stringify(result, null, 2));
+                out.result(SafeJSON.stringify(waited, null, 2));
             } else {
-                out.printlnErr(pc.dim(`waiter: ${result.waiter}`));
+                out.printlnErr(pc.dim(`waiter: ${waited.waiter}`));
 
-                if (result.form) {
-                    renderForm(result.form);
+                if (waited.form) {
+                    renderForm(waited.form);
                 }
             }
 
-            process.exit(WAITER_EXIT[result.waiter]);
+            process.exit(WAITER_EXIT[waited.waiter]);
         });
 
     program
@@ -466,35 +521,41 @@ export function registerAskCommand(program: Command): void {
 
     program
         .command("poll [ids...]")
-        .description("Show pending ask forms, or the status of the ids you name")
+        .description(
+            "Show pending ask forms and this session's unacknowledged answers, or the status of the form, decision and todo ids you name"
+        )
         .option("--format <fmt>", "human|json", "human")
         .action((ids: string[], opts: { format?: string }) => {
-            if (ids.length === 0) {
-                const forms = listPendingForms();
+            const polled = pollQuestions({ ids });
 
+            if (polled.kind === "pending") {
                 if (opts.format === "json") {
-                    out.result(SafeJSON.stringify({ forms }, null, 2));
+                    out.result(SafeJSON.stringify({ forms: polled.forms, answered: polled.answered }, null, 2));
                 } else {
-                    renderPendingList(forms);
+                    renderPendingList(polled.forms);
+                    renderAnswered(polled.answered);
                 }
 
                 process.exit(0);
             }
 
-            const forms = pollAskForms(ids);
-
             if (opts.format === "json") {
-                out.result(SafeJSON.stringify({ forms }, null, 2));
+                const decisions = Object.fromEntries(polled.decisions.map(({ id, row }) => [id, row]));
+                out.result(SafeJSON.stringify({ forms: polled.forms, decisions }, null, 2));
                 process.exit(0);
             }
 
-            for (const [id, form] of Object.entries(forms)) {
+            for (const [id, form] of Object.entries(polled.forms)) {
                 if (!form) {
                     out.println(`${pc.red("✖")} ${id} ${pc.dim("unknown")}`);
                     continue;
                 }
 
                 out.println(`${pc.green("●")} ${id} ${pc.cyan(form.status)} ${pc.dim(summarizeForm(form))}`);
+            }
+
+            for (const { id, row } of polled.decisions) {
+                out.println(decisionLine(id, row));
             }
 
             process.exit(0);
@@ -523,9 +584,32 @@ export function registerAskCommand(program: Command): void {
                     format?: string;
                 }
             ) => {
+                const decision = decisionAddress(id);
+
+                if (decision) {
+                    // The user's own answer: checked and delivered like an inbox click (`answerInboxDecisions`).
+                    let sent: Awaited<ReturnType<typeof answerInboxDecisions>>;
+
+                    try {
+                        sent = await answerInboxDecisions(
+                            {
+                                session: decision.session,
+                                answers: [{ number: decision.number, option: opts.option, text: opts.text }],
+                            },
+                            { ...decisionFiles(), block: waitingBlock }
+                        );
+                    } catch (err) {
+                        out.error(pc.red(err instanceof Error ? err.message : String(err)));
+                        process.exit(1);
+                    }
+
+                    out.result(SafeJSON.stringify(sent, null, 2));
+                    process.exit(0);
+                }
+
                 if (isDecisionId(id)) {
+                    // A todo has no answer check or delivery: the user's own CLI answer is stored for `tools question send`.
                     const { file, events } = decisionFiles();
-                    // The user's own answer from the CLI: queued for `tools question send` (`answeredVia: inbox`).
                     const [row] = await updateDecisions(
                         file,
                         events,
