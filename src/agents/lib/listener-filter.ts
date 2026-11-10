@@ -85,11 +85,10 @@ export function createListenerFilter(options: ListenerFilterOptions): (event: Fe
     const expressionFilter = options.expression ? compileExpression(options.expression) : null;
 
     return (event) => {
-        // A join or a leave opens or closes the channel: one event each, so `--kinds message` (meant to hide
-        // per-login noise) must not hide the moment a peer starts or stops listening.
-        const presence = event.type === "agent_joined" || event.type === "agent_left";
-
-        if ((kinds.size > 0 || excluded.size > 0) && !presence) {
+        // Presence is a feed type like any other: `--kinds message` hides joins and leaves, and
+        // `--kinds message,agent_left` keeps the leaves. Which joins and leaves a login gets at all is its
+        // `--presence` mode (filter.ts); before 2026-11-10 presence passed every --kinds.
+        if (kinds.size > 0 || excluded.size > 0) {
             const body = messageBody(event);
             const bodyKind =
                 typeof body?.op === "string" ? body.op : typeof body?.event === "string" ? body.event : null;

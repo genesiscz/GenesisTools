@@ -1,7 +1,49 @@
 import type { SessionMeta } from "./session-meta";
-import type { AgentRecord, FeedEvent, MessageEvent } from "./types";
+import type { AgentJoinedEvent, AgentLeftEvent, AgentRecord, FeedEvent, MessageEvent, PresenceMode } from "./types";
 
-export function isVisibleToAgent(event: FeedEvent, agent: AgentRecord, meta?: SessionMeta): boolean {
+export interface VisibilityOptions {
+    /** The login's `--presence`; absent means the default for this agent (see `presenceModeFor`). */
+    presence?: PresenceMode;
+}
+
+/**
+ * The presence mode of a login. An explicit `--presence` wins. Otherwise a `--debug` session shows everyone every
+ * join and leave, main gets the real changes (it steers the swarm and nudges a peer that lapsed), and every other
+ * agent gets none: in the 2026-11-08 swarm 28% of the child turns woke only on a peer's join or leave.
+ */
+export function presenceModeFor(agent: AgentRecord, meta?: SessionMeta, explicit?: PresenceMode): PresenceMode {
+    if (explicit) {
+        return explicit;
+    }
+
+    if (meta?.debug) {
+        return "all";
+    }
+
+    return agent.is_main ? "changes" : "none";
+}
+
+/** Leave reasons an older writer posted for a login the agent restarts; `changes` hides them. */
+const REARM_LEAVE_REASONS: ReadonlySet<AgentLeftEvent["reason"]> = new Set(["signal", "timeout"]);
+
+function visiblePresence(event: AgentJoinedEvent | AgentLeftEvent, mode: PresenceMode): boolean {
+    if (mode === "none") {
+        return false;
+    }
+
+    if (mode === "all" || event.type === "agent_joined") {
+        return true;
+    }
+
+    return !REARM_LEAVE_REASONS.has(event.reason);
+}
+
+export function isVisibleToAgent(
+    event: FeedEvent,
+    agent: AgentRecord,
+    meta?: SessionMeta,
+    options: VisibilityOptions = {}
+): boolean {
     if (event.type === "message") {
         return visibleMessage(event, agent);
     }
@@ -16,7 +58,11 @@ export function isVisibleToAgent(event: FeedEvent, agent: AgentRecord, meta?: Se
 
     // Presence from before this agent registered is not news to it, and must not wake its first `--once`.
     if (event.type === "agent_left" || event.type === "agent_joined") {
-        return event.agent_id !== agent.agent_id && event.seq > agent.registered_seq;
+        if (event.agent_id === agent.agent_id || event.seq <= agent.registered_seq) {
+            return false;
+        }
+
+        return visiblePresence(event, presenceModeFor(agent, meta, options.presence));
     }
 
     return false;
@@ -57,17 +103,21 @@ function visibleLifecycle(event: FeedEvent, agent: AgentRecord, meta?: SessionMe
         return true;
     }
 
+    // Main learns arrivals from `agent_joined` and departures from `agent_left`. A login is not news: a Monitor
+    // re-arm is one logged_out and one logged_in, and showing them woke the lead twice per peer every 30 minutes.
+    // A logout that is no re-arm and no clean exit (a stream login that hit its cap, an old dead lock) still shows.
     if (agent.is_main) {
-        if (event.type === "logged_in") {
-            return event.mode === "stream";
-        }
-
-        return event.reason !== "clean_exit";
+        return event.type === "logged_out" && event.reason !== "clean_exit" && !event.rearm_until;
     }
 
     return false;
 }
 
-export function filterForAgent(events: FeedEvent[], agent: AgentRecord, meta?: SessionMeta): FeedEvent[] {
-    return events.filter((e) => isVisibleToAgent(e, agent, meta));
+export function filterForAgent(
+    events: FeedEvent[],
+    agent: AgentRecord,
+    meta?: SessionMeta,
+    options: VisibilityOptions = {}
+): FeedEvent[] {
+    return events.filter((e) => isVisibleToAgent(e, agent, meta, options));
 }
