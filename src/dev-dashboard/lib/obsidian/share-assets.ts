@@ -3,7 +3,13 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type ResolvedAsset, renderCodeLines, renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
+import {
+    noteHeadings,
+    type ResolvedAsset,
+    renderCodeLines,
+    renderMarkdown,
+    stripFrontmatter,
+} from "@app/dev-dashboard/lib/obsidian/markdown";
 import { headingSlug } from "@app/dev-dashboard/lib/obsidian/obsidian-syntax";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -864,28 +870,19 @@ export async function buildShareEmbed(options: {
     return embed;
 }
 
-const HEADING_LINE_RE = /^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
-/** A Setext underline: `===` makes the paragraph above it a level 1 heading, `---` a level 2 one. */
-const SETEXT_UNDERLINE_RE = /^ {0,3}(=+|-+)[ \t]*$/;
-/** A line that cannot be the text of a Setext heading: a list item or a quote (a `---` under it is a rule). */
-const NOT_SETEXT_TEXT_RE = /^ {0,3}(?:[-*+][ \t]|\d{1,9}[.)][ \t]|>)/;
-/** A thematic break (`***`, `___`, `- - -`): it ends a paragraph, so the text after it starts a new one. */
-const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
-
 /**
  * The part of a note an embed shows: the whole body without frontmatter, the section under `#Heading`
  * (until the next heading of the same or a higher level), or the block that ends in `^id`.
  */
 export function noteSection(text: string, fragment: string): string {
-    const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "");
+    const body = stripFrontmatter(text);
 
     if (!fragment) {
         return body;
     }
 
-    const lines = body.split("\n");
-
     if (fragment.startsWith("^")) {
+        const lines = body.split("\n");
         const end = lines.findIndex((line) => line.trimEnd().endsWith(` ${fragment}`) || line.trim() === fragment);
 
         if (end === -1) {
@@ -902,68 +899,22 @@ export function noteSection(text: string, fragment: string): string {
     }
 
     const wanted = headingSlug(fragment);
-    let fence: string | null = null;
-    let start = -1;
-    let level = 0;
-    let end = lines.length;
-    // The first line of the paragraph the walk is in, which a Setext underline turns into a heading; -1 outside one.
-    let paragraph = -1;
+    const headings = noteHeadings(body);
+    const index = headings.findIndex((heading) => headingSlug(heading.text) === wanted);
 
-    for (let index = 0; index < lines.length; index++) {
-        const line = lines[index].replace(/\r$/, "");
-        const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-
-        if (fence) {
-            if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
-                fence = null;
-            }
-            continue;
-        }
-
-        if (marker && (marker[1][0] !== "`" || !marker[2].includes("`"))) {
-            fence = marker[1];
-            paragraph = -1;
-            continue;
-        }
-
-        const atx = HEADING_LINE_RE.exec(line);
-        const underline = paragraph === -1 ? null : SETEXT_UNDERLINE_RE.exec(line);
-        const heading = atx
-            ? { at: index, level: atx[1].length, text: atx[2] }
-            : underline
-              ? {
-                    at: paragraph,
-                    level: underline[1][0] === "=" ? 1 : 2,
-                    text: lines
-                        .slice(paragraph, index)
-                        .map((text) => text.trim())
-                        .join(" "),
-                }
-              : null;
-
-        if (!heading) {
-            // A `---` right under paragraph text is its Setext underline (read above); anywhere else a break.
-            paragraph =
-                !line.trim() || NOT_SETEXT_TEXT_RE.test(line) || THEMATIC_BREAK_RE.test(line)
-                    ? -1
-                    : paragraph === -1
-                      ? index
-                      : paragraph;
-            continue;
-        }
-
-        paragraph = -1;
-
-        if (start === -1 && headingSlug(heading.text) === wanted) {
-            start = heading.at;
-            level = heading.level;
-        } else if (start !== -1 && heading.level <= level) {
-            end = heading.at;
-            break;
-        }
+    if (index === -1) {
+        return "";
     }
 
-    return start === -1 ? "" : lines.slice(start, end).join("\n");
+    const start = headings[index];
+    const next = headings.slice(index + 1).find((heading) => heading.depth <= start.depth);
+    // Lines as marked counts them (`\r\n` and a lone `\r` both end one), each with its own line ending.
+    const cut = body
+        .split(/(?<=\n|\r(?!\n))/)
+        .slice(start.line, next?.line)
+        .join("");
+
+    return next ? cut.replace(/\n$/, "") : cut;
 }
 
 /** An embedded note or section, rendered like the side panel: its own links, images and embeds stay text. */
