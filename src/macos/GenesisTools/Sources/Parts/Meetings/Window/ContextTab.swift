@@ -13,7 +13,7 @@ struct ContextTab: View {
         LoadablePane(state: detail.record, reading: "Reading the context…", retry: detail.reloadRecord) { record in
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Files, links and notes the transcript rules read (quotes, meanings).")
+                    Text("Files, links and notes about this meeting. The transcript's suggestions read them for names and terms.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     WrapLayout(spacing: 8, lineSpacing: 6) {
                         GhostButton("Add files…", symbol: "plus", tooltip: "Choose files to add as context (or drop them here)",
@@ -101,7 +101,7 @@ private struct ContextComposerButton: View {
 
     var body: some View {
         GhostButton(kind == .link ? "Add link…" : "Add note…", symbol: kind == .link ? "link" : "note.text",
-                    tooltip: kind == .link ? "Add a web page the transcript rules read" : "Add a note the transcript rules read",
+                    tooltip: kind == .link ? "Add a web page the transcript's suggestions read" : "Add a note the transcript's suggestions read",
                     identifier: "meetings.context.add.\(kind.rawValue)") { open = true }
             .popover(isPresented: $open, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 8) {
