@@ -665,3 +665,19 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   every call site compiling and still decodes the key when it is present.
 - **A view with an optional slot** (chips under a line, an accessory) is generic over the slot, with
   `extension Row where Slot == EmptyView` for the call sites without one. `AnyView` there costs the diffing.
+- **A width on an empty slot is a width on nothing.** `row(name: EmptyView())` with `name.frame(width: 170)` puts
+  no view in the stack, so that row's flexible column is 170 pt (and one spacing) wider than in the rows whose slot
+  holds a view. The Speakers ruler and its question banners had a wider lane than the speakers' rows, and no clock
+  time stood over the second it names. Wrap the slot (`ZStack { name }.frame(width:)`), and compare the columns with
+  a frame probe at two widths (`testTheQuestionsAndTheRulerShareTheSpeakersLane`).
+- **A second view inside one `ForEach` element takes the element's id.** A `Divider()` written before the row in
+  the `ForEach` body made `proxy.scrollTo(row.id)` stop at the divider, with the row below the fold. Draw the rule on
+  the row (`.padding(.top)` and `.overlay(alignment: .top)`), after the row's own `.id`.
+- **`ViewThatFits` picks by each row's own words.** A folded row with a short answer kept its status and the row
+  under it dropped it, so one list had three shapes. When a list's rows must take one shape, give every part a
+  nominal ideal width (`.frame(idealWidth:)` changes only what the unspecified proposal measures), so the choice
+  follows the column and not the content.
+- **A view that follows something scrolls on change only.** `onChange(of: heard)` never fires for a pane that
+  appears while the value is already set. A follower also places itself in `onAppear`, on the next main-queue turn.
+- **A lazy stack places a far row by an estimate.** One `scrollTo` for a row far below lands near it; ask again on
+  the next main-queue turn, when the rows around it are laid out.

@@ -563,3 +563,27 @@ checklist.md or motion.md as well.
   click, or place it with a layout (`.padding(.leading:)`, `.position`). A stationary real pointer can also miss
   the hover event when a row opens, scrolls or refreshes, so its first click must work without a mouse move. The
   resting label now handles the same tap (dafe8e779f). Test a click with no preceding move.
+
+- 2026-11-10 07:20 — **A list picks one shape for all its rows, and drops in a stated order what the reader needs least.**
+  The Meetings review rows at the window's smallest size (900 x 600 pt): a decided row was "Q4 2 → Alex Example …"
+  (one character of text, the status an ellipsis), and a playing row's small bar drew its flag over its times while
+  the row's time wrapped. Each was one line squeezed, with every part still present. Now a narrow column drops who
+  decided it (the mark says it is decided), then the words of the button (its glyph stays), then a question's text
+  (its answer stays); the bar drops its times, then itself. Rule: for every one-line row, write down what goes first
+  at half the width, and look at the smallest window before the largest.
+- 2026-11-10 07:20 — **Weigh what you warn about.** The Speakers tab drew every sign as an orange warning that ended in
+  "(weak sign)" or "(strong sign)": eight lines of one colour, so the one strong sign was lost. Now a strong sign is
+  a filled warning and stands first, a weak one is a grey note, and the weight follows the sentence in small text.
+  Rule: a level that exists in the data is a level in the drawing; words in brackets are not a level.
+- 2026-11-10 07:20 — **Say a thing once per view.** Found in one pass over pictures of real meetings: "No project" as a badge
+  and as the picker under it; "Follows playback" alone on a line under the filter; "430 rows wait for you" as a title
+  under a bar that counted the same rows; "From ▶ 23:51" under a header with "▶ 23:51" on most of 430 rows; a
+  speaker range that said its two names on two lines; a "Meetings" chip on every person beside "5 meetings"; four
+  rule lines that each said "none"; a question as the card's title and again under "Asks" (my own change: I made
+  the title the question and did not read what else the card printed). Rule: after a pass over a view, read it for
+  the same fact twice, and when a title changes, read every part under it again.
+- 2026-11-10 07:20 — **A picture mode needs the states a click makes.** The off-screen snapshot showed only the resting
+  window, so the selected row, the open editor, the pin's card and the history sheet had never been looked at as
+  pictures. Each got a flag (`--select`, `--edit`, `--card`, `--sheet`); a popover or a sheet is drawn alone in
+  a window of its own size. The first card picture showed three defects at once. Rule: a state without a picture
+  is a state nobody reviewed.
