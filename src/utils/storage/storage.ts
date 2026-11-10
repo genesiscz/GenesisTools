@@ -29,9 +29,6 @@ export interface StorageOptions {
 
 export class Storage {
     private toolName: string;
-    private baseDir: string;
-    private cacheDir: string;
-    private configPath: string;
     private configFileMode?: number;
 
     /**
@@ -42,13 +39,24 @@ export class Storage {
     constructor(toolName: string, options?: StorageOptions) {
         this.toolName = toolName;
         this.configFileMode = options?.configFileMode;
-        // GENESIS_TOOLS_HOME overrides the storage root (toolDataDir). Tests set it to a fresh
-        // tmp dir so the suite can never write a user's real ~/.genesis-tools
-        // (bun's spyOn is process-global with no reliable cross-file restore,
-        // so per-test mocks alone are not a safe sandbox).
-        this.baseDir = toolDataDir(toolName);
-        this.cacheDir = join(this.baseDir, "cache");
-        this.configPath = join(this.baseDir, "config.json");
+    }
+
+    /**
+     * Resolved on every use, never stored. GENESIS_TOOLS_HOME overrides the root (toolDataDir), and a test
+     * moves it to a fresh tmp dir. A root captured in the constructor outlived that move: a cached instance
+     * or a module-level singleton kept writing the home it was built under, which is how the real store was
+     * overwritten twice (PR #177, 2026-08-29; see real-home-guard.ts).
+     */
+    private get baseDir(): string {
+        return toolDataDir(this.toolName);
+    }
+
+    private get cacheDir(): string {
+        return join(this.baseDir, "cache");
+    }
+
+    private get configPath(): string {
+        return join(this.baseDir, "config.json");
     }
 
     // ============================================

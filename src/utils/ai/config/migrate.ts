@@ -31,12 +31,21 @@ import { CONFIG_VERSION } from "./schema";
  * reader does not understand. Each migration is individually idempotent and
  * guarded, so running it on every load costs a stat and nothing else.
  */
-let migrated = false;
+/**
+ * The config path the chain last finished for, or null. Keyed by path, not a plain flag: a process whose
+ * GENESIS_TOOLS_HOME moves (a test, a sandboxed run) has a different config that the chain has not seen.
+ */
+let migratedFor: string | null = null;
+
+function currentConfigPath(): string {
+    return new Storage("ai").getConfigPath();
+}
 
 const CHAIN = [migrateAI, migrateConfigV4, migrateSecretsToVault];
 
 export async function ensureAiConfigMigrated(): Promise<void> {
-    if (migrated) {
+    const configPath = currentConfigPath();
+    if (migratedFor === configPath) {
         return;
     }
 
@@ -47,7 +56,7 @@ export async function ensureAiConfigMigrated(): Promise<void> {
     // refuse. Each migration keeps its own gate as well: two independent checks
     // are what stop a bug in one from reaching the user's real file.
     if (!migrationAllowedHere()) {
-        migrated = true;
+        migratedFor = configPath;
         await warnIfConfigIsBehind();
         return;
     }
@@ -59,7 +68,7 @@ export async function ensureAiConfigMigrated(): Promise<void> {
     // threw". Latching the process guard on that left a half-migrated config
     // (plaintext credentials still in the file) with every later load in this
     // process skipping the retry. Re-asking each migration costs a stat apiece.
-    migrated = !(await chainStillPending());
+    migratedFor = (await chainStillPending()) ? null : configPath;
 }
 
 /**
@@ -92,5 +101,5 @@ async function chainStillPending(): Promise<boolean> {
 
 /** Test seam: the chain is process-scoped, and tests switch config roots. */
 export function _resetMigrationStateForTest(): void {
-    migrated = false;
+    migratedFor = null;
 }

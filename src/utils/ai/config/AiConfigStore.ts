@@ -117,16 +117,33 @@ export class AiConfigStore {
     /** First construction in flight, so concurrent `load()` calls share one. */
     private static loading: Promise<AiConfigStore> | null = null;
 
+    /** The config file this store's data came from. `storage` resolves the home on every use; this does not. */
+    private readonly boundPath: string;
+
     private constructor(
         private readonly storage: Storage,
         private config: AiConfigData,
         private stamp: FileStamp
-    ) {}
+    ) {
+        this.boundPath = storage.getConfigPath();
+    }
 
     static async load(): Promise<AiConfigStore> {
-        if (AiConfigStore.instance) {
-            await AiConfigStore.instance.refreshIfStale();
-            return AiConfigStore.instance;
+        const cached = AiConfigStore.instance;
+
+        // Rebinds when the resolved path moved (GENESIS_TOOLS_HOME changed), as `SecretStore.fileStore()`
+        // does: the cached data and the migration verdict belong to the old home. `ensureAiConfigMigrated`
+        // keys its own latch by path, so the next build runs the chain for the new home.
+        if (cached && cached.boundPath !== cached.storage.getConfigPath()) {
+            logger.debug(
+                { from: cached.boundPath, to: cached.storage.getConfigPath() },
+                "ai config home moved, rebinding the store"
+            );
+            AiConfigStore.instance = null;
+            AiConfigStore.loading = null;
+        } else if (cached) {
+            await cached.refreshIfStale();
+            return cached;
         }
 
         // The instance check and the read below are separated by an await, so two

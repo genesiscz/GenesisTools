@@ -14,11 +14,14 @@ import { isTestProcess, testProcessReason } from "@genesiscz/utils/test-process"
  * entry (the vault survived, so nothing was unrecoverable, but the metadata had
  * to be rebuilt by hand).
  *
- * The mechanism both times: `Storage` resolves its base directory ONCE, in the
+ * The mechanism both times: `Storage` resolved its base directory ONCE, in the
  * constructor. A cached instance or a module-level singleton built while a
- * sandbox `GENESIS_TOOLS_HOME` was set outlives the `afterEach` that restores the
- * real home, and its next write lands on the real path. `AIConfig` is exactly
- * this shape: a process-wide singleton with an `invalidate()` that no test calls.
+ * sandbox `GENESIS_TOOLS_HOME` was set outlived the `afterEach` that restored the
+ * real home, and its next write landed on the real path. `Storage` now resolves
+ * the root on every use and `AiConfigStore` rebinds when it moves, but a path
+ * captured outside them (a module-level constant built from `genesisToolsDir`)
+ * still freezes the home at import, and an unset variable still means the real
+ * home. So this guard stays.
  *
  * `test-sandbox.ts` already guards this, but only for test files that opt in, and
  * neither incident was in a file that had. So this check is ALWAYS ON, and it is
