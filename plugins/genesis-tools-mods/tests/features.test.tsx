@@ -46,6 +46,7 @@ import { COMMIT, checkHubLink, forgeProject, forgetCommitLinks } from "../hooks/
 import {
     answeredInChat,
     chatDecisions,
+    DECISIONS_PANE,
     decisions,
     editAnswer,
     openDecisions,
@@ -564,6 +565,86 @@ test("decisions sidebar: ticks on an unlogged several-letter ask reach the promp
     // The ticks left with that line: a second put in prompt has nothing to write.
     await sendDecisionAnswers(host, { outgoing: "", how: "fill" });
     expect(filled).toHaveLength(1);
+    forgetAnswers();
+});
+
+test("decisions sidebar: a tick on an unlogged several-letter ask shows [send], and unticking its last letter clears it", async ($, on) => {
+    forgetAnswers();
+    forgetSettings();
+    forgetGenesisProbe();
+    mock.env(on, { HOME: "/home/test" });
+    mock.store(on);
+    mock.clock(on);
+    on("ui.open", async () => ({ value: undefined }));
+    on("fs.read", async (_$, e) => {
+        if (e.path === "/home/test/.genesis-tools/agents/hooks.json") {
+            return { value: JSON.stringify({ mods: { decisions: { enabled: true } } }) };
+        }
+
+        throw new Error(`ENOENT ${e.path}`);
+    });
+    on("session.id", async () => ({ value: "sess-ticks" }));
+    on("session.cwd", async () => ({ value: "/repo" }));
+    on("session.messages", async () => ({
+        value: [
+            {
+                role: "assistant",
+                text: "❓ DECISION 9 which parts?\na) cache\nb) queue\nPick several letters.",
+                toolUses: [],
+            },
+        ],
+    }));
+    on("process.run", async (_$, e) => {
+        const argv = e.argv.join(" ");
+        const answer = (stdout: string, exitCode = 0) => ({
+            value: { exitCode, stdout, stderr: "", isStdoutTruncated: false, isStderrTruncated: false },
+        });
+
+        if (argv === "tools genesis-tools probe --json") {
+            return answer(JSON.stringify({ router: {}, links: {} }));
+        }
+
+        // The decision log has no DECISION 9, so a stage answers that it is not waiting.
+        if (argv.includes(" draft --decision 9")) {
+            return answer(JSON.stringify({ error: "DECISION 9 is not waiting in the decision log" }));
+        }
+
+        return answer("", 1);
+    });
+
+    await $.command.run({
+        command: "decisions",
+        args: "",
+        origin: { kind: "composer" } as const,
+        presentation: { isFullscreen: false, columns: 100 },
+    });
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "Pane",
+        requestId: DECISIONS_PANE,
+        props: {
+            title: "Decisions",
+            isFocused: true,
+            bodyColumns: 100,
+            placement: "inline",
+            scroll: { offset: 0, bodyRows: 60 },
+            view: {},
+        },
+    });
+
+    expect(await ui.find({ key: "d9-a" })).toBeDefined();
+    expect(await ui.find({ key: "decisions-send" })).toBeUndefined();
+
+    // A tick lives only in the sidebar, and the staged preview with its [send] shows it.
+    await ui.press({ key: "d9-b" });
+    expect(await ui.find({ key: "decisions-send" })).toBeDefined();
+    expect(await ui.find({ text: "D9: b)" })).toBeDefined();
+
+    // Pressing the only ticked letter again unticks it: nothing is staged, so [send] goes.
+    await ui.press({ key: "d9-b" });
+    expect(await ui.find({ key: "decisions-send" })).toBeUndefined();
+    expect(await ui.find({ text: "D9: b)" })).toBeUndefined();
     forgetAnswers();
 });
 

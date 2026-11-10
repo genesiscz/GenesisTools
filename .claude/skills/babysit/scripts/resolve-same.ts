@@ -9,7 +9,8 @@ interface Resolution {
     versions: string[];
 }
 
-// Whitespace inside strings, templates, comments or regular expressions can change behavior.
+// Whitespace inside strings, templates, comments or regular expressions can change behavior, and so can a line break
+// where automatic semicolon insertion may end a statement.
 function normalize(text: string): string {
     // A slash may start a comment or a regular expression. Keep such blocks exact.
     if (text.includes("/")) {
@@ -34,9 +35,19 @@ function normalize(text: string): string {
         } else if (!/\s/.test(c)) {
             result += c;
         } else {
+            let end = i;
+            while (end + 1 < text.length && /\s/.test(text[end + 1])) {
+                end++;
+            }
+            const breaksLine = text.slice(i, end + 1).includes("\n");
+            i = end;
             const before = result.at(-1) ?? "";
-            const after = text.slice(i + 1).match(/^\s*(.)/s)?.[1] ?? "";
-            if (
+            const after = text[end + 1] ?? "";
+            // A line break can end a statement (`return\nx` returns undefined, `a\n++b` is two statements), so it
+            // stays unless the token before cannot end one or the token after closes or separates one.
+            if (breaksLine && before && after && !/[{([,;:=]/.test(before) && !/[)\]},;]/.test(after)) {
+                result += "\n";
+            } else if (
                 (/[\w$]/.test(before) && /[\w$]/.test(after)) ||
                 (/[+\-<>=&|?]/.test(before) && /[+\-<>=&|?]/.test(after))
             ) {
