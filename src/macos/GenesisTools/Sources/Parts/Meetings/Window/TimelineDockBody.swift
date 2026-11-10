@@ -41,6 +41,25 @@ struct TimelineDockState: Equatable {
     var moreSec: Double = 30
     /// Skip length of the back and forward buttons.
     var skipSec: Double = 5
+    /// The ranges the reader zoomed to while the top plays, the shown one last (TimelineDockModel's trail).
+    var views: [ClosedRange<Double>] = []
+    /// Who talks when (the waveform's colours) and the speakers for the legend; empty: one colour.
+    var voices: [VoiceSpan] = []
+    var legend: [VoiceLegend] = []
+    /// Rows the pins have in whole-meeting mode.
+    var pinLanes: Int = 2
+
+    /// A zoomed range in words: "48:46 to 1:27:00".
+    static func viewTitle(_ range: ClosedRange<Double>) -> String {
+        "\(MeetingsFormat.clock(range.lowerBound)) to \(MeetingsFormat.clock(range.upperBound))"
+    }
+
+    /// What "Back" goes to, in words: the range before the shown one, or the top's own view.
+    var backTitle: String? {
+        guard !views.isEmpty else { return nil }
+        if views.count >= 2 { return Self.viewTitle(views[views.count - 2]) }
+        return span == nil ? "the whole meeting" : "the clip"
+    }
 }
 
 /// What the dock's controls do; each closure maps to one MomentPlayer method or one view change (see the lane's
@@ -58,6 +77,8 @@ struct TimelineDockActions {
     /// A new view range from the strip's lens or a merged pin.
     var setView: (ClosedRange<Double>) -> Void = { _ in }
     var popTo: (Int) -> Void = { _ in }
+    /// Back to a zoomed range before the shown one (its index in `views`), or to the top's own view (nil).
+    var popView: (Int?) -> Void = { _ in }
     var showMeeting: () -> Void = {}
     /// Ends every Moment; the dock goes.
     var stop: () -> Void = {}
@@ -84,8 +105,9 @@ struct TimelineDockBody<Trailing: View>: View {
                 collapsedLine
             } else {
                 HStack(spacing: 10) {
-                    StackBreadcrumb(meeting: state.meetingTitle, moments: state.moments, isPlaying: state.isPlaying,
-                                    onMeeting: actions.showMeeting, onPop: actions.popTo)
+                    StackBreadcrumb(meeting: state.meetingTitle, moments: state.moments,
+                                    views: state.views.map(TimelineDockState.viewTitle), isPlaying: state.isPlaying,
+                                    onMeeting: actions.showMeeting, onPop: actions.popTo, onView: actions.popView)
                     Spacer(minLength: 8)
                 }
                 buttons
@@ -94,14 +116,15 @@ struct TimelineDockBody<Trailing: View>: View {
                         // In the Meeting view the zoomed timeline is the whole meeting already: no second strip.
                         if state.zoom != .meeting {
                             ConversationStrip(durationSec: state.durationSec, peaks: state.wholePeaks, zoom: state.view,
-                                              position: position, pins: state.pins, onZoom: actions.setView,
-                                              pinActions: actions.pins)
+                                              position: position, pins: state.pins, voices: state.voices,
+                                              onZoom: actions.setView, pinActions: actions.pins)
                             ZoomConnector(zoom: state.view, durationSec: state.durationSec)
                         }
                         MomentTimeline(span: state.zoom == .meeting ? nil : state.span, view: state.view,
                                        peaks: state.zoomPeaks, peaksRange: state.zoomPeaksRange, position: position,
                                        pins: state.pins, offerMore: state.offerMore, moreSec: state.moreSec,
-                                       zoomedOut: state.zoom != .clip, onFlag: actions.flag, onSeek: actions.seek,
+                                       zoomedOut: state.zoom != .clip, voices: state.voices, legend: state.legend,
+                                       pinLanes: state.pinLanes, onFlag: actions.flag, onSeek: actions.seek,
                                        onZoom: { out in actions.setZoom(out ? .context : .clip) },
                                        onPlayMore: actions.playMore, pinActions: actions.pins)
                     }
@@ -168,6 +191,13 @@ struct TimelineDockBody<Trailing: View>: View {
             }
             PositionClock(position: position)
             Spacer(minLength: 8)
+            // Only while a zoomed range shows; it stands in the free room before the view choice, so nothing moves.
+            if let back = state.backTitle {
+                GhostButton("Back", symbol: "arrow.uturn.backward", tooltip: "Show \(back) on the timeline again; the sound goes on",
+                            identifier: "meetings.dock.viewBack") {
+                    actions.popView(state.views.count >= 2 ? state.views.count - 2 : nil)
+                }
+            }
             GenSegmentedTabs("Zoom", items: DockZoom.allCases.map { zoom in
                                  GenSegmentedTabs.Item(zoom, zoom.title, isEnabled: zoom == .meeting || state.span != nil)
                              },

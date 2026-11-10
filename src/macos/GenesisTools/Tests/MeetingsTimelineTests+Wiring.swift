@@ -51,6 +51,55 @@ extension MeetingsTimelineTests {
                        "a new top shows its own clip again, not the lens range of the one before")
     }
 
+    /// 2026-11-10: a click on a merged pin zoomed in, the breadcrumb did not change and nothing went back.
+    func testTheZoomedRangesAreATrailThatTheBreadcrumbNamesAndGoesBackThrough() throws {
+        let (defaults, name) = try suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let dock = TimelineDockModel(reads: Self.noReads, defaults: defaults)
+        let layer = UUID()
+        dock.showView(2926...5220, layer: layer)
+        dock.pushView(3040...3075, layer: layer)
+        dock.pushView(3040...3075, layer: layer)
+        XCTAssertEqual(dock.trail(of: layer), [2926...5220, 3040...3075], "a merged pin is one level deeper; the same range twice is one level")
+        XCTAssertEqual(dock.viewOverride?.range, 3040...3075)
+        dock.setView(3050...3085, layer: layer)
+        XCTAssertEqual(dock.trail(of: layer), [2926...5220, 3050...3085], "the lens moves the shown range; no level is added")
+        XCTAssertTrue(dock.trail(of: UUID()).isEmpty, "another layer has no trail")
+        dock.backView()
+        XCTAssertEqual(dock.trail(of: layer), [2926...5220])
+        dock.pushView(3040...3075, layer: layer)
+        dock.pushView(3056...3060, layer: layer)
+        dock.popView(to: 0)
+        XCTAssertEqual(dock.trail(of: layer), [2926...5220], "a click on a level goes back to it in one step")
+        dock.backView()
+        XCTAssertNil(dock.viewOverride, "back from the first level shows the layer's own view")
+        dock.showView(10...20, layer: layer)
+        dock.showView(30...40, layer: layer)
+        XCTAssertEqual(dock.trail(of: layer), [30...40], "Show is that range alone")
+        let next = UUID()
+        dock.moveView(from: layer, to: next)
+        XCTAssertEqual(dock.trail(of: next), [30...40], "the next stretch of the same play keeps the range")
+        dock.popView(to: nil)
+        XCTAssertNil(dock.viewOverride)
+    }
+
+    func testTheDockSaysWhatBackGoesToAndTheBreadcrumbWhatAClickDoes() {
+        var state = TimelineDockState(meetingTitle: "Design review", moments: [], isPlaying: true, span: nil, zoom: .meeting, view: 0...100,
+                                      durationSec: 100, wholePeaks: [], zoomPeaks: [], zoomPeaksRange: 0...100, pins: [], offerMore: false)
+        XCTAssertNil(state.backTitle, "no zoomed range: no Back button")
+        state.views = [2926...5220]
+        XCTAssertEqual(state.backTitle, "the whole meeting")
+        state.views = [2926...5220, 3040...3075]
+        XCTAssertEqual(state.backTitle, "48:46 to 1:27:00")
+        state.span = TimelineFixture.span
+        state.views = [3260...3300]
+        XCTAssertEqual(state.backTitle, "the clip")
+        XCTAssertEqual(TimelineDockState.viewTitle(3040...3075), "50:40 to 51:15")
+        XCTAssertEqual(StackBreadcrumb.tooltip(top: true, title: "Q1", zoomed: false), "Plays now")
+        XCTAssertEqual(StackBreadcrumb.tooltip(top: true, title: "Q1", zoomed: true), "Plays now. Click to show all of it on the timeline again")
+        XCTAssertEqual(StackBreadcrumb.tooltip(top: false, title: "Q1", zoomed: true), "Back to Q1, where it stopped")
+    }
+
     func testZoomStepsHoldAtTheEndsAndAZoomChangeDropsTheLensRange() throws {
         let (defaults, name) = try suite()
         defer { defaults.removePersistentDomain(forName: name) }

@@ -113,6 +113,81 @@ final class MeetingsTimelineTests: XCTestCase {
         XCTAssertEqual(ZoomSpan(startSec: 0, endSec: 10, fromSec: 5, toSec: 6, spotSec: 5, label: "x").contextView(contextSec: 120, durationSec: 8772), 0...120)
     }
 
+    /// 2026-11-10: two items a second apart were a "2" that no zoom took apart. On two rows they stand under each
+    /// other with their texts; a third at the same place joins the first row's mark.
+    func testPinsCloseInTimeStandOnRowsAndOnlyTheOverflowBecomesACount() {
+        func pin(_ id: String, _ sec: Double, _ text: String = "Robertem → Róbertem") -> TimelinePin {
+            TimelinePin(id: id, sec: sec, text: text, state: .done)
+        }
+        // 4 s over 1200 pt: a second is 300 pt.
+        let two = PinCluster.laid([pin("a", 3059.0), pin("b", 3059.02)], in: 3056...3060, width: 1200, lanes: 2)
+        XCTAssertEqual(two.map(\.pins.count), [1, 1], "two rows hold both, each with its text")
+        XCTAssertEqual(two.map(\.lane), [0, 1])
+        let three = PinCluster.laid([pin("a", 3059.0), pin("b", 3059.02), pin("c", 3059.04)], in: 3056...3060, width: 1200, lanes: 2)
+        XCTAssertEqual(three.map(\.pins.count).sorted(), [1, 2], "no row has room for the third: it joins the first row's mark")
+        XCTAssertEqual(three.first { $0.lane == 0 }?.pins.map(\.id), ["a", "c"])
+        // Far apart: one row, the texts whole.
+        let apart = PinCluster.laid([pin("a", 3056.5, "one"), pin("b", 3058.5, "two")], in: 3056...3060, width: 1200, lanes: 2)
+        XCTAssertEqual(apart.map(\.lane), [0, 0])
+        XCTAssertEqual(apart[0].room, 600, "the room to the next mark on the same row")
+        // The first mark's text does not fit before the second pin: the second goes one row down, the text stays whole.
+        let near = PinCluster.laid([pin("a", 3057.0), pin("b", 3057.2)], in: 3056...3060, width: 1200, lanes: 2)
+        XCTAssertEqual(near.map(\.lane), [0, 1])
+        XCTAssertEqual(PinCluster.laid([pin("a", 10), pin("b", 9000)], in: 0...100, width: 500, lanes: 2).count, 1, "a pin outside the view is left out")
+    }
+
+    func testAMarkThatNoZoomTakesApartOpensAListInsteadOfAZoom() {
+        let same = PinCluster(pins: [TimelinePin(id: "a", sec: 3059, text: "a", state: .done), TimelinePin(id: "b", sec: 3059, text: "b", state: .done)],
+                              x: 0, room: 0)
+        XCTAssertTrue(same.expands(in: 2926...5220), "from a wide view a zoom to its 12 s shows less")
+        XCTAssertFalse(same.expands(in: 3053...3065), "the view is its 12 s already: a click lists its rows")
+        let wide = PinCluster(pins: [TimelinePin(id: "a", sec: 100, text: "a", state: .open), TimelinePin(id: "b", sec: 700, text: "b", state: .open)],
+                              x: 0, room: 0)
+        XCTAssertTrue(wide.expands(in: 0...8772))
+        XCTAssertEqual(PinCluster.expanded(100...200), 90...210)
+    }
+
+    /// 2026-11-10: a view from 48:46 showed "50:00" as its first time. The ruler names the view's two ends, and a
+    /// round mark that would stand in an end's label is left out.
+    func testTheRulerNamesTheViewsEndsAndKeepsTheMarksOffThem() {
+        let labels = TimelineGeometry.rulerLabels(in: 2926...5220, width: 1500)
+        XCTAssertEqual(labels.first, RulerLabel(sec: 2926, x: 0, kind: .start))
+        XCTAssertEqual(labels.last, RulerLabel(sec: 5220, x: 1500, kind: .end))
+        let marks = labels.filter { $0.kind == .mark }
+        XCTAssertEqual(marks.first?.sec, 3120, "52:00: the mark at 50:00 is 48 pt from the start label and is left out")
+        XCTAssertTrue(marks.allSatisfy { $0.x >= 62 && $0.x <= 1500 - 62 })
+        XCTAssertEqual(TimelineGeometry.rulerLabels(in: 0...600, width: 600).filter { $0.kind == .mark }.first?.sec, 120,
+                       "a view from 00:00 names it once, as its start")
+        XCTAssertTrue(TimelineGeometry.rulerLabels(in: 5...5, width: 600).isEmpty)
+    }
+
+    /// The waveform's colour per bar is the voice that talks longest in it; a bar nobody talks in has none.
+    func testABarHasTheColourOfTheVoiceThatTalksLongestInIt() {
+        let voices = [VoiceSpan(fromSec: 0, toSec: 5, color: .purple), VoiceSpan(fromSec: 4, toSec: 12, color: .green),
+                      VoiceSpan(fromSec: 30, toSec: 31, color: .purple)]
+        XCTAssertEqual(TimelineGeometry.barVoices(voices, view: 0...40, count: 4), [.green, .green, nil, .purple])
+        XCTAssertEqual(TimelineGeometry.barVoices(voices, view: 0...10, count: 2), [.purple, .green])
+        XCTAssertEqual(TimelineGeometry.barVoices([], view: 0...10, count: 2), [nil, nil])
+    }
+
+    func testTheWaveformHasEachSpeakersOwnColourAndTheLegendTheMostSpokenFirst() {
+        func speaker(_ label: String, _ spoken: Double, _ turns: [(Double, Double)]) -> MeetingsAPI.MeetingSpeakers.Speaker {
+            let spans = turns.map { MeetingsAPI.MeetingSpeakers.Span(fromSec: $0.0, toSec: $0.1, turns: 1) }
+            return MeetingsAPI.MeetingSpeakers.Speaker(label: label, speakerId: nil, origin: "call", turns: turns.count, lines: 1, words: 1,
+                                                       spokenSec: spoken, firstSec: turns.first?.0, lastSec: turns.last?.1, spans: spans, talk: spans)
+        }
+        let voices = TimelineDock.voices([speaker("Speaker 1", 10, [(20, 30)]), speaker("Speaker 2", 60, [(0, 20), (30, 70)])],
+                                         names: ["Speaker 1": "Alice Novak"])
+        XCTAssertEqual(voices.legend.map(\.name), ["Speaker 2", "Alice Novak"], "the most spoken first, by the shown name")
+        XCTAssertEqual(voices.spans.map(\.fromSec), [0, 20, 30], "in the order of their start")
+        XCTAssertEqual(voices.spans[1].color, KitPersonColor.color(for: "Alice Novak", among: ["Alice Novak", "Speaker 2"]),
+                       "the avatar's colour: the shown name among the meeting's shown names")
+        XCTAssertNotEqual(voices.spans[0].color, voices.spans[1].color)
+        XCTAssertTrue(TimelineDock.coloursVoices("speakers", look: .aurora))
+        XCTAssertFalse(TimelineDock.coloursVoices("plain", look: .aurora))
+        XCTAssertFalse(TimelineDock.coloursVoices("speakers", look: .classic), "the classic look keeps its one colour")
+    }
+
     /// The ruler marks fall on round seconds at least 70 pt apart; a second maps to x and back.
     func testTheRulerMarksRoundSecondsAndASecondMapsToXAndBack() {
         XCTAssertEqual(TimelineGeometry.ticks(in: 3266...3291, width: 500), [3270, 3275, 3280, 3285, 3290])

@@ -46,6 +46,11 @@ struct MeetingsRequest {
     var snapshot: String?
     /// `--play <target json>`: the Moment a snapshot starts, silently, before the picture.
     var play: MomentTarget?
+    /// `--show <from>,<to>`: a snapshot of what a "Show" chip does: the whole meeting plays from `from`, silently, and
+    /// the timeline shows the range.
+    var show: ClosedRange<Double>?
+    /// `--zoom-to <from>,<to>` (repeatable): a snapshot's zoom levels, as clicks on merged pins add them.
+    var zoomTo: [ClosedRange<Double>] = []
     /// `--select <row id>` and `--edit <row id>`: a snapshot's selected review row, and the row whose editor is open.
     var select: String?
     var edit: String?
@@ -87,6 +92,8 @@ struct MeetingsRequest {
             case "--sheet": request.sheet = value()
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
             case "--play": request.play = value().flatMap { try? JSONDecoder().decode(MomentTarget.self, from: Data($0.utf8)) }
+            case "--show": request.show = value().flatMap(MeetingsRequest.range)
+            case "--zoom-to": if let range = value().flatMap(MeetingsRequest.range) { request.zoomTo.append(range) }
             case "--width": request.width = value().flatMap(Double.init).map { CGFloat($0) } ?? request.width
             case "--height": request.height = value().flatMap(Double.init).map { CGFloat($0) } ?? request.height
             default: break
@@ -94,6 +101,13 @@ struct MeetingsRequest {
             index += 1
         }
         return request
+    }
+
+    /// "2926,5220" as seconds; nil for anything else.
+    static func range(_ text: String) -> ClosedRange<Double>? {
+        let parts = text.split(separator: ",").compactMap { Double($0) }
+        guard parts.count == 2, parts[1] > parts[0] else { return nil }
+        return parts[0]...parts[1]
     }
 }
 
@@ -321,6 +335,26 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     FileHandle.standardError.write(Data("meetings snapshot: the Moment did not play: \(failure.sentence)\n".utf8))
                 }
             }
+            if let range = request.show {
+                guard let meeting = model.detail?.id else {
+                    FileHandle.standardError.write(Data("meetings snapshot: --show needs --meeting\n".utf8))
+                    exit(1)
+                }
+                model.player.showMeeting(meeting, from: range.lowerBound)
+                model.player.timeline.showView(range, layer: model.player.top?.id)
+                guard await waitUntil(60, { model.player.phase == .playing || model.player.isFailed }) else {
+                    FileHandle.standardError.write(Data("meetings snapshot timed out starting the meeting\n".utf8))
+                    exit(1)
+                }
+            }
+            for range in request.zoomTo {
+                model.player.timeline.pushView(range, layer: model.player.top?.id)
+            }
+            if request.play != nil || request.show != nil, let detail = model.detail {
+                // The dock's waveform has the speakers' colours, which it reads after it shows.
+                if case .idle = detail.speakers { detail.loadSpeakers() }
+                _ = await waitUntil(60) { detail.speakers.value != nil || detail.speakers.failure != nil }
+            }
             if model.sidePanelOpen {
                 _ = await waitUntil(30) { model.settingsRaw != nil || model.settings.failure != nil }
             }
@@ -336,6 +370,14 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             }
             window.orderInForSnapshot()
             try? await Task.sleep(for: .milliseconds(900))
+            if request.card == nil, request.sheet == nil, let top = model.player.top {
+                // The dock reads its waveform once it shows, after the reads the window sent before it (the service
+                // answers in order): a picture taken before they land showed a timeline without a waveform.
+                let dock = model.player.timeline
+                if await waitUntil(8, { dock.whole[top.meeting] != nil }) {
+                    try? await Task.sleep(for: .milliseconds(400))
+                }
+            }
             guard let capture = await WindowSnapshot.capture(window),
                   let png = capture.image.representation(using: .png, properties: [:]) else {
                 FileHandle.standardError.write(Data("meetings snapshot failed: the window could not be drawn\n".utf8))

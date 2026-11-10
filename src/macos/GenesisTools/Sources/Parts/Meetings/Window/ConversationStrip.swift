@@ -15,6 +15,8 @@ struct ConversationStrip: View {
     /// The player's position, read only by the playhead.
     let position: () -> Double?
     var pins: [TimelinePin] = []
+    /// Who talks when: the waveform's colours (empty: one colour).
+    var voices: [VoiceSpan] = []
     var height: CGFloat = 74
     /// The lens is never drawn narrower than this, so a 25 s clip in a 2 h meeting stays visible and draggable.
     var minLensWidth: CGFloat = 9
@@ -31,26 +33,28 @@ struct ConversationStrip: View {
             HStack(spacing: 8) {
                 Text(verbatim: "Whole conversation · \(MeetingsFormat.clock(0)) to \(MeetingsFormat.clock(durationSec))")
                 Spacer(minLength: 8)
-                Text(verbatim: "⚑ open · ✓ answered · ? question")
+                PinLegend()
             }
             .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             .accessibilityHidden(true)
             GeometryReader { proxy in
                 let width = proxy.size.width
                 ZStack(alignment: .topLeading) {
+                    // Every layer maps a second onto the same inner width, so a pin, a mark and the lens agree.
                     if !pins.isEmpty {
                         TimelinePinsRow(pins: pins, view: whole, actions: pinActions, showsText: false)
-                            .frame(width: width, height: 16).offset(y: 2)
+                            .frame(width: width - 8, height: 16).offset(x: 4, y: 2)
                     }
-                    WaveformBars(peaks: peaks, peaksRange: whole, view: whole, clip: zoom)
+                    WaveformBars(peaks: peaks, peaksRange: whole, view: whole, clip: zoom, voices: voices)
                         .frame(width: width - 8, height: height - 38)
                         .offset(x: 4, y: 20)
                         .contentShape(Rectangle())
                         .gesture(dragGesture(width: width - 8))
+                    TimelineGrid(view: whole).frame(width: width - 8, height: height - 34).offset(x: 4, y: 18)
                     lens(width: width - 8).offset(x: 4)
                     TimelinePlayhead(position: position, view: whole)
                         .frame(width: width - 8, height: height - 32).offset(x: 4, y: 17)
-                    TimelineRuler(view: whole).frame(width: width).offset(y: height - 14)
+                    TimelineRuler(view: whole, edges: false).frame(width: width - 8).offset(x: 4, y: height - 14)
                 }
                 .frame(width: width, height: height, alignment: .topLeading)
             }
