@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 import { runTool } from "@genesiscz/utils/cli";
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
-import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
@@ -20,16 +19,10 @@ program
     .version("1.0.0")
     .showHelpAfterError(true);
 
-await registerRequestedTrees({
-    program,
-    registrars: CLAUDE_REGISTRARS,
-    requested: requestedCommandFromArgv(process.argv),
-});
-
 addGlobalVerboseOption(program);
 
 async function main(): Promise<void> {
-    await runTool(program, { tool: "claude" });
+    await runTool(program, { tool: "claude", registrars: CLAUDE_REGISTRARS });
 }
 
 main().catch((err) => {
