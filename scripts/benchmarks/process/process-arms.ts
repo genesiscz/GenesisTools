@@ -14,6 +14,11 @@ export const PROCESS_ARMS = {
     pulse: ["spawn", "host"],
     /** The session list's tmux lookup: `ps -axo` (`listPsTable`) against `listHostProcesses`. `check` = rows. */
     table: ["ps", "libproc"],
+    /**
+     * The hub's process report table (pid, parent, user, state, %cpu, memory, start, command): `ps -axo` with eight
+     * columns (`listPsTable`) against `kernelProcsTable`. `check` = rows.
+     */
+    report: ["ps", "libproc"],
     /** `tools claude who`: `ps axww`, `ps axeww` and `lsof` against the kernel scan. `check` = Claude processes. */
     who: ["ps", "libproc"],
     /** `tools say`'s caller chain from this process: `ps -axo pid=,ppid=` plus `ps -p` against the kernel walk. */
