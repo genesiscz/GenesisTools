@@ -1,7 +1,9 @@
 import SwiftUI
 
 /// Places its views left to right and starts a new row when the next one does not fit the proposed width, like words
-/// in a paragraph: chips, tags, the words of a transcript line. Each view keeps its own ideal size.
+/// in a paragraph: chips, tags, the words of a transcript line. Each view keeps its own ideal size, except a view wider
+/// than the whole row (a long sentence between two time links): it gets a row of its own and wraps inside the row's
+/// width, so nothing runs past the edge.
 public struct WrapLayout: Layout {
     var spacing: CGFloat
     var lineSpacing: CGFloat
@@ -22,8 +24,7 @@ public struct WrapLayout: Layout {
         var y = bounds.minY
         for row in rows(width: bounds.width, subviews: subviews) {
             var x = bounds.minX
-            for index in row.indices {
-                let size = subviews[index].sizeThatFits(.unspecified)
+            for (index, size) in zip(row.indices, row.sizes) {
                 subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: ProposedViewSize(size))
                 x += size.width + spacing
             }
@@ -33,6 +34,7 @@ public struct WrapLayout: Layout {
 
     private struct Row {
         var indices: [Int] = []
+        var sizes: [CGSize] = []
         var width: CGFloat = 0
         var height: CGFloat = 0
     }
@@ -41,7 +43,10 @@ public struct WrapLayout: Layout {
         var rows: [Row] = []
         var row = Row()
         for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
+            var size = subviews[index].sizeThatFits(.unspecified)
+            if width.isFinite, size.width > width {
+                size = subviews[index].sizeThatFits(ProposedViewSize(width: width, height: nil))
+            }
             let needed = row.indices.isEmpty ? size.width : row.width + spacing + size.width
             if !row.indices.isEmpty, needed > width {
                 rows.append(row)
@@ -50,6 +55,7 @@ public struct WrapLayout: Layout {
             row.width = row.indices.isEmpty ? size.width : row.width + spacing + size.width
             row.height = max(row.height, size.height)
             row.indices.append(index)
+            row.sizes.append(size)
         }
         if !row.indices.isEmpty { rows.append(row) }
         return rows
