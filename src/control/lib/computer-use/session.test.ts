@@ -7,7 +7,7 @@ import { toMcpTools } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
-import { createComputerMcpServer, invokeComputerTool } from "../../mcp/server";
+import { createComputerMcpServer, invokeComputerTool, isComputerTool } from "../../mcp/server";
 import type { Observation } from "../decision/observation";
 import type { AxResult } from "../runner";
 import { computerApi, computerDescriptions } from "./descriptor";
@@ -1383,6 +1383,13 @@ test("native MCP advertises and dispatches its own tools; unknown names use prot
         await client.close();
         await server.close();
     }
+});
+test("every computer schema and every advertised tool has an MCP handler", () => {
+    const missing = [...Object.keys(computerSchemas), ...toMcpTools(computerApi).map((tool) => tool.name)].filter(
+        (name) => !isComputerTool(name)
+    );
+    expect(missing).toEqual([]);
+    expect(isComputerTool("unknown")).toBe(false);
 });
 test("window inventory preserves native IDs independently of duplicate titles and ordering", async () => {
     const rows = [101, 202].map((window_id) => ({
