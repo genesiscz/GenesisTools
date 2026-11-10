@@ -1041,7 +1041,9 @@ export class DecisionJournal {
         const prepared = handler.prepare ? await handler.prepare(saved, action, this.options.split) : {};
         const at = (this.options.now?.() ?? new Date()).toISOString();
         const token = randomUUID();
-        const known = new Map<string, JournalEntry | undefined>();
+        // The journal is read once, at the first lookup inside the locked change, and every later token comes from that
+        // read: a bulk reopen of N items decided apart read and parsed the whole journal N times under the lock.
+        let byToken: Map<string, JournalEntry> | undefined;
         const context: ActionContext = {
             now: at,
             listenBelow: this.options.listenBelow ?? DEFAULT_LISTEN_BELOW,
@@ -1051,14 +1053,18 @@ export class DecisionJournal {
                     return undefined;
                 }
 
-                if (!known.has(wanted)) {
-                    known.set(
-                        wanted,
-                        this.entries(meeting).find((entry) => entry.token === wanted)
-                    );
+                if (!byToken) {
+                    byToken = new Map();
+
+                    for (const entry of this.entries(meeting)) {
+                        // The first entry with a token wins, as the old `find` did.
+                        if (!byToken.has(entry.token)) {
+                            byToken.set(entry.token, entry);
+                        }
+                    }
                 }
 
-                return known.get(wanted);
+                return byToken.get(wanted);
             },
         };
         let result: Decided = { skipped: [] };

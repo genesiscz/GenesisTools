@@ -1838,9 +1838,15 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { command: "new", change: "test" }
         );
         const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { open(ref: string): { speakers: { rename(label: string, name: string): Promise<unknown> } } };
+            meetings: {
+                open(ref: string): {
+                    speakers: { rename(label: string, name: string): Promise<{ token: string | null }> };
+                    items: { reopen(input: unknown): Promise<{ reopened: string[]; skipped: unknown[] }> };
+                };
+            };
         };
-        await meetings.open(record.id).speakers.rename("Speaker 2", "Alex Example");
+        const meeting = meetings.open(record.id);
+        const renamed = await meeting.speakers.rename("Speaker 2", "Alex Example");
 
         const journal = new DecisionJournal({ store });
         const [entry] = journal.read(record.id);
@@ -1848,9 +1854,12 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             action: { kind: "rename", label: "Speaker 2", name: "Alex Example" },
             labels: [{ label: "Speaker 2", after: "Alex Example" }],
         });
+        expect(renamed.token).toBe(entry!.token);
         expect(store.read(record.id)?.speakers.labels).toEqual({ "Speaker 2": "Alex Example" });
 
-        await journal.revert({ meeting: record.id, token: entry!.token, actor: { kind: "cli" } });
+        // eve PR #754 r2: the toolset gave no token back, and items.reopen refused a call with no ids.
+        await expect(meeting.items.reopen({})).rejects.toThrow("items.reopen needs ids, or the token");
+        expect(await meeting.items.reopen({ token: renamed.token })).toEqual({ reopened: [], skipped: [] });
         expect(store.read(record.id)?.speakers.labels).toEqual({});
     });
 

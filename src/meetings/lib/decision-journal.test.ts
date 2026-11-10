@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import * as readLines from "@genesiscz/utils/fs/read-lines";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingItem, MeetingStore } from "@genesiscz/utils/meetings/record";
 import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
@@ -167,6 +168,38 @@ describe("decision journal", () => {
         ]);
         expect(actorText(agent)).toBe("agent codex (session 1234abcd)");
         expect(actorText({ kind: "window" })).toBe("you in the window");
+    });
+
+    // eve PR #754 r2: each token's lookup read and parsed the whole journal again, under the meeting's lock, so a
+    // tokenless reopen of N items decided apart read it N times.
+    test("a reopen of items decided apart reads the journal once and puts each one back", async () => {
+        const ids = ["i1", "i2", "i3", "i4"];
+        const fx = await fixture(ids.map((id, n) => term(id, 10 * (n + 1), { proposed: "ADA" })));
+
+        for (const id of ids) {
+            await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "confirm", items: [id] }, actor: person });
+        }
+
+        const journalPath = fx.journal.path(fx.meeting.id);
+        const reads = spyOn(readLines, "readLinesSync");
+
+        try {
+            const { entry } = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "reopen", items: ids },
+                actor: person,
+            });
+
+            expect(entry?.changes.map((change) => change.id)).toEqual(ids);
+            expect(reads.mock.calls.filter(([path]) => path === journalPath)).toHaveLength(1);
+        } finally {
+            reads.mockRestore();
+        }
+
+        for (const id of ids) {
+            expect(fx.item(id)).toMatchObject({ status: "suggested" });
+            expect(fx.item(id)).not.toHaveProperty("decision");
+        }
     });
 
     test("an item decided before the journal reads as unknown, and its old token still reopens it", async () => {

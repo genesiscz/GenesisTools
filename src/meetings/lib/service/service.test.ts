@@ -3,12 +3,15 @@ import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
-import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
+import * as serviceHost from "@genesiscz/utils/rpc/service-host";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { Command } from "commander";
+import { registerServeCommand } from "../../commands/serve";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
 import fixture from "./__fixtures__/meetings-protocol.json";
@@ -599,6 +602,45 @@ function normalized(examples: Example[]): unknown {
     );
 }
 
+// eve PR #754 r2: --detach always started exactly `meetings serve`, so `--detach --no-idle` got a service that exits
+// after ten idle minutes.
+describe("tools meetings serve --detach", () => {
+    test.each([
+        [
+            ["serve", "--detach", "--no-idle"],
+            ["meetings", "serve", "--no-idle"],
+        ],
+        [
+            ["serve", "--detach"],
+            ["meetings", "serve"],
+        ],
+    ])("%p starts %p", async (args, command) => {
+        const entry: serviceHost.ServiceEntry = {
+            version: 1,
+            protocol: 1,
+            pid: 1,
+            socket: "/fixture.sock",
+            startedAt: "2026-11-10T00:00:00.000Z",
+            codeStamp: 0,
+        };
+        const launch = spyOn(serviceHost, "launchService").mockResolvedValue({ status: "running", entry });
+        const result = spyOn(out, "result").mockImplementation(() => undefined);
+
+        try {
+            const program = new Command().exitOverride();
+            registerServeCommand(program);
+            await program.parseAsync(args, { from: "user" });
+
+            expect(launch).toHaveBeenCalledTimes(1);
+            expect(launch.mock.calls[0][0].command).toEqual(command);
+            expect(result).toHaveBeenCalledWith(entry);
+        } finally {
+            launch.mockRestore();
+            result.mockRestore();
+        }
+    });
+});
+
 describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
     test("a live service on the scratch store answers every example as the fixture holds it", async () => {
         const captured = await captureExamples();
@@ -677,7 +719,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
 
     test("service.json names the service's protocol and code", async () => {
         const { dir } = await startService();
-        const entry = SafeJSON.parse(await Bun.file(serviceEntryPath(dir)).text(), { strict: true });
+        const entry = SafeJSON.parse(await Bun.file(serviceHost.serviceEntryPath(dir)).text(), { strict: true });
 
         expect(entry).toMatchObject({ version: 1, protocol: MEETINGS_PROTOCOL, code: CODE });
     });

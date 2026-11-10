@@ -124,11 +124,16 @@ export const reject = defineMethod({
 });
 export const reopen = defineMethod({
     name: "items.reopen",
-    params: z.object({ ids: ids.min(1), token: z.string().min(1).optional() }).strict(),
+    params: z
+        .object({ ids: ids.optional(), token: z.string().min(1).optional() })
+        .strict()
+        .refine((params) => (params.ids?.length ?? 0) > 0 || params.token !== undefined, {
+            message: "items.reopen needs ids, or the token of the decision to undo",
+        }),
     result: z.unknown(),
     resultName: "{ reopened: string[], skipped: { id, reason }[] }",
     effect: "reversible",
-    doc: "Undo a confirm or a reject: each item gets back what the decision changed. Pass the `token` the decision answered; an item decided again since is refused, and nothing is reopened (NR20).",
+    doc: "Undo a confirm, a reject or a speaker rename: each item gets back what the decision changed. Pass the `token` the decision answered; an item decided again since is refused, and nothing is reopened (NR20). A token with no ids undoes its whole decision, a rename's labels included.",
 });
 export const speakers = defineMethod({
     name: "speakers.stats",
@@ -142,9 +147,9 @@ export const rename = defineMethod({
     params: z.object({ label: z.string().min(1), name: z.string().min(1) }).strict(),
     positional: ["label", "name"],
     result: z.unknown(),
-    resultName: recordDoc,
+    resultName: `${recordDoc} with token`,
     effect: "reversible",
-    doc: 'Name a speaker label ("Speaker 2" → "Alice"): this meeting\'s transcripts use the name from now on. A label the linked transcript does not have is refused, with the labels it has.',
+    doc: 'Name a speaker label ("Speaker 2" → "Alice"): this meeting\'s transcripts use the name from now on. A label the linked transcript does not have is refused, with the labels it has. `token` undoes it with items.reopen({ token }); it is null when the label had that name already.',
 });
 export const set = defineMethod({
     name: "set",

@@ -359,7 +359,13 @@ export class MeetingsToolset extends ReplToolset {
                 reject: decideWith("rejected"),
                 reopen: async (input: z.input<typeof reopen.params>) => {
                     const options = reopen.params.parse(input);
-                    const result = await reopenItems({ store, record: current(), ...options });
+                    // A token alone undoes its whole decision: a speaker rename has no items, only labels.
+                    const result = await reopenItems({
+                        store,
+                        record: current(),
+                        ids: options.ids ?? [],
+                        ...(options.token ? { token: options.token } : {}),
+                    });
                     log.info({ meeting: id, reopened: result.reopened.length }, "items reopened");
                     return result;
                 },
@@ -394,13 +400,13 @@ export class MeetingsToolset extends ReplToolset {
                         );
                     }
 
-                    // A rename is a decision: journaled with who made it, so its token undoes it (`reopen --token`).
-                    await new DecisionJournal({ store }).apply({
+                    // A rename is a decision: journaled with who made it, so its token undoes it (items.reopen).
+                    const { entry } = await new DecisionJournal({ store }).apply({
                         meeting: id,
                         action: { kind: "rename", label: parsed.label, name: parsed.name },
                         actor: callerActor(),
                     });
-                    return describe(current());
+                    return { ...describe(current()), token: entry?.token ?? null };
                 },
             },
             assign: {
