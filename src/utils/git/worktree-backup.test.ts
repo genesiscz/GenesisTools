@@ -112,7 +112,11 @@ describe("worktree backup", () => {
     });
 
     it("refuses a removal when a process works inside the worktree", async () => {
-        const sleeper = Bun.spawn(["sleep", "30"], { cwd: detached, stdio: ["ignore", "ignore", "ignore"] });
+        const sleeper = Bun.spawn(["sleep", "30"], {
+            cwd: detached,
+            env: process.env,
+            stdio: ["ignore", "ignore", "ignore"],
+        });
 
         try {
             const plan = await planWorktreeBackup({ path: detached, remove: true });
