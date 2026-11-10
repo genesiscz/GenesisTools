@@ -20,21 +20,27 @@ public struct ToolsRunResult: Equatable, Sendable {
 /// `CustomStringConvertible` too: callers show `"\(error)"`, which printed `binaryNotFound("…")` instead of the sentence.
 public enum ToolsBridgeError: Error, LocalizedError, Equatable, CustomStringConvertible {
     case binaryNotFound(String)
-    case timeout(seconds: Int)
+    /// `command` is the call's first words (`tools hub pr list`, `command(_:)`), so the text says which call it was.
+    case timeout(seconds: Int, command: String = "tools")
     case refused(String)
 
     public var errorDescription: String? {
         switch self {
         case .binaryNotFound(let path):
             return "The tools command is not at \(path). Run ./install.sh in your GenesisTools checkout, then reopen the app."
-        case .timeout(let seconds):
-            return "tools call exceeded \(seconds)s"
+        case .timeout(let seconds, let command):
+            return "\(command) did not finish within \(seconds) s"
         case .refused(let reason):
             return reason
         }
     }
 
     public var description: String { errorDescription ?? "tools call failed" }
+
+    /// "tools hub pr list": the first three words of `argv`, as `ToolsFailure.summary` names a call.
+    public static func command(_ argv: [String]) -> String {
+        (["tools"] + argv.prefix(3)).joined(separator: " ")
+    }
 }
 
 /// Scrubbed `tools <sub> …` runner. Argv only, never a shell.
@@ -55,7 +61,8 @@ public struct ToolsBridge: Sendable {
     /// - `GITLAB_TOKEN`, `GITLAB_HOST`: the GitLab client behind `tools hub pr` on a GitLab project
     ///   (src/gitlab/lib/client.ts).
     /// - `GIT_*` (`envAllowlistPrefixes`): git's own settings (`GIT_SSH_COMMAND`, `GIT_CONFIG_GLOBAL`, …) for every
-    ///   `tools hub` verb that runs git (worktrees, PR fetch, readiness).
+    ///   `tools hub` verb that runs git (worktrees, PR fetch, readiness), apart from the location names in
+    ///   `envGitLocationKeys`.
     /// - `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and their lowercase forms: git, gh, glab and the forge
     ///   requests behind a proxy.
     /// - `LC_ALL`, `LC_CTYPE`: the locale git and the CLI print in, beside `LANG`.
@@ -64,6 +71,18 @@ public struct ToolsBridge: Sendable {
     ///   and the cmux verbs read (src/utils/providers/session-paths.ts).
     /// - `GENESIS_HUB_SERVER`: `GENESIS_HUB_SERVER=0` keeps a child's own `tools` calls off the resident server too.
     /// - `PROFILE_TO_STDERR`: the hub turns it off for the `PROFILE` it sets on `tools hub pr` (`HubSource.bridge`).
+    /// - `GITHUB_PERSONAL_ACCESS_TOKEN`: `env.github.getToken()` reads it after `GITHUB_TOKEN` and `GH_TOKEN`
+    ///   (src/utils/env/envVariables.ts `GITHUB_TOKEN_KEYS`, used by src/utils/github/octokit.ts), for every `tools hub pr` verb.
+    /// - `TOOLS_SKIP_AUTOINSTALL`, `TOOLS_AUTOINSTALL`, `GENESIS_TOOLS_NO_EXEC`: the switches of the `tools` launcher
+    ///   script at the repository root (its dependency install and its exec into the tool).
+    /// - `GENESIS_TOOLS_MASTER_KEY`: the vault key of a headless start (`env.security.getMasterKey()`, the first rung of
+    ///   src/utils/security/keyring/headless.ts), for `tools ai usage` and `tools ai-spend`.
+    /// - `XDG_CONFIG_HOME`: src/utils/obsidian/discovery.ts finds Obsidian's vault list under it.
+    /// - `GITLAB_PROJECT`: the GitLab project of `tools hub pr` on a GitLab forge (src/gitlab/lib/client.ts).
+    /// - `T3CODE_HOME`, `LC_TIME`, `GENESIS_TOOLS_APP_HOME`: T3 Code's home, the date locale and the home of the
+    ///   GenesisTools.app bundle (src/utils/env/envVariables.ts).
+    /// - `CODEBUFF_DATA_DIR`, `KIMI_DATA_DIR`, `OPENCLAW_DIR`, `HERMES_HOME`, `GOOSE_PATH_ROOT`: the data folders the
+    ///   spend reports read (src/utils/ai/usage/spend/reports/sources.ts).
     public static let envAllowlist: Set<String> = [
         "HOME", "PATH", "SHELL", "LANG", "USER", "LOGNAME", "TERM",
         "SSH_AUTH_SOCK", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "TZ",
@@ -76,14 +95,28 @@ public struct ToolsBridge: Sendable {
         "LC_ALL", "LC_CTYPE", "TMPDIR",
         "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME",
         "GENESIS_HUB_SERVER", "PROFILE_TO_STDERR",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "TOOLS_SKIP_AUTOINSTALL", "TOOLS_AUTOINSTALL", "GENESIS_TOOLS_NO_EXEC",
+        "GENESIS_TOOLS_MASTER_KEY",
+        "XDG_CONFIG_HOME", "GITLAB_PROJECT",
+        "T3CODE_HOME", "LC_TIME", "GENESIS_TOOLS_APP_HOME",
+        "CODEBUFF_DATA_DIR", "KIMI_DATA_DIR", "OPENCLAW_DIR", "HERMES_HOME", "GOOSE_PATH_ROOT",
     ]
 
     /// Names that pass by their prefix: git reads a family of `GIT_` variables.
     public static let envAllowlistPrefixes: [String] = ["GIT_"]
 
+    /// `GIT_` names that the prefix does not pass. They name a repository, and a face started from a git hook carries
+    /// them, so every git in every child would run against that repository instead of the one its command names.
+    public static let envGitLocationKeys: Set<String> = [
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+    ]
+
     /// Whether `key` reaches a `tools` child.
     public static func allowsEnvironmentKey(_ key: String) -> Bool {
-        envAllowlist.contains(key) || envAllowlistPrefixes.contains { key.hasPrefix($0) }
+        if envAllowlist.contains(key) { return true }
+        return !envGitLocationKeys.contains(key) && envAllowlistPrefixes.contains { key.hasPrefix($0) }
     }
 
     public typealias OutputSink = @Sendable (
@@ -341,7 +374,7 @@ public struct ToolsBridge: Sendable {
             ToolsCallTrace.record(
                 traceId: traceId, via: "server-timeout", argv: argv, started: started, exit: -1, outBytes: 0, stderr: ""
             )
-            throw ToolsBridgeError.timeout(seconds: timeoutSeconds)
+            throw ToolsBridgeError.timeout(seconds: timeoutSeconds, command: ToolsBridgeError.command(argv))
         }
 
         guard Self.isExecutableFile(resolvedBinaryPath) else {
@@ -448,7 +481,7 @@ public struct ToolsBridge: Sendable {
             do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) }
             catch { return }
             timedOutFlag.fired = true
-            let error = ToolsBridgeError.timeout(seconds: timeoutSeconds)
+            let error = ToolsBridgeError.timeout(seconds: timeoutSeconds, command: ToolsBridgeError.command(argv))
             outReader.stop(error)
             errReader.stop(error)
             ToolsProcessExit.terminate(process)
@@ -473,7 +506,7 @@ public struct ToolsBridge: Sendable {
                     traceId: traceId, via: "process-timeout", argv: argv, started: started,
                     exit: process.terminationStatus, outBytes: 0, stderr: ""
                 )
-                throw ToolsBridgeError.timeout(seconds: timeoutSeconds)
+                throw ToolsBridgeError.timeout(seconds: timeoutSeconds, command: ToolsBridgeError.command(argv))
             }
             MonitorPerf.mark("tools.\(subcommand) incomplete output: \(error.localizedDescription)")
             throw error
@@ -510,7 +543,7 @@ public struct ToolsBridge: Sendable {
         outputSink?(result, turnId, callId, argv)
 
         if timedOut {
-            throw ToolsBridgeError.timeout(seconds: timeoutSeconds)
+            throw ToolsBridgeError.timeout(seconds: timeoutSeconds, command: ToolsBridgeError.command(argv))
         }
         return result
     }

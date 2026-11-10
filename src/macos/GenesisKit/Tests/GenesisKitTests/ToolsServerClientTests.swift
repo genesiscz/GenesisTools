@@ -252,7 +252,7 @@ final class ToolsServerClientTests: XCTestCase {
             _ = try await bridge.run(subcommand: "slow", args: [], timeoutSeconds: 1)
             XCTFail("a call the server never answered cannot succeed")
         } catch {
-            XCTAssertEqual(error as? ToolsBridgeError, .timeout(seconds: 1))
+            XCTAssertEqual(error as? ToolsBridgeError, .timeout(seconds: 1, command: "tools slow"))
         }
     }
 

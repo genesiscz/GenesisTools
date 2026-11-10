@@ -12,7 +12,7 @@ extension ToolsBridge {
         ToolsCallTrace.began(traceId: traceId, argv: argv, started: started)
         if let server {
             let start = CFAbsoluteTimeGetCurrent()
-            let patience = Self.serverPatience(timeoutSeconds: Int(timeout))
+            let patience = Self.serverPatience(timeoutSeconds: Self.limitSeconds(timeout))
             if let result = server.callSync(argv: argv, timeout: TimeInterval(patience), traceId: traceId),
                !Self.isServerDeadline(result) {
                 return Self.serverCapture(result, argv, traceId: traceId, started: started, since: start)
@@ -52,7 +52,7 @@ extension ToolsBridge {
         ToolsCallTrace.began(traceId: traceId, argv: argv, started: started)
         if let server {
             let start = CFAbsoluteTimeGetCurrent()
-            let patience = Self.serverPatience(timeoutSeconds: Int(timeout))
+            let patience = Self.serverPatience(timeoutSeconds: Self.limitSeconds(timeout))
             let result = await server.call(argv: argv, timeoutSeconds: patience, traceId: traceId)
             try Task.checkCancellation()
             if let result, !Self.isServerDeadline(result) {
@@ -94,6 +94,12 @@ extension ToolsBridge {
         return (value, handle.cancelled)
     }
 
+    /// A limit in whole seconds, rounded up and at least 1: `Int(0.5)` is 0, and a call with 0 s failed at once without a
+    /// run.
+    static func limitSeconds(_ timeout: TimeInterval) -> Int {
+        max(1, Int(timeout.rounded(.up)))
+    }
+
     /// A server door's answer as a capture, with its perf span and its trace line.
     private static func serverCapture(_ result: ToolsRunResult, _ argv: [String], traceId: String, started: Date,
                                       since start: CFAbsoluteTime) -> ProcessCapture {
@@ -108,11 +114,11 @@ extension ToolsBridge {
     private func processCapture(_ argv: [String], timeout: TimeInterval, traceId: String, started: Date,
                                 handle: ProcessCancelHandle? = nil) throws -> ProcessCapture {
         // The server's try shares the limit; with nothing left the process would be started and killed at once.
-        guard let budget = Self.processBudget(timeoutSeconds: Int(timeout), waited: Date().timeIntervalSince(started)) else {
+        guard let budget = Self.processBudget(timeoutSeconds: Self.limitSeconds(timeout), waited: Date().timeIntervalSince(started)) else {
             ToolsCallTrace.record(
                 traceId: traceId, via: "server-timeout", argv: argv, started: started, exit: -1, outBytes: 0, stderr: ""
             )
-            throw ToolsBridgeError.timeout(seconds: Int(timeout))
+            throw ToolsBridgeError.timeout(seconds: Self.limitSeconds(timeout), command: ToolsBridgeError.command(argv))
         }
         let span = PerfSpans.begin("tools.\(argv.prefix(3).joined(separator: "."))")
         defer { span.end() }
@@ -136,7 +142,7 @@ extension ToolsBridge {
             ToolsCallTrace.record(
                 traceId: traceId, via: "process-timeout", argv: argv, started: started, exit: -1, outBytes: 0, stderr: ""
             )
-            throw ToolsBridgeError.timeout(seconds: Int(timeout))
+            throw ToolsBridgeError.timeout(seconds: Self.limitSeconds(timeout), command: ToolsBridgeError.command(argv))
         }
     }
 }

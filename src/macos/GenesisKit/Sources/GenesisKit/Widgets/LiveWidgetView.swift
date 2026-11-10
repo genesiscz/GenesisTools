@@ -1886,7 +1886,7 @@ enum WidgetErrorText {
         switch error {
         case is DecodingError:
             return ("The widget could not read the hub's answer. Try again, or reconnect.", String(describing: error))
-        case ToolsBridgeError.timeout(let seconds):
+        case ToolsBridgeError.timeout(let seconds, _):
             return ("The hub did not answer within \(seconds) seconds. Try again, or reconnect.", nil)
         case let bridge as ToolsBridgeError:
             // A missing tools command and a refusal already say what happened in a sentence of their own.

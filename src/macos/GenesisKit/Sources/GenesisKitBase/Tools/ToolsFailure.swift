@@ -10,7 +10,7 @@ import Foundation
 ///   `{"type":"error","message":"…"}`, as the whole output after a preamble or as its last JSON line;
 /// - the last `✗` line of stderr, with a leading `[code]` read as the code (`✗ [config-stale] …`);
 /// - Commander's `error: …` line at column 0 of stderr (its usage text follows it);
-/// - else "tools <verb> exited <status>: <stderr tail>".
+/// - else "tools <verb> exited <status>: <stderr tail>", or the stdout tail when stderr is empty.
 public struct ToolsFailure: Error, LocalizedError, CustomStringConvertible, Equatable, Sendable {
     public let message: String
     public let code: String?
@@ -51,7 +51,9 @@ public struct ToolsFailure: Error, LocalizedError, CustomStringConvertible, Equa
         } else if let commander = Self.commanderError(stderr) {
             self.init(message: commander, exitCode: capture.status, stderrTail: tail, summary: summary)
         } else {
-            self.init(message: command + (tail.isEmpty ? "" : ": \(tail)"), exitCode: capture.status, stderrTail: tail, summary: summary,
+            // A tool that prints its reason on stdout only (no JSON, empty stderr) still says it.
+            let said = tail.isEmpty ? Self.tail(stdout) : tail
+            self.init(message: command + (said.isEmpty ? "" : ": \(said)"), exitCode: capture.status, stderrTail: tail, summary: summary,
                       named: false)
         }
     }
