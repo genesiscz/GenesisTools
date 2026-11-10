@@ -4,8 +4,8 @@ import SwiftUI
 /// One review row (`meeting.rows`), the one row of the Items tab for questions and suggestions alike (R9, R12, R17).
 /// Open, it reads as points (who, what was said, when, what it asks, what it settles, why), offers its choices with
 /// the engine's confidence (R49), and opens its editor on Return or a double click (R11, R45). Decided, it folds in
-/// place to one line that names who decided it and why (R16, R35), with "Revert and edit". b-swift-timeline adds the
-/// playing row's mini bar (R25).
+/// place to one line that names who decided it and why (R16, R35), with "Revert and edit". While its Moment plays, its
+/// header carries its own timeline (R25).
 struct ReviewRowView: View {
     let row: ReviewRow
     let detail: MeetingDetailModel
@@ -75,13 +75,28 @@ struct ReviewRowView: View {
             if let confidence = MeetingsWords.confidence(row.confidence), row.isOpen {
                 Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
             }
-            Spacer(minLength: 6)
+            if let player, let span = playingSpan(player) {
+                // R25, G-ROW-1: the playing row's own timeline takes the header's free room, so the row keeps its height.
+                PlayingRowBar(span: span, position: { player.position },
+                              onFlag: { player.playTime($0, in: detail.id, from: .outside) },
+                              onSeek: { player.playTime($0, in: detail.id, from: .outside) })
+                    .frame(minWidth: 120, maxWidth: .infinity)
+                    .padding(.horizontal, 6)
+            } else {
+                Spacer(minLength: 6)
+            }
             if busy { ProgressView().controlSize(.small) }
             IconButton(systemName: "clock.arrow.circlepath", tooltip: "This row's history: who decided what, and Undo") {
                 detail.openHistory(item: row.id)
             }
             .accessibilityLabel("History of \(row.label)")
         }
+    }
+
+    /// The span of this row's Moment while it is the one on top of the player (R25).
+    private func playingSpan(_ player: MomentPlayer) -> ZoomSpan? {
+        guard let top = player.top, top.meeting == detail.id, top.target == row.target else { return nil }
+        return TimelineDock.span(of: top)
     }
 
     /// The row's title; a double click edits it in place (R45: "OMP" → "EMP" right there).

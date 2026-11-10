@@ -30,7 +30,8 @@ final class MeetingDetailModel {
     private(set) var record: Loadable<MeetingRecordView> = .idle
     private(set) var transcript: Loadable<MeetingTranscript> = .idle
     private(set) var timeline: Loadable<ScreenTimeline> = .idle
-    private(set) var speakers: Loadable<SpeakerStats> = .idle
+    /// `meeting.speakers`: talk time per label with its spans (the Speakers tab's lanes, R40) and the hints.
+    private(set) var speakers: Loadable<MeetingsAPI.MeetingSpeakers.Result> = .idle
     private(set) var proposals: Loadable<AssignProposals> = .idle
     /// Item ids with a command in flight: their buttons wait, so a second press cannot run it twice.
     var busyItems: Set<String> = []
@@ -87,6 +88,11 @@ final class MeetingDetailModel {
     @ObservationIgnored var eventRefresh: Task<Void, Never>?
     /// The Meetings service the writes go through; nil runs the commands (tests, the preview, a service turned off).
     @ObservationIgnored let service: MeetingsService?
+    /// The comments for the listening agent (R43): the staged ones and who listens now; the service keeps them.
+    var comments: Loadable<MeetingsAPI.CommentList.Result> = .idle
+    /// The last send of the staged comments, and how many listeners got it (G60).
+    var commentDelivery: CommentDelivery = .idle
+    @ObservationIgnored var commentsListening: MeetingsService.Listening?
 
     init(id: String, window: MeetingsWindowModel?, notices: NoticeStackModel? = nil, service: MeetingsService? = nil) {
         self.id = id
@@ -217,7 +223,7 @@ final class MeetingDetailModel {
 
     func readSpeakers(quiet: Bool) {
         read(\.speakers, generation: \.speakersGeneration,
-             .service(MeetingsAPI.SpeakerStatsRead.self, .init(meeting: id), orRun: ["speakers", "stats", id, "--json"], timeoutSeconds: 120),
+             .service(MeetingsAPI.MeetingSpeakers.self, .init(meeting: id), orRun: ["speakers", "stats", id, "--json"], timeoutSeconds: 120),
              quiet: quiet, revision: .speakers)
     }
 

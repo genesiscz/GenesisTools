@@ -151,6 +151,9 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     let startSec: Double?
     let speaker: String
     let text: String
+    /// When the line stops being heard: the next timed line's start (G-TR-1). `meeting.transcript` sends it; the
+    /// command `transcript --format json` leaves it out, and the transcript blocks compute it then.
+    var endSec: Double? = nil
     var rowID: String { id ?? "\(startSec ?? -1)-\(speaker)-\(text.prefix(24))" }
 }
 
@@ -171,6 +174,14 @@ struct SpeakerStat: Decodable, Equatable, Hashable, Identifiable {
     let firstSec: Double?
     let lastSec: Double?
     var id: String { label }
+}
+
+extension SpeakerStat {
+    /// One label of `meeting.speakers` as a speaker row shows it (its spans go to the talk-time lanes instead).
+    init(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker) {
+        self.init(label: speaker.label, origin: speaker.origin, turns: speaker.turns, lines: speaker.lines,
+                  words: speaker.words, spokenSec: speaker.spokenSec, firstSec: speaker.firstSec, lastSec: speaker.lastSec)
+    }
 }
 
 struct SpeakerStats: Decodable, Equatable {

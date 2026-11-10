@@ -51,11 +51,11 @@ struct TranscriptBlock: Equatable, Identifiable {
     /// `durationSec` ends the last line; `marks` adds marks by line id.
     static func build(from entries: [TranscriptLine], durationSec: Double? = nil,
                       marks: [String: Set<TranscriptLineMark>] = [:], breakAfterGapSec: Double? = nil) -> [TranscriptBlock] {
-        // The end of a line is the next timed line's start.
+        // The end of a line is the one `meeting.transcript` sends (G-TR-1), else the next timed line's start.
         var ends = [Double?](repeating: durationSec, count: entries.count)
         var nextStart = durationSec
         for index in entries.indices.reversed() {
-            ends[index] = nextStart
+            ends[index] = entries[index].endSec ?? nextStart
             if let start = entries[index].startSec { nextStart = start }
         }
         var blocks: [TranscriptBlock] = []
@@ -146,6 +146,10 @@ struct TranscriptBlocksList: View {
     var showsAvatar = true
     /// The player's position, read only to say which blocks are past; nil dims nothing.
     var pastBefore: Double? = nil
+    /// The line the selection popover points at (R43), and the popover: it opens beside that line's block.
+    var popoverLine: String? = nil
+    var popover: () -> AnyView = { AnyView(EmptyView()) }
+    var closePopover: () -> Void = {}
     /// A plain click on a line: play from this second (R42).
     let play: (Double) -> Void
     /// A ⇧ or ⌘ click on a line (R43).
@@ -164,9 +168,16 @@ struct TranscriptBlocksList: View {
                     select: select
                 )
                 .equatable()
+                .popover(isPresented: Binding(get: { holdsPopover(block) }, set: { if !$0 { closePopover() } }),
+                         arrowEdge: .leading) { popover() }
                 .id(block.id)
             }
         }
+    }
+
+    private func holdsPopover(_ block: TranscriptBlock) -> Bool {
+        guard let popoverLine else { return false }
+        return block.lines.contains { $0.id == popoverLine }
     }
 
     private func isPast(_ block: TranscriptBlock) -> Bool {
