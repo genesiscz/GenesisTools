@@ -3,6 +3,35 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-11-10 17:23 — **Meetings window, the first hour on a real meeting: a whole-meeting play that always started at
+  00:00, and a timeline the reader could zoom into but not out of.**
+  - *Every seek in the recording played its start.* The recording is Ogg Opus. The system player (`AVAudioPlayer`)
+    opens it, takes `currentTime`, reports the asked time, and decodes from the file's first second: the clock said
+    1:29:43 and the sound was the greeting. The player's tests used a fake sound that seeks, on a file named
+    `upload.ogg`. Found by a probe, not by ear: play at volume 0 with the meter on and compare the level sequence
+    after a seek to three times (identical on the Ogg file, different on WAV, AAC, MP3 and FLAC copies). Fix: the
+    file plays itself only in a coding that was measured to seek; any other one plays as cut stretches, which seek in
+    every format, and the next stretch is cut ahead. Rule: a fake of a system API has no format limits; measure the
+    real API on the user's real file once, and keep the allow list to what was measured.
+  - *An action did half of its sentence when its state was already on.* "Show 48:46 to 1:27:00" moved the sound only
+    when nothing of the meeting played yet; over a whole-meeting play it changed the view and left the sound and the
+    breadcrumb where they were. Rule: test an action twice in a row, and from every state its guard reads.
+  - *A zoom with no way back.* A click on a merged pin zoomed the timeline; the breadcrumb named what plays, not what
+    shows, and nothing went back. Fix: the ranges zoomed to are a trail, the breadcrumb names them after the playing
+    level, a click goes back, and "Back" stands beside the view choice. Rule: every view change the reader makes by a
+    click has a visible level and a click that undoes it.
+  - *A count that no zoom took apart.* Two items a second apart stayed "2" at every zoom: the zoom's smallest view
+    (10 s) still put them within one mark's width. Fix: rows (two by default, a setting): close pins stand under
+    each other with their texts, a count is the last resort, and a count that a zoom would not take apart opens a
+    list of its rows. Rule: when "click to expand" can end in the same picture, the click does something else there.
+  - *A ruler that did not name its ends.* A view from 48:46 showed "50:00" as its first time, and a time had no
+    line, so the reader could not see where 50:00 is. Fix: the view's start and end are labels at its two ends, and
+    each round mark has a line through the waveform. Rule: an axis names both ends, and a label has a mark.
+  - *My first picture of the fix had no waveform.* The service answers one connection's reads in order, and the
+    dock's waveform read stood behind the rows read the tab had sent; the picture was taken 900 ms after the window
+    showed. Rule: a picture waits for the data it is about, not for a fixed time.
+  Commits bb79a4d6d5 (the player) and a9d792e509 (the timeline).
+
 - 2026-11-10 04:58 — **Meetings window, a second look at a finished wave: defects that every test and a scored live
   check had passed.** Each one is a shape that will come back on another surface.
   - *Marks drew over each other*: the pin counts on the timeline strip, and "? Q7 ? Q9" banners over the speaker
