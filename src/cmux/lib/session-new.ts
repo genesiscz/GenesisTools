@@ -16,7 +16,7 @@ import { env } from "@genesiscz/utils/env";
 import { levenshteinDistance } from "@genesiscz/utils/fuzzy-match";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import { tmuxSendKeys } from "@genesiscz/utils/tmux/send-keys";
 import { createTmuxSession, killTmuxSession, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
 import { agentRunCommand, type SessionAgentId, withPidNote } from "./session-agents";
 
@@ -296,14 +296,6 @@ export function devTmuxSessionName(cwd: string, name: string | undefined, nonce:
     return `cmux-${slug || "repo"}-${id || "x"}`;
 }
 
-export function tmuxLiteralSendArgv(tmuxBin: string, session: string, command: string): string[] {
-    return [tmuxBin, "send-keys", "-t", session, "-l", "--", command];
-}
-
-export function tmuxEnterArgv(tmuxBin: string, session: string): string[] {
-    return [tmuxBin, "send-keys", "-t", session, "Enter"];
-}
-
 /**
  * The window the new workspace belongs to.
  *
@@ -420,15 +412,6 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
     };
 }
 
-async function spawnTmux(argv: string[]): Promise<void> {
-    const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
-    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-
-    if (code !== 0) {
-        throw new Error(`tmux ${argv[1] ?? "command"} failed: ${stderr.trim() || `exit ${code}`}`);
-    }
-}
-
 export function liveRepoFs(): RepoFs {
     return {
         isDirectory(path) {
@@ -501,10 +484,18 @@ export function liveSessionIO(): SessionNewIO {
             return { pane: panes.items[0].pane, sessionCreatedMs: panes.items[0].sessionCreatedMs };
         },
         sendTmuxKeys: async (session, command) => {
-            const tmux = resolveTmuxBin();
-            await spawnTmux(tmuxLiteralSendArgv(tmux, session, command));
+            const typed = await tmuxSendKeys(session, ["-l", "--", command]);
+
+            if (!typed.ok) {
+                throw new Error(typed.detail);
+            }
+
             await Bun.sleep(TMUX_ENTER_DELAY_MS);
-            await spawnTmux(tmuxEnterArgv(tmux, session));
+            const entered = await tmuxSendKeys(session, ["Enter"]);
+
+            if (!entered.ok) {
+                throw new Error(entered.detail);
+            }
         },
         killTmuxSession: (session) => killTmuxSession(session),
         repoFs: liveRepoFs(),
