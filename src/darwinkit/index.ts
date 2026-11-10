@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
-import * as p from "@clack/prompts";
 import { parseVariadic, runTool, type ToolErrorReport } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 import pc from "picocolors";
 import { type CommandDef, commands, GROUP_LABELS, GROUP_ORDER, getCommandsByGroup } from "./lib/commands";
