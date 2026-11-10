@@ -318,7 +318,10 @@ const momentParams = z
         padSec: z.number().min(0).max(60).optional(),
         /** Seconds of audio after it. */
         padAfterSec: z.number().min(0).max(60).optional(),
-        /** This tone instead of `playback.listen.tone.sound`: a sine, a preset or a sound file (`play --tone`). */
+        /**
+         * This tone instead of `playback.listen.tone.sound`: a sine, a preset or a sound file (`play --tone`). It sounds
+         * for this call even when `playback.listen.tone.enabled` is off.
+         */
         toneSound: toneSoundSettingSchema.optional(),
         /** False skips the screen frames at the spot. */
         screen: z.boolean().optional(),

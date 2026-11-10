@@ -591,6 +591,23 @@ describe("a Moment of a saved meeting", () => {
         expect(readFileSync(cut.path, "utf8")).toBe("RIFF");
     });
 
+    test("a tone the caller names sounds for that call even when the tone setting is off (play --tone)", async () => {
+        const { store, saved, opened } = await savedMeeting("meetings-moment-tone-off", recording("tone-off"));
+        const off = meetingsConfigSchema.parse({
+            version: 5,
+            global: { playback: { listen: { tone: { enabled: false } } } },
+        });
+        spyOn(opened, "config").mockResolvedValue(off);
+        const target: MomentTarget = { kind: "item", id: "Q1" };
+
+        expect((await openMoment({ store, record: saved, target, opened })).tone).toBeUndefined();
+        const named = await openMoment({ store, record: saved, target, opened, toneSound: { preset: "soft" } });
+        expect(named.tone?.sound).toEqual({ hz: 523, sec: 0.3, volume: 0.35, preset: "soft" });
+        expect(named.tone?.atSec).toBe(
+            (await openMoment({ store, record: saved, target, opened, toneSound: { preset: "beep" } })).tone?.atSec
+        );
+    });
+
     test("a recording with two tracks is cut with both, and another recording file is another clip", async () => {
         const { store, saved, opened } = await savedMeeting("meetings-moment-tracks", recording("tracks"));
         const cuts: Array<Parameters<typeof cutClip>[0]> = [];

@@ -714,7 +714,10 @@ export interface OpenMomentOptions {
     target: MomentTarget;
     padSec?: number;
     padAfterSec?: number;
-    /** This tone instead of the settings' `playback.listen.tone.sound` (`play --tone`). */
+    /**
+     * This tone instead of the settings' `playback.listen.tone.sound` (`play --tone`). It sounds for this call even
+     * when `playback.listen.tone.enabled` is off: the caller asked for it.
+     */
     toneSound?: ToneSoundSetting;
     /** Reads a tone file's length (tests pass a fake); ffprobe by default. */
     probeTone?: (path: string) => Promise<{ durationSec: number }>;
@@ -728,7 +731,10 @@ export interface OpenMomentOptions {
 async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Promise<Moment> {
     const { store, record } = options;
     const [meeting, config] = await Promise.all([opened.meeting(), opened.config()]);
-    const listen = config.global.playback.listen;
+    const saved = config.global.playback.listen;
+    // A tone the caller names turns the tone on for this call; the saved setting stays as it is.
+    const listen =
+        options.toneSound && !saved.tone.enabled ? { ...saved, tone: { ...saved.tone, enabled: true } } : saved;
     const toneSound = listen.tone.enabled
         ? await resolveToneSound(options.toneSound ?? listen.tone.sound, { probe: options.probeTone ?? probeAudio })
         : undefined;
