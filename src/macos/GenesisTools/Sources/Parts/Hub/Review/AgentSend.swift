@@ -368,7 +368,7 @@ struct AgentSendForm: View {
         }
         let span = HubPerf.begin("review.agentSend.sessions", args.suffix(from: 3).prefix(4).joined(separator: " "), awaits: true)
         let result = await Task.detached(priority: .userInitiated) {
-            Result { try JSONDecoder().decode(HubPRSessions.self, from: ToolsCLIRunner.run(args)) }
+            Result { try JSONDecoder().decode(HubPRSessions.self, from: HubSource.bridge.output(args)) }
         }.value
         loading = false
         switch result {

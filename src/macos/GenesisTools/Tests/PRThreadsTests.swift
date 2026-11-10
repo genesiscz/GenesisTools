@@ -443,7 +443,8 @@ final class PRThreadsTests: XCTestCase {
     }
 
     func testAFailedVerbPrintsItsErrorAndCode() throws {
-        let failure = try JSONDecoder().decode(PRCLIError.self, from: Data(#"{"error":"not a draft","code":"not-a-draft"}"#.utf8))
+        let capture = ProcessCapture(status: 1, stdout: Data(#"{"error":"not a draft","code":"not-a-draft"}"#.utf8), stderr: Data())
+        let failure = ToolsFailure(argv: ["hub", "pr", "publish"], capture: capture)
         XCTAssertEqual(failure.code, "not-a-draft")
         XCTAssertEqual("\(failure)", "not a draft")
     }

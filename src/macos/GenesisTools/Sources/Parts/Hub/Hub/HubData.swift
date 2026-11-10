@@ -32,7 +32,11 @@ enum HubSource {
     /// sandbox home, a worktree's `tools`, the preview build and `GENESIS_HUB_SERVER=0` keep processes only.
     static let server: ToolsServerClient? = ToolsServerClient.resident(startServer: { HubServerStarter.start() })
 
-    static let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath(), server: server)
+    /// Every `tools hub pr` phase, child process, forge request and cache lookup goes to <date>-profiling.log with the
+    /// call's trace id (scopes: src/utils/profile/scopes.ts).
+    static let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath(), server: server, childEnvironment: { argv in
+        argv.prefix(2) == ["hub", "pr"] ? ["PROFILE": "hub-pr,spawn,forge-http,cache", "PROFILE_TO_STDERR": "0"] : [:]
+    })
 
     /// How long a list fetch may take. `SessionListClient.fetch` (kept verbatim from Genesis) kills at 60 s; under load
     /// the rebuild took 44 to 74 s, so the killed fallback threw its work away and the next refresh started it again
