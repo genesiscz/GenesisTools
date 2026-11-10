@@ -303,7 +303,10 @@ options object, so `hub.prs()` and `hub.pr("owner/repo#42")` are refused.
 A toolset is a `ReplToolset` subclass (`@genesiscz/utils/repl/toolset`) with an `ApiDescriptor`
 (`@genesiscz/utils/api-descriptor`: per method a name, zod params and result, one line and an effect of `read`,
 `reversible` or `destructive`) and a `bootstrap(ctx)` that returns its globals. Each toolset lives in one file and
-has one entry in `REPL_TOOLSETS`. The table lives in this tool, not in `@genesiscz/utils/repl`, because a toolset
+has one row in `REPL_TOOLSETS`: its one-line summary, its global name when that differs from the id, and a `load()`
+that imports the toolset only when a run names it (a test pins the row to the loaded toolset's `api`). So `--help`,
+id parsing and the MCP start line load no toolset, and a toolset whose module throws at import fails alone. The
+table lives in this tool, not in `@genesiscz/utils/repl`, because a toolset
 may sit in a tool's folder (`computer` is in `src/control`) and `src/utils` may not import a tool. The smallest
 example is `lib/__fixtures__/counter-toolset.ts`.
 
