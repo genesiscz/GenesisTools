@@ -49,10 +49,11 @@ extension MeetingDetailModel {
     }
 
     /// The rows in the order the reader asked for (`meetings.rows.order`), decided rows in place or hidden
-    /// (`meetings.rows.decided`). Priority is the engine's own order, the one `listen` asks in.
+    /// (`meetings.rows.decided`); a held row (`keeping`, G33) stays until the reader scrolls. Priority is the engine's own
+    /// order, the one `listen` asks in.
     static func visibleRows(_ rows: [ReviewRow], order: MeetingsPreferences.Rows.Order,
-                            decided: MeetingsPreferences.Rows.Decided) -> [ReviewRow] {
-        var shown = decided == .hidden ? rows.filter(\.isOpen) : rows
+                            decided: MeetingsPreferences.Rows.Decided, keeping: Set<String> = []) -> [ReviewRow] {
+        var shown = decided == .hidden ? rows.filter { $0.isOpen || keeping.contains($0.id) } : rows
         if order == .time {
             shown = shown.enumerated().sorted { a, b in
                 let left = a.element.startSec ?? .infinity, right = b.element.startSec ?? .infinity
@@ -185,7 +186,7 @@ extension MeetingDetailModel {
         reasons[row.id] = nil
         decidedMeanwhile[row.id] = nil
         if editingRow == row.id { editingRow = nil }
-        markRows(entry)
+        foldAnswered(row, entry: entry)
         showDecided(entry, row: row)
         if !result.skipped.isEmpty {
             notices.push(StackedNotice(text: "\(Plural.count(result.skipped.count, "item")) left as \(result.skipped.count == 1 ? "it was" : "they were")",
@@ -219,6 +220,19 @@ extension MeetingDetailModel {
             mark(change.id, status: status)
         }
         if changed { rows = .loaded(value) }
+    }
+
+    /// This window's answer folds its row (R16). With `meetings.rows.keepPlace` the folded row keeps its open height
+    /// until the reader scrolls, so the next row stays under the eye (G33, R15): a fold that frees 100 pt moved every
+    /// row under it.
+    func foldAnswered(_ row: ReviewRow, entry: JournalEntry) {
+        if MeetingsPreferences.Rows.keepPlace.value(defaults) { heldFolds.insert(row.id) }
+        markRows(entry)
+    }
+
+    /// The reader scrolled: every held row gives its room back (G33).
+    func releaseHeldFolds() {
+        if !heldFolds.isEmpty { heldFolds = [] }
     }
 
     /// "Revert and edit" on a decided row (R16, G35): its decision is taken back for this row only, and its editor opens.

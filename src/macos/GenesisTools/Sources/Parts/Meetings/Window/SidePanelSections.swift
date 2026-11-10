@@ -256,6 +256,7 @@ enum SidePanelCatalog {
             row(Rows.returnKey, value: Rows.returnKey.value(defaults)),
             row(Rows.choiceKeys, value: Rows.choiceKeys.value(defaults)),
             row(Rows.decided, value: Rows.decided.value(defaults)),
+            row(Rows.keepPlace, value: Rows.keepPlace.value(defaults)),
             row(Rows.order, value: Rows.order.value(defaults)),
             row(Rows.lowPriority, value: Rows.lowPriority.value(defaults)),
             row(Rows.askReach, value: Rows.askReach.value(defaults)),

@@ -15,6 +15,8 @@ struct ItemsTab: View {
     @AppStorage(MeetingsPreferences.Rows.choiceKeys.key) private var choiceKeys = MeetingsPreferences.Rows.choiceKeys.defaultValue.rawValue
     @AppStorage(MeetingsPreferences.Rows.returnKey.key) private var returnKey = MeetingsPreferences.Rows.returnKey.defaultValue.rawValue
     @AppStorage(MeetingsPreferences.Rows.lowPriority.key) private var lowPriority = MeetingsPreferences.Rows.lowPriority.defaultValue.rawValue
+    /// Each row's last height and the list's scroll position, outside observation: a scroll writes them every frame.
+    @State private var layout = RowLayout()
 
     var body: some View {
         LoadablePane(state: detail.rows, reading: "Reading the items…", retry: detail.loadRows) { rows in
@@ -32,7 +34,8 @@ struct ItemsTab: View {
 
     private func list(_ rows: ReviewRows) -> some View {
         let shown = MeetingDetailModel.visibleRows(rows.rows, order: MeetingsPreferences.Rows.Order(rawValue: order) ?? .priority,
-                                                   decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace)
+                                                   decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace,
+                                                   keeping: detail.heldFolds)
         let ids = shown.map(\.id)
         let open = rows.rows.filter(\.isOpen).count
         return ScrollViewReader { proxy in
@@ -55,6 +58,10 @@ struct ItemsTab: View {
                         ReviewRowView(row: row, detail: detail, player: detail.window?.player, selected: detail.selectedRow == row.id,
                                       editing: detail.editingRow == row.id, busy: detail.busyItems.contains(row.id),
                                       meanwhile: detail.decidedMeanwhile[row.id], choiceKeys: choiceKeys == "on")
+                            // G33: a row this window just answered keeps its open height until the reader scrolls, so
+                            // the next row does not move up under the eye.
+                            .frame(minHeight: detail.heldFolds.contains(row.id) ? layout.heights[row.id] : nil, alignment: .top)
+                            .onGeometryChange(for: CGFloat.self, of: \.size.height) { layout.heights[row.id] = $0 }
                             .padding(.horizontal, 10)
                             .background(RoundedRectangle(cornerRadius: 6)
                                 .fill(detail.selectedRow == row.id ? Color.accentColor.opacity(focused ? 0.22 : 0.12) : .clear))
@@ -65,6 +72,7 @@ struct ItemsTab: View {
                             }
                             .id(row.id)
                             .padding(.horizontal, 6)
+                            .frameProbe("meetings.row.\(row.id)")
                     }
                     if open == 0, !rows.rows.isEmpty {
                         Text("Every question is answered and every suggestion decided. Revert and edit reopens one.")
@@ -73,7 +81,9 @@ struct ItemsTab: View {
                     }
                 }
                 .padding(.vertical, 6)
+                .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.scrollSpace)).minY }) { scrolled(to: $0) }
             }
+            .coordinateSpace(.named(Self.scrollSpace))
             .focusable()
             .focused($focused)
             .focusEffectDisabled()
@@ -97,6 +107,7 @@ struct ItemsTab: View {
             .onAppear { if let id = detail.selectedRow { proxy.scrollTo(id) } }
             .onChange(of: detail.selectedRow) { _, id in
                 guard let id else { return }
+                layout.expectScroll()
                 proxy.scrollTo(id)
                 if let row = shown.first(where: { $0.id == id }), row.isOpen { detail.window?.player.precut(row.target, in: detail.id) }
             }
@@ -111,8 +122,18 @@ struct ItemsTab: View {
     private func step(_ offset: Int, rows: [String], proxy: ScrollViewProxy) -> KeyPress.Result {
         guard let next = Self.step(from: detail.selectedRow, by: offset, in: rows) else { return .ignored }
         detail.selectedRow = next
+        layout.expectScroll()
         proxy.scrollTo(next)
         return .handled
+    }
+
+    private static let scrollSpace = "meetings.items.scroll"
+
+    /// The list moved in its scroll view. A move the window made (a selection kept in view) is not the reader's; any
+    /// other move is, and gives the held rows their room back (G33).
+    private func scrolled(to top: CGFloat) {
+        guard layout.moved(to: top) else { return }
+        detail.releaseHeldFolds()
     }
 
     /// The row Up (-1) or Down (+1) selects: the first row when none is selected, and the ends hold.
@@ -237,5 +258,26 @@ private struct BulkConfirmBar: View {
         menu.append(.divider)
         menu.append(.note("Questions, ranges with no speaker and terms with no spelling stay for you."))
         return menu
+    }
+}
+
+/// The Items list's layout facts that change every frame (G33): each row's last height, which a held row keeps, and the
+/// list's top in its scroll view, whose change tells a reader's scroll. A plain class, so a write redraws nothing.
+final class RowLayout {
+    var heights: [String: CGFloat] = [:]
+    private var top: CGFloat?
+    private var windowScrolls = false
+
+    /// The window is about to keep a row in view: the move that follows, in this pass, is not the reader's.
+    @MainActor func expectScroll() {
+        windowScrolls = true
+        DispatchQueue.main.async { [weak self] in self?.windowScrolls = false }
+    }
+
+    /// Whether the list's top moved by the reader: true for a move of more than half a point that the window did not make.
+    func moved(to newTop: CGFloat) -> Bool {
+        defer { top = newTop }
+        guard let top, abs(newTop - top) > 0.5 else { return false }
+        return !windowScrolls
     }
 }
