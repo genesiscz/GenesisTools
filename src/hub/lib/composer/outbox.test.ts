@@ -5673,9 +5673,11 @@ describe("background Widget roster", () => {
         expect(change("/fixture/claude/projects/-fixture-project/old-lead/subagents/agent-a1.jsonl")).toBe(
             "claude-agents"
         );
-        // A workflow's agents sit deeper; only the listing walks there, whether or not the lead is listed.
+        // A workflow's agents sit deeper. The agents tree lists them too, so a listed lead needs a read only; a
+        // lead that is not listed still needs the sub-agent listing, which finds it.
         const workflow = "/fixture/claude/projects/-fixture-project/lead-session/subagents/workflows/wf_1";
-        expect(change(`${workflow}/agent-a2.jsonl`, true)).toBe("claude-agents");
+        expect(change(`${workflow}/agent-a2.jsonl`, true)).toBe("read");
+        expect(change(`${workflow}/agent-a2.jsonl`)).toBe("claude-agents");
         expect(change(`${workflow}/journal.jsonl`, true)).toBeUndefined();
         expect(change(`${workflow}/agent-a2.meta.json`, true)).toBeUndefined();
         expect(change("/fixture/claude/projects/-fixture-project/lead-session/tool-results/out.txt")).toBeUndefined();

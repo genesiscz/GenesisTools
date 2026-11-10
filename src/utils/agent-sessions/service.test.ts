@@ -17,7 +17,7 @@ import { HistorySyncRepository } from "./sync-repository";
 import { type BaselineOracle, createBaselineOracle } from "./testing/baseline-oracle";
 import { generateHistoryCorpus } from "./testing/corpus";
 import { createFixtureWorld } from "./testing/fixture-world";
-import { noAnalysis, noStatistics } from "./testing/no-backward-read";
+import { noAnalysis, noStatistics, noWorkflows } from "./testing/no-backward-read";
 import { withBaseline } from "./testing/with-baseline";
 import type { AgentSearchFilters, NativeSessionReader, NativeSessionSource } from "./types";
 
@@ -53,6 +53,7 @@ function createReader(options: { kind: string; roots: string[] }): NativeSession
         scanInsights: () => ({ native: null, defaultModel: null }),
         analysis: noAnalysis,
         readStatistics: noStatistics,
+        workflows: noWorkflows,
         classifyPath: claudeClassifyPath,
         midWork: claudeMidWork,
         readSpawnLink: claudeReadSpawnLink,

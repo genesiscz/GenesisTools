@@ -44,7 +44,9 @@ function ago(iso: string | null): string {
 }
 
 function label(node: AgentNode): string {
-    return node.name ?? node.description ?? node.id;
+    const own = node.name ?? node.description ?? node.id;
+    // A Workflow tool agent: its run comes first, so the agents of one run read as a group.
+    return node.workflow ? `${node.workflow.runId.slice(0, 11)} ${node.workflow.label ?? own}` : own;
 }
 
 function pushRows(table: ReturnType<typeof createBoxTable>, nodes: AgentNode[], depth: number): void {

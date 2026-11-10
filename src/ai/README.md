@@ -489,6 +489,21 @@ tools ai sessions report <session-id> [--provider claude|codex|grok] [--top 10] 
   losses with their cause, and the longest gaps. A fact a harness does not record is listed under `unsupported` with
   its reason. `--json` prints `{ schema: "sessions.report@1", session, report }`.
 
+### `ai sessions workflows`: a session's Workflow tool runs
+
+```bash
+tools ai sessions workflows list [session-id] [--json]
+tools ai sessions workflows show <session-id> <run> [--usage] [--json]
+tools ai sessions workflows grep <session-id> <pattern> [--run <run>] [-i] [--before <iso>] [--max-hits 3] [--context 100] [--json]
+tools ai sessions workflows result <session-id> <run> <agent>
+```
+
+- Claude Code's Workflow tool keeps a run's agents outside the session's direct sub-agents: `<session>/subagents/workflows/<runId>/` holds their transcripts and a journal, and `<session>/workflows/<runId>.json` holds the run record. `subagents` lists them after the direct agents, grouped by run, each with its label, phase, model and state. Its `--json` adds `workflow: { runId, label, phase }` to each such agent, a `workflowRuns` list (name, status, start, duration, agents, results) and `workflowReader`.
+- `workflows` reads the runs through the session's reader (`NativeSessionReader.workflows`). It joins a run's agents by id from the run record, the journal and the transcript folder, and keeps which source named each one, because the three disagree: a killed run has transcripts and few results, and a run stopped before its end has transcripts and no record. `<run>` is a run id prefix or a workflow name.
+- `show --usage` reads every agent transcript for its calls, tokens and list-price cost. The run record's own token total is far lower and is printed as recorded, not recomputed.
+- `grep` says for each hit whether the agent wrote the text (`assistant`), was shown it (`tool-result`) or was told it (`prompt`). `result` prints an agent's final structured answer from the journal.
+- Codex and Grok have no workflow tool. `workflows list` with no session names each provider's reader, and a session of theirs answers `no workflow reader` with the reason, never "0 runs".
+
 ### `ai statusline`: the coding-agent statusline
 
 ```bash

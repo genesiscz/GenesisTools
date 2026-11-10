@@ -268,6 +268,7 @@ const SUBAGENT_META = {
     teamName: null,
     taskKind: null,
     spawnPrompt: null,
+    workflow: null,
 } satisfies Partial<SessionSubagent>;
 
 const SUBAGENTS: SessionSubagent[] = [
