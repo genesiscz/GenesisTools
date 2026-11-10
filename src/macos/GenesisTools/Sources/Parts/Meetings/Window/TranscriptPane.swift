@@ -219,6 +219,12 @@ private struct FollowingBlocks: View {
                 guard follows, let block else { return }
                 scroll(proxy, to: block)
             }
+            // A pane that opens while a Moment plays starts at the heard line: it scrolled only when the heard block
+            // changed, so beside a clip that stays in one block it showed the meeting's first lines to the end.
+            .onAppear {
+                guard follows, let block = heard?.blockID else { return }
+                DispatchQueue.main.async { proxy.scrollTo(block, anchor: .center) }
+            }
             .onChange(of: jump) { _, _ in
                 if let block = heard?.blockID { scroll(proxy, to: block) }
             }
