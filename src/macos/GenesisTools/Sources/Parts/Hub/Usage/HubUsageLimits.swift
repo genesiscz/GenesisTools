@@ -198,6 +198,7 @@ struct UsageAdvicePickChip: View, Equatable {
         .padding(.horizontal, 6)
         .frame(height: 22)
         .contentShape(Rectangle())
+        // lint-rules-ignore: short list (one "Use next" chip per provider, at most a few)
         .rowButton(cornerRadius: 6, action)
         .instantTooltip(tooltip)
         .accessibilityElement(children: .combine)
