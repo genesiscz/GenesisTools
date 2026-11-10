@@ -371,6 +371,8 @@ export const env = {
         shouldRunLiveSmoke: () => isFlag("SHOPS_LIVE_SMOKE") || isFlag("RUN_LIVE_SMOKE"),
         shouldRunShopsLiveItesco: () => isFlag("SHOPS_LIVE_ITESCO"),
         getTestAudioFile: () => getTrimmed("TEST_AUDIO_FILE"),
+        /** `GENESIS_TOOLS_WRITE_GOLDEN`: a golden-file test writes its files instead of comparing them. */
+        shouldWriteGolden: () => isOptIn("GENESIS_TOOLS_WRITE_GOLDEN"),
         /**
          * `GENESIS_TOOLS_TEST_NOW`: an ISO instant a byte golden runs a child at, so a report that reads "today"
          * prints the same bytes on every day. Unset or unparseable: undefined, and the caller reads the real clock.
