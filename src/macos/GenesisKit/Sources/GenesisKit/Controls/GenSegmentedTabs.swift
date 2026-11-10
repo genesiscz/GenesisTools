@@ -75,8 +75,16 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         case compact
         /// The same text with 3 pt on each side: the last step that keeps every title whole.
         case tight
-        /// The last step: equal segments, the titles scale down to 85 % and then cut.
+        /// The titles alone, one text size down with 6 pt on each side, each as wide as its words: a glyph or a count of
+        /// three digits took the room a title needed, and a cut title is worse than a count the bar below repeats.
+        case bare
+        /// The last step: the titles alone in equal segments; they scale down to 85 % and then cut.
         case scaled
+
+        /// Draws a segment's glyph and count.
+        var showsExtras: Bool { self != .bare && self != .scaled }
+        /// Every title keeps its own width.
+        var keepsTitles: Bool { self == .roomy || self == .compact || self == .tight || self == .bare }
 
         var fills: Bool { self != .natural }
 
@@ -86,6 +94,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
             case .roomy: 8
             case .compact: 5
             case .tight: 3
+            case .bare: 6
             case .scaled: 4
             }
         }
@@ -106,6 +115,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
                 strip(.roomy)
                 strip(.compact)
                 strip(.tight)
+                strip(.bare)
                 strip(.scaled)
             }
         } else {
@@ -179,9 +189,9 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         let surface = layer == .thumb
             ? look.surface(.thumb, hue: item.hue, scheme: scheme, selected: true)
             : look.surface(.segment, hue: item.hue, scheme: scheme)
-        let step: CGFloat = fit == .compact || fit == .tight ? 1 : 0
+        let step: CGFloat = fit == .compact || fit == .tight || fit == .bare ? 1 : 0
         return HStack(spacing: 5) {
-            if let symbol = item.symbol {
+            if let symbol = item.symbol, fit.showsExtras {
                 Image(systemName: symbol)
                     .font(.system(size: size.glyph - step, weight: .medium))
                     .foregroundStyle(layer == .sizing ? Color.clear : surface.glyph)
@@ -190,9 +200,9 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
                 .font(.system(size: size.font - step, weight: item.id == selection ? .semibold : .medium))
                 .lineLimit(1)
                 .minimumScaleFactor(fit == .scaled ? 0.85 : 1)
-                .fixedSize(horizontal: fit == .roomy || fit == .compact || fit == .tight, vertical: false)
+                .fixedSize(horizontal: fit.keepsTitles, vertical: false)
                 .foregroundStyle(layer == .sizing ? Color.clear : surface.label)
-            if let count = item.count {
+            if let count = item.count, fit.showsExtras {
                 countPill(count, item, layer)
             }
         }
@@ -208,6 +218,8 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
             .font(.system(size: size.font - 1.5, weight: .semibold))
             .monospacedDigit()
             .foregroundStyle(surface.label)
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 5)
             .frame(minWidth: 17, minHeight: 15)
             .background(Capsule().fill(surface.fill))
