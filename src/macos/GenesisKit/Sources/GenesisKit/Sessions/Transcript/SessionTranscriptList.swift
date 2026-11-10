@@ -448,15 +448,22 @@ public struct SessionTranscriptList: View {
             HStack(spacing: 5) {
                 Image(systemName: verbosity.symbol)
                     .font(.system(size: 10.5))
-                Text(verbatim: verbosity.title)
-                    .font(.system(size: 11.5, weight: .medium))
-                if wrap.any {
-                    // Wrapping is on: the menu holds a second choice besides the level.
-                    Image(systemName: "text.word.spacing")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(SessionPalette.blue)
-                        .accessibilityHidden(true)
+                // As wide as the widest level's title: a pick never changes the toolbar's width, so its ViewThatFits
+                // never switches layouts and the list's height and the reader's place stay where they were.
+                ZStack(alignment: .leading) {
+                    ForEach(TranscriptVerbosity.allCases) { level in
+                        Text(verbatim: level.title).hidden()
+                    }
+                    Text(verbatim: verbosity.title)
                 }
+                .font(.system(size: 11.5, weight: .medium))
+                // Wrapping is on: the menu holds a second choice besides the level. Its place is kept while it is off,
+                // for the same reason.
+                Image(systemName: "text.word.spacing")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(SessionPalette.blue)
+                    .opacity(wrap.any ? 1 : 0)
+                    .accessibilityHidden(true)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
             }
