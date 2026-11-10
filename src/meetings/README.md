@@ -106,10 +106,12 @@ A meeting argument is a meeting id, a unique prefix of it, `last`, or a source r
 - `confirm <meeting> --min-confidence 0.9`: confirm every suggested item at or above that confidence.
 - `reject <meeting> <ids...> [--min-confidence <0..1>] [--json]`: reject items; they are never suggested again.
 - `confirm --json` and `reject --json` print `{ decided, token, skipped }`. The token is what `reopen --token` takes.
-- `reopen <meeting> <ids...> [--token <token>] [--json]`: put confirmed or rejected items back to suggested (the Undo
-  of confirm and reject). `--token` undoes one decision; when another decision changed one of its items since, it is
-  refused with `[item-changed]`. Only `listen` reopens a question, and a confirm's line in the corrections ledger
-  stays. `--json` prints `{ reopened, skipped }`.
+- `reopen <meeting> [ids...] [--token <token>] [--json]`: put confirmed or rejected items back to suggested (the Undo
+  of confirm and reject). `--token` undoes one decision, by the token that `confirm --json` or `reject --json` printed
+  (or `journal` lists). With no ids it undoes the whole entry, a speaker rename too; with ids, only those items. When
+  another decision changed one of its items since, it is refused with `[item-changed]`. Without `--token` the ids are
+  required. Only `listen` reopens a question, and a confirm's line in the corrections ledger stays. `--json` prints
+  `{ reopened, skipped }`.
 - `speakers stats <meeting> [--gap 2m] [--attendance <platform>|<file>] [--json]`: per label, its origin, turns,
   spoken time and spans, with hints about labels that hold several voices. A pause shorter than `--gap` keeps two
   turns in one span.

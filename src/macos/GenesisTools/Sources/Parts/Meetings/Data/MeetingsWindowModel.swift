@@ -78,6 +78,10 @@ final class MeetingsWindowModel {
     private(set) var settings: Loadable<MeetingsSettings> = .idle
     private(set) var detail: MeetingDetailModel?
     var days: Int
+    /// The edge of a pane its notices float at (`meetings.notices.place`): an observed value, so the open pane moves its
+    /// stack when it changes. The Settings page runs in another process; its change lands when this window becomes key
+    /// again (`refreshAfterReturn`).
+    private(set) var noticePlace: MeetingsPreferences.NoticePlace
     /// The meeting audio that plays from a transcript time, shown and stopped by the bar under the window.
     var playback = MeetingsPlayback()
     private var overviewGeneration = 0
@@ -97,6 +101,7 @@ final class MeetingsWindowModel {
         MeetingsPreferences.migrate(defaults)
         place = MeetingsPreferences.openOn(defaults) == .needs ? .needs : .all
         days = MeetingsPreferences.days(defaults)
+        noticePlace = MeetingsPreferences.noticePlace(defaults)
     }
 
     /// A notice stack for one meeting's pane, with the window's notice times (Settings → Meetings → Window), read at
@@ -105,8 +110,12 @@ final class MeetingsWindowModel {
         NoticeStackModel(clock: noticeClock, timing: { [defaults] in MeetingsPreferences.noticeTiming(defaults) })
     }
 
-    /// The edge of a pane its notices float at (Settings → Meetings → Window).
-    var noticePlace: MeetingsPreferences.NoticePlace { MeetingsPreferences.noticePlace(defaults) }
+    /// A window setting changed (the window came back after the Settings page): the values the window model holds read
+    /// again. The views read every other window setting from the defaults themselves.
+    func windowSettingsChanged() {
+        let place = MeetingsPreferences.noticePlace(defaults)
+        if place != noticePlace { noticePlace = place }
+    }
 
     /// The meetings the sidebar's place shows, newest first.
     var visibleMeetings: [OverviewMeeting] {
@@ -256,6 +265,7 @@ final class MeetingsWindowModel {
     /// The window became key again: what changed outside it (a confirm in a terminal, a new meeting) shows. The reads
     /// are quiet: what is on screen stays until an answer differs.
     func refreshAfterReturn() {
+        windowSettingsChanged()
         HubMainBusy.measure("meetings.refresh", window: 1.5)
         loadOverview(quiet: true)
         loadSettings(quiet: true)

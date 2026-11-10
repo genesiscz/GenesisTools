@@ -65,6 +65,12 @@ export function meetingsServiceDir(): string {
     return toolDataDir("meetings-service");
 }
 
+/**
+ * An event name no service emits (the `$/` prefix is JSON-RPC's own, and no Meetings event uses it): a subscription
+ * to it alone hears nothing, which is how a connection with no listener left stops the service sending it events.
+ */
+export const NO_EVENT = "$/none";
+
 /** A meeting the event names, for the subscription's filter. */
 function meetingOf(params: unknown): string | undefined {
     const meeting = typeof params === "object" && params !== null ? Reflect.get(params, "meeting") : undefined;
@@ -267,8 +273,17 @@ export class SocketMeetingsClient implements MeetingsClient {
         this.client.close();
     }
 
-    /** The service's filter of this connection: every listener's events, and one meeting only when all name it. */
+    /**
+     * The service's filter of this connection: every listener's events, and one meeting only when all name it. With no
+     * listener left it subscribes to `NO_EVENT` alone: the transport has no unsubscribe, and an empty event list
+     * would read as every event of every meeting.
+     */
     private async resubscribe(): Promise<void> {
+        if (this.listeners.size === 0) {
+            await this.client.call(SUBSCRIBE, subscribeParamsSchema.parse({ events: [NO_EVENT] }));
+            return;
+        }
+
         const filters = [...this.listeners].map((each) => each.filter);
         const anyEvent = filters.some((filter) => !filter.events || filter.events.length === 0);
         const events = anyEvent ? [] : [...new Set(filters.flatMap((filter) => filter.events ?? []))];

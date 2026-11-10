@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, existsSync, statSync, truncateSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
@@ -12,6 +12,7 @@ import { appendCorrections, type Correction, correctionSchema } from "@genesiscz
 import {
     type DecisionActor,
     decisionActorSchema,
+    MEETING_UNCHANGED,
     type MeetingChange,
     type MeetingItem,
     type MeetingRecord,
@@ -1063,7 +1064,7 @@ export class DecisionJournal {
         let result: Decided = { skipped: [] };
         // Filled in by the handler: the store reads it after the change, for the record's history line.
         const history: MeetingChange = { command: action.kind, change: "" };
-        const decide = (record: MeetingRecord): boolean => {
+        const decide = (record: MeetingRecord): typeof MEETING_UNCHANGED | undefined => {
             const items = structuredClone(record.items);
             const labels = { ...record.speakers.labels };
             const outcome = handler.mutate(record, action, context);
@@ -1073,7 +1074,7 @@ export class DecisionJournal {
 
             if (changes.length === 0 && labelled.length === 0) {
                 result = { skipped: outcome.skipped ?? [] };
-                return false;
+                return MEETING_UNCHANGED;
             }
 
             const decided = changes
@@ -1109,7 +1110,7 @@ export class DecisionJournal {
                 },
                 skipped: outcome.skipped ?? [],
             };
-            return true;
+            return undefined;
         };
 
         if (!save) {
@@ -1117,16 +1118,21 @@ export class DecisionJournal {
             return result;
         }
 
-        await store.update(
-            meeting,
-            history,
-            (record) => decide(record),
-            () => {
+        let takeBack: () => void = () => {};
+        await store.update(meeting, history, (record) => decide(record), {
+            write: () => {
                 if (result.entry) {
-                    this.write(result.entry, action.kind === "revert" ? context.entryOf(action.token) : undefined);
+                    const reverted = action.kind === "revert" ? context.entryOf(action.token) : undefined;
+                    takeBack = this.writeLines(result.entry, reverted);
                 }
-            }
-        );
+            },
+            undo: () => takeBack(),
+            saved: () => {
+                if (result.entry) {
+                    this.writeLedger(result.entry);
+                }
+            },
+        });
         return result;
     }
 
@@ -1170,20 +1176,72 @@ export class DecisionJournal {
         }
     }
 
-    /** The entry's line, its answer log line and its ledger lines, in that order, under the record's lock. */
-    private write(entry: JournalEntry, reverted: JournalEntry | undefined): void {
+    /**
+     * The entry's line and its answer log line, under the record's lock before the record is saved. Answers what takes
+     * both back: the store runs it when the record is not saved, so neither file holds a decision the record lacks. A
+     * failed append takes back what it already wrote before it throws.
+     */
+    private writeLines(entry: JournalEntry, reverted: JournalEntry | undefined): () => void {
         const { store } = this.options;
-        appendFileSync(this.path(entry.meeting), `${SafeJSON.stringify(entry, { jsonl: true })}\n`, { mode: 0o600 });
+        const journalPath = this.path(entry.meeting);
+        const undo = [
+            undoableAppend(journalPath, () =>
+                appendFileSync(journalPath, `${SafeJSON.stringify(entry, { jsonl: true })}\n`, { mode: 0o600 })
+            ),
+        ];
         const event = answerEventOf(entry, reverted);
 
         if (event) {
-            appendAnswerEvent(join(store.folder(entry.meeting), ANSWER_LOG_FILE), event);
+            const logPath = join(store.folder(entry.meeting), ANSWER_LOG_FILE);
+
+            try {
+                undo.push(undoableAppend(logPath, () => appendAnswerEvent(logPath, event)));
+            } catch (error) {
+                undo[0]!();
+                throw error;
+            }
         }
 
-        (this.options.ledger ?? appendCorrections)(entry.corrections);
         log.debug(
             { meeting: entry.meeting, action: entry.action.kind, token: entry.token, changed: entry.changes.length },
             "decision journaled"
         );
+        return () => {
+            for (const each of undo.reverse()) {
+                each();
+            }
+        };
     }
+
+    /**
+     * The entry's ledger lines, once the record is saved, still under its lock (an Undo's retraction never lands before
+     * the line it retracts). The ledger is shared by every meeting, so it cannot be cut back: a failure here fails the
+     * command, and the decision stays saved and journaled, so its token still reverts it.
+     */
+    private writeLedger(entry: JournalEntry): void {
+        (this.options.ledger ?? appendCorrections)(entry.corrections);
+    }
+}
+
+/**
+ * Runs `append` on `path` and answers how to take it back: the file cut to the length it had (empty when the append
+ * made it). An append that throws is taken back before the error goes on. Cutting a file needs no free disk space,
+ * so a full disk that failed a write cannot also fail its undo.
+ */
+function undoableAppend(path: string, append: () => void): () => void {
+    const size = existsSync(path) ? statSync(path).size : 0;
+    const undo = (): void => {
+        if (existsSync(path) && statSync(path).size > size) {
+            truncateSync(path, size);
+        }
+    };
+
+    try {
+        append();
+    } catch (error) {
+        undo();
+        throw error;
+    }
+
+    return undo;
 }

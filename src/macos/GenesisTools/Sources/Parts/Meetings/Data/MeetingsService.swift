@@ -230,6 +230,8 @@ final class MeetingsService {
     private var subscription: MeetingsAPI.Subscribe.Params?
     /// Connects again while a subscription is kept and no connection is open (`resumeSubscription`).
     private var resuming: Task<Void, Never>?
+    /// Restores of the kept subscription that failed in a row: each one waits twice as long before the next connection.
+    private var restoreFailures = 0
     private var callsInFlight = 0
     private var idleGeneration = 0
 
@@ -441,9 +443,17 @@ final class MeetingsService {
             Task {
                 do {
                     _ = try await Self.send(MeetingsAPI.Subscribe.self, subscription, on: connected, timeout: timing.helloTimeout)
+                    restoreFailures = 0
                     onSubscriptionResumed?()
                 } catch {
-                    HubPerf.log("meetings.service: subscribe again failed: \(error.localizedDescription)")
+                    // A connection without the kept subscription hears no event, and a kept subscription keeps it from
+                    // closing when idle: drop it, so `resumeSubscription` connects again, each failure waiting twice
+                    // as long up to `refusedBackoff`.
+                    HubPerf.log("meetings.service: subscribe again failed: \(error.localizedDescription); connecting again")
+                    guard client === connected else { return }
+                    restoreFailures += 1
+                    let backoff = min(timing.reconnectDelay * pow(2, Double(restoreFailures - 1)), timing.refusedBackoff)
+                    drop(connected, backoff: backoff)
                 }
             }
         }

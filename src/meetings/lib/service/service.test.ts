@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
+import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
@@ -28,6 +29,7 @@ import {
     LocalMeetingsEvents,
     type MeetingsClient,
     type MeetingsEventMessage,
+    NO_EVENT,
     openMeetingsClient,
     SocketMeetingsClient,
 } from "./client";
@@ -293,6 +295,52 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(heard).toEqual([
             { method: "meeting.changed", params: { meeting: REVIEW.id, parts: ["show", "transcript"] } },
         ]);
+    });
+});
+
+describe("the socket client's subscription", () => {
+    // The transport has no unsubscribe, and an empty event list means every event: the last listener's stop sent
+    // `subscribe { events: [] }`, so a long-lived client heard every meeting's events and dropped them itself.
+    test("the last listener's stop leaves the connection subscribed to nothing, not to every event", async () => {
+        const { service } = await startService();
+        const sent = spyOn(RpcSocketClient.prototype, "call");
+        let lastSubscribe: unknown;
+
+        try {
+            const client = await SocketMeetingsClient.connect(service.entry, hello);
+            closing.push(() => client.close());
+            const stop = await client.subscribe({ meeting: REVIEW.id, events: ["meeting.changed"] }, () => {});
+            stop();
+            // The socket answers in order: the stop's subscribe went out before this call.
+            await client.call("meetings.list", { limit: 1 });
+            lastSubscribe = sent.mock.calls.filter(([method]) => method === "subscribe").at(-1)?.[1];
+        } finally {
+            sent.mockRestore();
+        }
+
+        expect(lastSubscribe).toEqual({ events: [NO_EVENT] });
+
+        // What that subscription hears on the wire, beside what the old one (an empty list) heard.
+        const heard = async (params: unknown): Promise<number> => {
+            const raw = await RpcSocketClient.connect({
+                socket: service.entry.socket,
+                logScope: "test",
+                label: "test",
+            });
+            closing.push(() => raw.close());
+            let count = 0;
+            raw.onNotification(() => {
+                count += 1;
+            });
+            await raw.call("hello", hello);
+            await raw.call("subscribe", params);
+            service.emit("meeting.changed", { meeting: RETRO.id, parts: ["show"] });
+            await raw.call("meetings.list", { limit: 1 });
+            return count;
+        };
+
+        expect(await heard({ events: [] })).toBe(1);
+        expect(await heard(lastSubscribe)).toBe(0);
     });
 });
 

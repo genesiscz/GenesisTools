@@ -4,14 +4,18 @@ import { dirname, join } from "node:path";
 import { HUB_SERVER_DOORS } from "@app/hub/server/doors";
 import { MEETINGS_DOORS, meetingsScreenTimelineDoor } from "@app/hub/server/doors/meetings";
 import { DoorUnsupported } from "@app/hub/server/doors/types";
+import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import * as ocrBoxes from "@genesiscz/utils/macos/ocr-boxes";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { readCorrections } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
+import { Command } from "commander";
 import type { z } from "zod";
+import { registerItemCommands } from "../commands/items";
 import { captureCost } from "./capture-cost";
 import {
     applyConfigEdits,
@@ -24,6 +28,7 @@ import {
     unsetConfigValue,
 } from "./config-edit";
 import { decideItems, reopenItems } from "./decide";
+import { DecisionJournal } from "./decision-journal";
 import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
 import { matchPreview } from "./match-preview";
@@ -464,9 +469,13 @@ describe("window revisions", () => {
             writeFileSync(path, "RIFF");
         };
 
-        // An earlier play made the folder; this read is the window's last one.
-        clip(0, 2);
+        // The first play makes moments/, which changed the meeting folder's own identity: it must change no token either.
         const before = await revisionsRead({ store: meetings, record: created });
+        clip(0, 2);
+
+        expect(await revisionsRead({ store: meetings, record: created })).toEqual(before);
+
+        // A later play adds a clip beside it.
         clip(1, 3);
 
         expect(await revisionsRead({ store: meetings, record: created })).toEqual(before);
@@ -672,6 +681,56 @@ describe("reopen", () => {
         expect((await reopenItems({ store: meetings, record: saved ?? created, ids: ["i1"] })).skipped).toEqual([
             { id: "i1", reason: "it is not decided" },
         ]);
+    });
+
+    // A rename entry changes labels and no item, so an Undo that had to name items could never give the name back.
+    test("reopen --token with no items undoes a speaker rename; without a token it still needs the items", async () => {
+        // The command reads the default store, which the test preload keeps in a sandbox.
+        const store = new MeetingStore();
+        const created = await store.create(
+            { title: "Harbor sync", start: "2026-11-05T10:00:00.000Z", createdBy: "new", speakers: { labels: {} } },
+            { command: "test", change: "fixture" }
+        );
+        const renamed = await new DecisionJournal({ store }).apply({
+            meeting: created.id,
+            action: { kind: "rename", label: "S1", name: "Dana Example" },
+            actor: { kind: "cli" },
+        });
+        expect(store.read(created.id)?.speakers.labels).toEqual({ S1: "Dana Example" });
+
+        const printed: string[] = [];
+        const errors: string[] = [];
+        const result = spyOn(out, "result").mockImplementation((text: string) => {
+            printed.push(text);
+        });
+        const err = spyOn(ui, "err").mockImplementation((line: string) => {
+            errors.push(line);
+        });
+
+        try {
+            const run = async (...args: string[]) => {
+                const program = new Command().exitOverride();
+                registerItemCommands(program);
+                await program.parseAsync(args, { from: "user" });
+            };
+
+            await run("reopen", created.id);
+            expect(errors).toEqual([
+                "Name the items to reopen (i1 i2 …), or undo a whole decision with --token <token>.",
+            ]);
+
+            await run("reopen", created.id, "--token", renamed.entry!.token, "--json");
+        } finally {
+            result.mockRestore();
+            err.mockRestore();
+            process.exitCode = 0;
+        }
+
+        expect(errors).toHaveLength(1);
+        expect(store.read(created.id)?.speakers.labels).toEqual({});
+        expect(SafeJSON.parse(printed[0]!)).toMatchObject({
+            entry: { action: { kind: "revert", token: renamed.entry!.token }, labels: [{ label: "S1" }] },
+        });
     });
 });
 

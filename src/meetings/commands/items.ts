@@ -445,6 +445,11 @@ async function reopen(
     ids: string[],
     opts: { token?: string; reason?: string; json?: boolean }
 ): Promise<void> {
+    if (!opts.token && ids.length === 0) {
+        fail(`Name the items to reopen (i1 i2 …), or undo a whole decision with --token <token>.`);
+        return;
+    }
+
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -734,7 +739,10 @@ export function registerItemCommands(program: Command): void {
     program
         .command("reopen")
         .argument("<meeting>", MEETING_REF)
-        .argument("<items...>", "item ids: i1 i2 …, or with --token a question's number: Q12")
+        .argument(
+            "[items...]",
+            "item ids: i1 i2 …, or with --token a question's number: Q12; with --token and none, the whole entry (a speaker rename too)"
+        )
         .description(
             "Put confirmed or rejected items back to suggested: the Undo of confirm and reject, and with --token of any decision journal entry"
         )

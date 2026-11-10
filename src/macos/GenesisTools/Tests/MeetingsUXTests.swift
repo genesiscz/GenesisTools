@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Observation
 import SwiftUI
 import XCTest
 @testable import GenesisToolsMeetings
@@ -656,6 +657,60 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(words("Speaker 3"), ["One turn next to Speaker 4, maybe one voice split in two (weak sign)"])
         XCTAssertEqual(words("Speaker 5"), ["May hold several people (normal sign)"])
         XCTAssertEqual(words("Dan"), ["A future kind"], "a kind this build does not know still shows its name")
+    }
+
+    /// "Notices float at" changed on the Settings page: the open pane read the place from the defaults on each draw, and
+    /// nothing redrew it, so it kept the old edge. The place is an observed value that the window's return reads again.
+    func testANoticePlaceChangedInSettingsMovesTheOpenPanesStack() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        XCTAssertEqual(model.noticePlace, .bottom)
+
+        var redraws = 0
+        // lint-rules-ignore: one shot on purpose, the test counts the first change only
+        withObservationTracking { _ = model.noticePlace } onChange: { redraws += 1 }
+        defaults.set(MeetingsPreferences.NoticePlace.top.rawValue, forKey: MeetingsPreferences.noticePlaceKey)
+        model.windowSettingsChanged()
+        XCTAssertEqual(model.noticePlace, .top)
+        XCTAssertEqual(redraws, 1, "a view that reads the place draws again")
+
+        // lint-rules-ignore: one shot on purpose, the test checks that no change arrives
+        withObservationTracking { _ = model.noticePlace } onChange: { redraws += 1 }
+        model.windowSettingsChanged()
+        XCTAssertEqual(redraws, 1, "an unchanged place draws nothing again")
+    }
+
+    /// A failed phrase test put an error notice up with no timeout, and a later test that worked (or an emptied phrase)
+    /// left it on screen. The failure notice now goes with the test it belongs to.
+    func testAPhraseTestFailureNoticeGoesWhenALaterTestWorksOrThePhraseIsEmptied() async throws {
+        let notices = NoticeStackModel(clock: ManualNoticeClock(), announces: false)
+        let model = MeetingsSettingsModel(writes: false, notices: notices)
+        var fails = true
+        model.phraseTester = { phrase, _ in
+            if fails { throw MeetingsCLI.Failure(sentence: "The dictionary test failed.", detail: phrase) }
+            return try JSONDecoder().decode(PhraseTest.self, from: Data("""
+            {"phrase":"\(phrase)","text":"\(phrase)","fired":[],"suggestions":[]}
+            """.utf8))
+        }
+
+        model.testPhrase("ship it")
+        for _ in 0..<100 where notices.notices.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(notices.notices.map(\.text), ["The dictionary test failed."])
+
+        fails = false
+        model.testPhrase("ship it now")
+        for _ in 0..<100 where model.phraseResult == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(model.phraseResult?.phrase, "ship it now")
+        XCTAssertTrue(notices.notices.isEmpty, "a test that worked takes the failure away")
+
+        fails = true
+        model.testPhrase("again")
+        for _ in 0..<100 where notices.notices.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(notices.notices.count, 1)
+        model.testPhrase("  ")
+        XCTAssertTrue(notices.notices.isEmpty, "an emptied phrase takes the failure away at once")
+        XCTAssertNil(model.phraseResult)
     }
 
     func testATitledNoteShowsItsText() throws {

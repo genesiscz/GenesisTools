@@ -32,6 +32,10 @@ final class MeetingsSettingsModel {
     @ObservationIgnored let notices: NoticeStackModel
     /// The phrase test runs as the reader types: its failure replaces the one before instead of piling up.
     @ObservationIgnored private let phraseFailureID = StackedNotice.ID()
+    /// What runs one phrase test (`dictionary test`); a test replaces it.
+    @ObservationIgnored var phraseTester: @MainActor (_ phrase: String, _ scope: String?) async throws -> PhraseTest = { phrase, scope in
+        try await MeetingsCLI.json(PhraseTest.self, ["dictionary", "test", phrase, "--json"] + (scope.map { ["--project", $0] } ?? []))
+    }
     /// The dictionary page's scope: nil is the global dictionary.
     var dictionaryScope: String? {
         didSet { if oldValue != dictionaryScope { loadDictionary(); testPhrase(phrase) } }
@@ -365,18 +369,22 @@ final class MeetingsSettingsModel {
         phrase = text
         phraseTask?.cancel()
         let trimmed = text.trimmingCharacters(in: .whitespaces)
+        // A failure notice belongs to the test that failed: an emptied phrase or a later test that works takes it away.
         guard !trimmed.isEmpty else {
             phraseResult = nil
+            notices.dismiss(phraseFailureID)
             return
         }
         let scope = dictionaryScope
+        let tester = phraseTester
         phraseTask = Task {
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
             do {
-                let result = try await MeetingsCLI.json(PhraseTest.self, ["dictionary", "test", trimmed, "--json"] + (scope.map { ["--project", $0] } ?? []))
+                let result = try await tester(trimmed, scope)
                 guard !Task.isCancelled else { return }
                 phraseResult = result
+                notices.dismiss(phraseFailureID)
             } catch {
                 guard !Task.isCancelled else { return }
                 notices.push(.meetingsFailure(error, id: phraseFailureID))
