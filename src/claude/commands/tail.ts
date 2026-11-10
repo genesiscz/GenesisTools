@@ -1,7 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve, sep } from "node:path";
-import * as p from "@clack/prompts";
 import {
     AmbiguousSessionIdError,
     canonicalClaudeTranscriptSync,
@@ -16,6 +15,7 @@ import { readHeadTailLines } from "@genesiscz/utils/claude/session.utils";
 import { suggestCommand } from "@genesiscz/utils/cli/executor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -506,6 +506,7 @@ async function promptSelectTarget(targets: TailTarget[]): Promise<TailTarget | n
             label: t.agentDescription ?? t.label,
             hint: basename(t.filePath),
         })),
+        cancel: "back",
     });
 
     if (p.isCancel(result)) {
@@ -551,6 +552,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
             { value: "agents", label: "Agent details" },
         ],
         initialValues: ["thinking", "tools", "agents"],
+        cancel: "back",
     });
 
     if (p.isCancel(categories)) {
@@ -568,6 +570,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
             message: "Tool input max chars?",
             placeholder: "500",
             defaultValue: "500",
+            cancel: "back",
         });
 
         if (p.isCancel(toolInChars)) {
@@ -578,6 +581,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
             message: "Tool output max chars?",
             placeholder: "500",
             defaultValue: "500",
+            cancel: "back",
         });
 
         if (p.isCancel(toolOutChars)) {
@@ -598,6 +602,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
                 { value: "thinking", label: "Agent thinking" },
             ],
             initialValues: ["input", "tools", "result"],
+            cancel: "back",
         });
 
         if (p.isCancel(agentParts)) {
@@ -613,6 +618,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
                 message: "Agent tool input max chars?",
                 placeholder: "50",
                 defaultValue: "50",
+                cancel: "back",
             });
 
             if (p.isCancel(agentToolIn)) {
@@ -623,6 +629,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
                 message: "Agent tool output max chars?",
                 placeholder: "500",
                 defaultValue: "500",
+                cancel: "back",
             });
 
             if (p.isCancel(agentToolOut)) {

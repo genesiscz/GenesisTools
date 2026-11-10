@@ -26,7 +26,6 @@ import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/s
 import { isAutoAccount, pickSmart, type SmartAlias, smartAliasOf } from "@app/claude/lib/usage/smart-alias";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
-import * as p from "@clack/prompts";
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -38,6 +37,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { resolveSecret } from "@genesiscz/utils/security";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import type { Command } from "commander";
@@ -269,6 +269,7 @@ async function resolveModel(spec: string): Promise<string> {
     const picked = await p.select({
         message: `Model matching "${spec}":`,
         options: resolution.candidates.map(modelOption),
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
@@ -396,6 +397,7 @@ async function guardFableHeadroom(accountName: string, modelId: string | undefin
     const proceed = await p.confirm({
         message: "Launch anyway? (No cancels so you can pick another account or model)",
         initialValue: true,
+        cancel: "back",
     });
 
     if (p.isCancel(proceed) || !proceed) {
@@ -580,6 +582,7 @@ async function plainSelect(withToken: AccountEntry[], defaultName: string): Prom
             value: acc.name,
             label: acc.label ? `${acc.name} ${pc.dim(`(${acc.label})`)}` : acc.name,
         })),
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
@@ -902,6 +905,7 @@ async function offerLimitKilledResume(): Promise<string[]> {
             ...sessions.map((session) => ({ value: session.id, label: sessionLabel(session) })),
             { value: "", label: "Start fresh" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
@@ -1117,6 +1121,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
                     `The keychain holds a Claude Code login for ${who} (probably a direct /login). ` +
                     "Back it up and restore it after this session?",
                 initialValue: false,
+                cancel: "back",
             });
 
             if (p.isCancel(proceed) || !proceed) {

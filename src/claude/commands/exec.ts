@@ -1,7 +1,6 @@
 import { ensureOnboardingSkippedForOAuthToken, pinnedLaunchEnv } from "@app/claude/lib/launch-env";
 import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { LONG_TOKEN_MIN_LENGTH, probeLongLivedToken, type TokenVerdict } from "@genesiscz/utils/claude/token-verify";
@@ -9,6 +8,7 @@ import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { resolveSecret } from "@genesiscz/utils/security";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -131,6 +131,7 @@ async function resolveAccount(eligible: AccountEntry[], name: string | undefined
     const picked = await p.select({
         message: "Run as which account?",
         options: eligible.map((a) => ({ value: a.name, label: a.name, hint: a.label })),
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {

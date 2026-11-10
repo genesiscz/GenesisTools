@@ -18,7 +18,6 @@ import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
 import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
 import { formatWarmupViaHint } from "@app/claude/lib/warmup/service";
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { applyLoginOutcome, removeAccount } from "@genesiscz/utils/ai/config/account-ops";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -28,6 +27,7 @@ import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { resolveSecret } from "@genesiscz/utils/security";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -95,6 +95,7 @@ async function interactiveConfig(): Promise<void> {
                 { value: "show", label: "Show current config" },
                 { value: "exit", label: "Exit" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "exit") {
@@ -125,6 +126,7 @@ async function manageAccounts(store: AiConfigStore): Promise<void> {
             ...(accounts.length > 0 ? [{ value: "remove", label: "Remove an account" }] : []),
             { value: "back", label: "Back" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(action) || action === "back") {
@@ -148,6 +150,7 @@ async function manageAccounts(store: AiConfigStore): Promise<void> {
                     return `Account "${val}" already exists`;
                 }
             },
+            cancel: "back",
         });
         if (p.isCancel(name)) {
             return;
@@ -160,6 +163,7 @@ async function manageAccounts(store: AiConfigStore): Promise<void> {
                     return "Token is required";
                 }
             },
+            cancel: "back",
         });
         if (p.isCancel(token)) {
             return;
@@ -175,6 +179,7 @@ async function manageAccounts(store: AiConfigStore): Promise<void> {
             const proceed = await p.confirm({
                 message: "Save anyway?",
                 initialValue: false,
+                cancel: "back",
             });
             if (p.isCancel(proceed) || !proceed) {
                 return;
@@ -184,6 +189,7 @@ async function manageAccounts(store: AiConfigStore): Promise<void> {
         const label = await p.text({
             message: "Label (optional, e.g. 'work', 'max'):",
             placeholder: "max",
+            cancel: "back",
         });
 
         const accountLabel = p.isCancel(label) ? undefined : (label as string) || undefined;
@@ -200,6 +206,7 @@ async function manageAccounts(store: AiConfigStore): Promise<void> {
                 value: acc.name,
                 label: `${acc.name}${acc.label ? ` (${acc.label})` : ""}`,
             })),
+            cancel: "back",
         });
         if (p.isCancel(toRemove)) {
             return;
@@ -207,6 +214,7 @@ async function manageAccounts(store: AiConfigStore): Promise<void> {
 
         const confirmed = await p.confirm({
             message: `Remove account "${toRemove}"?`,
+            cancel: "back",
         });
         if (p.isCancel(confirmed) || !confirmed) {
             return;
@@ -221,6 +229,7 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
     const sessionThresholds = await p.text({
         message: "Session thresholds (comma-separated %):",
         initialValue: config.notifications.sessionThresholds.join(", "),
+        cancel: "back",
     });
     if (p.isCancel(sessionThresholds)) {
         return;
@@ -229,6 +238,7 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
     const weeklyThresholds = await p.text({
         message: "Weekly thresholds (comma-separated %):",
         initialValue: config.notifications.weeklyThresholds.join(", "),
+        cancel: "back",
     });
     if (p.isCancel(weeklyThresholds)) {
         return;
@@ -237,6 +247,7 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
     const interval = await p.text({
         message: "Watch poll interval (seconds):",
         initialValue: String(config.notifications.watchInterval),
+        cancel: "back",
     });
     if (p.isCancel(interval)) {
         return;
@@ -245,6 +256,7 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
     const macosEnabled = await p.confirm({
         message: "Enable macOS notifications?",
         initialValue: config.notifications.channels.macos,
+        cancel: "back",
     });
     if (p.isCancel(macosEnabled)) {
         return;
@@ -292,6 +304,7 @@ async function manageWarmup(config: ClaudeConfig, store: AiConfigStore): Promise
             },
             { value: "back", label: "Back" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(action) || action === "back") {
@@ -324,6 +337,7 @@ async function configureSessionWarmup(
     const enabled = await p.confirm({
         message: "Enable automatic session warmup?",
         initialValue: warmup.session.enabled,
+        cancel: "back",
     });
     if (p.isCancel(enabled)) {
         return;
@@ -361,6 +375,7 @@ async function configureSessionWarmup(
         })),
         initialValues: warmup.session.accounts.filter((a) => accountNames.includes(a)),
         required: true,
+        cancel: "back",
     });
     if (p.isCancel(accounts)) {
         return;
@@ -378,6 +393,7 @@ async function configureSessionWarmup(
                 return "Must be 0-23";
             }
         },
+        cancel: "back",
     });
     if (p.isCancel(startHour)) {
         return;
@@ -392,6 +408,7 @@ async function configureSessionWarmup(
                 return "Must be 1-24";
             }
         },
+        cancel: "back",
     });
     if (p.isCancel(endHour)) {
         return;
@@ -417,6 +434,7 @@ async function configureSessionWarmup(
     const notify = await p.confirm({
         message: "Notify on each warmup?",
         initialValue: warmup.session.notify,
+        cancel: "back",
     });
     if (p.isCancel(notify)) {
         return;
@@ -430,6 +448,7 @@ async function configureSessionWarmup(
         const onlyIfUnused = await p.confirm({
             message: "Only notify if session was unused?",
             initialValue: warmup.session.notifyOnlyIfUnused,
+            cancel: "back",
         });
         if (p.isCancel(onlyIfUnused)) {
             return;
@@ -465,6 +484,7 @@ async function configureWeeklyWarmup(
     const enabled = await p.confirm({
         message: "Enable automatic warmup at weekly reset?",
         initialValue: warmup.weekly.enabled,
+        cancel: "back",
     });
     if (p.isCancel(enabled)) {
         return;
@@ -489,6 +509,7 @@ async function configureWeeklyWarmup(
         })),
         initialValues: warmup.weekly.accounts.filter((a) => accountNames.includes(a)),
         required: true,
+        cancel: "back",
     });
     if (p.isCancel(accounts)) {
         return;
@@ -499,6 +520,7 @@ async function configureWeeklyWarmup(
     const notify = await p.confirm({
         message: "Notify on weekly warmup?",
         initialValue: warmup.weekly.notify,
+        cancel: "back",
     });
     if (p.isCancel(notify)) {
         return;
@@ -739,6 +761,7 @@ export function registerConfigCommand(program: Command): void {
                     message: "New name:",
                     placeholder: oldName,
                     defaultValue: oldName,
+                    cancel: "back",
                 });
 
                 if (p.isCancel(typed) || !String(typed).trim()) {
