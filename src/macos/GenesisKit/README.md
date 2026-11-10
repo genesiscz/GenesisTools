@@ -80,6 +80,28 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Sessions/Detail/` | `SessionDetailScreen`, its header and sidebar, `SessionSidebarSplit`, `TranscriptPaging` (first page 12, pages of 150, refresh to the end), `TranscriptBuildQueue` (one document build at a time, newest pending wins) |
 | `Markdown/` | the Genesis Markdown viewer. `Window/`: `MarkdownViewerApp.run(_:)` (a process whose only window is the viewer, its menu and URL queue), `MarkdownDocumentWindowController.shared.show(paths:focus:range:)`, `MarkdownDocumentsModel` + `MarkdownDocumentsView` (tabs, split, sidebar). `Views/`: `MarkdownWebView` (markdown-it, highlight.js, mermaid, offline; `MarkdownWebPage` for a host's own pane), the source editor, `MarkdownPreviewView` / `MarkdownContentView` + `MarkdownStyle` (native), toolbar, status bar, find bar, outline, go to, file tree and its search, conflict view, media and image viewer. `Document/`: links and line ranges, file ops, drop, export, properties, completion, merge, default app, dashboard share, task boxes and their atomic write. `Resources/webview` is the renderer; an installed app copies it to `Contents/Resources/webview`, read first |
 
+## The catalog and the looks
+
+`KitLook` (`GenesisKitBase/Style/KitLook.swift`) says how the kit's controls draw their surfaces. A control names the
+surface it is (`KitSurfaceRole`: well, thumb, primary, tinted, soft, ghost, plain, badge, wash) and its state, and
+the look answers with a fill, a stroke, a shadow and the label colours. A window picks a look with `.kitLook(_:)` on
+its root; the default, `classic`, is what the kit drew before looks existed. A new look is one case and one table
+(`KitLookTables.swift`). `KitHue` names a colour by its meaning (play, ask, done, care, danger, neutral).
+
+The catalog (`Sources/GenesisKitCatalog`) is the kit's picture book: one entry per component with its variants
+(states, sizes, props, hues), drawn once per look. Draw it with
+
+```bash
+bun run kit:catalog -- --out <dir>          # one PNG per component and look, and manifest.json
+bun run kit:catalog -- --probe <png>        # today's controls in a fixed layout
+```
+
+The command shows no window. `\.kitForcedInteraction` in the environment makes a kit button draw as under the
+pointer or pressed, which is how a picture shows those states. Before you change a control's drawing, draw the probe,
+change the code, draw it again and compare the two files: `classic` must not change by a pixel unless the change is
+meant. A control added to `Controls/` gets an entry in `KitCatalogEntries.swift`, or a line with the reason in
+`KitCatalogTests`.
+
 ## Components
 
 Every public component a host uses, one section per folder. An entry says what the component is for, lists its
