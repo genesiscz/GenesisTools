@@ -35,7 +35,11 @@ struct PRDetailSketchA: View {
 
     /// The inspector may take 45% of the width; below its minimum it folds to a rail (the Files pane's rules).
     private static let inspectorFraction: CGFloat = 0.45
-    private static let inspectorMinWidth: CGFloat = 340
+    /// Wide enough for the five tab titles and for a thread card's header on one line. At the Files pane's saved width
+    /// (about 330 pt) the titles read "Threads…" and "Commits…", and a thread's author was cut in the middle.
+    private static let inspectorMinWidth: CGFloat = 420
+    /// The inspector's own saved width: it holds more than a file tree, so it does not take the Files pane's.
+    private static let inspectorKey = "prs.sketch.inspector"
 
     /// The detail for the PR's current head; an older head's numbers wait for the fresh answer.
     private var detail: HubPRDetail? {
@@ -54,10 +58,9 @@ struct PRDetailSketchA: View {
                         DiffToolbar(review: review, pr: pr) { tab = .threads }
                         DiffColumn(review: review)
                     }
-                    .flexiblePane(neighbourOf: "review.files")
+                    .flexiblePane(neighbourOf: Self.inspectorKey)
                     .hubSurface(.content)
-                    // The Files pane's key: the inspector takes its place and its saved width.
-                    ResizableSidePanel(key: "review.files", edge: .trailing, title: "Inspector", defaultWidth: 440,
+                    ResizableSidePanel(key: Self.inspectorKey, edge: .trailing, title: "Inspector", defaultWidth: 460,
                                        minWidth: Self.inspectorMinWidth, maxWidth: max(Self.inspectorMinWidth, room),
                                        autoCollapse: width > 0 && room < Self.inspectorMinWidth) {
                         inspector(review: review)
@@ -222,8 +225,8 @@ struct PRDetailSketchA: View {
         switch tab {
         case .about: return "About"
         case .files:
-            let count = review?.files.count ?? detail?.changedFiles ?? 0
-            return count > 0 ? "Files \(count)" : "Files"
+            // The file count is on the header's fact line; a second copy here was the "counts twice" defect (C14).
+            return "Files"
         case .threads:
             if let payload = review?.pr?.payload { return "Threads \(PRThreadCounts(payload.threads).open)" }
             return "Threads"
@@ -239,7 +242,9 @@ struct PRDetailSketchA: View {
     private func inspector(review: ReviewModel?) -> some View {
         VStack(spacing: 0) {
             GenSegmentedTabs("Inspector", items: InspectorTab.allCases.map { GenSegmentedTabs.Item($0, tabTitle($0, review: review)) },
-                             selection: $tab, minSegmentWidth: 0, identifier: "prDetail.inspector", fillsWidth: true)
+                             selection: $tab, minSegmentWidth: 0, identifier: "prDetail.inspector")
+                // Each title at its own width: equal segments cut the longest one ("Commits 743") first.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
                 .background { tabKeys }
@@ -418,7 +423,12 @@ private struct DiffToolbar: View {
     @State private var pickingCommit = false
     @State private var pickingAgent = false
 
-    private var wholePR: Bool { review.prScope.map { review.scope == $0 } ?? false }
+    /// The scope the hub opens a PR with: the PR's base against its head, under the hub's own label (`PRsModel.scope`).
+    /// `review.prScope` describes the same range under another label, so the two never compare equal as values.
+    private var wholePR: Bool {
+        guard case .range(_, _, let label, _) = review.scope else { return false }
+        return label == "\(pr.label) vs \(pr.baseBranch)"
+    }
 
     var body: some View {
         HStack(spacing: 10) {
