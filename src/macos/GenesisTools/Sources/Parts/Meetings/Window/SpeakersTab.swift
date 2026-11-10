@@ -101,14 +101,12 @@ struct SpeakersTab: View {
         detail.play(.range(from: from, to: max(from, to)), from: .speakerChip)
     }
 
-    /// A range longer than a clip (or a joined block) shows in the dock instead: the meeting plays from its start and the
-    /// timeline shows the range (G-SPK-3, G-SPK-8).
+    /// A range longer than a clip (or a joined block) shows in the dock instead: the meeting plays from the range's
+    /// start, also when it plays already from another time, and the timeline shows the range (G-SPK-3, G-SPK-8).
     private func zoom(_ from: Double, _ to: Double) {
         guard let player = detail.window?.player else { return }
-        if player.top?.meeting != detail.id || player.top?.contains(from) != true {
-            player.playMeeting(detail.id, at: from, from: .speakerChip)
-        }
-        player.timeline.setView(from...max(from + 1, to), layer: player.top?.id)
+        player.showMeeting(detail.id, from: from)
+        player.timeline.showView(from...max(from + 1, to), layer: player.top?.id)
     }
 
     /// `global.playback.listen.longestClipSec` (30 when the config does not say): a range longer than that is a "Show"
