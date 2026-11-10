@@ -15,7 +15,7 @@ import { type RpcCall, type RpcConnection, RpcSocketServer } from "./socket-serv
 
 /**
  * The host part of a resident JSON-RPC service: one per folder on this Mac, found through `<dir>/service.json`, on
- * `<dir>/service.sock`, claimed by `<dir>/service.pid`. It exits after an idle stretch with no connection, and once a
+ * the socket it names (`<dir>/service.sock` by default), claimed by `<dir>/service.pid`. It exits after an idle stretch with no connection, and once a
  * module it loaded changed (when no call runs), so the next caller starts the new code. The service itself answers
  * the methods (`call`); the transport answers `subscribe`.
  *
@@ -145,7 +145,8 @@ export type ServiceHostStart<S> =
 
 /**
  * Starts the service in this process: claims `<dir>/service.pid` (a second start, in this process or another, finds
- * the first and answers `running`), listens on `<dir>/service.sock`, and writes `service.json`.
+ * the first and answers `running`), listens on its socket (`options.socket`, else `<dir>/service.sock`), and writes
+ * `service.json`.
  */
 export async function startServiceHost<S>(options: ServiceHostOptions<S>): Promise<ServiceHostStart<S>> {
     const { dir } = options;
