@@ -5,8 +5,9 @@ import XCTest
 
 /// A unix-socket server on a thread, one connection at a time: each request line goes to `reply`, whose lines
 /// are written back. `fragmented` writes every answer in two pieces; `breakFirst` answers the first connection's
-/// first request with half a line and hangs up, so the client has to reconnect.
-private final class FakeServer: @unchecked Sendable {
+/// first request with half a line and hangs up, so the client has to reconnect. `ToolsClientTests` uses it as the
+/// fake server adapter.
+final class FakeServer: @unchecked Sendable {
     let path: String
     private let listenFd: Int32
     private let reply: @Sendable ([String: Any]) -> [[String: Any]]

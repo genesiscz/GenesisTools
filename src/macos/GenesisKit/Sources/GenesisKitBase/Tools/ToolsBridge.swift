@@ -48,6 +48,22 @@ public struct ToolsBridge: Sendable {
     /// checked it with the kernel), so `tools` skips both launcher stages when that is already GenesisTools.
     /// GENESIS_TOOLS_HOME and GENESIS_TOOLS_DAEMON_DIR pass through too: a process started against a sandbox home
     /// must not let its `tools` children read or change the real user's data (src/utils/storage/root.ts).
+    ///
+    /// The hub's calls passed the whole environment until 2026-11-10, when they moved onto this list. The names
+    /// added then, with the tools that read them:
+    /// - `GH_TOKEN`: `gh` and the forge client behind `tools hub pr` (src/utils/env, `env.github`).
+    /// - `GITLAB_TOKEN`, `GITLAB_HOST`: the GitLab client behind `tools hub pr` on a GitLab project
+    ///   (src/gitlab/lib/client.ts).
+    /// - `GIT_*` (`envAllowlistPrefixes`): git's own settings (`GIT_SSH_COMMAND`, `GIT_CONFIG_GLOBAL`, …) for every
+    ///   `tools hub` verb that runs git (worktrees, PR fetch, readiness).
+    /// - `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and their lowercase forms: git, gh, glab and the forge
+    ///   requests behind a proxy.
+    /// - `LC_ALL`, `LC_CTYPE`: the locale git and the CLI print in, beside `LANG`.
+    /// - `TMPDIR`: the per-user temporary folder that git, gh and the CLI write into.
+    /// - `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME`: the agent homes `tools ai sessions`, `tools claude history`
+    ///   and the cmux verbs read (src/utils/providers/session-paths.ts).
+    /// - `GENESIS_HUB_SERVER`: `GENESIS_HUB_SERVER=0` keeps a child's own `tools` calls off the resident server too.
+    /// - `PROFILE_TO_STDERR`: the hub turns it off for the `PROFILE` it sets on `tools hub pr` (`HubSource.bridge`).
     public static let envAllowlist: Set<String> = [
         "HOME", "PATH", "SHELL", "LANG", "USER", "LOGNAME", "TERM",
         "SSH_AUTH_SOCK", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "TZ",
@@ -55,7 +71,20 @@ public struct ToolsBridge: Sendable {
         "PROFILE", "GENESIS_TOOLS_APP_BUNDLE_ID", "GENESIS_TOOLS_APP_INODE", "GENESIS_TOOLS_NO_APP",
         "GENESIS_TOOLS_HOME", "GENESIS_TOOLS_DAEMON_DIR",
         ToolsCallTrace.environmentKey,
+        "GH_TOKEN", "GITLAB_TOKEN", "GITLAB_HOST",
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+        "LC_ALL", "LC_CTYPE", "TMPDIR",
+        "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME",
+        "GENESIS_HUB_SERVER", "PROFILE_TO_STDERR",
     ]
+
+    /// Names that pass by their prefix: git reads a family of `GIT_` variables.
+    public static let envAllowlistPrefixes: [String] = ["GIT_"]
+
+    /// Whether `key` reaches a `tools` child.
+    public static func allowsEnvironmentKey(_ key: String) -> Bool {
+        envAllowlist.contains(key) || envAllowlistPrefixes.contains { key.hasPrefix($0) }
+    }
 
     public typealias OutputSink = @Sendable (
         ToolsRunResult,
@@ -73,22 +102,30 @@ public struct ToolsBridge: Sendable {
 
     public var binaryPath: String { resolveBinaryPath() }
 
+    /// Variables a caller adds for some argvs (the hub's `PROFILE` for `tools hub pr`). Only allowlisted names pass.
+    public typealias ChildEnvironment = @Sendable (_ argv: [String]) -> [String: String]
+    private let extraChildEnvironment: ChildEnvironment?
+
     /// `server` nil asks `ToolsServerClient.shared`, the app's resident server, when the app set one.
-    public init(binaryPath: String, outputSink: OutputSink? = nil, server: ToolsServerClient? = nil) {
+    public init(binaryPath: String, outputSink: OutputSink? = nil, server: ToolsServerClient? = nil,
+                childEnvironment: ChildEnvironment? = nil) {
         let captured = binaryPath
         self.resolveBinaryPath = { captured }
         self.outputSink = outputSink
         self.server = server ?? ToolsServerClient.shared
+        self.extraChildEnvironment = childEnvironment
     }
 
     public init(
         resolveBinaryPath: @escaping @Sendable () -> String,
         outputSink: OutputSink? = nil,
-        server: ToolsServerClient? = nil
+        server: ToolsServerClient? = nil,
+        childEnvironment: ChildEnvironment? = nil
     ) {
         self.resolveBinaryPath = resolveBinaryPath
         self.outputSink = outputSink
         self.server = server ?? ToolsServerClient.shared
+        self.extraChildEnvironment = childEnvironment
     }
 
     public var binaryExists: Bool {
@@ -230,7 +267,7 @@ public struct ToolsBridge: Sendable {
     public static func scrubbedEnvironment(
         from env: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String: String] {
-        var out = env.filter { envAllowlist.contains($0.key) }
+        var out = env.filter { allowsEnvironmentKey($0.key) }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let extras = ["\(home)/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin"]
         var path = out["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -242,6 +279,16 @@ public struct ToolsBridge: Sendable {
             out["GENESIS_TOOLS_NO_APP"] = "1"
         }
         return out
+    }
+
+    /// A process child's environment: the scrubbed one, this bridge's additions for `argv`, and the call's trace id.
+    func childEnvironment(argv: [String], traceId: String) -> [String: String] {
+        var environment = Self.scrubbedEnvironment()
+        for (key, value) in extraChildEnvironment?(argv) ?? [:] where Self.allowsEnvironmentKey(key) {
+            environment[key] = value
+        }
+        environment[ToolsCallTrace.environmentKey] = traceId
+        return environment
     }
 
     public func run(
@@ -305,11 +352,10 @@ public struct ToolsBridge: Sendable {
         let process = Process()
         process.executableURL = plan.executable
         process.arguments = plan.arguments
-        var environment = Self.scrubbedEnvironment()
-        for (key, value) in extraEnv where Self.envAllowlist.contains(key) {
+        var environment = childEnvironment(argv: argv, traceId: traceId)
+        for (key, value) in extraEnv where Self.allowsEnvironmentKey(key) {
             environment[key] = value
         }
-        environment[ToolsCallTrace.environmentKey] = traceId
         process.environment = environment
         process.currentDirectoryURL = plan.workingDirectory
         process.qualityOfService = .userInitiated
