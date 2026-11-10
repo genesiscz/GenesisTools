@@ -27,6 +27,7 @@ import {
     pluginsDisabledFor,
     ratchetAdditions,
     staleRatchetEntries,
+    staticallyImportsCanvas,
     staticallyImportsReadme,
     withinCountRatchets,
 } from "./lint-rules";
@@ -1112,6 +1113,30 @@ describe("no-static-readme-import", () => {
         expect(rules('import type { X } from "@genesiscz/utils/readme";', "src/x/index.ts")).not.toContain(rule);
         expect(rules('import { a } from "./readme";', "src/x/lib/a.ts")).not.toContain(rule);
         expect(rules('import { a } from "@genesiscz/utils/readme-flag";', "src/x/index.ts")).not.toContain(rule);
+    });
+});
+
+describe("no-canvas-import-outside-owner", () => {
+    const rule = "no-canvas-import-outside-owner";
+
+    test("flags a value import or re-export of the canvas addon outside its owner", () => {
+        expect(rules('import { createCanvas } from "@napi-rs/canvas";', "src/control/lib/a.ts")).toContain(rule);
+        expect(rules('import { type Canvas, loadImage } from "@napi-rs/canvas";', "src/utils/image/a.ts")).toContain(
+            rule
+        );
+        expect(rules('import { type Canvas } from "@napi-rs/canvas";', "src/x/a.ts")).toContain(rule);
+        expect(rules('export { createCanvas } from "@napi-rs/canvas";', "src/x/a.ts")).toContain(rule);
+        expect(rules('import "@napi-rs/canvas";', "src/x/a.ts")).toContain(rule);
+    });
+
+    test("passes the owner, a type-only import, tests, a dynamic import and other packages", () => {
+        expect(rules('import { createCanvas } from "@napi-rs/canvas";', "src/utils/image/canvas.ts")).not.toContain(
+            rule
+        );
+        expect(rules('import type { Canvas } from "@napi-rs/canvas";', "src/control/lib/a.ts")).not.toContain(rule);
+        expect(rules('import { createCanvas } from "@napi-rs/canvas";', "src/x/a.test.ts")).not.toContain(rule);
+        expect(rules('const m = await import("@napi-rs/canvas");', "src/x/a.ts")).not.toContain(rule);
+        expect(staticallyImportsCanvas('import { a } from "@napi-rs/canvas-extra";')).toBe(false);
     });
 });
 

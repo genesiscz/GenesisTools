@@ -599,10 +599,13 @@ describe("the opt-in nudge", () => {
     });
 });
 
+/** A 1x1 PNG; encodeRgbaToPng is async (it loads the canvas addon lazily) and screenshot() below is not. */
+const SCREENSHOT_PNG = await encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1);
+
 describe("question_post item attachments", () => {
     function screenshot(dir: string, name: string): string {
         const path = join(dir, name);
-        writeFileSync(path, encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
+        writeFileSync(path, SCREENSHOT_PNG);
         return path;
     }
 
@@ -706,7 +709,7 @@ describe("question_post item attachments", () => {
         test("a header that claims more pixels than the importer accepts", async () => {
             const dir = mkdtempSync(join(tmpdir(), "gt-mcp-attach-huge-"));
             const huge = join(dir, "huge.png");
-            const bytes = Buffer.from(encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
+            const bytes = Buffer.from(await encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
             bytes.writeUInt32BE(20_000, 16);
             bytes.writeUInt32BE(20_000, 20);
             writeFileSync(huge, bytes);

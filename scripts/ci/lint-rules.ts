@@ -217,6 +217,20 @@ export function staticallyImportsReadme(text: string, file: string): boolean {
     );
 }
 
+/**
+ * Does this import or re-export statement load @napi-rs/canvas at runtime? Only `import type` / `export type` pass:
+ * under verbatimModuleSyntax an import whose names are all inline `type` still loads the module.
+ */
+export function staticallyImportsCanvas(text: string): boolean {
+    if (/^(?:import|export)\s+type\s/.test(text)) {
+        return false;
+    }
+
+    const match = README_SPECIFIER.exec(text);
+    const specifier = match?.[1] ?? match?.[2];
+    return specifier !== undefined && /^@napi-rs\/canvas(?:\/|$)/.test(specifier);
+}
+
 /** `import.meta` members only Bun sets; Vite's SSR runner and Node leave them undefined. */
 const BUN_ONLY_IMPORT_META = /^import\.meta\.(?:dir|dirname|filename|path)$/;
 /** Code a Vite dashboard can load server-side: the shared utils and the dashboards' own sources. */
@@ -804,6 +818,21 @@ const RULES: Rule[] = [
             "without runTool calls `await answerReadmeFlag(import.meta.dir)` from @genesiscz/utils/cli/readme-flag.",
         test: (text, node) => staticallyImportsReadme(text, node.getRoot().filename()),
         allowedIn: /(?:^|\/)src\/utils\/readme\.test\.ts$/,
+    },
+    {
+        name: "no-canvas-import-outside-owner",
+        severity: "error",
+        kinds: ["import_statement", "export_statement"],
+        matcher: {
+            rule: { any: [{ kind: "import_statement" }, { kind: "export_statement", has: { kind: "string" } }] },
+        },
+        message:
+            "A static import of @napi-rs/canvas loads the addon, which reads every system font (about 100 ms), into " +
+            "every start of the tool, even one that only reads a constant. Call `await loadCanvas()` from " +
+            "@genesiscz/utils/image/canvas in the drawing function, and use `import type` for type positions.",
+        test: (text) => staticallyImportsCanvas(text),
+        onlyIn: /^src\//,
+        allowedIn: /^src\/utils\/image\/canvas\.ts$|\.test\.tsx?$/,
     },
     {
         name: "no-transcript-format-outside-readers",
