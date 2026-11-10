@@ -8,7 +8,15 @@ import { _resetMigrationStateForTest, ensureAiConfigMigrated } from "./migrate";
 import { assertSafeToWriteRealConfig } from "./migration-guard";
 import { convertConfig } from "./migrations/2026-08-configV4";
 import { type AccountRef, accountRef, isAccountRef, type Referrer, referrersOf, refToId } from "./refs";
-import { type AccountEntry, type AiConfigData, aiConfigSchema, CONFIG_VERSION, emptyConfig } from "./schema";
+import {
+    type AccountEntry,
+    type AiConfigData,
+    aiConfigSchema,
+    CONFIG_VERSION,
+    emptyConfig,
+    type TaskDefault,
+    type TaskName,
+} from "./schema";
 import { isGateOnly } from "./selectors";
 
 /**
@@ -297,6 +305,24 @@ export class AiConfigStore {
 
     referrers(id: string): Promise<Referrer[]> {
         return referrersOf(this.config, id);
+    }
+
+    /**
+     * Merge `patch` onto a task's stored default (`--persist` of a task CLI). A key the patch
+     * carries as `undefined` clears it: a new provider without a model drops the old model,
+     * which belonged to the old provider. A key the patch omits keeps its stored value.
+     */
+    async setTaskDefault(task: TaskName, patch: TaskDefault): Promise<void> {
+        await this.mutate((config) => {
+            const merged = { ...config.defaults.task?.[task], ...patch };
+            config.defaults.task = {
+                ...(config.defaults.task ?? {}),
+                [task]: {
+                    ...(merged.provider ? { provider: merged.provider } : {}),
+                    ...(merged.model ? { model: merged.model } : {}),
+                },
+            };
+        });
     }
 
     /**

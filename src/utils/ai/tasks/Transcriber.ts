@@ -7,18 +7,12 @@ import { audioProcessor } from "@genesiscz/utils/ask/audio/AudioProcessor";
 import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
 import { CLOUD_PROVIDER_TYPES } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
-import { AIConfig } from "../AIConfig";
+import { AiConfigStore } from "../config/AiConfigStore";
 import { isTransientAiError } from "../core/retry";
 import { fromTranscriptionModel } from "../providers/transcription-adapter";
 import { assignSpeakers } from "../transcription/align-speakers";
 import { cleanRepetitions } from "../transcription/repetition-cleanup";
-import type {
-    AIProviderType,
-    AITranscriptionProvider,
-    TranscribeOptions,
-    TranscriptionResult,
-    TranscriptionSegment,
-} from "../types";
+import type { AITranscriptionProvider, TranscribeOptions, TranscriptionResult, TranscriptionSegment } from "../types";
 import { resolveForTask } from "./resolve-task";
 import { taskModelRef } from "./task-models";
 
@@ -53,11 +47,8 @@ export class Transcriber {
     }): Promise<Transcriber> {
         const model = taskModelRef(options, "transcribe");
         if (options?.persist && options.provider) {
-            const config = await AIConfig.load();
-            await config.setTask("transcribe", {
-                provider: options.provider as AIProviderType,
-                model: options.model,
-            });
+            const store = await AiConfigStore.load();
+            await store.setTaskDefault("transcribe", { provider: options.provider, model: options.model });
         }
 
         const resolved = await resolveForTask({

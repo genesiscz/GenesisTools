@@ -7,22 +7,24 @@ export class AnthropicApiKeyResolver implements AccountResolver {
     readonly providerType: AIProvider = "anthropic";
 
     async resolve(accountName: string): Promise<DetectedProvider> {
-        const { AIConfig } = await import("../AIConfig");
-        const config = await AIConfig.load();
-        const entry = config.getAccount(accountName);
+        const { AiConfigStore } = await import("../config/AiConfigStore");
+        const { resolveSecret } = await import("@genesiscz/utils/security");
+        const entry = (await AiConfigStore.load()).account(accountName);
+        // Resolved here, where the key is spent on the provider client.
+        const apiKey = await resolveSecret(entry?.credentials.apiKey);
 
-        if (!entry?.tokens.apiKey) {
+        if (!entry || !apiKey) {
             throw new Error(`No API key found for account "${accountName}".`);
         }
 
         const { createAnthropic } = await import("@ai-sdk/anthropic");
-        const provider = createAnthropic({ apiKey: entry.tokens.apiKey });
+        const provider = createAnthropic({ apiKey });
         const { models, config: providerConfig } = await resolveModelsWithPricing("anthropic");
 
         return {
             name: "anthropic",
             type: "anthropic",
-            key: `${entry.tokens.apiKey.slice(0, 12)}...`,
+            key: `${apiKey.slice(0, 12)}...`,
             provider,
             models,
             config: providerConfig,

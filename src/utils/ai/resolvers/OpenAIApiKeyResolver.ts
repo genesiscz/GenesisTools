@@ -7,22 +7,24 @@ export class OpenAIApiKeyResolver implements AccountResolver {
     readonly providerType: AIProvider = "openai";
 
     async resolve(accountName: string): Promise<DetectedProvider> {
-        const { AIConfig } = await import("../AIConfig");
-        const config = await AIConfig.load();
-        const entry = config.getAccount(accountName);
+        const { AiConfigStore } = await import("../config/AiConfigStore");
+        const { resolveSecret } = await import("@genesiscz/utils/security");
+        const entry = (await AiConfigStore.load()).account(accountName);
+        // Resolved here, where the key is spent on the provider client.
+        const apiKey = await resolveSecret(entry?.credentials.apiKey);
 
-        if (!entry?.tokens.apiKey) {
+        if (!entry || !apiKey) {
             throw new Error(`No API key found for OpenAI account "${accountName}".`);
         }
 
         const { createOpenAI } = await import("@ai-sdk/openai");
-        const provider = createOpenAI({ apiKey: entry.tokens.apiKey });
+        const provider = createOpenAI({ apiKey });
         const { models, config: providerConfig } = await resolveModelsWithPricing("openai");
 
         return {
             name: "openai",
             type: "openai",
-            key: `${entry.tokens.apiKey.slice(0, 12)}...`,
+            key: `${apiKey.slice(0, 12)}...`,
             provider,
             models,
             config: providerConfig,

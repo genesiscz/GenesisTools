@@ -8,15 +8,23 @@ import type { AIProvider } from "@genesiscz/utils/config/ai.types";
 import { askConfigCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 
 /**
- * A handle to an AI account from AIConfig.
+ * A handle to an AI account from the AI config. Metadata only: the vault is read when
+ * `.provider()` resolves the account's credential.
  * Lazy-initialized — no I/O until `.provider()` is called.
  */
+/** Account metadata reads never touch the vault, so listing or picking a default needs no master key. */
+async function accountStore() {
+    const { AiConfigStore } = await import("./config/AiConfigStore");
+    return AiConfigStore.load();
+}
+
 export class AIAccount {
     readonly name: string;
-    readonly providerType: AIProvider;
+    /** The account's provider id; a v4 account may name a provider the old `AIProvider` union predates. */
+    readonly providerType: string;
     private _provider: DetectedProvider | null = null;
 
-    private constructor(name: string, providerType: AIProvider) {
+    private constructor(name: string, providerType: string) {
         this.name = name;
         this.providerType = providerType;
     }
@@ -30,18 +38,17 @@ export class AIAccount {
 
     /** Use the default Claude subscription account. */
     static async defaultClaude(): Promise<AIAccount> {
-        const { AIConfig } = await import("./AIConfig");
-        const config = await AIConfig.load();
+        const store = await accountStore();
 
         // Try per-context default for "ask" (most common caller)
-        const defaultEntry = config.getDefaultAccount("ask");
+        const defaultEntry = store.defaultAccount("ask");
 
         if (defaultEntry?.provider === "anthropic-sub") {
             return new AIAccount(defaultEntry.name, "anthropic-sub");
         }
 
         // Fall back to first anthropic-sub account
-        const accounts = config.getAccountsByProvider("anthropic-sub");
+        const accounts = store.accounts({ provider: "anthropic-sub" });
 
         if (accounts.length === 0) {
             throw new Error(`No Claude subscription accounts configured. Run \`${askConfigCommand()}\` first.`);
@@ -52,10 +59,8 @@ export class AIAccount {
 
     /** List all Claude subscription accounts. */
     static async listClaude(): Promise<AIAccount[]> {
-        const { AIConfig } = await import("./AIConfig");
-        const config = await AIConfig.load();
-        const accounts = config.getAccountsByProvider("anthropic-sub");
-        return accounts.map((a) => new AIAccount(a.name, "anthropic-sub"));
+        const store = await accountStore();
+        return store.accounts({ provider: "anthropic-sub" }).map((a) => new AIAccount(a.name, "anthropic-sub"));
     }
 
     // ── Codex factories ──
@@ -67,23 +72,22 @@ export class AIAccount {
 
     /** Use the default OpenAI/Codex account. */
     static async defaultCodex(): Promise<AIAccount> {
-        const { AIConfig } = await import("./AIConfig");
-        const config = await AIConfig.load();
+        const store = await accountStore();
 
-        const defaultEntry = config.getDefaultAccount("ask");
+        const defaultEntry = store.defaultAccount("ask");
 
         if (defaultEntry?.provider === "openai-sub") {
             return new AIAccount(defaultEntry.name, "openai-sub");
         }
 
         // Fall back to first openai-sub account, then first openai account
-        const subAccounts = config.getAccountsByProvider("openai-sub");
+        const subAccounts = store.accounts({ provider: "openai-sub" });
 
         if (subAccounts.length > 0) {
             return new AIAccount(subAccounts[0].name, "openai-sub");
         }
 
-        const apiAccounts = config.getAccountsByProvider("openai");
+        const apiAccounts = store.accounts({ provider: "openai" });
 
         if (apiAccounts.length > 0) {
             return new AIAccount(apiAccounts[0].name, "openai");
@@ -94,10 +98,9 @@ export class AIAccount {
 
     /** List all OpenAI/Codex accounts. */
     static async listCodex(): Promise<AIAccount[]> {
-        const { AIConfig } = await import("./AIConfig");
-        const config = await AIConfig.load();
-        const apiAccounts = config.getAccountsByProvider("openai");
-        const subAccounts = config.getAccountsByProvider("openai-sub");
+        const store = await accountStore();
+        const apiAccounts = store.accounts({ provider: "openai" });
+        const subAccounts = store.accounts({ provider: "openai-sub" });
         return [...apiAccounts, ...subAccounts].map((a) => new AIAccount(a.name, a.provider));
     }
 
@@ -105,17 +108,14 @@ export class AIAccount {
 
     /** List all accounts across all providers. */
     static async list(): Promise<AIAccount[]> {
-        const { AIConfig } = await import("./AIConfig");
-        const config = await AIConfig.load();
-        const accounts = config.listAccounts();
-        return accounts.map((a) => new AIAccount(a.name, a.provider));
+        const store = await accountStore();
+        return store.accounts().map((a) => new AIAccount(a.name, a.provider));
     }
 
-    /** Look up an account by name. */
+    /** Look up an account by id or name. */
     static async fromConfig(name: string): Promise<AIAccount> {
-        const { AIConfig } = await import("./AIConfig");
-        const config = await AIConfig.load();
-        const entry = config.getAccount(name);
+        const store = await accountStore();
+        const entry = store.account(name);
 
         if (!entry) {
             throw new Error(`Account "${name}" not found. Run \`${askConfigCommand()}\` to add it.`);

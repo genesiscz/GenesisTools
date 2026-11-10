@@ -20,6 +20,7 @@ import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib
 import { formatWarmupViaHint } from "@app/claude/lib/warmup/service";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
@@ -761,10 +762,9 @@ export function registerConfigCommand(program: Command): void {
         .command("refresh [name]")
         .description("Re-read the subscription plan from the OAuth profile (all accounts when no name is given)")
         .action(async (name?: string) => {
-            const aiConfig = await AIConfig.load();
-            const accounts = aiConfig
-                .getAccountsByProvider("anthropic-sub")
-                .filter((a) => !name || a.name === name)
+            const accounts = (await AiConfigStore.load())
+                .accounts({ provider: "anthropic-sub" })
+                .filter((a) => !name || a.name === name || a.id === name)
                 // Force a re-read: the automatic pass only refetches every 6h.
                 .map((a) => ({ ...a, subscriptionCheckedAt: undefined }));
 
@@ -773,12 +773,12 @@ export function registerConfigCommand(program: Command): void {
                 process.exit(1);
             }
 
-            await ensureSubscriptionAnchors(aiConfig, accounts, { force: true });
+            await ensureSubscriptionAnchors(accounts, { force: true });
 
-            const fresh = await AIConfig.load();
+            const fresh = await AiConfigStore.load();
 
             for (const account of accounts) {
-                const stored = fresh.getAccount(account.name);
+                const stored = fresh.account(account.id);
                 const plan = stored?.subscriptionPlan ?? "unknown";
                 const status = stored?.subscriptionStatus ?? "unknown";
                 const usable = planAllowsClaudeCode(stored ?? {});

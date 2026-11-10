@@ -28,13 +28,13 @@ export interface AccountResolver {
     resolve(accountName: string, options?: ResolveAccountOptions): Promise<DetectedProvider>;
 }
 
-const registry = new Map<AIProvider, AccountResolver>();
+const registry = new Map<string, AccountResolver>();
 
 export function registerResolver(resolver: AccountResolver): void {
     registry.set(resolver.providerType, resolver);
 }
 
-export function getResolver(providerType: AIProvider): AccountResolver {
+export function getResolver(providerType: string): AccountResolver {
     const resolver = registry.get(providerType);
 
     if (!resolver) {
