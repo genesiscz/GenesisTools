@@ -76,6 +76,7 @@ import { parseEditPlan, timeToUs } from "./plan";
 import * as projectOps from "./project";
 import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
+import { layoutText } from "./text-metrics";
 import textCases from "./text-metrics.cases.json";
 import { cutRanges, fillerCuts, fillerList, transcriptSegmentSchema, wordCuts, wordSpans } from "./transcript-cuts";
 
@@ -1194,6 +1195,15 @@ describe("edit project (edit.json)", () => {
         const nearRight = textBoxes({ ...title, x: 0.95, block: right }, canvas);
         expect(nearRight.letters?.right).toBeCloseTo(canvas.width, 5);
         expect(nearRight.plate.right).toBeGreaterThan(canvas.width);
+    });
+
+    // layoutText takes named options, so its two pixel numbers cannot swap unnoticed; align defaults to center.
+    test("layoutText reads text, px, wrapPx and align by name and centres by default", () => {
+        const text = "Send, track and get paid on time";
+        const centred = layoutText({ text, px: 40, wrapPx: 400 });
+        expect(centred).toEqual(layoutText({ text, px: 40, wrapPx: 400, align: "center" }));
+        // Wrapped at 400 px the text takes more lines than at 4000 px.
+        expect(centred.height).toBeGreaterThan(layoutText({ text, px: 40, wrapPx: 4000 }).height);
     });
 
     // 2026-11-08: check() said a title and its subtitle overlap while the export showed them apart. At 0.58 em a

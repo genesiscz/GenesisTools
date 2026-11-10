@@ -483,7 +483,7 @@ export function textBoxes(
     const canvasHeight = canvas.height * unit;
     const block = canvasWidth * Math.min(0.95, Math.max(0.15, note.block?.width ?? 0.8));
     const align = note.block?.align ?? "center";
-    const set = layoutText(note.text, font, Math.max(font * 4, block - 2 * insetX), align);
+    const set = layoutText({ text: note.text, px: font, wrapPx: Math.max(font * 4, block - 2 * insetX), align });
     const width = Math.ceil(set.width + 2 * insetX);
     const height = Math.ceil(set.height + 2 * insetY);
     // The plate's leftmost left edge: a plain text keeps its letters inside the canvas, and its plate may reach past the
