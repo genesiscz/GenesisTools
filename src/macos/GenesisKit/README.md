@@ -1149,6 +1149,23 @@ IconButton(
 
 `GenesisKitBase/Controls/`: a field that completes from `items`, `lazyItems` (read once) or `search` (per typed text, debounced), with the keyboard (Down, Up, Return, Tab, Escape), loading, no match and a failed read with Retry, drawn through `KitLook`; the folder field completes paths (`~`, `/`, hidden folders after a dot) and says when macOS keeps a folder from the app.
 
+#### `KitNumberField`
+
+`GenesisKitBase/Controls/KitNumberField.swift`: a whole number with its unit in one control ("− 48 hours +", "± 15 min"), drawn through `KitLook`. The number is a text field: Return or a click elsewhere commits, Escape puts the value back, a typed value outside the range lands on the nearest limit. Minus and plus step at the press and keep stepping while held (ten steps with Shift); Up and Down do the same. The binding gets one write for each gesture, never one for each step, and the control keeps one width for every value of its range. In a settings row use `NativeSettingsNumberPicker`, which draws it.
+
+- `title: String`: the accessibility label (the first, unlabeled parameter).
+- `value: Binding<Int>`, `in: ClosedRange<Int>`, `step: Int = 1`.
+- `prefix: KitNumberAdornment? = nil`, `suffix: KitNumberAdornment? = nil`: `.text("min")` never changes, `.counted("day")` reads "1 day" and "14 days" (`.counted("person", plural: "people")` for an irregular noun), `.symbol("timer")` is an SF Symbol.
+- `style: KitNumberFieldStyle = .stepper`: `.stepper` (minus and plus beside the number), `.chevrons` (two chevrons at the trailing edge, for a dense row), `.bare` (no buttons).
+- `size: KitControlSize = .regular`, `minWidth: CGFloat? = nil` (fields under each other take one value, so their buttons stand in two columns).
+- `identifier: String? = nil`: of the text field; the buttons are `<identifier>.decrement` and `<identifier>.increment`.
+
+```swift
+KitNumberField("Calendar slack", value: $slack, in: 0...120, prefix: .text("±"), suffix: .text("min"))
+```
+
+A settings row's glyph: `.nativeSettingsIcon("clock.arrow.circlepath", tint: KitHue.play.ink)` on a `NativeSettingsRow` or any row built on it draws a tinted tile before the title. Give it to every row of a card or to none.
+
 #### `GhostButton`
 
 A text action with an icon in a hairline outline and no fill, such as "Open in last pane". With `fullWidth` it stretches across its column, one action per row, for a narrow sidebar where side-by-side buttons squeezed each other's titles.

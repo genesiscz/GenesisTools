@@ -661,17 +661,14 @@ private struct DaemonTaskEditor: View {
                     .accessibilityIdentifier("daemon.\(task.name).every")
             }
             NativeSettingsRow("Timeout", detail: "A run still going after this long is stopped and counts as timed out.") {
-                HStack(spacing: 6) {
-                    NativeSettingsNumberPicker(
-                        "Timeout seconds", range: 1..<7201, identifier: "daemon.\(task.name).timeout",
-                        value: Binding(
-                            get: { max(1, task.timeoutMs / 1000) },
-                            set: { seconds in
-                                store.set(task, ["--timeout-ms", String(seconds * 1000)]) { $0 = $0.with(timeoutMs: seconds * 1000) }
-                            }))
-                        .disabled(store.savingTasks.contains(task.name))
-                    Text("s").font(.system(size: 12)).foregroundStyle(.secondary)
-                }
+                NativeSettingsNumberPicker(
+                    "Timeout seconds", range: 1..<7201, identifier: "daemon.\(task.name).timeout", suffix: .text("s"),
+                    value: Binding(
+                        get: { max(1, task.timeoutMs / 1000) },
+                        set: { seconds in
+                            store.set(task, ["--timeout-ms", String(seconds * 1000)]) { $0 = $0.with(timeoutMs: seconds * 1000) }
+                        }))
+                    .disabled(store.savingTasks.contains(task.name))
             }
             NativeSettingsRow("Priority", detail: priorityDetail) {
                 Picker("Priority", selection: Binding(

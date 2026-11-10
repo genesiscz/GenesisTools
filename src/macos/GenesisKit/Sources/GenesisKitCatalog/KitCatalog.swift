@@ -109,7 +109,7 @@ public extension KitLook {
 public enum KitCatalog {
     public static var entries: [CatalogEntry] {
         [hues, people, tabs, buttons, toggleChips, iconButtons, ghostButton, primaryButton, hoverStyles, badges,
-         autocomplete, autocompleteFolder]
+         autocomplete, autocompleteFolder, numberField]
     }
 }
 

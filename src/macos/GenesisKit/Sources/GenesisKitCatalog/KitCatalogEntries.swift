@@ -724,4 +724,85 @@ extension KitCatalog {
                 ]),
             ])
     }
+
+    static var numberField: CatalogEntry {
+        func field(_ value: Int, _ range: ClosedRange<Int>, step: Int = 1, prefix: KitNumberAdornment? = nil,
+                   suffix: KitNumberAdornment? = nil, style: KitNumberFieldStyle = .stepper,
+                   size: KitControlSize = .regular) -> KitNumberField {
+            KitNumberField("Value", value: .constant(value), in: range, step: step, prefix: prefix, suffix: suffix,
+                           style: style, size: size)
+        }
+        return CatalogEntry(
+            id: "number-field", group: "Inputs", name: "Number field (KitNumberField)",
+            summary: "A whole number with its unit in one control. A click on the number edits it; Return or a click elsewhere commits, Escape puts the value back, and a typed value outside the range lands on the nearest limit. Minus and plus step at the press and keep stepping while held, ten steps at a time with Shift; Up and Down do the same from the keyboard. The host gets one write for each gesture, and the control keeps one width for every value of its range.",
+            source: "GenesisKitBase/Controls/KitNumberField.swift", isNew: true,
+            critique: [
+                "Before it, a number in the settings was the system's text field beside a stepper 13 points wide, and its unit stood in a sentence on the other side of the row.",
+                "The system's stepper wrote the value at every repeat of a held button, so a host that saves through a service saved, or dropped, each step.",
+            ],
+            sections: [
+                CatalogSection("Units", [
+                    CatalogVariant("A counted unit: many", props: "suffix: .counted(\"hour\")") {
+                        field(48, 1...336, suffix: .counted("hour"))
+                    },
+                    CatalogVariant("A counted unit: one, in the same width", props: "suffix: .counted(\"hour\")") {
+                        field(1, 1...336, suffix: .counted("hour"))
+                    },
+                    CatalogVariant("A sign before, a fixed unit after", props: "prefix: .text(\"±\"), suffix: .text(\"min\")") {
+                        field(15, 0...120, prefix: .text("±"), suffix: .text("min"))
+                    },
+                    CatalogVariant("A glyph before", props: "prefix: .symbol(\"timer\"), suffix: .text(\"s\")") {
+                        field(30, 1...7200, prefix: .symbol("timer"), suffix: .text("s"))
+                    },
+                    CatalogVariant("A step of five", props: "step: 5, suffix: .text(\"%\")") {
+                        field(80, 0...100, step: 5, suffix: .text("%"))
+                    },
+                    CatalogVariant("The number alone", props: "no prefix, no suffix") {
+                        field(5, 0...15)
+                    },
+                ]),
+                CatalogSection("States", [
+                    CatalogVariant("Rest", props: " ") {
+                        field(14, 1...365, suffix: .counted("day"))
+                    },
+                    CatalogVariant("Plus under the pointer", props: "kitForcedInteraction: .hover") {
+                        field(14, 1...365, suffix: .counted("day")).shown(.hover)
+                    },
+                    CatalogVariant("Plus pressed", props: "kitForcedInteraction: .pressed") {
+                        field(14, 1...365, suffix: .counted("day")).shown(.pressed)
+                    },
+                    CatalogVariant("While the reader types", props: "the field has the keyboard") {
+                        field(14, 1...365, suffix: .counted("day")).previewing(focused: true)
+                    },
+                    CatalogVariant("At the lower limit: minus is dim", props: "value == range.lowerBound") {
+                        field(1, 1...365, suffix: .counted("day"))
+                    },
+                    CatalogVariant("Disabled", props: ".disabled(true)") {
+                        field(14, 1...365, suffix: .counted("day")).disabled(true)
+                    },
+                ]),
+                CatalogSection("Styles", [
+                    CatalogVariant("Minus and plus beside the number", props: "style: .stepper (the default)") {
+                        field(10, 1...1440, suffix: .text("min"))
+                    },
+                    CatalogVariant("Chevrons at the trailing edge", props: "style: .chevrons") {
+                        field(10, 1...1440, suffix: .text("min"), style: .chevrons)
+                    },
+                    CatalogVariant("No buttons: typed, or the arrow keys", props: "style: .bare") {
+                        field(10, 1...1440, suffix: .text("min"), style: .bare)
+                    },
+                ]),
+                CatalogSection("Sizes", [
+                    CatalogVariant("Small, 22 pt", props: "size: .small") {
+                        field(48, 1...336, suffix: .counted("hour"), size: .small)
+                    },
+                    CatalogVariant("Regular, 26 pt", props: "size: .regular") {
+                        field(48, 1...336, suffix: .counted("hour"))
+                    },
+                    CatalogVariant("Large, 30 pt", props: "size: .large") {
+                        field(48, 1...336, suffix: .counted("hour"), size: .large)
+                    },
+                ]),
+            ])
+    }
 }

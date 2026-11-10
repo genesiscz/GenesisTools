@@ -183,14 +183,11 @@ private struct HubPaneSettings: View {
                     "Idle for at least",
                     detail: "Only worktrees idle this long count as removable. 0 days means any idle time."
                 ) {
-                    HStack(spacing: 8) {
-                        NativeSettingsNumberPicker(
-                            "Idle days",
-                            range: HubPreferences.cleanupIdleDaysRange.lowerBound
-                                ..< (HubPreferences.cleanupIdleDaysRange.upperBound + 1),
-                            identifier: "hub.cleanup.idleDays", value: $preferences.cleanupIdleDays)
-                        Text("days").font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
+                    NativeSettingsNumberPicker(
+                        "Idle days",
+                        range: HubPreferences.cleanupIdleDaysRange.lowerBound
+                            ..< (HubPreferences.cleanupIdleDaysRange.upperBound + 1),
+                        identifier: "hub.cleanup.idleDays", suffix: .counted("day"), value: $preferences.cleanupIdleDays)
                 }
             }
             NativeSettingsCard("Commit list") {
@@ -241,24 +238,18 @@ private struct HubPaneSettings: View {
                     "Fold a files folder above",
                     detail: "A folder with more changed files starts folded, unless it holds half of the change or more. 0 never folds."
                 ) {
-                    HStack(spacing: 8) {
-                        NativeSettingsNumberPicker(
-                            "Files", range: HubFileTreeFold.range.lowerBound ..< (HubFileTreeFold.range.upperBound + 1),
-                            identifier: "hub.files.foldAbove", value: $filesFoldAbove)
-                        Text("files").font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
+                    NativeSettingsNumberPicker(
+                        "Files", range: HubFileTreeFold.range.lowerBound ..< (HubFileTreeFold.range.upperBound + 1),
+                        identifier: "hub.files.foldAbove", suffix: .counted("file"), value: $filesFoldAbove)
                 }
                 Divider()
                 NativeSettingsRow(
                     "Fold tool output after",
                     detail: "Longer output shows these lines and \"… +N lines\" at every transcript level, Verbose too. 0 shows it all in Verbose."
                 ) {
-                    HStack(spacing: 8) {
-                        NativeSettingsNumberPicker(
-                            "Lines", range: TranscriptOutputFold.range.lowerBound ..< (TranscriptOutputFold.range.upperBound + 1),
-                            identifier: "sessionTranscript.outputFold", value: $transcriptOutputFold)
-                        Text("lines").font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
+                    NativeSettingsNumberPicker(
+                        "Lines", range: TranscriptOutputFold.range.lowerBound ..< (TranscriptOutputFold.range.upperBound + 1),
+                        identifier: "sessionTranscript.outputFold", suffix: .counted("line"), value: $transcriptOutputFold)
                 }
                 Divider()
                 NativeSettingsToggle(
@@ -295,14 +286,11 @@ private struct HubHistorySettings: View {
             }
             NativeSettingsCard("History") {
                 NativeSettingsRow("Keep the last", detail: "Older places leave History, Back and Forward.") {
-                    HStack(spacing: 8) {
-                        NativeSettingsNumberPicker(
-                            "Places kept",
-                            range: HubPreferences.navigationLimitRange.lowerBound
-                                ..< (HubPreferences.navigationLimitRange.upperBound + 1),
-                            identifier: "hub.nav.limit", value: $preferences.navigationLimit)
-                        Text("places").font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
+                    NativeSettingsNumberPicker(
+                        "Places kept",
+                        range: HubPreferences.navigationLimitRange.lowerBound
+                            ..< (HubPreferences.navigationLimitRange.upperBound + 1),
+                        identifier: "hub.nav.limit", suffix: .counted("place"), value: $preferences.navigationLimit)
                 }
                 Divider()
                 // The database path is a diagnostic detail: it sits behind a button, not in the retention choice's text.
