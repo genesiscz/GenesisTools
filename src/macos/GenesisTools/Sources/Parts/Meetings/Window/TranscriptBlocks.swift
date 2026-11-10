@@ -259,9 +259,12 @@ struct TranscriptAvatar: View {
             .accessibilityHidden(true)
     }
 
-    /// "Mira Holt" is "MH", "Speaker 4" is "S4", an empty label is "?".
+    /// "Mira Holt" is "MH", "Speaker 4" is "S4", an empty label is "?". Only letters and digits count, so a label that
+    /// is a note in brackets ("[unclear: …]") is "UN", not "[\"".
     static func initials(_ speaker: String) -> String {
-        let words = speaker.split(whereSeparator: { $0.isWhitespace || $0 == "-" }).map(String.init)
+        let words = speaker.split(whereSeparator: { $0.isWhitespace || $0 == "-" })
+            .map { String($0.filter { $0.isLetter || $0.isNumber }) }
+            .filter { !$0.isEmpty }
         guard let first = words.first else { return "?" }
         if words.count == 1 { return String(first.prefix(2)).uppercased() }
         let second = words[1]

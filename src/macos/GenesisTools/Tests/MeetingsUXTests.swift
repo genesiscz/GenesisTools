@@ -480,6 +480,30 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(words("Speaker 3"), ["One turn next to Speaker 4, maybe one voice split in two (weak sign)"])
         XCTAssertEqual(words("Speaker 5"), ["May hold several people (normal sign)"])
         XCTAssertEqual(words("Dan"), ["A future kind"], "a kind this build does not know still shows its name")
+
+        // Each line carries the stretches its chips play or show; a silence's times are a chip, not plain text.
+        XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Alice").map(\.ranges),
+                       [[SpeakerHint.Range(lines: 0, fromSec: 375, toSec: 1800)]])
+        XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Bob")[0].ranges.count, 2)
+        XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Carol")[0].ranges, [])
+    }
+
+    func testSeveralSilencesOfOneLabelAreOneLineWithAChipEach() throws {
+        let hints = try JSONDecoder().decode([SpeakerHint].self, from: Data("""
+        [{"kind":"label-drift","label":"Alice","strength":"normal","fromSec":74,"toSec":3128},
+         {"kind":"several-people","label":"Alice","strength":"weak"},
+         {"kind":"label-drift","label":"Alice","strength":"weak","fromSec":3167,"toSec":4561},
+         {"kind":"label-drift","label":"Alice","strength":"normal","fromSec":4594,"toSec":8769},
+         {"kind":"label-drift","label":"Bob","strength":"normal","fromSec":10,"toSec":20}]
+        """.utf8))
+        let lines = MeetingsWords.speakerHintLines(hints, for: "Alice")
+        XCTAssertEqual(lines.map(\.text), ["Silent 3 times while in the call, so the voice is under other labels (normal sign)",
+                                           "May hold several people (weak sign)"],
+                       "three sentences with the same words were a wall of text; the line takes the strongest of their signs")
+        XCTAssertEqual(lines[0].ranges.map(\.fromSec), [74, 3167, 4594])
+        XCTAssertEqual(HintChip.chips(for: lines[0].ranges).chips.map(\.action), [.show, .show, .show], "a long silence zooms the timeline")
+        XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Bob").map(\.text),
+                       ["Silent from 00:10 to 00:20 while in the call, so the voice is under other labels (normal sign)"])
     }
 
     func testATitledNoteShowsItsText() throws {

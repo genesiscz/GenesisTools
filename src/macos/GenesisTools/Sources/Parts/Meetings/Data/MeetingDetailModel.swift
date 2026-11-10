@@ -907,9 +907,34 @@ extension MeetingDetailModel {
 extension MeetingsWords {
     /// The signs about one label, as sentences under it.
     static func speakerHints(_ hints: [SpeakerHint], for label: String) -> [String] {
-        hints.filter { $0.label == label }.map { hint in
-            hintSentence(hint) + (hint.strength.map { " (\($0) sign)" } ?? "")
+        speakerHintLines(hints, for: label).map(\.text)
+    }
+
+    /// The signs of one label as lines, each with the stretches its chips play or show. Several silences of one label
+    /// are one line with a chip each: three "Silent from … to …" sentences in a row read as a wall, and their times
+    /// were plain text nobody could click.
+    static func speakerHintLines(_ hints: [SpeakerHint], for label: String) -> [SpeakerHintLine] {
+        let own = hints.filter { $0.label == label }
+        let silences = own.filter { $0.kind == "label-drift" && $0.fromSec != nil && $0.toSec != nil }
+        var lines: [SpeakerHintLine] = []
+        var silenceShown = false
+        for hint in own {
+            let isSilence = silences.contains(hint)
+            if isSilence, silenceShown { continue }
+            if isSilence {
+                silenceShown = true
+                let ranges = silences.map { SpeakerHint.Range(lines: 0, fromSec: $0.fromSec, toSec: $0.toSec) }
+                let levels: [String] = ["strong", "normal", "weak"]
+                let strength = levels.first { level in silences.contains { $0.strength == level } }
+                let sentence = silences.count == 1 ? hintSentence(hint)
+                    : "Silent \(silences.count) times while in the call, so the voice is under other labels"
+                lines.append(SpeakerHintLine(text: sentence + (strength.map { " (\($0) sign)" } ?? ""), ranges: ranges))
+            } else {
+                lines.append(SpeakerHintLine(text: hintSentence(hint) + (hint.strength.map { " (\($0) sign)" } ?? ""),
+                                             ranges: hint.ranges ?? []))
+            }
         }
+        return lines
     }
 
     /// What one sign means for the label it sits under. A kind this build does not know shows its name.

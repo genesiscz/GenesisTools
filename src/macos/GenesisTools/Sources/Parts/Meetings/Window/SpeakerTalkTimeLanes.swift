@@ -63,9 +63,13 @@ enum TalkTimeLayout {
         }
     }
 
-    /// The banners at `width` points; questions closer than `mergeWidth` merge into one "? N" banner.
+    /// The room a banner with a label takes ("? Q12" in bold 10.5 pt with its padding, and a gap).
+    static let bannerWidth: CGFloat = 46
+
+    /// The banners at `width` points; questions closer than `mergeWidth` merge into one "? N" banner. The merge
+    /// distance is a banner's own width: at 22 pt two labelled banners 22 to 45 pt apart drew over each other.
     static func banners(_ questions: [TalkTimeQuestion], durationSec: Double, width: CGFloat,
-                        mergeWidth: CGFloat = 22) -> [TalkTimeBanner] {
+                        mergeWidth: CGFloat = TalkTimeLayout.bannerWidth) -> [TalkTimeBanner] {
         guard durationSec > 0, width > 0 else { return [] }
         let scale = width / CGFloat(durationSec)
         var groups: [[TalkTimeQuestion]] = []

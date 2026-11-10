@@ -99,7 +99,7 @@ struct SpeakerHintChips: View {
         let who = chip.present.isEmpty ? "" : " In the call: \(chip.present.joined(separator: ", "))."
         switch chip.action {
         case .play:
-            return "Play \(Plural.count(chip.lines, "line")) from \(chip.rangeText).\(who)"
+            return chip.lines > 0 ? "Play \(Plural.count(chip.lines, "line")) from \(chip.rangeText).\(who)" : "Play \(chip.rangeText).\(who)"
         case .show:
             return "Longer than \(MeetingsFormat.seconds(longestClipSec)): zooms the timeline to \(chip.rangeText).\(who)"
         }
