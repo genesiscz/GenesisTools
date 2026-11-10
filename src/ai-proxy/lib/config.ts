@@ -1,6 +1,4 @@
 import { existsSync } from "node:fs";
-
-import { resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/account-config";
 import { getAiProxyConfigStore, getDefaultConfig, parseConfigJson, redactConfig } from "@app/ai-proxy/lib/config-store";
 import {
     type DetectedAccountReport,
@@ -8,6 +6,7 @@ import {
     providerTitleFor,
     suggestedModelFor,
 } from "@app/ai-proxy/lib/detect-report";
+import { resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/providers/account-paths";
 import type { AiProxyAccountConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
 import {
     fetchCopilotUserInfo,

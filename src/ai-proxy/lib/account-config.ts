@@ -6,9 +6,7 @@ import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state"
 import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import { copilotDataDir } from "@genesiscz/utils/ai/github-copilot/paths";
 import type { CopilotAccountType } from "@genesiscz/utils/ai/github-copilot/types";
-import { grokAuthPath } from "@genesiscz/utils/ai/grok";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { redactSecrets, securityStorage } from "@genesiscz/utils/security";
@@ -18,14 +16,6 @@ type LegacyAccountFields = {
     copilotDataDir?: string;
     copilotAccountType?: CopilotAccountType;
 };
-
-export function resolveGrokAuthPath(account: AiProxyAccountConfig): string {
-    return account.grok?.authPath ?? grokAuthPath();
-}
-
-export function resolveGithubCopilotDataDir(account: AiProxyAccountConfig): string {
-    return copilotDataDir(account.githubCopilot?.dataDir);
-}
 
 export interface AccountCredentialDescription {
     /** Where the credential comes from — never the credential itself. */

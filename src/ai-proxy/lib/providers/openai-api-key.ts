@@ -1,6 +1,7 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { assertApiKeySourceAllowed, resolveAccountApiKey } from "@app/ai-proxy/lib/providers/api-key-guard";
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
+import { OPENAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/endpoints";
 import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
@@ -9,8 +10,6 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
-
-export const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
 
 function maskKey(key: string): string {
     if (key.length <= 8) {

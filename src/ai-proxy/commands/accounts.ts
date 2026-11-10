@@ -3,12 +3,8 @@ import { aiProxyCommand, HOT_RELOAD_HINT, RESTART_HINT } from "@app/ai-proxy/lib
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { type AccountListRow, displayAccountsTable, displayAccountTestResult } from "@app/ai-proxy/lib/display";
 import { apiKeyStatus, defaultApiKeyEnvName, findEnvSourceFile } from "@app/ai-proxy/lib/providers/api-key-state";
-import {
-    createProviderForInspection,
-    isApiKeyProvider,
-    isProviderImplemented,
-    providerDefinition,
-} from "@app/ai-proxy/lib/providers/registry";
+import { createProviderForInspection } from "@app/ai-proxy/lib/providers/pool";
+import { isApiKeyProvider, isProviderImplemented, providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";

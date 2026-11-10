@@ -684,7 +684,7 @@ describe("GrokSubscriptionProvider.create probe mode", () => {
     });
 
     it("the registry builds a Grok account for inspection in probe mode", async () => {
-        const { createProviderForInspection } = await import("@app/ai-proxy/lib/providers/registry");
+        const { createProviderForInspection } = await import("@app/ai-proxy/lib/providers/pool");
         const grantCalls: string[] = [];
         stubFetchRefusingGrant(grantCalls);
 
@@ -696,7 +696,7 @@ describe("GrokSubscriptionProvider.create probe mode", () => {
 
     /** Negative control: the registry's serving build is not a probe. */
     it("the registry builds a Grok account for serving without probe mode", async () => {
-        const { createProvider } = await import("@app/ai-proxy/lib/providers/registry");
+        const { createProvider } = await import("@app/ai-proxy/lib/providers/pool");
         const grantCalls: string[] = [];
         stubFetchRefusingGrant(grantCalls);
 
