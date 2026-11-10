@@ -11,9 +11,9 @@ import {
     WEBHOOK_ALLOWED_UPDATES,
     WebhookSettingsError,
 } from "@app/telegram-bot/lib/webhook/settings";
-import * as p from "@clack/prompts";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import * as p from "@genesiscz/utils/prompts/p";
 import { secrets } from "@genesiscz/utils/security";
 import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
 import type { Command } from "commander";
