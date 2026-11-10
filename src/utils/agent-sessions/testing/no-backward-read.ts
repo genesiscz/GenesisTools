@@ -6,6 +6,7 @@ import type {
     HistorySourceRecord,
     HistoryStatisticsRead,
     RowAnchorWalk,
+    SpawnLink,
 } from "../types";
 
 /** `readBackward` for a test reader whose test never walks a session backwards. */
@@ -66,4 +67,9 @@ export async function* noRecordScan(): AsyncIterable<HistorySourceRecord> {}
 /** `readRecords` for a test reader whose test never hydrates a search match. */
 export async function noRecordRead(): Promise<HistoryRecordRead> {
     return { records: [], issues: [], complete: true };
+}
+
+/** `readSpawnLink` for a test reader whose sessions were never spawned by another session. */
+export async function noSpawnLink(): Promise<SpawnLink | null> {
+    return null;
 }

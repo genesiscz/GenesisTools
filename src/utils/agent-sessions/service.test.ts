@@ -11,7 +11,7 @@ import { initializeCompactHistorySchema } from "./migrations";
 import { createClaudeHistoryOperations } from "./readers/claude";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
 import { claudeMidWork } from "./readers/claude-mid-work";
-import { claudeClassifyPath } from "./readers/claude-paths";
+import { claudeClassifyPath, claudeReadSpawnLink } from "./readers/claude-paths";
 import { fallbackTitle, HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
 import { type BaselineOracle, createBaselineOracle } from "./testing/baseline-oracle";
@@ -55,6 +55,7 @@ function createReader(options: { kind: string; roots: string[] }): NativeSession
         readStatistics: noStatistics,
         classifyPath: claudeClassifyPath,
         midWork: claudeMidWork,
+        readSpawnLink: claudeReadSpawnLink,
         readChanges: () => null,
         roots: () => options.roots,
         read: async () => {

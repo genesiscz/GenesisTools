@@ -366,7 +366,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
             })
         ),
     ]);
-    const codexTops = prof.measure("codex-tree", () =>
+    const codexTops = await prof.measureAsync("codex-tree", () =>
         attachCodexAgents(codexRecords, { now, model: null, readOnly: options.refresh === false })
     );
     const open = await openSessions;

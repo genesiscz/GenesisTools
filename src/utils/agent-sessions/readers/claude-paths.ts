@@ -1,6 +1,6 @@
 import { basename, dirname, join, relative, sep } from "node:path";
 import { resolveProjectNameFromEncoded } from "@genesiscz/utils/claude/projects";
-import type { NativeSessionSource, SessionPathRole } from "../types";
+import type { NativeSessionSource, SessionPathRole, SpawnLink } from "../types";
 import { claudeSubagentFiles, claudeSubagentsDir, isClaudeSubagentPath, SUBAGENTS } from "./claude-subagent-path";
 
 export { claudeSubagentFiles, claudeSubagentsDir, isClaudeSubagentPath };
@@ -126,4 +126,22 @@ export function claudeClassifyPath(relativePath: string): SessionPathRole | null
               nested: true,
           }
         : null;
+}
+
+/**
+ * `NativeSessionReader.readSpawnLink` for Claude: a sub-agent transcript's lead session, from the folder it sits in
+ * (`claudeClassifyPath` under the source's root, `claudeSubagentLead` for a path outside it). A session's own
+ * transcript has no spawner. Claude's layout keeps no depth or role, so the link carries the lead alone.
+ */
+export async function claudeReadSpawnLink(
+    source: Pick<NativeSessionSource<string>, "root" | "filePath">
+): Promise<SpawnLink | null> {
+    const role = claudeClassifyPath(relative(source.root, source.filePath));
+
+    if (role?.owner === "subagent" && role.file === "transcript" && role.parentSessionId) {
+        return { parentSessionId: role.parentSessionId };
+    }
+
+    const lead = role ? null : claudeSubagentLead(source.filePath);
+    return lead ? { parentSessionId: lead.sessionId } : null;
 }

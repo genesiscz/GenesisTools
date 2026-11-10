@@ -22,6 +22,7 @@ import {
     noMidWork,
     noRowAnchors,
     noSessionChanges,
+    noSpawnLink,
     noStatistics,
 } from "./testing/no-backward-read";
 import type { NativeSessionSource } from "./types";
@@ -69,6 +70,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
             continuedIn: noContinuedIn,
             currentModel: noCurrentModel,
             midWork: noMidWork,
+            readSpawnLink: noSpawnLink,
             scanInsights: () => ({ native: null, defaultModel: null }),
             classifyPath: classifiesNoPath,
             readChanges: noSessionChanges,

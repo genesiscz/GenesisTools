@@ -1,4 +1,5 @@
 import { isRecord } from "@genesiscz/utils/ai/usage/transcripts/parse-helpers";
+import { codexSpawnLink } from "./codex";
 
 export type CodexActivity = "code-review" | "permission-review" | "other" | "unclassified";
 
@@ -47,9 +48,9 @@ export function updateCodexContext(
         const source = isRecord(payload.source) ? payload.source : undefined;
         const subagent = source && isRecord(source.subagent) ? source.subagent : undefined;
         context.permissionReviewer = subagent?.other === "guardian";
-        const spawn = subagent && isRecord(subagent.thread_spawn) ? subagent.thread_spawn : undefined;
-        context.parentThreadId = text(spawn?.parent_thread_id);
-        context.agentPath = text(spawn?.agent_path);
+        const link = codexSpawnLink(payload);
+        context.parentThreadId = link?.parentSessionId;
+        context.agentPath = link?.agentPath;
     }
     if (type === "event_msg" && payload.type === "task_started") {
         context.task = {

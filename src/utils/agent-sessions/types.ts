@@ -394,6 +394,20 @@ export interface SessionPathRole {
     nested: boolean;
 }
 
+/** Which session started this one (`NativeSessionReader.readSpawnLink`): a sub-agent's spawner. */
+export interface SpawnLink {
+    /** The session that started this one. */
+    parentSessionId: string;
+    /** How deep below the conversation's first session the spawn sits (1: started by the lead). */
+    depth?: number;
+    /** The role the spawner gave it (Codex `agent_role`). */
+    role?: string;
+    /** The name the harness gave it (Codex `agent_nickname`). */
+    nickname?: string;
+    /** The task path the spawner gave it (Codex `agent_path`, such as `/root/review_fixes`). */
+    agentPath?: string;
+}
+
 export interface RowAnchorIds {
     messageIds: string[];
     toolCallIds: string[];
@@ -486,6 +500,13 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * fixtures in `readers/fixtures/session-paths.json`.
      */
     classifyPath(relativePath: string): SessionPathRole | null;
+    /**
+     * The session that started this one, or null for a session nobody spawned or a provider whose files name no
+     * spawner. Codex reads its rollout's `session_meta` header (`codexSpawnLink`, which the usage context shares);
+     * Claude answers from the sub-agent folder layout (`classifyPath`); Grok's sub-agent files keep no lead id, so
+     * its reader answers null. The hub's agents tree asks here and never parses a header itself.
+     */
+    readSpawnLink(source: NativeSessionSource<Kind>): Promise<SpawnLink | null>;
     /**
      * A new walk that names the native ids of each row of this provider's transcript (a source anchor's message id,
      * tool call id and turn id), oldest row first. Stateful: a Codex row names its turn only where the turn starts.

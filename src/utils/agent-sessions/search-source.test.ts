@@ -12,6 +12,7 @@ import {
     noRecordRead,
     noRowAnchors,
     noSessionChanges,
+    noSpawnLink,
     noStatistics,
 } from "./testing/no-backward-read";
 import type { HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
@@ -113,6 +114,7 @@ function reader(records: HistorySourceRecord[]): NativeSessionReader<string> {
         continuedIn: noContinuedIn,
         currentModel: noCurrentModel,
         midWork: noMidWork,
+        readSpawnLink: noSpawnLink,
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,

@@ -15,6 +15,7 @@ import {
     noRecordScan,
     noRowAnchors,
     noSessionChanges,
+    noSpawnLink,
     noStatistics,
 } from "@genesiscz/utils/agent-sessions/testing/no-backward-read";
 import type {
@@ -284,6 +285,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         continuedIn: noContinuedIn,
         currentModel: noCurrentModel,
         midWork: noMidWork,
+        readSpawnLink: noSpawnLink,
         scanInsights: null,
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,
