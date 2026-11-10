@@ -163,7 +163,7 @@ describe("claude per-project enable override for globally-disabled servers", () 
         await installOverride(provider);
         const projectsBefore = readClaudeJson().projects;
 
-        await provider.disableServer("serena", null);
+        await provider.disableServers(["serena"], null);
 
         const claude = readClaudeJson();
         expect(claude.projects?.["/proj/a"].mcpServers?.serena).toBeDefined(); // entry kept
