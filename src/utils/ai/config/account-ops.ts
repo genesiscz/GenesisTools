@@ -554,6 +554,49 @@ export interface RemoveAccountResult {
     referrers: Referrer[];
     /** Vault entries deleted along with the account, so no orphan is left behind. */
     secretsDeleted: string[];
+    /**
+     * In-config refs (`defaults.*`, `models.*`) a forced removal cleared, so no default points at a missing account.
+     * A ref another config holds (`ai-proxy:…`) is not this file's to edit: it stays in `referrers` for the caller.
+     */
+    refsCleared: string[];
+}
+
+/** Delete the value at a dotted referrer path (`defaults.account.chat`, `models.list[2].ref`); false when absent. */
+function deleteConfigPath(root: object, path: string): boolean {
+    const segments = path.split(/\.|\[(\d+)\]/).filter((segment): segment is string => Boolean(segment));
+    let parent: unknown = root;
+
+    for (const segment of segments.slice(0, -1)) {
+        if (!parent || typeof parent !== "object") {
+            return false;
+        }
+
+        parent = (parent as Record<string, unknown>)[segment];
+    }
+
+    const last = segments.at(-1);
+
+    if (!parent || typeof parent !== "object" || last === undefined) {
+        return false;
+    }
+
+    if (Array.isArray(parent)) {
+        const index = Number(last);
+        if (!Number.isInteger(index) || index >= parent.length) {
+            return false;
+        }
+
+        parent.splice(index, 1);
+        return true;
+    }
+
+    const record = parent as Record<string, unknown>;
+    if (!(last in record)) {
+        return false;
+    }
+
+    delete record[last];
+    return true;
 }
 
 /**
@@ -575,10 +618,17 @@ export async function removeAccount(idOrName: string, options: { force?: boolean
         }
 
         const secretsDeleted = await deleteAccountSecrets(account.id);
+        // As the v3 facade did for its defaultAccounts: a forced removal leaves no in-config default naming the
+        // account. Deepest paths first, so removing an array item cannot shift the index of a later one.
+        const refsCleared = referrers
+            .map((referrer) => referrer.path)
+            .filter((path) => !path.includes(":"))
+            .sort((a, b) => b.localeCompare(a, "en", { numeric: true }))
+            .filter((path) => deleteConfigPath(config, path));
 
         config.accounts = config.accounts.filter((entry) => entry.id !== account.id);
-        logger.info({ id: account.id, referrers: referrers.length, secretsDeleted }, "removed AI account");
-        return { account, referrers, secretsDeleted };
+        logger.info({ id: account.id, referrers: referrers.length, secretsDeleted, refsCleared }, "removed AI account");
+        return { account, referrers, secretsDeleted, refsCleared };
     });
 }
 

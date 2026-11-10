@@ -263,7 +263,9 @@ describe("removeAccount", () => {
 
         expect(result.referrers).toHaveLength(1);
         expect(result.secretsDeleted).toEqual(["ai/acc_used/apiKey"]);
+        expect(result.refsCleared).toEqual(["defaults.account.chat"]);
         expect(readRawConfig().accounts).toHaveLength(0);
+        expect(readRawConfig().defaults.account?.chat).toBeUndefined();
         expect(await (await secrets()).get("ai/acc_used/apiKey")).toBeUndefined();
     });
 
