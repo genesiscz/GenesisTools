@@ -385,7 +385,9 @@ export async function ensureWorktreeForBranch(options: WorktreeCreateOptions): P
 
     if (!localExists.success && !options.startPoint) {
         // Try to fetch from origin (only when no explicit startPoint was given)
-        const fetchResult = await g.exec(["fetch", "origin", branch]);
+        const fetchResult = await g.exec(["fetch", "origin", branch], {
+            timeout: { ms: 600_000, reason: "a fetch of a branch from origin goes over the network" },
+        });
 
         if (fetchResult.success) {
             startPoint = `origin/${branch}`;

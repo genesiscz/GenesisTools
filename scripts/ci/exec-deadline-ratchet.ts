@@ -17,7 +17,7 @@ export const EXEC_DEADLINE_RATCHET: ReadonlyMap<string, number> = new Map<string
     ["src/git/commands/rename-commits.ts", 29],
     ["src/git/commands/worktree.ts", 1],
     ["src/git/lib/branch-attribution.ts", 2],
-    ["src/git/lib/cascade/execute.ts", 11],
+    ["src/git/lib/cascade/execute.ts", 10],
     ["src/git/lib/merged/prune.ts", 3],
     ["src/git/lib/monster/analyze.ts", 1],
     ["src/git/lib/rebranch/apply.ts", 5],
@@ -33,6 +33,6 @@ export const EXEC_DEADLINE_RATCHET: ReadonlyMap<string, number> = new Map<string
     ["src/utils/git/repo-config.ts", 3],
     ["src/utils/git/repo-facts.ts", 3],
     ["src/utils/git/worktree-backup.ts", 1],
-    ["src/utils/git/worktree.ts", 9],
+    ["src/utils/git/worktree.ts", 8],
     ["src/utils/github/url-parser.ts", 1],
 ]);
