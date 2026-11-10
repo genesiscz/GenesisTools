@@ -368,6 +368,14 @@ final class MeetingsReviewRowTests: XCTestCase {
     }
 
     /// A sentence names a suggestion by what it is and where; its id is the terminal's handle.
+    func testAnUndoComesBackToTheRowItReopened() throws {
+        let rows = try rows().rows
+        let undo = try entry(token: "t9", action: #"{"kind":"revert","token":"t1"}"#, changes: [("gone", "confirmed", "suggested"), ("i2", "confirmed", "suggested")])
+        XCTAssertEqual(MeetingDetailModel.rowToShow(afterUndo: undo, in: rows), "i2", "the first changed row the list holds")
+        let nothing = try entry(token: "t9", action: #"{"kind":"revert","token":"t1"}"#, changes: [("gone", "confirmed", "suggested")])
+        XCTAssertNil(MeetingDetailModel.rowToShow(afterUndo: nothing, in: rows), "no row of the list: the selection stays")
+    }
+
     func testASentenceNamesARowInWords() throws {
         let rows = try rows().rows
         let names = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, MeetingsWords.rowName($0)) })
@@ -390,12 +398,15 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertFalse(ReviewRowView.whoRepeatsTitle("Speaker 2", title: "Speaker 2 01:12 → Alice Example", when: "01:12"))
     }
 
-    /// The playing row's bar is left out below the width it reads at: squeezed, its flag drew over its times.
-    func testThePlayingBarNeedsRoomForItsTimes() {
-        XCTAssertGreaterThan(PlayingRowBar.smallestWidth(times: true), PlayingRowBar.smallestWidth(times: false) + 100,
-                             "two clock times of seven digits need about 110 pt")
-        XCTAssertGreaterThanOrEqual(PlayingRowBar.smallestWidth(times: false), 4 * FlagMark.hitWidth,
+    /// The playing row's bar is left out below the width it reads at: squeezed, its flag drew over its text.
+    func testThePlayingBarNeedsRoomForItsLength() {
+        XCTAssertGreaterThan(PlayingRowBar.smallestWidth(length: true), PlayingRowBar.smallestWidth(length: false) + 60,
+                             "\"12 min clip\" needs about 60 pt")
+        XCTAssertGreaterThanOrEqual(PlayingRowBar.smallestWidth(length: false), 4 * FlagMark.hitWidth,
                                     "a bar shorter than a few flags is only its flag")
+        let text = PlayingRowBar.lengthText(TimelineFixture.span)
+        XCTAssertTrue(text.hasSuffix(" clip"), text)
+        XCTAssertFalse(text.contains("→"), "the clip's two ends stood one second from the row's own span beside the bar")
     }
 }
 

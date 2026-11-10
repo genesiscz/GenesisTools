@@ -302,6 +302,9 @@ extension MeetingDetailModel {
                 if let entry = result.entry {
                     ownTokens.insert(entry.token)
                     markRows(entry)
+                    // The list keeps the selected row in view. After "Skip" it had moved on to the next open row, so
+                    // an Undo reopened a row the reader could not see.
+                    if then == nil, let back = Self.rowToShow(afterUndo: entry, in: rows.value?.rows ?? []) { selectedRow = back }
                 }
                 notices.push(StackedNotice(text: "Undone"), replacing: replacing)
                 then?()
@@ -313,6 +316,12 @@ extension MeetingDetailModel {
             }
             refreshAfterDecision()
         }
+    }
+
+    /// The row an Undo comes back to: the question it gave back, else the first row it changed.
+    static func rowToShow(afterUndo entry: JournalEntry, in rows: [ReviewRow]) -> String? {
+        let ids = [entry.question].compactMap { $0 } + entry.changes.map(\.id)
+        return ids.first { id in rows.contains { $0.id == id } }
     }
 
     /// After a decision: the rows and the record read again quietly (what is on screen stays until the answer lands),

@@ -90,13 +90,13 @@ struct ReviewRowView: View {
             }
             if let player, let span = playingSpan(player) {
                 // R25, G-ROW-1: the playing row's own timeline takes the header's free room, so the row keeps its height.
-                // In a narrow header it gives up its times first, then itself: squeezed under its smallest width, its
-                // flag drew over the times and the row's time wrapped to two lines.
+                // In a narrow header it gives up its length text first, then itself: squeezed under its smallest width,
+                // its flag drew over the text and the row's time wrapped to two lines.
                 ViewThatFits(in: .horizontal) {
-                    playingBar(player, span: span, times: true)
-                        .frame(minWidth: PlayingRowBar.smallestWidth(times: true), idealWidth: PlayingRowBar.smallestWidth(times: true), maxWidth: .infinity)
-                    playingBar(player, span: span, times: false)
-                        .frame(minWidth: PlayingRowBar.smallestWidth(times: false), idealWidth: PlayingRowBar.smallestWidth(times: false), maxWidth: .infinity)
+                    playingBar(player, span: span, length: true)
+                        .frame(minWidth: PlayingRowBar.smallestWidth(length: true), idealWidth: PlayingRowBar.smallestWidth(length: true), maxWidth: .infinity)
+                    playingBar(player, span: span, length: false)
+                        .frame(minWidth: PlayingRowBar.smallestWidth(length: false), idealWidth: PlayingRowBar.smallestWidth(length: false), maxWidth: .infinity)
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 6)
@@ -111,8 +111,8 @@ struct ReviewRowView: View {
         }
     }
 
-    private func playingBar(_ player: MomentPlayer, span: ZoomSpan, times: Bool) -> PlayingRowBar {
-        PlayingRowBar(span: span, position: { player.position }, showsTimes: times,
+    private func playingBar(_ player: MomentPlayer, span: ZoomSpan, length: Bool) -> PlayingRowBar {
+        PlayingRowBar(span: span, position: { player.position }, showsLength: length,
                       onFlag: { player.playTime($0, in: detail.id, from: .outside) },
                       onSeek: { player.playTime($0, in: detail.id, from: .outside) })
     }
@@ -353,6 +353,7 @@ struct ReviewRowView: View {
             Text(verbatim: row.label).font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(.secondary)
                 .lineLimit(1).fixedSize()
                 .frame(idealWidth: FoldedShape.Nominal.label, alignment: .leading)
+                .instantTooltip(shape.textWidth == nil ? Self.foldedText(row) : "")
             if !shape.words, let glyph = Self.actorGlyph(row) {
                 // The words that say who decided it are gone in this shape; a decision the reader did not make keeps a
                 // mark. It stands after the label, so the labels of the rows keep one column.
