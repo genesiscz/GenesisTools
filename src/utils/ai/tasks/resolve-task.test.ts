@@ -121,6 +121,37 @@ describe("resolveForTask availability chain", () => {
         );
     });
 
+    test("a lone provider on a text task takes that provider's catalog model", () => {
+        expect(taskModelRef({ provider: "anthropic" }, "summarize")).toMatch(/^anthropic\/claude-/);
+        expect(taskModelRef({ provider: "anthropic" }, "translate")).toMatch(/^anthropic\/claude-/);
+        expect(() => taskModelRef({ provider: "unsupported-provider" }, "summarize")).toThrow(
+            "No default summarize model"
+        );
+    });
+
+    test("walks the legacy getProviderForTask order, cloud expanded to openai, groq, openrouter", async () => {
+        // providers/index.ts fallbackOrder: ollama, coreml, darwinkit, local-hf, cloud, google,
+        // assemblyai, deepgram, gladia. The local and google rungs cannot transcribe through this
+        // table, so the transcribe chain is the cloud trio, then the three ASR vendors.
+        const legacy = ["openai", "groq", "openrouter", "assemblyai", "deepgram", "gladia"];
+        const picked: string[] = [];
+
+        for (let failing = 0; failing < legacy.length; failing++) {
+            _resetPluginsForTest();
+            _resetBuiltInPluginsForTest(true);
+
+            for (const [index, id] of legacy.entries()) {
+                registerPlugin(fakePlugin(id, { transcription: true, bindThrows: index < failing }));
+            }
+
+            // Config order is the reverse of the chain, so only FALLBACK_ORDER can produce the expected walk.
+            writeConfig([...legacy].reverse().map((id) => account(`acc_${id}`, id)));
+            picked.push((await resolveForTask({ task: "transcribe", needs: "transcription" })).plugin.id);
+        }
+
+        expect(picked).toEqual(legacy);
+    });
+
     test("degrades past a provider that cannot bind, in fallback order", async () => {
         registerPlugin(fakePlugin("deepgram", { bindThrows: true }));
         registerPlugin(fakePlugin("groq", { transcription: true }));

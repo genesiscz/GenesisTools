@@ -37,7 +37,31 @@ interface TranslateFlags {
     to?: string;
     from?: string;
     provider?: string;
+    model?: string;
     clipboard?: boolean;
+}
+
+/**
+ * One text-task call through the facade, retried on a transient failure.
+ *
+ * `--provider` and `--model` choose for this call only; nothing is saved
+ * (`tools ai config` owns the defaults).
+ */
+async function callTextTask<T>(
+    call: (ai: typeof import("@genesiscz/utils/ai/tasks/facade.ts").ai) => Promise<T>
+): Promise<T> {
+    // lazy: the facade loads the provider plugins, and only translate and summarize need them
+    const [{ ai }, { isTransientAiError }, { rateLimitAwareDelay, retry }] = await Promise.all([
+        import("@genesiscz/utils/ai/tasks/facade.ts"),
+        import("@genesiscz/utils/ai/core/retry.ts"),
+        import("@genesiscz/utils/async.ts"),
+    ]);
+
+    return retry(() => call(ai), {
+        maxAttempts: 3,
+        getDelay: rateLimitAwareDelay(),
+        shouldRetry: isTransientAiError,
+    });
 }
 
 /**
@@ -86,29 +110,19 @@ async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Pro
     s.start("Translating...");
 
     try {
-        // lazy: saves 122 ms cold import (tools ts imports lazy, 2026-09-16) — the ai barrel evaluates every provider plugin and only translate and summarize need it
-        const { AI } = await import("@genesiscz/utils/ai/index.ts");
-        const translator = await AI.Translator.create({
-            provider: opts.provider,
-        });
+        const to = opts.to;
+        const result = await callTextTask((ai) =>
+            ai.translate(input, { from: fromLang, to, provider: opts.provider, model: opts.model })
+        );
 
-        try {
-            const result = await translator.translate(input, {
-                from: fromLang,
-                to: opts.to,
-            });
+        s.stop(pc.green("Translation complete"));
+        out.error(pc.dim(`${result.from} → ${result.to}`));
 
-            s.stop(pc.green("Translation complete"));
-            out.error(pc.dim(`${result.from} → ${result.to}`));
-
-            if (opts.clipboard) {
-                await copyToClipboard(result.text, { label: "translation" });
-            }
-
-            out.println(result.text);
-        } finally {
-            translator.dispose();
+        if (opts.clipboard) {
+            await copyToClipboard(result.text, { label: "translation" });
         }
+
+        out.println(result.text);
     } catch (error) {
         s.stop(pc.red("Translation failed"));
         out.error(pc.red(error instanceof Error ? error.message : String(error)));
@@ -123,6 +137,7 @@ async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Pro
 interface SummarizeFlags {
     maxLength?: string;
     provider?: string;
+    model?: string;
     clipboard?: boolean;
 }
 
@@ -161,9 +176,10 @@ async function cmdSummarize(file: string | undefined, opts: SummarizeFlags): Pro
     s.start("Summarizing...");
 
     try {
-        // lazy: saves 122 ms cold import (tools ts imports lazy, 2026-09-16) — the ai barrel evaluates every provider plugin and only translate and summarize need it
-        const { AI } = await import("@genesiscz/utils/ai/index.ts");
-        const result = await AI.summarize(input, { maxLength });
+        const text = input;
+        const result = await callTextTask((ai) =>
+            ai.summarize(text, { maxLength, provider: opts.provider, model: opts.model })
+        );
 
         s.stop(pc.green("Summarization complete"));
         out.error(pc.dim(`Original: ${formatBytes(input.length)} → Summary: ${formatBytes(result.summary.length)}`));
@@ -529,7 +545,8 @@ program
     .argument("[text]", "Text to translate (or pipe via stdin)")
     .option("--to <lang>", "Target language (required)")
     .option("--from <lang>", "Source language (auto-detect if omitted)")
-    .option("--provider <provider>", "AI provider (local-hf, cloud, darwinkit)")
+    .option("--provider <provider>", "AI provider for this call (not saved)")
+    .option("--model <model>", "Model for this call (not saved)")
     .option("-c, --clipboard", "Copy result to clipboard")
     .action(async (text: string | undefined, opts: TranslateFlags) => {
         await cmdTranslate(text, opts);
@@ -540,7 +557,8 @@ program
     .description("Summarize text from file, stdin, or clipboard")
     .argument("[file]", 'File to summarize (use "-" for stdin, omit for clipboard)')
     .option("--max-length <n>", "Maximum summary length")
-    .option("--provider <provider>", "AI provider")
+    .option("--provider <provider>", "AI provider for this call (not saved)")
+    .option("--model <model>", "Model for this call (not saved)")
     .option("-c, --clipboard", "Copy result to clipboard")
     .action(async (file: string | undefined, opts: SummarizeFlags) => {
         await cmdSummarize(file, opts);

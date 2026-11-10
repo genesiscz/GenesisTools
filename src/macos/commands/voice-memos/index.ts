@@ -10,9 +10,9 @@ import {
     selectProvider,
 } from "@app/macos/lib/voice-memos/prompts.ts";
 import * as p from "@clack/prompts";
-import { AI } from "@genesiscz/utils/ai/index.ts";
 import type { LanguageDetectionResult } from "@genesiscz/utils/ai/LanguageDetector.ts";
 import { getAllProviders } from "@genesiscz/utils/ai/providers/index.ts";
+import { Transcriber } from "@genesiscz/utils/ai/tasks/Transcriber.ts";
 import { formatOutput, type OutputFormat } from "@genesiscz/utils/ai/transcription-format.ts";
 import type { AIProviderType, TranscriptionResult as AITranscriptionResult } from "@genesiscz/utils/ai/types.ts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor.ts";
@@ -431,7 +431,7 @@ export type MemoSpinner = Pick<ReturnType<typeof p.spinner>, "start" | "stop" | 
 const DEFAULT_TRANSCRIBE_ONE_DEPS: TranscribeOneDeps = {
     resolveMemo,
     extractTranscript,
-    createTranscriber: async (opts) => AI.Transcriber.create({ ...opts, persist: true }),
+    createTranscriber: async (opts) => Transcriber.create({ ...opts, persist: true }),
     deliver: deliverMemoTranscript,
 };
 

@@ -4,7 +4,7 @@ import { openRouterExtras } from "../catalog/openrouter";
 import type { TaskName } from "../config/schema";
 import { type CallLLMOptions, type CallLLMResult, callLLM } from "../core/call";
 import type { ModelRef } from "../core/model-ref";
-import { resolveModel } from "../core/resolve";
+import { resolveModel, TASK_CAPABILITY } from "../core/resolve";
 import type { ResolvedBinding } from "../core/types";
 import type {
     EmbeddingResult,
@@ -22,6 +22,7 @@ import { resolveForTask } from "./resolve-task";
 import type { SpeakOptions } from "./Synthesizer";
 import { Synthesizer } from "./Synthesizer";
 import { Transcriber } from "./Transcriber";
+import { taskModelRef } from "./task-models";
 
 /**
  * One entry point per task verb.
@@ -56,6 +57,18 @@ export interface TaskCommonOptions {
     model?: ModelRef;
     /** Tool name, for `defaults.app.<app>.<task>` overrides. */
     app?: string;
+}
+
+/**
+ * The text verbs also take a CLI-shaped `--provider` for one call.
+ *
+ * A lone provider has no ref spelling (core/model-ref.ts), so `taskModelRef`
+ * fills the model half with that provider's default for the task. The choice is
+ * never written to the config: a flag is a per-call choice, and the saved
+ * default changes only through `tools ai config`.
+ */
+export interface TextTaskOptions extends TaskCommonOptions {
+    provider?: string;
 }
 
 export class NotImplementedError extends Error {
@@ -125,10 +138,13 @@ async function withBinding<T>(
  * still calls with nothing but the text.
  */
 async function withLanguageBinding<T>(
-    opts: { task: TaskName; model?: ModelRef; app?: string },
+    opts: { task: TaskName; model?: ModelRef; provider?: string; app?: string },
     use: (resolved: ResolvedBinding) => Promise<T>
 ): Promise<T> {
-    const resolved = await resolveModel(opts.model, {
+    const ref = opts.provider
+        ? taskModelRef({ provider: opts.provider, model: opts.model }, TASK_CAPABILITY[opts.task])
+        : opts.model;
+    const resolved = await resolveModel(ref, {
         task: opts.task,
         ...(opts.app ? { app: opts.app } : {}),
     });
@@ -258,9 +274,9 @@ export const ai = {
         return synth.synthesize(text, options);
     },
 
-    async summarize(text: string, options?: TaskCommonOptions & SummarizeOptions): Promise<SummarizationResult> {
+    async summarize(text: string, options?: TextTaskOptions & SummarizeOptions): Promise<SummarizationResult> {
         return withLanguageBinding(
-            { task: "summarize", model: options?.model, app: options?.app },
+            { task: "summarize", model: options?.model, provider: options?.provider, app: options?.app },
             async (resolved) => {
                 const result = await callLLM({
                     systemPrompt: "",
@@ -273,8 +289,15 @@ export const ai = {
         );
     },
 
-    async translate(text: string, options: TaskCommonOptions & TranslateOptions): Promise<TranslationResult> {
-        return withLanguageBinding({ task: "translate", model: options.model, app: options.app }, async (resolved) => {
+    async translate(text: string, options: TextTaskOptions & TranslateOptions): Promise<TranslationResult> {
+        const binding = {
+            task: "translate" as const,
+            model: options.model,
+            provider: options.provider,
+            app: options.app,
+        };
+
+        return withLanguageBinding(binding, async (resolved) => {
             const result = await callLLM({
                 systemPrompt: "",
                 userPrompt:
