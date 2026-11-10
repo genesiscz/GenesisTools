@@ -5,10 +5,11 @@
  * on every vault request; this side only writes it. A missing file means VAULT_AUTO_ALLOW_DEFAULTS, and the Swift side
  * holds the same defaults: change both together.
  */
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
+import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { gateDir } from "./grants";
 
@@ -34,6 +35,7 @@ export const VAULT_AUTO_ALLOW_DEFAULTS: VaultAutoAllowSettings = {
     agentApps: ["Grok Bot"],
 };
 
+/** `~/.genesis-tools/ai/gate/vault-auto-allow.json`, beside the vault grants. */
 export function vaultAutoAllowPath(): string {
     return join(gateDir(), "vault-auto-allow.json");
 }
@@ -51,40 +53,94 @@ export function autoAllowCommand(words: readonly string[]): string {
 }
 
 /**
- * The settings on disk, a missing key taking its default. A file that is not a JSON object throws with its path: the
- * app turns the feature off for such a file, so the CLI must not show the defaults as if they applied.
+ * One key of the file, read the way the app's decoder reads it (`decodeIfPresent`): absent or null takes the default,
+ * a value of another type throws, because the app turns the whole feature off for such a file.
+ */
+function settingsField<T>(
+    value: Record<string, unknown>,
+    key: keyof VaultAutoAllowSettings,
+    accepts: (field: unknown) => field is T,
+    fallback: T,
+    path: string
+): T {
+    const field = value[key];
+    if (field === undefined || field === null) {
+        return fallback;
+    }
+
+    if (!accepts(field)) {
+        throw new Error(
+            `${path}: "${key}" has the wrong type; the app turns auto-allow off until the file is fixed or removed`
+        );
+    }
+
+    return field;
+}
+
+const isBoolean = (field: unknown): field is boolean => typeof field === "boolean";
+
+/**
+ * The settings on disk, a missing key taking its default. A file the app cannot decode (not JSON, not an object, or a
+ * key of the wrong type) throws with its path: the app turns the feature off for such a file, so the CLI must not show
+ * the defaults as if they applied, and must not write over it. A plain read: showing the settings never writes a file.
  */
 export function loadVaultAutoAllow(path = vaultAutoAllowPath()): VaultAutoAllowSettings {
-    const read = readJsonFileForUpdateSync<Record<string, unknown>>(path, { accepts: isJsonObject });
-    if (read.state === "missing") {
-        return { ...VAULT_AUTO_ALLOW_DEFAULTS };
+    let text: string;
+    try {
+        text = readFileSync(path, "utf8");
+    } catch (err) {
+        if (isMissingFileError(err)) {
+            return { ...VAULT_AUTO_ALLOW_DEFAULTS };
+        }
+
+        throw err;
     }
 
-    if (read.state !== "ok") {
-        throw new Error(`${path} is not a JSON object; the vault window asks for every command until it is fixed`);
+    let value: unknown;
+    try {
+        value = SafeJSON.parse(text, { strict: true });
+    } catch {
+        value = undefined;
     }
 
-    const value = read.value;
+    if (!isJsonObject(value)) {
+        throw new Error(
+            `${path} is not a JSON object; the app turns auto-allow off until the file is fixed or removed`
+        );
+    }
+
     return {
         version: 1,
-        enabled: typeof value.enabled === "boolean" ? value.enabled : VAULT_AUTO_ALLOW_DEFAULTS.enabled,
-        notify: typeof value.notify === "boolean" ? value.notify : VAULT_AUTO_ALLOW_DEFAULTS.notify,
-        commands: isStringArray(value.commands) ? value.commands : [...VAULT_AUTO_ALLOW_DEFAULTS.commands],
-        agentApps: isStringArray(value.agentApps) ? value.agentApps : [...VAULT_AUTO_ALLOW_DEFAULTS.agentApps],
+        enabled: settingsField(value, "enabled", isBoolean, VAULT_AUTO_ALLOW_DEFAULTS.enabled, path),
+        notify: settingsField(value, "notify", isBoolean, VAULT_AUTO_ALLOW_DEFAULTS.notify, path),
+        commands: settingsField(value, "commands", isStringArray, [...VAULT_AUTO_ALLOW_DEFAULTS.commands], path),
+        agentApps: settingsField(value, "agentApps", isStringArray, [...VAULT_AUTO_ALLOW_DEFAULTS.agentApps], path),
     };
 }
 
+/** Writes the settings atomically, private to the user. Callers that change one key use `updateVaultAutoAllow`. */
 export function saveVaultAutoAllow(settings: VaultAutoAllowSettings, path = vaultAutoAllowPath()): void {
     mkdirSync(dirname(path), { recursive: true });
     atomicWriteFileSync(path, `${SafeJSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
 }
 
-/** Loads, applies `change`, saves, and returns the saved settings. */
-export function updateVaultAutoAllow(
+/**
+ * Loads, applies `change`, saves, and returns the saved settings, all under the file's lock: two commands at once (a
+ * `disable` and a `notify off`) each see the other's write, so neither puts back what the other changed. A file that
+ * does not load throws before anything is written.
+ */
+export async function updateVaultAutoAllow(
     change: (settings: VaultAutoAllowSettings) => VaultAutoAllowSettings,
     path = vaultAutoAllowPath()
-): VaultAutoAllowSettings {
-    const next = change(loadVaultAutoAllow(path));
-    saveVaultAutoAllow(next, path);
-    return next;
+): Promise<VaultAutoAllowSettings> {
+    mkdirSync(dirname(path), { recursive: true });
+    return withFileLock(
+        `${path}.lock`,
+        async () => {
+            const next = change(loadVaultAutoAllow(path));
+            saveVaultAutoAllow(next, path);
+            return next;
+        },
+        10_000
+    );
 }

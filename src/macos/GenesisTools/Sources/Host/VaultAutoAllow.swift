@@ -5,9 +5,9 @@
 //
 // The list lives in `~/.genesis-tools/ai/gate/vault-auto-allow.json`, written by `tools ai gate auto-allow`
 // (src/utils/ai/gate/auto-allow.ts holds the same defaults). A request passes only when the script is a tool of the
-// GenesisTools checkout this app was built from, the command is on the list, an agent started it, and NODE_PATH is the
-// only variable that loads extra code. Anything else still gets the window. Every pass writes an audit line, and a
-// notification when `notify` is on.
+// GenesisTools checkout this app was built from, run by Bun or a `gt-<tool>` launcher, the command is on the list, an
+// agent process is among the caller's ancestors, and NODE_PATH is the only variable that loads extra code. Anything else
+// still gets the window. Every pass writes an audit line, and a notification when `notify` is on.
 
 import Foundation
 import UserNotifications
@@ -68,12 +68,18 @@ enum VaultAutoAllow {
     /// The one code-loading variable a pass tolerates: Electron agent apps put their own bundle's modules there.
     static let toleratedInjections: Set<String> = ["NODE_PATH"]
 
+    /// The listed command and the agent behind it, or nil for the window. The executable must be Bun or a `gt-<tool>`
+    /// launcher at their known paths (`VaultGrants.runtime`): the script path is only an argument, and any other program
+    /// can pass it without running it. The subcommand must be the first argument after the script: with an option
+    /// before it, the first bare word may be that option's value (`say --model voices`), so the command is unknown.
     static func match(caller: VaultCaller, session: VaultSessionInfo, settings: VaultAutoAllowSettings,
-                      trustedRoot: String?) -> VaultAutoAllowMatch? {
-        guard settings.enabled, let trustedRoot, let script = caller.script, caller.args != nil,
+                      trustedRoot: String?, home: String = genesisHome()) -> VaultAutoAllowMatch? {
+        guard settings.enabled, let trustedRoot, let executable = caller.executable,
+              VaultGrants.runtime(of: executable, home: home) == "bun",
+              let script = caller.script, caller.args != nil,
               Set(caller.injected).isSubset(of: toleratedInjections),
               let tool = tool(of: script, root: trustedRoot),
-              let subcommand = caller.scriptArguments.first(where: { !$0.hasPrefix("-") }) else { return nil }
+              let subcommand = caller.scriptArguments.first, !subcommand.hasPrefix("-") else { return nil }
 
         let command = "\(tool) \(subcommand)"
         guard settings.commands.contains(command),
@@ -90,10 +96,17 @@ enum VaultAutoAllow {
         return String(parts[0])
     }
 
-    /// A Claude Code session, a Claude, Codex or Grok CLI ancestor, or an ancestor process named like a listed app.
+    /// The agent among the caller's ancestors, from the kernel's process chain: a Claude, Codex or Grok CLI process, or
+    /// a process named like a listed app. The session (from `CLAUDE_CODE_SESSION_ID`, which any process can set) only
+    /// names a Claude Code agent found that way; on its own it proves nothing.
     static func agent(caller: VaultCaller, session: VaultSessionInfo, apps: [String]) -> String? {
-        if let summary = session.summary { return summary }
         for ancestor in caller.ancestors {
+            let name = ancestor.command.split(separator: " ").first.map(String.init)
+            if let harness = Harness.allCases.first(where: { $0.binary == name }) {
+                if harness == .claude, session.sessionId != nil, let summary = session.summary { return summary }
+                return "\(ancestor.command) (pid \(ancestor.pid))"
+            }
+
             if let app = apps.first(where: { ancestor.command == $0 || ancestor.command.hasPrefix($0 + " ") }) {
                 return app
             }

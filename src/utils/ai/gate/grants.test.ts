@@ -6,9 +6,11 @@ import { appendGateAudit, gatesAuditPath } from "@genesiscz/utils/audit/gates";
 import { defaultRouterConfig, route } from "@genesiscz/utils/browser-router/route";
 import { env } from "@genesiscz/utils/env";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import {
     autoAllowCommand,
     loadVaultAutoAllow,
+    saveVaultAutoAllow,
     updateVaultAutoAllow,
     VAULT_AUTO_ALLOW_DEFAULTS,
     vaultAutoAllowPath,
@@ -465,12 +467,12 @@ describe("vault auto-allow settings", () => {
         expect(VAULT_AUTO_ALLOW_DEFAULTS.commands).toEqual(["claude warmup", "claude usage", "ai warmup", "ai usage"]);
     });
 
-    test("a missing key takes its default, and an update is saved for the app to read", () => {
+    test("a missing key takes its default, and an update is saved for the app to read", async () => {
         mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
         writeFileSync(vaultAutoAllowPath(), SafeJSON.stringify({ version: 1, notify: false, commands: ["ai usage"] }));
         expect(loadVaultAutoAllow()).toMatchObject({ enabled: true, notify: false, commands: ["ai usage"] });
 
-        const saved = updateVaultAutoAllow((settings) => ({
+        const saved = await updateVaultAutoAllow((settings) => ({
             ...settings,
             commands: [...settings.commands, autoAllowCommand(["claude ", " warmup"])],
         }));
@@ -483,5 +485,67 @@ describe("vault auto-allow settings", () => {
         mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
         writeFileSync(vaultAutoAllowPath(), "[1, 2]");
         expect(() => loadVaultAutoAllow()).toThrow(/vault-auto-allow\.json is not a JSON object/);
+    });
+
+    // The app's decoder turns the whole feature off for a key of the wrong type (VaultAutoAllowSettings.load), so the
+    // CLI must not show, or write back, the defaults for it: {"enabled":"false"} would become enabled:true.
+    test("a key of the wrong type fails like the app's decoder, and null is a missing key", () => {
+        mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
+        for (const [key, value] of [
+            ["commands", "ai usage"],
+            ["agentApps", ["Grok Bot", 3]],
+            ["notify", "off"],
+            ["enabled", "false"],
+        ] as const) {
+            writeFileSync(vaultAutoAllowPath(), SafeJSON.stringify({ version: 1, [key]: value }));
+            expect(() => loadVaultAutoAllow()).toThrow(new RegExp(`"${key}" has the wrong type`));
+        }
+
+        writeFileSync(vaultAutoAllowPath(), SafeJSON.stringify({ version: 1, enabled: false, notify: null }));
+        expect(loadVaultAutoAllow()).toMatchObject({ enabled: false, notify: true });
+    });
+
+    test("showing a broken file reads it only, and an update refuses it instead of writing the defaults", async () => {
+        mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
+        const broken = '{"enabled": false, "commands": [';
+        writeFileSync(vaultAutoAllowPath(), broken);
+        const corruptCopies = () =>
+            readdirSync(dirname(vaultAutoAllowPath())).filter((name) =>
+                name.startsWith("vault-auto-allow.json.corrupt")
+            );
+
+        expect(() => loadVaultAutoAllow()).toThrow(/is not a JSON object/);
+        await expect(updateVaultAutoAllow((settings) => ({ ...settings, notify: false }))).rejects.toThrow(
+            /is not a JSON object/
+        );
+        expect(readFileSync(vaultAutoAllowPath(), "utf8")).toBe(broken);
+        expect(corruptCopies()).toEqual([]);
+    });
+
+    // Two commands at once: a `disable` lands while a `notify off` waits for the lock. The update must read the file
+    // after it gets the lock, or it saves its old snapshot and turns the feature back on.
+    test("an update waits for the file's lock and keeps a disable saved meanwhile", async () => {
+        const path = vaultAutoAllowPath();
+        mkdirSync(dirname(path), { recursive: true });
+        let release = () => {};
+        let locked = () => {};
+        const holding = new Promise<void>((resolve) => {
+            locked = resolve;
+        });
+        const holder = withFileLock(`${path}.lock`, async () => {
+            locked();
+            await new Promise<void>((resolve) => {
+                release = resolve;
+            });
+        });
+        await holding;
+
+        const update = updateVaultAutoAllow((settings) => ({ ...settings, notify: false }));
+        saveVaultAutoAllow({ ...VAULT_AUTO_ALLOW_DEFAULTS, enabled: false });
+        release();
+        await holder;
+
+        expect(await update).toMatchObject({ enabled: false, notify: false });
+        expect(loadVaultAutoAllow()).toMatchObject({ enabled: false, notify: false });
     });
 });

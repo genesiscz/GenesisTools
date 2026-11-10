@@ -139,20 +139,29 @@ logged (event `auto-allowed` in `~/.genesis-tools/ai/gate/audit.jsonl`) and post
 ```bash
 tools ai gate auto-allow [--json]                  # the list, the agent apps, the notification switch (read-only)
 tools ai gate auto-allow add claude warmup         # let "tools claude warmup" through
-tools ai gate auto-allow remove claude warmup      # it asks in the window again
+tools ai gate auto-allow remove claude warmup      # it no longer skips the window on this list
 tools ai gate auto-allow add-agent "Grok Bot"      # count an app's processes as an agent's
 tools ai gate auto-allow remove-agent "Grok Bot"
 tools ai gate auto-allow notify on|off             # the audit line is written either way
-tools ai gate auto-allow enable|disable            # disable: every command asks again; the list is kept
+tools ai gate auto-allow enable|disable            # disable: this bypass stops; the list is kept
+tools ai gate revoke <tool>                        # forget remembered "Always" allows too
 ```
 
+- `disable` and `remove` stop only this list. A command that was allowed with "Always" in the window is remembered
+  separately (`tools ai gate grants`) and still skips the window; `tools ai gate revoke <tool>` (or `--all`) forgets it.
 - Defaults: `claude warmup`, `claude usage`, `ai warmup`, `ai usage`; agent apps `Grok Bot`; notification on. The file
-  is `~/.genesis-tools/ai/gate/vault-auto-allow.json`; a missing file is the defaults, and a file that does not parse
-  turns the list off.
-- A request passes only when all of these hold: the script is `src/<tool>/index.ts` of the GenesisTools checkout the
-  app was built from (a worktree build counts as its main checkout); `<tool> <first argument>` is on the list; a Claude
-  Code session, a Claude, Codex or Grok CLI process, or a listed app started it; and the only variable that loads extra
-  code is `NODE_PATH` (Grok Bot, an Electron app, sets it in every shell it opens). Anything else gets the window.
+  is `~/.genesis-tools/ai/gate/vault-auto-allow.json`; a missing file, or a missing or null key, is the defaults. A
+  file the app cannot decode (not JSON, not an object, or a key of the wrong type such as `"enabled": "false"`) turns
+  the list off in the app. The CLI then prints the error with the file's path, exits 1, and changes nothing until the
+  file is fixed or removed. Showing the settings only reads the file.
+- `add` takes a tool and its subcommand (`claude warmup`); an empty or other-shaped command is refused.
+- A request passes only when all of these hold: the program is Bun or a `gt-<tool>` launcher at their known paths
+  (`~/.bun/bin/bun`, Homebrew's, `~/.genesis-tools/bin/gt-*`); the script is `src/<tool>/index.ts` of the GenesisTools
+  checkout the app was built from (a worktree build counts as its main checkout); the first argument after the script
+  is the subcommand (no option before it) and `<tool> <subcommand>` is on the list; a process named `claude`, `codex`
+  or `grok`, or a process of a listed app, is among the caller's parent processes (a `CLAUDE_CODE_SESSION_ID` in the
+  environment only names the session); and the only variable that loads extra code is `NODE_PATH` (Grok Bot, an
+  Electron app, sets it in every shell it opens). Anything else gets the window.
 - Why: DECISION 57 c (2026-11-10). The command never prints the key; the window's job is to decide which program holds
   the key, and for these commands that decision is made once, here.
 
