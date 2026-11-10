@@ -18,8 +18,12 @@ struct HintChip: Equatable, Hashable, Identifiable {
 
     var id: String { "\(fromSec)-\(toSec)" }
 
-    /// "12:04 to 12:31".
-    var rangeText: String { "\(MeetingsFormat.clock(fromSec)) to \(MeetingsFormat.clock(toSec))" }
+    /// "12:04 to 12:31", or "12:04" for a stretch that starts and ends in one second ("2:07:12 to 2:07:12" read as a
+    /// mistake).
+    var rangeText: String {
+        let from = MeetingsFormat.clock(fromSec), to = MeetingsFormat.clock(toSec)
+        return from == to ? from : "\(from) to \(to)"
+    }
 
     /// The chips of a hint's ranges in time order: a range up to `longestClipSec` plays, a longer one shows (zooms),
     /// because the engine refuses a Moment that long (G-SPK-3). At most `maxShown` chips; the rest are counted for

@@ -451,6 +451,12 @@ final class MeetingsUXTests: XCTestCase {
         }
     }
 
+    func testAStretchOfOneSecondNamesOneTime() {
+        XCTAssertEqual(HintChip(fromSec: 7632, toSec: 7632.4, lines: 1, action: .play, present: []).rangeText, "2:07:12",
+                       "2:07:12 to 2:07:12 read as a mistake")
+        XCTAssertEqual(HintChip(fromSec: 724, toSec: 751, lines: 3, action: .play, present: []).rangeText, "12:04 to 12:31")
+    }
+
     func testAProjectListsOnlyTheRulesItHas() {
         XCTAssertTrue(ProjectSummary.rules(folders: [], calendars: [], words: [], labels: []).isEmpty,
                       "four lines that each said none told nothing: a project without a rule says so in one sentence")
