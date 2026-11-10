@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { boundedCommand } from "./bounded-command";
 
 const { log } = logger.scoped("process-capture");
 
@@ -22,6 +23,9 @@ export interface CaptureResult {
 
 /** Where macOS keeps `lsof`, `sysctl` and friends: absent from a launchd job's PATH unless its plist adds them. */
 const SYSTEM_BIN_DIRS = ["/usr/sbin", "/sbin"];
+
+/** The largest budget boundedCommand accepts: an `lsof` over many pids prints megabytes. */
+const CAPTURE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 /**
  * A bare command name the PATH cannot resolve, found in the system bin folders instead. The daemon
@@ -71,42 +75,45 @@ export async function capture(
     args: string[],
     options?: { timeoutMs?: number; cwd?: string; env?: NodeJS.ProcessEnv }
 ): Promise<CaptureResult> {
-    const proc = Bun.spawn([resolveSystemCommand(command), ...args], {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        cwd: options?.cwd,
-        env: options?.env,
-    });
+    const argv = [resolveSystemCommand(command), ...args];
     const timeoutMs = options?.timeoutMs;
-    const streams = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    void streams.catch(() => {});
 
     if (timeoutMs === undefined) {
-        const [stdout, stderr] = await streams;
+        const proc = Bun.spawn(argv, {
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            cwd: options?.cwd,
+            env: options?.env,
+        });
+        const [stdout, stderr] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+        ]);
         await proc.exited;
 
         return { stdout, stderr, status: proc.exitCode };
     }
 
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timedOut = await new Promise<boolean>((resolve) => {
-        timeoutId = setTimeout(() => resolve(true), timeoutMs);
-        void proc.exited.then(() => resolve(false));
+    // boundedCommand owns the deadline: it runs the child in its own process group and kills the whole group,
+    // so a `lsof` stuck on a dead mount cannot leave a grandchild behind.
+    const result = await boundedCommand({
+        command: argv,
+        timeoutMs,
+        maxBufferBytes: CAPTURE_MAX_BUFFER_BYTES,
+        cwd: options?.cwd,
+        environment: options?.env,
     });
 
-    if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-    }
-
-    if (timedOut) {
-        proc.kill("SIGKILL");
+    if (result.error?.code === "ETIMEDOUT") {
         log.warn({ command, args, timeoutMs }, "child was killed on timeout; its output is partial");
 
         return { stdout: "", stderr: "", status: null, timedOut: true };
     }
 
-    const [stdout, stderr] = await streams;
+    if (result.error) {
+        throw result.error;
+    }
 
-    return { stdout, stderr, status: proc.exitCode };
+    return { stdout: result.stdout, stderr: result.stderr, status: result.status };
 }
