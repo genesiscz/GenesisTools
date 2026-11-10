@@ -1,0 +1,1378 @@
+{
+  "about": "Made from the TypeScript source by scripts/recorder/write-protocol-fixtures.ts: cases of the four frame rules that the TypeScript side (check, info, items-at, the agents) and the Swift renderer both compute. recording-editor.test.ts computes every value again; Tests/RecorderFrameRulesTests.swift replays the cases against the Swift twins. Times are microseconds.",
+  "time": {
+    "about": "outputTimeOf (project.ts) for each sourceUs, null where that moment was cut, and sourceTimeOf for each outUs. Swift: TimelineMap.outputTime(ofSource:) and sourceTime(atOutput:).",
+    "cases": [
+      {
+        "name": "one clip at speed 1",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 0
+          },
+          "sourceUs": [
+            0,
+            2500000,
+            10000000
+          ],
+          "outUs": [
+            0,
+            2500000,
+            10000000
+          ]
+        },
+        "value": {
+          "outputUs": [
+            0,
+            2500000,
+            10000000
+          ],
+          "sourceUs": [
+            0,
+            2500000,
+            10000000
+          ]
+        }
+      },
+      {
+        "name": "a cut between two clips: a cut moment plays nowhere",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 0
+          },
+          "sourceUs": [
+            0,
+            3999999,
+            4000000,
+            5000000,
+            6000000,
+            7500000,
+            10000000
+          ],
+          "outUs": [
+            0,
+            3999999,
+            4000000,
+            5500000,
+            8000000
+          ]
+        },
+        "value": {
+          "outputUs": [
+            0,
+            3999999,
+            4000000,
+            null,
+            4000000,
+            5500000,
+            8000000
+          ],
+          "sourceUs": [
+            0,
+            3999999,
+            6000000,
+            7500000,
+            10000000
+          ]
+        }
+      },
+      {
+        "name": "a sped-up, a slowed and a 3x clip round to whole microseconds",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 3000000,
+                "speed": 2
+              },
+              {
+                "id": "c2",
+                "fromUs": 5000000,
+                "toUs": 8000000,
+                "speed": 0.5
+              },
+              {
+                "id": "c3",
+                "fromUs": 8000000,
+                "toUs": 10000000,
+                "speed": 3
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 0
+          },
+          "sourceUs": [
+            1000001,
+            3000000,
+            4000000,
+            5000003,
+            8000000,
+            8000001,
+            9999999
+          ],
+          "outUs": [
+            1,
+            1499999,
+            1500000,
+            4333333,
+            7499999,
+            7500000,
+            8166666,
+            8166667
+          ]
+        },
+        "value": {
+          "outputUs": [
+            500001,
+            1500000,
+            null,
+            1500006,
+            7500000,
+            7500000,
+            8166666
+          ],
+          "sourceUs": [
+            2,
+            2999998,
+            5000000,
+            6416667,
+            8000000,
+            8000000,
+            9999998,
+            10000000
+          ]
+        }
+      },
+      {
+        "name": "clips out of source order",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 8000000,
+                "speed": 1
+              },
+              {
+                "id": "c1",
+                "fromUs": 1000000,
+                "toUs": 3000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 0
+          },
+          "sourceUs": [
+            7000000,
+            2000000,
+            4000000,
+            500000
+          ],
+          "outUs": [
+            1000000,
+            2000000,
+            3000000,
+            4000000
+          ]
+        },
+        "value": {
+          "outputUs": [
+            1000000,
+            3000000,
+            null,
+            null
+          ],
+          "sourceUs": [
+            7000000,
+            1000000,
+            2000000,
+            3000000
+          ]
+        }
+      },
+      {
+        "name": "a split with no cut: the shared moment belongs to the first clip",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 5000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 5000000,
+                "toUs": 10000000,
+                "speed": 1.5
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 0
+          },
+          "sourceUs": [
+            5000000,
+            7000000
+          ],
+          "outUs": [
+            5000000,
+            6000000,
+            8333333
+          ]
+        },
+        "value": {
+          "outputUs": [
+            5000000,
+            6333333
+          ],
+          "sourceUs": [
+            5000000,
+            6500000,
+            10000000
+          ]
+        }
+      }
+    ]
+  },
+  "joins": {
+    "about": "transitionJoins (fx.ts): every join, with kind none and halfUs 0 where nothing plays. Swift: TransitionLook.joins (RenderFx.swift), which leaves out the joins whose halfUs is 0.",
+    "cases": [
+      {
+        "name": "no transitions block: every join is a hard cut",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "clip": "c2",
+            "atUs": 4000000,
+            "kind": "none",
+            "ms": 300,
+            "halfUs": 0,
+            "own": false
+          }
+        ]
+      },
+      {
+        "name": "a default crossfade at a cut; a split alone joins nothing",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 4000000,
+                "toUs": 6000000,
+                "speed": 1
+              },
+              {
+                "id": "c3",
+                "fromUs": 8000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "transitions": {
+              "default": {
+                "kind": "crossfade",
+                "ms": 600
+              }
+            },
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "clip": "c3",
+            "atUs": 6000000,
+            "kind": "crossfade",
+            "ms": 600,
+            "halfUs": 300000,
+            "own": false
+          }
+        ]
+      },
+      {
+        "name": "an own join beats the default, and the half is held inside half of a short clip",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 1000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 3000000,
+                "toUs": 3400000,
+                "speed": 1
+              },
+              {
+                "id": "c3",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "transitions": {
+              "default": {
+                "kind": "zoom",
+                "ms": 1000
+              },
+              "joins": {
+                "c3": {
+                  "kind": "blur",
+                  "ms": 2000
+                }
+              }
+            },
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "clip": "c2",
+            "atUs": 1000000,
+            "kind": "zoom",
+            "ms": 1000,
+            "halfUs": 200000,
+            "own": false
+          },
+          {
+            "clip": "c3",
+            "atUs": 1400000,
+            "kind": "blur",
+            "ms": 2000,
+            "halfUs": 200000,
+            "own": true
+          }
+        ]
+      },
+      {
+        "name": "a join set to none among crossfades",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 2000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 3000000,
+                "toUs": 5000000,
+                "speed": 1
+              },
+              {
+                "id": "c3",
+                "fromUs": 6000000,
+                "toUs": 9000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "transitions": {
+              "default": {
+                "kind": "crossfade",
+                "ms": 400
+              },
+              "joins": {
+                "c2": {
+                  "kind": "none",
+                  "ms": 300
+                }
+              }
+            },
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "clip": "c2",
+            "atUs": 2000000,
+            "kind": "none",
+            "ms": 300,
+            "halfUs": 0,
+            "own": true
+          },
+          {
+            "clip": "c3",
+            "atUs": 4000000,
+            "kind": "crossfade",
+            "ms": 400,
+            "halfUs": 200000,
+            "own": false
+          }
+        ]
+      },
+      {
+        "name": "sped-up neighbours hold the half by their played length",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 2000000,
+                "speed": 4
+              },
+              {
+                "id": "c2",
+                "fromUs": 5000000,
+                "toUs": 9000000,
+                "speed": 2
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "transitions": {
+              "default": {
+                "kind": "crossfade",
+                "ms": 600
+              }
+            },
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "clip": "c2",
+            "atUs": 500000,
+            "kind": "crossfade",
+            "ms": 600,
+            "halfUs": 250000,
+            "own": false
+          }
+        ]
+      },
+      {
+        "name": "a clip of no length joins nothing and is skipped",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 2000000,
+                "speed": 1
+              },
+              {
+                "id": "c0",
+                "fromUs": 2000000,
+                "toUs": 2000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 4000000,
+                "toUs": 6000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "transitions": {
+              "default": {
+                "kind": "crossfade",
+                "ms": 300
+              }
+            },
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "clip": "c2",
+            "atUs": 2000000,
+            "kind": "crossfade",
+            "ms": 300,
+            "halfUs": 150000,
+            "own": false
+          }
+        ]
+      }
+    ]
+  },
+  "zoomClamp": {
+    "about": "zoomView (check.ts): a picture zoom's view at full scale, fractions of the picture from its top left. Swift: ZoomCurve.view (TimelineMap.swift) in the middle of a manual zoom, its rect.",
+    "cases": [
+      {
+        "name": "a centred focus",
+        "input": {
+          "scale": 2,
+          "focusX": 0.5,
+          "focusY": 0.5
+        },
+        "value": {
+          "x": 0.25,
+          "y": 0.25,
+          "width": 0.5,
+          "height": 0.5
+        }
+      },
+      {
+        "name": "a focus in the top left corner is held inside the picture",
+        "input": {
+          "scale": 2,
+          "focusX": 0,
+          "focusY": 0
+        },
+        "value": {
+          "x": 0,
+          "y": 0,
+          "width": 0.5,
+          "height": 0.5
+        }
+      },
+      {
+        "name": "a focus on the right edge",
+        "input": {
+          "scale": 1.5,
+          "focusX": 1,
+          "focusY": 0.3
+        },
+        "value": {
+          "x": 0.3333333333333334,
+          "y": 0,
+          "width": 0.6666666666666666,
+          "height": 0.6666666666666666
+        }
+      },
+      {
+        "name": "scale 1 shows the whole picture wherever the focus is",
+        "input": {
+          "scale": 1,
+          "focusX": 0.9,
+          "focusY": 0.1
+        },
+        "value": {
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1
+        }
+      },
+      {
+        "name": "scale 4 near the bottom left",
+        "input": {
+          "scale": 4,
+          "focusX": 0.1,
+          "focusY": 0.95
+        },
+        "value": {
+          "x": 0,
+          "y": 0.75,
+          "width": 0.25,
+          "height": 0.25
+        }
+      },
+      {
+        "name": "a focus far enough inside is kept",
+        "input": {
+          "scale": 3,
+          "focusX": 0.4,
+          "focusY": 0.6
+        },
+        "value": {
+          "x": 0.23333333333333336,
+          "y": 0.43333333333333335,
+          "width": 0.3333333333333333,
+          "height": 0.3333333333333333
+        }
+      }
+    ]
+  },
+  "hiddenSnap": {
+    "about": "snappedRedactionSpans (project.ts): each hidden part's id, style and the source times the export draws it. Swift: RedactionEdges.effective without the movie's frame times.",
+    "cases": [
+      {
+        "name": "no hidden parts",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 0
+          }
+        },
+        "value": []
+      },
+      {
+        "name": "a blur that ends 200 ms before a cut runs to the cut",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "redactions": [
+              {
+                "id": "r1",
+                "startUs": 1000000,
+                "endUs": 3800000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "blur"
+              }
+            ],
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "id": "r1",
+            "style": "blur",
+            "startUs": 1000000,
+            "endUs": 4000000
+          }
+        ]
+      },
+      {
+        "name": "a pixelate that starts 150 ms after a cut starts at it",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "redactions": [
+              {
+                "id": "r1",
+                "startUs": 6150000,
+                "endUs": 7000000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "pixelate"
+              }
+            ],
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "id": "r1",
+            "style": "pixelate",
+            "startUs": 6000000,
+            "endUs": 7000000
+          }
+        ]
+      },
+      {
+        "name": "a part 300 ms before a cut keeps its end",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "redactions": [
+              {
+                "id": "r1",
+                "startUs": 1000000,
+                "endUs": 3700000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "blur"
+              }
+            ],
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "id": "r1",
+            "style": "blur",
+            "startUs": 1000000,
+            "endUs": 3700000
+          }
+        ]
+      },
+      {
+        "name": "two hiding parts 100 ms apart meet; a spotlight keeps its own times",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "redactions": [
+              {
+                "id": "r1",
+                "startUs": 6500000,
+                "endUs": 7000000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "blur"
+              },
+              {
+                "id": "r2",
+                "startUs": 7100000,
+                "endUs": 8000000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "black"
+              },
+              {
+                "id": "s1",
+                "startUs": 1000000,
+                "endUs": 3900000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "spotlight"
+              }
+            ],
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "id": "r1",
+            "style": "blur",
+            "startUs": 6500000,
+            "endUs": 7100000
+          },
+          {
+            "id": "r2",
+            "style": "black",
+            "startUs": 7100000,
+            "endUs": 8000000
+          },
+          {
+            "id": "s1",
+            "style": "spotlight",
+            "startUs": 1000000,
+            "endUs": 3900000
+          }
+        ]
+      },
+      {
+        "name": "short gaps close one after another",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "redactions": [
+              {
+                "id": "r1",
+                "startUs": 2000000,
+                "endUs": 2500000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "blur"
+              },
+              {
+                "id": "r2",
+                "startUs": 2600000,
+                "endUs": 3000000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "blur"
+              },
+              {
+                "id": "r3",
+                "startUs": 3100000,
+                "endUs": 3400000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "blur"
+              }
+            ],
+            "revision": 0
+          }
+        },
+        "value": [
+          {
+            "id": "r1",
+            "style": "blur",
+            "startUs": 2000000,
+            "endUs": 2600000
+          },
+          {
+            "id": "r2",
+            "style": "blur",
+            "startUs": 2600000,
+            "endUs": 3100000
+          },
+          {
+            "id": "r3",
+            "style": "blur",
+            "startUs": 3100000,
+            "endUs": 3400000
+          }
+        ]
+      },
+      {
+        "name": "snapMs 0 draws every part as placed",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "redactions": [
+              {
+                "id": "r1",
+                "startUs": 1000000,
+                "endUs": 3800000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "blur"
+              }
+            ],
+            "revision": 0,
+            "redactionJoins": {
+              "snapMs": 0
+            }
+          }
+        },
+        "value": [
+          {
+            "id": "r1",
+            "style": "blur",
+            "startUs": 1000000,
+            "endUs": 3800000
+          }
+        ]
+      },
+      {
+        "name": "snapMs 500 reaches a cut and the movie's end 400 ms away",
+        "input": {
+          "edit": {
+            "version": 1,
+            "source": {
+              "video": "/rec/screen.mp4",
+              "durationUs": 10000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 4000000,
+                "speed": 1
+              },
+              {
+                "id": "c2",
+                "fromUs": 6000000,
+                "toUs": 10000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "redactions": [
+              {
+                "id": "r1",
+                "startUs": 1000000,
+                "endUs": 3600000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "blur"
+              },
+              {
+                "id": "r2",
+                "startUs": 8600000,
+                "endUs": 9600000,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.1,
+                "style": "black"
+              }
+            ],
+            "revision": 0,
+            "redactionJoins": {
+              "snapMs": 500
+            }
+          }
+        },
+        "value": [
+          {
+            "id": "r1",
+            "style": "blur",
+            "startUs": 1000000,
+            "endUs": 4000000
+          },
+          {
+            "id": "r2",
+            "style": "black",
+            "startUs": 8600000,
+            "endUs": 10000000
+          }
+        ]
+      }
+    ]
+  }
+}
