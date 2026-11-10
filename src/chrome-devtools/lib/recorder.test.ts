@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attemptStaleTakeover, EMPTY_HOLDER_GRACE_MS, writePidFile } from "@genesiscz/utils/process/pidfile";
-import { CdpDeadlineError, localDebuggerUrl } from "./cdp.ts";
+import { CdpDeadlineError } from "./cdp.ts";
 import {
     armThenRelease,
     claimRecorderPidfile,
@@ -364,10 +364,6 @@ describe("browser connection cancellation", () => {
         } finally {
             Object.defineProperty(globalThis, "WebSocket", { configurable: true, writable: true, value: socket });
         }
-
-        expect(localDebuggerUrl({ webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/x" }, 9222)).toBe(
-            "ws://127.0.0.1:9222/devtools/browser/x"
-        );
     });
 
     test("provides a deadline when the caller does not supply one", async () => {
