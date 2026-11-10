@@ -1,5 +1,38 @@
 import SwiftUI
 
+/// A colour for a person: the same for a name every time, and without a meaning. None of them is the play blue,
+/// so a person's colour is never read as "this plays". Each carries white initials.
+public enum KitPersonColor {
+    public static let palette: [Color] = [
+        Color(red: 0.55, green: 0.36, blue: 0.96), Color(red: 0.93, green: 0.49, blue: 0.13), Color(red: 0.16, green: 0.62, blue: 0.42),
+        Color(red: 0.86, green: 0.30, blue: 0.52), Color(red: 0.10, green: 0.60, blue: 0.66), Color(red: 0.72, green: 0.55, blue: 0.10),
+        Color(red: 0.80, green: 0.33, blue: 0.27), Color(red: 0.42, green: 0.58, blue: 0.18),
+    ]
+
+    /// The colour of `name`. With the names it stands `among` (the speakers of one meeting), two of them never share
+    /// a colour while the palette lasts: each takes its own colour, or the next free one, in the order of the names.
+    public static func color(for name: String, among names: [String] = []) -> Color {
+        guard names.count > 1, names.contains(name) else { return palette[slot(name)] }
+        var taken = Set<Int>()
+        for other in Set(names).sorted() {
+            var index = slot(other)
+            var steps = 0
+            while taken.contains(index), steps < palette.count {
+                index = (index + 1) % palette.count
+                steps += 1
+            }
+            taken.insert(index)
+            if other == name { return palette[index] }
+        }
+        return palette[slot(name)]
+    }
+
+    /// Stable across runs (Swift's `hashValue` is seeded per process).
+    private static func slot(_ name: String) -> Int {
+        name.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF } % palette.count
+    }
+}
+
 /// A colour with a meaning. A view names the meaning and never an RGB value, so one thing has one colour in every
 /// window: what plays is blue in the transcript, on the timeline and on the button that plays it.
 ///

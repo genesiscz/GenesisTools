@@ -22,13 +22,17 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         public let symbol: String?
         public let count: Int?
         public let hue: KitHue
+        /// False: the segment shows dimmed and takes no click (a view that has nothing to show now).
+        public let isEnabled: Bool
 
-        public init(_ id: ID, _ title: String, symbol: String? = nil, count: Int? = nil, hue: KitHue = .neutral) {
+        public init(_ id: ID, _ title: String, symbol: String? = nil, count: Int? = nil, hue: KitHue = .neutral,
+                    isEnabled: Bool = true) {
             self.id = id
             self.title = title
             self.symbol = symbol
             self.count = count
             self.hue = hue
+            self.isEnabled = isEnabled
         }
     }
 
@@ -150,6 +154,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
                 .contentShape(RoundedRectangle(cornerRadius: thumbRadius, style: look.corners))
         }
         .buttonStyle(GenSegmentStyle(selected: selected, radius: thumbRadius))
+        .disabled(!item.isEnabled)
         .anchorPreference(key: GenSegmentFrames.self, value: .bounds) { [AnyHashable(item.id): $0] }
         .accessibilityLabel(item.count.map { "\(item.title), \($0)" } ?? item.title)
         .chartAccessibilityIdentifier(identifier.map { "\($0).\(GenAccessibilityID.suffix(item.id))" })
@@ -187,6 +192,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
                 countPill(count, item, layer)
             }
         }
+        .opacity(item.isEnabled ? 1 : 0.4)
         .padding(.horizontal, fit.padding(size))
         .frame(minWidth: fit.fills ? 0 : minSegmentWidth, maxWidth: fit.fills ? .infinity : nil, minHeight: segmentHeight)
     }

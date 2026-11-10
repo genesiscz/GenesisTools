@@ -36,6 +36,8 @@ public struct KitButtonStyle: ButtonStyle {
     var fullWidth = false
     /// A square button for one glyph.
     var square = false
+    /// The least width: a button whose title changes ("Pause", "Play") keeps its place.
+    var minWidth: CGFloat?
 
     public func makeBody(configuration: Configuration) -> some View {
         KitButtonBody(configuration: configuration, style: self)
@@ -78,7 +80,7 @@ private struct KitButtonBody: View {
             .environment(\.kitGlyphSize, style.size.glyph)
             .padding(.horizontal, style.square ? 0 : style.size.padding)
             .frame(width: style.square ? style.size.height : nil, height: style.size.height)
-            .frame(maxWidth: style.fullWidth ? .infinity : nil)
+            .frame(minWidth: style.minWidth, maxWidth: style.fullWidth ? .infinity : nil)
             .background(KitSurfaceBackground(surface, radius: radius, corners: look.corners))
             .brightness(surface.brightness)
             .scaleEffect(reduceMotion ? 1 : (state == .pressed ? 0.97 : 1))
@@ -149,13 +151,14 @@ public struct KitButton: View {
     private let hue: KitHue
     private let size: KitControlSize
     private let fullWidth: Bool
+    private let minWidth: CGFloat?
     private let tooltip: String?
     private let identifier: String?
     private let action: () -> Void
 
     public init(_ title: String, symbol: String? = nil, trailingSymbol: String? = nil, kind: KitButtonKind = .soft,
-                hue: KitHue = .neutral, size: KitControlSize = .regular, fullWidth: Bool = false, tooltip: String? = nil,
-                identifier: String? = nil, action: @escaping () -> Void) {
+                hue: KitHue = .neutral, size: KitControlSize = .regular, fullWidth: Bool = false, minWidth: CGFloat? = nil,
+                tooltip: String? = nil, identifier: String? = nil, action: @escaping () -> Void) {
         self.title = title
         self.symbol = symbol
         self.trailingSymbol = trailingSymbol
@@ -163,6 +166,7 @@ public struct KitButton: View {
         self.hue = hue
         self.size = size
         self.fullWidth = fullWidth
+        self.minWidth = minWidth
         self.tooltip = tooltip
         self.identifier = identifier
         self.action = action
@@ -178,6 +182,7 @@ public struct KitButton: View {
         self.hue = hue
         self.size = size
         self.fullWidth = false
+        self.minWidth = nil
         self.tooltip = tooltip
         self.identifier = identifier
         self.action = action
@@ -198,7 +203,7 @@ public struct KitButton: View {
                 }
             }
         }
-        .buttonStyle(KitButtonStyle(kind: kind, hue: hue, size: size, fullWidth: fullWidth, square: title == nil))
+        .buttonStyle(KitButtonStyle(kind: kind, hue: hue, size: size, fullWidth: fullWidth, square: title == nil, minWidth: minWidth))
         .kitTooltip(tooltip)
         .accessibilityLabel(Text(verbatim: title ?? tooltip ?? ""))
         .accessibilityIdentifier(identifier ?? "")
