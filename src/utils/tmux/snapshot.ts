@@ -5,6 +5,7 @@ import { capture } from "@genesiscz/utils/process/ps";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import { tmuxSendKeys } from "@genesiscz/utils/tmux/send-keys";
 import {
     argvWithChildDeadline,
     createTmuxSession,
@@ -460,7 +461,7 @@ export async function restoreTmuxSession(
     }
 
     if (firstPane && !opts.skipReplay) {
-        await replayPane(tmuxBin, `${targetName}:0.0`, firstPane);
+        await replayPane(`${targetName}:0.0`, firstPane);
     }
 
     for (let pi = 1; pi < (firstWindow?.panes.length ?? 0); pi += 1) {
@@ -472,7 +473,7 @@ export async function restoreTmuxSession(
         await runTmux(tmuxBin, ["split-window", "-t", `${targetName}:0`, "-c", pane.cwd ?? firstCwd], "split-window");
 
         if (!opts.skipReplay) {
-            await replayPane(tmuxBin, `${targetName}:0.${pi}`, pane);
+            await replayPane(`${targetName}:0.${pi}`, pane);
         }
     }
 
@@ -493,7 +494,7 @@ export async function restoreTmuxSession(
         await runTmux(tmuxBin, newWindowArgs, "new-window");
 
         if (firstWindowPane && !opts.skipReplay) {
-            await replayPane(tmuxBin, `${targetName}:${wi}.0`, firstWindowPane);
+            await replayPane(`${targetName}:${wi}.0`, firstWindowPane);
         }
 
         for (let pi = 1; pi < window.panes.length; pi += 1) {
@@ -509,7 +510,7 @@ export async function restoreTmuxSession(
             );
 
             if (!opts.skipReplay) {
-                await replayPane(tmuxBin, `${targetName}:${wi}.${pi}`, pane);
+                await replayPane(`${targetName}:${wi}.${pi}`, pane);
             }
         }
     }
@@ -522,13 +523,18 @@ export async function restoreTmuxSession(
     };
 }
 
-async function replayPane(tmuxBin: string, target: string, pane: TmuxPaneSnapshot): Promise<void> {
+/** Type the pane's last shell command back without Enter, so the user decides whether to rerun it. */
+async function replayPane(target: string, pane: TmuxPaneSnapshot): Promise<void> {
     const cmd = pane.lastShellCommand;
     if (!cmd) {
         return;
     }
 
-    await runTmux(tmuxBin, ["send-keys", "-t", target, cmd], "send-keys");
+    const sent = await tmuxSendKeys(target, [cmd]);
+
+    if (!sent.ok) {
+        throw new Error(sent.detail);
+    }
 }
 
 function resolveTargetName(baseName: string, suffix?: string): string {
