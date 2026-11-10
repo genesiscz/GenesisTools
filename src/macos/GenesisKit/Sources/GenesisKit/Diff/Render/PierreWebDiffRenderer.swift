@@ -266,6 +266,15 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
         call("setBlame", payload)
     }
 
+    /// The page draws GenesisKit's bar until told otherwise; a repeat of the same style sends nothing.
+    private var scrollBars: GenScrollBarStyle = .genesis
+
+    public func setScrollBars(_ style: GenScrollBarStyle) {
+        guard style != scrollBars else { return }
+        scrollBars = style
+        call("setScrollBars", style.rawValue)
+    }
+
     public func showBlame(fileID: String, line: Int) {
         evaluateOnce("showBlameAt", BridgeBlameAt(fileId: fileID, line: line))
     }

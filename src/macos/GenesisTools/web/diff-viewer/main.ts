@@ -18,13 +18,14 @@ import { fenceCloses, fencedParts, fenceLanguage, fenceMarker } from "./code-lan
 import { keepOnlyFiles, parseFileDiff } from "./file-diff";
 import { createGlide } from "./glide";
 import { createLargeAsks } from "./large-asks";
+import { installOverlayScrollbar, type ScrollBarStyle } from "./overlay-scrollbar";
 import { installReviewState } from "./review-state";
 
 /**
  * The web half of GenesisTools.app's diff renderer (PierreWebDiffRenderer.swift). Swift owns the
  * data, the comment store and the chrome; this page draws file diffs with @pierre/diffs, hosts the
  * comment composer and the comment cards, and reports every user action back.
- * Swift -> page: window.genesisDiff.addFiles / setComments / setOptions / reveal / find.
+ * Swift -> page: window.genesisDiff.addFiles / setComments / setOptions / reveal / find / setScrollBars.
  * Page -> Swift: webkit.messageHandlers.genesisDiff.postMessage({ type, ... }).
  *
  * Every file of the diff is on the page, however large the diff: CodeView lays out only the files
@@ -219,6 +220,8 @@ interface BridgeApi {
     setBlame(next: BlameData): void;
     /** A snapshot's `--blame <path>:<line>`: the tip of that line without a pointer. */
     showBlameAt(target: { fileId: string; line: number }): void;
+    /** GenesisKit's overlay bar (the default) or WebKit's own (Settings → Hub → Appearance → Scroll bars). */
+    setScrollBars(style: ScrollBarStyle): void;
 }
 
 interface WebkitBridge {
@@ -248,6 +251,7 @@ function requireHost(): HTMLElement {
 }
 
 const host = requireHost();
+const scrollBars = installOverlayScrollbar(host);
 
 let options: BridgeOptions = { diffStyle: "split", themeType: "system", wrap: false, fontSize: 13 };
 
@@ -3813,6 +3817,9 @@ window.genesisDiff = {
         // An empty set (the files changed) asks again on the next hover; a request still running is
         // asked again too, and Swift drops the duplicate.
         blameAsked = new Set(next.loaded);
+    },
+    setScrollBars(style) {
+        scrollBars.setStyle(style === "system" ? "system" : "genesis");
     },
     showBlameAt({ fileId, line }) {
         // A `--snapshot --blame` run has no pointer: scroll to the line and show its tip there.

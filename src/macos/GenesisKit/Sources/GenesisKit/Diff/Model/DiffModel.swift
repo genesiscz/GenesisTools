@@ -534,4 +534,10 @@ public protocol DiffRenderer: AnyObject {
     func setBlame(_ payload: AgentBlamePayload)
     /// A snapshot's `--blame`: that line's tip without a pointer.
     func showBlame(fileID: String, line: Int)
+    /// GenesisKit's overlay scroll bar or the system's (Settings → Hub → Appearance → Scroll bars).
+    func setScrollBars(_ style: GenScrollBarStyle)
+}
+
+public extension DiffRenderer {
+    func setScrollBars(_ style: GenScrollBarStyle) {}
 }
