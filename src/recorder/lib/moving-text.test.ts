@@ -6,7 +6,13 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { movieContentKey } from "@genesiscz/utils/recording-editor/analysis-cache";
 import { framePresentationUs, gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
 import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
-import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import {
+    applyOp,
+    editOpSchema,
+    editProjectSchema,
+    wholeProject,
+    writeProject,
+} from "@genesiscz/utils/recording-editor/project";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { computeEdit } from "./edit";
@@ -15,8 +21,10 @@ import {
     exportFrameCache,
     exportRangeOf,
     findText,
+    OCR_FRAMES_PER_READ,
     ocrVideo,
     scanOf,
+    sourceScanOf,
     textHitsOf,
     verifyHidden,
 } from "./fx-analysis";
@@ -301,6 +309,27 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         expect(frames).toHaveLength(40);
         expect(onDisk).toHaveLength(40);
         expect(Math.max(...onDisk)).toBeLessThanOrEqual(32);
+
+        // Every frame of the movie is one run of 80 neighbouring frames, one term: the frame cap splits it as well.
+        const every = gridRead({ video: movie, fromUs: 0, toUs: 8_000_000, fps: 10, framesPerRead: 30 });
+        expect(every.reads.map((read) => read.frames)).toEqual([30, 30, 20]);
+        expect(every.reads.map((read) => read.args.at(-1))).toEqual(["30", "30", "20"]);
+        expect(every.slots.map((slot) => slot.frame)).toEqual([...Array(80).keys()]);
+        onDisk.length = 0;
+        const all = await ocrVideo({
+            video: movie,
+            toUs: 8_000_000,
+            fps: 10,
+            cache,
+            onFrame: () => {
+                const folders = readdirSync(tmpdir()).filter(
+                    (name) => name.startsWith("gt-screen-text-") && !before.has(name)
+                );
+                onDisk.push(folders.reduce((sum, name) => sum + readdirSync(join(tmpdir(), name)).length, 0));
+            },
+        });
+        expect(all).toHaveLength(80);
+        expect(Math.max(...onDisk)).toBeLessThanOrEqual(OCR_FRAMES_PER_READ);
     }, 60_000);
 
     test("verifyHidden with from and to reads the source of that range only (review CLI-F7)", async () => {
@@ -415,6 +444,24 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         await make(2);
         expect(framePresentationUs(movie)).toHaveLength(20);
     }, 60_000);
+
+    // Regression test: review of PR 748, round 1. An output range's source read took only the source at its two ends,
+    // so a clip that jumps forward and back (0–10, 80–90, 20–30) left the middle clip unread.
+    test("an output range's source read covers every clip that plays in it, not only the two ends", () => {
+        const project = editProjectSchema.parse({
+            ...wholeProject({ video: "/movies/jumps.mp4", durationUs: 100_000_000, width: W, height: H }),
+            clips: [
+                { id: "c1", fromUs: 0, toUs: 10_000_000 },
+                { id: "c2", fromUs: 80_000_000, toUs: 90_000_000 },
+                { id: "c3", fromUs: 20_000_000, toUs: 30_000_000 },
+            ],
+        });
+        expect(sourceScanOf(project, { from: 9, to: 21, timeBase: "output" })).toEqual({
+            fromUs: 8_000_000,
+            toUs: 91_000_000,
+        });
+        expect(sourceScanOf(project, { from: 2, to: 4 })).toEqual(scanOf(2, 4));
+    });
 
     test("a stretch is read by the frames' own times, never after an input seek, a gap keeping the frame before it (round 8)", async () => {
         const folder = mkdtempSync(join(tmpdir(), "gt-grid-read-"));

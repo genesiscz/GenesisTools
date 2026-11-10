@@ -72,7 +72,9 @@ export interface GridRead {
 /**
  * Reads `fromUs` to `toUs` (editor time) `fps` times a second, with `extra` filters after the selection (scale,
  * format). Output frame `slots[k].frame` is what the editor shows at `slots[k].atUs`; a time inside a gap of the
- * recording shares the frame before it. It decodes from the start (about a twentieth of the stretch's end on this Mac).
+ * recording shares the frame before it. It decodes from the start (about a twentieth of the stretch's end on this Mac),
+ * and each read stops at its own last frame. `framesPerRead` caps the frames one read writes, a run of neighbouring
+ * frames included, so a caller that keeps a read's pictures on disk keeps at most that many.
  */
 export function gridRead(options: {
     video: string;
@@ -80,6 +82,7 @@ export function gridRead(options: {
     toUs: number;
     fps: number;
     extra?: string;
+    framesPerRead?: number;
 }): GridRead {
     // A rate of 0, a negative one or NaN never advances the grid below and would fill memory with slots.
     if (!Number.isFinite(options.fps) || options.fps <= 0) {
@@ -118,9 +121,10 @@ export function gridRead(options: {
     }
 
     const reads: GridRead["reads"] = [];
-
-    for (let at = 0; at < Math.max(1, runs.length); at += TERMS_PER_READ) {
-        const part = runs.slice(at, at + TERMS_PER_READ);
+    const framesPerRead = Math.max(1, Math.floor(options.framesPerRead ?? Number.POSITIVE_INFINITY));
+    let part: Array<[number, number]> = [];
+    let frames = 0;
+    const flush = () => {
         const select = part.map(([a, b]) => (a === b ? `eq(n\\,${a})` : `between(n\\,${a}\\,${b})`)).join("+") || "0";
         reads.push({
             args: [
@@ -132,9 +136,30 @@ export function gridRead(options: {
                 `select='${select}'${options.extra ? `,${options.extra}` : ""}`,
                 "-fps_mode",
                 "passthrough",
+                // ffmpeg stops after the read's last frame instead of decoding the rest of the movie.
+                ...(frames > 0 ? ["-frames:v", String(frames)] : []),
             ],
-            frames: part.reduce((all, [a, b]) => all + b - a + 1, 0),
+            frames,
         });
+        part = [];
+        frames = 0;
+    };
+
+    for (const [a, b] of runs) {
+        for (let start = a; start <= b; ) {
+            const end = Math.min(b, start + (framesPerRead - frames) - 1);
+            part.push([start, end]);
+            frames += end - start + 1;
+            start = end + 1;
+
+            if (part.length === TERMS_PER_READ || frames >= framesPerRead) {
+                flush();
+            }
+        }
+    }
+
+    if (part.length > 0 || reads.length === 0) {
+        flush();
     }
 
     return { reads, slots };

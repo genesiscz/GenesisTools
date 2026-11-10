@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -29,7 +29,7 @@ import { editProject, readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS, shortRecordingId } from "./library";
-import { applyEdit, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
+import { applyEdit, callerParams, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
 import { hostCloseEditor, hostStill, ServiceConnectionLost, ServiceHost, withServiceClient } from "./service-client";
@@ -969,6 +969,7 @@ describe("the REPL's and the CLI's way to the service", () => {
             await movie.frame({ background: { kind: "image", image: "bg.png" } });
             await movie.apply([{ op: "introCard", logo: "" }]);
             await applyEdit(path, [{ op: "introCard", title: "Demo", logo: "logo.png" }], { dir });
+            await movie.apply([{ op: "exportSettings", output: "demo.mp4" }]);
         } finally {
             process.chdir(before);
         }
@@ -983,6 +984,7 @@ describe("the REPL's and the CLI's way to the service", () => {
             "movie.frame",
             "movie.apply",
             "edit.apply",
+            "movie.apply",
         ]);
         expect(sent[0].params).toMatchObject({ to: join(cwd, "cut-copy") });
         expect(sent[1].params).toMatchObject({ title: "Demo", logo: join(cwd, "logo.png") });
@@ -990,6 +992,11 @@ describe("the REPL's and the CLI's way to the service", () => {
         // "" removes the logo: it stays "".
         expect(sent[3].params).toMatchObject({ ops: [{ op: "introCard", logo: "" }] });
         expect(sent[4].params).toMatchObject({ ops: [{ op: "introCard", logo: join(cwd, "logo.png") }] });
+        // The export file an edit keeps: a relative one would be found later in the renderer's own folder.
+        expect(sent[5].params).toMatchObject({ ops: [{ op: "exportSettings", output: join(cwd, "demo.mp4") }] });
+        // A bare ~ is the home folder, as a shell reads it.
+        expect(callerParams("duplicate", { to: "~" })).toEqual({ to: homedir() });
+        expect(callerParams("duplicate", { to: "~/copy" })).toEqual({ to: join(homedir(), "copy") });
     });
 });
 

@@ -35,13 +35,14 @@ const callerPath = (value: string): string => resolveRecording(value);
  */
 const PATH_PARAMS: Readonly<Record<string, readonly string[]>> = {
     duplicate: ["to"],
+    exportSettings: ["output"],
     introCard: ["logo"],
     frame: ["background.image"],
 };
 
-/** A file path as the caller means it: `~/` is the home folder, a relative path is against this cwd; "" stays "". */
+/** A file path as the caller means it: `~` and `~/` are the home folder, a relative path is against this cwd; "" stays "". */
 function callerFile(value: string): string {
-    return value === "" ? value : resolve(value.replace(/^~(?=[/\\])/, homedir()));
+    return value === "" ? value : resolve(value.replace(/^~(?=[/\\]|$)/, homedir()));
 }
 
 /**

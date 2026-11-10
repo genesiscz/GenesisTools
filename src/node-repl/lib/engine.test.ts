@@ -962,24 +962,28 @@ it("reset with toolsets disposes them at once while a turn waits, and the turn h
 it("a module directory added while a turn runs answers at once and leaves the turn running", async () => {
     const dir = mkdtempSync(join(tmpdir(), "node-repl-dir-"));
     mkdirSync(join(dir, "node_modules"));
+    // The registration's timer is the default timeout (1 s, the margin a loaded runner needs to answer it); every
+    // other turn names its own budget.
     const engine = new ReplEngine({ defaultTimeoutMs: 1000 });
     try {
-        await engine.run("1");
-        const running = engine.run("await sleep(2500); 'done'", 60_000);
+        await engine.run("1", 60_000);
+        const running = engine.run("await sleep(1500); 'done'", 60_000);
         await Bun.sleep(100);
         const registered = await engine.addModuleDir(dir);
         expect(registered.ok).toBe(true);
+        // Answered by the worker, before the 1 s timer would.
         expect(registered.durationMs).toBeLessThan(900);
         expect((await running).text).toBe("done");
 
-        // A turn that keeps the CPU busy holds the registration; its timer answers without killing the worker.
-        await engine.run("globalThis.keptBehindBusyTurn = 1");
-        const busy = engine.run("const until = Date.now() + 1800; while (Date.now() < until) {} 'busy done'", 60_000);
+        // A turn that keeps the CPU busy holds the registration; its timer answers without killing the worker. The
+        // turn outlasts the timer (fired about 1.1 s in) by 600 ms.
+        await engine.run("globalThis.keptBehindBusyTurn = 1", 60_000);
+        const busy = engine.run("const until = Date.now() + 1700; while (Date.now() < until) {} 'busy done'", 60_000);
         await Bun.sleep(100);
         const waited = await engine.addModuleDir(join(dir, "."));
         expect(waited.error).toContain("behind the running turn");
         expect((await busy).text).toBe("busy done");
-        expect((await engine.run("globalThis.keptBehindBusyTurn")).text).toBe("1");
+        expect((await engine.run("globalThis.keptBehindBusyTurn", 60_000)).text).toBe("1");
     } finally {
         await engine.shutdown();
     }

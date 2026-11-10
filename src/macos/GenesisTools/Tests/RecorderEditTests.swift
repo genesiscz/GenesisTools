@@ -1481,6 +1481,18 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(TimelineMap.part(project, fromOut: 7_000_000, toOut: 9_000_000))
     }
 
+    // Regression test: review of PR 748, round 1. The shortest clip was measured in output time, so a whole 0.1 s clip
+    // at 16x (6.25 ms played) was dropped from a part; it is source time, as split and trim measure it.
+    func testAPartKeepsAWholeShortClipAtAHighSpeed() throws {
+        let project = EditProject(source: .init(video: "/m.mp4", durationUs: 8_000_000, width: 100, height: 100),
+                                  clips: [.init(id: "fast", fromUs: 1_000_000, toUs: 1_100_000, speed: 16),
+                                          .init(id: "slow", fromUs: 2_000_000, toUs: 4_000_000)])
+        let whole = try XCTUnwrap(TimelineMap.part(project, fromOut: 0, toOut: 6_250))
+        XCTAssertEqual(whole.clips.map { [$0.fromUs, $0.toUs] }, [[1_000_000, 1_100_000]])
+        let tail = try XCTUnwrap(TimelineMap.part(project, fromOut: 4_250, toOut: 1_000_000))
+        XCTAssertEqual(tail.clips.map(\.id), ["fast", "slow"])
+    }
+
     // Regression test: deep test 2026-11-07 R3-RX1. A movie the renderer could not open left the preview black with a
     // pill that read "The preview could not be built: Cannot Open": no cause, no next step. Each cause now has its own
     // sentence, and AVFoundation's own words go to Details only.

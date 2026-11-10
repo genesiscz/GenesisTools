@@ -11,6 +11,7 @@ import {
     MeetingsConfigStore,
     mergeLabels,
     projectNameSchema,
+    UnknownProjectError,
 } from "@genesiscz/utils/meetings/config";
 import {
     calendarCandidates,
@@ -743,6 +744,36 @@ async function advanceAsk(store: MeetingStore, record: MeetingRecord, deps: Assi
     return form.status;
 }
 
+/** Closes a folder step whose project is gone as declined, when the step still names that project. */
+async function closeFolderOfGoneProject(store: MeetingStore, meetingId: string, project: string): Promise<string> {
+    const renamed = "folder project renamed";
+
+    if (store.read(meetingId)?.assign?.folder?.project !== project) {
+        return renamed;
+    }
+
+    let closed = false;
+    // Checked again under the record lock: a rename can land between the read and the write.
+    await store.update(
+        meetingId,
+        { command: "assign sweep", change: `folder not paired: no project ${project}` },
+        (current) => {
+            if (current.assign?.folder?.project === project) {
+                current.assign.folder.state = "declined";
+                closed = true;
+            }
+        }
+    );
+
+    if (!closed) {
+        return renamed;
+    }
+
+    setOpen(store, meetingId, undefined);
+    log.info({ meeting: meetingId, project }, "folder step closed: its project is gone");
+    return "folder declined";
+}
+
 async function advanceFolder(
     store: MeetingStore,
     record: MeetingRecord,
@@ -772,7 +803,17 @@ async function advanceFolder(
         const yes = form?.status === "answered" && form.answers.folder?.selectedChoices?.[0] === "folder:yes";
 
         if (yes && folder.folder) {
-            await deps.config.addSourceFolder(folder.source, folder.project, folder.folder);
+            try {
+                await deps.config.addSourceFolder(folder.source, folder.project, folder.folder);
+            } catch (error) {
+                if (!(error instanceof UnknownProjectError)) {
+                    throw error;
+                }
+
+                // The project left the config while the question was open: a yes cannot pair it. The step closes as
+                // declined, unless a rename moved it to the new name meanwhile (the next sweep pairs that one).
+                return closeFolderOfGoneProject(store, record.id, folder.project);
+            }
         }
 
         await store.update(

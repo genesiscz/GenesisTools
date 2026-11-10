@@ -46,6 +46,7 @@ import {
 } from "@genesiscz/utils/recording-editor/private-data";
 import {
     boundaryWindows,
+    clipOutputUs,
     type EditOp,
     type EditProject,
     exportToOutputUs,
@@ -256,6 +257,12 @@ export function exportFrameCache(movie: string): FrameCache & { flush(): void } 
     };
 }
 
+/**
+ * The most frame pictures one ocrVideo read writes before they are read and removed: a few hundred MB of 1080p PNG at
+ * most, also when every frame of a stretch is read (a whole run of neighbouring frames is split too).
+ */
+export const OCR_FRAMES_PER_READ = 120;
+
 export async function ocrVideo(options: {
     video: string;
     fromUs?: number;
@@ -276,6 +283,7 @@ export async function ocrVideo(options: {
         fromUs,
         toUs: Math.max(fromUs + 50_000, options.toUs),
         fps: options.fps,
+        framesPerRead: OCR_FRAMES_PER_READ,
     });
 
     try {
@@ -286,8 +294,9 @@ export async function ocrVideo(options: {
         let index = 0;
         let missing = false;
 
-        // CLI-F9: one read's frame pictures at a time are on disk: they are read and removed before the next read
-        // writes its own, so a long export never needs GBs of temp space at once. The slots take the frames in order.
+        // CLI-F9: one read's frame pictures at a time are on disk (OCR_FRAMES_PER_READ at most): they are read and
+        // removed before the next read writes its own, so a long export never needs GBs of temp space at once. The
+        // slots take the frames in order.
         for (const read of plan.reads) {
             if (missing) {
                 break;
@@ -873,11 +882,15 @@ export interface HitsAnswer {
 }
 
 /** R8 7: the warning of each text, pattern or name of a request that no line read matched. */
-function unmatchedWarnings(
-    read: readonly ScreenTextFrame[],
-    query: Omit<TextQuery, "unit">,
-    scan: TrackOptions["scan"]
-): string[] {
+function unmatchedWarnings({
+    read,
+    query,
+    scan,
+}: {
+    read: readonly ScreenTextFrame[];
+    query: Omit<TextQuery, "unit">;
+    scan: TrackOptions["scan"];
+}): string[] {
     return unmatchedQueries(read, query).map(
         (said) =>
             `no screen text ${scan ? "of the range read" : "of the whole movie"} matches ${said}: each OCR line is matched on its own, without case; \\w and \\b take letters of any language, \\p{L} is any letter`
@@ -898,7 +911,7 @@ export async function privateHitsOf(
         },
     });
     const names = (options.names ?? []).map((name) => name.trim()).filter(Boolean);
-    const warnings = names.length > 0 ? unmatchedWarnings(read, { texts: names }, options.scan) : [];
+    const warnings = names.length > 0 ? unmatchedWarnings({ read, query: { texts: names }, scan: options.scan }) : [];
     log.debug({ hits: hits.length, warnings }, "private hits");
     return { hits, warnings };
 }
@@ -930,7 +943,7 @@ export async function textHitsOf(project: EditProject, options: TrackOptions & T
         },
     });
     // R8 7: a pattern that never matched is said, not silently dropped (a \w that did not take Czech letters did).
-    const warnings = unmatchedWarnings(read, options, options.scan);
+    const warnings = unmatchedWarnings({ read, query: options, scan: options.scan });
 
     for (const warning of warnings) {
         log.out.warn(warning);
@@ -1023,9 +1036,11 @@ export function exportRangeOf(
 
 /**
  * The part of the SOURCE a verifyHidden from/to covers, for its source reads (scanOf, with its margin each side):
- * source seconds as they are; output seconds through the clips. Undefined without from and to: the whole movie.
+ * source seconds as they are; output seconds through every clip that plays in that range, so clips that jump back or
+ * forward in the source (0–10, then 80–90, then 20–30) are all read, not only the source at the two ends. Undefined
+ * without from and to: the whole movie.
  */
-function sourceScanOf(
+export function sourceScanOf(
     project: EditProject,
     options: { from?: TimeValue; to?: TimeValue; timeBase?: "source" | "output" }
 ): { fromUs: number; toUs: number } | undefined {
@@ -1042,7 +1057,28 @@ function sourceScanOf(
         time === undefined ? fallback : Math.min(endUs, Math.max(0, timeToUs(time)));
     const fromUs = outputUs(options.from, 0);
     const toUs = Math.max(fromUs, outputUs(options.to, endUs) - 1);
-    const sourceUs = [sourceTimeOf(project, fromUs), sourceTimeOf(project, toUs)];
+    const sourceUs: number[] = [];
+    let startUs = 0;
+
+    for (const clip of project.clips) {
+        const clipEndUs = startUs + clipOutputUs(clip);
+        const overlapFromUs = Math.max(fromUs, startUs);
+        const overlapToUs = Math.min(toUs, clipEndUs);
+
+        if (overlapToUs >= overlapFromUs && clipEndUs > startUs) {
+            sourceUs.push(
+                clip.fromUs + Math.round((overlapFromUs - startUs) * clip.speed),
+                Math.min(clip.toUs, clip.fromUs + Math.round((overlapToUs - startUs) * clip.speed))
+            );
+        }
+
+        startUs = clipEndUs;
+    }
+
+    if (sourceUs.length === 0) {
+        sourceUs.push(sourceTimeOf(project, fromUs), sourceTimeOf(project, toUs));
+    }
+
     return scanOf(Math.min(...sourceUs) / 1_000_000, Math.max(...sourceUs) / 1_000_000);
 }
 
@@ -1087,7 +1123,7 @@ export async function verifyHidden(
     }
 
     if (options.movie) {
-        return verifyExport(value, options, options.movie);
+        return verifyExport(value, { ...options, movie: options.movie });
     }
 
     // CLI-F8: the export made for the check is removed after it (a 5-minute demo is hundreds of MB, and macOS clears
@@ -1106,7 +1142,7 @@ export async function verifyHidden(
             throw new Error(`the export to check failed: ${answer.error ?? "no file"}`);
         }
 
-        const checked = await verifyExport(value, options, answer.path);
+        const checked = await verifyExport(value, { ...options, movie: answer.path });
         return options.keepExport ? checked : { ...checked, exportRemoved: true };
     } finally {
         if (!options.keepExport) {
@@ -1143,7 +1179,11 @@ export interface VerifyHiddenAnswer {
 }
 
 /** verifyHidden over `movie`, an export of the edit `value`. */
-async function verifyExport(value: string, options: VerifyHiddenOptions, movie: string): Promise<VerifyHiddenAnswer> {
+async function verifyExport(
+    value: string,
+    options: VerifyHiddenOptions & { movie: string }
+): Promise<VerifyHiddenAnswer> {
+    const { movie } = options;
     const everySeconds = options.everySeconds ?? 0.25;
     const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
     // R6 3: every text and pattern (and the private data, when asked or when nothing else is) in one read.

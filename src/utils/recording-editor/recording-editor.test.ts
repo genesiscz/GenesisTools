@@ -1484,6 +1484,26 @@ describe("edit project (edit.json)", () => {
         expect(outputDurationUs(part)).toBe(2_000_000);
     });
 
+    // Regression test: review of PR 748, round 1. The shortest clip was measured in OUTPUT time, so a whole 0.1 s
+    // clip at 16x (6.25 ms played) was dropped from a part, and a part of only such clips threw "nothing plays".
+    test("a part keeps a whole short clip at a high speed; the shortest piece is measured in source time", () => {
+        const project = editProjectSchema.parse({
+            ...wholeProject(source),
+            clips: [
+                { id: "fast", fromUs: 1_000_000, toUs: 1_100_000, speed: 16 },
+                { id: "slow", fromUs: 2_000_000, toUs: 4_000_000 },
+            ],
+        });
+        expect(partOf(project, 0, 6_250).clips.map((clip) => [clip.id, clip.fromUs, clip.toUs])).toEqual([
+            ["fast", 1_000_000, 1_100_000],
+        ]);
+        // 2 ms of output at 16x is 32 ms of source: a frame and more, so it stays too.
+        expect(partOf(project, 4_250, 1_000_000).clips.map((clip) => [clip.id, clip.fromUs])).toEqual([
+            ["fast", 1_068_000],
+            ["slow", 2_000_000],
+        ]);
+    });
+
     test("a picture background needs a file that exists and sets the kind by itself", () => {
         const dir = workspace();
         const picture = join(dir, "wall.png");

@@ -325,6 +325,54 @@ describe("ask each time", () => {
         expect(store.read(meeting.id)?.assign?.folder?.state).toBe("paired");
     });
 
+    // Regression test: review of PR 748, round 1. A yes for a project removed while its folder question was open threw
+    // in addSourceFolder, the step stayed asked, and every sweep logged "assign step failed" again.
+    test("a yes for a project that is gone closes the folder step; a step a rename moved stays for the new name", async () => {
+        const { store, config, inbox, deps, create, state } = setup();
+        await config.addProject("offers");
+        const meeting = await create("Planning", "2026-11-04T14:00:00.000Z");
+        await assignSweep(store, deps);
+        inbox.answer(inbox.posted[0]!.id, [{ itemId: "project", freeText: "offers" }]);
+        await assignSweep(store, deps);
+        state.folders = ["Offers"];
+        await assignSweep(store, deps);
+        inbox.answer(inbox.posted[1]!.id, [{ itemId: "folder", selectedChoices: ["folder:yes"] }]);
+        const dropProject = (name: string) =>
+            config.update((raw) => {
+                const projects = raw.projects;
+
+                if (projects && typeof projects === "object" && !Array.isArray(projects)) {
+                    delete (projects as Record<string, unknown>)[name];
+                }
+            });
+
+        // A rename lands while the sweep pairs: the step now names the new project, so it is left for the next sweep.
+        await config.addProject("deals");
+        const pair = config.addSourceFolder.bind(config);
+        config.addSourceFolder = async (source, project, folder) => {
+            await store.update(meeting.id, { command: "test", change: "renamed" }, (current) => {
+                if (current.assign?.folder) {
+                    current.assign.folder.project = "deals";
+                }
+            });
+            await dropProject("offers");
+            return pair(source, project, folder);
+        };
+        expect((await assignSweep(store, deps)).advanced).toEqual([
+            { meeting: meeting.id, outcome: "folder project renamed" },
+        ]);
+        expect(store.read(meeting.id)?.assign?.folder).toMatchObject({ project: "deals", state: "asked" });
+
+        // The renamed project is removed too: the yes closes the step instead of failing on every sweep.
+        config.addSourceFolder = pair;
+        await dropProject("deals");
+        expect((await assignSweep(store, deps)).advanced).toEqual([
+            { meeting: meeting.id, outcome: "folder declined" },
+        ]);
+        expect(store.read(meeting.id)?.assign?.folder?.state).toBe("declined");
+        expect((await assignSweep(store, deps)).advanced).toEqual([]);
+    });
+
     test("a meeting in no folder: the question names the folder of each proposed project to move it into", async () => {
         const { store, config, deps, create } = setup();
         await config.addProject("offers");

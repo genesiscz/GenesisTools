@@ -1130,13 +1130,17 @@ export function partOf(project: EditProject, fromOutUs: number, toOutUs: number)
         const outEndUs = outStartUs + clipOutputUs(clip);
         const startUs = Math.max(fromOutUs, outStartUs);
         const endUs = Math.min(toOutUs, outEndUs);
+        const piece = {
+            ...clip,
+            fromUs: clip.fromUs + Math.round((startUs - outStartUs) * clip.speed),
+            toUs: Math.min(clip.toUs, clip.fromUs + Math.round((endUs - outStartUs) * clip.speed)),
+        };
+        // The shortest clip is SOURCE time, as split and cut measure it; a whole clip inside the part always stays (a
+        // 0.1 s clip at 16x plays 6 ms and was dropped by an output-time minimum).
+        const whole = startUs === outStartUs && endUs === outEndUs;
 
-        if (endUs - startUs >= MINIMUM_CLIP_US) {
-            clips.push({
-                ...clip,
-                fromUs: clip.fromUs + Math.round((startUs - outStartUs) * clip.speed),
-                toUs: Math.min(clip.toUs, clip.fromUs + Math.round((endUs - outStartUs) * clip.speed)),
-            });
+        if (endUs > startUs && (whole || piece.toUs - piece.fromUs >= MINIMUM_CLIP_US)) {
+            clips.push(piece);
         }
 
         outStartUs = outEndUs;

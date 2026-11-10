@@ -76,7 +76,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
         const played = playedUs(project, entry.startUs, entry.endUs);
 
         if (entry.kind !== "hidden part" && played < shortest) {
-            const longer = lengthened(project, entry, shortest);
+            const longer = lengthened({ project, item: entry, shortest });
             const sourceUs = keptUs(project, entry.startUs, entry.endUs);
             const speedNote =
                 Math.abs(played - sourceUs) >= 50_000
@@ -271,15 +271,19 @@ const LENGTHENED_US = 1_500_000;
  * The length is played time, so the clips' speeds set how far in source time the item reaches. Times in seconds to
  * the millisecond, the end rounded down so it never passes the source's end. Undefined when the movie has no room.
  */
-function lengthened(
-    project: EditProject,
-    item: { startUs: number; endUs: number },
-    shortest: number
-): { from?: number; to: number } | undefined {
-    const toUs = sourceAfterPlayed(project, item.startUs, LENGTHENED_US);
+function lengthened({
+    project,
+    item,
+    shortest,
+}: {
+    project: EditProject;
+    item: { startUs: number; endUs: number };
+    shortest: number;
+}): { from?: number; to: number } | undefined {
+    const toUs = sourceAfterPlayed({ project, startUs: item.startUs, playUs: LENGTHENED_US });
     const fromUs =
         playedUs(project, item.startUs, toUs) < shortest
-            ? sourceBeforePlayed(project, toUs, LENGTHENED_US)
+            ? sourceBeforePlayed({ project, endUs: toUs, playUs: LENGTHENED_US })
             : item.startUs;
 
     if (playedUs(project, fromUs, toUs) <= playedUs(project, item.startUs, item.endUs)) {
@@ -466,7 +470,15 @@ function playedUs(project: EditProject, startUs: number, endUs: number): number 
 }
 
 /** The source time where `playUs` of output has played from `startUs` on, through the clips at their speeds. */
-function sourceAfterPlayed(project: EditProject, startUs: number, playUs: number): number {
+function sourceAfterPlayed({
+    project,
+    startUs,
+    playUs,
+}: {
+    project: EditProject;
+    startUs: number;
+    playUs: number;
+}): number {
     let leftUs = playUs;
 
     for (const clip of project.clips) {
@@ -485,7 +497,15 @@ function sourceAfterPlayed(project: EditProject, startUs: number, playUs: number
 }
 
 /** The source time from which `playUs` of output plays up to `endUs`, through the clips at their speeds. */
-function sourceBeforePlayed(project: EditProject, endUs: number, playUs: number): number {
+function sourceBeforePlayed({
+    project,
+    endUs,
+    playUs,
+}: {
+    project: EditProject;
+    endUs: number;
+    playUs: number;
+}): number {
     let leftUs = playUs;
 
     for (const clip of [...project.clips].reverse()) {

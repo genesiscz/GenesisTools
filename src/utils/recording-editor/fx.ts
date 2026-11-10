@@ -10,6 +10,8 @@ import { sourceTimeSchema, timeToUs } from "./plan";
 
 /** #RRGGBB, as project.ts's hexColor (not imported: project.ts imports this file). */
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
+/** The id a lens op may give a new lens (a window's own id); the service makes one when it is absent. */
+const NEW_LENS_ID = /^[A-Za-z0-9_-]{1,40}$/;
 
 export const TRANSITION_KINDS = ["none", "crossfade", "zoom", "blur"] as const;
 export type TransitionKind = (typeof TRANSITION_KINDS)[number];
@@ -77,10 +79,7 @@ export const fxOpSchemas = [
         .object({
             op: z.literal("lens"),
             /** The new lens's id, so a window that made one keeps its id; absent: the service makes one. */
-            id: z
-                .string()
-                .regex(/^[A-Za-z0-9_-]{1,40}$/)
-                .optional(),
+            id: z.string().regex(NEW_LENS_ID).optional(),
             from: sourceTimeSchema,
             to: sourceTimeSchema,
             radius: z.number().min(0.04).max(0.4).optional(),
@@ -274,6 +273,12 @@ export function applyFxOp<P extends FxProject>(project: P, op: FxOp): P {
         }
         case "lens": {
             const items = project.lens?.items ?? [];
+
+            // A Movie made by movies.demo() applies ops it never parsed, so the id's form is checked here too; a lens
+            // loaded from an older edit keeps whatever id it has.
+            if (op.id !== undefined && !NEW_LENS_ID.test(op.id)) {
+                throw new RangeError(`a lens id is 1 to 40 letters, digits, _ or -, not "${op.id}"`);
+            }
 
             if (op.id !== undefined && items.some((lens) => lens.id === op.id)) {
                 throw new Error(`a lens ${op.id} exists already; lenses: ${items.map((lens) => lens.id).join(", ")}`);

@@ -95,6 +95,9 @@ describe("lens", () => {
         expect(() => editOpSchema.parse({ op: "lens", id: "", from: 1, to: 2 })).toThrow();
         expect(() => editOpSchema.parse({ op: "lens", id: "l 1", from: 1, to: 2 })).toThrow();
         expect(() => editOpSchema.parse({ op: "lens", id: "l".repeat(41), from: 1, to: 2 })).toThrow();
+        // An op that skipped the schema (a Movie of movies.demo()) is refused the same way.
+        expect(() => applyOp(cutProject(), { op: "lens", id: "", from: 1, to: 2 })).toThrow(/a lens id is 1 to 40/);
+        expect(() => applyOp(cutProject(), { op: "lens", id: "l 1", from: 1, to: 2 })).toThrow(/a lens id is 1 to 40/);
         const facts = { generatedIds: [] as string[] };
         const made = applyOp(project, { op: "lens", from: 4, to: 5 }, facts);
         expect(made.lens?.items).toHaveLength(2);

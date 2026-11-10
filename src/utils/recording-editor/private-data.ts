@@ -391,23 +391,46 @@ export function privateMatcher(names: readonly string[] = []): LineMatcher {
     const wanted = names.map((name) => name.trim()).filter(Boolean);
     // A name matches with the spaces OCR leaves out or reads in, as textMatcher does, so a name that the "no screen text
     // matches" warning counts as read is also hidden.
-    const namePattern = wanted.length
-        ? new RegExp(wanted.map((name) => [...name.replace(/\s+/g, "")].map(escapeRegExp).join("\\s*")).join("|"), "gi")
-        : undefined;
+    // Each name is its own pattern (escaped, so a name never adds regex syntax): one alternation returned the first
+    // name that matched, so "Ann A" took "Anna" of "Annabelle Johnson" and the longer name stayed visible.
+    const namePatterns = wanted.map(
+        (name) => new RegExp([...name.replace(/\s+/g, "")].map(escapeRegExp).join("\\s*"), "gi")
+    );
     return compacting((text) => {
         const found: TextMatch[] = findPrivateText(text).map((match) => ({ ...match, label: labelOf(match.kind) }));
 
-        for (const match of namePattern ? text.matchAll(namePattern) : []) {
-            const start = match.index ?? 0;
-            const end = start + match[0].length;
-
+        for (const [start, end] of nameSpans(text, namePatterns)) {
             if (!found.some((other) => start < other.end && end > other.start)) {
-                found.push({ kind: "name", label: "Name", value: match[0].toLowerCase(), start, end });
+                // Without spaces, as textMatcher keeps a value: "Bob Builder" and "BobBuilder" are one track.
+                const value = text.slice(start, end).replace(/\s+/g, "").toLowerCase();
+                found.push({ kind: "name", label: "Name", value, start, end });
             }
         }
 
         return found.sort((a, b) => a.start - b.start);
     });
+}
+
+/** Where any of `patterns` matches in `text`, each found on its own and overlapping spans joined into one. */
+function nameSpans(text: string, patterns: readonly RegExp[]): Array<[number, number]> {
+    const spans = patterns
+        .flatMap((pattern) => [...text.matchAll(pattern)])
+        .filter((match) => match[0].length > 0)
+        .map((match): [number, number] => [match.index ?? 0, (match.index ?? 0) + match[0].length])
+        .sort((a, b) => a[0] - b[0]);
+    const joined: Array<[number, number]> = [];
+
+    for (const span of spans) {
+        const last = joined.at(-1);
+
+        if (last && span[0] < last[1]) {
+            last[1] = Math.max(last[1], span[1]);
+        } else {
+            joined.push([...span]);
+        }
+    }
+
+    return joined;
 }
 
 /** What a hideText hides of an OCR line that holds a match: the match only, or the whole line (a name and its number). */

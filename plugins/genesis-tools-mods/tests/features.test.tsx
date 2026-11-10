@@ -22,6 +22,7 @@ import {
     questionCalls,
     refreshAnswers,
     sendStaged,
+    takesSeveral,
 } from "../hooks/answers";
 import { quoteOf } from "../hooks/ask-row";
 import { cacheBand, cacheRowsOf, cacheTone, markEnded } from "../hooks/cache-band";
@@ -5108,4 +5109,16 @@ test("links: an unmatched closing parenthesis cannot select the wrong repository
     expect(await linkLine(ctx, manyBoundaries)).toBe(manyBoundaries);
     const longSuffix = `#914 (fix: handle ) tokens)${"x".repeat(1024)}.\n`;
     expect(await linkLine(ctx, longSuffix)).toBe(longSuffix);
+});
+
+// Review of PR 748, round 1: the plugin's copy of takesSeveral kept the old rules, so it showed check boxes where the
+// source answers one letter, and a user could send a set for a single-choice decision.
+test("takesSeveral: the plugin's copy follows the source's rules", () => {
+    // "no" on a yes/no decision names n and o, which are not letters of its two options.
+    expect(takesSeveral({ recommended: "no", options: ["yes", "no"] })).toBe(false);
+    expect(takesSeveral({ recommended: "ac", options: ["x", "y", "z"] })).toBe(true);
+    // A yes/no question about selecting several things is not a set of the options.
+    expect(takesSeveral({ prompt: "Should users select multiple sessions?", options: ["x", "y"] })).toBe(false);
+    expect(takesSeveral({ prompt: "Pick several of these:", options: ["x", "y"] })).toBe(true);
+    expect(takesSeveral({ prompt: "Tick all that apply.", options: ["x", "y"] })).toBe(true);
 });

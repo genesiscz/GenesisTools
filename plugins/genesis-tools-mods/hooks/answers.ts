@@ -66,8 +66,11 @@ export interface LoggedDecision {
     at: number;
 }
 
-/** The letters a recommendation names when it is a rising set of two or more ("abc", "a, c", "a + c"). */
-function recommendedSet(recommended: string | undefined): boolean {
+/**
+ * Whether a recommendation names a rising set of two or more letters ("abc", "a, c", "a + c") that are all letters of
+ * the options: "no" on a yes/no decision names n and o, not a set.
+ */
+function recommendedSet(recommended: string | undefined, options: readonly unknown[] | undefined): boolean {
     const plain = (recommended ?? "").trim().toLowerCase();
 
     if (!/^[a-z](?:[\s,+&/]*[a-z])*$/.test(plain)) {
@@ -82,11 +85,19 @@ function recommendedSet(recommended: string | undefined): boolean {
         }
     }
 
-    return letters.length > 1;
+    return (
+        letters.length > 1 &&
+        (options === undefined || [...letters].every((letter) => letter.charCodeAt(0) - 97 < options.length))
+    );
 }
 
+/**
+ * The words of a prompt that ask for a set of the options. "Pick several" counts only about the options themselves (the
+ * clause ends, goes on with "if", or names the letters, a list of letters or the options), so "Should users select
+ * multiple sessions?" is not a set.
+ */
 const ASKS_FOR_SEVERAL =
-    /\b(?:any set of (?:the )?(?:letters|options)|(?:pick|choose|select|tick) (?:several|multiple|one or more|any number)|all that apply|several letters|multiple letters)\b/i;
+    /\b(?:any set of (?:the )?(?:letters|options)\b|all that apply\b|several letters\b|multiple letters\b|(?:pick|choose|select|tick) (?:several|multiple|one or more|any number)(?=\s+of\s+(?:the|these|them|letters|options)\b|\s+of\s+\(?[a-z]\s*[,)+/]|\s+(?:letters|options|if)\b|\s*(?:[.:!;),\n]|$)))/i;
 
 /**
  * Whether a decision takes any set of its options instead of one. A plugin file is standalone, so this copies
@@ -104,7 +115,9 @@ export function takesSeveral(row: {
         return false;
     }
 
-    return row.multiple === true || recommendedSet(row.recommended) || ASKS_FOR_SEVERAL.test(row.prompt ?? "");
+    return (
+        row.multiple === true || recommendedSet(row.recommended, row.options) || ASKS_FOR_SEVERAL.test(row.prompt ?? "")
+    );
 }
 
 /** A message the session sent to the inbox, or a question and answer it recorded. */

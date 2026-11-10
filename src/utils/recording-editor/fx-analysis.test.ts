@@ -237,6 +237,16 @@ describe("tracked text, exclusions and events", () => {
         // OCR drops or doubles the space: the name is still hidden, as the warning of an unread name assumes.
         expect(privateMatcher(["Bob Builder"])("call BobBuilder now").map((match) => match.kind)).toEqual(["name"]);
         expect(privateMatcher(["Bob Builder"])("call bob  builder now").map((match) => match.kind)).toEqual(["name"]);
+        // One value however OCR spaces it, so the reads of a moving name stay one track.
+        expect(
+            ["call Bob Builder now", "call BobBuilder now"].map(
+                (line) => privateMatcher(["Bob Builder"])(line)[0]?.value
+            )
+        ).toEqual(["bobbuilder", "bobbuilder"]);
+        // A shorter name that matches the head of a longer one does not leave the longer one visible.
+        expect(
+            privateMatcher(["Ann A", "Annabelle Johnson"])("Annabelle Johnson").map((match) => [match.start, match.end])
+        ).toEqual([[0, 17]]);
         // It scrolls up 0.1 of the picture per 0.2 s sample, then rests.
         const frames = [
             frame(0, []),

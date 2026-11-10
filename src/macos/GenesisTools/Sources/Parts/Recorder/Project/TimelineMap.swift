@@ -63,10 +63,13 @@ enum TimelineMap {
         var clips: [EditProject.Clip] = []
         for placed in placed(project) {
             let start = max(fromOut, placed.outStartUs), end = min(toOut, placed.outEndUs)
-            guard end - start >= minimumClipUs else { continue }
+            guard end > start else { continue }
             var clip = placed.clip
             clip.fromUs = placed.clip.fromUs + Int64((Double(start - placed.outStartUs) * placed.clip.speed).rounded())
             clip.toUs = min(placed.clip.toUs, placed.clip.fromUs + Int64((Double(end - placed.outStartUs) * placed.clip.speed).rounded()))
+            // The shortest clip is source time, as split and trim measure it; a whole clip inside the part always stays.
+            let whole = start == placed.outStartUs && end == placed.outEndUs
+            guard whole || clip.toUs - clip.fromUs >= minimumClipUs else { continue }
             clips.append(clip)
         }
         guard !clips.isEmpty else { return nil }
