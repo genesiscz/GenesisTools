@@ -1,7 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { sep } from "node:path";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
-import { getSessionListing } from "@app/claude/lib/history/search";
 import { HistoryDatabase } from "@genesiscz/utils/agent-sessions/database";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
@@ -213,31 +212,24 @@ export async function refreshWidgetIndex(
 
     const since = now - WIDGET_ROSTER_HOURS * 3_600_000;
     const tasks: Promise<number>[] = [];
-    const claude = (filters: { excludeSubagents?: boolean; subagentsOnly?: boolean }) =>
-        getSessionListing({ ...filters, mtimeFrom: since, refresh: true }).then(
-            (listing) => listing.indexed + listing.staleRemoved
-        );
-    const native = (
-        provider: Exclude<HarnessId, "claude">,
-        filters: { excludeAgents?: boolean; agentsOnly?: boolean }
-    ) =>
+    const listing = (provider: HarnessId, filters: { excludeAgents?: boolean; agentsOnly?: boolean }) =>
         catalogHistory({ provider, refresh: true, filters: { ...filters, mtimeFrom: since } }).then(
             ({ report }) => report.parsed + report.removed
         );
     if (whole.has("claude")) {
-        tasks.push(claude({ excludeSubagents: true }));
+        tasks.push(listing("claude", { excludeAgents: true }));
     }
 
     if (whole.has("claude-agents")) {
-        tasks.push(claude({ subagentsOnly: true }));
+        tasks.push(listing("claude", { agentsOnly: true }));
     }
 
     if (whole.has("codex")) {
-        tasks.push(native("codex", { excludeAgents: true }), native("codex", { agentsOnly: true }));
+        tasks.push(listing("codex", { excludeAgents: true }), listing("codex", { agentsOnly: true }));
     }
 
     if (whole.has("grok")) {
-        tasks.push(native("grok", { excludeAgents: true }));
+        tasks.push(listing("grok", { excludeAgents: true }));
     }
 
     const counts = await Promise.all(tasks);

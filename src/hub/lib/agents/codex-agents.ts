@@ -81,7 +81,7 @@ export async function recentCodexAgentRecords({
     });
 
     return catalog.metadata.flatMap((record) =>
-        record.isSubagent && record.nativeId && record.mtime >= since
+        record.nativeId && record.mtime >= since
             ? [
                   {
                       id: record.nativeId,

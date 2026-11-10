@@ -7,7 +7,7 @@ import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, sep } from "node:path";
 import { toSessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-repository";
 import { parseHistoryDate } from "@genesiscz/utils/agent-sessions/history-date";
-import { catalogHistory, openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
+import { catalogHistory, catalogHistoryCounts, openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { claudeProjectName } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { aggregateHistoryStatistics } from "@genesiscz/utils/agent-sessions/statistics-aggregate";
@@ -126,24 +126,21 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     const projectDir = options.project ? resolveProjectDir(options.project) : undefined;
     const scope = projectDir ? options.project || projectDir.split(sep).pop() || "unknown" : "all projects";
     const project = projectDir ? basename(projectDir) : undefined;
-    const {
-        metadata: all,
-        report,
-        reindexed,
-    } = await p.measureAsync(
+    const filters = {
+        project,
+        excludeAgents: !subagentsOnly && excludeSubagents,
+        agentsOnly: subagentsOnly,
+        limit,
+        mtimeFrom: options.mtimeFrom,
+        filePaths: options.filePaths,
+        newest: options.newest,
+    };
+    const { metadata, report, reindexed } = await p.measureAsync(
         "listing.catalog",
         () =>
             catalogHistory({
                 provider: "claude",
-                filters: {
-                    project,
-                    excludeAgents: !subagentsOnly && excludeSubagents,
-                    agentsOnly: subagentsOnly,
-                    limit,
-                    mtimeFrom: options.mtimeFrom,
-                    filePaths: options.filePaths,
-                    newest: options.newest,
-                },
+                filters,
                 maxDiscoveryAgeMs: options.maxDiscoveryAgeMs,
                 refresh: options.refresh,
             }),
@@ -156,26 +153,19 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
             refresh: options.refresh,
         })
     );
-    const subagentCount = all.filter((metadata) => metadata.isSubagent).length;
-    const selected = subagentsOnly
-        ? all.filter((metadata) => metadata.isSubagent)
-        : excludeSubagents
-          ? all.filter((metadata) => !metadata.isSubagent)
-          : all;
-    const sessions = selected.map(toSessionMetadataRecord);
-    sessions.sort((left, right) => {
-        const leftTime = left.firstTimestamp ? new Date(left.firstTimestamp).getTime() : 0;
-        const rightTime = right.firstTimestamp ? new Date(right.firstTimestamp).getTime() : 0;
-        return rightTime - leftTime;
-    });
-    const projects = new Set(all.map((metadata) => metadata.project).filter(Boolean));
+    // The listing above refreshed this scope, so the counts read the index as it is.
+    const counts = await p.measureAsync("listing.counts", () =>
+        catalogHistoryCounts({ provider: "claude", filters, refresh: false })
+    );
+    const sessions = metadata.map(toSessionMetadataRecord);
+    const projects = new Set(sessions.map((session) => session.project).filter(Boolean));
 
     p.summary("getSessionListing");
 
     return {
-        sessions: limit ? sessions.slice(0, limit) : sessions,
-        total: all.length,
-        subagents: subagentCount,
+        sessions,
+        total: counts.total,
+        subagents: counts.subagents,
         indexed: report.parsed,
         staleRemoved: report.removed,
         reindexed,

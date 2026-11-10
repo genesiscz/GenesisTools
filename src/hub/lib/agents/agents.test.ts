@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import * as sessionRows from "@app/ai/lib/sessions/agent-session-rows";
-import * as history from "@app/claude/lib/history/search";
 import type { CodexSessionMeta } from "@app/codex/lib/store";
 import type { GrokSessionMeta } from "@app/grok/lib/store";
+import * as historyCatalog from "@genesiscz/utils/agent-sessions/open-service";
 import * as transcriptResolver from "@genesiscz/utils/ai/transcripts/resolve";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -807,15 +807,10 @@ describe("freshMtime", () => {
 
 test("hub roster forwards diagnostic and intentional-refresh modes to every catalog", async () => {
     const rows = spyOn(sessionRows, "listAgentSessionRows").mockResolvedValue([]);
-    const claude = spyOn(history, "getSessionListing").mockResolvedValue({
-        sessions: [],
-        total: 0,
-        subagents: 0,
-        indexed: 0,
-        staleRemoved: 0,
+    const claude = spyOn(historyCatalog, "catalogHistory").mockResolvedValue({
+        metadata: [],
+        report: { issues: [], parsed: 0, unchanged: 0, removed: 0 },
         reindexed: false,
-        projectCount: 0,
-        scope: "fixture",
     });
     const codex = spyOn(codexAgents, "recentCodexAgentRecords").mockResolvedValue([]);
     const workers = spyOn(workerListing, "listWorkers").mockResolvedValue([]);
@@ -960,15 +955,10 @@ describe("a session an open agent process holds", () => {
             };
         });
         const listing = spyOn(sessionRows, "listAgentSessionRows").mockResolvedValue(rows);
-        const claude = spyOn(history, "getSessionListing").mockResolvedValue({
-            sessions: [],
-            total: 0,
-            subagents: 0,
-            indexed: 0,
-            staleRemoved: 0,
+        const claude = spyOn(historyCatalog, "catalogHistory").mockResolvedValue({
+            metadata: [],
+            report: { issues: [], parsed: 0, unchanged: 0, removed: 0 },
             reindexed: false,
-            projectCount: 0,
-            scope: "fixture",
         });
         const codex = spyOn(codexAgents, "recentCodexAgentRecords").mockResolvedValue([]);
         const workers = spyOn(workerListing, "listWorkers").mockResolvedValue([]);
@@ -1032,15 +1022,10 @@ describe("a session an open agent process holds", () => {
                 ],
             ])
         );
-        const claude = spyOn(history, "getSessionListing").mockResolvedValue({
-            sessions: [],
-            total: 0,
-            subagents: 0,
-            indexed: 0,
-            staleRemoved: 0,
+        const claude = spyOn(historyCatalog, "catalogHistory").mockResolvedValue({
+            metadata: [],
+            report: { issues: [], parsed: 0, unchanged: 0, removed: 0 },
             reindexed: false,
-            projectCount: 0,
-            scope: "fixture",
         });
         const codex = spyOn(codexAgents, "recentCodexAgentRecords").mockResolvedValue([]);
         const workers = spyOn(workerListing, "listWorkers").mockResolvedValue([]);
@@ -1103,15 +1088,10 @@ describe("a session an open agent process holds", () => {
         const batchResolver = spyOn(transcriptResolver, "resolveTranscripts").mockImplementation(
             async (ids) => new Map(ids.map((id) => [id, resolved(id)]))
         );
-        const claude = spyOn(history, "getSessionListing").mockResolvedValue({
-            sessions: [],
-            total: 0,
-            subagents: 0,
-            indexed: 0,
-            staleRemoved: 0,
+        const claude = spyOn(historyCatalog, "catalogHistory").mockResolvedValue({
+            metadata: [],
+            report: { issues: [], parsed: 0, unchanged: 0, removed: 0 },
             reindexed: false,
-            projectCount: 0,
-            scope: "fixture",
         });
         const codex = spyOn(codexAgents, "recentCodexAgentRecords").mockResolvedValue([]);
         const workers = spyOn(workerListing, "listWorkers").mockResolvedValue([]);

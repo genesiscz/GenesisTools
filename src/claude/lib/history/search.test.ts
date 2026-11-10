@@ -37,6 +37,7 @@ interface State {
     indexedConversation: SearchResult | null;
     conversationRequests: Array<{ sessionId: string }>;
     catalogCalls: Array<Record<string, unknown>>;
+    countCalls: Array<Record<string, unknown>>;
     catalog: Catalog;
     projectDirs: Record<string, string | undefined>;
     reader: Reader | null;
@@ -62,6 +63,7 @@ const state: State = {
     indexedConversation: null,
     conversationRequests: [],
     catalogCalls: [],
+    countCalls: [],
     catalog: { metadata: [], report: { parsed: 0, removed: 0 }, reindexed: false },
     projectDirs: {},
     reader: null,
@@ -95,11 +97,27 @@ mock.module("./indexed-search", () => ({
         return state.indexedConversation;
     },
 }));
+/** The catalog's contract on the fixture rows: the agent flags on each row, newest start first, then the limit. */
+function catalogRows(filters: { excludeAgents?: boolean; agentsOnly?: boolean; limit?: number } = {}) {
+    const rows = state.catalog.metadata.filter((row) =>
+        filters.agentsOnly ? row.isSubagent === true : !(filters.excludeAgents && row.isSubagent === true)
+    );
+    rows.sort((left, right) => String(right.firstTimestamp ?? "").localeCompare(String(left.firstTimestamp ?? "")));
+    return filters.limit ? rows.slice(0, filters.limit) : rows;
+}
+
 mock.module("@genesiscz/utils/agent-sessions/open-service", () => ({
     ...realOpenService,
-    catalogHistory: async (options: Record<string, unknown>) => {
+    catalogHistory: async (options: {
+        filters?: { excludeAgents?: boolean; agentsOnly?: boolean; limit?: number };
+    }) => {
         state.catalogCalls.push(options);
-        return state.catalog;
+        return { ...state.catalog, metadata: catalogRows(options.filters) };
+    },
+    catalogHistoryCounts: async (options: Record<string, unknown>) => {
+        state.countCalls.push(options);
+        const rows = state.catalog.metadata;
+        return { total: rows.length, subagents: rows.filter((row) => row.isSubagent === true).length };
     },
     openHistoryService: (options: { roots?: string[] }) => ({
         refreshStatistics: async (refreshOptions?: Record<string, unknown>) => {
@@ -292,6 +310,7 @@ beforeEach(() => {
     state.indexedConversation = null;
     state.conversationRequests = [];
     state.catalogCalls = [];
+    state.countCalls = [];
     state.catalog = { metadata: [], report: { parsed: 0, removed: 0 }, reindexed: false };
     state.projectDirs = {};
     state.reader = reader();
@@ -386,7 +405,7 @@ describe("getSessionListing", () => {
         state.catalog = { metadata: [main, newer, undated, agent], report: { parsed: 3, removed: 1 }, reindexed: true };
     });
 
-    it("lists main sessions newest first, counting everything the catalog returned", async () => {
+    it("lists main sessions newest first, counting every session of the scope", async () => {
         const listing = await search.getSessionListing();
 
         expect(listing.sessions.map((s) => s.sessionId)).toEqual(["newer", "main", "undated"]);
@@ -412,6 +431,12 @@ describe("getSessionListing", () => {
             },
             maxDiscoveryAgeMs: undefined,
             refresh: undefined,
+        });
+        // The counts read the index the listing just refreshed, with the listing's own filters.
+        expect(state.countCalls[0]).toEqual({
+            provider: "claude",
+            filters: state.catalogCalls[0].filters,
+            refresh: false,
         });
     });
 
