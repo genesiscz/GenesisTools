@@ -173,6 +173,8 @@ describe("decision journal", () => {
         expect(actorText({ kind: "window" })).toBe("you");
         expect(actorText({ kind: "listen" })).toBe("you in the terminal");
         expect(actorText({ kind: "agent", harness: "claude-code", session: null })).toBe("an agent (Claude Code)");
+        expect(actorText({ kind: "agent", harness: "grok", session: null })).toBe("an agent (Grok)");
+        expect(actorText({ kind: "agent", harness: "other-agent", session: null })).toBe("an agent (other-agent)");
         expect(actorText({ kind: "unknown" })).toBe("someone, before the history existed");
     });
 

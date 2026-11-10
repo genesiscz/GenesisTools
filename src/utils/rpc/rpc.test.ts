@@ -473,7 +473,7 @@ describe("the service host (service-host.ts)", () => {
 
     test("stop signals the verified service process and waits until it is gone", async () => {
         const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
-        const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+        const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore", env: process.env });
         opened.push({ close: () => child.kill() });
         const pidCommand = readProcessCommand(child.pid);
         const entry = {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import type { AgentIdentity } from "@genesiscz/utils/agent/identity";
+import { harnessLabel, harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -1079,8 +1080,11 @@ export function decisionReach(options: {
     return { items, ...(taught.length > 0 && lines !== undefined ? { lines } : {}), dictionary };
 }
 
-/** The agent harnesses by the name a person knows them by; another harness shows its own id. */
-const HARNESS_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok" };
+/** An agent's harness by the name a person knows it by (its driver's label); an agent no driver claims shows its id. */
+function harnessText(agent: string): string {
+    const harness = harnessOfRuntimeAgent(agent);
+    return harness ? harnessLabel(harness) : agent;
+}
 
 /**
  * An actor in words, after "by" on a row or a journal line (GLOSSARY.md, "Decision journal"): "by you" (the window),
@@ -1097,7 +1101,7 @@ export function actorText(actor: DecisionActor): string {
             return "you at the command line";
         case "agent": {
             const session = actor.session ? `, session ${actor.session.slice(0, 8)}` : "";
-            return `an agent (${HARNESS_NAMES[actor.harness] ?? actor.harness}${session})`;
+            return `an agent (${harnessText(actor.harness)}${session})`;
         }
         case "rule":
             return `rule ${actor.rule}`;
