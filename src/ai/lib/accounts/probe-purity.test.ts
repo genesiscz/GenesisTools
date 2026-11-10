@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as historySearch from "@app/claude/lib/history/search";
+import * as historyCatalog from "@genesiscz/utils/agent-sessions/open-service";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { _resetBuiltInPluginsForTest, registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -244,17 +244,12 @@ describe("accounts show", () => {
  * that reads no credential and is not what this suite asserts. The process scan (`ps`,
  * `lsof`, `cmux`) and the account read off each process environment stay real.
  */
-mock.module("@app/claude/lib/history/search", () => ({
-    ...historySearch,
-    getSessionListing: async (): Promise<historySearch.SessionListingResult> => ({
-        sessions: [],
-        total: 0,
-        subagents: 0,
-        indexed: 0,
-        staleRemoved: 0,
+mock.module("@genesiscz/utils/agent-sessions/open-service", () => ({
+    ...historyCatalog,
+    catalogHistory: async (): Promise<Awaited<ReturnType<typeof historyCatalog.catalogHistory>>> => ({
+        metadata: [],
         reindexed: false,
-        projectCount: 0,
-        scope: "all projects",
+        report: { issues: [], parsed: 0, unchanged: 0, removed: 0 },
     }),
 }));
 
