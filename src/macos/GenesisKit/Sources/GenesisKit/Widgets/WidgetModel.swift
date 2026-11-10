@@ -1862,6 +1862,9 @@ public final class WidgetModel: ObservableObject {
     var pendingStageAt: [String: Double] = [:]
     /// The item each pending pick was made on, so a leave or a popup's end right after the click still knows it.
     var pendingStageItems: [String: WidgetInboxItem] = [:]
+    /// Picks whose stage write got no answer from the hub in time. They stay shown, with Try again, until the user
+    /// stages, discards or retries them or a snapshot shows them; no clock drops them, because the hub never took them.
+    var pendingStageUnsaved: Set<String> = []
     /// Notes waiting for their stage write and snapshot, distinct from an empty pick used to clear a stage.
     var pendingStageNotes: [String: String] = [:]
     /// When the hub confirmed each pending pick was written (epoch ms): a row written after it is another surface's.
@@ -2615,8 +2618,11 @@ public final class WidgetModel: ObservableObject {
             })
     }
 
+    /// `unanswered`: called in place of `failed` and the error note when the hub gave no answer within
+    /// `timeoutSeconds`, for a write whose caller keeps the user's input and offers it again.
     public func action(
-        _ value: WidgetJSON, failed: (() -> Void)? = nil, completed: (() -> Void)? = nil
+        _ value: WidgetJSON, timeoutSeconds: Int = 120, failed: (() -> Void)? = nil,
+        unanswered: ((Int) -> Void)? = nil, completed: (() -> Void)? = nil
     ) {
         if completed == nil, failed == nil, case .object(let request) = value,
             request["action"] == .string("preferences"), case .object(let patch) = request["patch"]
@@ -2637,9 +2643,12 @@ public final class WidgetModel: ObservableObject {
             guard let self else { return }
             if let draftKey, self.draftRevisions[draftKey, default: 0] != draftRevision { return }
             do {
-                _ = try await self.call(value)
+                _ = try await self.call(value, timeoutSeconds: timeoutSeconds)
                 completed?()
                 if self.settingsOnly { self.refreshSettings() }
+            } catch ToolsBridgeError.timeout(let seconds) where unanswered != nil {
+                PerfLog.mark("widget.error tools call exceeded \(seconds)s; the input is kept")
+                unanswered?(seconds)
             } catch {
                 failed?()
                 self.report(error)

@@ -325,9 +325,22 @@ extension WidgetModel {
             "expectedRevision": .number(Double(revision)), "state": "drafted", "draftOption": .string(option ?? ""),
         ]
         if let stagedNote { fields["draft"] = .string(stagedNote) }
-        action(.object(fields), failed: { [weak self] in
+        action(.object(fields), timeoutSeconds: Self.stageWriteTimeoutSeconds, failed: { [weak self] in
             self?.pendingStagesInFlight.remove(version)
             self?.clearPendingStage(id, version: version)
+        }, unanswered: { [weak self] seconds in
+            // No answer is not a refusal: the pick and its note stay here. A click on 2026-11-10 was dropped after
+            // its write was killed at 120 s on a Mac at load 500, and the user learned it from an agent that waited.
+            guard let self else { return }
+            self.pendingStagesInFlight.remove(version)
+            guard self.pendingStageVersions[id] == version else { return }
+            self.pendingStageUnsaved.insert(id)
+            PerfLog.mark("widget.staged write unanswered id=\(id) after \(seconds)s; the pick stays")
+            self.postNote("The hub did not answer within \(seconds) seconds, so this pick is not saved yet. It stays here.",
+                          action: WidgetNoticeAction(title: "Try again") { [weak self] in
+                              self?.stage(id: id, sessionId: sessionId, revision: revision, option: option,
+                                          note: stagedNote, item: item, completed: completed)
+                          }, tone: .warning)
         }, completed: { [weak self] in
             if self?.pendingStageVersions[id] == version {
                 self?.pendingStageDone[id] = Date().timeIntervalSince1970 * 1000
@@ -347,6 +360,10 @@ extension WidgetModel {
     nonisolated static let pendingStageLifetime: TimeInterval = 15
     /// The limit for a pick whose write never answered (a discard has no `pendingStageDone`).
     nonisolated static let pendingStageUnansweredLifetime: TimeInterval = 60
+    /// The limit of one stage write. It writes one row of the decision log on this Mac and delivers nothing, so 30 s
+    /// without an answer is a stalled Mac: of 624 widget calls in five days, 6 that answered took longer. At the limit
+    /// the pick stays shown with Try again (`pendingStageUnsaved`); it waited 120 s and was dropped before.
+    nonisolated static let stageWriteTimeoutSeconds = 30
 
     /// A pick or a clear (`""`) made here, shown at once until a snapshot shows the decision log has it.
     @discardableResult
@@ -354,6 +371,7 @@ extension WidgetModel {
         let version = UUID()
         pendingStageVersions[id] = version
         keptStaged.remove(id)
+        pendingStageUnsaved.remove(id)
         pendingStage[id] = option
         if let note { pendingStageNotes[id] = note }
         pendingStageAt[id] = Date().timeIntervalSince1970 * 1000
@@ -367,6 +385,7 @@ extension WidgetModel {
         pendingStage[id] = nil
         pendingStageNotes[id] = nil
         pendingStageVersions[id] = nil
+        pendingStageUnsaved.remove(id)
     }
 
     /// A later edit has its own staged intent; an older send must not send that edit instead.
@@ -395,8 +414,12 @@ extension WidgetModel {
             // no snapshot confirmed the pick in time.
             let confirmed = (row?.pick ?? "") == option && (pendingStageNotes[id].map { row?.note == $0 } ?? true)
             let overtaken = pendingStageDone[id].map { done in (row?.at ?? 0) > done } ?? false
+            // A write still running, or one the hub never answered, is not a pick the hub lost: the first ends with
+            // its call, the second waits for the user. A queued write lost its pick after a minute before.
+            let waiting = pendingStageUnsaved.contains(id)
+                || (pendingStageVersions[id].map { pendingStagesInFlight.contains($0) } ?? false)
             let expired = pendingStageDone[id].map { done in now - done > Self.pendingStageLifetime * 1000 }
-                ?? pendingStageAt[id].map { asked in now - asked > Self.pendingStageUnansweredLifetime * 1000 }
+                ?? pendingStageAt[id].map { asked in !waiting && now - asked > Self.pendingStageUnansweredLifetime * 1000 }
                 ?? false
             if confirmed || overtaken || expired {
                 if !confirmed { PerfLog.mark("widget.staged pending dropped id=\(id) overtaken=\(overtaken)") }
@@ -407,6 +430,7 @@ extension WidgetModel {
         pendingStageDone = pendingStageDone.filter { pendingStage[$0.key] != nil }
         pendingStageItems = pendingStageItems.filter { pendingStage[$0.key] != nil }
         pendingStageNotes = pendingStageNotes.filter { pendingStage[$0.key] != nil }
+        pendingStageUnsaved = pendingStageUnsaved.filter { pendingStage[$0] != nil }
         pendingStageVersions = pendingStageVersions.filter {
             pendingStage[$0.key] != nil || pendingStagesInFlight.contains($0.value)
                 || (sendingDecisionIDs.contains($0.key) && sendingStageVersions[$0.key] == $0.value)

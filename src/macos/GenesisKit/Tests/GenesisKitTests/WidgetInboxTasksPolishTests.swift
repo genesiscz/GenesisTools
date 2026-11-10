@@ -2142,6 +2142,53 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertNil(model.pendingStage["d1"], "a write that never answered stops showing its pick after a minute")
     }
 
+    /// 2026-11-10, a Mac at load 500: the write of a pick was killed at its 120 s limit and the pick was dropped, and
+    /// a minute into that wait it had already stopped showing. No answer is not a refusal, so the pick stays.
+    func testAPickWhoseStageWriteGotNoAnswerStaysAndCanBeTriedAgain() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.receive([try snapshot(draftOption: nil)])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        var writes = 0
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, fields["action"] == "ledger" else { return ["ok": true] }
+            writes += 1
+            if writes == 1 { throw ToolsBridgeError.timeout(seconds: WidgetModel.stageWriteTimeoutSeconds) }
+            return ["ok": true]
+        }
+        let unanswered = expectation(description: "the first write ended without an answer")
+        model.choose(card, option: "a")
+        model.afterMutations { unanswered.fulfill() }
+        await fulfillment(of: [unanswered], timeout: 1)
+        XCTAssertEqual(model.stagedOption(card.sourceId, stored: nil), "a", "a pick the hub did not answer stays shown")
+        XCTAssertEqual(model.noticeAction?.title, "Try again")
+        XCTAssertEqual(model.notice, "The hub did not answer within 30 seconds, so this pick is not saved yet. It stays here.")
+
+        model.pendingStageAt[card.sourceId] = Date().timeIntervalSince1970 * 1000 - 70_000
+        model.reconcileStaged([])
+        XCTAssertEqual(model.pendingStage[card.sourceId], "a", "no clock drops a pick the hub never took")
+
+        let retried = expectation(description: "the second write was answered")
+        model.noticeAction?.run()
+        model.afterMutations { retried.fulfill() }
+        await fulfillment(of: [retried], timeout: 1)
+        XCTAssertEqual(writes, 2, "Try again writes the same pick once more")
+        XCTAssertNotNil(model.pendingStageDone[card.sourceId], "the answered write is acknowledged")
+        XCTAssertTrue(model.pendingStageUnsaved.isEmpty)
+    }
+
+    /// A pick whose write still runs (queued behind another call to the hub) keeps showing past the minute.
+    func testAPickWhoseStageWriteStillRunsDoesNotExpire() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let version = model.markPending("d1", "a")
+        model.pendingStagesInFlight.insert(version)
+        model.pendingStageAt["d1"] = Date().timeIntervalSince1970 * 1000 - 70_000
+        model.reconcileStaged([])
+        XCTAssertEqual(model.pendingStage["d1"], "a")
+    }
+
     /// Decision audit F16: Esc right after a pick, before any snapshot lists it, still asks about it.
     func testANewerStageDuringASendAsksOnLeave() throws {
         let model = StagingFixture.model()
