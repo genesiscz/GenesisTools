@@ -3,6 +3,56 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-11-10 04:58 — **Meetings window, a second look at a finished wave: defects that every test and a scored live
+  check had passed.** Each one is a shape that will come back on another surface.
+  - *Marks drew over each other*: the pin counts on the timeline strip, and "? Q7 ? Q9" banners over the speaker
+    lanes. Both merged neighbours closer than a fixed gap (6 pt, 22 pt) that was smaller than the mark itself (16 pt,
+    about 44 pt). Fix: the merge distance is the mark's drawn width; a group is anchored at its first member, so a
+    chain cannot swallow a whole lane into one count; and no mark is placed closer than one width to the mark before
+    it (`PinCluster.clusters`, `TalkTimeLayout.banners`). Rule: a merge threshold is the size of what is drawn, and
+    its test asserts the spacing on a dense fixture, not on three hand-picked pins.
+  - *A threshold that could never fire.* The dock folds "below 560 pt", and 560 pt is the window's minimum height. It
+    never folded, and the smallest window kept about 90 pt of rows above a playing dock. Rule: check every size
+    threshold against the window's reachable sizes; one outside that range is dead code with a setting on top.
+  - *A folded question hid its answer.* The line showed the engine's one-line text, which ends in "→ answer", cut
+    with an ellipsis before the arrow. Fix: the answer is its own field and its own text with a higher layout
+    priority, so the question gives way first. Rule: in a one-line summary, the part the reader came for is its own
+    text and never truncates.
+  - *"Keep its place" drew a blank gap.* A row answered in this window kept its old height so that the next row did
+    not move, but it drew one folded line at the top of that height: 150 to 280 pt of nothing. Fix: while it keeps its
+    place it keeps its content, dimmed, with the decision where the choices were. Rule: room held for stability holds
+    something; an empty hold reads as a rendering fault.
+  - *Each time in a question started a new line.* The sentence was laid out as pieces (text, time, text), and a piece
+    wider than the row got a row of its own, so "(" stood alone at a line's end. Fix: the text between two times flows
+    as words, and a space is the trailing room of the item before it (`ReviewRowView.flow`). Rule: controls inside a
+    sentence need word-level flow; look at the wrap in the narrowest column with a real long sentence.
+  - *Item ids as words*: "It settles 1 item: i39", "Answered i116". Fix: a reference names the row in words ("Speaker
+    range 1:45:15–1:53:22") and selects it on a click; a notice names a question by the label its row shows. The
+    checklist already said "values from the data are mapped to words"; the miss was a string built from an action's
+    payload, not from a view model. Rule: search the strings that notices, tooltips and history lines build from
+    actions and events too.
+  - *A wall of one warning.* Three "Silent from … to … while in the call" lines per speaker, their times plain text,
+    and the chips of every sign after the last line. Fix: signs of one kind are one line with a chip per stretch, and
+    a line's chips sit under that line. Rule: sentences that differ only in a time are one sentence and a list of live
+    times.
+  - *A picture from another time under a current caption.* "Screen at 17:28" beside a Moment at 54:35, because the
+    screen capture had ended. Fix: outside the capture the caption reads "Last frame, 37 min earlier", its tooltip
+    and VoiceOver give the full sentence, and the picture dims. Rule: when the nearest data is far from what was asked,
+    say how far. The first wording ("Last screen frame, 17:28 · 37 min before this") was cut to "…37…" in the 290 pt
+    header: a new caption is checked in its real width before it ships.
+  - *The live check ran on a fallback and did not know.* Its sandbox home made the service's socket path 127 bytes;
+    the window could not connect (the swift skill's gotchas, "Socket paths"), read everything through commands and
+    drew no waveform. Rule: before a live check, read the app's perf log for a fallback line; a window on its fallback
+    path is another product.
+  - *My own first try of the folded line truncated the question at half the free room*: "Who agre…", then a wide
+    blank, then "Revert and edit" on two lines. A one-line `Text` beside a `Spacer` of the same layout priority gets an
+    equal share, not its ideal width, and a label with no `fixedSize` wraps when a neighbour grows. Fix: the text sits
+    above the spacer's priority and below the answer's; the button's label is fixed. Rule: look at a picture of every
+    row state after a layout change, with long and short values.
+  - How they got through: the wave's tests pinned what was built (three pins, one banner, one silence), the live check
+    scored requests, and nobody opened the densest real meeting to look for overlap, truncation and dead text. Rule:
+    after "all green", open the densest real data at the smallest and at the default window size, and read every
+    string and every mark.
 - 2026-11-01 21:52 — **Markdown viewer: task boxes, the reading position after a change on disk, file names as links.**
   - *The first task box drew at the small macOS control size (about 11 pt beside 16 px text).* `width:1em` on an
     `<input>` uses the input's own 13.33 px control font, and WebKit picks the control size from that. Fix:
