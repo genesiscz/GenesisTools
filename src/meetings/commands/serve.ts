@@ -24,6 +24,8 @@ async function detach(): Promise<void> {
         command: ["meetings", "serve"],
         gates: toolDataDir("meetings", "start-gates"),
         label: "meetings service",
+        // Its launch lines join the service's own (`[meetings-service]`), as its start and stop lines do.
+        logScope: "meetings-service",
     });
 
     if (launch.status === "failed") {
