@@ -506,7 +506,7 @@ final class ToolsClientTests: XCTestCase {
     func testAFailureThatNamesNothingReadsAsTheExitSummary() {
         let read = failure(stderr: "[profile:hub-pr] 4ms\nboom\n", status: 2)
         XCTAssertEqual(read.message, "tools hub pr fetch exited 2: boom")
-        XCTAssertEqual(read.summary, read.message)
+        XCTAssertEqual(read.summary, "tools hub pr fetch exited 2: [profile:hub-pr] 4ms\nboom", "Details keep all of stderr")
         XCTAssertEqual(read.stderrTail, "boom", "the profile lines are not the reason")
         XCTAssertEqual(read.exitCode, 2)
         XCTAssertFalse(read.named)

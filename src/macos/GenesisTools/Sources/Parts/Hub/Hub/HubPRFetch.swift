@@ -74,7 +74,7 @@ enum PRFetch {
     /// picks the lead. A failure that names nothing reads as its exit summary.
     static func sentence(stdout: Data, stderr: Data, status: Int32) -> String {
         let failure = ToolsFailure(argv: ["hub", "pr", "fetch"], capture: ProcessCapture(status: status, stdout: stdout, stderr: stderr))
-        guard failure.named else { return failure.summary }
+        guard failure.named else { return failure.message }
         switch failure.code {
         case "auth": return "Sign-in needed to fetch the PR head: \(failure.message)"
         case "network": return "The host did not answer: \(failure.message)"

@@ -10,7 +10,7 @@ import Foundation
 ///   `{"type":"error","message":"…"}`, as the whole output after a preamble or as its last JSON line;
 /// - the last `✗` line of stderr, with a leading `[code]` read as the code (`✗ [config-stale] …`);
 /// - Commander's `error: …` line at column 0 of stderr (its usage text follows it);
-/// - else `summary`, "tools <verb> exited <status>: <stderr tail>".
+/// - else "tools <verb> exited <status>: <stderr tail>".
 public struct ToolsFailure: Error, LocalizedError, CustomStringConvertible, Equatable, Sendable {
     public let message: String
     public let code: String?
@@ -18,16 +18,21 @@ public struct ToolsFailure: Error, LocalizedError, CustomStringConvertible, Equa
     public let exitCode: Int32
     /// The end of stderr (300 characters at most) without the `[profile:` timing lines.
     public let stderrTail: String
-    /// "tools hub pr fetch exited 1: <stderr tail>": the raw line behind a failure's Details.
+    /// "tools hub pr fetch exited 1: <all of stderr>": the raw text behind a failure's Details, uncut.
     public let summary: String
+    /// True when the CLI named the problem itself (a JSON error, a `✗` line or an `error:` line), false when `message`
+    /// is only the exit status with the stderr tail.
+    public let named: Bool
 
-    public init(message: String, code: String? = nil, missing: [String]? = nil, exitCode: Int32, stderrTail: String, summary: String) {
+    public init(message: String, code: String? = nil, missing: [String]? = nil, exitCode: Int32, stderrTail: String, summary: String,
+                named: Bool = true) {
         self.message = message
         self.code = code
         self.missing = missing
         self.exitCode = exitCode
         self.stderrTail = stderrTail
         self.summary = summary
+        self.named = named
     }
 
     /// Reads a finished call. `argv` names the command in `summary`.
@@ -35,7 +40,9 @@ public struct ToolsFailure: Error, LocalizedError, CustomStringConvertible, Equa
         let stdout = String(decoding: capture.stdout, as: UTF8.self)
         let stderr = String(decoding: capture.stderr, as: UTF8.self)
         let tail = Self.tail(stderr)
-        let summary = "tools \(argv.prefix(3).joined(separator: " ")) exited \(capture.status)" + (tail.isEmpty ? "" : ": \(tail)")
+        let command = "tools \(argv.prefix(3).joined(separator: " ")) exited \(capture.status)"
+        let whole = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let summary = command + (whole.isEmpty ? "" : ": \(whole)")
         if let json = Self.jsonError(stdout) {
             self.init(message: json.message, code: json.code, missing: json.missing, exitCode: capture.status, stderrTail: tail,
                       summary: summary)
@@ -44,13 +51,10 @@ public struct ToolsFailure: Error, LocalizedError, CustomStringConvertible, Equa
         } else if let commander = Self.commanderError(stderr) {
             self.init(message: commander, exitCode: capture.status, stderrTail: tail, summary: summary)
         } else {
-            self.init(message: summary, exitCode: capture.status, stderrTail: tail, summary: summary)
+            self.init(message: command + (tail.isEmpty ? "" : ": \(tail)"), exitCode: capture.status, stderrTail: tail, summary: summary,
+                      named: false)
         }
     }
-
-    /// True when the CLI named the problem itself (a JSON error, a `✗` line or an `error:` line), false when `message`
-    /// is only the exit summary.
-    public var named: Bool { message != summary }
 
     public var description: String { message }
     public var errorDescription: String? { message }
