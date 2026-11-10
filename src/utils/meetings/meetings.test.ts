@@ -386,7 +386,8 @@ describe("meetings config", () => {
         expect(() => sound({ file: "sounds/chime.wav" })).toThrow("absolute path");
         expect(sound({ file: "/sounds/chime.wav", volume: 0.2 })).toEqual({ file: "/sounds/chime.wav", volume: 0.2 });
         expect(sound({ hz: 440, sec: 0.2 })).toEqual({ hz: 440, sec: 0.2, volume: 0.6 });
-        expect(() => sound({ preset: "gong" })).toThrow();
+        // A misspelt preset names the presets, not an unknown key.
+        expect(() => sound({ preset: "gong" })).toThrow("with a preset of beep, soft, click, tink");
         expect(() => sound({ hz: 440, sec: 3 })).toThrow();
         expect(Object.keys(TONE_PRESETS).slice(0, 3)).toEqual(["beep", "soft", "click"]);
         // The sines are the Meetings window's presets (SidePanelSections.swift TonePreset).
