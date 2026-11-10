@@ -483,6 +483,52 @@ extension KitCatalog {
             ])
     }
 
+    /// A timeout of the transcript's read, as the hub shows it (names made up).
+    private static var timeoutReport: FailureReport {
+        let started = Date(timeIntervalSince1970: 1_800_000_000)
+        let call = ToolsCallLedger.Call(traceId: "297f7e79", argv: ["ai", "sessions", "tail", "a1523c66", "--json", "--limit", "12"],
+                                        started: started, via: "server-timeout", exit: -1, ended: started.addingTimeInterval(31.2))
+        return FailureReport.toolsCall(ToolsBridgeError.timeout(seconds: 30), outcome: "The transcript did not load",
+                                       action: "Open the session's transcript", call: call, area: "hub", home: "/Users/alice")
+    }
+
+    static var failureInline: CatalogEntry {
+        let long = FailureReport.toolsCall(
+            ToolsBridgeError.refused("tools hub pr: GitHub answered 502 Bad Gateway three times while the threads of acme/storefront#4182 were read"),
+            outcome: "The PR's threads did not load", action: "Read the PR's review threads",
+            argv: ["hub", "pr", "threads", "acme/storefront#4182", "--json"], home: "/Users/alice")
+        return CatalogEntry(
+            id: "failure-inline", group: "Status", name: "Inline failure (FailureInline)",
+            summary: "A load or an action that failed, where its data should be: one sentence a person reads, one quiet line of what ran and how it ended, and Try again, Details (the failure window: log, Copy context for agents) and Report a bug. `FailureReport.toolsCall` makes the report of a failed tools call.",
+            source: "GenesisKit/Controls/FailureNotice/FailureInline.swift · GenesisKit/Controls/FailureNotice/FailureReport+ToolsCall.swift",
+            isNew: true,
+            critique: [
+                "Before it, a failed pane drew a triangle and the raw error in red (\"tools call exceeded 30s\"), with nothing to click.",
+            ],
+            looks: [.classic],
+            sections: [
+                CatalogSection("For a whole pane", [
+                    CatalogVariant("With Try again", props: "form: .pane, retry: { … }") {
+                        FailureInline(timeoutReport, form: .pane, retry: {}).frame(width: 340, height: 260)
+                    },
+                    CatalogVariant("Without", props: "form: .pane") {
+                        FailureInline(timeoutReport, form: .pane).frame(width: 340, height: 260)
+                    },
+                ]),
+                CatalogSection("Compact, for a strip, a row or a card", flow: .column, [
+                    CatalogVariant("With Try again", props: "form: .compact, retry: { … }") {
+                        FailureInline(timeoutReport, form: .compact, retry: {}).frame(width: 680)
+                    },
+                    CatalogVariant("Without", props: "form: .compact") {
+                        FailureInline(timeoutReport, form: .compact).frame(width: 680)
+                    },
+                    CatalogVariant("A long headline wraps, never truncates", props: "form: .compact, 360 pt") {
+                        FailureInline(long, form: .compact, retry: {}).frame(width: 360)
+                    },
+                ]),
+            ])
+    }
+
     static var primaryButton: CatalogEntry {
         CatalogEntry(
             id: "primary-button", group: "Actions", name: "Filled button (.genPrimary)",

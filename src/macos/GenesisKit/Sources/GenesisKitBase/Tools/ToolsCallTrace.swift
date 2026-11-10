@@ -54,6 +54,15 @@ public enum ToolsCallTrace {
 
     private static let stampLock = NSLock()
 
+    /// The calls of the task that reads it, for a failure report. A caller binds one around the work that may fail:
+    /// `ToolsCallTrace.$ledger.withValue(ledger) { try await … }`, then `ledger.last` names the call that failed.
+    @TaskLocal public static var ledger: ToolsCallLedger?
+
+    /// A call starts: noted in the task's ledger, when it has one.
+    public static func began(traceId: String, argv: [String], started: Date = Date()) {
+        ledger?.began(ToolsCallLedger.Call(traceId: traceId, argv: argv, started: started))
+    }
+
     public static func record(
         traceId: String,
         via: String,
@@ -63,6 +72,7 @@ public enum ToolsCallTrace {
         outBytes: Int,
         stderr: String
     ) {
+        ledger?.ended(traceId: traceId, via: via, exit: exit, stderr: stderr, ended: Date())
         guard PerfLog.enabled else { return }
         let ms = Int(Date().timeIntervalSince(started) * 1000)
         let start = stampLock.withLock { stamp.string(from: started) }
@@ -74,5 +84,80 @@ public enum ToolsCallTrace {
             line += " err=\(stderr.utf8.count)B"
         }
         PerfLog.mark(line)
+    }
+}
+
+/// The `tools` calls one piece of work made, in order: what a failure report names as "what ran". Bound to a task
+/// through `ToolsCallTrace.ledger`; `ToolsBridge.run` and the hub's runner note each call's start and end in it.
+public final class ToolsCallLedger: @unchecked Sendable {
+    public struct Call: Equatable, Sendable {
+        public var traceId: String
+        public var argv: [String]
+        public var started: Date
+        /// How it ran (`server`, `process`, `server-timeout`, `process-timeout`); nil until it ended.
+        public var via: String?
+        public var exit: Int32?
+        /// The start of its stderr, at most 4 KB: the error a failed call printed.
+        public var stderr: String?
+        public var ended: Date?
+
+        public init(traceId: String, argv: [String], started: Date, via: String? = nil, exit: Int32? = nil,
+                    stderr: String? = nil, ended: Date? = nil) {
+            self.traceId = traceId
+            self.argv = argv
+            self.started = started
+            self.via = via
+            self.exit = exit
+            self.stderr = stderr
+            self.ended = ended
+        }
+
+        public var timedOut: Bool { via?.hasSuffix("-timeout") ?? false }
+    }
+
+    private let lock = NSLock()
+    private var list: [Call] = []
+
+    public init() {}
+
+    public var calls: [Call] { lock.withLock { list } }
+
+    /// The call started last: the one that failed when the work runs its calls one after another.
+    public var last: Call? { lock.withLock { list.last } }
+
+    /// The newest call that ended with an error or never ended, else the newest call.
+    public var failed: Call? {
+        lock.withLock { list.last { $0.exit.map { $0 != 0 } ?? true } ?? list.last }
+    }
+
+    func began(_ call: Call) {
+        lock.withLock {
+            list.append(call)
+            if list.count > 64 {
+                list.removeFirst(list.count - 64)
+            }
+        }
+    }
+
+    func ended(traceId: String, via: String, exit: Int32, stderr: String, ended: Date) {
+        lock.withLock {
+            guard let index = list.lastIndex(where: { $0.traceId == traceId }) else { return }
+            list[index].via = via
+            list[index].exit = exit
+            list[index].stderr = stderr.isEmpty ? nil : String(stderr.prefix(4096))
+            list[index].ended = ended
+        }
+    }
+}
+
+public extension ToolsCallLedger {
+    /// Runs `work` with this ledger bound, so every `tools` call inside it is noted here.
+    func record<T>(_ work: () async throws -> T) async rethrows -> T {
+        try await ToolsCallTrace.$ledger.withValue(self) { try await work() }
+    }
+
+    /// `record` for synchronous work (a runner that blocks a background thread).
+    func recordSync<T>(_ work: () throws -> T) rethrows -> T {
+        try ToolsCallTrace.$ledger.withValue(self) { try work() }
     }
 }

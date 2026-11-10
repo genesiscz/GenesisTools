@@ -261,6 +261,7 @@ public struct ToolsBridge: Sendable {
         let argv = [subcommand] + args
         let traceId = ToolsCallTrace.newId()
         let started = Date()
+        ToolsCallTrace.began(traceId: traceId, argv: argv, started: started)
         // The server gets a part of the call's limit (`serverPatience`), so a server that is busy or starved costs a
         // wait and then a process, never the whole limit and an error. Its own "exceeded" answer is no answer.
         let patience = Self.serverPatience(timeoutSeconds: timeoutSeconds)

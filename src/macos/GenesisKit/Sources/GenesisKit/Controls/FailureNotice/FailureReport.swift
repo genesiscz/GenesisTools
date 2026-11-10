@@ -86,6 +86,8 @@ public struct FailureReport: Equatable, Sendable {
     public var area: String?
     /// The environment `tools genesis-tools triage --json` reported, nil until it answered (or when it could not).
     public var environment: FailureEnvironment?
+    /// The failed `tools` call, from the task's `ToolsCallLedger`: its trace id, argv, how it ran and its stderr.
+    public var call: ToolsCallLedger.Call?
 
     public init(title: String = "Failed", headline: String, summary: String? = nil, nextStep: String? = nil,
                 action: String? = nil, command: String? = nil, exitStatus: Int32? = nil, folder: String? = nil,
@@ -206,6 +208,9 @@ public struct FailureReport: Equatable, Sendable {
         }
         if let folder {
             lines.append("folder: \(folder)" + (FileManager.default.fileExists(atPath: folder) ? "" : " (no longer on disk)"))
+        }
+        if let call {
+            lines.append("trace: t=\(call.traceId)" + (call.via.map { " (via \($0))" } ?? ""))
         }
         lines.append("time: \(formatter.string(from: time))")
         if hasLog {

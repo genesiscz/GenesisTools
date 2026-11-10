@@ -1643,6 +1643,50 @@ List(items) { row($0) }
     .noticeStack(model.notices)
 ```
 
+#### `FailureInline`, `FailureReporter` and `FailureReport.toolsCall`
+
+A load or an action that failed, shown where its data should be (Controls/FailureNotice/FailureInline.swift): the
+headline a person reads, one quiet line of what ran and how it ended, and **Try again** (when a retry is given),
+**Details** (the failure window, `FailureNoticePanel`, on this report: its summary, its log, Copy context for agents,
+Copy log, Open log) and **Report a bug** (the issue draft window). Never a raw error string in red.
+
+- `FailureInline(_ report:, form: .pane | .compact, identifier:, reporter: .shared, retry:)`. `.pane` stands in for a
+  whole pane, centred (the transcript's placeholder); `.compact` is one paragraph and a row of small buttons for a
+  strip, a row or a card, and it wraps under the buttons in a narrow row. The headline is announced to VoiceOver when
+  the view appears; the buttons are `KitButton`s with tooltips and identifiers (`<identifier>.retry|details|report`).
+- `FailureReporter.shared`, `@MainActor`: the one failure window and issue target for failures shown in place, so a hub
+  pane, a widget card and a settings page reach the same window. `showDetails(_:retry:)`, `reportBug(_:)` (reads the
+  environment facts once per run; waits at most 4 s), `prefetchEnvironment()`. `issueTarget`, `options` and
+  `environment` are closures a host or a test replaces; `defaultIssueTarget(defaults:dryRunKey:)` posts to
+  `FailureReporter.issueRepo` (the recorder uses it with its own dry-run switch).
+- `NoticeFix.details(_ report:retry:)` and `StackedNotice.Action.details(_:retry:)`: "Details" on a notice (class B, an
+  action that failed); the notice stays.
+- `FailureReport.toolsCall(_ error:, outcome:, action:, call:, argv:, title:, area:, expected:)`: the one report of a
+  failed `tools` call. From a `ToolsBridgeError` (timeout, binary not found, refused), a non-zero exit with its stderr,
+  or a runner's own error for a call it killed, it makes the headline ("The transcript did not load: the tools call did
+  not answer in 30 s."), the quiet line ("`ai sessions tail` did not answer in 30 s."), a next step, the command as a
+  person types it (credentials hidden), the exit status and the day log. `addingCallLog(perfLog:window:)` reads, off
+  the main thread and from the file's last 2 MB, the app-perf.log lines that carry the call's trace id and every call
+  that ended in the 60 s before it; "Open log" goes to the call's own line. `deliver(_:isCurrent:)` shows a report at
+  once and again with its log. `FailureReport.unexpected(_ message:, outcome:, action:)` is the same for a failure
+  that is not a `tools` call (git, a decode).
+- Which call failed: bind a `ToolsCallLedger` around the work (`ledger.record { try await … }`, or `recordSync` on a
+  background thread) and pass `ledger.failed`. `ToolsBridge.run` and the hub's `ToolsCLIRunner` note every call's start
+  and end in the task's ledger (`ToolsCallTrace.ledger`, a task local; a queue hop must carry it by hand).
+
+```swift
+let ledger = ToolsCallLedger()
+do {
+    rows = try await ledger.record { try await client.fetch() }
+} catch {
+    FailureReport.toolsCall(error, outcome: "The transcript did not load", action: "Open the session's transcript",
+                            call: ledger.failed, area: "hub")
+        .deliver({ failure = $0 }, isCurrent: { failure == $0 })
+}
+// in the view
+if let failure { FailureInline(failure, form: .pane) { reload() } }
+```
+
 #### `NewItemsPill`
 
 A floating "3 new" pill with a down arrow icon. A live list shows it while the reader is scrolled up and items arrived below. The list decides when to show it, so it never moves a reader who scrolled up. A click means the reader asks to go down.
