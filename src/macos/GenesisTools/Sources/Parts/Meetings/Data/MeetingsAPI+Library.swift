@@ -260,4 +260,75 @@ extension MeetingsAPI {
 
         typealias Result = [Change]
     }
+
+    // MARK: The tone (config version 5)
+
+    /// `global.playback.listen.tone.sound` as config version 5 keeps it (`toneSoundSettingSchema` in
+    /// src/utils/meetings/config.ts): a sine (version 4's shape), a named preset, or a sound file. A preset or a file
+    /// without a volume plays at the preset's own or the default one. The encoder writes only the case's members, so
+    /// the strict schema takes it in `config.set`, `tone.preview` and `moment.plan`'s `toneSound`.
+    enum ToneSoundSetting: Codable, Equatable, Hashable {
+        case sine(hz: Double, sec: Double, volume: Double)
+        case preset(String, volume: Double?)
+        case file(String, volume: Double?)
+
+        private enum CodingKeys: String, CodingKey { case hz, sec, volume, preset, file }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let volume = try container.decodeIfPresent(Double.self, forKey: .volume)
+            if let preset = try container.decodeIfPresent(String.self, forKey: .preset) {
+                self = .preset(preset, volume: volume)
+            } else if let file = try container.decodeIfPresent(String.self, forKey: .file) {
+                self = .file(file, volume: volume)
+            } else {
+                // The engine's defaults (DEFAULT_TONE_SOUND) fill a sine's missing members, as the config reads it.
+                self = .sine(hz: try container.decodeIfPresent(Double.self, forKey: .hz) ?? 880,
+                             sec: try container.decodeIfPresent(Double.self, forKey: .sec) ?? 0.15,
+                             volume: volume ?? 0.6)
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .sine(let hz, let sec, let volume):
+                try container.encode(hz, forKey: .hz)
+                try container.encode(sec, forKey: .sec)
+                try container.encode(volume, forKey: .volume)
+            case .preset(let name, let volume):
+                try container.encode(name, forKey: .preset)
+                try container.encodeIfPresent(volume, forKey: .volume)
+            case .file(let path, let volume):
+                try container.encode(path, forKey: .file)
+                try container.encodeIfPresent(volume, forKey: .volume)
+            }
+        }
+    }
+
+    /// `tone.presets`: the named tones a sound picker offers, three sines and the Mac's alert sounds. Picking one
+    /// writes `.preset(name, volume: nil)` with `config.set`; `tone.preview` plays it.
+    enum TonePresets: MeetingsServiceMethod {
+        static let name = "tone.presets"
+
+        struct Params: Codable, Equatable {}
+
+        struct Preset: Decodable, Equatable, Hashable {
+            let name: String
+            let label: String
+            /// sine or file.
+            let kind: String
+            /// The volume it plays at when the setting names none.
+            let volume: Double
+            /// A sine's pitch and length.
+            let hz: Double?
+            let sec: Double?
+            /// A file preset's sound file.
+            let file: String?
+            /// False when this Mac lacks the file: the picker greys the row out.
+            let available: Bool
+        }
+
+        struct Result: Decodable, Equatable { let presets: [Preset] }
+    }
 }

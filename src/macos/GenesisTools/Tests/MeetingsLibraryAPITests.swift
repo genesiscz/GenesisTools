@@ -3,7 +3,7 @@ import XCTest
 @testable import GenesisToolsMeetings
 
 /// The protocol fixture TypeScript writes (src/meetings/lib/service/__fixtures__/meetings-protocol.json): its library
-/// examples (projects, dictionary, config.edit) decode with the types of MeetingsAPI+Library.swift.
+/// examples (projects, dictionary, config.edit, tone.presets) decode with the types of MeetingsAPI+Library.swift.
 private enum LibraryFixture {
     static var url: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -31,7 +31,7 @@ final class MeetingsLibraryAPITests: XCTestCase {
         MeetingsAPI.ProjectsAdd.name, MeetingsAPI.ProjectsRename.name, MeetingsAPI.ProjectsRemove.name,
         MeetingsAPI.ProjectsLabels.name, MeetingsAPI.ProjectsUnpair.name, MeetingsAPI.ProjectsPreview.name,
         MeetingsAPI.DictionaryShowEntries.name, MeetingsAPI.DictionaryAdd.name, MeetingsAPI.DictionaryRemove.name,
-        MeetingsAPI.DictionaryTest.name, MeetingsAPI.ConfigEdit.name,
+        MeetingsAPI.DictionaryTest.name, MeetingsAPI.ConfigEdit.name, MeetingsAPI.TonePresets.name,
     ]
 
     func testEveryLibraryExampleDecodesWithTheSwiftTypes() throws {
@@ -105,6 +105,15 @@ final class MeetingsLibraryAPITests: XCTestCase {
                                                          ["projects", "Atlas", "match", "title", "words"]])
                     XCTAssertEqual(changes.last?.value, .array([.string("review")]))
                 }
+            case MeetingsAPI.TonePresets.name:
+                try roundTrip(MeetingsAPI.TonePresets.Params.self, params, label)
+                if let result {
+                    let presets = try MeetingsService.decode(MeetingsAPI.TonePresets.Result.self, result).presets
+                    XCTAssertEqual(presets.prefix(3).map(\.name), ["beep", "soft", "click"])
+                    XCTAssertEqual(presets.first, .init(name: "beep", label: "Beep", kind: "sine", volume: 0.6, hz: 880, sec: 0.15,
+                                                        file: nil, available: true))
+                    XCTAssertTrue(presets.contains { $0.kind == "file" && $0.file == "/System/Library/Sounds/Tink.aiff" })
+                }
             default:
                 continue
             }
@@ -129,6 +138,24 @@ final class MeetingsLibraryAPITests: XCTestCase {
         let result = try XCTUnwrap((hello["reply"] as? [String: Any])?["result"])
         let methods = Set(try MeetingsService.decode(MeetingsAPI.Hello.Result.self, result).methods)
         XCTAssertTrue(Set(Self.methods).isSubset(of: methods), "missing: \(Set(Self.methods).subtracting(methods))")
+    }
+
+    /// A tone setting writes only its own members (the schema is strict), and reads every version 5 shape.
+    func testAToneSoundSettingRoundTripsEachShape() throws {
+        let settings: [(MeetingsAPI.ToneSoundSetting, [String: Any])] = [
+            (.sine(hz: 440, sec: 0.2, volume: 0.5), ["hz": 440, "sec": 0.2, "volume": 0.5]),
+            (.preset("soft", volume: nil), ["preset": "soft"]),
+            (.preset("tink", volume: 0.3), ["preset": "tink", "volume": 0.3]),
+            (.file("/sounds/chime.wav", volume: nil), ["file": "/sounds/chime.wav"]),
+        ]
+        for (setting, object) in settings {
+            let encoded = try MeetingsService.paramsObject(setting)
+            XCTAssertTrue(NSDictionary(dictionary: encoded).isEqual(to: object), "\(encoded) is not \(object)")
+            XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.ToneSoundSetting.self, object), setting)
+        }
+        // A version 4 sine with a member left out reads with the engine's defaults.
+        XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.ToneSoundSetting.self, ["hz": 523]),
+                       .sine(hz: 523, sec: 0.15, volume: 0.6))
     }
 
     /// `expect: null` (the page read nothing there) stays apart from no expect (no check), both ways.
