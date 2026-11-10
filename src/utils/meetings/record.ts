@@ -606,6 +606,27 @@ export class MeetingStore {
 
     /** Changes one record under its lock. The result must validate, or nothing is written. */
     async update(id: string, change: MeetingChange, mutate: (record: MeetingRecord) => void): Promise<MeetingRecord> {
+        return this.locked(id, (current) => {
+            mutate(current);
+            return this.commit(current, change);
+        });
+    }
+
+    /**
+     * Like `update`, but writes only when `mutate` answers true; false leaves the record and its history as they were
+     * and answers undefined. A command that picked records from an earlier `list()` rechecks each one here, under its
+     * lock, so a change another process made meanwhile is never overwritten.
+     */
+    async updateIf(
+        id: string,
+        change: MeetingChange,
+        mutate: (record: MeetingRecord) => boolean
+    ): Promise<MeetingRecord | undefined> {
+        return this.locked(id, (current) => (mutate(current) ? this.commit(current, change) : undefined));
+    }
+
+    /** Runs `fn` on the record as it is on disk, under its lock. */
+    private locked<T>(id: string, fn: (current: MeetingRecord) => T): Promise<T> {
         return this.storage.withFileLock({
             file: this.path(id),
             fn: async () => {
@@ -615,14 +636,18 @@ export class MeetingStore {
                     throw new Error(`No meeting ${id} (or its ${MEETING_FILE} does not validate): ${this.path(id)}`);
                 }
 
-                mutate(current);
-                current.history.push({ at: new Date().toISOString(), command: change.command, change: change.change });
-                const record = meetingRecordSchema.parse(current);
-                this.write(record);
-                log.debug({ id, command: change.command }, "meeting updated");
-                return record;
+                return fn(current);
             },
         });
+    }
+
+    /** Writes a changed record with its history line. The result must validate, or nothing is written. */
+    private commit(current: MeetingRecord, change: MeetingChange): MeetingRecord {
+        current.history.push({ at: new Date().toISOString(), command: change.command, change: change.change });
+        const record = meetingRecordSchema.parse(current);
+        this.write(record);
+        log.debug({ id: record.id, command: change.command }, "meeting updated");
+        return record;
     }
 
     /**

@@ -807,6 +807,38 @@ describe("projects rename and remove", () => {
         );
     });
 
+    test("a meeting moved to another project after the list was read keeps it on rename and on remove", async () => {
+        const { config, meetings, used } = await withProject();
+        await config.addProject("other");
+        // The list both commands read before another process moved the meeting to "other".
+        const seen = meetings.list();
+        const stale = new (class extends MeetingStore {
+            override list() {
+                return seen;
+            }
+        })(meetings.storage);
+        await meetings.update(used, { command: "test", change: "moved" }, (next) => {
+            next.project = "other";
+        });
+        const historyLength = meetings.read(used)?.history.length;
+
+        expect((await renameProject({ config, store: stale, from: "wrok", to: "work" })).meetings).toEqual([]);
+        expect(meetings.read(used)?.project).toBe("other");
+
+        await config.addProject("wrok");
+        const removed = await removeProject({
+            config,
+            store: stale,
+            name: "wrok",
+            unassign: true,
+            backupRoot: join(meetings.root, "..", "backups"),
+        });
+
+        expect(removed.unassigned).toEqual([]);
+        expect(meetings.read(used)?.project).toBe("other");
+        expect(meetings.read(used)?.history).toHaveLength(historyLength ?? -1);
+    });
+
     test("removing a project twice in one minute keeps both removed blocks", async () => {
         const { config, meetings } = stores();
         const backupRoot = join(meetings.root, "..", "backups");

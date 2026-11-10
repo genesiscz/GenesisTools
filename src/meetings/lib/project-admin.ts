@@ -70,11 +70,24 @@ export async function renameProject(options: {
 
     const meetings: string[] = [];
 
+    // The list is a snapshot: a meeting moved to another project since keeps that project, and is not reported.
     for (const record of store.list().filter((one) => one.project === from)) {
-        await store.update(record.id, { command: "projects rename", change: `project ${from} → ${to}` }, (next) => {
-            next.project = to;
-        });
-        meetings.push(record.id);
+        const renamed = await store.updateIf(
+            record.id,
+            { command: "projects rename", change: `project ${from} → ${to}` },
+            (next) => {
+                if (next.project !== from) {
+                    return false;
+                }
+
+                next.project = to;
+                return true;
+            }
+        );
+
+        if (renamed) {
+            meetings.push(record.id);
+        }
     }
 
     log.debug({ from, to, meetings: meetings.length }, "project renamed");
@@ -175,11 +188,24 @@ export async function removeProject(options: {
 
     const unassigned: string[] = [];
 
+    // `using` is a snapshot taken before the config lock: a meeting moved to another project since keeps it.
     for (const record of using) {
-        await store.update(record.id, { command: "projects remove", change: `project ${name} removed` }, (next) => {
-            next.project = undefined;
-        });
-        unassigned.push(record.id);
+        const cleared = await store.updateIf(
+            record.id,
+            { command: "projects remove", change: `project ${name} removed` },
+            (next) => {
+                if (next.project !== name) {
+                    return false;
+                }
+
+                next.project = undefined;
+                return true;
+            }
+        );
+
+        if (cleared) {
+            unassigned.push(record.id);
+        }
     }
 
     log.debug({ name, unassigned: unassigned.length, backup }, "project removed");
