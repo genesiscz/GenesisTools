@@ -1,18 +1,24 @@
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import {
+    actArguments,
+    expectedValueArgs,
+    nativeActionArguments,
+    parseObservation,
+    pinArguments,
+    seeArguments,
+    webDispatchArguments,
+} from "../native-protocol";
 import { type AxResult, runAxAsync } from "../runner";
-import { type ActionParameters, nativeActionArguments } from "./action";
+import type { ActionParameters } from "./action";
 import {
     type Candidate,
     candidatesFor,
-    expectedValueArgs,
     hasAncestorRole,
     type Observation,
     type ObservedElement,
-    observationSchema,
     primaryWebArea,
     sameScope,
-    targetOrdinalArgs,
 } from "./observation";
 
 const { log } = logger.scoped("control-native");
@@ -74,23 +80,7 @@ export interface ControlDriver {
         }
     ): Promise<AxResult>;
 }
-/** Mirrors the `--prepare` allowlist in WorkflowArguments.validateAction. */
-const PREPARABLE_ACTIONS = new Set(["press", "click", "key", "type", "paste", "select", "set"]);
-/** Mirrors the `--target-key` allowlist in WorkflowArguments.validateAction. */
-const TARGET_KEY_ACTIONS = new Set([
-    "press",
-    "click",
-    "key",
-    "type",
-    "paste",
-    "select",
-    "set",
-    "perform",
-    "hover",
-    "move",
-    "scroll",
-    "get",
-]);
+
 /** ax-tool refuses a tree deeper than this; see HierarchySource.buildObservedTree. */
 export const MAX_SEE_DEPTH = 50;
 
@@ -176,34 +166,22 @@ export class NativeControlDriver implements ControlDriver {
         }
     ) {}
     private seeArguments(): string[] {
-        const args = ["see", "--app", this.options.app, "--scope", this.scope ?? this.options.scope ?? "window"];
-        if (this.options.image === false) {
-            args.push("--no-image");
+        const reuse = this.options.perceptionReuse;
+        if (reuse !== undefined && this.options.image === false) {
+            throw new Error(
+                "perceptionReuse reads OCR from the screenshot, so it cannot be combined with image: false."
+            );
         }
 
-        if (this.options.perceptionReuse !== undefined) {
-            if (this.options.image === false) {
-                throw new Error(
-                    "perceptionReuse reads OCR from the screenshot, so it cannot be combined with image: false."
-                );
-            }
-
-            args.push("--perception", "ocr", "--perception-reuse", this.options.perceptionReuse);
-        }
-
-        const depth = this.depth ?? this.options.depth;
-        if (depth !== undefined) {
-            args.push("--depth", String(depth));
-        }
-
-        const windowId = this.pinned?.window.id ?? this.options.windowId;
-        if (windowId !== undefined) {
-            args.push("--window-id", String(windowId));
-        } else if (this.options.windowIndex !== undefined) {
-            args.push("--window-index", String(this.options.windowIndex));
-        }
-
-        return args;
+        return seeArguments({
+            app: this.options.app,
+            scope: this.scope ?? this.options.scope ?? "window",
+            image: this.options.image,
+            depth: this.depth ?? this.options.depth,
+            ...(reuse === undefined ? {} : { perception: "ocr", perceptionReuse: reuse }),
+            windowId: this.pinned?.window.id ?? this.options.windowId,
+            windowIndex: this.options.windowIndex,
+        });
     }
     async observe(call: DriverCall): Promise<Observation> {
         call.signal?.throwIfAborted();
@@ -242,7 +220,7 @@ export class NativeControlDriver implements ControlDriver {
             throw new Error(result.error ?? "Observation failed.");
         }
 
-        const parsed = observationSchema.safeParse(result);
+        const parsed = parseObservation(result);
         if (!parsed.success) {
             if (this.narrowScope(parsed.error.message)) {
                 return this.observe(call);
@@ -338,59 +316,23 @@ export class NativeControlDriver implements ControlDriver {
         }
 
         if (prepare && target && webTarget) {
-            if (call.candidate.action === "set" && ["AXTextField", "AXTextArea", "AXComboBox"].includes(target.role)) {
-                actionArgs = ["--action", "paste", "--text", call.value ?? "", "--format", "text", "--replace"];
-            } else if (call.candidate.action === "press" && target.role === "AXLink") {
-                actionArgs = ["--action", "key", "--keys", "return"];
-            } else if (
-                call.candidate.action === "press" &&
-                ["AXButton", "AXCheckBox", "AXRadioButton", "AXSwitch"].includes(target.role)
-            ) {
-                actionArgs = ["--action", "key", "--keys", "space"];
-            }
+            actionArgs =
+                webDispatchArguments({
+                    action: call.candidate.action,
+                    row: target,
+                    rows: call.observation.elements,
+                    value: call.value,
+                }) ?? actionArgs;
         }
-        // Both option gates read the action ACTUALLY dispatched, never the candidate's: a press
-        // rewritten to `perform` cannot take `--prepare`, and `focus` cannot take `--target-key`,
-        // and native refuses either with "option is not valid" before anything is dispatched.
+
+        // The pin reads the action ACTUALLY dispatched, never the candidate's: a press rewritten to
+        // `perform` cannot take `--prepare`.
         const dispatched = actionArgs[1] ?? call.candidate.action;
         if (dispatched === "key" && target) {
             actionArgs.push(...expectedValueArgs(target));
         }
 
-        if (prepare && PREPARABLE_ACTIONS.has(dispatched)) {
-            actionArgs.push(
-                "--prepare",
-                ...(target?.targetKey
-                    ? [
-                          "--target-key",
-                          target.targetKey,
-                          ...targetOrdinalArgs({
-                              rows: call.observation.elements,
-                              row: target,
-                              key: target.targetKey,
-                              fields: ["targetKey"],
-                          }),
-                      ]
-                    : [])
-            );
-        } else if (target?.stableKey && TARGET_KEY_ACTIONS.has(dispatched)) {
-            // Without this every act against a window with a clock in it refuses as
-            // stale_observation: the whole-tree digest moves once a second, so the snapshot is
-            // already out of date by the time the dispatch runs. Pinning the target's stable
-            // identity checks the thing we are acting on instead of the whole screen.
-            actionArgs.push(
-                "--target-key",
-                target.stableKey,
-                "--revalidate-scope",
-                "element",
-                ...targetOrdinalArgs({
-                    rows: call.observation.elements,
-                    row: target,
-                    key: target.stableKey,
-                    fields: ["targetKey", "stableKey"],
-                })
-            );
-        }
+        actionArgs.push(...pinArguments({ action: dispatched, row: target, rows: call.observation.elements, prepare }));
         log.info(
             {
                 app: this.options.app,
@@ -405,20 +347,13 @@ export class NativeControlDriver implements ControlDriver {
             },
             "native act"
         );
-        const args = [
-            "act",
-            "--app",
-            this.options.app,
-            "--snapshot",
-            call.observation.snapshot,
-            "--element",
-            String(call.candidate.element),
-            ...actionArgs,
-            "--refresh",
-        ];
-        if (this.options.image === false) {
-            args.push("--no-image");
-        }
+        const args = actArguments({
+            app: this.options.app,
+            snapshot: call.observation.snapshot,
+            element: call.candidate.element,
+            action: actionArgs,
+            image: this.options.image,
+        });
         const stopAct = prof.start("act");
         const result = await (this.options.run ?? runAxAsync)({
             args,
