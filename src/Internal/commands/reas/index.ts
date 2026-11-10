@@ -76,11 +76,6 @@ async function resolveDistrictFromAddress(address: string): Promise<DistrictInfo
         })),
     });
 
-    if (p.isCancel(picked)) {
-        p.cancel("Operation cancelled.");
-        process.exit(0);
-    }
-
     const resolved = getDistrict(picked as string);
 
     if (!resolved) {
@@ -102,20 +97,10 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
         ],
     });
 
-    if (p.isCancel(districtName)) {
-        p.cancel("Operation cancelled.");
-        process.exit(0);
-    }
-
     let district: DistrictInfo;
 
     if (districtName === "__address__") {
         const addressQuery = await p.text({ message: "Enter address or locality" });
-
-        if (p.isCancel(addressQuery)) {
-            p.cancel("Operation cancelled.");
-            process.exit(0);
-        }
 
         const spinner = p.spinner();
         spinner.start("Searching via Sreality...");
@@ -138,20 +123,10 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
                 })),
             });
 
-            if (p.isCancel(picked)) {
-                p.cancel("Operation cancelled.");
-                process.exit(0);
-            }
-
             district = getDistrict(picked as string) ?? addressResults[0].district;
         }
     } else if (districtName === "__search__") {
         const query = await p.text({ message: "Type city/district name" });
-
-        if (p.isCancel(query)) {
-            p.cancel("Operation cancelled.");
-            process.exit(0);
-        }
 
         const matches = searchDistricts(query);
 
@@ -165,11 +140,6 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
             options: matches.map((d) => ({ value: d.name, label: d.name })),
         });
 
-        if (p.isCancel(picked)) {
-            p.cancel("Operation cancelled.");
-            process.exit(0);
-        }
-
         district = getDistrict(picked as string) ?? matches[0];
     } else if (districtName === "Praha") {
         const subDistrict = await p.select({
@@ -179,11 +149,6 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
                 ...getPrahaDistrictNames().map((name) => ({ value: name, label: name })),
             ],
         });
-
-        if (p.isCancel(subDistrict)) {
-            p.cancel("Operation cancelled.");
-            process.exit(0);
-        }
 
         const resolved = getDistrict(subDistrict as string) ?? getDistrict("Praha");
 
@@ -209,31 +174,16 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
         options: PROPERTY_TYPES,
     });
 
-    if (p.isCancel(propertyType)) {
-        p.cancel("Operation cancelled.");
-        process.exit(0);
-    }
-
     const disposition = await p.select({
         message: "Disposition",
         options: DISPOSITIONS,
     });
-
-    if (p.isCancel(disposition)) {
-        p.cancel("Operation cancelled.");
-        process.exit(0);
-    }
 
     const periods = await p.multiselect({
         message: "Select periods to analyze",
         options: buildPeriodOptions(),
         required: true,
     });
-
-    if (p.isCancel(periods)) {
-        p.cancel("Operation cancelled.");
-        process.exit(0);
-    }
 
     const price = await p.text({
         message: "Target property price (CZK)",
@@ -244,11 +194,6 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
         },
     });
 
-    if (p.isCancel(price)) {
-        p.cancel("Operation cancelled.");
-        process.exit(0);
-    }
-
     const area = await p.text({
         message: "Target property area (m²)",
         validate: (val) => {
@@ -257,11 +202,6 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
             }
         },
     });
-
-    if (p.isCancel(area)) {
-        p.cancel("Operation cancelled.");
-        process.exit(0);
-    }
 
     const rent = await p.text({
         message: "Expected monthly rent (CZK)",
@@ -272,11 +212,6 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
         },
     });
 
-    if (p.isCancel(rent)) {
-        p.cancel("Operation cancelled.");
-        process.exit(0);
-    }
-
     const monthlyCosts = await p.text({
         message: "Monthly costs / fond oprav + utilities (CZK)",
         validate: (val) => {
@@ -285,11 +220,6 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
             }
         },
     });
-
-    if (p.isCancel(monthlyCosts)) {
-        p.cancel("Operation cancelled.");
-        process.exit(0);
-    }
 
     const propertyTypeStr = propertyType as string;
     const dispositionStr = disposition as string;
