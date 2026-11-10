@@ -42,23 +42,24 @@ extension ListsSketchB {
         }
     }
 
+    /// What a row shows, as values: a count and a date, not the session list. A row compared its whole session list
+    /// on every update of the sidebar (an array of ids per row and per compare) and the list sorted every worktree's
+    /// sessions on every redraw; only the selected worktree shows sessions, so only it reads them.
     struct WorktreeEntry: Equatable {
         let worktree: HubWorktree
-        let sessions: [HubSession]
+        let sessionCount: Int
         let lastActive: Date?
         let pr: RepoFacts.PullRequest?
         let prKind: String?
-
-        static func == (a: WorktreeEntry, b: WorktreeEntry) -> Bool {
-            a.worktree == b.worktree && a.sessions.map(\.id) == b.sessions.map(\.id) && a.lastActive == b.lastActive
-                && a.pr == b.pr && a.prKind == b.prKind
-        }
     }
 
     /// The sidebar: worktrees by recency, each with its repository as a tag; the selected one shows its sessions.
     struct WorktreeList: View {
         var model: HubModel
         @ObservedObject private var repos = RepoFactsStore.shared
+        /// "No sessions" starts folded: it was 55 rows of "(detached)" under the worktrees that have work in them.
+        @State private var showsNever = false
+        @GenReduceMotion private var reduceMotion
 
         private var groups: [(recency: Recency, rows: [WorktreeEntry])] {
             let needle = model.filter.trimmed.lowercased()
@@ -67,9 +68,9 @@ extension ListsSketchB {
                 .filter { needle.isEmpty || "\($0.repo) \($0.branch) \($0.path)".lowercased().contains(needle) }
                 .map { worktree -> WorktreeEntry in
                     let sessions = model.sessions(for: worktree)
-                        .sorted { ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast) }
                     let facts = cache[worktree.path]
-                    return WorktreeEntry(worktree: worktree, sessions: sessions, lastActive: sessions.first?.lastActivity,
+                    return WorktreeEntry(worktree: worktree, sessionCount: sessions.count,
+                                         lastActive: sessions.compactMap(\.lastActivity).max(),
                                          pr: facts?.pr, prKind: facts?.origin?.kind)
                 }
             let grouped = Dictionary(grouping: entries) { Recency.of($0.lastActive) }
@@ -81,6 +82,8 @@ extension ListsSketchB {
 
         var body: some View {
             let groups = groups
+            let picked = model.selectedWorktree
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
                     if model.loadingWorktrees, model.worktrees.isEmpty {
@@ -92,18 +95,27 @@ extension ListsSketchB {
                         WorktreeCleanupEntry(model: model)
                     }
                     ForEach(groups, id: \.recency) { group in
+                        // A folded "No sessions" still shows the selected worktree, so the selection never hides.
+                        let folded = group.recency == .never && !showsNever && model.filter.trimmed.isEmpty
                         Section {
-                            ForEach(group.rows, id: \.worktree.path) { entry in
-                                let selected = model.selectedWorktree == entry.worktree.path
+                            ForEach(folded ? group.rows.filter { $0.worktree.path == picked } : group.rows, id: \.worktree.path) { entry in
+                                let selected = picked == entry.worktree.path
                                 WorktreeRow(entry: entry, selected: selected) { model.selectWorktree(entry.worktree) }
                                     .equatable()
-                                if selected, !entry.sessions.isEmpty {
-                                    NestedSessions(model: model, sessions: entry.sessions)
+                                    .id(entry.worktree.path)
+                                if selected, entry.sessionCount > 0 {
+                                    NestedSessions(model: model, sessions: model.sessions(for: entry.worktree)
+                                        .sorted { ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast) })
                                         .id("sessions:" + entry.worktree.path)
                                 }
                             }
                         } header: {
                             HStack(spacing: 6) {
+                                if group.recency == .never {
+                                    Image(systemName: showsNever ? "chevron.down" : "chevron.right")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .accessibilityHidden(true)
+                                }
                                 Text(verbatim: group.recency.title).font(.system(size: 11.5, weight: .semibold))
                                 Text(verbatim: "\(group.rows.count)").font(.system(size: 10.5, design: .monospaced))
                                 Spacer()
@@ -111,17 +123,52 @@ extension ListsSketchB {
                             .foregroundColor(ReviewPalette.dim)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 5)
+                            .contentShape(Rectangle())
                             .hubSurface(.groupHeader)
+                            .modifier(NeverFold(active: group.recency == .never, open: showsNever) {
+                                GenMotion.perform(expanding: !showsNever, reduceMotion: reduceMotion) { showsNever.toggle() }
+                            })
                         }
                     }
                 }
                 .padding(.bottom, 12)
                 .genScrollBars()
             }
+            // The selection can come from a link or a reopen: bring its row into view once the list holds it. At once,
+            // not animated: an animated scrollTo in a lazy stack with pinned headers places its rows on every frame.
+            .onChange(of: [picked ?? "", model.worktrees.isEmpty ? "" : "loaded"], initial: true) { _, _ in
+                guard let picked, !model.worktrees.isEmpty else { return }
+                DispatchQueue.main.async {
+                    var instant = Transaction()
+                    instant.disablesAnimations = true
+                    withTransaction(instant) { proxy.scrollTo(picked, anchor: nil) }
+                }
+            }
+            }
         }
     }
 
-    /// "feat/x" over "GenesisTools · #106 · ± –", the last session's age at the trailing edge.
+    /// The "No sessions" header as a fold button; every other header stays plain.
+    private struct NeverFold: ViewModifier {
+        let active: Bool
+        let open: Bool
+        let toggle: () -> Void
+
+        func body(content: Content) -> some View {
+            if active {
+                content
+                    .rowButton(cornerRadius: 0) { toggle() }
+                    .instantTooltip(open ? "Fold the worktrees no session worked in" : "Show the worktrees no session worked in")
+                    .accessibilityValue(Text(open ? "Expanded" : "Collapsed"))
+            } else {
+                content
+            }
+        }
+    }
+
+    /// "feat/x" over "GenesisTools · #106 · 44 sessions", the last session's age at the trailing edge. The slot for the
+    /// changed-file count (C31) is on the page's header only: a dashed "± –" on every row was a mark that says nothing,
+    /// about 60 times per screen.
     struct WorktreeRow: View, Equatable {
         let entry: WorktreeEntry
         let selected: Bool
@@ -167,9 +214,8 @@ extension ListsSketchB {
                                 .foregroundColor(Self.prColor(pr.state))
                                 .instantTooltip(pr.label(kind: entry.prKind))
                         }
-                        ListsSketchB.ChangedSlot()
-                        if !entry.sessions.isEmpty {
-                            Text(verbatim: "\(entry.sessions.count)")
+                        if entry.sessionCount > 0 {
+                            Text(verbatim: "\(entry.sessionCount)")
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundColor(ReviewPalette.dim)
                             Image(systemName: "bubble.left.and.bubble.right")
@@ -196,7 +242,7 @@ extension ListsSketchB {
             .padding(.horizontal, 6)
             .contentShape(Rectangle())
             .rowButton { select() }
-            .accessibilityLabel(Text(verbatim: "\(worktree.branch), \(worktree.repo), \(Plural.count(entry.sessions.count, "session"))"))
+            .accessibilityLabel(Text(verbatim: "\(worktree.branch), \(worktree.repo), \(Plural.count(entry.sessionCount, "session"))"))
             .accessibilityAddTraits(selected ? .isSelected : [])
             .instantTooltip("\(worktree.branch)\n\(PathLabel.display(worktree.path))")
             .liveRow(selected: selected)
@@ -693,6 +739,10 @@ extension ListsSketchB {
             entry.item.recommended ?? entry.item.choices?.first { $0.recommended == true }?.id
         }
 
+        static let optionsWidth: CGFloat = 170
+        static let sessionWidth: CGFloat = 250
+        static let projectWidth: CGFloat = 140
+
         var body: some View {
             HStack(spacing: 8) {
                 Image(systemName: open ? "chevron.down" : "chevron.right")
@@ -714,28 +764,39 @@ extension ListsSketchB {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 10)
-                if let recommended, let count = entry.item.choices?.count, count > 0 {
-                    Text(verbatim: "\(count) options · \(recommended) recommended")
-                        .font(.system(size: 11))
+                // Fixed columns, as in a table: a long session title or project name moved every cell left of it, so
+                // "3 options" started at a different x on each line.
+                Group {
+                    if let recommended, let count = entry.item.choices?.count, count > 0 {
+                        Text(verbatim: "\(Plural.count(count, "option")) · \(recommended) recommended")
+                    } else {
+                        Text(verbatim: "")
+                    }
+                }
+                .font(.system(size: 11))
+                .foregroundColor(ReviewPalette.dim)
+                .lineLimit(1)
+                .frame(width: Self.optionsWidth, alignment: .trailing)
+                HStack(spacing: 6) {
+                    ProviderBadge(provider: entry.session.provider ?? "?", size: 13)
+                    Text(verbatim: entry.session.displayTitle)
+                        .font(.system(size: 11.5))
                         .foregroundColor(ReviewPalette.dim)
                         .lineLimit(1)
-                        .fixedSize()
+                        .truncationMode(.tail)
                 }
-                ProviderBadge(provider: entry.session.provider ?? "?", size: 13)
-                Text(verbatim: entry.session.displayTitle)
-                    .font(.system(size: 11.5))
-                    .foregroundColor(ReviewPalette.dim)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: 260, alignment: .leading)
+                .frame(width: Self.sessionWidth, alignment: .leading)
+                .instantTooltip(entry.session.displayTitle)
                 Text(verbatim: entry.session.projectName)
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundColor(Color.white.opacity(0.7))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
                     .background(Capsule().fill(Color.white.opacity(0.07)))
-                    .lineLimit(1)
-                    .fixedSize()
+                    .frame(width: Self.projectWidth, alignment: .trailing)
+                    .instantTooltip(entry.session.projectName)
                 LiveAgo(date: entry.item.date, style: .brief)
                     .font(.system(size: 10.5))
                     .foregroundColor(ReviewPalette.dim)
