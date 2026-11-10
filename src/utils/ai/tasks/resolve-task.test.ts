@@ -4,12 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { VaultKeyDeniedError } from "@genesiscz/utils/security/keyring/app-gate";
 import { AIConfig } from "../AIConfig";
 import { AiConfigStore } from "../config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "../config/schema";
+import { ModelResolutionError } from "../core/resolve";
+import { isTransientAiError } from "../core/retry";
+import { UpstreamStatusError } from "../http-auth";
+import { CredentialUnavailableError } from "../providers/credentials";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../providers/plugin-types";
 import { _resetBuiltInPluginsForTest } from "../providers/plugins";
 import { _resetPluginsForTest, registerPlugin } from "../providers/registry";
+import { NotImplementedError } from "./facade";
 import { NoProviderForTaskError, resolveForTask } from "./resolve-task";
 import { Transcriber } from "./Transcriber";
 import { taskModelRef } from "./task-models";
@@ -199,5 +205,45 @@ describe("resolveForTask availability chain", () => {
         const resolved = await resolveForTask({ task: "transcribe", needs: "transcription" });
 
         expect(resolved.plugin.id).toBe("groq");
+    });
+});
+
+/**
+ * The retry predicate sits beside the chain because its permanent kinds are the
+ * chain's own failures: a retry cannot make a provider appear.
+ */
+describe("isTransientAiError", () => {
+    test("answers false for each error a retry cannot fix", () => {
+        const permanent: unknown[] = [
+            new ModelResolutionError("No model resolved for task"),
+            new NoProviderForTaskError("summarize", ["openai"], "nothing configured"),
+            new VaultKeyDeniedError("ai", "no answer within 169 s"),
+            new UpstreamStatusError(401, "upstream said no"),
+            new UpstreamStatusError(403, "upstream said no"),
+            Object.assign(new Error("Incorrect API key provided"), { statusCode: 401 }),
+            new CredentialUnavailableError("work", "openai", "no key"),
+            new NotImplementedError("ai.realtime", "a later phase"),
+            new Error("invalid api key"),
+            new Error("model not found: grok-9"),
+        ];
+
+        for (const error of permanent) {
+            expect(isTransientAiError(error)).toBe(false);
+        }
+    });
+
+    test("still answers true for transient failures", () => {
+        const transient: unknown[] = [
+            new Error("socket hang up"),
+            new Error("read ECONNRESET"),
+            new Error("Rate limit reached, retry after 2s"),
+            new UpstreamStatusError(429, "slow down"),
+            Object.assign(new Error("Service Unavailable"), { statusCode: 503 }),
+            "timeout",
+        ];
+
+        for (const error of transient) {
+            expect(isTransientAiError(error)).toBe(true);
+        }
     });
 });
