@@ -33,6 +33,7 @@ import {
 import { devNull, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ExecResult } from "@genesiscz/utils/cli";
+import { gitWorktreeBackupCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -1061,7 +1062,7 @@ function renderReadme({
     const lines: string[] = [];
 
     lines.push(`# Worktree backup: ${plan.repo} / ${basename(plan.path)}`, "");
-    lines.push(`Written ${localMinute(now)} by \`tools git worktree backup\`.`, "");
+    lines.push(`Written ${localMinute(now)} by \`${gitWorktreeBackupCommand()}\`.`, "");
     lines.push("| What | Value |", "|---|---|");
     lines.push(
         `| Original path | \`${plan.path}\`${plan.listed === plan.path ? "" : ` (git listed it as \`${plan.listed}\`)`} |`
