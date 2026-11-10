@@ -2,7 +2,6 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, resolve } from "node:path";
-import * as p from "@clack/prompts";
 import { getModelsForTask } from "@genesiscz/utils/ai/ModelManager";
 import { getProvidersForTask } from "@genesiscz/utils/ai/providers";
 import { ai } from "@genesiscz/utils/ai/tasks/facade";
@@ -25,6 +24,7 @@ import {
     type SettableField,
 } from "@genesiscz/utils/macos/SayConfigManager.ts";
 import { normalizeVolume } from "@genesiscz/utils/macos/tts.ts";
+import * as p from "@genesiscz/utils/prompts/p";
 import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -778,6 +778,7 @@ async function resolveSaveApp(app: string | undefined, mgr: SayConfigManager): P
             ...apps.map((a) => ({ value: a.name, label: a.name })),
             { value: NEW_APP, label: pc.cyan("+ new app") },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {
@@ -804,6 +805,7 @@ async function resolveSaveApp(app: string | undefined, mgr: SayConfigManager): P
                 return `"${v}" already exists`;
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(name)) {
@@ -971,6 +973,7 @@ async function configCommand(mgr: SayConfigManager): Promise<void> {
                 { value: "global-mute", label: `Toggle global mute (currently ${globalMute ? "ON" : "off"})` },
                 { value: "exit", label: "Exit" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "exit") {
@@ -1025,6 +1028,7 @@ async function manageTextOverridesTUI(mgr: SayConfigManager): Promise<void> {
             ...(overrides.length > 0 ? [{ value: "remove", label: "− Remove override" }] : []),
             { value: "back", label: "← Back" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(action) || action === "back") {
@@ -1036,6 +1040,7 @@ async function manageTextOverridesTUI(mgr: SayConfigManager): Promise<void> {
             message: "Substring to match (case-insensitive)",
             placeholder: "Permission needed",
             validate: (v) => (v == null || v.trim().length === 0 ? "Cannot be empty" : undefined),
+            cancel: "back",
         });
 
         if (p.isCancel(match)) {
@@ -1049,6 +1054,7 @@ async function manageTextOverridesTUI(mgr: SayConfigManager): Promise<void> {
                 { value: "xai", label: "xai (cloud, requires X_AI_API_KEY)" },
                 { value: "openai", label: "openai (cloud, requires OPENAI_API_KEY)" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(provider)) {
@@ -1067,6 +1073,7 @@ async function manageTextOverridesTUI(mgr: SayConfigManager): Promise<void> {
                 value: i,
                 label: `"${o.match}" → ${o.provider}`,
             })),
+            cancel: "back",
         });
 
         if (p.isCancel(idx)) {
@@ -1093,6 +1100,7 @@ async function pickAndEditAppTUI(mgr: SayConfigManager): Promise<void> {
             })),
             { value: NEW_APP_SENTINEL, label: pc.cyan("+ new app") },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(target)) {
@@ -1153,6 +1161,7 @@ async function promptNewAppName(apps: SayAppConfig[]): Promise<string | null> {
                 return `"${v}" already exists — pick "Edit" instead`;
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(name)) {
@@ -1172,6 +1181,7 @@ async function speakActionTUI(mgr: SayConfigManager): Promise<void> {
             label: a.name + (a.name === DEFAULT_APP_NAME ? pc.dim(" (base)") : ""),
             hint: appPickerHint(a),
         })),
+        cancel: "back",
     });
 
     if (p.isCancel(appChoice)) {
@@ -1182,6 +1192,7 @@ async function speakActionTUI(mgr: SayConfigManager): Promise<void> {
         message: "Text to speak:",
         placeholder: "Hello world",
         defaultValue: "Hello world",
+        cancel: "back",
     });
 
     if (p.isCancel(text)) {
@@ -1261,7 +1272,7 @@ async function editAppFields(mgr: SayConfigManager, app: string): Promise<void> 
 
     p.log.message(buildSummary(patch, clearList));
 
-    const confirmed = await p.confirm({ message: "Save changes?", initialValue: true });
+    const confirmed = await p.confirm({ message: "Save changes?", initialValue: true, cancel: "back" });
 
     if (p.isCancel(confirmed) || !confirmed) {
         p.log.info(pc.dim("Cancelled — no changes saved."));
@@ -1334,6 +1345,7 @@ async function promptMute(profile: SayAppConfig): Promise<FieldDecision> {
             { value: CLEAR, label: pc.dim("Inherit (clear)") },
         ],
         initialValue: KEEP,
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {
@@ -1365,6 +1377,7 @@ async function promptEnum(
             ...values.map((v) => ({ value: v, label: v })),
         ],
         initialValue: KEEP,
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {
@@ -1405,6 +1418,7 @@ async function promptText(field: SettableField, profile: SayAppConfig): Promise<
                 }
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(input)) {
@@ -1485,6 +1499,7 @@ async function deleteAppTUI(mgr: SayConfigManager): Promise<void> {
     const target = await p.select({
         message: "Delete which profile?",
         options: apps.map((a) => ({ value: a.name, label: a.name })),
+        cancel: "back",
     });
 
     if (p.isCancel(target)) {
@@ -1494,6 +1509,7 @@ async function deleteAppTUI(mgr: SayConfigManager): Promise<void> {
     const confirmed = await p.confirm({
         message: `Really delete "${target}"? This cannot be undone.`,
         initialValue: false,
+        cancel: "back",
     });
 
     if (p.isCancel(confirmed) || !confirmed) {
