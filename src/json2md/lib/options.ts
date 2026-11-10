@@ -46,6 +46,7 @@ export async function resolveEnumFlag<T extends string>(input: {
         message: label,
         options: values.map((value) => ({ value, label: value })),
         initialValue: fallback,
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
