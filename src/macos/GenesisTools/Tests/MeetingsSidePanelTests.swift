@@ -17,7 +17,7 @@ final class MeetingsSidePanelTests: XCTestCase {
         let (defaults, suite) = try defaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let sections = SidePanelCatalog.windowSections(defaults)
-        XCTAssertEqual(sections.map(\.id), ["playback", "rows", "notices", "panes", "people"])
+        XCTAssertEqual(sections.map(\.id), ["playback", "rows", "notices", "panes", "transcript", "people"])
         let keys = Set(sections.flatMap(\.windowKeys))
         for key in ["meetings.rows.typedAnswer", "meetings.rows.returnKey", "meetings.rows.choiceKeys", "meetings.rows.decided",
                     "meetings.rows.order", "meetings.rows.lowPriority", "meetings.rows.askReach", "meetings.rows.autoplayNext",

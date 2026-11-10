@@ -46,6 +46,85 @@ final class MeetingsReviewFixTests: XCTestCase {
         XCTAssertEqual(found, [true], "the block's time plays from a resting block")
     }
 
+    // MARK: Finding 5: every opinionated pick of a view is a window setting with a row
+
+    func testEveryHardCodedPickIsAWindowSettingWithARow() {
+        let rows = Dictionary(uniqueKeysWithValues: SidePanelCatalog.windowSections(defaults).flatMap(\.rows).map { ($0.id, $0) })
+        let picks: [(String, SidePanelValue)] = [
+            ("meetings.transcript.dimPast", .flag(true)), ("meetings.transcript.avatars", .flag(true)),
+            ("meetings.transcript.blockBreakSec", .number(0)), ("meetings.selection.clipSec", .number(5)),
+            ("meetings.speakers.showQuestions", .flag(true)), ("meetings.speakers.hintChips", .number(3)),
+            ("meetings.screen.height", .number(150)), ("meetings.timeline.collapseHeight", .number(560)),
+            ("meetings.rows.openPersonPicker", .flag(true)), ("meetings.playback.keys", .flag(true)),
+        ]
+        for (key, value) in picks {
+            XCTAssertEqual(rows[key]?.value, value, "\(key) has a row with the view's old pick")
+            XCTAssertEqual(rows[key]?.defaultValue, value, "\(key)'s default is the view's old pick")
+        }
+        XCTAssertEqual(rows["meetings.transcript.blockBreakSec"]?.valueTitle, "Off")
+        XCTAssertEqual(rows["meetings.timeline.collapseHeight"]?.choices.first?.title, "Never")
+        XCTAssertEqual(rows["meetings.screen.height"]?.valueTitle, "150 pt")
+        XCTAssertNil(MeetingsPreferences.Transcript.breakAfterGapSec(0), "Off keeps one block per turn")
+        XCTAssertEqual(MeetingsPreferences.Transcript.breakAfterGapSec(10), 10)
+        XCTAssertTrue(MeetingsPlayerBar.collapses(timelineShown: true, windowHeight: 500, collapseHeight: 560))
+        XCTAssertFalse(MeetingsPlayerBar.collapses(timelineShown: true, windowHeight: 500, collapseHeight: 0), "Never folds")
+        SidePanelCatalog.write(.number(0), key: MeetingsPreferences.Panes.collapseHeight.key, to: defaults)
+        XCTAssertEqual(MeetingsPreferences.Panes.collapseHeight.value(defaults), 0, "Never is stored as a whole number and read back")
+    }
+
+    func testThePlayerKeysCanBeTurnedOff() {
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        window.player.timeline.hoveredPin = "i1"
+        defaults.set(false, forKey: MeetingsPreferences.Playback.keys.key)
+        XCTAssertFalse(MeetingsPlaybackKeys.perform(.escape, model: window), "off: Esc goes on to the views")
+        XCTAssertEqual(window.player.timeline.hoveredPin, "i1")
+        defaults.removeObject(forKey: MeetingsPreferences.Playback.keys.key)
+        XCTAssertTrue(MeetingsPlaybackKeys.perform(.escape, model: window), "on by default: Esc closes the pin card")
+        XCTAssertNil(window.player.timeline.hoveredPin)
+    }
+
+    // MARK: Finding 6: a sub-option is off while its parent is off, and says why
+
+    func testASubOptionIsOffWhileItsParentIsOff() throws {
+        let toneOff = SidePanelCatalog.engineSection(listen: .object(["tone": .object(["enabled": .bool(false)])]))
+        let lead = try XCTUnwrap(toneOff.rows.first { $0.id.hasSuffix(".tone.leadSec") })
+        let sound = try XCTUnwrap(toneOff.rows.first { $0.id.hasSuffix(".tone.sound") })
+        XCTAssertFalse(toneOff.isEnabled(lead))
+        XCTAssertFalse(toneOff.isEnabled(sound))
+        XCTAssertTrue(toneOff.detail(lead).hasSuffix("Off while Tone is off."))
+        let toneOn = SidePanelCatalog.engineSection(listen: .object([:]))
+        XCTAssertTrue(toneOn.rows.allSatisfy { toneOn.isEnabled($0) }, "Tone is on by default")
+        XCTAssertEqual(toneOn.detail(lead), lead.detail)
+
+        XCTAssertTrue(SidePanelCatalog.windowSections(defaults).allSatisfy { section in section.rows.allSatisfy(section.isEnabled) },
+                      "fresh defaults: every row takes a change")
+        defaults.set("off", forKey: MeetingsPreferences.Rows.autoplayNext.key)
+        defaults.set("stop", forKey: MeetingsPreferences.Playback.afterClip.key)
+        defaults.set(false, forKey: MeetingsPreferences.Panes.timelineShown.key)
+        defaults.set(false, forKey: MeetingsPreferences.Panes.screenBesidePlayback.key)
+        let sections = SidePanelCatalog.windowSections(defaults)
+        func off(_ key: String) -> Bool {
+            guard let section = sections.first(where: { $0.rows.contains { $0.id == key } }),
+                  let row = section.rows.first(where: { $0.id == key }) else { return false }
+            return !section.isEnabled(row)
+        }
+        for key in [MeetingsPreferences.Rows.autoplayDelaySec.key, MeetingsPreferences.Playback.moreSec.key,
+                    MeetingsPreferences.Panes.hoverDelayMs.key, MeetingsPreferences.Panes.collapseHeight.key,
+                    MeetingsPreferences.Panes.screenHeight.key] {
+            XCTAssertTrue(off(key), "\(key) is off while its parent is off")
+        }
+        XCTAssertFalse(off(MeetingsPreferences.Panes.followPlayback.key), "a row with no parent stays on")
+    }
+
+    // MARK: Finding 11: the detail model reads the window's defaults
+
+    func testTheDetailModelReadsTheWindowsDefaults() {
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        XCTAssertTrue(detail.defaults === defaults, "a test's suite reaches the rows' settings and \"Do not ask again\"")
+        XCTAssertTrue(MeetingDetailModel(id: "m", window: nil).defaults === UserDefaults.standard)
+    }
+
     // MARK: Finding 3: a stored 0 is a value when the setting offers it
 
     func testAStoredZeroIsTheValueWhenTheChoicesOfferIt() {

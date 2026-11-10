@@ -421,14 +421,21 @@ struct MeetingsCatalogCard: View {
         }
     }
 
+    /// A row whose parent is off is disabled and says why (`SidePanelSection.isEnabled`, the same rule as the panel).
     @ViewBuilder
     private func rowView(_ row: SidePanelRow) -> some View {
+        rowControl(row, detail: section.detail(row))
+            .disabled(!section.isEnabled(row))
+    }
+
+    @ViewBuilder
+    private func rowControl(_ row: SidePanelRow, detail: String) -> some View {
         if case .flag(let on) = row.value {
-            NativeSettingsToggle(row.title, detail: row.detail, identifier: row.id,
+            NativeSettingsToggle(row.title, detail: detail, identifier: row.id,
                                  isOn: Binding(get: { on }, set: { change(row, .flag($0)) }))
         } else {
             HStack(alignment: .top, spacing: 8) {
-                NativeSettingsPicker(row.title, detail: row.detail, identifier: row.id,
+                NativeSettingsPicker(row.title, detail: detail, identifier: row.id,
                                      options: row.choices.map { NativeSettingsOption($0.value, $0.title) },
                                      selection: Binding(get: { row.value }, set: { change(row, $0) }))
                 if let playTone, let sound = SidePanelCatalog.sound(row.value, for: row) {

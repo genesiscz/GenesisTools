@@ -11,6 +11,9 @@ struct SpeakersTab: View {
     /// field and the Play button left the numbers about 20 pt, one letter per line.
     static let stackWidth: CGFloat = 560
     @State private var reviewing: String?
+    @AppStorage(MeetingsPreferences.Speakers.showQuestions.key) private var showQuestions =
+        MeetingsPreferences.Speakers.showQuestions.defaultValue
+    @AppStorage(MeetingsPreferences.Speakers.hintChips.key) private var hintChips = MeetingsPreferences.Speakers.hintChips.defaultValue
 
     var body: some View {
         LoadablePane(state: detail.speakers, reading: "Reading the speakers…", retry: detail.loadSpeakers,
@@ -38,6 +41,7 @@ struct SpeakersTab: View {
                                 ForEach(Array(stats.hints.filter { $0.label == speaker.label && !($0.ranges ?? []).isEmpty }.enumerated()),
                                         id: \.offset) { _, hint in
                                     SpeakerHintChips(ranges: hint.ranges ?? [], longestClipSec: longestClipSec,
+                                                     maxShown: hintChips > 0 ? hintChips : MeetingsPreferences.Speakers.hintChips.defaultValue,
                                                      play: { from, to in playRange(from, to) },
                                                      zoom: { from, to in zoom(from, to) },
                                                      review: { reviewing = speaker.label })
@@ -72,6 +76,7 @@ struct SpeakersTab: View {
         return SpeakerTalkTimeLanes(speakers: stats.speakers, durationSec: durationSec(stats), timed: stats.timed,
                                     questions: Self.questions(detail.rows.value?.rows ?? []),
                                     activeRange: top.map { $0.startSec...max($0.startSec, $0.endSec) },
+                                    showsQuestions: showQuestions,
                                     names: names,
                                     playSpan: { from, to in playRange(from, to) },
                                     zoom: { from, to in zoom(from, to) },

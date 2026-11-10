@@ -332,8 +332,11 @@ private struct RowEditor: View {
     let row: ReviewRow
     let detail: MeetingDetailModel
     @FocusState private var focused: Bool
-    /// A speaker range's voice: the person picker under the field (R23), open with the editor.
+    /// A speaker range's voice: the person picker under the field (R23), open with the editor while
+    /// `meetings.rows.openPersonPicker` is on.
     @State private var picking = false
+    @AppStorage(MeetingsPreferences.Rows.openPersonPicker.key) private var opensPicker =
+        MeetingsPreferences.Rows.openPersonPicker.defaultValue
 
     /// A speaker range is confirmed as a person: the picker ranks the people in the call at its start first.
     private var picksPerson: Bool { row.kind == "speaker-range" && row.edit == "person" }
@@ -373,7 +376,7 @@ private struct RowEditor: View {
         }
         .onAppear {
             focused = true
-            if picksPerson { picking = true }
+            if picksPerson && opensPicker { picking = true }
         }
     }
 

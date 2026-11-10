@@ -190,6 +190,7 @@ private struct DockScreen: View {
     let dock: TimelineDockModel
     let position: () -> Double?
 
+    @AppStorage(MeetingsPreferences.Panes.screenHeight.key) private var screenHeight = MeetingsPreferences.Panes.screenHeight.defaultValue
     @State private var throttle = ScreenFrameThrottle()
     @State private var image: NSImage?
     @State private var held: Double?
@@ -203,7 +204,9 @@ private struct DockScreen: View {
                              displays: screen.displays.compactMap { display in
                                  display.id.map { ScreenDisplayChoice(id: $0, name: display.name ?? "Display \($0)", frames: display.frames) }
                              },
-                             selectedDisplay: chosen, follows: dock.screenFollows,
+                             selectedDisplay: chosen,
+                             height: CGFloat(screenHeight > 0 ? screenHeight : MeetingsPreferences.Panes.screenHeight.defaultValue),
+                             follows: dock.screenFollows,
                              pickDisplay: { dock.displays[meeting] = $0 },
                              toggleFollows: {
                                  held = position()

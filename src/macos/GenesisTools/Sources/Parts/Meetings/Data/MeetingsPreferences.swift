@@ -181,6 +181,9 @@ extension MeetingsPreferences {
         static let autoplayDelaySec = MeetingsWindowSetting(
             key: "meetings.rows.autoplayDelaySec", defaultValue: 1.0, choices: [0.5, 1, 2, 3],
             title: "Delay before the next row plays", detail: "Seconds between an answer and the next row's sound.")
+        static let openPersonPicker = MeetingsWindowSetting(
+            key: "meetings.rows.openPersonPicker", defaultValue: true, choices: [true, false],
+            title: "Open the people list by itself", detail: "A speaker range's editor opens the person picker with it.")
     }
 
     /// The notice stack (F4 keys stay in `MeetingsPreferences`; this adds the visible count).
@@ -228,6 +231,40 @@ extension MeetingsPreferences {
         static let stackDepth = MeetingsWindowSetting(
             key: "meetings.playback.stack.depth", defaultValue: 3, choices: [2, 3, 5],
             title: "Moments kept below", detail: "How many Moments the player keeps to come back to.")
+        /// The player's keys without a modifier (ux checklist: single-key shortcuts can be turned off).
+        static let keys = MeetingsWindowSetting(
+            key: "meetings.playback.keys", defaultValue: true, choices: [true, false],
+            title: "Player keys without ⌘",
+            detail: "Space plays or pauses, Left and Right go 5 s, [ and ] step through the pins, Esc goes back. Never in a text field.")
+    }
+
+    /// The transcript blocks and a selection's clip (F9).
+    enum Transcript {
+        static let dimPast = MeetingsWindowSetting(
+            key: "meetings.transcript.dimPast", defaultValue: true, choices: [true, false],
+            title: "Dim what was heard", detail: "Blocks the playback has passed turn fainter.")
+        static let avatars = MeetingsWindowSetting(
+            key: "meetings.transcript.avatars", defaultValue: true, choices: [true, false],
+            title: "Initials beside each block", detail: "A round badge with the speaker's initials starts each block.")
+        static let blockBreakSec = MeetingsWindowSetting(
+            key: "meetings.transcript.blockBreakSec", defaultValue: 0.0, choices: [0, 5, 10, 30],
+            title: "New block after a pause", detail: "Seconds of silence that start a new block of the same speaker. Off: one block per turn.")
+        static let clipSec = MeetingsWindowSetting(
+            key: "meetings.selection.clipSec", defaultValue: 5.0, choices: [3, 5, 10],
+            title: "Clip of a selection", detail: "Seconds “Clip” plays from the first selected line.")
+
+        /// The pause that starts a new block, nil for one block per turn.
+        static func breakAfterGapSec(_ stored: Double) -> Double? { stored > 0 ? stored : nil }
+    }
+
+    /// The Speakers tab (F9).
+    enum Speakers {
+        static let showQuestions = MeetingsWindowSetting(
+            key: "meetings.speakers.showQuestions", defaultValue: true, choices: [true, false],
+            title: "Open questions on the lanes", detail: "A “?” banner marks each open question on the talk-time lanes.")
+        static let hintChips = MeetingsWindowSetting(
+            key: "meetings.speakers.hintChips", defaultValue: 3, choices: [2, 3, 5],
+            title: "Hint stretches shown", detail: "Stretches under a speaker before “Review N” lists them all.")
     }
 
     /// A speaker's rename field and its person picker (F10).
@@ -259,5 +296,11 @@ extension MeetingsPreferences {
         static let transcriptPane = MeetingsWindowSetting(
             key: "meetings.items.transcriptPane", defaultValue: TranscriptPane.auto, choices: TranscriptPane.allCases,
             title: "Transcript beside the rows", detail: "Auto shows it when the window is wide enough.")
+        static let collapseHeight = MeetingsWindowSetting(
+            key: "meetings.timeline.collapseHeight", defaultValue: 560, choices: [0, 480, 560, 700],
+            title: "Fold the dock below", detail: "A window lower than this shows the dock as one line, so the rows keep the room.")
+        static let screenHeight = MeetingsWindowSetting(
+            key: "meetings.screen.height", defaultValue: 150, choices: [100, 150, 200],
+            title: "Screen height in the dock", detail: "Points the frame beside the sound takes.")
     }
 }
