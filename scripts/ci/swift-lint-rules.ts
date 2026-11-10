@@ -964,11 +964,11 @@ const SWIFT_PROCESS_TOOL = /"(?:\/usr)?\/s?bin\/(?:ps|lsof|pgrep)"/;
 export const SWIFT_PROCESS_TOOL_RATCHET = new Map<string, string>([
     [
         "src/macos/GenesisKit/Sources/GenesisKitBase/Perf/HangWatch.swift",
-        "at most once a minute, only after a main-thread stall, killed at 3 s",
+        "at most once a minute, only after a main-thread stall, killed at 3 s, and ten minutes after a ps that failed; it needs other users' %cpu, which only the setuid ps reads",
     ],
     [
         "src/macos/GenesisKit/Sources/GenesisKitDisk/Disk/DiskSystemProbes.swift",
-        "one fseventsd health read, off the main thread, 5 s timeout",
+        "one fseventsd health read, off the main thread, 5 s timeout; no caller in the app on 2026-11-10; the kernel refuses this root daemon's usage to libproc",
     ],
 ]);
 
