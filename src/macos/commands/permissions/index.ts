@@ -375,6 +375,7 @@ export function registerPermissionsCommand(program: Command): void {
                 const picked = await p.select({
                     message: "Which grant?",
                     options: PERMISSION_KINDS.map((value) => ({ value, label: value })),
+                    cancel: "back",
                 });
                 kind = typeof picked === "string" ? picked : undefined;
             }
@@ -562,6 +563,7 @@ export function registerPermissionsCommand(program: Command): void {
                 const picked = await p.select({
                     message: "Which pane?",
                     options: PANES.map((pane) => ({ value: pane, label: pane })),
+                    cancel: "back",
                 });
                 pane = typeof picked === "string" ? picked : undefined;
             }
