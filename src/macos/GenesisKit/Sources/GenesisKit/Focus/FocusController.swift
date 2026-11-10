@@ -66,7 +66,9 @@ public final class FocusController: ObservableObject {
                 recorder?.attach(sessionId: sessionId)
                 // Starting a phase shows the timer, wherever the start came from: the HUD, the
                 // menu bar, a keyboard shortcut or `genesis focus start`.
-                if sessionId != nil, self?.presentsWindows == true { self?.hud?.show() }
+                if sessionId != nil, self?.presentsWindows == true, self?.settings.timerWindow == .automatic {
+                    self?.hud?.show()
+                }
             }
             // Spec 17 already solved snapshot-and-restore; the pomodoro just has its own
             // reason string and its own gate (plan.dndWhileFlowing), not the voice toggle.
@@ -94,6 +96,7 @@ public final class FocusController: ObservableObject {
                 onOpenStudio: { [weak self] in self?.openStudio() },
                 onToggleHUD: { [weak self] in self?.toggleHUD() })
             statusItem.isHUDVisible = { [weak self] in self?.hud?.isVisible ?? false }
+            statusItem.canShowHUD = { [weak self] in self?.settings.timerWindow != .off }
             if presentsWindows { statusItem.install(style: settings.menuBarStyle) }
             self.statusItem = statusItem
 
@@ -106,7 +109,7 @@ public final class FocusController: ObservableObject {
             idleWatch.onAutoResume = { [weak self] in self?.callAttention(bringForward: false) }
             idleWatch.onNudge = { [weak self] in
                 FocusChime.nudge()
-                self?.callAttention(bringForward: true)
+                self?.callAttention(bringForward: self?.settings.timerWindow == .automatic)
             }
             if liveServices { idleWatch.start() }
             self.idleWatch = idleWatch
@@ -123,7 +126,11 @@ public final class FocusController: ObservableObject {
             // The timer window comes back exactly as it was left: visible if it was visible,
             // and visible anyway while a phase is running, because a running timer you cannot
             // see is the thing this window exists to prevent.
-            if presentsWindows && (FocusHUDWindowController.wasVisible || engine.state != .idle) { hud?.show() }
+            // "When opened" restores a window that was left up but never opens one; "Off" never shows it.
+            if presentsWindows && Self.showsTimerAtStart(settings.timerWindow, wasVisible: FocusHUDWindowController.wasVisible,
+                                                         running: engine.state != .idle) {
+                hud?.show()
+            }
         } catch {
             available = false
             lastError = String(describing: error)
@@ -233,16 +240,31 @@ public final class FocusController: ObservableObject {
 
     // MARK: - Surfaces
 
-    public func toggleHUD() { hud?.toggle() }
+    /// Whether the timer window shows when Focus starts, under the Timer window setting.
+    nonisolated static func showsTimerAtStart(_ mode: FocusSettings.TimerWindow, wasVisible: Bool, running: Bool) -> Bool {
+        switch mode {
+        case .automatic: return wasVisible || running
+        case .onRequest: return wasVisible
+        case .off: return false
+        }
+    }
 
-    public func showHUD() { hud?.show(followPointer: true) }
+    public func toggleHUD() {
+        guard settings.timerWindow != .off || hud?.isVisible == true else { return }
+        hud?.toggle()
+    }
+
+    public func showHUD() {
+        guard settings.timerWindow != .off else { return }
+        hud?.show(followPointer: true)
+    }
 
     /// Brings the timer in front of you and blinks it. A banner click uses `bringForward`:
     /// the window comes to the screen under the pointer, shown if it was hidden. An automatic
     /// event only blinks a window that is already up.
     public func callAttention(bringForward: Bool) {
         guard let hud else { return }
-        if bringForward {
+        if bringForward && settings.timerWindow != .off {
             hud.show(followPointer: true)
         } else if !hud.isVisible {
             FlowFocusLog.focus.notice("focus attention: HUD hidden, no blink")
@@ -274,7 +296,7 @@ public final class FocusController: ObservableObject {
         hud?.setStyle(style)
         // A shape chosen in Settings is a request to see it, so the window comes up if it was
         // hidden. Nothing about the HUD is worth a preference you cannot observe.
-        hud?.show()
+        if settings.timerWindow != .off { hud?.show() }
     }
 
     /// Opens (or raises) the granular breakdown of one session.
@@ -313,6 +335,7 @@ public final class FocusController: ObservableObject {
         let previousRetention = settings.retentionDays
         settings = FocusSettings.from(appConfig: appConfig)
         recorder?.apply(settings: settings)
+        if settings.timerWindow == .off { hud?.hide() }
         engine?.plan = PomodoroPlan.from(appConfig: appConfig)
         if settings.retentionDays != previousRetention { pruneExpiredActivity() }
     }

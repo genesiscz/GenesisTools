@@ -3491,6 +3491,7 @@ The privacy settings of the recorder, as a value type. `FocusSettings.from(appCo
 - `retentionDays: Int = 365`: how long activity is kept. The valid range is `FocusSettings.retentionRange` (`1...36_500`). A larger stored value is clamped to the top.
 - `interruptionThresholdSec: Int = 45`: seconds away from the app a flow started in before it counts as an interruption.
 - `menuBarStyle: String = "time"`: `time` shows the countdown, `dot` shows only the phase dot, `off` removes the item.
+- `timerWindow: TimerWindow = .automatic`: when the timer window shows (`app.focus.timerWindow`). `automatic` comes back as it was left and shows itself when a phase starts or a nudge fires; `on-request` shows only when opened from the menu bar, a shortcut or `genesis focus hud`; `off` never shows it, and the menu bar offers no "Show timer window".
 - `excludedBundles: Set<String> = FocusSettings.defaultExcludedBundles`: apps that are never recorded. The default holds four bundle ids (two 1Password versions, Bitwarden and Keychain Access). Reading the config always adds them back.
 - `excludedHosts: Set<String> = []`: sites that are never recorded, with their subdomains.
 - `projects: [ProjectRule] = []`: rules that name the project for an activity.
@@ -3838,6 +3839,7 @@ The menu-bar item. Its title is a phase dot, and the remaining time in monospace
 
 - `init(engine: PomodoroEngine, recorder: ActivityRecorder, store: ActivityStore, onOpenStudio: @escaping () -> Void, onToggleHUD: @escaping () -> Void)`
 - `isHUDVisible: () -> Bool = { false }`: read when the popover opens, so it can say "Hide timer window" when the window is already up.
+- `canShowHUD: () -> Bool = { true }`: false while the Timer window setting is Off, so the popover offers no "Show timer window".
 - `install(style: String)`: adds the item. `style` is `"time"` (countdown), `"dot"` (dot only) or `"off"` (adds nothing). Calling it again while installed does nothing.
 - `remove()`: removes the item.
 
