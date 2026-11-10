@@ -406,7 +406,7 @@ describe("getSessionListing", () => {
     });
 
     it("lists main sessions newest first, counting every session of the scope", async () => {
-        const listing = await search.getSessionListing();
+        const listing = await search.getSessionListing({ counts: true });
 
         expect(listing.sessions.map((s) => s.sessionId)).toEqual(["newer", "main", "undated"]);
         expect(listing).toMatchObject({
@@ -440,6 +440,15 @@ describe("getSessionListing", () => {
         });
     });
 
+    it("reads no counts unless the caller asks for them", async () => {
+        const listing = await search.getSessionListing();
+
+        expect(listing.sessions.map((s) => s.sessionId)).toEqual(["newer", "main", "undated"]);
+        expect(listing.total).toBeUndefined();
+        expect(listing.subagents).toBeUndefined();
+        expect(state.countCalls).toEqual([]);
+    });
+
     it("includes subagent sessions when excludeSubagents is false", async () => {
         const listing = await search.getSessionListing({ excludeSubagents: false });
 
@@ -462,6 +471,7 @@ describe("getSessionListing", () => {
             newest: 5,
             maxDiscoveryAgeMs: 60_000,
             refresh: false,
+            counts: true,
         });
 
         expect(listing.sessions.map((s) => s.sessionId)).toEqual(["newer", "main"]);

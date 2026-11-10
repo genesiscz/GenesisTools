@@ -95,6 +95,8 @@ export interface SessionListingOptions {
     maxDiscoveryAgeMs?: number;
     /** `false` reads the index as it is, with no refresh (see `HistoryService.catalog`). */
     refresh?: boolean;
+    /** Also count the whole scope (`total`, `subagents`): a second read of the index, so only a caller that prints them asks. */
+    counts?: boolean;
     /** Progress callback: (processed, total, currentFile) */
     onProgress?: (processed: number, total: number, currentFile: string) => void;
 }
@@ -106,8 +108,10 @@ export interface SessionListingOptions {
  */
 export interface SessionListingResult {
     sessions: SessionMetadataRecord[];
-    total: number;
-    subagents: number;
+    /** Every session of the scope, sub-agents included; only with `counts: true`. */
+    total?: number;
+    /** The sub-agent sessions of the scope; only with `counts: true`. */
+    subagents?: number;
     /** How many files were newly indexed or re-indexed this run */
     indexed: number;
     /** How many stale cache entries were cleaned up */
@@ -154,9 +158,11 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         })
     );
     // The listing above refreshed this scope, so the counts read the index as it is.
-    const counts = await p.measureAsync("listing.counts", () =>
-        catalogHistoryCounts({ provider: "claude", filters, refresh: false })
-    );
+    const counts = options.counts
+        ? await p.measureAsync("listing.counts", () =>
+              catalogHistoryCounts({ provider: "claude", filters, refresh: false })
+          )
+        : undefined;
     const sessions = metadata.map(toSessionMetadataRecord);
     const projects = new Set(sessions.map((session) => session.project).filter(Boolean));
 
@@ -164,8 +170,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
 
     return {
         sessions,
-        total: counts.total,
-        subagents: counts.subagents,
+        ...(counts ? { total: counts.total, subagents: counts.subagents } : {}),
         indexed: report.parsed,
         staleRemoved: report.removed,
         reindexed,
