@@ -1,5 +1,5 @@
 import { paths } from "@app/dev-dashboard/contract/endpoints";
-import type { LiveChannel, LiveFrame } from "@app/dev-dashboard/lib/live/types";
+import type { LiveChannel, LiveDataFrame, LiveFrame } from "@app/dev-dashboard/lib/live/types";
 import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
@@ -63,6 +63,16 @@ export interface LiveConnectionDeps {
     setLastError: (message: string | null) => void;
     /** A fake in tests; the browser global otherwise. */
     EventSourceCtor?: typeof EventSource;
+    /** Every data frame, before the built-in cache writes: for a caller that folds a channel itself. */
+    onFrame?: (frame: LiveDataFrame) => void;
+    /** `true` when the stream dropped, `false` once it delivers again. */
+    onStatus?: (down: boolean) => void;
+}
+
+/** What a caller of `useLive` adds to the built-in cache writes. Read through a ref, so a fresh closure is fine. */
+export interface LiveListeners {
+    onFrame?: (frame: LiveDataFrame) => void;
+    onStatus?: (down: boolean) => void;
 }
 
 /**
@@ -85,6 +95,8 @@ export function openLiveConnection(
     const es = new ESCtor(paths.live(channelsFromKey(channelsKey)));
 
     es.onmessage = (ev) => {
+        deps.onStatus?.(false);
+
         try {
             const frame = SafeJSON.parse(ev.data, { strict: true }) as LiveFrame;
 
@@ -99,6 +111,12 @@ export function openLiveConnection(
                 setLastError(frame.payload.message);
                 return;
             }
+
+            if (frame.channel === "system") {
+                return;
+            }
+
+            deps.onFrame?.(frame);
 
             if (frame.channel === "ports" && frame.type === "snapshot") {
                 qc.setQueryData(["ports"], frame.payload);
@@ -126,12 +144,6 @@ export function openLiveConnection(
 
                 return;
             }
-
-            if (frame.channel === "qa" && frame.type === "entry") {
-                qc.setQueryData(["qa", "live-entry"], frame.payload);
-                // Let QA page listeners also invalidate list
-                void qc.invalidateQueries({ queryKey: ["qa"] });
-            }
         } catch {
             // ignore malformed
         }
@@ -139,6 +151,7 @@ export function openLiveConnection(
 
     es.onerror = () => {
         setLastError("live stream disconnected");
+        deps.onStatus?.(true);
     };
 
     return () => {
@@ -148,7 +161,10 @@ export function openLiveConnection(
     };
 }
 
-export function useLive(channels: LiveChannel[]): {
+export function useLive(
+    channels: LiveChannel[],
+    listeners: LiveListeners = {}
+): {
     connId: string | null;
     setChannels: (ch: LiveChannel[]) => Promise<void>;
     lastError: string | null;
@@ -159,9 +175,18 @@ export function useLive(channels: LiveChannel[]): {
     const connIdRef = useRef<string | null>(null);
     const channelsKey = liveChannelsKey(channels);
     const visible = usePageVisible();
+    const listenersRef = useRef(listeners);
+    listenersRef.current = listeners;
 
     useEffect(() => {
-        return openLiveConnection(channelsKey, visible, { qc, connIdRef, setConnId, setLastError });
+        return openLiveConnection(channelsKey, visible, {
+            qc,
+            connIdRef,
+            setConnId,
+            setLastError,
+            onFrame: (frame) => listenersRef.current.onFrame?.(frame),
+            onStatus: (down) => listenersRef.current.onStatus?.(down),
+        });
         // `channels` is deliberately absent: the array identity changes every
         // render, and depending on it reopened the stream about eight times a
         // second. `channelsKey` carries the same information and is stable.
