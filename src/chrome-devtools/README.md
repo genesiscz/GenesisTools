@@ -335,7 +335,8 @@ sanitized), `--documents <n>` (document hops to print, default 40), `--summary` 
 | `console --match <p> [--reload] [--wait <s>]` | What the tab already logged plus what it logs while listening (5 s, or 8 s with `--reload`) |
 | `eval [fnOrExpr] [--file <path>] [--timeout 30]` | Runs JS in the page and prints the result as JSON |
 | `nav <url> [--new] [--spa] [--wait-for <sel>] [--wait-text <t>]` | Navigates a tab, opens a new one, or moves a single-page app in place |
-| `shot [path] [--full]` | Screenshot, default `/tmp/shot.png` |
+| `shot [path] [--full]` | Screenshot, default `/tmp/shot.png`; refuses an output that is no `.png` |
+| `shot <path> --mark <loc> [--label <t>] [--at <side>] [--clip <loc>] [--pad <px>] [--annotate <plan>] [--preset <name>]` | An annotated and a raw image of what the tab shows now, plus the marks (see below) |
 | `grid [path] [--region x,y,w,h] [--step 60] [--full]` | Screenshot with a pixel grid burned in (needs ImageMagick) |
 | `snapshot [--text] [--json]` | The tab's controls (role, label, value) and, with `--text`, its visible text |
 | `click <label> [--nth <n>] [--role <role>] [--json]` | Clicks a control by its label; an option's label picks that option |
@@ -400,6 +401,49 @@ How it reads and acts (`DomPage.attach({ port, target })` in `lib/dom/`, on this
 loopback fixture (no model, no network; `CHROME=<binary>` picks the browser). Measured 2026-09-28: a 2000-link page
 reads in 11.8 ms median over 10 reads, a click that changes nothing settles at the 300 ms cap, and `back` from a
 back-forward-cache page returns in 5 to 11 ms.
+
+### Annotated page shots
+
+Boxes and labels drawn into the page (in its own font, so Czech letters are right), photographed and removed: each
+shot is a raw image and an annotated one that differ only under the overlay. Targets are locator strings resolved when
+the shot runs, never pixels; a target that matches nothing, or a label with no free spot, fails the shot by name.
+
+```bash
+# one quick shot of the tab you look at: annotated, raw (.original) and the marks in image pixels
+tools chrome-devtools shot ~/shots/usages.webp \
+    --mark testid=usages-button \
+    --label "Kde je použitý" \
+    --at below
+# a shot book: list it, check it (no browser), rehearse it (no images), run it
+tools chrome-devtools shots list scripts/app.shots.ts
+tools chrome-devtools shots check scripts/app.shots.ts
+tools chrome-devtools shots rehearse scripts/app.shots.ts --only 18,08
+tools chrome-devtools shots run scripts/app.shots.ts --tag 1110 --out ~/Projects/app/docs/images
+```
+
+| Command | What it does |
+|---|---|
+| `shots run <book> [--only ids] [--out dir] [--tag t] [--base url] [--browser headless\|attach] [--port n] [--json]` | Every shot: `<stem>.<tag>.webp` and `<stem>.<tag>.original.webp`, PNGs under `png/` when the book asks, marks and the run report under `.shots/<tag>/` |
+| `shots list <book> [--only ids] [--json]` | id, stem, parts, first URL, note; no browser |
+| `shots check <book> [--only ids]` | Parses every locator, mark and part; no browser, changes nothing |
+| `shots rehearse <book> [--only ids] [--browser] [--port]` | Visits every part, runs its steps, resolves every locator and places every label; no image |
+
+- **Locators**: `testid=x` (`testid^=` prefix), `css=…`, `text=Exact` (`text~=` contains, `text=/re/`), `role=dialog`,
+  `role=heading[name="Zahrada"]`, `label=/^Název/`, chained with ` >> ` (`has-text=…`, `nth=1`); an array is a union
+  whose every member must match.
+- **A book** is `.ts` (`export default defineShots({...})`, with `id`, `css`, `text`, `union`, `nth`, `within`,
+  `hasText`, `role` and `label` imported from `@genesis-tools/shots`; the loader serves that module, so the book's
+  folder needs no `node_modules`) or `.json`/`.jsonc`. A mark also takes the words `at: "below"`, `dx`, `dy`,
+  `color: "amber"` and `quiet`.
+- **Labels** go to the requested side, else to the next side that covers no page text and no other label inside the
+  clip; `clip.fit: "labels"` grows the clip instead. The clip defaults to the marks' targets plus 20 px.
+- **Browsers**: `headless` (default: a fresh Chrome; login cookies copied in memory from your running browser, only
+  those the book's base URL sends, or from `browser.headless.cookies: { from: "command", argv }`) or `attach` (your
+  running browser, in a new background tab).
+- The marks file is an annotation plan: `tools control draw <image> --annotate <marks.json>` redraws it. A
+  `shot --annotate` plan is the same format, where an item may name a `target` instead of a `rect`.
+- Code: `src/utils/chrome-devtools/shots/` (vendored: locators, the in-page agent, `capturePart`) and `lib/shots/`
+  (book, browsers, runner, quick shot).
 
 ### Performance, throttling and overrides
 
