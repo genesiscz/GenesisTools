@@ -205,6 +205,8 @@ final class MomentPlayer {
     /// The meeting that plays, so the bar names it while the reader looks at another one (R18).
     var meeting: String? { top?.meeting }
     var isActive: Bool { phase != .idle }
+    /// The top's cut failed: a click on its control is a retry.
+    var isFailed: Bool { if case .failed = phase { return true } else { return false } }
 
     // MARK: The table
 
@@ -238,9 +240,9 @@ final class MomentPlayer {
     // MARK: Playing
 
     /// Plays the Moment of `target`, placed on the stack as its source says. A row's button that names the Moment that
-    /// plays pauses or plays it again instead (R14: a second click no longer starts over).
+    /// plays pauses or plays it again instead (R14: a second click no longer starts over); on a failed cut it cuts again.
     func play(_ target: MomentTarget, in meeting: String, from source: MomentSource, lengthSec: Double? = nil) {
-        if source == .row, let top, top.meeting == meeting, top.target == target, top.kind == .moment {
+        if source == .row, let top, top.meeting == meeting, top.target == target, top.kind == .moment, !isFailed {
             togglePause()
             return
         }

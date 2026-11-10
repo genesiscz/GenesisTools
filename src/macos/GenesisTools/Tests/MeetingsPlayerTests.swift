@@ -286,6 +286,18 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertTrue(player.stack.isEmpty)
     }
 
+    func testARowsPlayControlCutsAgainAfterAFailedCut() async throws {
+        engine.cutFailure = MeetingsCLI.Failure(sentence: "The clip could not be cut.", detail: "ffmpeg exited 1")
+        let player = makePlayer()
+        player.play(.item("i3"), in: "m", from: .row)
+        try await until("it failed") { if case .failed = player.phase { return true } else { return false } }
+        engine.cutFailure = nil
+        player.play(.item("i3"), in: "m", from: .row)
+        try await until("the second click plays") { player.phase == .playing }
+        XCTAssertEqual(engine.cuts.count, 2, "a click on the failed Moment's control is a retry, not a pause")
+        XCTAssertEqual(player.stack.count, 1)
+    }
+
     func testCancelStopsTheCutAndKeepsWhatPlayedBefore() async throws {
         let player = makePlayer()
         player.play(.item("i1"), in: "m", from: .row)

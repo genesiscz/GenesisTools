@@ -31,7 +31,8 @@ struct MeetingsRootView: View {
                 ZStack(alignment: .bottom) {
                     Color.clear.frame(height: 0)
                     MeetingsPlayerBar(player: model.player,
-                                      title: model.player.meeting.flatMap { model.meeting($0)?.displayTitle })
+                                      title: model.player.meeting.flatMap { model.meeting($0)?.displayTitle },
+                                      window: model)
                 }
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { dockHeight = $0 }
             }

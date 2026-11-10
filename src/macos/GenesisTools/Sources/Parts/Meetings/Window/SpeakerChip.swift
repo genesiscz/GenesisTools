@@ -25,7 +25,7 @@ struct SpeakerChip: View {
             nameView
             if let startSec {
                 if let play {
-                    LiveButton(tooltip: "Play from \(MeetingsFormat.clock(startSec))", action: { play(startSec) }) {
+                    LiveButton(tooltip: "Play from \(MeetingsFormat.clock(startSec))", pressable: true, action: { play(startSec) }) {
                         time(startSec)
                     }
                     .accessibilityLabel("Play from \(MeetingsFormat.clock(startSec))")
