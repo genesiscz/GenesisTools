@@ -504,14 +504,5 @@ export function createApifyCommand(): Command {
 
 if (import.meta.main) {
     p.setBackend(clackBackend);
-    try {
-        await runTool(createApifyCommand(), { tool: "apify" });
-    } catch (error) {
-        const message =
-            error instanceof ApifyError
-                ? error.message
-                : "Apify command failed. Check the vault and network connection.";
-        out.printlnErr(`apify: ${message}`);
-        process.exitCode = 1;
-    }
+    await runTool(createApifyCommand(), { tool: "apify" });
 }

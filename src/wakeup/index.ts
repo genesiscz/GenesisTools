@@ -68,12 +68,7 @@ program.action(async () => {
 });
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "wakeup" });
-    } catch (error) {
-        p.log.error(error instanceof Error ? error.message : String(error));
-        process.exit(1);
-    }
+    await runTool(program, { tool: "wakeup" });
 }
 
 main().catch((err) => {

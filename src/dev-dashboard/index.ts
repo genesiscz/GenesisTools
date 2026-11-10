@@ -274,8 +274,5 @@ program
     });
 
 if (import.meta.main) {
-    await runTool(program, { tool: "dev-dashboard" }).catch((err) => {
-        logger.error({ err }, "dev-dashboard failed");
-        process.exit(1);
-    });
+    await runTool(program, { tool: "dev-dashboard" });
 }

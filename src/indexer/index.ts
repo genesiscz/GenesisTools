@@ -58,12 +58,7 @@ async function main(): Promise<void> {
         return;
     }
 
-    try {
-        await runTool(program, { tool: "indexer" });
-    } catch (error) {
-        p.log.error(error instanceof Error ? error.message : String(error));
-        process.exit(1);
-    }
+    await runTool(program, { tool: "indexer" });
 }
 
 main().catch((err) => {

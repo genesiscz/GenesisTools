@@ -50,8 +50,7 @@
  */
 
 import { runTool } from "@genesiscz/utils/cli";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { logger, out } from "@genesiscz/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 /**
@@ -108,19 +107,6 @@ for (const name of toRegister) {
 async function main(): Promise<void> {
     try {
         await runTool(program, { tool: "macos" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(message);
-
-        // Every permission-aware path (MacDatabase, Voice Memos, Calendar) already prints the
-        // grant it needs, who holds it and how to switch it on. A second generic block here used
-        // to contradict them by naming the terminal, which stopped being the grant holder when
-        // GenesisTools.app became the responsible process.
-        if (message.includes("not authorized") || message.includes("permission")) {
-            out.println(`\nRun \`${toolCommand("macos permissions")}\` to see which grants GenesisTools holds.`);
-        }
-
-        process.exit(1);
     } finally {
         // No-op unless a command actually opened DarwinKit, and by then the
         // module is already in the loader cache, so this import is free. Doing

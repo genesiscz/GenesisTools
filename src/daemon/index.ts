@@ -43,12 +43,7 @@ async function main(): Promise<void> {
         return;
     }
 
-    try {
-        await runTool(program, { tool: "daemon" });
-    } catch (error) {
-        p.log.error(error instanceof Error ? error.message : String(error));
-        process.exit(1);
-    }
+    await runTool(program, { tool: "daemon" });
 }
 
 main().catch((err) => {

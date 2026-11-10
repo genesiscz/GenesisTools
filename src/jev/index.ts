@@ -4,10 +4,7 @@ import { addProviderOption } from "@genesiscz/utils/ai/evaluation/cli";
 import { registerConfig } from "@genesiscz/utils/ai/evaluation/config-cli";
 import { runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { ui } from "@genesiscz/utils/cli/ui";
-import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
-import { ZodError } from "zod";
 import { registerArena } from "./commands/arena";
 import { registerCompact } from "./commands/compact";
 import { registerControlLabCommands } from "./commands/control";
@@ -60,23 +57,4 @@ registerGrep(program);
 registerSpend(program);
 registerJevMcp(program);
 
-const ERROR_LINE_MAX_CHARS = 400;
-
-try {
-    await runTool(program, { tool: "jev" });
-} catch (error) {
-    const message =
-        error instanceof ZodError
-            ? error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ")
-            : error instanceof Error
-              ? error.message
-              : "Jev command failed.";
-    logger.error({ error }, "Jev command failed");
-    const firstLine = message.split(/\r?\n/, 1)[0] ?? message;
-    const shown =
-        firstLine.length > ERROR_LINE_MAX_CHARS
-            ? `${firstLine.slice(0, ERROR_LINE_MAX_CHARS)}… (${message.length} chars; full text in the log)`
-            : firstLine;
-    ui.err(shown);
-    process.exitCode = 1;
-}
+await runTool(program, { tool: "jev" });

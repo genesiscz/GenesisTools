@@ -892,13 +892,6 @@ async function main(): Promise<void> {
         registerPhoneCommands(program);
 
         await runTool(program, { tool: "notify" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        p.log.error(message);
-        // Use exitCode rather than process.exit() so the finally block below
-        // runs and closes the DarwinKit child. process.exit() terminates
-        // synchronously and would skip finally — defeating the whole point.
-        process.exitCode = 1;
     } finally {
         // sendViaDarwinKit() spawns a long-lived Swift child via the
         // module-level singleton in @app/utils/macos/darwinkit. Without
