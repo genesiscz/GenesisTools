@@ -328,9 +328,11 @@ export function shareRoutes(): RouteDef[] {
                                     asset,
                                     text: body.toString("utf8"),
                                     lines: parseLinesParam(ctx.query.get("lines")),
-                                    resolveImage: linkedImageResolver(assets, noteKey, (image) =>
-                                        shareAssetUrl(slug, image.hash)
-                                    ),
+                                    resolveImage: linkedImageResolver({
+                                        index: assets,
+                                        noteKey,
+                                        url: (image) => shareAssetUrl(slug, image.hash),
+                                    }),
                                 }),
                             };
                         }
@@ -414,14 +416,14 @@ export function shareRoutes(): RouteDef[] {
                                                   text: noteText,
                                                   fragment: decodeFragment(section),
                                                   idPrefix: `:transclusion-${++transclusionIndex}-`,
-                                                  resolveImage: linkedImageResolver(
-                                                      assets,
-                                                      linkedNoteKey(asset),
-                                                      (image) =>
+                                                  resolveImage: linkedImageResolver({
+                                                      index: assets,
+                                                      noteKey: linkedNoteKey(asset),
+                                                      url: (image) =>
                                                           embed
                                                               ? (embed.media.get(image.hash) ?? null)
-                                                              : shareAssetUrl(slug, image.hash)
-                                                  ),
+                                                              : shareAssetUrl(slug, image.hash),
+                                                  }),
                                               }),
                                       };
                             const publishedSlug =

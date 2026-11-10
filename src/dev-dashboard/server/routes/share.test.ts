@@ -459,6 +459,7 @@ describe("GET /share/:slug assets", () => {
         for (const label of ["folder", "suffix", "bare"]) {
             expect(html).toContain(`<a href="#summary" class="dd-wikilink">${label}</a>`);
         }
+
         expect(html).not.toContain('class="dd-md-asset-chip');
     });
 
@@ -770,6 +771,31 @@ describe("GET /share/:slug assets", () => {
         expect(bundle?.entries.map((entry) => entry.name).sort()).toEqual(["Twins/Twins.md", "Twins/b.png"]);
         const b = bundle?.entries.find((entry) => entry.name === "Twins/b.png");
         expect(Buffer.from(b?.data ?? []).equals(twin)).toBe(true);
+    });
+
+    test("a bundle keeps a symlink alias as its own entry, so both names the note uses still open after unzipping", async () => {
+        const vault = mkdtempSync(join(dir, "alias-"));
+        const picture = Buffer.from("\u0089PNG aliased-picture");
+        mkdirSync(join(vault, "N"));
+        writeFileSync(join(vault, "N/original.png"), picture);
+        symlinkSync(join(vault, "N/original.png"), join(vault, "N/alias.png"));
+        const source = "![[original.png]]\n\n![[alias.png]]";
+        const index = await buildShareAssetIndex({ vaultRoot: vault, notePath: "N/Alias.md", source });
+        const bundle = await buildShareBundle({
+            vaultRoot: vault,
+            index,
+            notePath: "N/Alias.md",
+            noteText: source,
+            folderName: "Alias",
+        });
+
+        expect(bundle?.entries.map((entry) => entry.name).sort()).toEqual([
+            "Alias/Alias.md",
+            "Alias/alias.png",
+            "Alias/original.png",
+        ]);
+        const alias = bundle?.entries.find((entry) => entry.name === "Alias/alias.png");
+        expect(Buffer.from(alias?.data ?? []).equals(picture)).toBe(true);
     });
 
     test("both downloads count source bytes without attachments", async () => {

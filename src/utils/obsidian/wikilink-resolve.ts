@@ -6,30 +6,16 @@ export function wikilinkTargetKey(target: string): string {
 }
 
 /**
- * The vault path a wikilink `target` names, as the disk spells it, or null. Names are compared in NFC: macOS keeps a
- * file name's accents decomposed (NFD), while a link typed in a note is composed, and both name the same file.
+ * The vault path a wikilink `target` names, as the disk spells it, or null. An exact spelling wins; only when no name
+ * matches as written are the names compared in NFC. macOS keeps a file name's accents decomposed (NFD) while a link
+ * typed in a note is composed, and both name the same file there; a file system that keeps both spellings as two
+ * files still opens the one the link spells.
  */
 export function resolveWikilinkToVaultPath(entries: VaultEntry[], target: string, fromPath?: string): string | null {
-    const key = wikilinkTargetKey(target).normalize("NFC");
-    const matches: string[] = [];
-
-    function walk(items: VaultEntry[]): void {
-        for (const item of items) {
-            if (item.isDirectory) {
-                walk(item.children ?? []);
-                continue;
-            }
-
-            const relNoExt = item.relativePath.normalize("NFC").replace(/\.md$/i, "");
-            const base = item.name.normalize("NFC").replace(/\.md$/i, "");
-
-            if (base === key || relNoExt === key || relNoExt.endsWith(`/${key}`)) {
-                matches.push(item.relativePath);
-            }
-        }
-    }
-
-    walk(entries);
+    const key = wikilinkTargetKey(target);
+    const exact = matchingPaths(entries, key, (name) => name);
+    const matches =
+        exact.length > 0 ? exact : matchingPaths(entries, key.normalize("NFC"), (name) => name.normalize("NFC"));
 
     if (matches.length === 0) {
         return null;
@@ -51,4 +37,29 @@ export function resolveWikilinkToVaultPath(entries: VaultEntry[], target: string
     }
 
     return matches.sort((a, b) => a.length - b.length)[0];
+}
+
+/** Every file whose name or vault path, spelled by `spell`, ends in `key` (`.md` dropped from both sides). */
+function matchingPaths(entries: VaultEntry[], key: string, spell: (name: string) => string): string[] {
+    const matches: string[] = [];
+
+    function walk(items: VaultEntry[]): void {
+        for (const item of items) {
+            if (item.isDirectory) {
+                walk(item.children ?? []);
+                continue;
+            }
+
+            const relNoExt = spell(item.relativePath).replace(/\.md$/i, "");
+            const base = spell(item.name).replace(/\.md$/i, "");
+
+            if (base === key || relNoExt === key || relNoExt.endsWith(`/${key}`)) {
+                matches.push(item.relativePath);
+            }
+        }
+    }
+
+    walk(entries);
+
+    return matches;
 }

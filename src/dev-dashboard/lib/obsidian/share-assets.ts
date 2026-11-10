@@ -547,11 +547,12 @@ export async function buildShareAssetIndex(options: {
  * `noteKey`), at the URL `url` gives (the live page's hash URL, or a saved page's `data:` URL); everything else stays
  * text.
  */
-export function linkedImageResolver(
-    index: ShareAssetIndex,
-    noteKey: string,
-    url: (asset: ShareAsset) => string | null
-): (target: string) => ResolvedAsset | null {
+export function linkedImageResolver(options: {
+    index: ShareAssetIndex;
+    noteKey: string;
+    url: (asset: ShareAsset) => string | null;
+}): (target: string) => ResolvedAsset | null {
+    const { index, noteKey, url } = options;
     const images = index.linkedImages.get(noteKey);
 
     return (target) => {
@@ -739,20 +740,23 @@ async function readAssetBodies(options: {
 
 /**
  * Every file the share carries besides the note itself: what the note references, and the images its linked notes
- * show, so an unzipped linked note still shows its pictures. One entry per file on disk, so two spellings of one name
- * (a composed link to a decomposed file name) count and zip once.
+ * show, so an unzipped linked note still shows its pictures. One entry per name the notes use: a symlink alias keeps
+ * its own entry, so its link still works after unzipping, while two spellings of one name for one file (a composed
+ * link to a decomposed file name) count and zip once.
  */
 export function shareAttachments(index: ShareAssetIndex): ShareAsset[] {
-    const byFile = new Map<string, ShareAsset>();
+    const byEntry = new Map<string, ShareAsset>();
     const linkedImages = [...index.linkedImages.values()].flatMap((images) => [...images.values()]);
 
     for (const asset of [...index.byTarget.values(), ...linkedImages]) {
-        if (!isSharedNote(index, asset) && !byFile.has(asset.absPath)) {
-            byFile.set(asset.absPath, asset);
+        const entry = `${asset.absPath}\0${asset.vaultPath.normalize("NFC")}`;
+
+        if (!isSharedNote(index, asset) && !byEntry.has(entry)) {
+            byEntry.set(entry, asset);
         }
     }
 
-    return [...byFile.values()];
+    return [...byEntry.values()];
 }
 
 /**
@@ -893,11 +897,11 @@ export async function buildShareEmbed(options: {
                 asset,
                 text: body.toString("utf8"),
                 lines,
-                resolveImage: linkedImageResolver(
+                resolveImage: linkedImageResolver({
                     index,
-                    linkedNoteKey(asset),
-                    (image) => embed.media.get(image.hash) ?? null
-                ),
+                    noteKey: linkedNoteKey(asset),
+                    url: (image) => embed.media.get(image.hash) ?? null,
+                }),
             }),
             raw: asset.hash,
         };

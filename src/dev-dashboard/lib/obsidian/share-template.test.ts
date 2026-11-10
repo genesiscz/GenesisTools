@@ -10,7 +10,8 @@ import { JSDOM } from "jsdom";
  * The page with the scripts that hold `marker` running against it. Bun cannot run jsdom's own script sandbox, so each
  * script runs with the jsdom window as its scope; jsdom lays nothing out.
  */
-function openPage(html: string, marker: string, stored: Record<string, string> = {}): JSDOM {
+function openPage(options: { html: string; marker: string; stored?: Record<string, string> }): JSDOM {
+    const { html, marker, stored = {} } = options;
     const page = renderSharePage({
         title: "Pictures",
         rendered: { html, hasMath: false, hasMermaid: false, tags: [] },
@@ -137,10 +138,10 @@ describe("renderSharePage", () => {
     });
 
     test("a picture alone is a keyboard button that opens the viewer; a picture inside a link keeps the link", () => {
-        const dom = openPage(
-            '<p><img src="a.png" alt="Chart"></p><p><a href="/share/other"><img src="b.png" alt="B"></a></p>',
-            'getElementById("dd-lightbox")'
-        );
+        const dom = openPage({
+            html: '<p><img src="a.png" alt="Chart"></p><p><a href="/share/other"><img src="b.png" alt="B"></a></p>',
+            marker: 'getElementById("dd-lightbox")',
+        });
         const doc = dom.window.document;
         const [alone, linked] = [...doc.querySelectorAll("article img")];
 
@@ -156,26 +157,31 @@ describe("renderSharePage", () => {
     });
 
     test("page settings set how long a jumped-to heading stays marked, kept in the browser, Off included", () => {
-        const fresh = openPage('<h2 id="a">A</h2>', HEADING_FLASH_STORAGE_KEY);
-        const select = fresh.window.document.getElementById("dd-share-heading-flash") as HTMLSelectElement | null;
+        const fresh = openPage({ html: '<h2 id="a">A</h2>', marker: HEADING_FLASH_STORAGE_KEY });
+        const select = fresh.window.document.getElementById("dd-share-heading-flash");
         const root = fresh.window.document.documentElement;
 
-        expect(select?.value).toBe(String(HEADING_FLASH_DEFAULT_MS));
+        if (!(select instanceof fresh.window.HTMLSelectElement)) {
+            throw new Error("the page settings have no heading highlight select");
+        }
+
+        expect(select.value).toBe(String(HEADING_FLASH_DEFAULT_MS));
         expect(root.classList.contains("dd-heading-flash-off")).toBe(false);
 
-        if (select) {
-            select.value = "3600";
-            select.dispatchEvent(new fresh.window.Event("change"));
-        }
+        select.value = "3600";
+        select.dispatchEvent(new fresh.window.Event("change"));
         expect(root.style.getPropertyValue("--dd-heading-flash")).toBe("3600ms");
         expect(fresh.window.localStorage.getItem(HEADING_FLASH_STORAGE_KEY)).toBe("3600");
         fresh.window.close();
 
-        const off = openPage('<h2 id="a">A</h2>', HEADING_FLASH_STORAGE_KEY, { [HEADING_FLASH_STORAGE_KEY]: "0" });
+        const off = openPage({
+            html: '<h2 id="a">A</h2>',
+            marker: HEADING_FLASH_STORAGE_KEY,
+            stored: { [HEADING_FLASH_STORAGE_KEY]: "0" },
+        });
+        const offSelect = off.window.document.getElementById("dd-share-heading-flash");
         expect(off.window.document.documentElement.classList.contains("dd-heading-flash-off")).toBe(true);
-        expect((off.window.document.getElementById("dd-share-heading-flash") as HTMLSelectElement | null)?.value).toBe(
-            "0"
-        );
+        expect(offSelect instanceof off.window.HTMLSelectElement && offSelect.value).toBe("0");
         off.window.close();
     });
 });
