@@ -297,7 +297,7 @@ final class MeetingsWindowModel {
 
     /// Plays the tone alone with `sound` (`tone.preview` cuts it; the side panel's Play button). Only the service cuts a
     /// preview; without one a notice says so, since a second tone maker would be a second engine (R7).
-    func previewTone(_ sound: ToneSound) {
+    func previewTone(_ sound: MeetingsAPI.ToneSoundSetting) {
         Task {
             do {
                 try await TonePreviewPlayer.play(sound, service: service)

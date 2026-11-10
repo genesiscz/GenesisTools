@@ -274,6 +274,16 @@ extension MeetingsAPI {
 
         private enum CodingKeys: String, CodingKey { case hz, sec, volume, preset, file }
 
+        /// DEFAULT_TONE_SOUND in src/utils/meetings/config.ts: what a config without `tone.sound` plays.
+        static let defaultSine = (hz: 880.0, sec: 0.15, volume: 0.6)
+        static let engineDefault = ToneSoundSetting.sine(hz: defaultSine.hz, sec: defaultSine.sec, volume: defaultSine.volume)
+
+        /// The sound file's path; nil for a sine or a preset.
+        var filePath: String? {
+            if case .file(let path, _) = self { return path }
+            return nil
+        }
+
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             let volume = try container.decodeIfPresent(Double.self, forKey: .volume)
@@ -282,10 +292,10 @@ extension MeetingsAPI {
             } else if let file = try container.decodeIfPresent(String.self, forKey: .file) {
                 self = .file(file, volume: volume)
             } else {
-                // The engine's defaults (DEFAULT_TONE_SOUND) fill a sine's missing members, as the config reads it.
-                self = .sine(hz: try container.decodeIfPresent(Double.self, forKey: .hz) ?? 880,
-                             sec: try container.decodeIfPresent(Double.self, forKey: .sec) ?? 0.15,
-                             volume: volume ?? 0.6)
+                // The engine's defaults fill a sine's missing members, as the config reads it.
+                self = .sine(hz: try container.decodeIfPresent(Double.self, forKey: .hz) ?? Self.defaultSine.hz,
+                             sec: try container.decodeIfPresent(Double.self, forKey: .sec) ?? Self.defaultSine.sec,
+                             volume: volume ?? Self.defaultSine.volume)
             }
         }
 

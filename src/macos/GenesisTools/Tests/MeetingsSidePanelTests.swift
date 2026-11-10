@@ -1,11 +1,13 @@
 import AppKit
 import Foundation
+import GenesisKit
 import SwiftUI
 import XCTest
 @testable import GenesisToolsMeetings
 
-/// The settings side panel's sections (F8; R8, R26, G52 to G55).
-/// Snapshots: `MEETINGS_PEOPLE_SHOTS=<folder>` renders the panel there at inspector widths, light and dark.
+/// The settings side panel's sections (F8; R8, R26, G52 to G55) and the engine's version 5 rows (decisions 8 and 9).
+/// Snapshots: `MEETINGS_UI_SNAPSHOTS=<folder>` (or `MEETINGS_PEOPLE_SHOTS`) renders the panel there at inspector widths,
+/// light and dark, and the Settings page's Clip and Tone card.
 @MainActor
 final class MeetingsSidePanelTests: XCTestCase {
     private func defaults() throws -> (UserDefaults, String) {
@@ -60,35 +62,158 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertEqual(SidePanelWords.number(3, key: "meetings.notices.maxVisible"), "3")
     }
 
-    func testTheEngineSectionReadsTheListenConfigAndWritesPresets() throws {
-        let listen = JSONValue.object([
-            "padSec": .number(3),
-            "tone": .object(["enabled": .bool(false), "leadSec": .number(0.6),
-                             "sound": .object(["hz": .number(523), "sec": .number(0.3), "volume": .number(0.35)])]),
-        ])
-        let engine = SidePanelCatalog.engineSection(listen: listen)
-        XCTAssertEqual(engine.footnote, "Applies from the next clip. The clip that plays keeps its sound.")
-        XCTAssertEqual(engine.enginePaths, ["global.playback.listen.padSec", "global.playback.listen.tone.enabled",
-                                            "global.playback.listen.tone.leadSec", "global.playback.listen.tone.sound",
-                                            "global.playback.listen.longestClipSec"])
-        let rows = Dictionary(uniqueKeysWithValues: engine.rows.map { ($0.id, $0) })
-        let sound = try XCTUnwrap(rows["global.playback.listen.tone.sound"])
-        XCTAssertEqual(sound.value, .text("soft"), "523 Hz 0.3 s at 0.35 is the Soft preset")
-        XCTAssertEqual(rows["global.playback.listen.tone.enabled"]?.value, .flag(false))
-        XCTAssertEqual(rows["global.playback.listen.longestClipSec"]?.value, .number(30), "a missing key reads as its default")
-        XCTAssertEqual(SidePanelCatalog.configValue(.text("click"), for: sound),
-                       .object(["hz": .number(2000), "sec": .number(0.03), "volume": .number(0.7)]))
-        XCTAssertEqual(SidePanelCatalog.sound(.text("beep"), for: sound)?.hz, 880)
-        XCTAssertFalse(engine.isDefault)
+    /// `tone.presets` as the service answers it on a Mac without the Tink sound.
+    private static let presets: [MeetingsAPI.TonePresets.Preset] = [
+        .init(name: "beep", label: "Beep", kind: "sine", volume: 0.6, hz: 880, sec: 0.15, file: nil, available: true),
+        .init(name: "soft", label: "Soft", kind: "sine", volume: 0.35, hz: 523, sec: 0.3, file: nil, available: true),
+        .init(name: "click", label: "Click", kind: "sine", volume: 0.7, hz: 2000, sec: 0.03, file: nil, available: true),
+        .init(name: "glass", label: "Glass", kind: "file", volume: 0.6, hz: nil, sec: nil, file: "/System/Library/Sounds/Glass.aiff", available: true),
+        .init(name: "tink", label: "Tink", kind: "file", volume: 0.6, hz: nil, sec: nil, file: "/System/Library/Sounds/Tink.aiff", available: false),
+    ]
 
-        let fresh = SidePanelCatalog.engineSection(listen: .null)
-        let pad = try XCTUnwrap(fresh.rows.first)
-        XCTAssertEqual(pad.value, .text(""), "padSec has no default: the first listen asks")
-        XCTAssertEqual(pad.valueTitle, "Not set")
+    /// The engine section of `listen`, with the presets above unless `presets` says otherwise; `files` exist.
+    private func engine(_ listen: [String: JSONValue], presets: TonePresetList? = nil,
+                        files: Set<String> = []) -> (SidePanelSection, [String: SidePanelRow]) {
+        let section = SidePanelCatalog.engineSection(listen: .object(listen), presets: presets ?? .loaded(Self.presets),
+                                                     fileExists: { files.contains($0) })
+        return (section, Dictionary(uniqueKeysWithValues: section.rows.map { ($0.id, $0) }))
+    }
+
+    private static let soundPath = "global.playback.listen.tone.sound"
+    private static let volumePath = "global.playback.listen.tone.sound.volume"
+
+    /// Decision 9 (config version 5): two pads, before and after the asked spot, choices 1 to 10 s, no default. An unset
+    /// side follows the other one, as the engine reads it; a write goes to its own key and never to padSec.
+    func testThePadIsTwoRowsBeforeAndAfterTheAskedSpot() throws {
+        let (fresh, freshRows) = engine([:])
+        let before = try XCTUnwrap(freshRows["global.playback.listen.padBeforeSec"])
+        let after = try XCTUnwrap(freshRows["global.playback.listen.padAfterSec"])
+        XCTAssertEqual(Array(fresh.rows.prefix(2)).map(\.title), ["Before the asked spot", "After it"])
+        XCTAssertEqual(before.choices.map(\.title), ["Not set", "1 s", "2 s", "3 s", "5 s", "10 s"])
+        XCTAssertEqual(before.value, .text(""), "no default: the first listen asks")
+        XCTAssertEqual(after.valueTitle, "Not set")
+        XCTAssertTrue(before.isDefault && after.isDefault)
+
+        let (_, rows) = engine(["padBeforeSec": .number(3)])
+        let setBefore = try XCTUnwrap(rows["global.playback.listen.padBeforeSec"])
+        let sameAfter = try XCTUnwrap(rows["global.playback.listen.padAfterSec"])
+        XCTAssertEqual(setBefore.valueTitle, "3 s")
+        XCTAssertEqual(sameAfter.valueTitle, "Same as before", "one side set stands for both")
+        XCTAssertEqual(SidePanelCatalog.enginePick(.number(5), for: sameAfter), .set(.number(5)))
+        XCTAssertEqual(SidePanelCatalog.enginePick(.text(""), for: setBefore), .unset)
+        XCTAssertEqual(SidePanelCatalog.enginePick(.number(3), for: setBefore), .nothing, "the value it shows writes nothing")
+
+        let (_, odd) = engine(["padBeforeSec": .number(4), "padAfterSec": .number(1)])
+        XCTAssertEqual(odd["global.playback.listen.padBeforeSec"]?.choices.map(\.title), ["Same as after", "1 s", "2 s", "3 s", "4 s", "5 s", "10 s"])
+        XCTAssertFalse(fresh.enginePaths.contains { $0.hasSuffix(".padSec") }, "version 5 refuses padSec")
+    }
+
+    /// Decision 8: the sound menu lists `tone.presets`, greys a sound this Mac lacks, and writes a whole `{ preset }`.
+    func testTheSoundRowListsTheNamedTonesAndWritesAPreset() throws {
+        let (section, rows) = engine(["tone": .object(["enabled": .bool(false), "leadSec": .number(0.6),
+                                                       "sound": .object(["hz": .number(523), "sec": .number(0.3), "volume": .number(0.35)])])])
+        XCTAssertEqual(section.footnote, "Applies from the next clip. The clip that plays keeps its sound.")
+        XCTAssertEqual(section.enginePaths, ["global.playback.listen.padBeforeSec", "global.playback.listen.padAfterSec",
+                                             "global.playback.listen.tone.enabled", "global.playback.listen.tone.leadSec",
+                                             Self.soundPath, "global.playback.listen.longestClipSec"],
+                       "the volume goes with the sound: one unset, no second write")
+        let sound = try XCTUnwrap(rows[Self.soundPath])
+        XCTAssertEqual(sound.value, .text("soft"), "a stored sine with Soft's pitch and length is Soft")
+        XCTAssertEqual(sound.choices.map(\.title), ["Beep", "Soft", "Click", "Glass", "Tink", "Sound file…"])
+        XCTAssertEqual(sound.choices.filter { !$0.available }.map(\.title), ["Tink"])
+        XCTAssertEqual(sound.choices.last?.startsGroup, true)
+        XCTAssertEqual(sound.tone, .sine(hz: 523, sec: 0.3, volume: 0.35), "Play plays the saved sound")
+        XCTAssertNil(sound.problem)
+        XCTAssertEqual(rows["global.playback.listen.tone.enabled"]?.value, .flag(false))
+        XCTAssertFalse(section.isEnabled(sound), "off while Tone is off")
+        XCTAssertEqual(SidePanelCatalog.enginePick(.text("click"), for: sound), .set(.object(["preset": .string("click")])))
+        XCTAssertEqual(SidePanelCatalog.enginePick(.text("soft"), for: sound), .nothing)
+        XCTAssertEqual(SidePanelCatalog.enginePick(SidePanelCatalog.chooseFileValue, for: sound), .chooseFile)
+        XCTAssertFalse(section.isDefault)
+
+        let (fresh, freshRows) = engine([:])
+        XCTAssertEqual(freshRows[Self.soundPath]?.value, .text("beep"))
+        XCTAssertEqual(freshRows[Self.volumePath]?.value, .number(0.6))
         XCTAssertTrue(fresh.isDefault)
-        XCTAssertNil(SidePanelCatalog.configValue(.text(""), for: pad))
-        let custom = SidePanelCatalog.engineSection(listen: .object(["tone": .object(["sound": .object(["hz": .number(440)])])]))
-        XCTAssertEqual(custom.rows.first { $0.id.hasSuffix(".tone.sound") }?.valueTitle, "Custom")
+
+        let (_, custom) = engine(["tone": .object(["sound": .object(["hz": .number(440)])])])
+        XCTAssertEqual(custom[Self.soundPath]?.valueTitle, "Custom (440 Hz)")
+        XCTAssertEqual(custom[Self.soundPath]?.choices.map(\.title).suffix(2), ["Custom (440 Hz)", "Sound file…"])
+        XCTAssertEqual(SidePanelCatalog.enginePick(SidePanelCatalog.customValue, for: try XCTUnwrap(custom[Self.soundPath])), .nothing)
+    }
+
+    /// Need 2: a preset or a file reads as itself, not as Beep's values; before the presets answer, the default still
+    /// reads as Beep and a stored preset by its name.
+    func testASavedPresetOrFileReadsAsItself() throws {
+        let (_, preset) = engine(["tone": .object(["sound": .object(["preset": .string("glass")])])])
+        let glass = try XCTUnwrap(preset[Self.soundPath])
+        XCTAssertEqual(glass.valueTitle, "Glass")
+        XCTAssertEqual(glass.tone, .preset("glass", volume: nil))
+        XCTAssertEqual(preset[Self.volumePath]?.value, .number(0.6), "a preset without a volume plays at its own")
+
+        let (_, missing) = engine(["tone": .object(["sound": .object(["preset": .string("tink")])])])
+        XCTAssertEqual(missing[Self.soundPath]?.problem, "Tink is not on this Mac, so clips do not play. Pick another sound.")
+
+        let (_, waiting) = engine(["tone": .object(["sound": .object(["preset": .string("soft")])])], presets: .loading)
+        XCTAssertEqual(waiting[Self.soundPath]?.valueTitle, "Soft")
+        XCTAssertEqual(waiting[Self.soundPath]?.choices.map(\.title), ["Soft", "Sound file…"])
+        let (_, fresh) = engine([:], presets: .unavailable("the service did not answer"))
+        XCTAssertEqual(fresh[Self.soundPath]?.valueTitle, "Beep")
+        XCTAssertEqual(fresh[Self.soundPath]?.detail.hasSuffix("The named sounds did not load: the service did not answer."), true)
+    }
+
+    /// Need 3: "Sound file…" writes `{ file }` with the absolute path the panel picked; a cancel writes nothing. A saved
+    /// file shows its name, its path as the tooltip, and a sentence when it is gone.
+    func testASoundFileIsPickedShownAndNamedWhenItIsGone() async throws {
+        let path = "/Users/alice/Sounds/chime.m4a"
+        let (_, present) = engine(["tone": .object(["sound": .object(["file": .string(path), "volume": .number(0.6)])])], files: [path])
+        let file = try XCTUnwrap(present[Self.soundPath])
+        XCTAssertEqual(file.value, .file(path))
+        XCTAssertEqual(file.valueTitle, "chime.m4a")
+        XCTAssertEqual(file.valueHelp, path)
+        XCTAssertNil(file.problem)
+        XCTAssertEqual(file.choices.suffix(2).map(\.title), ["chime.m4a", "Sound file…"])
+        XCTAssertEqual(file.choices.suffix(2).first?.startsGroup, true)
+
+        let (_, gone) = engine(["tone": .object(["sound": .object(["file": .string(path), "volume": .number(0.6)])])])
+        XCTAssertEqual(gone[Self.soundPath]?.problem, "chime.m4a is not there, so clips do not play. Pick another sound.")
+
+        var written: [JSONValue?] = []
+        var askedNear: [String?] = []
+        let picked = expectation(description: "a file was picked")
+        SidePanelCatalog.applyEngine(SidePanelCatalog.chooseFileValue, for: file, chooseFile: { near in
+            askedNear.append(near)
+            return "/Users/alice/Sounds/bell.wav"
+        }, write: { written.append($0); picked.fulfill() })
+        await fulfillment(of: [picked], timeout: 2)
+        XCTAssertEqual(written, [.object(["file": .string("/Users/alice/Sounds/bell.wav")])])
+        XCTAssertEqual(askedNear, [path], "the panel opens in the saved file's folder")
+
+        let cancelled = expectation(description: "the panel was cancelled")
+        SidePanelCatalog.applyEngine(SidePanelCatalog.chooseFileValue, for: file, chooseFile: { _ in
+            cancelled.fulfill()
+            return nil
+        }, write: { written.append($0) })
+        await fulfillment(of: [cancelled], timeout: 2)
+        await Task.yield()
+        XCTAssertEqual(written.count, 1, "a cancel writes nothing")
+    }
+
+    /// Need 4: the volume row is a 0 to 1 slider at `tone.sound.volume`; its default is the sound's own volume.
+    func testTheVolumeSliderWritesTheSoundsVolume() throws {
+        let (_, rows) = engine(["tone": .object(["sound": .object(["preset": .string("soft"), "volume": .number(0.2)])])])
+        let volume = try XCTUnwrap(rows[Self.volumePath])
+        XCTAssertEqual(volume.slider, SidePanelRow.Slider(range: 0...1, step: 0.05))
+        XCTAssertEqual(volume.value, .number(0.2))
+        XCTAssertEqual(volume.defaultValue, .number(0.35), "Soft's own volume")
+        XCTAssertFalse(volume.isDefault)
+        XCTAssertEqual(SidePanelCatalog.enginePick(.number(0.45), for: volume), .set(.number(0.45)))
+        XCTAssertEqual(SidePanelWords.percent(0.45), "45 %")
+        XCTAssertEqual(SidePanelWords.fileName("/Users/alice/Sounds/a-long-chime-name.m4a"), "a-long…ame.m4a")
+        XCTAssertEqual(SidePanelWords.fileName("/Users/alice/Sounds/chime.m4a"), "chime.m4a")
+        let (_, own) = engine(["tone": .object(["sound": .object(["preset": .string("click")])])])
+        XCTAssertEqual(own[Self.volumePath]?.value, .number(0.7))
+        XCTAssertEqual(own[Self.volumePath]?.isDefault, true)
     }
 
     /// F8: a window row writes the type its reader reads, so `integer(forKey:)` and the typed accessors see it.
@@ -142,37 +267,58 @@ final class MeetingsSidePanelTests: XCTestCase {
 
     /// F8: a config write names the value it replaces, the same on the service and the command (decision 13).
     func testAnEngineWriteNamesTheValueItReplaces() {
-        let raw = JSONValue.object(["global": .object(["playback": .object(["listen": .object(["padSec": .number(3)])])])])
-        let path = ["global", "playback", "listen", "padSec"]
+        let raw = JSONValue.object(["global": .object(["playback": .object(["listen": .object(["padBeforeSec": .number(3)])])])])
+        let path = ["global", "playback", "listen", "padBeforeSec"]
         let set = MeetingsConfigWrite.set(path, .number(5), readFrom: raw)
         XCTAssertEqual(set, .set(path: path, value: .number(5), expect: .number(3)))
-        XCTAssertEqual(set.args, ["config", "set", #"["global","playback","listen","padSec"]"#, "5", "--expect", "3"])
-        XCTAssertEqual(set.pathArgument, #"["global","playback","listen","padSec"]"#, "the service reads the same JSON path")
+        XCTAssertEqual(set.args, ["config", "set", #"["global","playback","listen","padBeforeSec"]"#, "5", "--expect", "3"])
+        XCTAssertEqual(set.pathArgument, #"["global","playback","listen","padBeforeSec"]"#, "the service reads the same JSON path")
         let unset = MeetingsConfigWrite.unset(["global", "playback", "listen", "longestClipSec"], readFrom: raw)
         XCTAssertEqual(unset.args, ["config", "unset", #"["global","playback","listen","longestClipSec"]"#, "--expect", "null"])
     }
 
-    func testTonePresetsMatchTheEngineDefault() {
-        XCTAssertEqual(TonePreset.beep.sound, ToneSound(hz: 880, sec: 0.15, volume: 0.6), "DEFAULT_TONE_SOUND in config.ts")
-        XCTAssertEqual(TonePreset.matching(ToneSound(hz: 880, sec: 0.15, volume: 0.6)), .beep)
-        XCTAssertNil(TonePreset.matching(ToneSound(hz: 881.5, sec: 0.15, volume: 0.6)))
+    func testTheEngineDefaultIsTheBeepSine() throws {
+        XCTAssertEqual(MeetingsAPI.ToneSoundSetting.engineDefault, .sine(hz: 880, sec: 0.15, volume: 0.6), "DEFAULT_TONE_SOUND in config.ts")
+        XCTAssertEqual(SidePanelCatalog.toneSetting(.null), .engineDefault)
+        XCTAssertEqual(SidePanelCatalog.toneSetting(.object([:])), .engineDefault, "a stored {} reads as the default sine")
+        XCTAssertNil(SidePanelCatalog.namedSine(.sine(hz: 881.5, sec: 0.15, volume: 0.6), in: Self.presets))
+        XCTAssertEqual(SidePanelCatalog.namedSine(.sine(hz: 880, sec: 0.15, volume: 0.2), in: Self.presets)?.name, "beep",
+                       "the volume is its own row")
     }
 
     func testSnapshotsOfThePanel() throws {
-        guard let folder = ProcessInfo.processInfo.environment["MEETINGS_PEOPLE_SHOTS"] else { return }
+        let environment = ProcessInfo.processInfo.environment
+        guard let folder = environment["MEETINGS_UI_SNAPSHOTS"] ?? environment["MEETINGS_PEOPLE_SHOTS"] else { return }
         let (defaults, suite) = try defaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set("confirm", forKey: "meetings.rows.returnKey")
-        let listen = JSONValue.object(["padSec": .number(3), "tone": .object(["leadSec": .number(0.4)])])
-        let sections = [SidePanelCatalog.engineSection(listen: listen)] + SidePanelCatalog.windowSections(defaults)
-        for dark in [false, true] {
-            for width in [280.0, 340.0] {
-                try PeopleSnapshot.render(
-                    SidePanelSections(sections: sections, change: { _, _ in }, reset: { _ in }, playTone: { _ in },
-                                      openSettings: { _ in }, folded: ["panes"], setFolded: { _, _ in })
-                        .frame(height: 1500),
-                    width: width, dark: dark, to: "\(folder)/side-panel-\(Int(width))-\(dark ? "dark" : "light").png")
+        let presets = TonePresetList.loaded(Self.presets)
+        let states: [(String, JSONValue)] = [
+            ("preset", .object(["padBeforeSec": .number(3), "tone": .object(["leadSec": .number(0.4),
+                                                                              "sound": .object(["preset": .string("soft"), "volume": .number(0.5)])])])),
+            ("gone-file", .object(["padBeforeSec": .number(2), "padAfterSec": .number(5),
+                                   "tone": .object(["sound": .object(["file": .string("/Users/alice/Sounds/a-long-chime-name.m4a"),
+                                                                       "volume": .number(0.6)])])])),
+        ]
+        for (name, listen) in states {
+            let engine = SidePanelCatalog.engineSection(listen: listen, presets: presets, fileExists: { _ in false })
+            let sections = [engine] + SidePanelCatalog.windowSections(defaults)
+            for dark in [false, true] {
+                for width in [280.0, 340.0] {
+                    try PeopleSnapshot.render(
+                        SidePanelSections(sections: sections, change: { _, _ in }, reset: { _ in }, playTone: { _ in },
+                                          openSettings: { _ in }, folded: ["playback", "rows", "notices", "panes", "transcript", "people"],
+                                          setFolded: { _, _ in })
+                            .frame(height: 760),
+                        width: width, dark: dark, to: "\(folder)/side-panel-\(name)-\(Int(width))-\(dark ? "dark" : "light").png")
+                }
             }
+            // The Settings window is dark; a glass card is invisible to this capture, so the card takes a solid theme.
+            try PeopleSnapshot.render(
+                MeetingsCatalogCard(section: engine, change: { _, _ in }, reset: { _ in }, playTone: { _ in })
+                    .padding(20)
+                    .environment(\.nativeSettingsTheme, .graphite),
+                width: 680, dark: true, to: "\(folder)/settings-card-\(name)-dark.png")
         }
     }
 }

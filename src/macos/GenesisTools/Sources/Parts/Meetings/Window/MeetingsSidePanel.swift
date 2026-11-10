@@ -10,6 +10,8 @@ struct MeetingsSidePanel: View {
     let detail: MeetingDetailModel
     /// A window setting was written here: the rows read the defaults again.
     @State private var revision = 0
+    /// The named tones of the sound row, asked each time the panel opens.
+    @State private var tonePresets: TonePresetList = .loading
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,6 +32,10 @@ struct MeetingsSidePanel: View {
         }
         // The terminal or another window may have changed the engine's values since the last read: one read on open.
         .onAppear { window.loadSettings(quiet: true) }
+        .task {
+            let presets = await TonePresetList.load(service: window.service)
+            if presets != .loading { tonePresets = presets }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Settings")
     }
@@ -56,7 +62,7 @@ struct MeetingsSidePanel: View {
         _ = revision
         var out: [SidePanelSection] = []
         if let raw = window.settingsRaw {
-            out.append(SidePanelCatalog.engineSection(listen: raw.at(Self.listenPath)))
+            out.append(SidePanelCatalog.engineSection(listen: raw.at(Self.listenPath), presets: tonePresets))
         }
         return out + SidePanelCatalog.windowSections(window.defaults)
     }
@@ -72,7 +78,7 @@ struct MeetingsSidePanel: View {
             revision += 1
             window.windowSettingsChanged()
         case .engine(let path):
-            window.setConfig(SidePanelCatalog.segments(path), SidePanelCatalog.configValue(value, for: row))
+            SidePanelCatalog.applyEngine(value, for: row) { window.setConfig(SidePanelCatalog.segments(path), $0) }
         }
     }
 
