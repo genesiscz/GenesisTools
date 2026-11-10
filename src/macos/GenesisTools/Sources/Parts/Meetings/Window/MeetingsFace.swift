@@ -10,6 +10,8 @@ import SwiftUI
 //   Draws the window off screen into a PNG once its data has loaded, then exits (verification without a screen).
 //   `--select` selects a review row of the Items tab (its number keys show) and `--edit` opens its editor, so a
 //   picture can show the states that a click or a key makes.
+//   `--card <row id>` draws that row's pin card alone, and `--sheet history` (or `history:<row id>`) the history
+//   sheet alone: a popover and a sheet are windows of their own, which the window's picture does not hold.
 //   `--play '{"kind":"item","id":"i2"}'` (a Moment target as the engine writes it) starts that Moment of the meeting
 //   without sound first, so the picture shows the dock, the timeline and the playing row.
 
@@ -43,6 +45,9 @@ struct MeetingsRequest {
     /// `--select <row id>` and `--edit <row id>`: a snapshot's selected review row, and the row whose editor is open.
     var select: String?
     var edit: String?
+    /// `--card <row id>` and `--sheet history[:<row id>]`: a snapshot of that part alone.
+    var card: String?
+    var sheet: String?
     var width: CGFloat = 1280
     var height: CGFloat = 820
 
@@ -70,6 +75,8 @@ struct MeetingsRequest {
             case "--side-panel": request.sidePanel = true
             case "--select": request.select = value()
             case "--edit": request.edit = value()
+            case "--card": request.card = value()
+            case "--sheet": request.sheet = value()
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
             case "--play": request.play = value().flatMap { try? JSONDecoder().decode(MomentTarget.self, from: Data($0.utf8)) }
             case "--width": request.width = value().flatMap(Double.init).map { CGFloat($0) } ?? request.width
@@ -150,6 +157,17 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize { Self.floored(frameSize) }
 
+    /// A window that holds one part at its own size, for a snapshot of a popover or a sheet.
+    static func partWindow(_ part: AnyView) -> NSWindow {
+        let hosting = NSHostingView(rootView: part.background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: hosting.fittingSize), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        return window
+    }
+
     static func makeWindow(model: MeetingsWindowModel, size: NSSize) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -189,6 +207,28 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         NSApp.terminate(nil)
     }
+}
+
+/// A part of the window drawn alone for a snapshot (`--card`, `--sheet`), with its data read first.
+@MainActor
+private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWindowModel) async -> AnyView? {
+    guard let detail = model.detail else { return nil }
+    if let id = request.card {
+        if case .idle = detail.rows { detail.loadRows() }
+        _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
+        let rows = detail.rows.value?.rows ?? []
+        return rows.first { $0.id == id }.map { row in
+            AnyView(PinCard(row: row, reference: { id in rows.first { $0.id == id }.map(ReviewRowView.reference) }))
+        }
+    }
+    if let sheet = request.sheet, sheet == "history" || sheet.hasPrefix("history:") {
+        if case .idle = detail.rows { detail.loadRows() }
+        _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
+        detail.openHistory(item: sheet.hasPrefix("history:") ? String(sheet.dropFirst(8)) : nil)
+        _ = await waitUntil(30) { detail.history?.entries.value != nil || detail.history?.entries.failure != nil }
+        return detail.history.map { AnyView(HistorySheetView(detail: detail, history: $0)) }
+    }
+    return nil
 }
 
 /// Waits (up to `seconds`) until `ready` holds, checking every 100 ms; a snapshot needs the data on screen.
@@ -269,7 +309,16 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             if model.sidePanelOpen {
                 _ = await waitUntil(30) { model.settingsRaw != nil || model.settings.failure != nil }
             }
-            let window = MeetingsWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
+            let window: NSWindow
+            if request.card != nil || request.sheet != nil {
+                guard let part = await meetingsSnapshotPart(request, model: model) else {
+                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history or history:<row id>)\n".utf8))
+                    exit(1)
+                }
+                window = MeetingsWindow.partWindow(part)
+            } else {
+                window = MeetingsWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
+            }
             window.orderInForSnapshot()
             try? await Task.sleep(for: .milliseconds(900))
             guard let capture = await WindowSnapshot.capture(window),
