@@ -113,6 +113,17 @@ struct MeetingsRootView: View {
     }
 }
 
+/// Takes the window's title out of the toolbar (macOS 15 and later); the window keeps it.
+private struct NoToolbarTitle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content
+        }
+    }
+}
+
 /// The settings panel's switch at the toolbar's trailing end, above the panel it opens. Without the flexible space
 /// the toolbar put it at the leading edge of the detail column, between the list and the meeting.
 private struct SidePanelToolbar: ToolbarContent {
@@ -280,9 +291,10 @@ private struct MeetingsListPane: View {
             }
             content
         }
-        // The window's title is the open meeting, so the title bar, Mission Control and the Window menu name it.
+        // The window's title is the open meeting, so Mission Control and the Window menu name it. The toolbar does
+        // not draw it: it stood over the sidebar, cut to about 20 characters, above a header that says it in full.
         .navigationTitle(openTitle ?? title)
-        .navigationSubtitle(openTitle == nil ? "" : title)
+        .modifier(NoToolbarTitle())
         .toolbar {
             ToolbarItem {
                 MenuButton(items: {
