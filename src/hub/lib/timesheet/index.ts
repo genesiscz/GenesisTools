@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { FillResult, MonthFillInput, MonthFillPreview, ShownFillWeek } from "@app/clarity/lib/month-fill";
 import type {
     TimesheetFillInput,
     TimesheetFillReceiptDto,
@@ -9,29 +10,34 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
- * The Friday timesheet swipe (F27): the week of a date as the Clarity dashboard previews it, and its fill. Both go
- * through the dashboard's own server functions (`src/clarity/ui/src/server/fill.ts`), so the phone, the dashboard
- * and `tools clarity fill` plan the same rows. The fill names the revision the phone showed and is refused when the
+ * The Friday timesheet swipe (F27): the week of a date as the Clarity month fill plans it, and its fill. The phone,
+ * the dashboard and `tools clarity fill` all render the one plan of `src/clarity/lib/month-fill.ts`, so the rows the
+ * phone shows are the rows the fill writes. The fill names the revision the phone showed and is refused when the
  * week read again no longer matches it.
  */
 
-type FillPreview = Awaited<ReturnType<typeof import("@app/clarity/ui/src/server/fill").getFillPreview>>;
-type PreviewWeek = FillPreview["weeks"][number];
-type FillResult = Awaited<ReturnType<typeof import("@app/clarity/ui/src/server/fill").executeFill>>;
-
 export interface TimesheetDeps {
-    preview?: (month: number, year: number) => Promise<FillPreview>;
-    execute?: (month: number, year: number, weekIds: number[]) => Promise<FillResult>;
+    preview?: (input: MonthFillInput) => Promise<MonthFillPreview>;
+    execute?: (input: MonthFillInput) => Promise<FillResult>;
 }
 
-async function livePreview(month: number, year: number): Promise<FillPreview> {
-    const { getFillPreview } = await import("@app/clarity/ui/src/server/fill");
-    return getFillPreview(month, year);
+async function liveDeps() {
+    const [monthFill, { dashboardFillDeps }] = await Promise.all([
+        import("@app/clarity/lib/month-fill"),
+        import("@app/clarity/ui/src/server/fill"),
+    ]);
+
+    return { monthFill, dashboardFillDeps };
 }
 
-async function liveExecute(month: number, year: number, weekIds: number[]): Promise<FillResult> {
-    const { executeFill } = await import("@app/clarity/ui/src/server/fill");
-    return executeFill(month, year, weekIds);
+async function livePreview(input: MonthFillInput): Promise<MonthFillPreview> {
+    const { monthFill, dashboardFillDeps } = await liveDeps();
+    return monthFill.previewMonthFill(input, dashboardFillDeps({ titles: true }).deps);
+}
+
+async function liveExecute(input: MonthFillInput): Promise<FillResult> {
+    const { monthFill, dashboardFillDeps } = await liveDeps();
+    return monthFill.executeMonthFill(input, dashboardFillDeps().deps);
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -43,14 +49,16 @@ function monthsToRead(date: string): Array<{ month: number; year: number }> {
     return [{ month, year }, previous];
 }
 
-function rowsOf(week: PreviewWeek): TimesheetRowDto[] {
-    return week.entries.map((entry) => ({
-        task: entry.clarityTaskName,
-        code: entry.clarityTaskCode,
-        minutesByDay: entry.dayValues,
-        totalMinutes: entry.totalMinutes,
-        clarityMinutes: entry.clarityCurrentMinutes ?? null,
-        items: entry.timelogEntries.map((item) => ({
+async function rowsOf(week: ShownFillWeek): Promise<TimesheetRowDto[]> {
+    const { weekRows } = await import("@app/clarity/lib/month-fill");
+
+    return weekRows(week).map((row) => ({
+        task: row.taskName,
+        code: row.taskCode,
+        minutesByDay: row.minutesByDay,
+        totalMinutes: row.totalMinutes,
+        clarityMinutes: row.clarityMinutes,
+        items: row.timelogEntries.map((item) => ({
             workItemId: item.workItemId,
             title: item.workItemTitle,
             minutes: item.minutes,
@@ -71,19 +79,25 @@ async function findWeek(
         throw new Error("date: YYYY-MM-DD");
     }
 
+    const { shownWeeks, weekRange } = await import("@app/clarity/lib/month-fill");
+
     for (const { month, year } of monthsToRead(date)) {
-        const preview = await (deps.preview ?? livePreview)(month, year);
-        const found = preview.weeks.find((week) => week.periodStart <= date && date < week.periodFinish);
+        const { plan } = await (deps.preview ?? livePreview)({ month, year });
+        const found = shownWeeks(plan).find((week) => {
+            const { start, finishExclusive } = weekRange(week);
+            return start <= date && date < finishExclusive;
+        });
 
         if (found) {
-            const rows = rowsOf(found);
+            const rows = await rowsOf(found);
+            const { start, finishExclusive } = weekRange(found);
             return {
                 month,
                 year,
                 week: {
                     timesheetId: found.timesheetId,
-                    periodStart: found.periodStart,
-                    periodFinish: found.periodFinish,
+                    periodStart: start,
+                    periodFinish: finishExclusive,
                     rows,
                     unmapped: found.unmappedWorkItems,
                     totalMinutes: rows.reduce((sum, row) => sum + row.totalMinutes, 0),
@@ -122,13 +136,24 @@ export async function fillTimesheetWeek(
         return refused("The week changed since the phone showed it; read it again.");
     }
 
-    const result = await (deps.execute ?? liveExecute)(found.month, found.year, [input.timesheetId]);
-    logger.info({ timesheetId: input.timesheetId, ...result, entries: undefined }, "timesheet: filled a week");
+    const { describeRefusal, fillTally } = await import("@app/clarity/lib/month-fill");
+    const result = await (deps.execute ?? liveExecute)({
+        month: found.month,
+        year: found.year,
+        weekIds: [input.timesheetId],
+    });
+
+    if (result.refusal) {
+        return refused(describeRefusal(result.refusal, found));
+    }
+
+    const tally = fillTally(result);
+    logger.info({ timesheetId: input.timesheetId, ...tally }, "timesheet: filled a week");
     return {
-        filled: result.failed === 0,
-        written: result.success,
-        failed: result.failed,
-        skipped: result.skipped,
+        filled: tally.failed === 0,
+        written: tally.written,
+        failed: tally.failed,
+        skipped: tally.skipped,
         error: null,
     };
 }
