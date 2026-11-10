@@ -353,6 +353,9 @@ final class MeetingsUXTests: XCTestCase {
         """.utf8))
         XCTAssertEqual(MeetingsWords.speakerSpan(stats.speakers[0]), "00:12 to 25:40", "MU8")
         XCTAssertNil(MeetingsWords.speakerSpan(stats.speakers[1]))
+        let line = MeetingsWords.factsLine(["1 h 02 min spoken", "00:03 to 2:25:58"])
+        XCTAssertEqual(line.components(separatedBy: " "), ["1\u{00A0}h\u{00A0}02\u{00A0}min\u{00A0}spoken", "·", "00:03\u{00A0}to\u{00A0}2:25:58"],
+                       "the line may break only around the dot between two facts")
         XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 2"),
                        ["May hold several people (weak evidence)", "Silent while in the call, so the voice is under other labels"])
         XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 1"), [])

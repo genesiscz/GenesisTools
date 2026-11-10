@@ -49,9 +49,9 @@ struct SpeakerRow<Chips: View>: View {
     private func labels(fieldUnderNumbers: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(verbatim: speaker.label).font(.system(size: 13, weight: .medium))
-            Text(verbatim: [Plural.count(speaker.turns, "turn"), MeetingsFormat.length(speaker.spokenSec).map { "\($0) spoken" },
-                            speaker.words.map { Plural.count($0, "word") }, MeetingsWords.speakerSpan(speaker),
-                            MeetingsWords.origin(speaker.origin)].compactMap { $0 }.joined(separator: " · "))
+            Text(verbatim: MeetingsWords.factsLine([Plural.count(speaker.turns, "turn"), MeetingsFormat.length(speaker.spokenSec).map { "\($0) spoken" },
+                                                    speaker.words.map { Plural.count($0, "word") }, MeetingsWords.speakerSpan(speaker),
+                                                    MeetingsWords.origin(speaker.origin)].compactMap { $0 }))
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
             if fieldUnderNumbers { field.frame(maxWidth: 260).padding(.vertical, 4) }
             SpeakerHints(hints: hints, chips: chips)

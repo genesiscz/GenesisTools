@@ -965,6 +965,12 @@ extension MeetingsWords {
     }
 
     /// "0:12 to 25:40": where a label speaks first and last.
+    /// Facts joined by " · " that wrap only between facts. A narrow column broke "00:03 to 2:25:58" after its first time
+    /// and "1 h 02 min" after "1 h", so one fact read as two.
+    static func factsLine(_ facts: [String]) -> String {
+        facts.map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: " · ")
+    }
+
     static func speakerSpan(_ speaker: SpeakerStat) -> String? {
         guard let first = speaker.firstSec, let last = speaker.lastSec else { return nil }
         return "\(MeetingsFormat.clock(first)) to \(MeetingsFormat.clock(last))"
