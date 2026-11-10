@@ -275,6 +275,7 @@ struct PinMark: View {
         .onChange(of: focused) { _, now in
             if now, cluster.isSingle, let pin = cluster.pins.first { actions.hover(pin.id) } else if !now { actions.hover(nil) }
         }
+        // lint-rules-ignore: short list (the marks of the button below: a lane holds at most its width / 20 of them, and each keeps its tooltip, because a merged mark says in it what a click does)
         .instantTooltip(tooltip)
         .accessibilityLabel(accessibility)
         .accessibilityAddTraits(.isButton)
