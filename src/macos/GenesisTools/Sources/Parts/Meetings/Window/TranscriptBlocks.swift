@@ -205,6 +205,9 @@ struct TranscriptBlockView: View, Equatable {
     private var isHeard: Bool { heardLineID != nil }
     private var isSelected: Bool { !selected.isEmpty }
 
+    /// The widest a block's lines run: about 100 characters of the 13 pt text.
+    static let measure: CGFloat = 680
+
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             if showsAvatar {
@@ -219,6 +222,8 @@ struct TranscriptBlockView: View, Equatable {
                     )
                 }
             }
+            // A reader loses the way back to the start of a line of 180 characters, which a wide window drew.
+            .frame(maxWidth: Self.measure, alignment: .leading)
             Spacer(minLength: 0)
         }
         .padding(.vertical, 7)
