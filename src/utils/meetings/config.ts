@@ -175,10 +175,19 @@ export const TONE_MAX_SEC = 2;
 /** Where a named tone's sound comes from: a sine of `hz` for `sec`, or a sound file. */
 export type TonePresetSound = { kind: "sine"; hz: number; sec: number } | { kind: "file"; path: string };
 
+/** A preset of one of the alert sounds every Mac keeps in /System/Library/Sounds, at the default volume. */
+function macAlertSound(name: string): { label: string; volume: number; sound: TonePresetSound } {
+    return {
+        label: name,
+        volume: DEFAULT_TONE_SOUND.volume,
+        sound: { kind: "file", path: `/System/Library/Sounds/${name}.aiff` },
+    };
+}
+
 /**
- * The named tones a sound picker offers (decision 8): three sines, and the alert sounds every Mac keeps in
- * /System/Library/Sounds. `beep` is the default sine. A preset plays at its own `volume` unless the setting names one;
- * the sines are the Meetings window's presets (Beep, Soft, Click).
+ * The named tones a sound picker offers (decision 8): three sines, and the Mac's alert sounds. `beep` is the default
+ * sine. A preset plays at its own `volume` unless the setting names one; the sines are the Meetings window's presets
+ * (Beep, Soft, Click).
  */
 export const TONE_PRESETS = {
     beep: {
@@ -188,76 +197,20 @@ export const TONE_PRESETS = {
     },
     soft: { label: "Soft", volume: 0.35, sound: { kind: "sine", hz: 523, sec: 0.3 } },
     click: { label: "Click", volume: 0.7, sound: { kind: "sine", hz: 2000, sec: 0.03 } },
-    tink: {
-        label: "Tink",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Tink.aiff" },
-    },
-    pop: {
-        label: "Pop",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Pop.aiff" },
-    },
-    ping: {
-        label: "Ping",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Ping.aiff" },
-    },
-    glass: {
-        label: "Glass",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Glass.aiff" },
-    },
-    purr: {
-        label: "Purr",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Purr.aiff" },
-    },
-    bottle: {
-        label: "Bottle",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Bottle.aiff" },
-    },
-    morse: {
-        label: "Morse",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Morse.aiff" },
-    },
-    frog: {
-        label: "Frog",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Frog.aiff" },
-    },
-    funk: {
-        label: "Funk",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Funk.aiff" },
-    },
-    hero: {
-        label: "Hero",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Hero.aiff" },
-    },
-    blow: {
-        label: "Blow",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Blow.aiff" },
-    },
-    basso: {
-        label: "Basso",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Basso.aiff" },
-    },
-    submarine: {
-        label: "Submarine",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Submarine.aiff" },
-    },
-    sosumi: {
-        label: "Sosumi",
-        volume: DEFAULT_TONE_SOUND.volume,
-        sound: { kind: "file", path: "/System/Library/Sounds/Sosumi.aiff" },
-    },
+    tink: macAlertSound("Tink"),
+    pop: macAlertSound("Pop"),
+    ping: macAlertSound("Ping"),
+    glass: macAlertSound("Glass"),
+    purr: macAlertSound("Purr"),
+    bottle: macAlertSound("Bottle"),
+    morse: macAlertSound("Morse"),
+    frog: macAlertSound("Frog"),
+    funk: macAlertSound("Funk"),
+    hero: macAlertSound("Hero"),
+    blow: macAlertSound("Blow"),
+    basso: macAlertSound("Basso"),
+    submarine: macAlertSound("Submarine"),
+    sosumi: macAlertSound("Sosumi"),
 } as const satisfies Record<string, { label: string; volume: number; sound: TonePresetSound }>;
 export type TonePresetName = keyof typeof TONE_PRESETS;
 export const TONE_PRESET_NAMES = Object.keys(TONE_PRESETS) as [TonePresetName, ...TonePresetName[]];
@@ -269,28 +222,50 @@ const toneVolume = z.number().min(0).max(1).default(DEFAULT_TONE_SOUND.volume);
  * `volume` (else the preset's own), or a sine of `hz`, `sec` long, at `volume` (1 is the speech's level). The sine is
  * version 4's shape, so a version 4 file reads as it is.
  */
-export const toneSoundSettingSchema = z.union([
-    z
-        .object({
-            /** An absolute path to a sound ffmpeg reads (wav, aiff, mp3, m4a); cut to `TONE_MAX_SEC`. */
-            file: z
-                .string()
-                .trim()
-                .refine((path) => path.startsWith("/"), "the tone's sound file needs an absolute path"),
-            volume: toneVolume,
-        })
-        .strict(),
-    // A preset without a volume plays at the preset's own (`TONE_PRESETS[name].volume`).
-    z.object({ preset: z.enum(TONE_PRESET_NAMES), volume: z.number().min(0).max(1).optional() }).strict(),
-    // Strict, as the other two: a misspelt preset or a sine key beside a preset is refused, never read as the beep.
-    z
-        .object({
-            hz: z.number().min(50).max(8000).default(DEFAULT_TONE_SOUND.hz),
-            sec: z.number().min(0.02).max(TONE_MAX_SEC).default(DEFAULT_TONE_SOUND.sec),
-            volume: toneVolume,
-        })
-        .strict(),
-]);
+export const toneSoundSettingSchema = z
+    .union(
+        [
+            z
+                .object({
+                    /** An absolute path to a sound ffmpeg reads (wav, aiff, mp3, m4a); cut to `TONE_MAX_SEC`. */
+                    file: z.string().trim().min(1),
+                    volume: toneVolume,
+                })
+                .strict(),
+            // A preset without a volume plays at the preset's own (`TONE_PRESETS[name].volume`). The name is a soft
+            // check first, so a misspelt one reads as the union's sentence with the names, not as an unknown key.
+            z
+                .object({
+                    preset: z
+                        .string()
+                        .refine((name) => Object.hasOwn(TONE_PRESETS, name))
+                        .pipe(z.enum(TONE_PRESET_NAMES)),
+                    volume: z.number().min(0).max(1).optional(),
+                })
+                .strict(),
+            // Strict, as the other two: a misspelt preset or a sine key beside a preset is refused, never read as the beep.
+            z
+                .object({
+                    hz: z.number().min(50).max(8000).default(DEFAULT_TONE_SOUND.hz),
+                    sec: z.number().min(0.02).max(TONE_MAX_SEC).default(DEFAULT_TONE_SOUND.sec),
+                    volume: toneVolume,
+                })
+                .strict(),
+        ],
+        {
+            error: `a tone's sound is { hz, sec, volume }, { preset, volume } with a preset of ${TONE_PRESET_NAMES.join(", ")}, or { file, volume } with an absolute path`,
+        }
+    )
+    // Checked after the union, so a relative path reads as its own sentence instead of the union's "Invalid input".
+    .superRefine((setting, context) => {
+        if ("file" in setting && !setting.file.startsWith("/")) {
+            context.addIssue({
+                code: "custom",
+                path: ["file"],
+                message: `the tone's sound file needs an absolute path, not ${setting.file}`,
+            });
+        }
+    });
 export type ToneSoundSetting = z.output<typeof toneSoundSettingSchema>;
 
 /**
