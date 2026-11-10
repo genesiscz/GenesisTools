@@ -18,8 +18,8 @@ struct HubWorktree: Identifiable, Hashable, Codable {
 
     var name: String { (path as NSString).lastPathComponent }
 
-    /// The folder name without the repository's name in front: in the `col-fe` group, `col-fe-pr-7237-b1` reads
-    /// `pr-7237-b1`. The group header already names the repository, and sibling folders differ only after it.
+    /// The folder name without the repository's name in front: in the `web-app` group, `web-app-pr-123-b1` reads
+    /// `pr-123-b1`. The group header already names the repository, and sibling folders differ only after it.
     var shortName: String {
         guard !isMain, name.count > repo.count + 1, name.lowercased().hasPrefix(repo.lowercased()) else { return name }
         let rest = name.dropFirst(repo.count)
