@@ -182,14 +182,36 @@ public final class JSONRPCSocketClient: @unchecked Sendable {
         if descriptor >= 0 { source?.cancel() }
     }
 
+    /// The path `connect` hands to the kernel. A Unix socket address holds `limit` bytes with its ending zero (104 on
+    /// macOS), and a service that listens through Bun is not held to it: a home deep in a temporary folder (a test
+    /// sandbox) gave a 127-byte socket path that every CLI call reached and no window could, so the window fell back
+    /// to commands and started the service again every minute. A longer path connects through a short symbolic link
+    /// in `linkFolder`, which the kernel follows. Nil when even the link's path is too long.
+    static func connectablePath(_ path: String, limit: Int,
+                                linkFolder: URL = FileManager.default.temporaryDirectory) -> String? {
+        guard path.utf8.count >= limit else { return path }
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in path.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3 }
+        let link = linkFolder.appendingPathComponent("gt-sock-" + String(hash, radix: 16)).path
+        guard link.utf8.count < limit else { return nil }
+        let files = FileManager.default
+        if (try? files.destinationOfSymbolicLink(atPath: link)) != path {
+            try? files.removeItem(atPath: link)
+            guard (try? files.createSymbolicLink(atPath: link, withDestinationPath: path)) != nil else { return nil }
+        }
+        return link
+    }
+
     /// Synchronous: a Unix socket connects or refuses at once.
     public func connect() throws {
         try queue.sync {
             guard descriptor < 0 else { return }
             var address = sockaddr_un()
             address.sun_family = sa_family_t(AF_UNIX)
-            let bytes = Array(path.utf8)
-            guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { throw Failure.pathTooLong }
+            guard let reachable = Self.connectablePath(path, limit: MemoryLayout.size(ofValue: address.sun_path)) else {
+                throw Failure.pathTooLong
+            }
+            let bytes = Array(reachable.utf8)
             withUnsafeMutableBytes(of: &address.sun_path) { raw in
                 raw.copyBytes(from: bytes)
                 raw[bytes.count] = 0
