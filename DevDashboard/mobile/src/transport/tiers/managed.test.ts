@@ -39,21 +39,16 @@ const { SafeJSON } = await import("@genesiscz/utils/json");
 describe("managed tier idempotency (real Agent rpc, real bound route)", () => {
     it("a retried keyed write over the relay returns its first answer and runs once", async () => {
         const { Router } = await import("@app/dev-dashboard/server/router");
-        const { ReceiptCache, withTableIdempotency } = await import("@app/dev-dashboard/server/bind");
+        const { ReceiptCache, bindHandler } = await import("@app/dev-dashboard/server/bind");
         const { handleE2eRpc } = await import("@app/dev-dashboard/server/transport/e2e-rpc");
         const { ENDPOINTS } = await import("@dd/contract");
         const agent = naclBoxCipher.keyPair();
         const device = naclBoxCipher.keyPair();
         let runs = 0;
         // A keyed-write row of the table, keyed by the same receipt cache the Mac's routes use.
-        const [dismiss] = withTableIdempotency(
-            [
-                {
-                    method: "POST",
-                    pattern: ENDPOINTS.qaDecisionsDismiss.path,
-                    handler: async () => ({ kind: "json", status: 200, body: { run: ++runs } }),
-                },
-            ],
+        const dismiss = bindHandler(
+            ENDPOINTS.qaDecisionsDismiss,
+            async () => ({ kind: "json", status: 200, body: { run: ++runs } }),
             new ReceiptCache()
         );
         const router = new Router().add(dismiss);
