@@ -1,12 +1,11 @@
 import { getConfig } from "@app/dev-dashboard/config";
-import { createHandoffStream } from "@app/dev-dashboard/lib/handoff-sse";
+import type { LiveHub } from "@app/dev-dashboard/lib/live/hub";
 import { PENDING_SNAPSHOT_LIMIT } from "@app/dev-dashboard/lib/live/producers";
+import type { LiveFrame } from "@app/dev-dashboard/lib/live/types";
 import { saveToObsidianUnique } from "@app/dev-dashboard/lib/obsidian-save";
 import { clipQaEntry } from "@app/dev-dashboard/lib/qa-clip";
 import { formatQaAsMarkdown } from "@app/dev-dashboard/lib/qa-clipboard";
-import { createPendingStream } from "@app/dev-dashboard/lib/qa-pending-sse";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
-import { createQaStream } from "@app/dev-dashboard/lib/qa-sse";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import { defaultDbPath } from "@app/question/commands/log";
@@ -67,7 +66,27 @@ async function readJsonObject<T extends object>(ctx: RouteContext): Promise<{ bo
     return { body: raw as T };
 }
 
-export function qaRoutes(): RouteDef[] {
+/**
+ * One live frame in the flat `{ type, ... }` shape `/api/qa/stream` sent before the live channels existed. A pending
+ * snapshot becomes one `created` frame per form, as the old route sent on connect.
+ */
+const OLD_QA_STREAM_TYPES: Partial<Record<LiveFrame["channel"], string>> = {
+    qa: "qa",
+    pending: "pending",
+    handoffs: "handoff",
+};
+
+function oldQaStreamFrames(frame: LiveFrame): object[] {
+    if (frame.channel === "pending" && frame.type === "snapshot") {
+        return frame.payload.forms.map((form) => ({ type: "pending", ev: "created", id: form.id, form }));
+    }
+
+    const type = OLD_QA_STREAM_TYPES[frame.channel];
+
+    return type && frame.channel !== "system" ? [{ type, ...frame.payload }] : [];
+}
+
+export function qaRoutes(hub: LiveHub): RouteDef[] {
     return [
         {
             method: "GET",
@@ -198,55 +217,30 @@ export function qaRoutes(): RouteDef[] {
             method: "GET",
             pattern: "/api/qa/stream",
             longLived: true,
+            // An adapter over the live channels for phone builds that still read this route. Remove it when the
+            // installed phone build is newer than this commit (Phase 10, fix F7).
             handler: () => ({
                 kind: "sse",
                 start: (emit) => {
-                    emit.comment(" qa+handoff+pending multiplexed stream open");
-
-                    // The tailer attaches BEFORE the snapshot is read. `FileTailer` starts at
-                    // the current file size and never replays, so an event written between a
-                    // snapshot-first read and the attach would be missing from BOTH sources: a
-                    // form could stay hidden, or stay visible after it was answered, until the
-                    // next reload. This order duplicates a frame instead, and the client folds
-                    // by id, so a duplicate costs nothing.
-                    const pendingStream = createPendingStream((event) =>
-                        emit.data(
-                            SafeJSON.stringify(
-                                { type: "pending", ev: event.ev, id: event.id, ts: event.ts, form: event.form },
-                                { strict: true }
-                            )
-                        )
-                    );
-
-                    // A client that connects while forms are already waiting must see them
-                    // without a reload, exactly like the Genesis stream.
-                    for (const form of listPendingForms(undefined, PENDING_SNAPSHOT_LIMIT)) {
-                        emit.data(
-                            SafeJSON.stringify({ type: "pending", ev: "created", id: form.id, form }, { strict: true })
-                        );
-                    }
-
-                    const qaStream = createQaStream((entry) =>
-                        emit.data(
-                            SafeJSON.stringify({ type: "qa", ...enrichQaEntry(clipQaEntry(entry)) }, { strict: true })
-                        )
-                    );
-                    const handoffStream = createHandoffStream((event) =>
-                        emit.data(
-                            SafeJSON.stringify(
-                                { type: "handoff", id: event.id, ev: event.ev, ts: event.ts },
-                                { strict: true }
-                            )
-                        )
+                    const conn = hub.open(
+                        {
+                            comment: emit.comment,
+                            data: (line) => {
+                                for (const old of oldQaStreamFrames(
+                                    SafeJSON.parse(line, { strict: true }) as LiveFrame
+                                )) {
+                                    emit.data(SafeJSON.stringify(old, { strict: true }));
+                                }
+                            },
+                        },
+                        ["qa", "pending", "handoffs"]
                     );
                     const keepAlive = setInterval(() => emit.comment(" ping"), 12_000);
 
                     return {
                         close: () => {
                             clearInterval(keepAlive);
-                            qaStream.close();
-                            handoffStream.close();
-                            pendingStream.close();
+                            conn.close();
                         },
                     };
                 },
