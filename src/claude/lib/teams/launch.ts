@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
@@ -17,7 +17,7 @@ export type LaunchMode = "focus" | "attach" | "split";
 export interface LaunchTeammateOptions {
     team: TeamView;
     teammate: TeamMemberView;
-    /** AIConfig account name for OAuth (tools cc run). */
+    /** AI config account name for OAuth (tools cc run). */
     account: string;
     mode: LaunchMode;
     /**
@@ -108,8 +108,10 @@ async function resolveAccount(preferred?: string): Promise<string> {
         return preferred;
     }
 
-    const ai = await AIConfig.load();
-    const withToken = ai.getAccountsByProvider("anthropic-sub").filter((a) => Boolean(a.tokens.longLivedToken));
+    const store = await AiConfigStore.load();
+    const withToken = store
+        .accounts({ provider: "anthropic-sub" })
+        .filter((a) => Boolean(a.credentials.longLivedToken));
     if (withToken.length === 0) {
         throw new Error(`No accounts with a long-lived token. Run: ${toolCommand("claude login-long")}`);
     }
