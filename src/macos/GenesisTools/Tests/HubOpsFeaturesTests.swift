@@ -166,10 +166,10 @@ final class HubOpsFeaturesTests: XCTestCase {
     }
 
     /// The PR description opens on its first paragraph; the reader's choice is kept per PR, newest last.
-    func testThePRDescriptionLeadIsItsFirstParagraphAndTheChoiceIsKeptPerPR() {
-        let body = "## About\n\nThe unified branch: every session commits here first.\nIt is never merged.\n\n## Waves so far\n- #497 (merged)"
-        XCTAssertEqual(PRDescriptionView.lead(of: body), "The unified branch: every session commits here first.\nIt is never merged.")
-        XCTAssertNil(PRDescriptionView.lead(of: "One short paragraph."), "nothing more to show: no button")
+    func testThePRDescriptionFoldsAt60PercentOfTheColumnAndTheChoiceIsKeptPerPR() {
+        XCTAssertEqual(PRDescriptionView.foldHeight(column: 1180), 708, "60% of the visible column")
+        XCTAssertEqual(PRDescriptionView.foldHeight(column: 0), PRDescriptionView.minimumFold, "before the column has a height")
+        XCTAssertEqual(PRDescriptionView.foldHeight(column: 200), PRDescriptionView.minimumFold, "a very short window")
         var stored = PRDescriptionChoices.set("", pr: "https://example.org/pr/1", whole: true)
         stored = PRDescriptionChoices.set(stored, pr: "https://example.org/pr/2", whole: false)
         XCTAssertEqual(PRDescriptionChoices.whole(stored, pr: "https://example.org/pr/1"), true)

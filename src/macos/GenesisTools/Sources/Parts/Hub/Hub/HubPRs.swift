@@ -2635,6 +2635,8 @@ struct PRDetailView: View {
     @State private var launching = false
     @State private var reviewing = false
     @State private var width: CGFloat = 0
+    /// The overview column's visible height: the description may take 60% of it before it folds.
+    @State private var overviewHeight: CGFloat = 0
     @State private var find = PanelFindModel(scope: "pr.overview", title: "this PR")
 
     /// The first message of a review session. Only the PR's URL comes from outside, and it came from
@@ -2929,7 +2931,8 @@ struct PRDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if let body = detail?.body?.trimmed, !body.isEmpty {
                     PRSection(title: "Description", folded: $foldDescription) {
-                        PRDescriptionView(markdown: linkedDescription(body), whole: descriptionShownWhole) { whole in
+                        PRDescriptionView(markdown: linkedDescription(body), whole: descriptionShownWhole,
+                                          foldHeight: PRDescriptionView.foldHeight(column: overviewHeight)) { whole in
                             descriptionChoices = PRDescriptionChoices.set(descriptionChoices, pr: pr.id, whole: whole)
                         }
                         .environment(\.openURL, OpenURLAction { url in
@@ -2978,6 +2981,7 @@ struct PRDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .genScrollBars()
         }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { overviewHeight = $0 }
         .modifier(PRCommitScrollTarget(prs: prs, prID: pr.id))
     }
 
@@ -3055,59 +3059,47 @@ enum PRDescriptionChoices {
     }
 }
 
-/// A PR's description: its first paragraph, cut at about three lines with a fade, and Show description; or the whole
-/// body and Show less. The old waves and the notes under them no longer push the commits and checks out of the
-/// column (hub UX council, 2026-11-09). A body that is one short paragraph shows no button.
+/// A PR's description, shown whole while it fits in 60% of the overview column's visible height; a longer one is cut
+/// there with a fade and Show description, and open it shows the whole body and Show less. Cut at three lines, the
+/// most important part of a PR read as a teaser (Martin, 2026-11-10: "let it use at least 60% of the height").
 struct PRDescriptionView: View {
     let markdown: String
     let whole: Bool
+    /// Where a long description folds: `foldHeight(column:)` of the overview's visible height.
+    let foldHeight: CGFloat
     let choose: (Bool) -> Void
-    /// About three lines of the hub's 13 pt markdown.
-    static let leadHeight: CGFloat = 62
-    @State private var leadOverflows = false
+    @State private var overflows = false
     @GenReduceMotion private var reduceMotion
 
-    /// The first paragraph after any heading that opens the body; nil when there is nothing more after it.
-    static func lead(of markdown: String) -> String? {
-        let lines = markdown.components(separatedBy: "\n")
-        var lead: [String] = []
-        var index = 0
-        while index < lines.count, lines[index].trimmingCharacters(in: .whitespaces).isEmpty || (lead.isEmpty && lines[index].hasPrefix("#")) {
-            index += 1
-        }
-        while index < lines.count {
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
-            if line.isEmpty || line.hasPrefix("#") { break }
-            lead.append(lines[index])
-            index += 1
-        }
-        let rest = lines[index...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return lead.isEmpty || rest.isEmpty ? nil : lead.joined(separator: "\n")
+    /// The share of the column's visible height a description shows before it folds.
+    static let columnShare: CGFloat = 0.6
+    /// The fold before the column has a height, and its floor in a very short window.
+    static let minimumFold: CGFloat = 180
+
+    static func foldHeight(column: CGFloat) -> CGFloat {
+        max(minimumFold, (column * columnShare).rounded())
     }
 
     var body: some View {
-        let lead = Self.lead(of: markdown)
-        let shownWhole = whole || (lead == nil && !leadOverflows)
-        let faded = !shownWhole && leadOverflows
+        let shownWhole = whole || !overflows
+        let fold = foldHeight
         VStack(alignment: .leading, spacing: 6) {
-            MarkdownContentView(markdown: shownWhole ? markdown : (lead ?? markdown), style: .hub)
+            MarkdownContentView(markdown: markdown, style: .hub)
                 .findField("desc")
                 .findRow(PRDetailView.descriptionRowID)
                 .tint(Color(red: 0.62, green: 0.78, blue: 1))
                 .fixedSize(horizontal: false, vertical: true)
-                .onGeometryChange(for: Bool.self, of: { $0.size.height > Self.leadHeight + 1 }) { tall in
-                    if !whole { leadOverflows = tall }
-                }
-                .frame(maxHeight: shownWhole ? nil : Self.leadHeight, alignment: .top)
+                .onGeometryChange(for: Bool.self, of: { $0.size.height > fold + 1 }) { overflows = $0 }
+                .frame(maxHeight: shownWhole ? nil : fold, alignment: .top)
                 .clipped()
                 .mask {
                     VStack(spacing: 0) {
                         Rectangle()
                         LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                            .frame(height: faded ? 24 : 0)
+                            .frame(height: shownWhole ? 0 : 32)
                     }
                 }
-            if lead != nil || leadOverflows || whole {
+            if overflows {
                 Button {
                     GenMotion.perform(expanding: !shownWhole, reduceMotion: reduceMotion) { choose(!shownWhole) }
                 } label: {
@@ -3117,8 +3109,8 @@ struct PRDescriptionView: View {
                 }
                 .buttonStyle(.genHoverPlain())
                 .instantTooltip(shownWhole
-                    ? "Back to the first paragraph. The hub remembers it for this PR."
-                    : "The whole description: every wave and note. The hub remembers it for this PR.")
+                    ? "Fold it back to 60% of the column's height. The hub remembers it for this PR."
+                    : "The whole description. The hub remembers it for this PR.")
                 .accessibilityValue(Text(shownWhole ? "Expanded" : "Collapsed"))
             }
         }

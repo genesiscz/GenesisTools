@@ -136,7 +136,7 @@ private struct HubPaneSettings: View {
             NativeSettingsCard("PR overview") {
                 NativeSettingsToggle(
                     "Show each PR's whole description",
-                    detail: "Off: a PR opens on the first paragraph of its description and Show description. The hub remembers what you open per PR.",
+                    detail: "Off: a long description shows as much as fits in 60% of the column, then Show description. The hub remembers what you open per PR.",
                     identifier: "hub.prs.descriptionWhole", isOn: $prDescriptionWhole)
             }
             NativeSettingsCard("Activity") {
