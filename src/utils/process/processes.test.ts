@@ -58,7 +58,7 @@ import {
     signalProcessTree,
     userName,
 } from "./processes";
-import { batchPsInfo, PS_COLUMNS_SPEC, parsePsLine } from "./ps";
+import { batchPsInfo, listPsTable, PS_COLUMNS_SPEC, parsePsLine } from "./ps";
 import {
     canReadSockets,
     listEstablishedTcp,
@@ -1650,6 +1650,18 @@ describe("the ps rows contract on every adapter", () => {
                 });
                 expect(sameLstartSecond(now?.startTime, was?.startTime)).toBe(true);
             }
+        }
+    );
+
+    test.skipIf(process.platform !== "darwin")(
+        "macOS: the table keeps the order ps printed, so a first match is the same process",
+        async () => {
+            const [table, old] = await Promise.all([listProcessRows(), listPsTable({ timeoutMs: 10_000 })]);
+            const oldPids = new Set(old.map((row) => row.pid));
+            const listed = table.map((row) => row.pid).filter((pid) => oldPids.has(pid));
+            const both = new Set(listed);
+            expect(listed.length).toBeGreaterThan(10);
+            expect(listed).toEqual(old.map((row) => row.pid).filter((pid) => both.has(pid)));
         }
     );
 
