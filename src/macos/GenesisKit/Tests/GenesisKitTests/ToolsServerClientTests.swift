@@ -240,6 +240,21 @@ final class ToolsServerClientTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 
+    /// A server that kept a call for its whole limit: the bridge reports the timeout and does not reach for the
+    /// process (here a `tools` that does not exist, which the process path would report instead). The process
+    /// shares the call's limit, so it was started and killed at once before.
+    func testAServerThatUsedTheWholeLimitStartsNoProcess() async throws {
+        let server = try FakeServer { _ in [] }
+        defer { server.stop() }
+        let bridge = ToolsBridge(binaryPath: "/nonexistent/gk-no-tools", server: ToolsServerClient(socketPath: server.path))
+        do {
+            _ = try await bridge.run(subcommand: "slow", args: [], timeoutSeconds: 1)
+            XCTFail("a call the server never answered cannot succeed")
+        } catch {
+            XCTAssertEqual(error as? ToolsBridgeError, .timeout(seconds: 1))
+        }
+    }
+
     @MainActor
     func testSubscriptionDeliversLinesThenEnd() async throws {
         let server = try FakeServer { request in

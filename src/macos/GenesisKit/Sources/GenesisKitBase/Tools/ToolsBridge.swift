@@ -275,6 +275,19 @@ public struct ToolsBridge: Sendable {
         // A task cancelled while the server had the call never starts the process fallback.
         try Task.checkCancellation()
 
+        // The server had the call for its whole limit, and the process shares that limit: it would be started and
+        // killed in the same moment. Five days of app-perf.log had 41 such starts (31 of `ai sessions tail`, each
+        // after 31.0 to 31.2 s), every one a `tools` start on a Mac that was already slow.
+        guard Self.processBudget(timeoutSeconds: timeoutSeconds, waited: Date().timeIntervalSince(started)) != nil else {
+            let spanLabel = Self.spanLabel(subcommand: subcommand, args: args)
+            MonitorPerf.record(spanLabel, ms: Date().timeIntervalSince(started) * 1000)
+            MonitorPerf.mark("\(spanLabel) TIMEOUT after \(timeoutSeconds)s (the hub server did not answer; no process started)")
+            ToolsCallTrace.record(
+                traceId: traceId, via: "server-timeout", argv: argv, started: started, exit: -1, outBytes: 0, stderr: ""
+            )
+            throw ToolsBridgeError.timeout(seconds: timeoutSeconds)
+        }
+
         guard Self.isExecutableFile(resolvedBinaryPath) else {
             throw ToolsBridgeError.binaryNotFound(resolvedBinaryPath)
         }
@@ -333,6 +346,13 @@ public struct ToolsBridge: Sendable {
             stderr.stop(CancellationError())
             ToolsProcessExit.terminate(process)
         }
+    }
+
+    /// The seconds a process may still run after `waited` seconds went to the hub server, or nil when none is
+    /// left: the call's limit covers the server's try and the process together.
+    static func processBudget(timeoutSeconds: Int, waited: TimeInterval) -> TimeInterval? {
+        let remaining = Double(timeoutSeconds) - waited
+        return remaining > 0 ? remaining : nil
     }
 
     private func finish(

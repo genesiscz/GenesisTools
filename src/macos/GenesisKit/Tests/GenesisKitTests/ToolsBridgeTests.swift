@@ -218,6 +218,14 @@ final class ToolsBridgeTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.8)
     }
 
+    /// A hub server that kept a call for its whole limit (the limit plus 1 s) leaves the process nothing: it is
+    /// not started. It was started and killed at once before, 41 times in five days.
+    func testNoProcessBudgetIsLeftAfterTheServerUsedTheWholeLimit() {
+        XCTAssertNil(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 31.1))
+        XCTAssertNil(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 30))
+        XCTAssertEqual(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 0.2) ?? 0, 29.8, accuracy: 0.001)
+    }
+
     func testEnvAllowlistScrubsSecrets() {
         let scrubbed = ToolsBridge.scrubbedEnvironment(from: [
             "HOME": "/Users/x",
