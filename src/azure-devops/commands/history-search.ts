@@ -12,11 +12,11 @@ import { periodEndTime, resolveUser, userMatches } from "@app/azure-devops/histo
 import type { AzureConfig, WorkItem, WorkItemCache } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import { buildCombinedQuery } from "@app/azure-devops/wiql-builder";
-import * as p from "@clack/prompts";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { formatLocalDate, formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { formatDuration as _formatDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 // ============= Types =============
