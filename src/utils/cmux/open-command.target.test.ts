@@ -57,11 +57,12 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
 
 const { livePlacementIO, openCommandAt } = await import("./open-command");
 
-/** The argv of the one `send` invocation. */
+/** The argv of the one `paste` invocation: the launch line is pasted, so cmux reads no backslash in it as a key. */
 function sendArgs(): string[] {
-    const sends = argv.filter((a) => a[0] === "send");
-    expect(sends).toHaveLength(1);
-    return sends[0];
+    const pastes = argv.filter((a) => a[0] === "paste");
+    expect(pastes).toHaveLength(1);
+    expect(argv.some((a) => a[0] === "send")).toBe(false);
+    return pastes[0];
 }
 
 beforeEach(() => {
@@ -77,19 +78,29 @@ describe("livePlacementIO().send target flags", () => {
         const args = sendArgs();
         expect(args).not.toContain("--workspace");
         expect(args).not.toContain(WORKSPACE);
-        expect(args).toEqual(["send", "--surface", SURFACE_UUID, "cmd\n"]);
+        expect(args).toEqual(["paste", "--surface", SURFACE_UUID, "--", "cmd"]);
+        // The trailing newline is not pasted: it is pressed as Enter after the line.
+        expect(argv.at(-1)).toEqual(["send-key", "--surface", SURFACE_UUID, "enter"]);
+    });
+
+    test("a launch line with a backslash and a quote is pasted as written, never typed", async () => {
+        // shellQuote writes 'it'\''s', and `cmux send` reads a backslash sequence as a key.
+        const line = "claude 'it'\\''s' 'C:\\new\\tab'";
+        await livePlacementIO().send(WORKSPACE, SURFACE_UUID, `${line}\n`);
+
+        expect(sendArgs()).toEqual(["paste", "--surface", SURFACE_UUID, "--", line]);
     });
 
     test("a surface: ref is self-identifying too, so it also drops the workspace", async () => {
         await livePlacementIO().send(WORKSPACE, "surface:44", "cmd\n");
 
-        expect(sendArgs()).toEqual(["send", "--surface", "surface:44", "cmd\n"]);
+        expect(sendArgs()).toEqual(["paste", "--surface", "surface:44", "--", "cmd"]);
     });
 
     test("a tab: ref likewise", async () => {
         await livePlacementIO().send(WORKSPACE, "tab:3", "cmd\n");
 
-        expect(sendArgs()).toEqual(["send", "--surface", "tab:3", "cmd\n"]);
+        expect(sendArgs()).toEqual(["paste", "--surface", "tab:3", "--", "cmd"]);
     });
 
     test("NEGATIVE CONTROL: a bare index IS workspace-relative and KEEPS --workspace", async () => {
@@ -99,7 +110,7 @@ describe("livePlacementIO().send target flags", () => {
 
         const args = sendArgs();
         expect(args).toContain("--workspace");
-        expect(args).toEqual(["send", "--workspace", WORKSPACE, "--surface", "4", "cmd\n"]);
+        expect(args).toEqual(["paste", "--workspace", WORKSPACE, "--surface", "4", "--", "cmd"]);
     });
 
     test("selectWorkspace still names the workspace — it is a workspace command, not a surface send", async () => {
@@ -126,7 +137,7 @@ describe("openCommandAt silent", () => {
 
         expect(placed).toEqual({ workspaceId: WORKSPACE, surfaceId: SURFACE_UUID });
         expect(argv.filter(changesView)).toEqual([]);
-        expect(sendArgs()).toContain("echo probe\n");
+        expect(sendArgs()).toContain("echo probe");
     });
 
     test.each([undefined, "/repo/fixture"])(
@@ -159,7 +170,7 @@ describe("openCommandAt silent", () => {
                     "fixture",
                 ],
             ]);
-            expect(argv.some((args) => args[0] === "send")).toBe(false);
+            expect(argv.some((args) => args[0] === "send" || args[0] === "paste")).toBe(false);
             expect(argv.filter(changesView)).toEqual([]);
             expect(argv).toContainEqual(["workspace", "rename", WORKSPACE, "--title", "fixture"]);
         }
@@ -175,7 +186,10 @@ describe("openCommandAt silent", () => {
         });
 
         expect(placed).toEqual({ workspaceId: WORKSPACE, surfaceId: SURFACE_UUID });
-        expect(argv).toEqual([["send", "--surface", SURFACE_UUID, `echo probe${enter ? "\n" : ""}`]]);
+        expect(argv).toEqual([
+            ["paste", "--surface", SURFACE_UUID, "--", "echo probe"],
+            ...(enter ? [["send-key", "--surface", SURFACE_UUID, "enter"]] : []),
+        ]);
     });
 
     test("a silent new workspace refuses enter:false before creating anything", async () => {
