@@ -20,7 +20,11 @@ export type StartGateTurn = { status: "passed" } | { status: "cancelled" };
 /** The spawner's close: the child will not start, or it passed the gate (its pid when it still runs). */
 export type StartGateClose = { status: "cancelled" } | { status: "passed"; pid: number | null };
 
-/** Never take a claim over: whoever holds the gate, a live child or the spawner's mark, holds it for good. */
+/**
+ * Never take a holder over: whoever holds the gate, a live child or the spawner's mark, holds it for good. Only a gate
+ * file that names no process past the shared grace (`EMPTY_HOLDER_GRACE_MS` in pidfile.ts) is taken, since its writer
+ * died between the create and the write.
+ */
 const never = (): boolean => false;
 
 /** A new gate in `dir`, one per start. */

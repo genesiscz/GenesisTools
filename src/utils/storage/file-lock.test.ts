@@ -1,12 +1,13 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
-import { parsePidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
-import { attemptRenameSteal, LockTimeoutError, tryAcquireLock, withFileLock } from "./file-lock";
+import { EMPTY_HOLDER_GRACE_MS, serializePidRecord } from "@genesiscz/utils/process/pidfile";
+import { LockTimeoutError, withFileLock } from "./file-lock";
 
+// The race cases (N racers, a fresh claim during arbitration, a steal that finds new bytes) are in
+// src/utils/process/claim-takeover.test.ts, with every other caller of the shared takeover.
 describe("file-lock: stale/orphaned lock handling", () => {
     let dir: string;
 
@@ -33,6 +34,9 @@ describe("file-lock: stale/orphaned lock handling", () => {
         // then blocks every future acquirer.
         const lockPath = join(dir, "target.lock");
         writeFileSync(lockPath, "");
+        // Past the shared grace an empty lock is an orphan (claim-takeover.test.ts covers one inside it).
+        const created = new Date(Date.now() - EMPTY_HOLDER_GRACE_MS - 1_000);
+        utimesSync(lockPath, created, created);
 
         const result = await withFileLock(lockPath, async () => "acquired", 2000);
 
@@ -117,59 +121,6 @@ describe("file-lock: stale/orphaned lock handling", () => {
         expect(existsSync(nestedDir)).toBe(true);
     });
 
-    it("exactly one of N concurrent racers steals a stale lock (rename-based takeover regression test)", async () => {
-        // Regression test for the Jul 3 incident: launchd respawn storm got 31
-        // daemon instances racing the same stale pidfile/lock past a
-        // check-then-unlink-then-write takeover, and N of them "won". The
-        // rename-based steal must guarantee exactly one winner no matter how
-        // many racers hit it concurrently.
-        const lockPath = join(dir, "target.lock");
-        writeFileSync(lockPath, "999999999"); // dead PID — eligible for steal
-
-        const RACER_COUNT = 12;
-        const results = await Promise.all(Array.from({ length: RACER_COUNT }, () => tryAcquireLock(lockPath)));
-
-        const winners = results.filter((won) => won === true);
-        expect(winners).toHaveLength(1);
-
-        // Exactly one lock file remains, owned by us (the single process all
-        // racers ran in), and no leftover `.stale-*` temp files. The winner
-        // rewrites the slot as an identity-bearing record, not the bare number
-        // the losers validated as stale.
-        expect(existsSync(lockPath)).toBe(true);
-
-        const held = parsePidRecord(readFileSync(lockPath, "utf-8"));
-        expect(held?.pid).toBe(process.pid);
-        expect(held?.command ?? "").toContain("bun");
-
-        expect(readdirSync(dir)).toEqual(["target.lock"]);
-    });
-
-    it("a fresh claim cannot be renamed while another claimant owns arbitration", async () => {
-        const lockPath = join(dir, "target.lock");
-        let releaseOwner: () => void = () => {};
-        let ownerReady: () => void = () => {};
-        const ownerStarted = new Promise<void>((resolve) => {
-            ownerReady = resolve;
-        });
-        const ownerRelease = new Promise<void>((resolve) => {
-            releaseOwner = resolve;
-        });
-        const owner = tryWithPathArbitration(lockPath, async () => {
-            writeFileSync(lockPath, String(process.pid));
-            ownerReady();
-            await ownerRelease;
-        });
-        await ownerStarted;
-
-        expect(await attemptRenameSteal(lockPath, "999999999")).toBe(false);
-        expect(await tryAcquireLock(lockPath)).toBe(false);
-        expect(readFileSync(lockPath, "utf8").trim()).toBe(String(process.pid));
-
-        releaseOwner();
-        expect((await owner).acquired).toBe(true);
-    });
-
     it("a release that cannot read the lock never replaces fn's result", async () => {
         const lockPath = join(dir, "target.lock");
 
@@ -181,19 +132,5 @@ describe("file-lock: stale/orphaned lock handling", () => {
         });
 
         expect(result).toBe("committed");
-    });
-
-    it("a steal that grabs a FRESH lock restores it and loses (TOCTOU guard)", async () => {
-        // The stealer validated "999999999" as dead, but by the time its
-        // rename lands a live holder has re-acquired the lock. The steal must
-        // detect the content mismatch, restore the fresh lock, and lose.
-        const lockPath = join(dir, "target.lock");
-        writeFileSync(lockPath, "12345");
-
-        const won = await attemptRenameSteal(lockPath, "999999999");
-
-        expect(won).toBe(false);
-        expect(readFileSync(lockPath, "utf-8").trim()).toBe("12345"); // restored, not clobbered
-        expect(readdirSync(dir)).toEqual(["target.lock"]); // no temp litter
     });
 });

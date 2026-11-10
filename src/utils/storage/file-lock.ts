@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
-import { rename, unlink, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { type ArbitrationResult, tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
@@ -9,11 +9,11 @@ import {
     type PidRecord,
     parsePidRecord,
     serializePidRecord,
+    takeOverStaleClaimAsync,
 } from "@genesiscz/utils/process/pidfile";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;
-const ORPHANED_PID_RECHECK_MS = 100;
 
 /**
  * Wait budget for a lock whose HOLDER runs a network call inside it, rather than
@@ -43,115 +43,14 @@ function isEnoent(err: unknown): boolean {
     return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-/**
- * Atomically steal a stale/orphaned lock file whose content was pre-validated.
- *
- * Renames the lock to a unique temp path first — `rename` is atomic on POSIX,
- * so under N concurrent stealers exactly one rename succeeds; every loser gets
- * ENOENT (the source is already gone under them) and returns false. Only the
- * rename winner proceeds to claim the path with its own `wx` write.
- *
- * The rename alone is NOT sufficient: it steals whatever currently sits at
- * the path, so a late stealer can grab the lock a legitimate holder just
- * (re-)acquired (TOCTOU — the daemon pidfile twin of this code reproduced
- * two "winners" in a 12-racer test without the guard). After the rename the
- * stolen content must still equal `expectedContent` — the exact stale
- * artifact the caller validated (a dead pid, or "" for the orphaned-empty
- * case). On mismatch the fresh file is restored best-effort and the steal
- * reports defeat.
- *
- * Exported for direct race testing (see file-lock.test.ts).
- */
-async function attemptRenameStealUnlocked(lockPath: string, expectedContent: string): Promise<boolean> {
-    const tempPath = `${lockPath}.stale-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
-
-    try {
-        await rename(lockPath, tempPath);
-    } catch (err) {
-        if (isEnoent(err)) {
-            return false;
-        }
-
-        throw err;
-    }
-
-    let stolen: string | null = null;
-
-    try {
-        stolen = await Bun.file(tempPath).text();
-    } catch {
-        stolen = null;
-    }
-
-    if (stolen === null || stolen.trim() !== expectedContent.trim()) {
-        if (stolen !== null) {
-            try {
-                await writeFile(lockPath, stolen, { flag: "wx" });
-            } catch (err) {
-                // Slot already re-claimed; the robbed holder's release is
-                // ownership-checked, so worst case is one early-released lock.
-                logger.debug(`Steal-restore skipped at ${lockPath} (slot re-claimed): ${err}`);
-            }
-        }
-
-        try {
-            await unlink(tempPath);
-        } catch (err) {
-            // Best effort, but never silent: this temp path ends in a random
-            // suffix, so `sweepStaleLocks` (which matches .lock/.login) never
-            // reaps it, and a leaked one sits in ~/.genesis-tools forever with
-            // nothing on record to explain it.
-            logger.debug({ err, tempPath }, "steal temp file left behind after a failed steal");
-        }
-
-        return false;
-    }
-
-    try {
-        await writeFile(lockPath, serializePidRecord(buildPidRecord()), { flag: "wx" });
-    } catch (err) {
-        if (isEexist(err)) {
-            return false;
-        }
-
-        throw err;
-    } finally {
-        try {
-            await unlink(tempPath);
-        } catch (err) {
-            // ENOENT if somehow already gone. Logged for the same reason as
-            // above: nothing sweeps this path by name.
-            logger.debug({ err, tempPath }, "steal temp file left behind after claiming the lock");
-        }
-    }
-
-    return true;
-}
-
-export async function attemptRenameSteal(lockPath: string, expectedContent: string): Promise<boolean> {
-    const arbitration = await tryWithPathArbitration(lockPath, () =>
-        attemptRenameStealUnlocked(lockPath, expectedContent)
-    );
-    return arbitration.acquired ? arbitration.value : false;
-}
-
-/**
- * Try to acquire a lock file atomically.
- * Uses O_CREAT|O_EXCL semantics (writeFile flag:'wx') so two processes
- * cannot both "acquire" the lock simultaneously.
- *
- * Exported for direct concurrency testing (see file-lock.test.ts) —
- * exercising `withFileLock`'s polling loop end-to-end would obscure the
- * single-winner guarantee this function itself must provide.
- */
-async function tryAcquireLockUnlocked(lockPath: string): Promise<boolean> {
+/** The `wx` create of this process's record; false when the lock file exists. */
+async function createLock(lockPath: string): Promise<boolean> {
     const dir = dirname(lockPath);
 
     if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
     }
 
-    // Atomic exclusive create — fails with EEXIST if another process holds it
     try {
         await writeFile(lockPath, serializePidRecord(buildPidRecord()), { flag: "wx" });
         return true;
@@ -161,70 +60,45 @@ async function tryAcquireLockUnlocked(lockPath: string): Promise<boolean> {
             throw err;
         }
 
-        // Lock file exists — check if the owning process is still alive.
-        // The raw bytes are kept so the steal below compares exactly what was
-        // validated here, whatever record format the holder wrote.
-        let content: string;
-        let record: PidRecord | null;
-
-        try {
-            content = await Bun.file(lockPath).text();
-            record = parsePidRecord(content);
-        } catch {
-            // Can't read the lock file — assume it's held
-            return false;
-        }
-
-        if (record === null) {
-            // Lock file has no valid PID content. writeFile with `flag:"wx"` is
-            // O_CREAT|O_EXCL followed by a separate write() syscall, so a
-            // legitimate owner is empty for microseconds; but a SIGKILL between
-            // those two syscalls leaves a permanently empty (0-byte) lock that
-            // would otherwise block every future acquirer until timeout.
-            // Disambiguate by re-reading after a short grace: if the owner is
-            // real, the PID appears; if the file stays empty, the lock is
-            // orphaned and safe to steal.
-            await sleep(ORPHANED_PID_RECHECK_MS);
-
-            try {
-                content = await Bun.file(lockPath).text();
-                record = parsePidRecord(content);
-            } catch {
-                return false;
-            }
-
-            if (record === null) {
-                // Still empty after grace — orphaned. Steal (expecting the
-                // empty artifact we validated).
-                logger.debug(`Stealing orphaned lock at ${lockPath} (no PID content)`);
-                return await attemptRenameStealUnlocked(lockPath, content);
-            }
-            // Owner finished its write during the grace — fall through to the
-            // normal alive/dead check below.
-        }
-
-        // Identity, not just liveness: a holder that died and had its number
-        // reissued would otherwise look alive forever, and every acquirer would
-        // time out against a lock nobody holds. Same verdict as inspectPidFile
-        // (command + startedAt), including when the recycled pid is ours.
-        const identity = classifyPidRecord(record);
-        if (identity.status === "live" || identity.status === "unverified") {
-            return false;
-        }
-
-        if (identity.status === "foreign") {
-            logger.debug(`Stealing stale lock at ${lockPath} (PID ${record.pid} was reused by ${identity.command})`);
-        } else {
-            logger.debug(`Stealing stale lock at ${lockPath} (PID ${record.pid} is dead)`);
-        }
-
-        return await attemptRenameStealUnlocked(lockPath, content);
+        return false;
     }
 }
 
+/**
+ * Identity, not just liveness: a holder that died and had its number reissued would otherwise look alive forever,
+ * and every acquirer would time out against a lock nobody holds. Same verdict as inspectPidFile (command + startedAt),
+ * including when the recycled pid is ours.
+ */
+function holderIsGone(lockPath: string, holder: PidRecord): boolean {
+    const identity = classifyPidRecord(holder);
+
+    if (identity.status === "live" || identity.status === "unverified") {
+        return false;
+    }
+
+    logger.debug({ lockPath, pid: holder.pid, status: identity.status }, "taking over a stale lock");
+    return true;
+}
+
+/**
+ * Try to acquire a lock file atomically: an O_CREAT|O_EXCL create (writeFile flag:'wx'), and when the file exists,
+ * the shared fenced takeover (`takeOverStaleClaimAsync` in pidfile.ts, which also owns the rule for an empty lock)
+ * followed by the create again, so exactly one racer wins.
+ *
+ * Exported for direct concurrency testing (see claim-takeover.test.ts).
+ */
 export async function tryAcquireLock(lockPath: string): Promise<boolean> {
-    const arbitration = await tryWithPathArbitration(lockPath, () => tryAcquireLockUnlocked(lockPath));
-    return arbitration.acquired ? arbitration.value : false;
+    if (await createLock(lockPath)) {
+        return true;
+    }
+
+    const outcome = await takeOverStaleClaimAsync(lockPath, {
+        arbiter: lockPath,
+        holderIsStale: (holder) => holderIsGone(lockPath, holder),
+    });
+
+    // After a lost race the holder may be gone (a sweeper reaped it), so the create is tried again; it stays atomic.
+    return outcome === "held" ? false : await createLock(lockPath);
 }
 
 /**
