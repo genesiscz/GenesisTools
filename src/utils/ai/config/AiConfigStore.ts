@@ -1,11 +1,12 @@
 import { statSync } from "node:fs";
 import type { AIConfigData as V3ConfigData } from "@genesiscz/utils/config/ai.types";
+import { mayPersistMigration } from "@genesiscz/utils/config/real-home-write";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { matchesSpec } from "@genesiscz/utils/string";
 import { writeDefaultsSnapshot } from "./defaults-snapshot";
 import { _resetMigrationStateForTest, ensureAiConfigMigrated } from "./migrate";
-import { assertSafeToWriteRealConfig } from "./migration-guard";
+
 import { convertConfig } from "./migrations/2026-08-configV4";
 import { type AccountRef, accountRef, isAccountRef, type Referrer, referrersOf, refToId } from "./refs";
 import {
@@ -374,7 +375,7 @@ export class AiConfigStore {
             // writes inside `fn` (the lock-order contract says config lock first,
             // vault second), so a worktree build that is refused the config write
             // must be refused before it can mutate the vault behind a live ref.
-            assertSafeToWriteRealConfig();
+            assertMayWriteRealConfig();
             const { config } = await AiConfigStore.readFrom(this.storage);
             const result = await fn(config);
 
@@ -382,7 +383,7 @@ export class AiConfigStore {
             const validated = { ...aiConfigSchema.parse(config), _schemaVersion: 3 as const };
             // Last line of defence: every v4 write in the codebase funnels through
             // here, so even a mis-gated migration cannot reach the real config.
-            assertSafeToWriteRealConfig();
+            assertMayWriteRealConfig();
             await this.storage.setConfig(validated);
             // Keep the copy old binaries cannot touch in step; the hybrid repair
             // restores `defaults` from it after an old-code rewrite.
@@ -391,6 +392,18 @@ export class AiConfigStore {
             this.stamp = AiConfigStore.stampOf(this.storage);
             return result;
         }, timeout);
+    }
+}
+
+/**
+ * Every v4 write asks the shared real-home write check, so a bug in one migration's own gate cannot
+ * reach the user's real file: the installed tools may still read an older shape.
+ */
+function assertMayWriteRealConfig(): void {
+    const verdict = mayPersistMigration();
+
+    if (!verdict.allowed) {
+        throw new Error(`Refusing to write the AI config into the real ~/.genesis-tools: ${verdict.reason}`);
     }
 }
 
