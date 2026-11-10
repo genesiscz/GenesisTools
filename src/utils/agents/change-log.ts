@@ -4,6 +4,7 @@ import { safeSessionId } from "@genesiscz/utils/agents/session-id";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
+import type { RmBashWrite } from "@genesiscz/utils/rm";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 /**
@@ -351,6 +352,26 @@ export function bashWritesByPath(
     { maxBytes = BASH_LOOKUP_MAX_BYTES }: { maxBytes?: number } = {}
 ): ReadonlyMap<string, ChangeLogRow[]> {
     return bashWriteIndex(sessionId, maxBytes) ?? new Map();
+}
+
+/**
+ * Every Bash command of `sessionId` that recorded writing each path (`tools rm`'s own-files rule asks), in log order:
+ * when it began (rows before 2026-11-02 carry no start) and when its row was written. The rows come from
+ * `bashWritesByPath`, read once on the first lookup and kept by this lookup while later ones see a grown log.
+ */
+export function bashWriteLookup(
+    sessionId: string,
+    options: { maxBytes?: number } = {}
+): (path: string) => RmBashWrite[] {
+    let index: ReadonlyMap<string, ChangeLogRow[]> | undefined;
+
+    return (path) => {
+        if (index === undefined) {
+            index = bashWritesByPath(sessionId, options);
+        }
+
+        return (index.get(path) ?? []).map((row) => ({ ...(row.began ? { began: row.began } : {}), ended: row.ts }));
+    };
 }
 
 function bashWriteIndex(sessionId: string, maxBytes: number): Map<string, ChangeLogRow[]> | null {
