@@ -3,6 +3,25 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-11-10 19:56 — **A transcript that did not load showed a red triangle and "tools call exceeded 30s", with nothing to
+  click (the owner: "this definitely deserves 1. details 2. a button to bug report").**
+  - *The pane drew the error's own words.* `TranscriptLoadState.failed(String)` carried `localizedDescription`, and the
+    placeholder printed it in red monospace. The words named the mechanism, not what the person missed, and the
+    failure window and issue draft the recorder had since the day before were one module away. Fix: GenesisKit
+    `FailureInline` (`.pane`, `.compact`) with Try again, Details and Report a bug, and `FailureReport.toolsCall`, the
+    one report of a failed `tools` call: "The transcript did not load: the tools call did not answer in 30 s.", what
+    ran (`ai sessions tail`), the typed command, and as its log the call's app-perf.log line plus every call of the
+    minute before, read off the main thread from the file's tail.
+  - *The failing call had no name once it failed.* `ToolsBridge.run` made a trace id and threw it away with the error.
+    Fix: a task-local `ToolsCallLedger` the caller binds around its work; the bridge and the hub's runner note each
+    call's start and end in it. A queue hop (`DispatchQueue.global`) leaves the task, so the hub's runner carries the
+    ledger across by hand. Rule: when an id exists for tracing, the error the person sees must be able to reach it.
+  - *The same defect in about twenty more places.* The sweep found raw error strings in red or grey in the hub (Agents,
+    Activity, Inbox, decisions, PR threads, Changes, digest, insights, searches), the widget's error pill, the Daemon
+    settings page, the Meetings notices, and a session list refresh that only wrote a perf mark while the sidebar kept
+    a stale list. Rule: a failure has one shape everywhere (`.claude/rules/macos-app.md`, "A load or an action that
+    failed"), and `rg 'Text\((verbatim: )?[^)]*(error|failure|localizedDescription)'` over `src/macos` is the check.
+
 - 2026-11-10 17:23 — **Meetings window, the first hour on a real meeting: a whole-meeting play that always started at
   00:00, and a timeline the reader could zoom into but not out of.**
   - *Every seek in the recording played its start.* The recording is Ogg Opus. The system player (`AVAudioPlayer`)
