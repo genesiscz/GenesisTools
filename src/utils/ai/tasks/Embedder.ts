@@ -1,27 +1,11 @@
 import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
 import { AIConfig } from "../AIConfig";
+import { isTransientAiError } from "../core/retry";
 import { findDescriptor } from "../local/descriptors";
 import { getProviderForTask } from "../providers";
 import type { AIEmbeddingProvider, AIProviderType, EmbeddingResult, EmbedOptions } from "../types";
 
 const RETRY_DELAY = rateLimitAwareDelay();
-
-/** Don't retry permanent errors — only transient/rate-limit failures are worth retrying */
-function shouldRetryEmbedding(error: unknown): boolean {
-    const msg = error instanceof Error ? error.message : String(error);
-
-    // Permanent HTTP errors: bad credentials, bad model, invalid input
-    if (/\b(401|403|404|400)\b/.test(msg)) {
-        return false;
-    }
-
-    // Permanent provider errors
-    if (/\b(invalid.api.key|unauthorized|forbidden|model.not.found)\b/i.test(msg)) {
-        return false;
-    }
-
-    return true;
-}
 
 export class Embedder {
     private provider: AIEmbeddingProvider;
@@ -123,7 +107,7 @@ export class Embedder {
         return retry(() => this.provider.embed(text, resolved), {
             maxAttempts: 3,
             getDelay: RETRY_DELAY,
-            shouldRetry: shouldRetryEmbedding,
+            shouldRetry: isTransientAiError,
         });
     }
 
@@ -141,7 +125,7 @@ export class Embedder {
             return retry(() => this.provider.embedBatch!(texts, resolved), {
                 maxAttempts: 3,
                 getDelay: RETRY_DELAY,
-                shouldRetry: shouldRetryEmbedding,
+                shouldRetry: isTransientAiError,
             });
         }
 
@@ -152,7 +136,7 @@ export class Embedder {
             const result = await retry(() => this.provider.embed(t, resolved), {
                 maxAttempts: 3,
                 getDelay: RETRY_DELAY,
-                shouldRetry: shouldRetryEmbedding,
+                shouldRetry: isTransientAiError,
             });
             results.push(result);
         }
