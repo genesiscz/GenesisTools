@@ -414,6 +414,10 @@ final class PRsModel: ObservableObject {
     /// PR details being fetched, and when each last arrived fresh.
     private var detailLoading: Set<String> = []
     private var detailFetched: [String: Date] = [:]
+    /// Failed check names a row's tooltip shows before its detail was opened (hub UX C9), by `checksKey(id, head:)`:
+    /// a push is a new key, so it asks again. Filled by `loadFailedChecks` while the pointer rests on the row.
+    @Published private(set) var hoverChecks: [String: [String]] = [:]
+    private var hoverChecksLoading: Set<String> = []
     /// The wanted PR whose detail was already asked for straight away (`startWanted`), so a list load
     /// that lands meanwhile does not ask again.
     private var wantedStarted: HubPRRef?
@@ -1697,6 +1701,43 @@ final class PRsModel: ObservableObject {
         store.load()
     }
 
+    nonisolated static func checksKey(_ id: String, head: String?) -> String { "\(id)@\(head ?? "")" }
+
+    /// The failed checks a row's tooltip names: the loaded detail's when it is for the row's head, else what a rest
+    /// of the pointer on the row loaded for that head (`loadFailedChecks`).
+    func failedChecks(for pr: HubPR) -> [String] {
+        if let detail = details[pr.id], detail.headSha == nil || pr.headSha == nil || detail.headSha == pr.headSha {
+            let names = (detail.checks ?? []).filter { $0.status == "failed" }.map(\.name)
+            if !names.isEmpty { return names }
+        }
+        return hoverChecks[Self.checksKey(pr.id, head: pr.headSha)] ?? []
+    }
+
+    /// The checks of a row whose CI failed, for its tooltip, through the detail's own loader (`tools hub pr show`):
+    /// the list query asks GitHub only for the rollup state. Once per head; a failed load is asked again at the next
+    /// rest. The answer also goes into the detail cache, so opening the PR afterwards starts from it.
+    func loadFailedChecks(_ pr: HubPR) {
+        guard pr.ci == "failed", let root = pr.repoRoot else { return }
+        let key = Self.checksKey(pr.id, head: pr.headSha)
+        guard hoverChecks[key] == nil, !hoverChecksLoading.contains(key), failedChecks(for: pr).isEmpty else { return }
+        hoverChecksLoading.insert(key)
+        Task {
+            let span = HubPerf.begin("prs.hoverChecks", pr.id, awaits: true)
+            let (id, project, number) = (pr.id, pr.project, pr.number)
+            let detail = await Task.detached(priority: .utility) { () -> HubPRDetail? in
+                guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", "\(root)#\(number)"]),
+                      let detail = try? JSONDecoder().decode(HubPRDetail.self, from: data) else { return nil }
+                PRListCache.writeDetail(data, id: id, project: project, number: number)
+                return detail
+            }.value
+            span.end(detail == nil ? "failed" : "")
+            hoverChecksLoading.remove(key)
+            guard let detail else { return }
+            hoverChecks[Self.checksKey(id, head: detail.headSha ?? pr.headSha)] =
+                (detail.checks ?? []).filter { $0.status == "failed" }.map(\.name)
+        }
+    }
+
     /// `tools hub pr show` for `pr`, off the main thread. Opening a PR always asks again (the
     /// description, commits, checks and head move), at most once per 15 s unless `force`, so a list
     /// refresh re-selecting it does not spawn another. The agent sessions load after it.
@@ -1885,6 +1926,8 @@ struct PRListView: View {
     @ObservedObject private var readiness = PRReadinessStore.shared
     /// When a row shows its CI icon (Settings → Hub → Panes → PR list; `HubPRRowCI`).
     @AppStorage(HubPRRowCI.key, store: HubDefaults.store) private var rowCI = HubPRRowCI.unusual.rawValue
+    /// Whether a rest of the pointer on a failed row loads its checks (Settings → Hub → Panes; `HubPRRowHoverChecks`).
+    @AppStorage(HubPRRowHoverChecks.key, store: HubDefaults.store) private var hoverChecks = HubPRRowHoverChecks.onRest.rawValue
     @GenReduceMotion private var reduceMotion
     /// The list's keyboard focus: a click on a row gives it, then Up and Down move the selection (`SidebarArrowKeys`).
     @FocusState private var listFocused: Bool
@@ -2136,6 +2179,8 @@ struct PRListView: View {
         // with an accessibility client meets 40 labels, not 40 × 3 responders.
         let ready = readiness.readiness(for: pr)
         let always = HubPRRowCI.stored(rowCI) == .always
+        let failed = prs.failedChecks(for: pr)
+        let loadsChecks = HubPRRowHoverChecks.stored(hoverChecks) == .onRest && pr.ci == "failed" && failed.isEmpty
         return PRRow(
             pr: pr,
             selected: prs.selectedID == pr.id,
@@ -2143,10 +2188,27 @@ struct PRListView: View {
             readiness: ready,
             showsCI: always || (pr.ci != usualCI && !PRReadinessBadge.saysCI(ready)),
             usualCI: usualCI,
-            failedChecks: (prs.details[pr.id]?.checks ?? []).filter { $0.status == "failed" }.map(\.name),
+            failedChecks: failed,
+            loadChecks: loadsChecks ? { prs.loadFailedChecks(pr) } : nil,
             select: { listFocused = true; prs.select(pr, opened: true) }
         )
         .equatable()
+    }
+}
+
+/// Asks for a failed PR row's checks once the pointer has rested on it for 0.35 s (`HubPRRowHoverChecks`); a pointer
+/// that only passes over the list starts nothing. A selected row is live too, and its detail load answers first.
+private struct PRRowChecksProbe: View {
+    let load: () -> Void
+    @Environment(\.rowLive) private var live
+
+    var body: some View {
+        Color.clear
+            .task(id: live) {
+                guard live else { return }
+                try? await Task.sleep(for: .milliseconds(350))
+                if !Task.isCancelled { load() }
+            }
     }
 }
 
@@ -2209,13 +2271,16 @@ struct PRRow: View, Equatable {
     var showsCI = true
     /// The CI state most of the project's PRs share, for the icon's tooltip; nil when there is none.
     var usualCI: String?
-    /// The failed checks' names, when the PR's detail was loaded: the icon's tooltip names them.
+    /// The failed checks' names, for the row's head, when its detail or a hover loaded them: the tooltips name them.
     var failedChecks: [String] = []
+    /// Loads the failed checks once the pointer rests on the row; nil when the row needs none (`PRRowChecksProbe`).
+    var loadChecks: (() -> Void)?
     let select: () -> Void
 
     static func == (a: PRRow, b: PRRow) -> Bool {
         a.pr == b.pr && a.selected == b.selected && a.flash == b.flash && a.readiness == b.readiness
             && a.showsCI == b.showsCI && a.usualCI == b.usualCI && a.failedChecks == b.failedChecks
+            && (a.loadChecks == nil) == (b.loadChecks == nil)
     }
 
     /// The CI state most of a project's rows share: one red mark on nearly every row said nothing (hub UX C9). nil
@@ -2268,12 +2333,25 @@ struct PRRow: View, Equatable {
         .swrFlash(flash)
         .contentShape(Rectangle())
         .rowButton(cornerRadius: 8) { select() }
-        .instantTooltip("\(pr.label) \(pr.headBranch) → \(pr.baseBranch)\nRight-click for its web pages")
+        .instantTooltip(rowTooltip)
         .padding(.horizontal, 6)
+        // Inside `liveRow`, so it reads the row's liveness: the pointer resting on a failed row loads its checks.
+        .background {
+            if let loadChecks {
+                PRRowChecksProbe(load: loadChecks)
+            }
+        }
         .liveRow(selected: selected)
         // The row stays one button (select); its labels' web pages live here, since a link inside
         // the row would turn a click meant to select into a browser tab.
         .contextMenu { linksMenu }
+    }
+
+    /// The row's tooltip; it names the failed checks too, since the CI icon is often left out of the row.
+    private var rowTooltip: String {
+        let base = "\(pr.label) \(pr.headBranch) → \(pr.baseBranch)"
+        let failed = pr.ci == "failed" && !failedChecks.isEmpty ? "\nFailed checks: " + failedChecks.joined(separator: ", ") : ""
+        return base + failed + "\nRight-click for its web pages"
     }
 
     private var metaLine: some View {

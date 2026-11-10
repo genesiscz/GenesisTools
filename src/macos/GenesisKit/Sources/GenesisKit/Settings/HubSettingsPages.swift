@@ -112,6 +112,7 @@ private struct HubPaneSettings: View {
     @AppStorage(HubActivityRows.commitPrefixKey) private var activityCommitPrefix = false
     @AppStorage(HubSessionRows.hideSharedKey) private var sessionsHideShared = true
     @AppStorage(HubPRRowCI.key) private var prRowCI = HubPRRowCI.unusual.rawValue
+    @AppStorage(HubPRRowHoverChecks.key) private var prHoverChecks = HubPRRowHoverChecks.onRest.rawValue
     @AppStorage(HubFileTreeFold.key) private var filesFoldAbove = HubFileTreeFold.defaultAbove
     @AppStorage(TranscriptOutputFold.key) private var transcriptOutputFold = TranscriptOutputFold.defaultLines
     @AppStorage(HubChrome.glassButtonKey) private var glassButton = false
@@ -222,6 +223,13 @@ private struct HubPaneSettings: View {
                     "PR rows show CI", identifier: "hub.prs.rowCI",
                     options: HubPRRowCI.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
                     selection: Binding(get: { HubPRRowCI.stored(prRowCI) }, set: { prRowCI = $0.rawValue }),
+                    minSegmentWidth: 90)
+                Divider()
+                NativeSettingsSegmented(
+                    "Load failed checks for a PR row's tooltip", identifier: "hub.prs.hoverChecks",
+                    options: HubPRRowHoverChecks.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                    selection: Binding(
+                        get: { HubPRRowHoverChecks.stored(prHoverChecks) }, set: { prHoverChecks = $0.rawValue }),
                     minSegmentWidth: 90)
                 Divider()
                 NativeSettingsRow(
