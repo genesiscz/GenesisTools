@@ -591,6 +591,16 @@ enum MusicMix {
             .map { ($0, gain(atUs: $0, music: music, speech: speech, lengthUs: endUs, duck: duck)) }
     }
 
+    /// Where the music's fade-out ends, on the whole export's clock for a part (`music.inWhole`): the whole's end for
+    /// music that loops, and for music played once the end of its file (`laidEndUs`, where its last pass ends on the
+    /// part's clock) when that comes first. The part's own end is never it: a part in the middle of the whole fades
+    /// only where the whole does, so its music stays at the level of that stretch of the whole.
+    static func fadeEndUs(music: EditProject.Music, lengthUs: Int64, laidEndUs: Int64) -> Int64 {
+        let wholeUs = music.inWhole?.lengthUs ?? lengthUs
+        guard music.loop == false else { return wholeUs }
+        return min(wholeUs, laidEndUs + (music.inWhole?.atUs ?? 0))
+    }
+
     /// Lays the music under the movie and returns its mix parameters; nil (logged) when the file has no sound.
     /// `offsetUs`: where the movie starts in the composition (after an intro card); the speech moves by it.
     /// `lines`: the transcript the captions are drawn from (the render's ZoomState), so the preview ducks under the
@@ -628,9 +638,10 @@ enum MusicMix {
             range = available
         }
         // Played once, the music fades out at its own end (on the whole's clock for a part).
-        let playedUs = min(lengthUs, Int64((at.seconds * 1_000_000).rounded()))
+        let laidEndUs = Int64((at.seconds * 1_000_000).rounded())
+        let playedUs = min(lengthUs, laidEndUs)
         guard playedUs > 0 else { return nil }
-        let fadeEndUs = min(music.inWhole?.lengthUs ?? lengthUs, playedUs + shiftUs)
+        let fadeEndUs = fadeEndUs(music: music, lengthUs: lengthUs, laidEndUs: laidEndUs)
         var speech = speech(lines: lines, project: project)
             .map { (fromUs: $0.fromUs + offsetUs, toUs: $0.toUs + offsetUs) }
         // Round 3 (2026-11-08): a card's voiceover ducks the music over its card too (in the file's time already).

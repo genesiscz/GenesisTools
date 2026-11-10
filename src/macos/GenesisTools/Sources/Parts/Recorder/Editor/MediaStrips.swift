@@ -145,6 +145,11 @@ final class Waveform {
                         open[index] = false
                         continue
                     }
+                    // A buffer's samples start at its time in the movie: a microphone track that starts after the
+                    // video, or has a gap, is drawn where the preview plays it (EditRenderer inserts each track at its
+                    // own time range), not packed from 0.
+                    let at = CMSampleBufferGetPresentationTimeStamp(buffer)
+                    if at.isNumeric { positions[index] = max(0, Int((at.seconds * 8000).rounded())) }
                     var length = 0
                     var pointer: UnsafeMutablePointer<Int8>?
                     guard let block = CMSampleBufferGetDataBuffer(buffer),

@@ -6,6 +6,9 @@ import XCTest
 /// not only the movie's first track, and a muted track leaves it.
 @MainActor
 final class RecorderHuntWaveformAllTracksTests: XCTestCase {
+    /// The fixture writer stopped taking a track's samples for 10 s: the test fails instead of waiting for good.
+    private struct WriterStalled: Error { let track: Int }
+
     private var folder: URL!
 
     override func setUp() async throws {
@@ -18,8 +21,10 @@ final class RecorderHuntWaveformAllTracksTests: XCTestCase {
     }
 
     /// A 4 s movie with one 8 kHz mono LPCM track per entry of `tones`: a 440 Hz sine at that amplitude over each
-    /// range (in seconds), silence elsewhere.
-    private func makeMovie(_ name: String, tones: [(amplitude: Double, ranges: [Range<Double>])]) async throws -> URL {
+    /// range (in seconds), silence elsewhere. A track with a `starts` entry has no samples before that second, the way
+    /// a microphone that joined late starts after the video.
+    private func makeMovie(_ name: String, tones: [(amplitude: Double, ranges: [Range<Double>])],
+                           starts: [Double] = []) async throws -> URL {
         let url = folder.appendingPathComponent(name)
         let rate = 8000
         let seconds = 4
@@ -45,6 +50,7 @@ final class RecorderHuntWaveformAllTracksTests: XCTestCase {
         // Each quarter second goes to every track in turn: the writer interleaves them and waits for each.
         for start in stride(from: 0, to: rate * seconds, by: chunk) {
             for (index, input) in inputs.enumerated() {
+                guard Double(start) / Double(rate) >= (index < starts.count ? starts[index] : 0) else { continue }
                 var samples = [Int16](repeating: 0, count: chunk)
                 for offset in 0..<chunk {
                     let time = Double(start + offset) / Double(rate)
@@ -66,7 +72,11 @@ final class RecorderHuntWaveformAllTracksTests: XCTestCase {
                                                                      presentationTimeStamp: CMTime(value: Int64(start), timescale: Int32(rate)),
                                                                      packetDescriptions: nil, sampleBufferOut: &made)
                 let buffer = try XCTUnwrap(made)
-                while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+                let ready = Date().addingTimeInterval(10)
+                while !input.isReadyForMoreMediaData {
+                    guard Date() < ready else { throw WriterStalled(track: index) }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
                 XCTAssertTrue(input.append(buffer), "track \(index) takes its samples: \(String(describing: writer.error))")
             }
         }
@@ -137,6 +147,17 @@ final class RecorderHuntWaveformAllTracksTests: XCTestCase {
         XCTAssertGreaterThan(peak(wave, 1.2, 2.8, [0]), 0.9)
         XCTAssertLessThan(peak(wave, 0.1, 0.8, [0]), 0.05)
         XCTAssertLessThan(peak(wave, 3.2, 3.9, [0]), 0.05)
+    }
+
+    /// PR #752 review: every track's buckets counted from 0, so a microphone that starts 1 s after the video was drawn
+    /// 1 s early. Its tone at 1 to 2 s of the movie is drawn at 1 to 2 s, where the preview plays it.
+    func testALateTrackIsDrawnWhereItPlays() async throws {
+        let url = try await makeMovie("late-track.mov", tones: [(0.9, [3..<4]), (0.9, [1..<2])], starts: [0, 1])
+        let wave = try await loaded(url)
+        XCTAssertEqual(wave.trackCount, 2)
+        XCTAssertGreaterThan(peak(wave, 1.2, 1.8, [1]), 0.5, "the late track's tone shows at 1 to 2 s")
+        XCTAssertLessThan(peak(wave, 0.1, 0.9, [1]), 0.05, "nothing before the late track starts")
+        XCTAssertLessThan(peak(wave, 2.2, 2.8, [1]), 0.05, "its silence after the tone stays flat")
     }
 
     /// The lane's audible set is the renderer's: none while the sound is off, else every track `mutedTracks` does not

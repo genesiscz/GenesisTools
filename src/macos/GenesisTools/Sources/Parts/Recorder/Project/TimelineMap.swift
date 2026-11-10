@@ -34,8 +34,13 @@ enum TimelineMap {
     }
 
     static func placed(_ project: EditProject) -> [Placed] {
+        placed(clips: project.clips)
+    }
+
+    /// `placed(_:)` of a clip list alone (a cached zoom schedule keeps the clips, not the whole project).
+    static func placed(clips: [EditProject.Clip]) -> [Placed] {
         var start: Int64 = 0
-        return project.clips.enumerated().map { index, clip in
+        return clips.enumerated().map { index, clip in
             defer { start += clip.outputDurationUs }
             return Placed(clip: clip, index: index, outStartUs: start)
         }
@@ -213,25 +218,80 @@ enum ZoomCurve {
     /// The picture's view at a source moment that plays: the zooms inside the movie (R5 4: a canvas zoom is
     /// `canvasView`'s, never this one's).
     static func view(atSource sourceUs: Int64, project: EditProject, cursor: CursorTrack?) -> View {
-        curve(atSource: sourceUs, project: project, zooms: project.zooms.filter { $0.target != .canvas }, cursor: cursor)
+        curve(atSource: sourceUs, project: project, layer: .picture, cursor: cursor)
     }
 
     // R5 4 canvas zoom
     /// The whole framed canvas's view: the canvas zooms, eased the same way, focused where they were placed (0...1 of
     /// the canvas; a canvas zoom does not follow the cursor, which moves inside the picture).
     static func canvasView(atSource sourceUs: Int64, project: EditProject) -> View {
-        curve(atSource: sourceUs, project: project, zooms: project.zooms.filter { $0.target == .canvas }, cursor: nil)
+        curve(atSource: sourceUs, project: project, layer: .canvas, cursor: nil)
     }
 
-    private static func curve(atSource sourceUs: Int64, project: EditProject, zooms: [EditProject.Zoom], cursor: CursorTrack?) -> View {
-        let placed = TimelineMap.placed(project)
+    private static func curve(atSource sourceUs: Int64, project: EditProject, layer: Layer, cursor: CursorTrack?) -> View {
+        let schedule = schedules.schedule(layer: layer, clips: project.clips, zooms: project.zooms) {
+            Schedule(layer: layer, clips: project.clips, zooms: project.zooms)
+        }
         // A moment that was cut never shows; the renderer asks only for moments that play.
-        guard !zooms.isEmpty, let outUs = TimelineMap.outputTime(ofSource: sourceUs, placed: placed) else { return .whole }
-        let ordered = zooms.compactMap { zoom in
-            TimelineMap.shown(fromUs: zoom.startUs, toUs: zoom.endUs, placed: placed).map { Played(zoom: zoom, startOut: $0.startOut, endOut: $0.endOut) }
-        }.sorted { ($0.startOut, $0.zoom.startUs) < ($1.startOut, $1.zoom.startUs) }
-        return curve(atSource: sourceUs, outUs: outUs, ordered: ordered, placed: placed, cursor: cursor)
+        guard !schedule.ordered.isEmpty, let outUs = TimelineMap.outputTime(ofSource: sourceUs, placed: schedule.placed) else {
+            return .whole
+        }
+        return curve(atSource: sourceUs, outUs: outUs, ordered: schedule.ordered, placed: schedule.placed, cursor: cursor)
     }
+
+    /// Which zooms a curve reads: the picture's (every zoom inside the movie) or the framed canvas's.
+    enum Layer { case picture, canvas }
+
+    /// One layer's zooms placed on the output timeline and sorted by where they play. It depends on the clips and the
+    /// zooms only, so it is made once per edit, not at every frame: the preview and the export ask for both layers at
+    /// every frame, and again for the previous frame with motion blur.
+    private struct Schedule {
+        let clips: [EditProject.Clip]
+        let zooms: [EditProject.Zoom]
+        let placed: [TimelineMap.Placed]
+        let ordered: [Played]
+
+        init(layer: Layer, clips: [EditProject.Clip], zooms: [EditProject.Zoom]) {
+            self.clips = clips
+            self.zooms = zooms
+            let placed = TimelineMap.placed(clips: clips)
+            self.placed = placed
+            ordered = zooms.filter { ($0.target == .canvas) == (layer == .canvas) }.compactMap { zoom in
+                TimelineMap.shown(fromUs: zoom.startUs, toUs: zoom.endUs, placed: placed)
+                    .map { Played(zoom: zoom, startOut: $0.startOut, endOut: $0.endOut) }
+            }.sorted { ($0.startOut, $0.zoom.startUs) < ($1.startOut, $1.zoom.startUs) }
+        }
+    }
+
+    /// The last schedule of each layer. The render threads and the editor read it at once, so a lock guards it; a hit
+    /// compares the project's clip and zoom arrays, which share their storage while the edit does not change.
+    private final class Schedules: @unchecked Sendable {
+        private let lock = NSLock()
+        private var kept: [Layer: Schedule] = [:]
+        private var made = 0
+
+        /// How many schedules were made, for the tests.
+        var builds: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return made
+        }
+
+        func schedule(layer: Layer, clips: [EditProject.Clip], zooms: [EditProject.Zoom], make: () -> Schedule) -> Schedule {
+            lock.lock()
+            defer { lock.unlock() }
+            if let schedule = kept[layer], schedule.clips == clips, schedule.zooms == zooms { return schedule }
+            let schedule = make()
+            kept[layer] = schedule
+            made += 1
+            return schedule
+        }
+    }
+
+    private static let schedules = Schedules()
+
+    /// How many zoom schedules were made since launch: the tests read it to prove a frame reuses the edit's schedule.
+    static var scheduleBuilds: Int { schedules.builds }
 
     /// Which zoom shows is the source time's, how far it is in is `clockUs`'s, and the links and the glides between
     /// zooms are the output time's. A follow zoom's cursor average stays in source time, so the view stays on what the

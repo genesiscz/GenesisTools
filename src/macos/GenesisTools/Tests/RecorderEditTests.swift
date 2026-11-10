@@ -738,6 +738,32 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(ZoomCurve.easeOut(1), 1, accuracy: 0.0001)
     }
 
+    /// PR #752 review: every frame placed the clips, intersected every zoom with every clip and sorted them, twice per
+    /// frame (picture and canvas) and again for motion blur. The schedule is made once per edit and layer; a changed
+    /// zoom or clip makes a new one, and the view follows the change.
+    func testEveryFrameOfOneEditReusesItsZoomSchedule() {
+        let zoom = EditProject.Zoom(id: "z", startUs: 1_000_000, endUs: 3_000_000, scale: 2, easeInMs: 0, easeOutMs: 0)
+        let movie = project([.init(id: "a", fromUs: 0, toUs: 4_000_000), .init(id: "b", fromUs: 5_000_000, toUs: 9_000_000)],
+                            zooms: [zoom])
+        _ = ZoomCurve.view(atSource: 0, project: movie, cursor: nil)
+        _ = ZoomCurve.canvasView(atSource: 0, project: movie)
+        let before = ZoomCurve.scheduleBuilds
+        for us in stride(from: Int64(0), to: 4_000_000, by: 16_667) {
+            _ = ZoomCurve.view(atSource: us, project: movie, cursor: nil)
+            _ = ZoomCurve.canvasView(atSource: us, project: movie)
+        }
+        XCTAssertEqual(ZoomCurve.scheduleBuilds, before, "240 frames of both layers reuse the edit's schedules")
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, project: movie, cursor: nil).scale, 2, accuracy: 0.0001)
+
+        var changed = movie
+        changed.zooms[0].scale = 3
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, project: changed, cursor: nil).scale, 3, accuracy: 0.0001,
+                       "a changed zoom is placed again")
+        XCTAssertEqual(ZoomCurve.scheduleBuilds, before + 1)
+        changed.clips.removeFirst()
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, project: changed, cursor: nil), .whole, "a cut zoom never shows")
+    }
+
     /// Round 3 (2026-11-08): the release starts and lands softly. It used to leave at full speed (about a fifth of the
     /// scale in its first 60 fps frame), which read as a snap at 300 to 500 ms; the snap before that (held, then out in
     /// the last milliseconds) must not come back either.
