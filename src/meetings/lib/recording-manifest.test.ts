@@ -10,6 +10,7 @@ import type { RecorderSettings } from "@genesiscz/utils/screen-recorder/control"
 import type { OcrRow } from "@genesiscz/utils/screen-recorder/frame-output";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { parseRereadSince } from "../commands/ocr";
 import { appendFrameIndex, ocrBacklog, readFrameIndex } from "./frame-index";
 import { ensureOcrWorkers, OCR_FAILURES_BEFORE_RESTART, OCR_PID_FILE, runOcrWorker } from "./ocr-worker";
 import { meetingMovieZeroMs, writeMeetingRecordingManifest } from "./recording-manifest";
@@ -389,6 +390,15 @@ describe("the frame index and the OCR worker (two phases)", () => {
 
         expect(result.read).toBe(2);
         expect(rows(meeting.dir).map((row) => row.file)).toEqual(["frames/f1-d1.jpg", "frames/f2-d1.jpg"]);
+    });
+
+    it("--reread-empty-since takes a local time of the meeting's day or a full date", () => {
+        const start = "2026-11-11T14:00:00.000Z";
+        const local = parseRereadSince("15:56", { start });
+
+        expect([local?.getDate(), local?.getHours(), local?.getMinutes()]).toEqual([new Date(start).getDate(), 15, 56]);
+        expect(parseRereadSince("2026-11-11T14:56:00.000Z", { start })?.toISOString()).toBe("2026-11-11T14:56:00.000Z");
+        expect(parseRereadSince("soon", { start })).toBeUndefined();
     });
 
     it("ensureOcrWorkers starts a worker only for a recent meeting with frames that have no OCR row", async () => {
