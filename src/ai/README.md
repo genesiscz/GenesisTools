@@ -481,6 +481,7 @@ tools ai sessions report <session-id> [--provider claude|codex|grok] [--top 10] 
   calls with their tags (`cold-cache`, `partial-cold`, `large-cache-write`, `high-output`, `subagent`), the cache
   losses with their cause, and the longest gaps. A fact a harness does not record is listed under `unsupported` with
   its reason. `--json` prints `{ schema: "sessions.report@1", session, report }`.
+- The calls of `report` are the session's own and those of every agent transcript it has (the agents it and its agents started, and the agents of its Workflow tool runs), each call once by its id across the files (`sessionCallsWithAgents`). The cost line names how many agent transcripts were read. The cache losses and the gaps read the main loop only. Read from the lead's transcript alone, a Claude session with agents printed sub-agents $0, because Claude Code writes each agent's calls into the agent's own file. `--json` adds `agentTranscripts` and `unreadable`.
 
 #### `ai sessions subagents` and `ai sessions workflows`: a session's agents and its Workflow tool runs
 

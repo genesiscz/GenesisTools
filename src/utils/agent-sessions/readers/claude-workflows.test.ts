@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claudeHooks } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/harness-hooks";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import { sessionCallsWithAgents } from "@genesiscz/utils/ai/transcripts/session-calls";
 import { listSubagents } from "@genesiscz/utils/ai/transcripts/subagents";
 import {
     listSessionAgents,
@@ -14,6 +15,8 @@ import {
     workflowReaderSupport,
 } from "@genesiscz/utils/ai/transcripts/workflows";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { buildSessionReport } from "../analysis/report";
+import { factsOf } from "../analysis-types";
 import { claudeHistoryReader, codexHistoryReader, grokHistoryReader } from "../compact-readers";
 import { pickWorkflowRun, type WorkflowRun, workflowRunTotals } from "../workflow-types";
 import { subagentFiles } from "./claude-changes-parse";
@@ -363,6 +366,34 @@ describe("the Claude workflow reader", () => {
         expect(pickWorkflowRun(runs, "REVIEW-changes").runId).toBe(RUN_A);
         expect(() => pickWorkflowRun(runs, "nope")).toThrow(/no workflow run matches/);
         expect(() => pickWorkflowRun(runs, "wf_")).toThrow(/matches 2 runs/);
+    });
+});
+
+describe("a session's calls", () => {
+    test("are its own and its agents', each once, and an agent's call is a side-chain call the report prices", async () => {
+        const local = buildSession();
+        writeFileSync(
+            local,
+            jsonl([
+                { type: "user", timestamp: "2026-11-01T10:00:00.000Z", message: { role: "user", content: "go" } },
+                assistantRow("msg_lead", "2026-11-01T10:00:01.000Z", { type: "text", text: "starting the review" }),
+            ])
+        );
+        const session = { ...resolved, filePath: local };
+        const { calls, agentTranscripts, unreadable } = await sessionCallsWithAgents(session);
+        expect(agentTranscripts).toBe(4);
+        expect(unreadable).toEqual([]);
+        expect(factsOf(calls).map((call) => [call.id, call.sidechain])).toEqual([
+            ["msg_lead", false],
+            ["msg_1", true],
+            ["msg_2", true],
+        ]);
+
+        const report = buildSessionReport({ calls, compactions: { supported: true, items: [] }, agent: "claude" });
+        expect(report.overview).toMatchObject({ calls: 3, subagentCalls: 2 });
+        // Read from the lead's transcript alone, the sub-agent cost of this session is zero.
+        expect(report.cost.subagentUsd).toBeCloseTo(report.cost.mainUsd * 2, 10);
+        expect(report.cost.mainUsd).toBeGreaterThan(0);
     });
 });
 
