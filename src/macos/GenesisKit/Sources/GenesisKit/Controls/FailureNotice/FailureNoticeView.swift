@@ -9,7 +9,14 @@ public final class FailureNoticeModel: ObservableObject {
         case summary, raw
     }
 
-    @Published public var report: FailureReport
+    /// The environment arrives after the window opens; the texts built from the report follow it.
+    @Published public var report: FailureReport {
+        didSet {
+            guard report != oldValue else { return }
+            detailsMarkdown = report.detailsMarkdown()
+            rawMarkdown = Self.rawMarkdown(report)
+        }
+    }
     @Published public var detailsOpen: Bool
     @Published public var tab: Tab = .summary
     @Published public var userSized = false
@@ -38,12 +45,17 @@ public final class FailureNoticeModel: ObservableObject {
         self.retry = retry
         self.dismiss = dismiss
         detailsMarkdown = report.detailsMarkdown()
-        rawMarkdown = "```text\n" + report.log.trimmingCharacters(in: .newlines) + "\n```\n"
+        rawMarkdown = Self.rawMarkdown(report)
         let formatter = DateFormatter()
         formatter.dateStyle = .none
         formatter.timeStyle = .medium
         timeText = formatter.string(from: report.time)
         stepCount = FailureLog.events(in: report.log).count
+    }
+
+    /// "Raw log": everything the report knows as plain text (`FailureReport.rawText`), in one code block.
+    static func rawMarkdown(_ report: FailureReport) -> String {
+        "```text\n" + report.rawText().trimmingCharacters(in: .newlines) + "\n```\n"
     }
 
     public func copyContext() {
@@ -52,7 +64,7 @@ public final class FailureNoticeModel: ObservableObject {
     }
 
     public func copyLog() {
-        Clipboard.copy(report.log, what: "the log")
+        Clipboard.copy(report.rawText(), what: "the log")
         flash(.log)
     }
 

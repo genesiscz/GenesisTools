@@ -19,13 +19,10 @@ public struct IssueDraft: Equatable, Sendable {
         self.labels = labels
     }
 
-    /// "Recording failed: The camera did not start", at most 120 characters, cut at a word with "…".
+    /// "[meetings] A Moment does not play (too-long)" (`FailureReport.issueTitle`), at most 120 characters, cut at a
+    /// word with "…".
     public static func defaultTitle(for report: FailureReport, limit: Int = 120) -> String {
-        var headline = report.headline.trimmingCharacters(in: .whitespacesAndNewlines)
-        if headline.hasSuffix(".") {
-            headline.removeLast()
-        }
-        let full = "\(report.title): \(headline)"
+        let full = PathDisplay.shortenHome(in: report.issueTitle)
         guard full.count > limit else { return full }
         var cut = String(full.prefix(limit))
         if let space = cut.lastIndex(of: " ") {

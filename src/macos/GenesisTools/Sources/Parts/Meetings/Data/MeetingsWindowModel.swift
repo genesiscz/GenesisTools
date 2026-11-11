@@ -16,6 +16,9 @@ extension StackedNotice {
         var report = FailureReport.unexpected(more, outcome: "A Meetings action failed", action: "Use the Meetings window",
                                               title: "Meetings action failed", area: "meetings")
         report.headline = FailureLog.sentence(text) ?? text
+        report.command = failure?.command
+        report.stack = failure?.stack
+        report.issue = failure?.issue
         let actions: [StackedNotice.Action] = (retry.map { [.retry($0)] } ?? []) + [.details(report, retry: retry)]
         return StackedNotice(id: id, text: text, more: more, tone: .error, actions: actions)
     }
@@ -28,6 +31,9 @@ extension MeetingsCLI.Failure {
         var report = FailureReport.unexpected(detail, outcome: outcome, action: action, title: outcome, area: "meetings",
                                               time: occurredAt, app: .launch)
         report.headline = FailureLog.sentence(sentence) ?? sentence
+        report.command = command
+        report.stack = stack
+        report.issue = issue
         return report
     }
 

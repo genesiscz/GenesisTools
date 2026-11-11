@@ -661,3 +661,78 @@ private final class FailureCaptureProbe: @unchecked Sendable {
     var count: Int { lock.withLock { value } }
     func next() -> Int { lock.withLock { value += 1; return value } }
 }
+
+/// What an issue and an agent get beyond the log: the issue title the thrower named, the Impact checkboxes, the stack,
+/// and every home path as `~`.
+final class FailureIssueTests: XCTestCase {
+    private let stack = """
+    RpcError: I14 lasts 00:50, longer than the 30 s a Moment plays.
+        at unplayable (/Users/alice/GenesisTools/src/meetings/lib/service/moment-handlers.ts:134:12)
+        at clipMomentCall (/Users/alice/GenesisTools/src/meetings/lib/service/moment-handlers.ts:125:19)
+    """
+
+    private func moment(issue: FailureIssue?) -> FailureReport {
+        FailureReport(title: "A Meetings read failed", headline: "I14 lasts 00:50, longer than the 30 s a Moment plays.",
+                      command: "meetings service moment.clip {\"meeting\":\"m1\"}", log: "The Meetings service refused it",
+                      area: "meetings", stack: stack, issue: issue)
+    }
+
+    func testTheIssueTitleIsTheToolInBracketsAndTheThrowersTitle() {
+        XCTAssertEqual(IssueDraft.defaultTitle(for: moment(issue: FailureIssue(tool: "meetings", title: "A Moment does not play (too-long)"))),
+                       "[meetings] A Moment does not play (too-long)")
+        XCTAssertEqual(IssueDraft.defaultTitle(for: moment(issue: nil)),
+                       "[meetings] I14 lasts 00:50, longer than the 30 s a Moment plays", "no title: the headline, the area as the tool")
+    }
+
+    func testTheIssueOfAnErrorReplyNeedsATool() {
+        XCTAssertEqual(FailureIssue(json: ["tool": "meetings", "title": " A title "]), FailureIssue(tool: "meetings", title: "A title"))
+        XCTAssertEqual(FailureIssue(json: ["tool": "meetings", "title": ""]), FailureIssue(tool: "meetings"))
+        XCTAssertNil(FailureIssue(json: ["title": "x"]))
+        XCTAssertNil(FailureIssue(json: nil))
+    }
+
+    func testImpactIsAChecklistToTick() throws {
+        let environment = try XCTUnwrap(FailureEnvironment.parse(json: FailureNoticeTests.environmentJSON))
+        var report = moment(issue: nil)
+        report.environment = environment
+        XCTAssertTrue(report.issueBody().contains("""
+        ### Impact
+
+        - [ ] Blocks my work completely
+        - [ ] Frequent failure or major degradation
+        - [ ] Occasional failure
+        - [ ] Cosmetic
+        """))
+    }
+
+    func testTheStackIsFoldedInTheSummaryAndWholeInTheRawLogTheIssueAndTheContext() {
+        let report = moment(issue: nil)
+        XCTAssertTrue(report.detailsMarkdown().hasPrefix("### Stack\n\nStack: 2 frames, from `unplayable` at `src/meetings/lib/service/moment-handlers.ts:134:12`"))
+        let raw = report.rawText()
+        XCTAssertTrue(raw.contains("command: meetings service moment.clip {\"meeting\":\"m1\"}"))
+        XCTAssertTrue(raw.contains("stack:\nRpcError: I14 lasts"))
+        XCTAssertTrue(raw.contains("at clipMomentCall ("))
+        XCTAssertTrue(report.issueBody().contains("at clipMomentCall ("))
+        XCTAssertTrue(report.agentContext().contains("- **Command:** `meetings service moment.clip {\"meeting\":\"m1\"}`"))
+    }
+
+    func testEveryHomePathInTheReportTextIsShortened() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let report = FailureReport(headline: "It failed.", dayLog: home + "/.genesis-tools/logs/2026-11-11.log", log: "read \(home)/a.txt")
+        for text in [report.rawText(), report.agentContext(), report.issueBody()] {
+            XCTAssertFalse(text.contains(home + "/"), text)
+            XCTAssertTrue(text.contains("day log: ~/.genesis-tools/logs/2026-11-11.log"), text)
+        }
+    }
+
+    func testShortenHomeCoversMacLinuxAndWindows() {
+        XCTAssertEqual(PathDisplay.shortenHome(in: "at f (/Users/alice/src/a.ts:3:9) and /Users/alice", home: "/Users/alice"),
+                       "at f (~/src/a.ts:3:9) and ~")
+        XCTAssertEqual(PathDisplay.shortenHome(in: "open /home/alice/notes.md", home: "/home/alice"), "open ~/notes.md")
+        XCTAssertEqual(PathDisplay.shortenHome(in: "read /root/.bashrc", home: "/root"), "read ~/.bashrc")
+        XCTAssertEqual(PathDisplay.shortenHome(in: #"at C:\Users\alice\src\a.ts"#, home: #"C:\Users\alice"#), #"at ~\src\a.ts"#)
+        XCTAssertEqual(PathDisplay.shortenHome(in: "at d:/users/Alice/src/a.ts", home: #"C:\Users\alice"#), "at ~/src/a.ts")
+        XCTAssertEqual(PathDisplay.shortenHome(in: "/Users/alice2/a /data/Users/alice/b /Users/bob/c", home: "/Users/alice"),
+                       "/Users/alice2/a /data/Users/alice/b /Users/bob/c")
+    }
+}

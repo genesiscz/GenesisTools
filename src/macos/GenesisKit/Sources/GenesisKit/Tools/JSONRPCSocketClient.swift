@@ -123,11 +123,17 @@ public final class JSONRPCSocketClient: @unchecked Sendable {
         public let code: Int
         public let message: String
         public let data: Data?
+        /// The stack of the error that failed the call, when the other side sends one (GenesisTools' TypeScript does).
+        public let stack: String?
+        /// The issue the failure would be filed as: the answering tool, and the title the place that threw gave.
+        public let issue: FailureIssue?
 
-        public init(code: Int, message: String, data: Data? = nil) {
+        public init(code: Int, message: String, data: Data? = nil, stack: String? = nil, issue: FailureIssue? = nil) {
             self.code = code
             self.message = message
             self.data = data
+            self.stack = stack
+            self.issue = issue
         }
 
         public var errorDescription: String? { message }
@@ -390,7 +396,8 @@ public final class JSONRPCSocketClient: @unchecked Sendable {
                     value is NSNull ? nil : try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
                 }
                 let failure = RemoteError(code: (error["code"] as? NSNumber)?.intValue ?? 0,
-                                          message: error["message"] as? String ?? "the recorder refused", data: data)
+                                          message: error["message"] as? String ?? "the recorder refused", data: data,
+                                          stack: error["stack"] as? String, issue: FailureIssue(json: error["issue"]))
                 deliver(waiting, .failure(failure))
             } else {
                 deliver(waiting, .success(object["result"].flatMap { $0 is NSNull ? nil : $0 }))

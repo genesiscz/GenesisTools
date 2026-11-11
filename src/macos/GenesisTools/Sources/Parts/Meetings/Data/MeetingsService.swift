@@ -458,7 +458,7 @@ final class MeetingsService {
             return result
         } catch {
             span.end("failed")
-            throw failure(of: M.name, error, on: client)
+            throw failure(of: M.name, error, on: client, params: { Self.commandLine(M.name, params) })
         }
     }
 
@@ -500,7 +500,17 @@ final class MeetingsService {
 
     /// What a failed call throws: `Unavailable` (the command answers), the command's `MeetingsCLI.Failure` for a
     /// refusal, or `CancellationError`.
-    private func failure(of method: String, _ error: Error, on client: JSONRPCSocketClient) -> Error {
+    /// "meetings service moment.clip {"meeting":"…","target":…}": the call as a failure report names it, its params cut
+    /// at 600 characters.
+    static func commandLine<P: Encodable>(_ method: String, _ params: P) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let json = (try? encoder.encode(params)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return "meetings service \(method) " + (json.count > 600 ? String(json.prefix(600)) + "…" : json)
+    }
+
+    private func failure(of method: String, _ error: Error, on client: JSONRPCSocketClient,
+                         params: () -> String) -> Error {
         if Task.isCancelled || error is CancellationError { return CancellationError() }
         switch error {
         case let remote as JSONRPCSocketClient.RemoteError:
@@ -517,7 +527,7 @@ final class MeetingsService {
             }
             return MeetingsCLI.Failure(sentence: MeetingsCLI.sentence(fromStderr: remote.message) ?? "The Meetings service refused it.",
                                        detail: "The Meetings service refused \(method) [\(code)]:\n\(remote.message)", code: code,
-                                       data: remote.data)
+                                       data: remote.data, command: params(), stack: remote.stack, issue: remote.issue)
         case let failure as JSONRPCSocketClient.Failure:
             // A service that does not answer in time may hang: the next call opens a new connection.
             if case .timeout = failure { drop(client) }
