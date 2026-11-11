@@ -12,11 +12,21 @@ struct MomentButton: View {
     var label: String?
     /// Where the click comes from: it decides push or replace on the context stack.
     var source: MomentSource = .row
+    /// What the button shows, handed in by a list that computed it once per row (`MomentPlay`); nil reads the player
+    /// here, which makes the button re-run on every play, pause and stop of any Moment.
+    var shown: Shown?
+
+    /// The player's state as one button shows it.
+    struct Shown: Equatable {
+        var reason: MomentCannot?
+        var top = false
+        var playing = false
+    }
 
     var body: some View {
-        let reason = player.reason(target, in: meeting)
-        let top = player.isTop(target, in: meeting)
-        let playing = player.isPlaying(target, in: meeting)
+        let shown = self.shown ?? Shown(reason: player.reason(target, in: meeting), top: player.isTop(target, in: meeting),
+                                        playing: player.isPlaying(target, in: meeting))
+        let reason = shown.reason, top = shown.top, playing = shown.playing
         // Pressable at rest: inside a resting row (`.liveRow`) a plain LiveButton draws only its label, so a pointer
         // already over the row, VoiceOver and `tools control` could not press it.
         LiveButton(tooltip: reason?.message ?? tooltip(top: top, playing: playing), enabled: reason == nil, pressable: true, action: press) {
@@ -62,5 +72,43 @@ struct MomentButton: View {
     private func accessibilityLabel(playing: Bool) -> String {
         let what = label.map { "the Moment at \($0)" } ?? "this Moment"
         return playing ? "Pause \(what)" : "Play \(what)"
+    }
+}
+
+/// The player's state as one review row's play controls and header see it (cause 6 of the 2026-11-11 lag report). The
+/// Items list computes it once per row and hands it in as a value, so a play, a pause or a stop re-runs only the rows
+/// whose Moments it concerns, not every MomentButton on screen.
+struct MomentPlay: Equatable {
+    /// The top layer, while it plays one of the row's targets in this meeting.
+    var top: MomentLayer?
+    /// The player's phase while `top` is set; idle otherwise.
+    var phase: MomentPlayer.Phase = .idle
+    /// Why no Moment of the meeting can play (no audio on this Mac, still recording, no ffmpeg).
+    var meetingCannot: MomentCannot?
+    /// Why one of the row's targets cannot play (too long).
+    var targetCannot: [MomentTarget: MomentCannot] = [:]
+
+    static let none = MomentPlay()
+
+    /// `player`'s state for `targets` of `meeting`.
+    @MainActor
+    static func of(_ player: MomentPlayer, meeting: String, targets: [MomentTarget]) -> MomentPlay {
+        var play = MomentPlay(meetingCannot: player.cannot[meeting])
+        if let top = player.top, top.meeting == meeting, targets.contains(top.target) {
+            play.top = top
+            play.phase = player.phase
+        }
+        if play.meetingCannot == nil {
+            for target in targets {
+                if let reason = player.reason(target, in: meeting) { play.targetCannot[target] = reason }
+            }
+        }
+        return play
+    }
+
+    /// What the button of `target` shows.
+    func button(_ target: MomentTarget) -> MomentButton.Shown {
+        let top = self.top?.target == target
+        return MomentButton.Shown(reason: meetingCannot ?? targetCannot[target], top: top, playing: top && phase == .playing)
     }
 }

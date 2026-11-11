@@ -38,29 +38,43 @@ struct FilterField: View {
 struct DisplayPicker: View {
     let displays: [(id: Int, name: String)]
     @Binding var selection: Int
+    @Environment(\.kitLook) private var look
+    /// The width the picker is offered, in whole points; nil until its first layout. The segments or the menu are
+    /// picked from it: a `ViewThatFits` built the segments and the menu on every measurement.
+    @State private var room: CGFloat?
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            GenSegmentedTabs("Display", items: [GenSegmentedTabs.Item(-1, "All displays")] + displays.map {
-                GenSegmentedTabs.Item($0.id, $0.name)
-            }, selection: $selection, minSegmentWidth: 70, identifier: "meetings.screen.display")
-            MenuButton(items: {
-                [MenuButtonItem.action("All displays", checked: selection == -1) { selection = -1 }]
-                    + displays.map { display in .action(display.name, checked: selection == display.id) { selection = display.id } }
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "display").accessibilityHidden(true)
-                    Text(verbatim: selected).lineLimit(1)
-                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).accessibilityHidden(true)
-                }
-                .font(.system(size: 12))
+        Group {
+            if room.map({ GenSegmentedTabs.naturalWidth(items: items, selection: selection, minSegmentWidth: 70, look: look) <= $0 }) ?? true {
+                GenSegmentedTabs("Display", items: items, selection: $selection, minSegmentWidth: 70, identifier: "meetings.screen.display")
+            } else {
+                menu
             }
-            .instantTooltip("Which display the timeline shows")
-            .accessibilityLabel("Display: \(selected)")
-            .accessibilityIdentifier("meetings.screen.display")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded(.down) } action: { room = $0 }
         .frameProbe("meetings.screen.display")
+    }
+
+    private var items: [GenSegmentedTabs<Int>.Item] {
+        [GenSegmentedTabs.Item(-1, "All displays")] + displays.map { GenSegmentedTabs.Item($0.id, $0.name) }
+    }
+
+    private var menu: some View {
+        MenuButton(items: {
+            [MenuButtonItem.action("All displays", checked: selection == -1) { selection = -1 }]
+                + displays.map { display in .action(display.name, checked: selection == display.id) { selection = display.id } }
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: "display").accessibilityHidden(true)
+                Text(verbatim: selected).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).accessibilityHidden(true)
+            }
+            .font(.system(size: 12))
+        }
+        .instantTooltip("Which display the timeline shows")
+        .accessibilityLabel("Display: \(selected)")
+        .accessibilityIdentifier("meetings.screen.display")
     }
 
     private var selected: String { displays.first { $0.id == selection }?.name ?? "All displays" }

@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import GenesisToolsMeetings
 
@@ -546,6 +548,35 @@ final class MeetingsReviewRowTests: XCTestCase {
     }
 
     /// The playing row's bar is left out below the width it reads at: squeezed, its flag drew over its text.
+    func testAFoldedRowTakesTheWidestShapeItsRoomHoldsAsItsOwnLayoutMeasuresIt() throws {
+        guard let decided = try rows().rows.first(where: { $0.id == "i3" }) else { return XCTFail("the fixture's decided row") }
+        let shapes = ReviewRowView.foldedShapes(isQuestion: ReviewRowView.foldedAnswer(decided) != nil)
+        let needs = shapes.map { ReviewRowView.foldedNeed(decided, shape: $0, busy: false) }
+        XCTAssertEqual(needs, needs.sorted(by: >), "each shape needs less room than the one before it")
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: nil), 0, "the widest before the first layout")
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: needs[0]), 0, "a shape that fits exactly")
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: needs[0] - 1), 1)
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: needs[1] - 1), 2)
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: 0), 2, "the narrowest when none fits, as ViewThatFits did")
+        XCTAssertGreaterThan(ReviewRowView.foldedNeed(decided, shape: shapes[0], busy: true), needs[0], "a busy row's spinner takes room")
+        // The arithmetic follows the line term by term: the row's own ideal width in each shape is what it computes.
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        for (fit, need) in needs.enumerated() {
+            let ideal = NSHostingView(rootView: ReviewRowView(row: decided, detail: detail, player: nil, foldedFit: fit)).fittingSize.width
+            XCTAssertEqual(ideal, need, accuracy: 2, "shape \(fit)")
+        }
+    }
+
+    func testARowSeesThePlayerOnlyThroughItsOwnMoments() {
+        let layer = MomentLayer(meeting: "m", target: .item("i2"), source: .row, kind: .moment, label: "i2")
+        var play = MomentPlay(top: layer, phase: .playing)
+        XCTAssertEqual(play.button(.item("i2")), MomentButton.Shown(reason: nil, top: true, playing: true))
+        XCTAssertEqual(play.button(.time(12)), MomentButton.Shown(), "another Moment of the row is neither top nor playing")
+        play.phase = .paused
+        XCTAssertEqual(play.button(.item("i2")), MomentButton.Shown(reason: nil, top: true, playing: false))
+        XCTAssertNotEqual(play, .none, "a row whose Moment is on top differs from one without")
+    }
+
     func testThePlayingBarNeedsRoomForItsLength() {
         XCTAssertGreaterThan(PlayingRowBar.smallestWidth(length: true), PlayingRowBar.smallestWidth(length: false) + 60,
                              "\"12 min clip\" needs about 60 pt")

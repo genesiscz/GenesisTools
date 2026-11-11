@@ -6,16 +6,28 @@ import SwiftUI
 /// the engine's confidence (R49), and opens its editor on Return or a double click (R11, R45). Decided, it folds in
 /// place to one line that names who decided it and why (R16, R35), with "Revert and edit". While its Moment plays, its
 /// header carries its own timeline (R25).
-struct ReviewRowView: View {
+///
+/// The row is a value (`Equatable`, `.equatable()` in the list): the list hands in what it shows (selected, editing,
+/// busy, the player's state for its Moments, its draft), and a click, a hover or a play re-runs only the rows it
+/// changes. `detail` and `player` are for the actions and are left out of `==`.
+struct ReviewRowView: View, Equatable {
     let row: ReviewRow
     let detail: MeetingDetailModel
     let player: MomentPlayer?
+    /// The player's state for this row's Moments (`MomentPlay.of`, computed by the list).
+    var play: MomentPlay = .none
     var selected = false
     var editing = false
     var busy = false
     /// The entry that decided this row while its editor held a draft (G47, G48).
     var meanwhile: JournalEntry?
     var choiceKeys = true
+    /// The row's draft in its editor, for "Use mine instead".
+    var draft: String?
+    /// The row is in `detail.changingRows`: its answer is being changed.
+    var changingAnswer = false
+    /// Which of `foldedShapes` a folded row draws (`foldedFit`, from the list's width).
+    var foldedFit = 0
     /// How suggested, confirmed and rejected differ (`meetings.rows.stateLook`), read once here for the row's chips.
     @AppStorage(MeetingsPreferences.Rows.stateLook.key) private var stateLook = MeetingsPreferences.Rows.stateLook.defaultValue
     /// This window just decided the row and it still keeps its place (G33): it stays readable, with how it was decided
@@ -27,7 +39,29 @@ struct ReviewRowView: View {
     private var asks: Bool { row.isQuestion && look != .classic }
 
     /// An answered question whose answer is being changed: its choices show, its earlier answer confirmed among them.
-    private var changing: Bool { !row.isOpen && detail.changingRows.contains(row.id) }
+    private var changing: Bool { !row.isOpen && changingAnswer }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.row == rhs.row && lhs.selected == rhs.selected && lhs.editing == rhs.editing && lhs.busy == rhs.busy
+            && lhs.meanwhile == rhs.meanwhile && lhs.choiceKeys == rhs.choiceKeys && lhs.held == rhs.held
+            && lhs.play == rhs.play && lhs.draft == rhs.draft && lhs.changingAnswer == rhs.changingAnswer
+            && lhs.foldedFit == rhs.foldedFit
+    }
+
+    /// Every Moment the row offers to play: its own, the times in its text, and the transcript lines it comes from.
+    static func targets(_ row: ReviewRow) -> [MomentTarget] {
+        var targets = [row.target]
+        for part in row.parts {
+            switch part {
+            case .asks(let pieces), .reason(let pieces): targets += pieces.compactMap(\.target)
+            default: break
+            }
+        }
+        for source in shownSources(row) {
+            if case .line(let at, _, _) = source { targets.append(.time(at.sec)) }
+        }
+        return targets
+    }
 
     var body: some View {
         Group {
@@ -63,7 +97,7 @@ struct ReviewRowView: View {
                     Label("Decided meanwhile by \(MeetingsWords.actor(meanwhile.actor)): \(MeetingsWords.entryAction(meanwhile, label: detail.rowName))",
                           systemImage: "person.2.badge.gearshape")
                         .font(.system(size: 12)).foregroundStyle(KitPalette.modified)
-                    if let action = MeetingDetailModel.draftDecision(detail.drafts[row.id], on: row) {
+                    if let action = MeetingDetailModel.draftDecision(draft, on: row) {
                         GhostButton("Use mine instead", symbol: "arrow.uturn.forward",
                                     tooltip: "Take their decision back for this row and save what you typed") { detail.useMine(action, on: row) }
                     }
@@ -104,24 +138,17 @@ struct ReviewRowView: View {
                 .foregroundStyle(asks ? AnyShapeStyle(KitHue.ask.ink) : AnyShapeStyle(.secondary))
                 .lineLimit(1).fixedSize()
             if let player {
-                MomentButton(player: player, meeting: detail.id, target: row.target, label: row.whenText, source: .row)
+                MomentButton(player: player, meeting: detail.id, target: row.target, label: row.whenText, source: .row,
+                             shown: play.button(row.target))
             }
             if let confidence = MeetingsWords.confidence(row.confidence), row.isOpen {
                 Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
                     .lineLimit(1).fixedSize()
             }
-            if let player, let span = playingSpan(player) {
+            if let player, let span = playingSpan() {
                 // R25, G-ROW-1: the playing row's own timeline takes the header's free room, so the row keeps its height.
-                // In a narrow header it gives up its length text first, then itself: squeezed under its smallest width,
-                // its flag drew over the text and the row's time wrapped to two lines.
-                ViewThatFits(in: .horizontal) {
-                    playingBar(player, span: span, length: true)
-                        .frame(minWidth: PlayingRowBar.smallestWidth(length: true), idealWidth: PlayingRowBar.smallestWidth(length: true), maxWidth: .infinity)
-                    playingBar(player, span: span, length: false)
-                        .frame(minWidth: PlayingRowBar.smallestWidth(length: false), idealWidth: PlayingRowBar.smallestWidth(length: false), maxWidth: .infinity)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 6)
+                PlayingBarSlot(span: span, player: player, meeting: detail.id)
+                    .padding(.horizontal, 6)
             } else {
                 Spacer(minLength: 6)
             }
@@ -133,15 +160,10 @@ struct ReviewRowView: View {
         }
     }
 
-    private func playingBar(_ player: MomentPlayer, span: ZoomSpan, length: Bool) -> PlayingRowBar {
-        PlayingRowBar(span: span, position: { player.position }, showsLength: length,
-                      onFlag: { player.playTime($0, in: detail.id, from: .outside) },
-                      onSeek: { player.playTime($0, in: detail.id, from: .outside) })
-    }
 
     /// The span of this row's Moment while it is the one on top of the player (R25).
-    private func playingSpan(_ player: MomentPlayer) -> ZoomSpan? {
-        guard let top = player.top, top.meeting == detail.id, top.target == row.target else { return nil }
+    private func playingSpan() -> ZoomSpan? {
+        guard let top = play.top, top.target == row.target else { return nil }
         return TimelineDock.span(of: top)
     }
 
@@ -209,7 +231,8 @@ struct ReviewRowView: View {
                             if let target = token.piece.target, let player {
                                 // Room only toward a word. Toward "(" or ";" the pill gives up most of its own inner room:
                                 // its ground is faint, so that room read as a space ("( 1:49:48 ; the answer").
-                                MomentButton(player: player, meeting: detail.id, target: target, label: token.piece.text, source: .questionTime)
+                                MomentButton(player: player, meeting: detail.id, target: target, label: token.piece.text, source: .questionTime,
+                                             shown: play.button(target))
                                     .padding(.leading, index == 0 ? 2 : -Self.pillGive)
                                     .padding(.trailing, index == unit.count - 1 ? 2 : -Self.pillGive)
                             } else if let url = Self.link(token.piece) {
@@ -304,7 +327,8 @@ struct ReviewRowView: View {
                 case .line(let at, _, let text):
                     HStack(spacing: 4) {
                         if let player {
-                            MomentButton(player: player, meeting: detail.id, target: .time(at.sec), label: at.text, source: .transcript)
+                            MomentButton(player: player, meeting: detail.id, target: .time(at.sec), label: at.text, source: .transcript,
+                                         shown: play.button(.time(at.sec)))
                         }
                         if let text = Self.sourceQuote(text, in: row) {
                             Text(verbatim: "“\(text)”").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
@@ -337,12 +361,10 @@ struct ReviewRowView: View {
         // Each part measures as a nominal width (`FoldedShape.nominal`), so the shape follows the column's width
         // and not a row's own words: measured by its words, a row with a short answer kept its status and the row
         // under it did not.
+        // The list picks the shape from its width (`foldedFit`): a `ViewThatFits` of the three built every shape
+        // of every folded row on each measurement of the list (2026-11-11 lag report).
         let shapes = Self.foldedShapes(isQuestion: Self.foldedAnswer(row) != nil)
-        return ViewThatFits(in: .horizontal) {
-            foldedLine(shapes[0])
-            foldedLine(shapes[1])
-            foldedLine(shapes[2])
-        }
+        return foldedLine(shapes[min(max(foldedFit, 0), shapes.count - 1)])
     }
 
     /// One shape of the folded line: the room its text needs to be worth showing (nil: no text), and whether it says
@@ -367,6 +389,34 @@ struct ReviewRowView: View {
         [FoldedShape(textWidth: 150, words: true, revertWords: true),
          FoldedShape(textWidth: 90, words: false, revertWords: true),
          FoldedShape(textWidth: isQuestion ? nil : 60, words: false, revertWords: false)]
+    }
+
+    /// Which of `foldedShapes` fits `room` (the row's width): the first whose parts fit at their ideal widths, in the
+    /// order the `ViewThatFits` it replaces tried them, else the last. The widest before the room is known.
+    static func foldedFit(_ row: ReviewRow, busy: Bool, room: CGFloat?) -> Int {
+        let shapes = foldedShapes(isQuestion: foldedAnswer(row) != nil)
+        guard let room else { return 0 }
+        return shapes.firstIndex { foldedNeed(row, shape: $0, busy: busy) <= room } ?? shapes.count - 1
+    }
+
+    /// The width a folded line of `shape` asks for: each part at its ideal width (`foldedLine` term by term), the
+    /// line's gap between them.
+    @MainActor
+    static func foldedNeed(_ row: ReviewRow, shape: FoldedShape, busy: Bool) -> CGFloat {
+        let answer = foldedAnswer(row) != nil
+        var parts: [CGFloat] = [
+            KitTextWidth.symbol(row.status == "confirmed" ? "checkmark.circle.fill" : "xmark.circle", size: 13, weight: .regular),
+            FoldedShape.Nominal.label,
+        ]
+        if !shape.words, let glyph = actorGlyph(row) { parts.append(KitTextWidth.symbol(glyph, size: 9.5, weight: .semibold) - 4) }
+        if let width = shape.textWidth { parts.append(width + (answer ? 0 : FoldedShape.Nominal.answer + FoldedShape.Nominal.gap)) }
+        if answer { parts.append(FoldedShape.Nominal.answer) }
+        if shape.words { parts.append(FoldedShape.Nominal.words) }
+        parts.append(6) // the spacer's minimum
+        if busy { parts.append(16) } // a small ProgressView
+        parts.append(shape.revertWords ? KitTextWidth.text("Revert and edit", size: 12, weight: .regular) : 22) // or an IconButton
+        parts.append(22) // the history IconButton
+        return parts.reduce(0, +) + FoldedShape.Nominal.gap * CGFloat(parts.count - 1)
     }
 
     private func foldedLine(_ shape: FoldedShape) -> some View {
@@ -502,18 +552,7 @@ struct ReviewRowView: View {
     private func settlesLine(_ text: String, items: [String]) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "checkmark.seal").font(.system(size: 10)).foregroundStyle(.tertiary).frame(width: 14).accessibilityHidden(true)
-            WrapLayout(spacing: 6, lineSpacing: 2) {
-                Text(verbatim: items.isEmpty ? text : "\(text):").font(.system(size: 12.5)).foregroundStyle(.secondary)
-                ForEach(items, id: \.self) { id in
-                    let settled = detail.rows.value?.rows.first { $0.id == id }
-                    // lint-rules-ignore: short list (the one to three items a question settles; LiveButton reads the review row's liveness)
-                    LiveButton(tooltip: settled.map { "\($0.what). Click to select it in the list." } ?? "Item \(id)", pressable: true,
-                               action: { detail.selectedRow = id }) {
-                        Text(verbatim: settled.map(Self.reference) ?? id).font(.system(size: 12)).foregroundStyle(Color.accentColor)
-                    }
-                    .accessibilityLabel("Select \(settled.map(Self.reference) ?? id)")
-                }
-            }
+            SettlesReferences(text: text, items: items, detail: detail)
         }
     }
 
@@ -732,5 +771,56 @@ private struct RowEditor: View {
         case "person": return "Who it is"
         default: return "Type what you heard"
         }
+    }
+}
+
+/// A settles line's text and its items as live references. Its own view, because it reads the meeting's rows: read in
+/// the row's body, every new rows list (one per decision) re-ran every row that settles something.
+private struct SettlesReferences: View {
+    let text: String
+    let items: [String]
+    let detail: MeetingDetailModel
+
+    var body: some View {
+        WrapLayout(spacing: 6, lineSpacing: 2) {
+            Text(verbatim: items.isEmpty ? text : "\(text):").font(.system(size: 12.5)).foregroundStyle(.secondary)
+            ForEach(items, id: \.self) { id in
+                let settled = detail.rows.value?.rows.first { $0.id == id }
+                // lint-rules-ignore: short list (the one to three items a question settles; LiveButton reads the review row's liveness)
+                LiveButton(tooltip: settled.map { "\($0.what). Click to select it in the list." } ?? "Item \(id)", pressable: true,
+                           action: { detail.selectedRow = id }) {
+                    Text(verbatim: settled.map(ReviewRowView.reference) ?? id).font(.system(size: 12)).foregroundStyle(Color.accentColor)
+                }
+                .accessibilityLabel("Select \(settled.map(ReviewRowView.reference) ?? id)")
+            }
+        }
+    }
+}
+
+/// The playing row's own timeline in the header's free room (R25, G-ROW-1). In a narrow header it gives up its length
+/// text first, then itself: squeezed under its smallest width, its flag drew over the text and the row's time wrapped
+/// to two lines. The shape comes from the slot's width, written at whole points: a `ViewThatFits` built both bars on
+/// every measurement of the row.
+private struct PlayingBarSlot: View {
+    let span: ZoomSpan
+    let player: MomentPlayer
+    let meeting: String
+    /// The slot's width in whole points; nil until its first layout.
+    @State private var room: CGFloat?
+
+    var body: some View {
+        let withLength = room.map { $0 >= PlayingRowBar.smallestWidth(length: true) } ?? true
+        let fits = room.map { $0 >= PlayingRowBar.smallestWidth(length: false) } ?? true
+        ZStack(alignment: .leading) {
+            if fits {
+                let smallest = PlayingRowBar.smallestWidth(length: withLength)
+                PlayingRowBar(span: span, position: { player.position }, showsLength: withLength,
+                              onFlag: { player.playTime($0, in: meeting, from: .outside) },
+                              onSeek: { player.playTime($0, in: meeting, from: .outside) })
+                    .frame(minWidth: smallest, idealWidth: smallest, maxWidth: .infinity)
+            }
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded(.down) } action: { room = $0 }
     }
 }

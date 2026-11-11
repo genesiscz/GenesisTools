@@ -187,6 +187,58 @@ final class MeetingsReviewFixTests: XCTestCase {
         return try JSONDecoder().decode(ReviewRows.self, from: Data(json.utf8))
     }
 
+    /// `count` term rows, every `decidedEvery`-th one confirmed (it folds), the rest open; `flip` confirms the first.
+    private func manyRows(count: Int, decidedEvery: Int, flip: Bool = false) throws -> ReviewRows {
+        let rows = (1...count).map { index in
+            let status = index % decidedEvery == 0 || (flip && index == 1) ? "confirmed" : "suggested"
+            return #"""
+            {"id":"r\#(index)","label":"r\#(index)","kind":"term","status":"\#(status)","confidence":0.8,"what":"OMP\#(index) → EMP\#(index)",
+             "edit":"spelling","sources":[],
+             "parts":[{"kind":"when","from":{"sec":\#(index * 60),"text":"\#(index):00"},"target":{"kind":"item","id":"r\#(index)"}},
+                      {"kind":"asks","pieces":[{"text":"Is this the word the team uses for the service in this part of the meeting?"}]}],
+             "choices":[{"value":"EMP\#(index)","label":"EMP\#(index)","role":"suggested","action":{"kind":"confirm"},"confidence":0.8},
+                        {"value":"OMP\#(index)","label":"OMP\#(index)","role":"heard","action":{"kind":"reject"}}],
+             "target":{"kind":"item","id":"r\#(index)"}}
+            """#
+        }.joined(separator: ",")
+        let json = #"{"meeting":"m","hidden":{"lowPriority":0,"minPriority":0.5},"rows":[\#(rows)]}"#
+        return try JSONDecoder().decode(ReviewRows.self, from: Data(json.utf8))
+    }
+
+    private static func cpuMs() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        func ms(_ t: timeval) -> Double { Double(t.tv_sec) * 1000 + Double(t.tv_usec) / 1000 }
+        return ms(usage.ru_utime) + ms(usage.ru_stime)
+    }
+
+    /// The main-thread CPU one change of the Items list costs (lag report 2026-11-11, cause 6): a click that selects a
+    /// row, and a new rows list after a decision. Prints `rows-cost …` lines; run with MEETINGS_ROWS_COST=1.
+    func testRowsCost() throws {
+        guard ProcessInfo.processInfo.environment["MEETINGS_ROWS_COST"] == "1" else { throw XCTSkip("set MEETINGS_ROWS_COST=1") }
+        defaults.set(MeetingsPreferences.Rows.AutoplayNext.off.rawValue, forKey: MeetingsPreferences.Rows.autoplayNext.key)
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        let rows = try manyRows(count: 40, decidedEvery: 2)
+        let flipped = try manyRows(count: 40, decidedEvery: 2, flip: true)
+        detail.rows = .loaded(rows)
+        let host = hostedItems(detail, height: 900)
+        defer { host.orderOut(nil); host.close() }
+        RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        let changes = 40
+        func measure(_ name: String, _ change: (Int) -> Void) {
+            let start = Self.cpuMs()
+            for index in 0..<changes {
+                change(index)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            }
+            print(String(format: "rows-cost %@ cpu/change=%.2f ms", name, (Self.cpuMs() - start) / Double(changes)))
+        }
+        measure("idle") { _ in }
+        measure("select") { index in detail.selectedRow = rows.rows[index % 12].id }
+        measure("rows") { index in detail.rows = .loaded(index % 2 == 0 ? flipped : rows) }
+    }
+
     private func confirmed(_ id: String) throws -> JournalEntry {
         let json = #"{"token":"t-\#(id)","at":"2026-11-09T17:32:38.000Z","meeting":"m","actor":{"kind":"window"},"action":{"kind":"confirm","items":["\#(id)"]},"decided":["\#(id)"],"changes":[{"id":"\#(id)","before":{"id":"\#(id)","kind":"term","status":"suggested"},"after":{"id":"\#(id)","kind":"term","status":"confirmed"}}]}"#
         return try JSONDecoder().decode(JournalEntry.self, from: Data(json.utf8))

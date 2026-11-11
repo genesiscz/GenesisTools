@@ -63,6 +63,9 @@ struct ItemsTab: View {
     @AppStorage(MeetingsPreferences.Rows.lowPriority.key) private var lowPriority = MeetingsPreferences.Rows.lowPriority.defaultValue.rawValue
     /// Each row's last height and the list's scroll position, outside observation: a scroll writes them every frame.
     @State private var layout = RowLayout()
+    /// The list's width in whole points, for the shape of the folded rows (`ReviewRowView.foldedFit`); nil until the
+    /// first layout.
+    @State private var listWidth: CGFloat?
 
     var body: some View {
         LoadablePane(state: detail.rows, reading: "Reading the items…", retry: detail.loadRows) { rows in
@@ -83,7 +86,8 @@ struct ItemsTab: View {
         let questions = rows.rows.filter { $0.isOpen && $0.isQuestion }.count
         let kind = ItemsFilter.effective(filter, open: open, questions: questions)
         // The row whose Moment is on top of the player: it carries the play hue on its leading edge.
-        let top = detail.window?.player.top
+        let player = detail.window?.player
+        let top = player?.top
         let playing = top?.meeting == detail.id ? top?.target : nil
         let visible = MeetingDetailModel.visibleRows(rows.rows, order: MeetingsPreferences.Rows.Order(rawValue: order) ?? .priority,
                                                    decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace,
@@ -112,10 +116,20 @@ struct ItemsTab: View {
                     }
                     ForEach(shown) { row in
                         let ruled = Self.ruleAbove(row, first: shown.first?.id, held: detail.heldFolds.contains(row.id))
-                        ReviewRowView(row: row, detail: detail, player: detail.window?.player, selected: detail.selectedRow == row.id,
-                                      editing: detail.editingRow == row.id, busy: detail.busyItems.contains(row.id),
-                                      meanwhile: detail.decidedMeanwhile[row.id], choiceKeys: choiceKeys == "on",
+                        // A value row (lag report cause 6): what it shows comes in as values, so a click, a hover or
+                        // a play re-runs only the rows whose values changed. The draft is read only for a row decided
+                        // meanwhile (its one use), so typing in an editor does not re-run this list.
+                        let busy = detail.busyItems.contains(row.id)
+                        let meanwhile = detail.decidedMeanwhile[row.id]
+                        ReviewRowView(row: row, detail: detail, player: player,
+                                      play: player.map { MomentPlay.of($0, meeting: detail.id, targets: ReviewRowView.targets(row)) } ?? .none,
+                                      selected: detail.selectedRow == row.id, editing: detail.editingRow == row.id, busy: busy,
+                                      meanwhile: meanwhile, choiceKeys: choiceKeys == "on",
+                                      draft: meanwhile == nil ? nil : detail.drafts[row.id],
+                                      changingAnswer: detail.changingRows.contains(row.id),
+                                      foldedFit: ReviewRowView.foldedFit(row, busy: busy, room: listWidth.map { $0 - Self.rowInset }),
                                       held: detail.heldFolds.contains(row.id))
+                            .equatable()
                             // G33: a row this window just answered keeps its open height until the reader scrolls, so
                             // the next row does not move up under the eye.
                             .frame(minHeight: detail.heldFolds.contains(row.id) ? layout.heights[row.id] : nil, alignment: .top)
@@ -154,6 +168,7 @@ struct ItemsTab: View {
                 }
                 .padding(.vertical, 6)
                 .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.scrollSpace)).minY }) { scrolled(to: $0) }
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.width.rounded(.down) }) { listWidth = $0 }
             }
             .coordinateSpace(.named(Self.scrollSpace))
             .focusable()
@@ -193,6 +208,9 @@ struct ItemsTab: View {
                            applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
         }
     }
+
+    /// A row's horizontal padding inside the list (10 pt in its background, 6 pt outside it, on both sides).
+    static let rowInset: CGFloat = 32
 
     /// The "This also affects" card shows over the column: its keys are its own (Return saves, Esc cancels).
     private var cardShows: Bool { detail.pendingReach != nil }

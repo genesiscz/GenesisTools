@@ -3,7 +3,7 @@ import AppKit
 /// The width a one-line label takes, measured once per string, size and weight and kept: a control that picks its
 /// shape from the room it has asks this instead of building each shape to measure it.
 @MainActor
-enum KitTextWidth {
+public enum KitTextWidth {
     private struct Key: Hashable {
         let text: String
         let size: CGFloat
@@ -15,7 +15,7 @@ enum KitTextWidth {
     private static var widths: [Key: CGFloat] = [:]
 
     /// A system-font text, as `Text(text).font(.system(size:weight:))` draws it (`.monospacedDigit()` with `monospacedDigits`).
-    static func text(_ text: String, size: CGFloat, weight: NSFont.Weight, monospacedDigits: Bool = false) -> CGFloat {
+    public static func text(_ text: String, size: CGFloat, weight: NSFont.Weight, monospacedDigits: Bool = false) -> CGFloat {
         let key = Key(text: text, size: size, weight: weight.rawValue, mono: monospacedDigits, symbol: false)
         if let width = widths[key] {
             return width
@@ -31,7 +31,7 @@ enum KitTextWidth {
 
     /// An SF Symbol, as `Image(systemName:).font(.system(size:weight:))` draws it, to within 1 pt: AppKit and SwiftUI
     /// round a symbol's width apart (14 against 15 pt for `list.bullet` at 12 pt, measured 2026-11-11).
-    static func symbol(_ name: String, size: CGFloat, weight: NSFont.Weight) -> CGFloat {
+    public static func symbol(_ name: String, size: CGFloat, weight: NSFont.Weight) -> CGFloat {
         let key = Key(text: name, size: size, weight: weight.rawValue, mono: false, symbol: true)
         if let width = widths[key] {
             return width
