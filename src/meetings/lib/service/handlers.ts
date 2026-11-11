@@ -10,7 +10,7 @@ import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
 import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { RpcError } from "@genesiscz/utils/rpc/errors";
+import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
@@ -91,8 +91,13 @@ export interface MeetingsHandlerDeps {
  * A refusal: JSON-RPC error 1100 with `data.code`, the same through the socket and in-process. `data` adds what the
  * code names (`already-decided`'s entry, `unplayable`'s reason).
  */
-export function refusal(code: MeetingsErrorCode, message: string, data: Record<string, unknown> = {}): RpcError {
-    return new RpcError(MEETINGS_REFUSED, message, { ...data, code });
+export function refusal(
+    code: MeetingsErrorCode,
+    message: string,
+    data: Record<string, unknown> = {},
+    options: RpcErrorOptions = {}
+): RpcError {
+    return new RpcError(MEETINGS_REFUSED, message, { ...data, code }, options);
 }
 
 /**
@@ -105,10 +110,10 @@ export function asRefusal(error: unknown, fallback: MeetingsErrorCode = "failed"
     }
 
     if (error instanceof MeetingsConflictError || error instanceof MeetingsStateError) {
-        return refusal(error.code, error.message);
+        return refusal(error.code, error.message, {}, { cause: error });
     }
 
-    return refusal(fallback, error instanceof Error ? error.message : String(error));
+    return refusal(fallback, error instanceof Error ? error.message : String(error), {}, { cause: error });
 }
 
 /** The code of a refusal (`data.code`); undefined for a transport error (a bad param, an unknown method). */

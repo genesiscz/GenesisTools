@@ -317,6 +317,10 @@
           "message": "No meeting \"nope\". List them: tools meetings list",
           "data": {
             "code": "meeting-not-found"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -341,6 +345,10 @@
           "message": "\"2026-11-03\" fits 2 meetings: 2026-11-03-1400-retro, 2026-11-03-1000-design-review",
           "data": {
             "code": "meeting-ref"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -402,6 +410,10 @@
           "message": "2026-11-03-1400-retro has no source with a transcript. Link one: tools meetings link 2026-11-03-1400-retro 'wisprflow:<id>'",
           "data": {
             "code": "no-transcript-source"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -446,7 +458,11 @@
         "id": 10,
         "error": {
           "code": -32602,
-          "message": "meetings.list: limit: Too small: expected number to be >0"
+          "message": "meetings.list: limit: Too small: expected number to be >0",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
         }
       }
     },
@@ -538,7 +554,11 @@
         "id": 13,
         "error": {
           "code": -32602,
-          "message": "subscribe: meeting: Too small: expected string to have >=1 characters"
+          "message": "subscribe: meeting: Too small: expected string to have >=1 characters",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
         }
       }
     },
@@ -1203,6 +1223,10 @@
               "corrections": []
             },
             "code": "already-decided"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -1551,6 +1575,11 @@
           "data": {
             "reason": "no-audio",
             "code": "unplayable"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings",
+            "title": "A Moment does not play (no-audio)"
           }
         }
       }
@@ -2579,6 +2608,10 @@
           "message": "Comment c1 was sent at 2026-11-03T10:00:00.000Z; it cannot change.",
           "data": {
             "code": "already-sent"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -2606,6 +2639,10 @@
           "message": "No staged comment c7.",
           "data": {
             "code": "unknown-comment"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -2774,6 +2811,10 @@
           "message": "Nobody known is \"Nobody Example\". Search: tools meetings people <text>",
           "data": {
             "code": "unknown-person"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -2987,6 +3028,10 @@
           "message": "No merge has the token nope. See them: tools meetings people --json",
           "data": {
             "code": "unknown-merge"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -3078,6 +3123,10 @@
               }
             ],
             "code": "ambiguous-person"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -3362,6 +3411,10 @@
           "message": "Atlass is in the project Atlas dictionary already; it was left as it is",
           "data": {
             "code": "dictionary-exists"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -3653,6 +3706,10 @@
           "message": "1 meeting has the project Harbor: 2026-11-03-1000-design-review. Rename it instead, or remove it with --unassign to leave them without a project.",
           "data": {
             "code": "failed"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -4012,6 +4069,10 @@
           "message": "say hello before meeting.show",
           "data": {
             "code": "no-hello"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -4038,6 +4099,10 @@
           "message": "the meetings service speaks protocol 1, not 2",
           "data": {
             "code": "protocol-mismatch"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }
@@ -4064,6 +4129,10 @@
           "message": "the meetings service runs the code of another checkout (0123456789ab)",
           "data": {
             "code": "code-mismatch"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }

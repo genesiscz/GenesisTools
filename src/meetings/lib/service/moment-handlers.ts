@@ -122,16 +122,21 @@ export async function clipMomentCall(
         });
     } catch (error) {
         if (error instanceof MomentError) {
-            throw unplayable(error.code, error.message);
+            throw unplayable(error.code, error.message, error);
         }
 
         throw error;
     }
 }
 
-/** A refusal of a Moment, with the reason a `moment.plan` would name. */
-function unplayable(reason: string, message: string) {
-    return refusal("unplayable", message, { reason });
+/** A refusal of a Moment, with the reason a `moment.plan` would name; one issue title per reason. */
+function unplayable(reason: string, message: string, cause?: unknown) {
+    return refusal(
+        "unplayable",
+        message,
+        { reason },
+        { cause, issue: { title: `A Moment does not play (${reason})` } }
+    );
 }
 
 export async function previewTone(
@@ -186,7 +191,7 @@ export async function readMeetingAudio(
     try {
         path = await openedOf(store, record, deps).audioPath();
     } catch (error) {
-        throw unplayable("no-audio", error instanceof Error ? error.message : String(error));
+        throw unplayable("no-audio", error instanceof Error ? error.message : String(error), error);
     }
 
     const probe = await (deps.probe ?? probeAudio)(path);

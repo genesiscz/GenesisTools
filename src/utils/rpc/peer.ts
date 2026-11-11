@@ -1,7 +1,8 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { logger } from "@genesiscz/utils/logger";
+import { currentToolName } from "@genesiscz/utils/security/vault-purpose";
 import { z } from "zod";
-import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
+import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError, rpcErrorBody } from "./errors";
 
 /**
  * One side of a newline-delimited JSON-RPC 2.0 connection, the same on the server and on the client: it answers the
@@ -244,6 +245,8 @@ export interface RpcPeerOptions {
     log: RpcLog;
     /** Names the connection in log lines: `live recording` gives "live recording call refused". */
     label: string;
+    /** The tool an error reply names in its `issue` (`meetings`); the tool this process runs when left out. */
+    tool?: string;
     logFields?: Record<string, unknown>;
     /** What the other side speaks; a field left out keeps `DEFAULT_RPC_DIALECT`'s value. */
     dialect?: Partial<RpcDialect>;
@@ -602,7 +605,6 @@ export class RpcPeer {
             log.debug({ ...logFields, method }, `${label} call`);
             reply({ result: result ?? null });
         } catch (error) {
-            const code = error instanceof RpcError ? error.code : JSON_RPC_ERRORS.internal;
             // A refusal (an RpcError) is the caller's answer, which it gets; only an unexpected throw is this side's.
             if (error instanceof RpcError) {
                 log.debug({ ...logFields, method, error }, `${label} call refused`);
@@ -610,14 +612,7 @@ export class RpcPeer {
                 log.warn({ ...logFields, method, error }, `${label} call failed`);
             }
 
-            const data = error instanceof RpcError ? error.data : undefined;
-            reply({
-                error: {
-                    code,
-                    message: error instanceof Error ? error.message : String(error),
-                    ...(data !== undefined ? { data } : {}),
-                },
-            });
+            reply({ error: rpcErrorBody(error, this.options.tool ?? currentToolName()) });
         }
     }
 }

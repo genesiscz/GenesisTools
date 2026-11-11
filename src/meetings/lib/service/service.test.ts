@@ -1519,6 +1519,8 @@ function normalized(examples: Example[]): unknown {
             // A removed project's backup: under the sandbox home, named by the local time of the removal.
             .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
             .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
+            // An error's stack names this checkout's paths and line numbers.
+            .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
             // A file preset's availability is the host's (/System/Library/Sounds is on a Mac only).
             .replace(/"available":(true|false)/g, '"available":"<host>"'),
         { strict: true }
