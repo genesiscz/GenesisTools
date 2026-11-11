@@ -120,6 +120,20 @@ final class ObservedTreeBuilderTests: XCTestCase {
         XCTAssertEqual(tree.digest.count, 64)
     }
 
+    func testPopoverEscapesItsOwningScrollClip() throws {
+        let fake = FakeSource()
+        fake.nodes[1] = FakeNode(role: "AXWindow", children: [2], frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        fake.nodes[2] = FakeNode(role: "AXScrollArea", children: [3, 5], frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        fake.nodes[3] = FakeNode(role: "AXPopover", children: [4], frame: CGRect(x: 200, y: 150, width: 150, height: 100))
+        fake.nodes[4] = FakeNode(role: "AXTextField", frame: CGRect(x: 210, y: 160, width: 100, height: 20))
+        fake.nodes[5] = FakeNode(role: "AXTextField", frame: CGRect(x: 210, y: 160, width: 100, height: 20))
+
+        let tree = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
+        XCTAssertEqual(tree.rows[2]["visible"] as? Bool, true)
+        XCTAssertEqual(tree.rows[3]["visible"] as? Bool, true)
+        XCTAssertEqual(tree.rows[4]["visible"] as? Bool, false, "ordinary scroll children keep their clip")
+    }
+
     func testAVanishedElementLeavesNoRowAndNoSubtree() throws {
         let fake = source()
         fake.nodes[3]?.vanished = true

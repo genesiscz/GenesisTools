@@ -146,18 +146,20 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
             throw ObservedTreeError(depthOverflowMessage(depth))
         }
         let frame = snapshotFrame(element, source: source)
+        // A popover is an owned floating window, even when AX nests it below a scroll area.
+        let visibleClip = role == "AXPopover" ? frame : clip
         var row: [String: Any] = [
             "index": tree.elements.count, "depth": level, "role": role,
             "identity": identity,
             "x": snapshotPx(frame.minX), "y": snapshotPx(frame.minY),
             "width": snapshotPx(frame.width), "height": snapshotPx(frame.height),
-            "visible": frame.width > 0 && frame.height > 0 && clip.contains(CGPoint(x: frame.midX, y: frame.midY)),
+            "visible": frame.width > 0 && frame.height > 0 && visibleClip.contains(CGPoint(x: frame.midX, y: frame.midY)),
             "actions": source.actionNames(of: element).sorted(),
         ]
         // A long line or a wide text node can have its CENTER clipped by a narrow column while most of
         // it is on screen. Record where the visible part is, so a click can land there instead of being
         // refused ("element center is outside its window/scroll clip").
-        let shown = frame.intersection(clip)
+        let shown = frame.intersection(visibleClip)
         if row["visible"] as? Bool != true, !shown.isNull, shown.width >= 4, shown.height >= 4 {
             row["visibleX"] = snapshotPx(shown.midX)
             row["visibleY"] = snapshotPx(shown.midY)
@@ -210,7 +212,7 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
             tree.truncatedAt.append(tree.rows.count - 1)
             return
         }
-        let childClip = role == "AXScrollArea" ? clip.intersection(frame) : clip
+        let childClip = role == "AXScrollArea" ? visibleClip.intersection(frame) : visibleClip
         for child in children {
             try walk(child, level: level + 1, clip: childClip)
         }
