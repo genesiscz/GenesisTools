@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AGENTS_REGISTRARS } from "@app/agents/registrars";
 import { loadUsageSpendAlias } from "@app/ai/commands/usage/spend";
 import { AI_REGISTRARS } from "@app/ai/registrars";
+import AI_PROXY_CLI_CONTRACTS from "@app/ai-proxy/commands/registrars/__fixtures__/cli-contracts.json";
+import { AI_PROXY_REGISTRARS } from "@app/ai-proxy/registrars";
 import { CLAUDE_REGISTRARS } from "@app/claude/registrars";
 import { CMUX_REGISTRARS } from "@app/cmux/registrars";
 import { CODEX_REGISTRARS } from "@app/codex/registrars";
@@ -9,12 +14,14 @@ import { HUB_REGISTRARS } from "@app/hub/registrars";
 import { MACOS_REGISTRARS } from "@app/macos/registrars";
 import { MEETINGS_REGISTRARS } from "@app/meetings/registrars";
 import { QUESTION_REGISTRARS } from "@app/question/registrars";
+import { runTool } from "@genesiscz/utils/cli";
 import {
     type LazyRegistrar,
     registerRequestedTrees,
     requestedCommandFromArgv,
 } from "@genesiscz/utils/cli/lazy-registrars";
-import { Command } from "commander";
+import { env } from "@genesiscz/utils/env";
+import { Command, CommanderError } from "commander";
 
 /**
  * Every tool that hands `runTool` a registrar table, checked by one conformance suite instead of a drift test per
@@ -24,6 +31,7 @@ import { Command } from "commander";
 const TABLES: Record<string, readonly LazyRegistrar[]> = {
     agents: AGENTS_REGISTRARS,
     ai: AI_REGISTRARS,
+    "ai-proxy": AI_PROXY_REGISTRARS,
     claude: CLAUDE_REGISTRARS,
     cmux: CMUX_REGISTRARS,
     codex: CODEX_REGISTRARS,
@@ -119,5 +127,79 @@ describe("ai usage", () => {
         expect(await verbs(["bun", "src/ai/index.ts", "usage", "--json", "spend", "daily"])).toEqual(
             expect.arrayContaining(["daily", "weekly", "statusline", "series", "workers", "monitor"])
         );
+    });
+});
+
+describe("ai-proxy CLI extraction contract", () => {
+    test("help and usage errors match the eager tree byte for byte through runTool's argv gate", async () => {
+        for (const fixture of AI_PROXY_CLI_CONTRACTS.filter((entry) => !entry.argv.includes("--readme"))) {
+            let stdout = "";
+            let stderr = "";
+            let exit = 0;
+            const program = new Command()
+                .name("ai-proxy")
+                .description("OpenAI-compatible local proxy for Grok, GitHub Copilot, and other AI providers")
+                .version("0.1.0")
+                .exitOverride()
+                .configureOutput({
+                    writeOut: (text) => {
+                        stdout += text;
+                    },
+                    writeErr: (text) => {
+                        stderr += text;
+                    },
+                    getOutHelpWidth: () => 80,
+                    getErrHelpWidth: () => 80,
+                });
+            program.hook("preAction", () => {
+                throw new Error("A CLI contract probe must never execute a command action");
+            });
+
+            try {
+                await runTool(program, { tool: "ai-proxy", registrars: AI_PROXY_REGISTRARS }, [
+                    process.execPath,
+                    "src/ai-proxy/index.ts",
+                    ...fixture.argv,
+                ]);
+            } catch (error) {
+                if (!(error instanceof CommanderError)) {
+                    throw error;
+                }
+
+                exit = error.exitCode;
+            }
+
+            expect({ argv: fixture.argv, exit, stdout, stderr }).toEqual(fixture);
+        }
+    });
+
+    test("root and subcommand --readme print the same tool README and exit before any action", async () => {
+        const childHome = mkdtempSync(join(tmpdir(), "gt-ai-proxy-readme-"));
+        const outputs: string[] = [];
+        for (const argv of [["--readme"], ["models", "--readme"]]) {
+            const child = Bun.spawn([process.execPath, "src/ai-proxy/index.ts", ...argv], {
+                cwd: new URL("../../", import.meta.url).pathname,
+                env: {
+                    ...env.testing.snapshot(),
+                    GENESIS_TOOLS_HOME: childHome,
+                    NO_COLOR: "1",
+                    FORCE_COLOR: undefined,
+                    PROFILE_TO_STDERR: "0",
+                },
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+            const [stdout, stderr, exit] = await Promise.all([
+                new Response(child.stdout).text(),
+                new Response(child.stderr).text(),
+                child.exited,
+            ]);
+            expect(exit).toBe(0);
+            expect(stderr).toBe("");
+            expect(stdout).toStartWith("# tools ai-proxy\n");
+            outputs.push(stdout);
+        }
+
+        expect(outputs[0]).toBe(outputs[1]);
     });
 });
