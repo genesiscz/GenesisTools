@@ -395,22 +395,37 @@ function printPlan(plan: WorktreeBackupPlan): void {
     ui.kv("locked", plan.locked === null ? "no" : plan.locked || "yes, without a reason", KEY_WIDTH);
 }
 
-function printBlockers(plan: WorktreeBackupPlan): void {
-    if (plan.blockers.length === 0) {
+function printBlockers(blockers: string[]): void {
+    if (blockers.length === 0) {
         ui.ok("No blockers.");
         return;
     }
 
-    for (const blocker of plan.blockers) {
+    for (const blocker of blockers) {
         ui.err(blocker);
     }
+}
+
+/**
+ * Why a backup refused before writing: the plan's blockers, or the refusal itself when no blocker holds it (a backup
+ * root inside the worktree is checked after the plan).
+ */
+export function preWriteReasons(result: {
+    plan: Pick<WorktreeBackupPlan, "blockers">;
+    refusal: WorktreeBackupResult["refusal"];
+}): string[] {
+    if (result.plan.blockers.length > 0 || result.refusal === null) {
+        return result.plan.blockers;
+    }
+
+    return [result.refusal];
 }
 
 function printResult(result: WorktreeBackupResult): void {
     printPlan(result.plan);
 
     if (result.folder === null) {
-        printBlockers(result.plan);
+        printBlockers(preWriteReasons(result));
         return;
     }
 
@@ -449,7 +464,8 @@ function printResult(result: WorktreeBackupResult): void {
 
 /**
  * The `--max-copy-mb` value in bytes, or null for anything but a plain decimal number of MiB: `Number()` alone reads
- * `""` as 0 and `0x10` as 16.
+ * `""` as 0 and `0x10` as 16. A byte count past `Number.MAX_SAFE_INTEGER` is refused too: a long run of digits reads
+ * as Infinity, and an Infinity limit would switch the copy ceiling off.
  */
 export function parseMaxCopyMb(value: string | undefined): number | null {
     if (value === undefined) {
@@ -460,7 +476,8 @@ export function parseMaxCopyMb(value: string | undefined): number | null {
         return null;
     }
 
-    return Math.round(Number(value) * 1024 * 1024);
+    const bytes = Math.round(Number(value) * 1024 * 1024);
+    return Number.isSafeInteger(bytes) ? bytes : null;
 }
 
 /**
@@ -491,7 +508,7 @@ async function runBackup(path: string, options: BackupOptions): Promise<number> 
                 out.result(plan);
             } else {
                 printPlan(plan);
-                printBlockers(plan);
+                printBlockers(plan.blockers);
                 ui.dim("Dry run: nothing was written.");
             }
 

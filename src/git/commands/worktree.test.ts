@@ -30,7 +30,7 @@ mock.module("@clack/prompts", () => ({
     confirm: async () => answer("confirm"),
 }));
 
-const { backupExitCode, parseMaxCopyMb, runConfig } = await import("./worktree");
+const { backupExitCode, parseMaxCopyMb, preWriteReasons, runConfig } = await import("./worktree");
 
 describe("tools git worktree config, the guided edit", () => {
     let repo: TestRepo;
@@ -173,9 +173,18 @@ describe("tools git worktree backup, the CLI values", () => {
         expect(parseMaxCopyMb("0")).toBe(0);
         expect(parseMaxCopyMb("1.5")).toBe(1.5 * 1024 * 1024);
 
-        for (const bad of ["", " ", "0x10", "1e3", "-1", "12 ", "Infinity"]) {
+        // Digits only, yet too large: "9".repeat(400) reads as Infinity, which would switch the ceiling off.
+        for (const bad of ["", " ", "0x10", "1e3", "-1", "12 ", "Infinity", "9".repeat(400), "9".repeat(20)]) {
             expect(parseMaxCopyMb(bad)).toBeNull();
         }
+    });
+
+    test("a refusal before writing names its reason, also when no plan blocker holds it", () => {
+        const inside = "The backup folder /w/backups lies inside the worktree";
+
+        expect(preWriteReasons({ plan: { blockers: [] }, refusal: inside })).toEqual([inside]);
+        expect(preWriteReasons({ plan: { blockers: ["locked"] }, refusal: "locked" })).toEqual(["locked"]);
+        expect(preWriteReasons({ plan: { blockers: [] }, refusal: null })).toEqual([]);
     });
 
     test("a proven backup whose removal was refused exits 2, a failed one 1", () => {

@@ -542,13 +542,20 @@ function walkEntries({
 /**
  * Tracked files whose working copy differs from the index while `assume-unchanged` or `skip-worktree` hides them from
  * `git diff`, so neither patch holds the edit. A flagged file that is not on disk (a sparse checkout leaves it out) or
- * that still matches its index blob is no change.
+ * that still matches its index blob and mode is no change. The bytes are compared raw: a clean filter is a configured
+ * command, which a read-only plan never starts, so a filtered or line-ending-converted file reads as changed.
  */
 async function hiddenIndexChanges(path: string): Promise<string[]> {
     const hidden: string[] = [];
     const files: Array<{ rel: string; sha: string }> = [];
+    const [records, fileMode] = await Promise.all([
+        mustReadZ(path, ["ls-files", "-v", "-s", "-z"]),
+        readGit(path, ["config", "--type=bool", "core.fileMode"]),
+    ]);
+    // Git compares the executable bit only while core.fileMode is on, its default (an unset key exits 1).
+    const checkMode = !(fileMode.success && fileMode.stdout.trim() === "false");
 
-    for (const record of await mustReadZ(path, ["ls-files", "-v", "-s", "-z"])) {
+    for (const record of records) {
         const tab = record.indexOf("\t");
         const [tag = "", mode = "", sha = ""] = record.slice(0, tab).split(" ");
         const rel = record.slice(tab + 1);
@@ -571,7 +578,10 @@ async function hiddenIndexChanges(path: string): Promise<string[]> {
             continue;
         }
 
-        if (!stat.isFile()) {
+        // Git keeps only the owner's executable bit of a regular file, as 100755 or 100644.
+        const worktreeMode = stat.mode & 0o100 ? "100755" : "100644";
+
+        if (!stat.isFile() || (checkMode && worktreeMode !== mode)) {
             hidden.push(rel);
             continue;
         }
@@ -580,8 +590,10 @@ async function hiddenIndexChanges(path: string): Promise<string[]> {
     }
 
     if (files.length > 0) {
-        // hash-object without -w writes nothing, and it runs the file's clean filters as `git add` would.
-        const ids = (await mustRead(path, ["hash-object", "--", ...files.map((file) => file.rel)])).split("\n");
+        // Without -w nothing is written, and --no-filters hashes the bytes as they are, so no clean filter starts.
+        const ids = (
+            await mustRead(path, ["hash-object", "--no-filters", "--", ...files.map((file) => file.rel)])
+        ).split("\n");
 
         for (const [i, file] of files.entries()) {
             if (ids[i] !== file.sha) {
@@ -915,7 +927,7 @@ async function inspectWorktree(options: PlanWorktreeBackupOptions): Promise<Insp
         const shown = state.hidden.slice(0, 5).join(", ");
         const more = state.hidden.length > 5 ? ` and ${state.hidden.length - 5} more` : "";
         blockers.push(
-            `Tracked files differ from the index while assume-unchanged or skip-worktree hides them from git diff (${shown}${more}), so no patch would hold them; clear the flags with git update-index --no-assume-unchanged --no-skip-worktree first.`
+            `Tracked files differ from the index while assume-unchanged or skip-worktree hides them from git diff (${shown}${more}), so no patch would hold them; clear the flags with git update-index --no-assume-unchanged --no-skip-worktree first. The check reads raw bytes and the executable bit without clean filters, so a filtered file counts as changed.`
         );
     }
 

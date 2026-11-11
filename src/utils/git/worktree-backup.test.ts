@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    symlinkSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { type ExecCallOptions, Executor } from "@genesiscz/utils/cli/executor";
 import { TestRepo } from "./test-repo";
@@ -279,6 +288,41 @@ describe("worktree backup", () => {
         expect(plan.changed).toEqual([]);
         expect(plan.blockers).toHaveLength(1);
         expect(plan.blockers[0]).toContain("skip-worktree hides them from git diff (README.md)");
+    });
+
+    it("refuses an executable bit that assume-unchanged hides from git diff", async () => {
+        // The test above left README.md assume-unchanged with an edit: its committed bytes come back first.
+        repo.write({ file: "README.md", content: "seed\n", cwd: spare });
+        expect((await planWorktreeBackup({ path: spare })).blockers).toEqual([]);
+
+        chmodSync(join(spare, "README.md"), 0o755);
+        const plan = await planWorktreeBackup({ path: spare });
+        chmodSync(join(spare, "README.md"), 0o644);
+
+        expect(plan.changed).toEqual([]);
+        expect(plan.blockers).toHaveLength(1);
+        expect(plan.blockers[0]).toContain("skip-worktree hides them from git diff (README.md)");
+    });
+
+    it("never starts the clean filter of a flagged file during a read-only plan", async () => {
+        // A clean filter is a configured command, so the dry run must not run it; the raw bytes still show the edit.
+        const marker = join(repo.root, "clean-filter-ran");
+        const attributes = join(repo.root, "attributes");
+        writeFileSync(attributes, "README.md filter=marker\n");
+        await repo.git(["config", "core.attributesFile", attributes]);
+        await repo.git(["config", "filter.marker.clean", `touch '${marker}'; cat`]);
+        repo.write({ file: "README.md", content: "filtered edit\n", cwd: spare });
+
+        try {
+            const plan = await planWorktreeBackup({ path: spare });
+
+            expect(existsSync(marker)).toBe(false);
+            expect(plan.blockers).toHaveLength(1);
+            expect(plan.blockers[0]).toContain("skip-worktree hides them from git diff (README.md)");
+        } finally {
+            await repo.git(["config", "--unset", "core.attributesFile"]);
+            await repo.git(["config", "--remove-section", "filter.marker"]);
+        }
     });
 
     it("takes the base from the other branches when no candidate gives one, and refuses --remove without a base", async () => {
