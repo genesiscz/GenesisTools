@@ -130,6 +130,8 @@ public final class PomodoroEngine: ObservableObject {
 
     /// Set by the host so the engine can split segments and arm DND without importing the app.
     public var onSessionChange: ((Int64?) -> Void)?
+    /// The intent drain awaits recorder persistence before applying its next command.
+    public var onSessionChangeSuspending: ((Int64?) async -> Void)?
     public var onPhaseEnd: ((PomodoroPlan.Phase, Int64) -> Void)?
     /// Fires once per announced boundary, after the chime and the notification.
     public var onBoundary: (() -> Void)?
@@ -144,6 +146,8 @@ public final class PomodoroEngine: ObservableObject {
     private var plannedSec: Int = 0
     private var accruedPauseMs: Int64 = 0
     private var ticker: Timer?
+    /// A runtime owner routes clock work through the same ordered drain as its queued commands.
+    var requestTick: (() -> Void)?
     private var dndActive = false
     /// Set when a flow announced itself at zero, so the skip that ends its overrun is silent.
     private var overrunAnnounced = false
@@ -155,81 +159,160 @@ public final class PomodoroEngine: ObservableObject {
 
     // MARK: - Commands
 
+    private enum DeferredCommand {
+        case start(PomodoroPlan.Phase, Int?, String?, String?)
+        case pause(ActivityStore.PauseReason, Date?)
+        case resume, stop, skip, back, interruption, restore
+        case tag(String?), note(String)
+    }
+    private var applyingIntent = false
+    private var deferredCommands: [DeferredCommand] = []
+    private var pendingSessionChanges: [Int64?] = []
+    private var restartTickerAfterIntents = false
+
+    func beginIntentBatch() {
+        guard !applyingIntent else { return }
+        applyingIntent = true
+        restartTickerAfterIntents = isTicking
+        stopTicker()
+    }
+
+    func flushDeferredCommandsInBatch() async {
+        while !deferredCommands.isEmpty {
+            let next = deferredCommands.removeFirst()
+            await applySuspending(next)
+        }
+    }
+
+    func endIntentBatch() async {
+        await flushDeferredCommandsInBatch()
+        applyingIntent = false
+        if state == .running || state == .overrun || (state == .paused && restartTickerAfterIntents) { startTicker() }
+    }
+
+    private func notifySessionChange(_ id: Int64?) {
+        if applyingIntent { pendingSessionChanges.append(id) }
+        else { onSessionChange?(id) }
+    }
+
+    private func deferDuringIntent(_ command: DeferredCommand) -> Bool {
+        guard applyingIntent else { return false }
+        deferredCommands.append(command)
+        return true
+    }
+
+    private typealias LedgerTransition = (ActivityStore) -> (@MainActor () -> Void)
+
+    private func perform(_ transition: LedgerTransition) { transition(store)() }
+
+    private func performSuspending(_ transition: @escaping LedgerTransition) async {
+        do {
+            let finish = try await store.perform(transition)
+            finish()
+            // A transition may arm its normal ticker; the ordered batch owns it until all commands settle.
+            stopTicker()
+            while !pendingSessionChanges.isEmpty {
+                let id = pendingSessionChanges.removeFirst()
+                if let onSessionChangeSuspending { await onSessionChangeSuspending(id) }
+                else { onSessionChange?(id) }
+            }
+        } catch {
+            FlowFocusLog.focus.error("focus intent persistence failed: \(error.localizedDescription)")
+        }
+    }
+
     public func start(_ phase: PomodoroPlan.Phase = .flow, seconds: Int? = nil, tag: String? = nil) {
         if forward("focus.start", FocusStartCommand(phase: phase, seconds: seconds, tag: tag)) { return }
+        if deferDuringIntent(.start(phase, seconds, tag, nil)) { return }
         endCurrent(state: .abandoned)
+        perform(startTransition(phase, seconds: seconds, tag: tag))
+    }
+
+    private func startTransition(_ phase: PomodoroPlan.Phase, seconds: Int?, tag: String?) -> LedgerTransition {
         let duration = seconds ?? plan.duration(of: phase)
-        let now = nowMs()
-        self.phase = phase
-        self.tag = tag ?? self.tag
-        plannedSec = duration
-        startedMs = now
-        accruedPauseMs = 0
-        interruptions = 0
-        pauseReason = nil
-        overrunAnnounced = false
-        remainingSec = duration
-        state = .running
-        sessionId = try? store.startSession(.init(kind: phase.rawValue,
-                                                  plannedSec: duration,
-                                                  startedMs: now,
-                                                  state: ActivityStore.SessionState.running.rawValue,
-                                                  cycleIndex: completedFlows,
-                                                  tag: self.tag))
-        onSessionChange?(sessionId)
-        armDNDIfNeeded()
-        startTicker()
+        let now = nowMs(), cycle = completedFlows
+        let tag = tag ?? self.tag
+        return { store in
+            let id = try? store.startSession(.init(kind: phase.rawValue, plannedSec: duration, startedMs: now,
+                                                   state: ActivityStore.SessionState.running.rawValue,
+                                                   cycleIndex: cycle, tag: tag))
+            return { [self] in
+                self.phase = phase
+                self.tag = tag
+                plannedSec = duration
+                startedMs = now
+                accruedPauseMs = 0
+                interruptions = 0
+                pauseReason = nil
+                overrunAnnounced = false
+                remainingSec = duration
+                state = .running
+                sessionId = id
+                notifySessionChange(id)
+                armDNDIfNeeded()
+                startTicker()
+            }
+        }
     }
 
     /// `since` backdates the pause: an idle pause starts when the input stopped, not when the
     /// threshold noticed it, so the minute you were away is not charged to the flow.
     public func pause(reason: ActivityStore.PauseReason = .manual, since: Date? = nil) {
         if forward("focus.pause", FocusPauseCommand(reason: reason, since: since)) { return }
-        guard state == .running || state == .overrun, let sessionId else { return }
-        let now = nowMs()
-        // A row this engine forgot (a restart, a double press) must be closed before a new one
-        // opens, or two overlapping pauses describe the same minute.
-        try? store.closeOrphanedPauses(sessionId: sessionId, keeping: nil, now: now)
-        // Nor may the backdate reach into the last pause: after a resume nobody was there for
-        // (the CLI), it did, and the frozen clock subtracted those minutes twice.
-        let lastPauseEnd = ((try? store.pauses(sessionId: sessionId)) ?? []).compactMap(\.endedMs).max() ?? startedMs
-        let pausedAt = since.map { min(now, max(startedMs, lastPauseEnd, Int64($0.timeIntervalSince1970 * 1000))) } ?? now
-        // The frozen clock shows what a backdated pause hands back on resume.
-        let elapsed = max(0, Int((pausedAt - startedMs - accruedPauseMs) / 1000))
-        remainingSec = state == .overrun ? min(plannedSec - elapsed, 0) : plannedSec - elapsed
-        state = .paused
-        pauseReason = reason
-        pauseId = try? store.recordPause(sessionId: sessionId, startedMs: pausedAt, endedMs: nil, reason: reason)
-        try? store.setSessionState(id: sessionId, state: .paused)
-        releaseDND()
+        if deferDuringIntent(.pause(reason, since)) { return }
+        if let transition = pauseTransition(reason: reason, since: since) { perform(transition) }
+    }
+
+    private func pauseTransition(reason: ActivityStore.PauseReason, since: Date?) -> LedgerTransition? {
+        guard state == .running || state == .overrun, let sessionId else { return nil }
+        let now = nowMs(), started = startedMs, accrued = accruedPauseMs, planned = plannedSec
+        let overrunning = state == .overrun
+        return { store in
+            try? store.closeOrphanedPauses(sessionId: sessionId, keeping: nil, now: now)
+            // Backdating must not overlap the previous pause, including one closed by another process.
+            let lastEnd = ((try? store.pauses(sessionId: sessionId)) ?? []).compactMap(\.endedMs).max() ?? started
+            let pausedAt = since.map { min(now, max(started, lastEnd, Int64($0.timeIntervalSince1970 * 1000))) } ?? now
+            let elapsed = max(0, Int((pausedAt - started - accrued) / 1000))
+            let remaining = overrunning ? min(planned - elapsed, 0) : planned - elapsed
+            let id = try? store.recordPause(sessionId: sessionId, startedMs: pausedAt, endedMs: nil, reason: reason)
+            try? store.setSessionState(id: sessionId, state: .paused)
+            return { [self] in
+                remainingSec = remaining
+                state = .paused
+                pauseReason = reason
+                pauseId = id
+                releaseDND()
+            }
+        }
     }
 
     public func resume() {
         if forward("focus.resume") { return }
-        guard state == .paused else { return }
-        pauseReason = nil
-        let now = nowMs()
-        if let pauseId {
-            try? store.closePause(id: pauseId, at: now)
-            self.pauseId = nil
-        }
-        if let sessionId {
-            // Anything still open here belongs to a process that is gone.
-            try? store.closeOrphanedPauses(sessionId: sessionId, keeping: nil, now: now)
-        }
-        let wasOverrunning = remainingSec <= 0
-        accruedPauseMs = clampedPause((try? store.pausedMs(sessionId: sessionId ?? -1, now: now)) ?? accruedPauseMs,
-                                      now: now)
-        // A phase that had already run out stays run out. Without this, a bad accrued value can
-        // hand back positive time and the HUD shows a fresh hour on a flow that ended long ago.
-        state = wasOverrunning || remainingSec <= 0 ? .overrun : .running
-        if wasOverrunning { remainingSec = min(remainingSec, 0) }
-        if let sessionId { try? store.setSessionState(id: sessionId, state: .running) }
-        armDNDIfNeeded()
-        // A phase restored paused after a relaunch never had a ticker: without this the HUD
-        // showed the pause button over a clock that did not move (observed 2026-09-24 12:47).
-        startTicker()
+        if deferDuringIntent(.resume) { return }
+        guard let transition = resumeTransition() else { return }
+        perform(transition)
         tick()
+    }
+
+    private func resumeTransition() -> LedgerTransition? {
+        guard state == .paused else { return nil }
+        let now = nowMs(), pause = pauseId, session = sessionId, accrued = accruedPauseMs
+        let wasOverrunning = remainingSec <= 0
+        return { store in
+            if let pause { try? store.closePause(id: pause, at: now) }
+            if let session { try? store.closeOrphanedPauses(sessionId: session, keeping: nil, now: now) }
+            let paused = (try? store.pausedMs(sessionId: session ?? -1, now: now)) ?? accrued
+            if let session { try? store.setSessionState(id: session, state: .running) }
+            return { [self] in
+                pauseReason = nil
+                pauseId = nil
+                accruedPauseMs = clampedPause(paused, now: now)
+                state = wasOverrunning || remainingSec <= 0 ? .overrun : .running
+                if wasOverrunning { remainingSec = min(remainingSec, 0) }
+                armDNDIfNeeded()
+                startTicker()
+            }
+        }
     }
 
     /// Paused time can never exceed the wall clock since the phase started. A larger number is a
@@ -243,6 +326,7 @@ public final class PomodoroEngine: ObservableObject {
     /// not an absence.
     public func skip() {
         if forward("focus.skip") { return }
+        if deferDuringIntent(.skip) { return }
         let finished = phase
         endCurrent(state: .done)
         advance(after: finished, auto: plan.autoStarts(plan.next(after: finished, completedFlows: completedFlows)))
@@ -255,6 +339,7 @@ public final class PomodoroEngine: ObservableObject {
     /// skipped is already closed in the ledger and inventing time back into it would be a lie.
     public func goBack() {
         if forward("focus.back") { return }
+        if deferDuringIntent(.back) { return }
         let current = phase
         let target = plan.previous(before: current, completedFlows: completedFlows)
         endCurrent(state: .abandoned)
@@ -265,6 +350,7 @@ public final class PomodoroEngine: ObservableObject {
 
     public func stop() {
         if forward("focus.stop") { return }
+        if deferDuringIntent(.stop) { return }
         endCurrent(state: .abandoned)
         state = .idle
         remainingSec = 0
@@ -273,32 +359,51 @@ public final class PomodoroEngine: ObservableObject {
 
     public func setTag(_ value: String?) {
         if forward("focus.tag", value) { return }
-        tag = value
-        guard let sessionId else { return }
-        do {
-            if let value {
-                try store.updateSession(id: sessionId, tag: value, note: nil, interruptions: nil)
-            } else {
-                try store.clearSessionTag(id: sessionId)
-            }
-        } catch {
-            FlowFocusLog.focus.error("focus tag not saved: \(error.localizedDescription)")
+        if deferDuringIntent(.tag(value)) { return }
+        perform(tagTransition(value))
+    }
+
+    private func tagTransition(_ value: String?) -> LedgerTransition {
+        let session = sessionId
+        return { store in
+            do {
+                if let session {
+                    if let value { try store.updateSession(id: session, tag: value, note: nil, interruptions: nil) }
+                    else { try store.clearSessionTag(id: session) }
+                }
+            } catch { FlowFocusLog.focus.error("focus tag not saved: \(error.localizedDescription)") }
+            return { [self] in tag = value }
         }
     }
 
     public func setNote(_ value: String) {
         if forward("focus.note", value) { return }
-        guard let sessionId else { return }
-        try? store.updateSession(id: sessionId, tag: nil, note: value, interruptions: nil)
+        if deferDuringIntent(.note(value)) { return }
+        if let transition = noteTransition(value) { perform(transition) }
+    }
+
+    private func noteTransition(_ value: String) -> LedgerTransition? {
+        guard let sessionId else { return nil }
+        return { store in
+            try? store.updateSession(id: sessionId, tag: nil, note: value, interruptions: nil)
+            return {}
+        }
     }
 
     /// Called by the recorder when focus left the tagged work for longer than the threshold.
     public func recordInterruption() {
         guard remoteCommand == nil else { return }
-        guard state == .running || state == .overrun, phase == .flow else { return }
-        interruptions += 1
-        guard let sessionId else { return }
-        try? store.updateSession(id: sessionId, tag: nil, note: nil, interruptions: interruptions)
+        if deferDuringIntent(.interruption) { return }
+        if let transition = interruptionTransition() { perform(transition) }
+    }
+
+    private func interruptionTransition() -> LedgerTransition? {
+        guard state == .running || state == .overrun, phase == .flow else { return nil }
+        let session = sessionId, count = interruptions + 1
+        return { store in
+            if let session { try? store.updateSession(id: session, tag: nil, note: nil, interruptions: count) }
+            return { [self] in interruptions = count }
+        }
     }
 
     // MARK: - Crash resume
@@ -308,63 +413,60 @@ public final class PomodoroEngine: ObservableObject {
     /// had stayed up.
     public func resumeOpenSessionIfAny() {
         guard remoteCommand == nil else { return }
-        guard let open = try? store.openSession(), let phase = PomodoroPlan.Phase(rawValue: open.kind) else { return }
-        sessionId = open.id
-        self.phase = phase
-        tag = open.tag
-        interruptions = open.interruptions
-        plannedSec = open.plannedSec
-        startedMs = open.startedMs
-        // A process killed while paused leaves its pause row open. Adopt the newest one so this
-        // engine can close it, and close the rest at the last moment anything was recorded —
-        // an open row counts up to now forever, and three of them made a 25-minute flow report
-        // an hour of remaining time (observed 2026-09-21 21:56).
-        let now = nowMs()
-        let lastSeen = (try? store.lastRecordedMs()) ?? now
-        let openPause = (try? store.openPauses(sessionId: open.id))?.first
-        let adopt = open.state == ActivityStore.SessionState.paused.rawValue ? openPause?.id : nil
-        pauseId = adopt
-        try? store.closeOrphanedPauses(sessionId: open.id, keeping: adopt, now: now)
-        // A paused session with no row to adopt (an older ledger) gets one before the clock is
-        // derived; after it, the whole downtime counted as work and the flow came back overrun.
-        if open.state == ActivityStore.SessionState.paused.rawValue, pauseId == nil {
-            pauseId = try? store.recordPause(sessionId: open.id, startedMs: min(now, max(open.startedMs, lastSeen)),
-                                             endedMs: nil, reason: .auto)
-        }
-        accruedPauseMs = clampedPause((try? store.pausedMs(sessionId: open.id, now: now)) ?? 0, now: now)
-        let elapsed = max(0, Int((now - open.startedMs - accruedPauseMs) / 1000))
-        remainingSec = open.plannedSec - elapsed
+        if deferDuringIntent(.restore) { return }
+        perform(restoreTransition())
+    }
 
-        if open.state == ActivityStore.SessionState.paused.rawValue {
-            // A paused phase stays paused however long the app was closed: the clock was not
-            // running, so neither is it now.
-            state = .paused
-            pauseReason = openPause.flatMap { ActivityStore.PauseReason(rawValue: $0.reason) } ?? .auto
-            onSessionChange?(sessionId)
-            return
+    private func restoreTransition() -> LedgerTransition {
+        let now = nowMs(), plan = self.plan, completed = completedFlows
+        return { store in
+            guard let open = try? store.openSession(), let phase = PomodoroPlan.Phase(rawValue: open.kind) else { return {} }
+            let lastSeen = (try? store.lastRecordedMs()) ?? now
+            let openPause = (try? store.openPauses(sessionId: open.id))?.first
+            let paused = open.state == ActivityStore.SessionState.paused.rawValue
+            var pause = paused ? openPause?.id : nil
+            try? store.closeOrphanedPauses(sessionId: open.id, keeping: pause, now: now)
+            if paused, pause == nil {
+                pause = try? store.recordPause(sessionId: open.id, startedMs: min(now, max(open.startedMs, lastSeen)),
+                                               endedMs: nil, reason: .auto)
+            }
+            let accrued = max(0, min((try? store.pausedMs(sessionId: open.id, now: now)) ?? 0, max(0, now - open.startedMs)))
+            let remaining = open.plannedSec - max(0, Int((now - open.startedMs - accrued) / 1000))
+            let expired = !paused && remaining <= 0 && !(phase == .flow && plan.allowOverrun)
+            if expired {
+                try? store.endSession(id: open.id, at: open.startedMs + Int64(open.plannedSec) * 1000 + accrued, state: .done)
+            }
+            let adoptedPause = pause
+            return { [self] in
+                sessionId = open.id
+                self.phase = phase
+                tag = open.tag
+                interruptions = open.interruptions
+                plannedSec = open.plannedSec
+                startedMs = open.startedMs
+                pauseId = adoptedPause
+                accruedPauseMs = accrued
+                remainingSec = remaining
+                if paused {
+                    state = .paused
+                    pauseReason = openPause.flatMap { ActivityStore.PauseReason(rawValue: $0.reason) } ?? .auto
+                    notifySessionChange(sessionId)
+                } else if expired {
+                    sessionId = nil
+                    notifySessionChange(nil)
+                    completedFlows = completed + (phase == .flow ? 1 : 0)
+                    let next = plan.next(after: phase, completedFlows: completedFlows)
+                    self.phase = next
+                    remainingSec = plan.duration(of: next)
+                    state = .idle
+                } else {
+                    state = remainingSec <= 0 ? .overrun : .running
+                    notifySessionChange(sessionId)
+                    armDNDIfNeeded()
+                    startTicker()
+                }
+            }
         }
-
-        // The phase expired while the app was closed. A flow is left overrunning, because
-        // finishing it is still the user's call; anything else is completed at the moment it
-        // actually ended and the next phase is queued but NOT auto-started — nobody was here
-        // to start it, and pretending otherwise would invent focus time that never happened.
-        if remainingSec <= 0, !(phase == .flow && plan.allowOverrun) {
-            let endedAt = open.startedMs + Int64(open.plannedSec) * 1000 + accruedPauseMs
-            try? store.endSession(id: open.id, at: endedAt, state: .done)
-            sessionId = nil
-            onSessionChange?(nil)
-            if phase == .flow { completedFlows += 1 }
-            let next = plan.next(after: phase, completedFlows: completedFlows)
-            self.phase = next
-            remainingSec = plan.duration(of: next)
-            state = .idle
-            return
-        }
-
-        state = remainingSec <= 0 ? .overrun : .running
-        onSessionChange?(sessionId)
-        armDNDIfNeeded()
-        startTicker()
     }
 
     // MARK: - Ticking
@@ -372,7 +474,11 @@ public final class PomodoroEngine: ObservableObject {
     private func startTicker() {
         stopTicker()
         let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+            Task { @MainActor in
+                guard let self else { return }
+                if let requestTick = self.requestTick { requestTick() }
+                else { self.tick() }
+            }
         }
         timer.tolerance = 0.1
         RunLoop.main.add(timer, forMode: .common)
@@ -386,58 +492,50 @@ public final class PomodoroEngine: ObservableObject {
 
     /// Internal rather than private so a test can step the clock without waiting a second.
     public func tick() {
-        guard remoteCommand == nil else { return }
-        guard state == .running || state == .overrun else { return }
-        // Remaining is derived from the clock, never decremented, so a missed tick or a sleeping
-        // machine cannot drift the timer.
+        guard !applyingIntent else { return }
+        guard let (finished, endedAt) = expiredPhase() else { return }
+        endCurrent(state: .done)
+        onPhaseEnd?(finished, endedAt)
+        advance(after: finished, auto: true)
+    }
+
+    /// Derives the clock and announces an overrun without doing ledger I/O.
+    private func expiredPhase() -> (PomodoroPlan.Phase, Int64)? {
+        guard remoteCommand == nil else { return nil }
+        guard state == .running || state == .overrun else { return nil }
         let now = nowMs()
         accruedPauseMs = clampedPause(accruedPauseMs, now: now)
         let elapsed = max(0, Int((now - startedMs - accruedPauseMs) / 1000))
         let derived = plannedSec - elapsed
-        // Overrun is one-way: the clock counts up from zero and never returns to positive
-        // remaining, whatever the ledger says about pauses.
         remainingSec = state == .overrun ? min(derived, 0) : derived
-
-        guard remainingSec <= 0 else { return }
-        if state == .running {
-            let finished = phase
-            let endedAt = nowMs()
-            if plan.allowOverrun, phase == .flow {
-                state = .overrun
-                onPhaseEnd?(finished, endedAt)
-                // Zero is the moment to ding, not the later skip. Without this a 25-minute flow
-                // ended in silence and only breaks ever announced themselves.
-                overrunAnnounced = true
-                announce(finished: .flow,
-                         next: plan.next(after: .flow, completedFlows: completedFlows + 1),
-                         autoStarted: false)
-                return
-            }
-            endCurrent(state: .done)
+        guard remainingSec <= 0, state == .running else { return nil }
+        let finished = phase, endedAt = nowMs()
+        if plan.allowOverrun, phase == .flow {
+            state = .overrun
             onPhaseEnd?(finished, endedAt)
-            advance(after: finished, auto: true)
+            overrunAnnounced = true
+            announce(finished: .flow, next: plan.next(after: .flow, completedFlows: completedFlows + 1), autoStarted: false)
+            return nil
         }
+        return (finished, endedAt)
     }
 
     private func advance(after finished: PomodoroPlan.Phase, auto: Bool) {
+        if let next = prepareAdvance(after: finished, auto: auto) { start(next, tag: tag) }
+    }
+
+    private func prepareAdvance(after finished: PomodoroPlan.Phase, auto: Bool) -> PomodoroPlan.Phase? {
         if finished == .flow { completedFlows += 1 }
         let next = plan.next(after: finished, completedFlows: completedFlows)
         phase = next
         remainingSec = plan.duration(of: next)
         let willAutoStart = auto && plan.autoStarts(next)
-        // One announcement per boundary, from the single place every transition passes through,
-        // so a skip, an expiry and an auto-start all sound the same.
-        // A flow that already announced itself at zero does not ring again on the skip.
-        if !(finished == .flow && overrunAnnounced) {
-            announce(finished: finished, next: next, autoStarted: willAutoStart)
-        }
+        if !(finished == .flow && overrunAnnounced) { announce(finished: finished, next: next, autoStarted: willAutoStart) }
         overrunAnnounced = false
-        if willAutoStart {
-            start(next, tag: tag)
-        } else {
-            state = .idle
-            stopTicker()
-        }
+        if willAutoStart { return next }
+        state = .idle
+        stopTicker()
+        return nil
     }
 
     /// Overridable for tests: they assert the boundary was announced without making noise.
@@ -455,15 +553,100 @@ public final class PomodoroEngine: ObservableObject {
 
     private func endCurrent(state newState: ActivityStore.SessionState) {
         pauseReason = nil
-        guard let sessionId else { return }
-        if let pauseId {
-            try? store.closePause(id: pauseId, at: nowMs())
-            self.pauseId = nil
+        guard sessionId != nil else { return }
+        perform(endTransition(state: newState))
+    }
+
+    private func endCurrentSuspending(state newState: ActivityStore.SessionState) async {
+        pauseReason = nil
+        guard sessionId != nil else { return }
+        await performSuspending(endTransition(state: newState))
+    }
+
+    private func endTransition(state newState: ActivityStore.SessionState) -> LedgerTransition {
+        let session = sessionId, pause = pauseId, now = nowMs()
+        return { store in
+            if let session {
+                if let pause { try? store.closePause(id: pause, at: now) }
+                try? store.endSession(id: session, at: now, state: newState)
+            }
+            return { [self] in
+                pauseReason = nil
+                if session != nil {
+                    pauseId = nil
+                    sessionId = nil
+                    notifySessionChange(nil)
+                    releaseDND()
+                }
+            }
         }
-        try? store.endSession(id: sessionId, at: nowMs(), state: newState)
-        self.sessionId = nil
-        onSessionChange?(nil)
-        releaseDND()
+    }
+
+    /// The mailbox and UI commands share an ordered application path while persistence is suspended.
+    func applySuspending(intent: ActivityStore.Intent) async {
+        guard remoteCommand == nil else { return }
+        let command: DeferredCommand
+        switch intent.kind {
+        case "start": command = .start(.flow, (intent.payload["minutes"] as? Int).map { $0 * 60 }, intent.payload["tag"] as? String, intent.payload["note"] as? String)
+        case "pause": command = .pause(.manual, nil)
+        case "resume": command = .resume
+        case "stop": command = .stop
+        case "skip": command = .skip
+        default: return
+        }
+        let ownsBatch = !applyingIntent
+        if ownsBatch { beginIntentBatch() }
+        await applySuspending(command)
+        if ownsBatch { await endIntentBatch() }
+    }
+
+    private func applySuspending(_ command: DeferredCommand) async {
+        switch command {
+        case let .start(phase, seconds, tag, note):
+            await endCurrentSuspending(state: .abandoned)
+            await performSuspending(startTransition(phase, seconds: seconds, tag: tag))
+            if let note, let transition = noteTransition(note) { await performSuspending(transition) }
+        case let .pause(reason, since):
+            if let transition = pauseTransition(reason: reason, since: since) { await performSuspending(transition) }
+        case .resume:
+            if let transition = resumeTransition() {
+                await performSuspending(transition)
+                await tickSuspendingInBatch()
+            }
+        case .stop:
+            await endCurrentSuspending(state: .abandoned)
+            state = .idle
+            remainingSec = 0
+            stopTicker()
+        case .skip:
+            let finished = phase
+            await endCurrentSuspending(state: .done)
+            await advanceSuspending(after: finished, auto: plan.autoStarts(plan.next(after: finished, completedFlows: completedFlows)))
+        case .back:
+            let current = phase, target = plan.previous(before: phase, completedFlows: completedFlows)
+            await endCurrentSuspending(state: .abandoned)
+            if current.isBreak { completedFlows = max(0, completedFlows - 1) }
+            await performSuspending(startTransition(target, seconds: nil, tag: tag))
+        case .tag(let value): await performSuspending(tagTransition(value))
+        case .note(let value):
+            if let transition = noteTransition(value) { await performSuspending(transition) }
+        case .interruption:
+            if let transition = interruptionTransition() { await performSuspending(transition) }
+        case .restore: await performSuspending(restoreTransition())
+        }
+    }
+
+    func tickSuspendingInBatch() async {
+        guard let (finished, endedAt) = expiredPhase() else { return }
+        await endCurrentSuspending(state: .done)
+        onPhaseEnd?(finished, endedAt)
+        await advanceSuspending(after: finished, auto: true)
+    }
+
+    private func advanceSuspending(after finished: PomodoroPlan.Phase, auto: Bool) async {
+        if let next = prepareAdvance(after: finished, auto: auto) {
+            await performSuspending(startTransition(next, seconds: nil, tag: tag))
+        }
     }
 
     // MARK: - DND

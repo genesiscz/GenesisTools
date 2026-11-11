@@ -9,9 +9,15 @@ import Darwin
 /// Lives at `~/.genesis/activity.db`, mode 0600, and is deliberately a **separate** database
 /// from `genesis.db`: this data is high-volume, private, and is never served to anyone.
 ///
-/// Thread-safety follows the house pattern (`Knowledge/VaultIndex.swift`): one serial queue,
-/// synchronous-but-cheap public methods, migrations on open.
+/// One serial queue owns the ledger. Async UI work uses `perform` to suspend while it waits;
+/// synchronous callers keep the same public methods. Migrations run on open.
 public final class ActivityStore {
+    /// The runtime drain must suspend for ledger access, including callbacks reached while applying a command.
+    @TaskLocal static var suspendingAccessRequired = false
+    /// Tests can observe a real violation without trapping their process; the runtime always uses Swift.assert.
+    @TaskLocal static var suspendingAccessAssertion: @Sendable (Bool, String) -> Void = { condition, message in
+        Swift.assert(condition, message)
+    }
     // MARK: - Types
 
     /// One contiguous stretch of a single (app, window, url) triple.
@@ -80,9 +86,34 @@ public final class ActivityStore {
 
     private var db: OpaquePointer?
     private var preparedStatements = 0
-    var preparedStatementCount: Int { queue.sync { preparedStatements } }
+    var preparedStatementCount: Int { onQueue { preparedStatements } }
     private let queue = DispatchQueue(label: "dev.genesis.activity-store")
+    private let queueKey = DispatchSpecificKey<Bool>()
     public let dbPath: String
+
+    /// Suspend a UI caller while an ordered ledger operation waits for the queue or disk. Existing methods can be
+    /// composed here: onQueue recognises this queue and does not synchronously dispatch back onto itself.
+    func perform<Value>(_ operation: @escaping (ActivityStore) throws -> Value) async throws -> Value {
+        let assertion = Self.suspendingAccessAssertion
+        let requiresSuspendingAccess = Self.suspendingAccessRequired
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async { [self] in
+                dispatchPrecondition(condition: .notOnQueue(.main))
+                Self.$suspendingAccessAssertion.withValue(assertion) {
+                    Self.$suspendingAccessRequired.withValue(requiresSuspendingAccess) {
+                        continuation.resume(with: Result { try operation(self) })
+                    }
+                }
+            }
+        }
+    }
+
+    private func onQueue<Value>(_ operation: () throws -> Value) rethrows -> Value {
+        Self.suspendingAccessAssertion(!Thread.isMainThread || !Self.suspendingAccessRequired,
+                                      "Focus intent ledger access on main must await ActivityStore.perform")
+        if DispatchQueue.getSpecific(key: queueKey) == true { return try operation() }
+        return try queue.sync(execute: operation)
+    }
 
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
@@ -91,6 +122,7 @@ public final class ActivityStore {
 
     public init(path: String = ActivityStore.defaultPath, readOnly: Bool = false) throws {
         dbPath = path
+        queue.setSpecific(key: queueKey, value: true)
         if !readOnly, path != ":memory:" {
             let dir = (path as NSString).deletingLastPathComponent
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
@@ -109,7 +141,7 @@ public final class ActivityStore {
         sqlite3_busy_timeout(handle, 1_000)
         do {
             if !readOnly {
-                try queue.sync { try migrate() }
+                try onQueue { try migrate() }
                 if path != ":memory:" {
                     for suffix in ["", "-wal", "-shm"] { try Self.secureFile(path + suffix, create: false) }
                 }
@@ -252,7 +284,7 @@ public final class ActivityStore {
     /// Opens a segment and returns its id. The caller closes it when focus moves.
     @discardableResult
     public func openSegment(_ segment: Segment) throws -> Int64 {
-        try queue.sync {
+        try onQueue {
             let sql = """
             INSERT INTO activity_segment(
                 started_ms, ended_ms, session_id, app_bundle, app_name, window_title,
@@ -283,7 +315,7 @@ public final class ActivityStore {
     /// Closes an open segment. Closing an already-closed segment is a no-op, so a duplicate
     /// focus notification can never shorten a stretch that was already recorded.
     public func closeSegment(id: Int64, at endedMs: Int64) throws {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("UPDATE activity_segment SET ended_ms=MAX(COALESCE(ended_ms,started_ms),?), is_closed=1 WHERE id=? AND is_closed=0;")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, endedMs)
@@ -296,7 +328,7 @@ public final class ActivityStore {
     /// a segment that is still open on disk is never more than one tick stale. That is what lets
     /// a crash or a quit be bounded: whatever the last touch says is where the record stops.
     public func touchSegment(id: Int64, at endedMs: Int64) throws {
-        try queue.sync { try touchSegmentOnQueue(id: id, at: endedMs) }
+        try onQueue { try touchSegmentOnQueue(id: id, at: endedMs) }
     }
 
     /// `touchSegment` without waiting: the write runs on the store's serial queue, in order with
@@ -321,7 +353,7 @@ public final class ActivityStore {
     /// The last moment anything was recorded, across segments and input buckets. Launch uses it
     /// as the start of the "app was not running" gap.
     public func lastRecordedMs() throws -> Int64? {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("""
             SELECT MAX(value) FROM (
                 SELECT MAX(COALESCE(ended_ms, started_ms)) AS value FROM activity_segment
@@ -342,7 +374,7 @@ public final class ActivityStore {
 
     /// Where segment `id` starts now, or nil when the ledger no longer has it (a deletion can move or remove it).
     func segmentStartedMs(id: Int64) throws -> Int64? {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("SELECT started_ms FROM activity_segment WHERE id=?;")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, id)
@@ -355,7 +387,7 @@ public final class ActivityStore {
 
     /// Attaches a segment to a pomodoro session after the fact (a flow can start mid-segment).
     public func attachSegment(id: Int64, toSession sessionId: Int64?) throws {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("UPDATE activity_segment SET session_id=? WHERE id=?;")
             defer { sqlite3_finalize(stmt) }
             bindOptionalInt(stmt, 1, sessionId)
@@ -365,7 +397,7 @@ public final class ActivityStore {
     }
 
     public func segments(from: Int64, to: Int64) throws -> [Segment] {
-        try queue.sync {
+        try onQueue {
             let sql = """
             SELECT id, started_ms, ended_ms, session_id, app_bundle, app_name, window_title,
                    url_host, url_path, project, cmux_session, cmux_pane, display_id, idle
@@ -400,7 +432,7 @@ public final class ActivityStore {
     }
 
     private func segmentsWhere(_ clause: String) throws -> [Segment] {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("""
             SELECT id, started_ms, ended_ms, session_id, app_bundle, app_name, window_title,
                    url_host, url_path, project, cmux_session, cmux_pane, display_id, idle
@@ -433,7 +465,7 @@ public final class ActivityStore {
 
     /// Adds counts to a one-minute bucket. Counts only — the schema has nowhere to put a keycode.
     public func appendInput(bucketMs: Int64, segmentId: Int64, counts: InputCounts) throws {
-        try queue.sync {
+        try onQueue {
             let sql = """
             INSERT INTO input_bucket(bucket_ms, segment_id, keys, clicks, scrolls, px)
             VALUES(?,?,?,?,?,?)
@@ -456,7 +488,7 @@ public final class ActivityStore {
     }
 
     public func inputTotals(from: Int64, to: Int64) throws -> InputCounts {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("""
             SELECT COALESCE(SUM(keys),0), COALESCE(SUM(clicks),0), COALESCE(SUM(scrolls),0), COALESCE(SUM(px),0)
             FROM input_bucket WHERE bucket_ms >= ? AND bucket_ms < ?;
@@ -481,7 +513,7 @@ public final class ActivityStore {
     /// The one-minute buckets themselves rather than their sum, so effort can be drawn over
     /// time instead of collapsed into a single number.
     public func inputSeries(from: Int64, to: Int64) throws -> [InputSample] {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("""
             SELECT bucket_ms, segment_id, keys, clicks, scrolls, px FROM input_bucket
             WHERE bucket_ms >= ? AND bucket_ms < ? ORDER BY bucket_ms ASC;
@@ -509,7 +541,7 @@ public final class ActivityStore {
     /// `untilMs`: when a timed pause is due to end. It lives on the ledger, so a pause the user asked for
     /// survives the process that took it (an owner handoff, a crash).
     public func recordGap(startedMs: Int64, endedMs: Int64?, reason: String, untilMs: Int64? = nil) throws -> Int64 {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("INSERT INTO capture_gap(started_ms, ended_ms, reason, until_ms) VALUES(?,?,?,?);")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, startedMs)
@@ -522,7 +554,7 @@ public final class ActivityStore {
     }
 
     public func setGapUntil(id: Int64, untilMs: Int64?) throws {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("UPDATE capture_gap SET until_ms=? WHERE id=?;")
             defer { sqlite3_finalize(stmt) }
             bindOptionalInt(stmt, 1, untilMs)
@@ -532,7 +564,7 @@ public final class ActivityStore {
     }
 
     public func gapUntil(id: Int64) throws -> Int64? {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("SELECT until_ms FROM capture_gap WHERE id=?;")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, id)
@@ -545,7 +577,7 @@ public final class ActivityStore {
     /// started inside or after the range), else the open tail `forget` split off at `to` with its reason and
     /// deadline. Nil when neither is open.
     func openGapAfterForget(id: Int64, to: Int64) throws -> Int64? {
-        try queue.sync {
+        try onQueue {
             let own = try prepare("SELECT ended_ms IS NULL, reason FROM capture_gap WHERE id=?;")
             defer { sqlite3_finalize(own) }
             sqlite3_bind_int64(own, 1, id)
@@ -573,7 +605,7 @@ public final class ActivityStore {
     }
 
     public func gaps(from: Int64, to: Int64) throws -> [Gap] {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("""
             SELECT id, started_ms, ended_ms, reason FROM capture_gap
             WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?)
@@ -594,7 +626,7 @@ public final class ActivityStore {
     }
 
     public func closeGap(id: Int64, at endedMs: Int64) throws {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("UPDATE capture_gap SET ended_ms=? WHERE id=? AND ended_ms IS NULL;")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, endedMs)
@@ -607,7 +639,7 @@ public final class ActivityStore {
 
     @discardableResult
     public func startSession(_ session: FocusSession) throws -> Int64 {
-        try queue.sync {
+        try onQueue {
             let sql = """
             INSERT INTO focus_session(kind, planned_sec, started_ms, ended_ms, state, cycle_index, tag, note, interruptions)
             VALUES(?,?,?,?,?,?,?,?,?);
@@ -629,7 +661,7 @@ public final class ActivityStore {
     }
 
     public func endSession(id: Int64, at endedMs: Int64, state: SessionState) throws {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("UPDATE focus_session SET ended_ms=?, state=? WHERE id=?;")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, endedMs)
@@ -640,7 +672,7 @@ public final class ActivityStore {
     }
 
     public func updateSession(id: Int64, tag: String?, note: String?, interruptions: Int?) throws {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("""
             UPDATE focus_session SET
                 tag = COALESCE(?, tag),
@@ -659,7 +691,7 @@ public final class ActivityStore {
 
     /// Removes a session's tag. `updateSession` reads nil as "leave it", so clearing needs its own write.
     public func clearSessionTag(id: Int64) throws {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("UPDATE focus_session SET tag = NULL WHERE id=?;")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, id)
@@ -682,7 +714,7 @@ public final class ActivityStore {
     }
 
     private func sessionsWhere(_ clause: String) throws -> [FocusSession] {
-        try queue.sync {
+        try onQueue {
             let sql = """
             SELECT id, kind, planned_sec, started_ms, ended_ms, state, cycle_index, tag, note, interruptions
             FROM focus_session WHERE \(clause);
@@ -709,7 +741,7 @@ public final class ActivityStore {
 
     @discardableResult
     public func recordPause(sessionId: Int64, startedMs: Int64, endedMs: Int64?, reason: PauseReason) throws -> Int64 {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("INSERT INTO focus_pause(session_id, started_ms, ended_ms, reason) VALUES(?,?,?,?);")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, sessionId)
@@ -725,7 +757,7 @@ public final class ActivityStore {
     /// only record of "paused" was an open pause row, which the resume path could not see
     /// because the session still said `running`.
     public func setSessionState(id: Int64, state: SessionState) throws {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("UPDATE focus_session SET state=? WHERE id=? AND ended_ms IS NULL;")
             defer { sqlite3_finalize(stmt) }
             bindText(stmt, 1, state.rawValue)
@@ -735,7 +767,7 @@ public final class ActivityStore {
     }
 
     public func closePause(id: Int64, at endedMs: Int64) throws {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("UPDATE focus_pause SET ended_ms=? WHERE id=? AND ended_ms IS NULL;")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, endedMs)
@@ -754,7 +786,7 @@ public final class ActivityStore {
     /// Every pause inside one session, oldest first. `pausedMs` answers "how long"; this
     /// answers "when, and why", which is what a breakdown has to draw.
     public func pauses(sessionId: Int64) throws -> [Pause] {
-        try queue.sync { try pausesHoldingQueue(sessionId: sessionId) }
+        try onQueue { try pausesHoldingQueue(sessionId: sessionId) }
     }
 
     /// `pauses(sessionId:)` for a caller already on `queue` (a transaction such as `forget`).
@@ -849,7 +881,7 @@ public final class ActivityStore {
     /// input minutes; only its start moves to the cutoff.
     @discardableResult
     public func prune(before cutoff: Int64) throws -> (segments: Int, sessions: Int) {
-        try queue.sync {
+        try onQueue {
             try exec("BEGIN IMMEDIATE;")
             var committed = false
             defer {
@@ -906,7 +938,7 @@ public final class ActivityStore {
     public func forget(from: Int64, to: Int64, appBundle: String? = nil,
                        now: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) throws -> (segments: Int, sessions: Int) {
         guard from < to else { return (0, 0) }
-        return try queue.sync {
+        return try onQueue {
             try exec("BEGIN IMMEDIATE;")
             var committed = false
             defer {
@@ -1025,7 +1057,7 @@ public final class ActivityStore {
     /// Returns unconsumed intents and marks them consumed in the same queue hop, so two drains
     /// can never run the same command twice.
     public func takeIntents(limit: Int = 16) throws -> [Intent] {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("SELECT id, kind, payload FROM focus_intent WHERE consumed_ms IS NULL ORDER BY id ASC LIMIT ?;")
             var rows: [Intent] = []
             sqlite3_bind_int(stmt, 1, Int32(limit))
@@ -1059,7 +1091,7 @@ public final class ActivityStore {
     /// Test seam and parity with the CLI writer.
     @discardableResult
     public func pushIntent(kind: String, payload: [String: Any] = [:]) throws -> Int64 {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("INSERT INTO focus_intent(created_ms, kind, payload) VALUES(?,?,?);")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, Int64(Date().timeIntervalSince1970 * 1000))
@@ -1074,7 +1106,7 @@ public final class ActivityStore {
     // MARK: - Rollups
 
     public func cacheRollup(day: String, json: String, computedMs: Int64) throws {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("INSERT INTO day_rollup(day, computed_ms, json) VALUES(?,?,?) ON CONFLICT(day) DO UPDATE SET computed_ms=excluded.computed_ms, json=excluded.json;")
             defer { sqlite3_finalize(stmt) }
             bindText(stmt, 1, day)
@@ -1085,7 +1117,7 @@ public final class ActivityStore {
     }
 
     public func cachedRollup(day: String) throws -> String? {
-        try queue.sync {
+        try onQueue {
             let stmt = try prepare("SELECT json FROM day_rollup WHERE day=?;")
             defer { sqlite3_finalize(stmt) }
             bindText(stmt, 1, day)

@@ -143,16 +143,63 @@ public final class FocusStudioModel: ObservableObject {
 
     // MARK: - Loading
 
-    public func reload(now: Date = Date()) {
-        PerfLog.span("focus.studio.reload") { reloadSnapshot(now: now) }
+    private struct LedgerSnapshot {
+        let sessions: [ActivityStore.FocusSession]
+        let segments: [ActivityStore.Segment]
+        let input: [ActivityStore.InputSample]
+        let gaps: [ActivityStore.Gap]
+    }
+    private var reloadGeneration = 0
+
+    /// UI callers enqueue their reads; only the cached result is applied on the main actor.
+    func scheduleReload(now: Date = Date()) {
+        Task { @MainActor [weak self] in await self?.reloadSuspending(now: now) }
     }
 
-    private func reloadSnapshot(now: Date) {
+    func reloadSuspending(now: Date = Date()) async {
+        await PerfLog.spanAsync("focus.studio.reload") {
+            reloadGeneration += 1
+            let generation = reloadGeneration
+            let from = range.fromMs, to = range.toMs, selectedSession = sessionFilter
+            let tag = tagFilter, project = projectFilter, query = search
+            let clock = Int64(now.timeIntervalSince1970 * 1000)
+            guard let snapshot = try? await store.perform({ store in
+                Self.readSnapshot(store: store, from: from, to: to, session: selectedSession, now: clock)
+            }) else { return }
+            guard generation == reloadGeneration, range.fromMs == from, range.toMs == to,
+                  sessionFilter == selectedSession, tagFilter == tag, projectFilter == project, search == query else { return }
+            reloadSnapshot(now: now, ledger: snapshot)
+        }
+    }
+
+    nonisolated private static func readSnapshot(store: ActivityStore, from: Int64, to: Int64,
+                                                session: Int64?, now: Int64) -> LedgerSnapshot {
+        let sessions = (try? store.sessions(from: from, to: to)) ?? []
+        let focused = session.flatMap { id in sessions.first { $0.id == id } }
+        let readFrom = min(from, sessions.map(\.startedMs).min() ?? from)
+        let readTo = max(to, sessions.map { $0.endedMs ?? now }.max() ?? to)
+        return LedgerSnapshot(sessions: sessions,
+                              segments: (try? store.segments(from: readFrom, to: readTo)) ?? [],
+                              input: (try? store.inputSeries(from: readFrom, to: readTo)) ?? [],
+                              gaps: (try? store.gaps(from: focused?.startedMs ?? from,
+                                                    to: focused.map { $0.endedMs ?? now } ?? to)) ?? [])
+    }
+
+    public func reload(now: Date = Date()) {
+        reloadGeneration += 1
+        PerfLog.span("focus.studio.reload") {
+            let snapshot = Self.readSnapshot(store: store, from: range.fromMs, to: range.toMs,
+                                             session: sessionFilter, now: Int64(now.timeIntervalSince1970 * 1000))
+            reloadSnapshot(now: now, ledger: snapshot)
+        }
+    }
+
+    private func reloadSnapshot(now: Date, ledger: LedgerSnapshot) {
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         let from = range.fromMs
         let to = range.toMs
 
-        let rangeSessions = (try? store.sessions(from: from, to: to)) ?? []
+        let rangeSessions = ledger.sessions
         // A tag names a set of SESSIONS, so filtering by one scopes every view to the work done
         // inside them. Until 2026-09-21 21:30 it only filtered the Sessions list, which made
         // picking a tag look like it did nothing at all on the other three tabs.
@@ -169,11 +216,9 @@ public final class FocusStudioModel: ObservableObject {
 
         // The picker describes whole sessions, including phases crossing the range boundary.
         // Read their union once, then scope the visible charts in memory.
-        let readFrom = min(from, rangeSessions.map(\.startedMs).min() ?? from)
-        let readTo = max(to, rangeSessions.map { $0.endedMs ?? nowMs }.max() ?? to)
-        let allSegments = (try? store.segments(from: readFrom, to: readTo)) ?? []
-        let input = InputIndex((try? store.inputSeries(from: readFrom, to: readTo)) ?? [])
-        let gaps = (try? store.gaps(from: windowFrom, to: windowTo)) ?? []
+        let allSegments = ledger.segments
+        let input = InputIndex(ledger.input)
+        let gaps = ledger.gaps
         let windowSegments = allSegments.filter {
             $0.startedMs < windowTo && ($0.endedMs ?? nowMs) > windowFrom
         }
@@ -438,13 +483,13 @@ public final class FocusStudioModel: ObservableObject {
 
     public func step(_ delta: Int) {
         range = range.stepped(by: delta)
-        reload()
+        scheduleReload()
     }
 
     public func setGranularity(_ granularity: FocusRange.Granularity) {
         let anchor = Date(timeIntervalSince1970: Double(range.fromMs) / 1000)
         range = FocusRange.make(granularity, containing: anchor)
-        reload()
+        scheduleReload()
     }
 
     /// The digest the CLI prints, for the copy button — same numbers, same wording.

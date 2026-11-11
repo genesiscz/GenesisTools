@@ -179,6 +179,37 @@ final class FocusStudioModelTests: XCTestCase {
 
     private func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
 
+    func testSuspendingStudioReloadMatchesTheLedgerSnapshotWithoutMainQueueReads() async throws {
+        let start = localMs(hour: 9, onDayOf: model.range.fromMs)
+        let session = try store.startSession(.init(kind: "flow", plannedSec: 600, startedMs: start,
+                                                  state: "running", cycleIndex: 1, tag: "work"))
+        try store.endSession(id: session, at: start + 600_000, state: .done)
+        let segment = try store.openSegment(.init(startedMs: start, endedMs: start + 600_000,
+                                                  sessionId: session, appBundle: "test.editor", appName: "Fixture editor"))
+        try store.appendInput(bucketMs: start, segmentId: segment, counts: .init(keys: 3))
+        _ = try store.recordGap(startedMs: start + 120_000, endedMs: start + 180_000, reason: "capture_paused")
+        let now = Date(timeIntervalSince1970: Double(start + 900_000) / 1000)
+        model.tagFilter = "work"
+        model.sessionFilter = session
+        model.reload(now: now)
+        XCTAssertFalse(model.bars.isEmpty)
+        let reopened = try ActivityStore(path: path)
+        let asynchronous = FocusStudioModel(store: reopened)
+        asynchronous.range = model.range
+        asynchronous.tagFilter = "work"
+        asynchronous.sessionFilter = session
+        await ActivityStore.$suspendingAccessRequired.withValue(true) {
+            await asynchronous.reloadSuspending(now: now)
+        }
+        XCTAssertEqual(asynchronous.bars, model.bars)
+        XCTAssertEqual(asynchronous.phaseBands, model.phaseBands)
+        XCTAssertEqual(asynchronous.gapBars, model.gapBars)
+        XCTAssertEqual(asynchronous.keys, 3)
+        XCTAssertEqual(asynchronous.unmeasuredMs, model.unmeasuredMs)
+        XCTAssertEqual(asynchronous.totals.focusedMs, model.totals.focusedMs)
+        XCTAssertEqual(asynchronous.sessionCards, model.sessionCards)
+    }
+
     func testFilteredRecordedActivityDoesNotClaimNothingWasRecorded() throws {
         let from = localMs(hour: 9, onDayOf: model.range.fromMs)
         _ = try store.openSegment(.init(startedMs: from, endedMs: from + 60_000,
@@ -886,7 +917,7 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertTrue(try store.gaps(from: 0, to: nowMs() + 1).allSatisfy { $0.endedMs != nil })
     }
 
-    func testAnAccessibilityGrantDuringAnExclusionLeavesTheInputCounterStopped() throws {
+    func testAnAccessibilityGrantDuringAnExclusionLeavesTheInputCounterStopped() async throws {
         var settings = FocusSettings()
         settings.excludedBundles.insert("test.private-app")
         let recorder = ActivityRecorder(store: store, settings: settings, probeReader: { _, _ in AXFocusProbe.Result() })
@@ -897,19 +928,26 @@ final class FocusStudioModelTests: XCTestCase {
         }
         recorder.start()
         defer { recorder.stop() }
+        await recorder.waitForPersistence()
         XCTAssertEqual(starts, 1, "capture starts the counter")
 
         recorder.applyProbe(.init(title: "Private app fixture", url: nil, displayId: nil),
                             bundle: "test.private-app", appName: "Private app", settings: settings, idle: false)
         recorder.accessibilityWasGranted()
+        await recorder.waitForPersistence()
         XCTAssertEqual(starts, 1, "a grant while an excluded app is in front must not count its input")
 
         recorder.applyProbe(.init(title: "Visible again", url: nil, displayId: nil),
                             bundle: "test.editor", appName: "Editor", settings: settings, idle: false)
+        await recorder.waitForPersistence()
         XCTAssertEqual(starts, 2, "the allowed probe that ends the exclusion starts the counter again")
 
         recorder.accessibilityWasGranted()
+        await recorder.waitForPersistence()
         XCTAssertEqual(starts, 3, "with no exclusion open, a grant still restarts the counter")
+        let reopened = try ActivityStore(path: path)
+        XCTAssertEqual(try reopened.openSegments().first?.appBundle, "test.editor")
+        XCTAssertTrue(try reopened.gaps(from: 0, to: nowMs() + 1).filter { $0.reason == "excluded_app" }.allSatisfy { $0.endedMs != nil })
     }
 
     func testDelayedProbeCannotReopenCaptureAfterPauseStopOrPrivacyChange() async throws {
@@ -1094,5 +1132,267 @@ final class FocusSessionKeysTests: XCTestCase {
         XCTAssertNotEqual(FocusSessionCardView(card: card, keyed: true, open: {}),
                           FocusSessionCardView(card: card, keyed: false, open: {}),
                           "== must compare keyed, or the card keeps its resting body when the keys reach it")
+    }
+}
+
+extension FocusStudioModelTests {
+    func testSuspendingCapturePausePreservesCountsAndSerializesLaterUIResumeAndPause() async throws {
+        let recorder = ActivityRecorder(store: store, liveServices: false)
+        recorder.start()
+        recorder.applyProbe(.init(title: "Fixture", url: nil, displayId: nil), bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        recorder.recordKeyForTesting()
+        recorder.recordKeyForTesting()
+        let entered = expectation(description: "ledger queue held")
+        let prepared = expectation(description: "capture pause prepared")
+        let gate = DispatchSemaphore(value: 0)
+        let ledger = try XCTUnwrap(store)
+        let blocker = Task.detached {
+            try await ledger.perform { _ in entered.fulfill(); return gate.wait(timeout: .now() + 5) }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        recorder.suspendingTransitionPrepared = { prepared.fulfill() }
+        let firstDeadline = Date().addingTimeInterval(600)
+        let lastDeadline = firstDeadline.addingTimeInterval(600)
+        let pause = Task { @MainActor in
+            await ActivityStore.$suspendingAccessRequired.withValue(true) { await recorder.pauseCaptureAsync(until: firstDeadline) }
+        }
+        await fulfillment(of: [prepared], timeout: 2)
+        recorder.suspendingTransitionPrepared = nil
+        recorder.resumeCapture()
+        recorder.pauseCapture(until: lastDeadline)
+        gate.signal()
+        await pause.value
+        let waitStatus = try await blocker.value
+        XCTAssertEqual(waitStatus, .success, "the main actor must progress while persistence waits")
+        await recorder.waitForPersistence()
+        let reopened = try ActivityStore(path: path)
+        XCTAssertEqual(recorder.pausedUntil, lastDeadline)
+        XCTAssertTrue(try reopened.openSegments().isEmpty)
+        XCTAssertEqual(try reopened.inputTotals(from: 0, to: nowMs() + 120_000).keys, 2)
+        let pauses = try reopened.gaps(from: 0, to: nowMs() + 120_000).filter { $0.reason == "capture_paused" }
+        XCTAssertEqual(pauses.count, 2)
+        XCTAssertNotNil(pauses[0].endedMs)
+        let finalGap = try XCTUnwrap(pauses.last)
+        XCTAssertNil(finalGap.endedMs)
+        XCTAssertEqual(try reopened.gapUntil(id: finalGap.id), Int64(lastDeadline.timeIntervalSince1970 * 1000))
+    }
+
+    func testSuspendingAttachAttributesAFlushDuringTheWaitToItsNewSessionAndKeepsLaterUIAttach() async throws {
+        let first = try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: nowMs(), state: "running", cycleIndex: 0))
+        let second = try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: nowMs(), state: "running", cycleIndex: 1))
+        let recorder = ActivityRecorder(store: store, liveServices: false)
+        recorder.start()
+        recorder.applyProbe(.init(title: "Fixture", url: nil, displayId: nil), bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        recorder.attach(sessionId: first)
+        recorder.recordKeyForTesting()
+        recorder.recordKeyForTesting()
+        let entered = expectation(description: "ledger queue held")
+        let prepared = expectation(description: "session split prepared")
+        let gate = DispatchSemaphore(value: 0)
+        let ledger = try XCTUnwrap(store)
+        let blocker = Task.detached {
+            try await ledger.perform { _ in entered.fulfill(); return gate.wait(timeout: .now() + 5) }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        recorder.suspendingTransitionPrepared = { prepared.fulfill() }
+        let attach = Task { @MainActor in
+            await ActivityStore.$suspendingAccessRequired.withValue(true) { await recorder.attachAsync(sessionId: second) }
+        }
+        await fulfillment(of: [prepared], timeout: 2)
+        recorder.suspendingTransitionPrepared = nil
+        recorder.recordKeyForTesting()
+        recorder.flushOffMainForTesting()
+        recorder.attach(sessionId: nil)
+        gate.signal()
+        await attach.value
+        let waitStatus = try await blocker.value
+        XCTAssertEqual(waitStatus, .success)
+        await recorder.waitForPersistence()
+        let reopened = try ActivityStore(path: path)
+        let segments = try reopened.segments(from: 0, to: nowMs() + 120_000)
+        let samples = try reopened.inputSeries(from: 0, to: nowMs() + 120_000)
+        func keys(_ session: Int64) -> Int {
+            let ids = Set(segments.filter { $0.sessionId == session }.map(\.id))
+            return samples.filter { ids.contains($0.segmentId) }.reduce(0) { $0 + $1.counts.keys }
+        }
+        XCTAssertEqual(keys(first), 2, "the forced flush before splitting retains its original segment")
+        XCTAssertEqual(keys(second), 1, "a timer flush while the new id is pending belongs to the new phase")
+        XCTAssertEqual(try reopened.openSegments().count, 1)
+        XCTAssertNil(try reopened.openSegments().first?.sessionId, "the queued UI attach wins after the older awaited attach")
+    }
+
+    func testSuspendingCaptureRetriesFailedInputAndSegmentAndGapCloses() async throws {
+        let recorder = ActivityRecorder(store: store, liveServices: false)
+        recorder.start()
+        recorder.applyProbe(.init(title: "Fixture", url: nil, displayId: nil), bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        recorder.recordKeyForTesting()
+        var other: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &other), SQLITE_OK)
+        defer { sqlite3_close(other) }
+        XCTAssertEqual(sqlite3_exec(other, "CREATE TRIGGER reject_input BEFORE INSERT ON input_bucket BEGIN SELECT RAISE(FAIL,'fixture input'); END;", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(other, "CREATE TRIGGER reject_close BEFORE UPDATE OF is_closed ON activity_segment BEGIN SELECT RAISE(FAIL,'fixture close'); END;", nil, nil, nil), SQLITE_OK)
+        await ActivityStore.$suspendingAccessRequired.withValue(true) { await recorder.pauseCaptureAsync(until: Date().addingTimeInterval(600)) }
+        XCTAssertEqual(sqlite3_exec(other, "DROP TRIGGER reject_input; DROP TRIGGER reject_close;", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(other, "CREATE TRIGGER reject_gap BEFORE UPDATE OF ended_ms ON capture_gap BEGIN SELECT RAISE(FAIL,'fixture gap'); END;", nil, nil, nil), SQLITE_OK)
+        await recorder.resumeCaptureAsync()
+        XCTAssertEqual(sqlite3_exec(other, "DROP TRIGGER reject_gap;", nil, nil, nil), SQLITE_OK)
+        await recorder.resumeCaptureAsync()
+        await recorder.attachAsync(sessionId: nil)
+        let reopened = try ActivityStore(path: path)
+        XCTAssertEqual(try reopened.inputTotals(from: 0, to: nowMs() + 120_000).keys, 1, "failed input is retried without duplication")
+        XCTAssertTrue(try reopened.openSegments().isEmpty, "failed segment closes remain pending until they commit")
+        XCTAssertTrue(try reopened.gaps(from: 0, to: nowMs() + 120_000).allSatisfy { $0.endedMs != nil }, "a failed gap close keeps its id for retry")
+    }
+}
+
+extension FocusStudioModelTests {
+    func testQueuedRecorderProbeAndSettingsStopKeepTheLedgerOffMainAndCloseEverySegment() async throws {
+        let recorder = ActivityRecorder(store: store, liveServices: false)
+        recorder.start()
+        let probe = AXFocusProbe.Result(title: "First", url: nil, displayId: nil)
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let entered = expectation(description: "ledger queue held")
+        let prepared = expectation(description: "pause admitted")
+        let gate = DispatchSemaphore(value: 0)
+        let ledger = try XCTUnwrap(store)
+        let blocker = Task.detached {
+            try await ledger.perform { _ in entered.fulfill(); return gate.wait(timeout: .now() + 5) }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        recorder.suspendingTransitionPrepared = { prepared.fulfill() }
+        let pause = Task { @MainActor in
+            await ActivityStore.$suspendingAccessRequired.withValue(true) { await recorder.pauseCaptureAsync(until: Date().addingTimeInterval(600)) }
+        }
+        await fulfillment(of: [prepared], timeout: 2)
+        recorder.suspendingTransitionPrepared = nil
+        recorder.resumeCapture()
+        recorder.applyProbe(.init(title: "Second", url: nil, displayId: nil), bundle: "test.browser", appName: "Browser", settings: FocusSettings(), idle: false)
+        var disabled = FocusSettings()
+        disabled.captureEnabled = false
+        recorder.apply(settings: disabled)
+        recorder.stop()
+        gate.signal()
+        await pause.value
+        let waitStatus = try await blocker.value
+        XCTAssertEqual(waitStatus, .success)
+        await recorder.waitForPersistence()
+        let reopened = try ActivityStore(path: path)
+        XCTAssertFalse(recorder.isCapturing)
+        XCTAssertTrue(try reopened.openSegments().isEmpty)
+        let segments = try reopened.segments(from: 0, to: nowMs() + 120_000)
+        XCTAssertEqual(segments.map(\.appName), ["Editor", "Browser"], "the admitted probe commits before the settings stop")
+        XCTAssertTrue(segments.allSatisfy { $0.endedMs != nil })
+        XCTAssertEqual(try reopened.gaps(from: 0, to: nowMs() + 120_000).filter { $0.endedMs == nil }.map(\.reason), ["capture_off"])
+    }
+}
+
+extension FocusStudioModelTests {
+    func testAnAXResultQueuedBehindSettingsCannotReopenCaptureOrPersistAnOldPrivacyPolicy() async throws {
+        for change in ["disabled", "hashed", "excluded"] {
+            let readEntered = expectation(description: "AX read started \(change)")
+            let readGate = DispatchSemaphore(value: 0)
+            let secret = "Secret AX \(change)"
+            let recorder = ActivityRecorder(store: store, liveServices: false, probeReader: { _, _ in
+                readEntered.fulfill()
+                guard readGate.wait(timeout: .now() + 5) == .success else { return .init() }
+                return .init(title: secret, url: nil, displayId: nil)
+            })
+            recorder.start()
+            recorder.applyProbe(.init(title: "Visible", url: nil, displayId: nil), bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+            let entered = expectation(description: "ledger held \(change)")
+            let prepared = expectation(description: "attach prepared \(change)")
+            let queued = expectation(description: "AX result queued behind settings \(change)")
+            let gate = DispatchSemaphore(value: 0)
+            let ledger = try XCTUnwrap(store)
+            let blocker = Task.detached {
+                try await ledger.perform { _ in entered.fulfill(); return gate.wait(timeout: .now() + 5) }
+            }
+            await fulfillment(of: [entered], timeout: 2)
+            recorder.suspendingTransitionPrepared = { prepared.fulfill() }
+            let attach = Task { @MainActor in await recorder.attachAsync(sessionId: nil) }
+            await fulfillment(of: [prepared], timeout: 2)
+            recorder.suspendingTransitionPrepared = nil
+            recorder.generatedProbeQueued = { queued.fulfill() }
+            let read = try XCTUnwrap(recorder.requestProbe(pid: 42, bundle: "test.secret", appName: "Secret", idle: false))
+            await fulfillment(of: [readEntered], timeout: 2)
+            var policy = FocusSettings()
+            if change == "disabled" { policy.captureEnabled = false }
+            else if change == "hashed" { policy.titleMode = .hashed }
+            else { policy.excludedBundles.insert("test.secret") }
+            recorder.apply(settings: policy)
+            readGate.signal()
+            await fulfillment(of: [queued], timeout: 2)
+            gate.signal()
+            await attach.value
+            await read.value
+            let status = try await blocker.value
+            XCTAssertEqual(status, .success)
+            await recorder.waitForPersistence()
+            let reopened = try ActivityStore(path: path)
+            let rows = try reopened.segments(from: 0, to: nowMs() + 120_000)
+            XCTAssertFalse(rows.contains { $0.windowTitle == secret }, "queued AX must not persist an old policy: \(change)")
+            if change == "disabled" {
+                XCTAssertFalse(recorder.isCapturing)
+                XCTAssertTrue(try reopened.openSegments().isEmpty, "a stale AX result cannot reopen capture after stop")
+            }
+            recorder.stop()
+            await recorder.waitForPersistence()
+        }
+    }
+}
+
+extension FocusStudioModelTests {
+    private func checkExtractedInputHandoff(_ operation: String) async throws {
+        let first = try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: nowMs(), state: "running", cycleIndex: 0))
+        let second = try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: nowMs(), state: "running", cycleIndex: 1))
+        let recorder = ActivityRecorder(store: store, liveServices: false)
+        recorder.start()
+        recorder.applyProbe(.init(title: "Visible", url: nil, displayId: nil), bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        recorder.attach(sessionId: first)
+        recorder.recordKeyForTesting()
+        recorder.recordKeyForTesting()
+        let extracted = expectation(description: "counts extracted before recorder callback")
+        let transitionEntered = expectation(description: "transition reached its asynchronous emission barrier")
+        let gate = DispatchSemaphore(value: 0)
+        recorder.counterEmissionExtractedForTesting = {
+            extracted.fulfill()
+            XCTAssertEqual(gate.wait(timeout: .now() + 5), .success, "the main actor must remain available to release the flush")
+        }
+        let flush = recorder.flushOffMainAsynchronouslyForTesting()
+        await fulfillment(of: [extracted], timeout: 2)
+        XCTAssertTrue(recorder.hasPendingPersistence, "extracted counts are pending before onFlush begins")
+        recorder.suspendingTransitionWillWait = { [weak recorder] in
+            recorder?.suspendingTransitionWillWait = nil
+            Task { @MainActor in gate.signal(); transitionEntered.fulfill() }
+        }
+        let transition = Task { @MainActor in
+            await ActivityStore.$suspendingAccessRequired.withValue(true) {
+                if operation == "attach" { await recorder.attachAsync(sessionId: second) }
+                else { recorder.stop(); await recorder.waitForPersistence() }
+            }
+        }
+        await transition.value
+        await fulfillment(of: [transitionEntered], timeout: 2)
+        await flush.value
+        await recorder.waitForPersistence()
+        let reopened = try ActivityStore(path: path)
+        let segments = try reopened.segments(from: 0, to: nowMs() + 120_000)
+        let ids = Set(segments.filter { $0.sessionId == first }.map(\.id))
+        let input = try reopened.inputSeries(from: 0, to: nowMs() + 120_000)
+        XCTAssertEqual(input.reduce(0) { $0 + $1.counts.keys }, 2, "the already-extracted callback persists exactly once")
+        XCTAssertEqual(input.filter { ids.contains($0.segmentId) }.reduce(0) { $0 + $1.counts.keys }, 2,
+                       "counts extracted before \(operation) retain their original session")
+        if operation == "stop" { XCTAssertTrue(try reopened.openSegments().isEmpty) }
+        else { XCTAssertEqual(try reopened.openSegments().first?.sessionId, second) }
+        recorder.stop()
+        await recorder.waitForPersistence()
+    }
+
+    func testAnAttachWaitsForExtractedInputBeforeChangingTheCounterDestination() async throws {
+        try await checkExtractedInputHandoff("attach")
+    }
+
+    func testAStopWaitsForExtractedInputBeforeDroppingItsCounterDestination() async throws {
+        try await checkExtractedInputHandoff("stop")
     }
 }

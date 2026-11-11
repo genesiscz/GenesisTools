@@ -31,6 +31,132 @@ final class ActivityStoreTests: XCTestCase {
         ActivityStore.Segment(startedMs: start, appBundle: app, appName: app, windowTitle: title)
     }
 
+    private final class AccessAssertionProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var observations: [(Bool, String)] = []
+        func record(_ condition: Bool, message: String) {
+            lock.lock()
+            observations.append((condition, message))
+            lock.unlock()
+        }
+        var values: [(Bool, String)] {
+            lock.lock()
+            defer { lock.unlock() }
+            return observations
+        }
+    }
+
+    @MainActor
+    func testTheLedgerGuardCatchesARealMainThreadReadAndAllowsTheAwaitedRead() async throws {
+        let ledger = try XCTUnwrap(store)
+        let probe = AccessAssertionProbe()
+        try await ActivityStore.$suspendingAccessAssertion.withValue({ condition, message in
+            probe.record(condition, message: message)
+        }) {
+            try await ActivityStore.$suspendingAccessRequired.withValue(true) {
+                _ = try ledger.takeIntents()
+                _ = try await ledger.perform { try $0.takeIntents() }
+            }
+        }
+        let values = probe.values
+        XCTAssertEqual(values.map { $0.0 }, [false, true], "the actual onQueue guard must flag the MainActor plant")
+        XCTAssertTrue(values.allSatisfy { $0.1.contains("must await ActivityStore.perform") })
+    }
+
+    @MainActor
+    func testIntentDrainSuspendsForTheStoreAndKeepsOrderAcrossUICommandsAndShutdown() async throws {
+        let controller = FocusController()
+        controller.ownsRuntime = true
+        controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
+        controller.start(appConfig: [:], databasePath: path, liveServices: false, presentsWindows: false)
+        let ledger = try XCTUnwrap(controller.store)
+        let engine = try XCTUnwrap(controller.engine)
+        var engineTime = Date()
+        var boundaries = 0
+        engine.clock = { engineTime }
+        engine.announcePhaseChange = { _, _, _ in boundaries += 1 }
+        let sessionChange = engine.onSessionChangeSuspending
+        engine.onSessionChangeSuspending = { id in
+            await sessionChange?(id)
+            if id != nil { engineTime = engineTime.addingTimeInterval(13 * 60) }
+        }
+        try store.pushIntent(kind: "start", payload: ["minutes": 12, "tag": "queued"])
+        try store.pushIntent(kind: "studio")
+        for _ in 0..<14 { try store.pushIntent(kind: "unknown") }
+        let unclaimed = try store.pushIntent(kind: "start", payload: ["minutes": 5])
+        let entered = expectation(description: "store queue held")
+        let gate = DispatchSemaphore(value: 0)
+        let blocker = Task.detached {
+            try await ledger.perform { _ in
+                entered.fulfill()
+                return gate.wait(timeout: .now() + 5)
+            }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        var progress: Task<Void, Never>?
+        controller.intentDrainWillTake = { progress = Task { @MainActor in gate.signal() } }
+        controller.drainIntents()
+        controller.drainIntents()
+        // These arrive during the awaited claim. They run after the accepted intents, without stale completions.
+        engine.setNote("Saved after queued start")
+        controller.apply(appConfig: ["focus": ["retentionDays": 1]])
+        engine.stop()
+        controller.stop(preservingSession: true)
+        await controller.finishLedgerWrites()
+        await progress?.value
+        let waitStatus = try await blocker.value
+        XCTAssertEqual(waitStatus, .success, "main must run before the store queue is released")
+        XCTAssertFalse(controller.ownsRuntime)
+        XCTAssertNil(controller.store)
+        XCTAssertEqual(engine.state, .idle)
+        XCTAssertEqual(boundaries, 0, "a newer queued UI stop must run before a delayed expiry tick")
+        let reopened = try ActivityStore(path: path)
+        let sessions = try reopened.sessions(from: 0, to: Int64(engineTime.timeIntervalSince1970 * 1000) + 1_000)
+        XCTAssertEqual(sessions.count, 1)
+        let session = try XCTUnwrap(sessions.first)
+        XCTAssertEqual(session.note, "Saved after queued start")
+        XCTAssertEqual(session.tag, "queued")
+        XCTAssertEqual(session.state, ActivityStore.SessionState.abandoned.rawValue)
+        XCTAssertNotNil(session.endedMs)
+        XCTAssertTrue(try reopened.pauses(sessionId: session.id).isEmpty)
+        XCTAssertTrue(try reopened.openPauses(sessionId: session.id).isEmpty)
+        XCTAssertEqual(try reopened.takeIntents().map(\.id), [unclaimed], "an overlapping timer tick must not claim a second batch")
+        XCTAssertTrue(try reopened.takeIntents().isEmpty)
+    }
+
+    @MainActor
+    func testDueRetentionPruneSuspendsForTheStoreAndPersistsItsDeletion() async throws {
+        let controller = FocusController()
+        controller.ownsRuntime = true
+        controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
+        controller.start(appConfig: ["focus": ["retentionDays": 30]], databasePath: path, liveServices: false, presentsWindows: false)
+        defer { controller.stop() }
+        let ledger = try XCTUnwrap(controller.store)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let old = try store.openSegment(segment(now - 40 * 86_400_000, title: "old"))
+        try store.closeSegment(id: old, at: now - 40 * 86_400_000 + 1_000)
+        let recent = try store.openSegment(segment(now - 86_400_000, title: "recent"))
+        try store.closeSegment(id: recent, at: now - 86_400_000 + 1_000)
+        let due = try XCTUnwrap(controller.nextPrune).addingTimeInterval(1)
+        let entered = expectation(description: "store queue held")
+        let gate = DispatchSemaphore(value: 0)
+        let blocker = Task.detached {
+            try await ledger.perform { _ in
+                entered.fulfill()
+                return gate.wait(timeout: .now() + 5)
+            }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        let progress = Task { @MainActor in gate.signal() }
+        await controller.pruneIfDueSuspending(store: ledger, now: due)
+        await progress.value
+        let waitStatus = try await blocker.value
+        XCTAssertEqual(waitStatus, .success)
+        XCTAssertEqual(controller.nextPrune, due.addingTimeInterval(FocusController.pruneInterval))
+        let reopened = try ActivityStore(path: path)
+        XCTAssertEqual(try reopened.segments(from: 0, to: now + 1).map(\.id), [recent])
+    }
+
     // MARK: - Migration
 
     func testMigrationIsIdempotent() throws {

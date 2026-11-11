@@ -73,6 +73,66 @@ public final class ActivityRecorder: ObservableObject {
         if currentMix != snapshot.currentMix { currentMix = snapshot.currentMix }
     }
 
+    private final class PendingDestination { var segment: Int64? }
+    private enum InputTarget { case segment(Int64), attaching(PendingDestination) }
+    private final class InputDestination: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: InputTarget?
+        private var deliveries = 0
+        var hasPendingDeliveries: Bool { lock.lock(); defer { lock.unlock() }; return deliveries > 0 }
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        func beginDelivery() { lock.lock(); deliveries += 1; lock.unlock() }
+        func endDelivery() {
+            lock.lock()
+            deliveries -= 1
+            let ready = deliveries == 0 ? waiters : []
+            if deliveries == 0 { waiters = [] }
+            lock.unlock()
+            for waiter in ready { waiter.resume() }
+        }
+        func waitForDeliveries() async {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if deliveries == 0 { lock.unlock(); continuation.resume() }
+                else { waiters.append(continuation); lock.unlock() }
+            }
+        }
+        func get() -> InputTarget? { lock.lock(); defer { lock.unlock() }; return value }
+        func set(_ value: InputTarget?) { lock.lock(); self.value = value; lock.unlock() }
+    }
+    private struct InputWrite {
+        let bucket: Int64
+        let segment: Int64
+        let counts: ActivityStore.InputCounts
+    }
+    private enum CaptureTransition {
+        case pause(Date), resume, attach(Int64?), start, stop, exclude(String), poll, expirePause(Date)
+        case probe(AXFocusProbe.Result, String, String, FocusSettings, Bool)
+        case noteTick(Int64), forgotten(Int64, Int64), downtime(Date), barrier
+        case generatedProbe(AXFocusProbe.Result, String, String, Bool, UInt64)
+    }
+    private enum DeferredUI {
+        case start, stop, settings(FocusSettings), pause(Date), resume, attach(Int64?), permission
+        case probe(AXFocusProbe.Result, String, String, FocusSettings, Bool)
+        case noteTick(Int64), forgotten(Int64, Int64), forgetEnded(DeletionFence), downtime(Date)
+    }
+    private enum MainOnlyRequest { case settings(FocusSettings), permission, forgetEnded(DeletionFence) }
+    private enum Request {
+        case ui(MainOnlyRequest)
+        case transition(CaptureTransition, CheckedContinuation<Void, Never>?)
+        case input(Int64, ActivityStore.InputCounts, InputTarget?)
+        case gap(Int64, Int64, String)
+    }
+    private let inputDestination = InputDestination()
+    private var requests: [Request] = []
+    private var performing = false
+    var hasPendingPersistence: Bool {
+        performing || !requests.isEmpty || counter.hasPendingEmissions || inputDestination.hasPendingDeliveries
+    }
+    private var replayingUI = false
+    private var collectedInput: [InputWrite]?
+    private var pendingInput: [InputWrite] = []
+
     private let store: ActivityStore
     private let counter = InputCounter()
     /// Where a missing Accessibility grant goes: the GenesisKit permission dialog, once per process after "Not now".
@@ -80,8 +140,11 @@ public final class ActivityRecorder: ObservableObject {
     /// Starts the input tap; false when it could not. Replaced in tests, because a real tap needs the grants of the
     /// machine running them.
     var inputCounterStarter: (InputCounter) -> Bool = { $0.start() }
+    var suspendingTransitionPrepared: (() -> Void)?
+    var suspendingTransitionWillWait: (() -> Void)?
+    var generatedProbeQueued: (() -> Void)?
     private var settings: FocusSettings
-    private var segmentId: Int64?
+    private var segmentId: Int64? { didSet { inputDestination.set(segmentId.map(InputTarget.segment)) } }
     /// Segments whose close failed (SQLite busy, a write error), with the end they should get. Retried on every
     /// tick and before the next close, so a row is never left open while a newer one claims the capture.
     private var pendingCloses: [Int64: Int64] = [:]
@@ -105,7 +168,7 @@ public final class ActivityRecorder: ObservableObject {
 
     public static let pollSeconds: TimeInterval = 2
     /// Far above App Nap timer throttling, so only real sleep or suspension counts as unobserved.
-    static let unobservedGapMs: Int64 = 60_000
+    nonisolated static let unobservedGapMs: Int64 = 60_000
     private var lastTickMs: Int64?
 
     public init(store: ActivityStore, settings: FocusSettings = FocusSettings(), liveServices: Bool = true,
@@ -114,20 +177,467 @@ public final class ActivityRecorder: ObservableObject {
         self.settings = settings
         self.liveServices = liveServices
         self.probeReader = probeReader ?? { AXFocusProbe.read(pid: $0, bundle: $1) }
-        counter.onFlush = { [weak self] bucketMs, counts in
-            // A flush from stop() runs on the main thread, right before the segment closes.
-            // Persisting it in a later Task would find no open segment and drop the counts.
+        let destination = inputDestination
+        counter.onFlush = { [weak self, destination] bucketMs, counts in
+            let target = destination.get()
+            // Attribute when the counter flushes, before a phase boundary can change the destination. A final flush
+            // joins that boundary's batch; a timer flush carries its destination to the queued write.
             if Thread.isMainThread {
-                MainActor.assumeIsolated { self?.persistInput(bucketMs: bucketMs, counts: counts) }
-            } else {
-                Task { @MainActor in self?.persistInput(bucketMs: bucketMs, counts: counts) }
+                MainActor.assumeIsolated { self?.persistInput(bucketMs: bucketMs, counts: counts, target: target) }
+            } else if let recorder = self {
+                destination.beginDelivery()
+                Task { @MainActor in
+                    recorder.persistInput(bucketMs: bucketMs, counts: counts, target: target)
+                    destination.endDelivery()
+                }
             }
         }
-        counter.onGap = { [weak self] started, ended, reason in
+        counter.onGap = { [weak self, destination] started, ended, reason in
+            guard let recorder = self else { return }
+            destination.beginDelivery()
             Task { @MainActor in
-                self?.persist("input gap") { try self?.store.recordGap(startedMs: started, endedMs: ended, reason: reason) }
+                recorder.requests.append(.gap(started, ended, reason))
+                recorder.runNextRequest()
+                destination.endDelivery()
             }
         }
+    }
+
+    private struct CaptureState {
+        var segment: Int64?
+        var pendingCloses: [Int64: Int64]
+        var segmentStarted: Int64
+        var session: Int64?
+        var sessionStarted: Int64?
+        var gap: Int64?
+        var gapReason: String?
+        var inputs: [InputWrite]
+        var paused: Date?
+        var current: FocusSnapshot?
+        var idle: Bool
+        var capturing: Bool
+        var lastTick: Int64?
+        var mix: [AppShare]
+
+        mutating func flushInput(store: ActivityStore) {
+            inputs = inputs.filter { write in
+                do { try store.appendInput(bucketMs: write.bucket, segmentId: write.segment, counts: write.counts); return false }
+                catch { FlowFocusLog.focus.error("input bucket write failed; retained for retry: \(error.localizedDescription)"); return true }
+            }
+        }
+        mutating func retryCloses(store: ActivityStore) {
+            for (id, end) in pendingCloses {
+                do { try store.closeSegment(id: id, at: end); pendingCloses[id] = nil }
+                catch { FlowFocusLog.focus.error("segment \(id) close retry failed: \(error.localizedDescription)") }
+            }
+        }
+        mutating func closeSegment(store: ActivityStore, at ms: Int64) {
+            retryCloses(store: store)
+            guard let id = segment else { return }
+            segment = nil
+            do { try store.closeSegment(id: id, at: ms) }
+            catch { pendingCloses[id] = ms; FlowFocusLog.focus.error("segment \(id) close failed; retained for retry: \(error.localizedDescription)") }
+        }
+        mutating func openSegment(store: ActivityStore, snapshot: FocusSnapshot, at ms: Int64, idle: Bool) {
+            var row = ActivityStore.Segment(startedMs: ms, appBundle: snapshot.appBundle, appName: snapshot.appName, windowTitle: snapshot.windowTitle)
+            row.sessionId = session
+            row.urlHost = snapshot.urlHost
+            row.urlPath = snapshot.urlPath
+            row.cmuxSession = snapshot.cmuxSession
+            row.cmuxPane = snapshot.cmuxPane
+            row.displayId = snapshot.displayId
+            row.idle = idle
+            row.project = snapshot.project
+            do { segment = try store.openSegment(row) }
+            catch { segment = nil; FlowFocusLog.focus.error("segment open failed: \(error.localizedDescription)") }
+            segmentStarted = ms
+        }
+        mutating func noteTick(store: ActivityStore, at now: Int64) {
+            if let last = lastTick, now - last > ActivityRecorder.unobservedGapMs {
+                closeSegment(store: store, at: last)
+                current = nil
+                do { try store.recordGap(startedMs: last, endedMs: now, reason: "system_sleep") }
+                catch { FlowFocusLog.focus.error("sleep gap record failed: \(error.localizedDescription)") }
+            }
+            lastTick = now
+            if let segment {
+                do { try store.touchSegment(id: segment, at: now) }
+                catch { FlowFocusLog.focus.error("focus ledger segment touch failed: \(error.localizedDescription)") }
+            }
+        }
+        mutating func reconcileForget(store: ActivityStore, from: Int64, to: Int64) {
+            if let id = gap {
+                do { gap = try store.openGapAfterForget(id: id, to: to); if gap == nil { gapReason = nil } }
+                catch { FlowFocusLog.focus.error("capture gap not reread after deletion: \(error.localizedDescription)") }
+            }
+            guard let id = segment else { return }
+            do {
+                if let started = try store.segmentStartedMs(id: id) { segmentStarted = started } else { segment = nil }
+            } catch {
+                FlowFocusLog.focus.error("segment not reread after deletion: \(error.localizedDescription)")
+                if segmentStarted >= from, segmentStarted < to { segment = nil }
+                else if segmentStarted < from { segmentStarted = to }
+            }
+        }
+        mutating func recoverDowntime(store: ActivityStore, launch: Int64) {
+            do {
+                for row in try store.openSegments() { try store.closeSegment(id: row.id, at: row.endedMs ?? row.startedMs) }
+                var keptPause: Int64?
+                for row in try store.gaps(from: 0, to: launch + 1) where row.endedMs == nil {
+                    if row.reason == "capture_paused", let until = try store.gapUntil(id: row.id) {
+                        if until > launch { keptPause = row.id; paused = Date(timeIntervalSince1970: Double(until) / 1000); continue }
+                        try store.closeGap(id: row.id, at: max(row.startedMs, until))
+                    } else { try store.closeGap(id: row.id, at: launch) }
+                }
+                gap = keptPause
+                gapReason = keptPause == nil ? nil : "capture_paused"
+                guard var cursor = try store.lastRecordedMs(), launch - cursor >= 60_000 else { return }
+                for row in try store.gaps(from: cursor, to: launch) {
+                    if row.startedMs - cursor >= 60_000 { try store.recordGap(startedMs: cursor, endedMs: row.startedMs, reason: "app_not_running") }
+                    cursor = max(cursor, min(row.endedMs ?? launch, launch))
+                }
+                if launch - cursor >= 60_000 { try store.recordGap(startedMs: cursor, endedMs: launch, reason: "app_not_running") }
+            } catch { FlowFocusLog.focus.error("capture recovery failed: \(error.localizedDescription)") }
+        }
+        static func appMix(rows: [ActivityStore.Segment], from: Int64, to: Int64, now: Int64, limit: Int) -> [AppShare] {
+            var totals: [String: (ms: Int64, bundleId: String)] = [:]
+            for row in rows where !row.idle {
+                let start = max(row.startedMs, from), end = min(row.endedMs ?? now, to)
+                guard end > start else { continue }
+                var entry = totals[row.appName] ?? (0, row.appBundle)
+                entry.ms += end - start
+                totals[row.appName] = entry
+            }
+            let sum = totals.values.reduce(Int64(0)) { $0 + $1.ms }
+            guard sum > 0 else { return [] }
+            return totals.sorted { $0.value.ms > $1.value.ms }.prefix(limit).map {
+                AppShare(appName: $0.key, bundleId: $0.value.bundleId, ms: $0.value.ms, share: Double($0.value.ms) / Double(sum))
+            }
+        }
+        mutating func openGap(store: ActivityStore, reason: String, at ms: Int64, until: Int64? = nil) {
+            guard gap == nil else { return }
+            do { gap = try store.recordGap(startedMs: ms, endedMs: nil, reason: reason, untilMs: until); gapReason = reason }
+            catch { FlowFocusLog.focus.error("capture gap failed: \(error.localizedDescription)") }
+        }
+        mutating func closeGap(store: ActivityStore, at ms: Int64, only reasons: Set<String>? = nil) {
+            guard let id = gap else { return }
+            if let reasons, let gapReason, !reasons.contains(gapReason) { return }
+            do { try store.closeGap(id: id, at: ms); gap = nil; gapReason = nil }
+            catch { FlowFocusLog.focus.error("capture gap close failed; retained for retry: \(error.localizedDescription)") }
+        }
+    }
+
+    private var captureState: CaptureState {
+        CaptureState(segment: segmentId, pendingCloses: pendingCloses, segmentStarted: segmentStartedMs,
+                     session: sessionId, sessionStarted: sessionStartedMs, gap: openGapId, gapReason: openGapReason,
+                     inputs: pendingInput.filter { inputAllowed($0.bucket) }, paused: pausedUntil, current: current,
+                     idle: isIdle, capturing: isCapturing, lastTick: lastTickMs, mix: currentMix)
+    }
+    private func applyCaptureState(_ state: CaptureState) {
+        segmentId = state.segment
+        pendingCloses = state.pendingCloses
+        segmentStartedMs = state.segmentStarted
+        sessionId = state.session
+        sessionStartedMs = state.sessionStarted
+        openGapId = state.gap
+        openGapReason = state.gapReason
+        pendingInput = state.inputs.filter { inputAllowed($0.bucket) }
+        if pausedUntil != state.paused { pausedUntil = state.paused }
+        if current != state.current { current = state.current }
+        if isIdle != state.idle { isIdle = state.idle }
+        if isCapturing != state.capturing { isCapturing = state.capturing }
+        lastTickMs = state.lastTick
+        if currentMix != state.mix { currentMix = state.mix }
+    }
+    private func inputAllowed(_ bucket: Int64) -> Bool {
+        !forgottenRanges.contains { bucket >= $0.from && bucket < $0.to }
+            && !runningDeletions.values.contains { bucket >= $0.from && bucket < $0.to }
+    }
+
+    private func prepareTransition(_ requested: CaptureTransition) -> (work: (ActivityStore) -> CaptureState, destination: PendingDestination?, transition: CaptureTransition) {
+        var transition = requested
+        if case .generatedProbe(let probe, let bundle, let name, let idle, let generation) = requested {
+            if generation == probeGeneration, isCapturing, settings.captureEnabled, pausedUntil == nil {
+                transition = .probe(probe, bundle, name, settings, idle)
+            } else { transition = .barrier }
+        }
+        let now = nowMs()
+        let snapshot = current
+        let idle = isIdle
+        var destination: PendingDestination?
+        var nextProbe: FocusSnapshot?
+        var probeChanged = false
+        collectedInput = []
+        switch transition {
+        case .start:
+            if isCapturing { transition = .barrier }
+            else if !settings.captureEnabled { transition = .exclude("capture_off") }
+            else { isCapturing = true; invalidateProbes() }
+        case .stop:
+            if !isCapturing { transition = .barrier }
+            else {
+                invalidateProbes()
+                NSWorkspace.shared.notificationCenter.removeObserver(self)
+                pollTimer?.invalidate()
+                pollTimer = nil
+                lastTickMs = nil
+                counter.stop()
+                counter.flush(now: Double(now), force: true)
+                current = nil
+                isCapturing = false
+                inputDestination.set(nil)
+            }
+        case .pause(let date):
+            invalidateProbes()
+            pausedUntil = date
+            counter.stop()
+            counter.flush(now: Double(now), force: true)
+            current = nil
+            inputDestination.set(nil)
+        case .attach:
+            invalidateProbes()
+            counter.flush(now: Double(now), force: true)
+            if snapshot != nil { destination = PendingDestination(); inputDestination.set(destination.map(InputTarget.attaching)) }
+        case .resume: pausedUntil = nil
+        case .probe(let probe, let bundle, let name, let policy, let newIdle):
+            if pausedUntil != nil { transition = .barrier }
+            else if !policy.captureEnabled { transition = .exclude("capture_off") }
+            else if !policy.records(bundle: bundle) { transition = .exclude("excluded_app") }
+            else if let host = probe.url.flatMap({ URL(string: $0)?.host }), !policy.records(host: host) { transition = .exclude("excluded_host") }
+            else {
+                let parts = policy.urlParts(probe.url)
+                let cmux = CmuxAttribution.parse(title: probe.title, bundle: bundle)
+                nextProbe = FocusSnapshot(appBundle: bundle, appName: name, windowTitle: policy.title(probe.title, appName: name),
+                    urlHost: parts.host, urlPath: parts.path,
+                    cmuxSession: policy.titleMode == .appOnly ? nil : policy.title(cmux.session, appName: name),
+                    cmuxPane: policy.titleMode == .appOnly ? nil : policy.title(cmux.pane, appName: name), displayId: probe.displayId,
+                    project: policy.project(cmuxSession: cmux.session, title: probe.title, host: probe.url.flatMap { URL(string: $0)?.host }))
+                probeChanged = current.map { old in nextProbe.map { !old.sameSegment(as: $0) } ?? false } ?? true
+                probeChanged = probeChanged || newIdle != isIdle || segmentId == nil
+                if probeChanged {
+                    counter.flush(now: Double(now), force: true)
+                    destination = PendingDestination()
+                    inputDestination.set(destination.map(InputTarget.attaching))
+                }
+            }
+        case .poll:
+            if !isCapturing || !liveServices { transition = .barrier }
+            else if pausedUntil.map({ Date() < $0 }) != true {
+                counter.flush(now: Double(now))
+                recordInputSample()
+            }
+        case .exclude, .noteTick, .forgotten, .downtime, .expirePause, .generatedProbe, .barrier: break
+        }
+        if case .exclude = transition {
+            invalidateProbes()
+            counter.stop()
+            counter.flush(now: Double(now), force: true)
+            current = nil
+            inputDestination.set(nil)
+        }
+        var state = captureState
+        state.inputs += collectedInput ?? []
+        collectedInput = nil
+        let operation = transition
+        return ({ store in
+            state.flushInput(store: store)
+            switch operation {
+            case .start:
+                if state.paused == nil { state.closeGap(store: store, at: now, only: ["capture_off", "app_not_running"]) }
+            case .stop:
+                state.closeSegment(store: store, at: now)
+                state.openGap(store: store, reason: "capture_off", at: now)
+            case .exclude(let reason):
+                state.closeSegment(store: store, at: now)
+                state.openGap(store: store, reason: reason, at: now)
+            case .pause(let date):
+                state.closeSegment(store: store, at: now)
+                let until = Int64(date.timeIntervalSince1970 * 1000)
+                if state.gapReason == "capture_paused", let gap = state.gap {
+                    do { try store.setGapUntil(id: gap, untilMs: until) }
+                    catch { FlowFocusLog.focus.error("capture pause deadline failed: \(error.localizedDescription)") }
+                } else { state.openGap(store: store, reason: "capture_paused", at: now, until: until) }
+            case .resume: state.closeGap(store: store, at: now, only: ["capture_paused"])
+            case .expirePause(let date):
+                if let until = state.paused, date >= until { state.paused = nil; state.closeGap(store: store, at: now, only: ["capture_paused"]) }
+            case .attach(let session):
+                state.closeSegment(store: store, at: now)
+                state.session = session
+                state.sessionStarted = session == nil ? nil : now
+                if let snapshot { state.openSegment(store: store, snapshot: snapshot, at: now, idle: idle) }
+            case .probe(_, _, _, _, let newIdle):
+                state.closeGap(store: store, at: now)
+                if let nextProbe {
+                    if probeChanged { state.closeSegment(store: store, at: now); state.idle = newIdle; state.openSegment(store: store, snapshot: nextProbe, at: now, idle: newIdle) }
+                    state.current = nextProbe
+                }
+            case .poll:
+                if let until = state.paused {
+                    if Int64(until.timeIntervalSince1970 * 1000) > now { state.lastTick = nil; return state }
+                    state.paused = nil
+                    state.closeGap(store: store, at: now, only: ["capture_paused"])
+                }
+                state.retryCloses(store: store)
+                state.noteTick(store: store, at: now)
+                if let from = state.sessionStarted {
+                    do { state.mix = CaptureState.appMix(rows: try store.segments(from: from, to: now), from: from, to: now, now: now, limit: 3) }
+                    catch { FlowFocusLog.focus.error("capture mix read failed: \(error.localizedDescription)") }
+                } else { state.mix = [] }
+            case .noteTick(let at): state.noteTick(store: store, at: at)
+            case .forgotten(let from, let to): state.reconcileForget(store: store, from: from, to: to)
+            case .downtime(let date): state.recoverDowntime(store: store, launch: Int64(date.timeIntervalSince1970 * 1000))
+            case .generatedProbe, .barrier: break
+            }
+            return state
+        }, destination, operation)
+    }
+    private func finishTransition(_ state: CaptureState, transition: CaptureTransition, destination: PendingDestination?) {
+        let wasPaused = pausedUntil != nil
+        let hadGap = openGapId != nil
+        applyCaptureState(state)
+        destination?.segment = state.segment
+        switch transition {
+        case .attach(let session): if session == nil { currentMix = [] }
+        case .start:
+            guard liveServices else { return }
+            if pausedUntil == nil { startCounter() }
+            NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(appActivated(_:)), name: NSWorkspace.didActivateApplicationNotification, object: nil)
+            let timer = Timer.scheduledTimer(withTimeInterval: Self.pollSeconds, repeats: true) { [weak self] _ in Task { @MainActor in self?.tick() } }
+            timer.tolerance = 0.5
+            RunLoop.main.add(timer, forMode: .common)
+            pollTimer = timer
+            tick()
+        case .resume:
+            if isCapturing, liveServices, openGapId == nil { startCounter(); tick() }
+        case .expirePause:
+            if wasPaused, pausedUntil == nil, isCapturing, liveServices, openGapId == nil { startCounter() }
+        case .poll:
+            if wasPaused, pausedUntil == nil, isCapturing, liveServices, openGapId == nil { startCounter() }
+            if pausedUntil == nil { requestLiveProbe() }
+        case .probe:
+            if hadGap, openGapId == nil, isCapturing, liveServices, pausedUntil == nil { startCounter() }
+        default: break
+        }
+    }
+    private func performSync(_ transition: CaptureTransition) {
+        let prepared = prepareTransition(transition)
+        finishTransition(prepared.work(store), transition: prepared.transition, destination: prepared.destination)
+    }
+
+    private func deferUI(_ operation: DeferredUI) -> Bool {
+        guard !replayingUI, hasPendingPersistence else { return false }
+        switch operation {
+        case .pause(let date): requests.append(.transition(.pause(date), nil))
+        case .resume: requests.append(.transition(.resume, nil))
+        case .attach(let session): requests.append(.transition(.attach(session), nil))
+        case .start: requests.append(.transition(.start, nil))
+        case .stop: requests.append(.transition(.stop, nil))
+        case .probe(let probe, let bundle, let name, let policy, let idle): requests.append(.transition(.probe(probe, bundle, name, policy, idle), nil))
+        case .noteTick(let at): requests.append(.transition(.noteTick(at), nil))
+        case .forgotten(let from, let to): requests.append(.transition(.forgotten(from, to), nil))
+        case .downtime(let date): requests.append(.transition(.downtime(date), nil))
+        case .settings(let settings): requests.append(.ui(.settings(settings)))
+        case .permission: requests.append(.ui(.permission))
+        case .forgetEnded(let fence): requests.append(.ui(.forgetEnded(fence)))
+        }
+        runNextRequest()
+        return true
+    }
+    private func replay(_ operation: MainOnlyRequest) {
+        switch operation {
+        case .settings(let next):
+            invalidateProbes()
+            let wasEnabled = settings.captureEnabled
+            settings = next
+            if !next.captureEnabled, isCapturing { requests.insert(.transition(.stop, nil), at: 0) }
+            else if next.captureEnabled, !wasEnabled { requests.insert(.transition(.start, nil), at: 0) }
+        case .permission: accessibilityWasGranted()
+        case .forgetEnded(let fence): runningDeletions[fence] = nil
+        }
+    }
+    private func runNextRequest() {
+        guard !performing, !replayingUI, !requests.isEmpty else { return }
+        performing = true
+        let request = requests.removeFirst()
+        if case .ui(let operation) = request {
+            let requiresSuspendingAccess = ActivityStore.suspendingAccessRequired
+            DispatchQueue.main.async { [self] in
+                ActivityStore.$suspendingAccessRequired.withValue(requiresSuspendingAccess) {
+                    self.replayingUI = true
+                    self.replay(operation)
+                    self.replayingUI = false
+                    self.performing = false
+                    self.runNextRequest()
+                }
+            }
+            return
+        }
+        Task { @MainActor in
+            switch request {
+            case .transition(let transition, let continuation):
+                suspendingTransitionWillWait?()
+                await counter.waitForEmissions()
+                let prepared = prepareTransition(transition)
+                suspendingTransitionPrepared?()
+                do {
+                    let state = try await store.perform(prepared.work)
+                    finishTransition(state, transition: prepared.transition, destination: prepared.destination)
+                } catch { FlowFocusLog.focus.error("capture transition failed: \(error.localizedDescription)") }
+                continuation?.resume()
+            case .input(let bucket, let counts, let target):
+                var state = captureState
+                let id: Int64?
+                switch target {
+                case .segment(let value): id = value
+                case .attaching(let destination): id = destination.segment
+                case nil: id = nil
+                }
+                if let id, inputAllowed(bucket) { state.inputs.append(InputWrite(bucket: bucket, segment: id, counts: counts)) }
+                do {
+                    let inputs = state.inputs
+                    let failed = try await store.perform { store in
+                        var written = state
+                        written.inputs = inputs
+                        written.flushInput(store: store)
+                        return written.inputs
+                    }
+                    pendingInput = failed.filter { inputAllowed($0.bucket) }
+                } catch { pendingInput = state.inputs; FlowFocusLog.focus.error("input persistence failed: \(error.localizedDescription)") }
+            case .gap(let start, let end, let reason):
+                do { try await store.perform { try $0.recordGap(startedMs: start, endedMs: end, reason: reason) } }
+                catch { FlowFocusLog.focus.error("input gap failed: \(error.localizedDescription)") }
+            case .ui: break
+            }
+            performing = false
+            runNextRequest()
+        }
+    }
+    private func enqueue(_ transition: CaptureTransition) async {
+        await withCheckedContinuation { continuation in
+            requests.append(.transition(transition, continuation))
+            switch transition {
+            case .generatedProbe, .probe: generatedProbeQueued?()
+            default: break
+            }
+            runNextRequest()
+        }
+    }
+    public func pauseCaptureAsync(until date: Date) async {
+        if remoteCommand != nil { pauseCapture(until: date); return }
+        await enqueue(.pause(date))
+    }
+    public func resumeCaptureAsync() async {
+        if remoteCommand != nil { resumeCapture(); return }
+        await enqueue(.resume)
+    }
+    public func attachAsync(sessionId: Int64?) async {
+        guard remoteCommand == nil else { return }
+        await enqueue(.attach(sessionId))
+    }
+    func waitForPersistence() async {
+        await counter.waitForEmissions()
+        await inputDestination.waitForDeliveries()
+        await enqueue(.barrier)
     }
 
     // MARK: - Lifecycle
@@ -138,66 +648,15 @@ public final class ActivityRecorder: ObservableObject {
     /// measured, and the ledger says so rather than leaving a hole the views would have to
     /// guess about.
     public func closeDowntime(launchedAt: Date = Date()) {
+        if deferUI(.downtime(launchedAt)) { return }
         guard remoteCommand == nil else { return }
-        let launch = Int64(launchedAt.timeIntervalSince1970 * 1000)
-        do {
-            for segment in try store.openSegments() {
-                try store.closeSegment(id: segment.id, at: segment.endedMs ?? segment.startedMs)
-            }
-            var keptPause: Int64?
-            // `launch + 1`: a gap opened in the launch millisecond (a handoff right after a pause) is open too.
-            for gap in try store.gaps(from: 0, to: launch + 1) where gap.endedMs == nil {
-                // A timed pause belongs to the user, not to the process that took it: an owner handoff or a crash
-                // must not resume capture early. One still running stays open and paused; one that ran out while
-                // nobody watched ends at its deadline.
-                if gap.reason == "capture_paused", let until = try store.gapUntil(id: gap.id) {
-                    if until > launch {
-                        keptPause = gap.id
-                        pausedUntil = Date(timeIntervalSince1970: Double(until) / 1000)
-                        continue
-                    }
-                    try store.closeGap(id: gap.id, at: max(gap.startedMs, until))
-                    continue
-                }
-                try store.closeGap(id: gap.id, at: launch)
-            }
-            openGapId = keptPause
-            openGapReason = keptPause == nil ? nil : "capture_paused"
-            guard var cursor = try store.lastRecordedMs(), launch - cursor >= 60_000 else { return }
-            for gap in try store.gaps(from: cursor, to: launch) {
-                if gap.startedMs - cursor >= 60_000 {
-                    try store.recordGap(startedMs: cursor, endedMs: gap.startedMs, reason: "app_not_running")
-                }
-                cursor = max(cursor, min(gap.endedMs ?? launch, launch))
-            }
-            if launch - cursor >= 60_000 {
-                try store.recordGap(startedMs: cursor, endedMs: launch, reason: "app_not_running")
-            }
-        } catch {
-            FlowFocusLog.focus.error("capture recovery failed: \(error.localizedDescription)")
-        }
+        performSync(.downtime(launchedAt))
     }
 
     public func start() {
+        if deferUI(.start) { return }
         guard remoteCommand == nil else { return }
-        guard !isCapturing else { return }
-        guard settings.captureEnabled else { excludeCurrent(reason: "capture_off"); return }
-        isCapturing = true
-        invalidateProbes()
-        if pausedUntil == nil { closeOpenGap(only: ["capture_off", "app_not_running"]) }
-        guard liveServices else { return }
-        // A pause restored by closeDowntime keeps input uncounted; resumeIfPauseExpired starts the counter.
-        if pausedUntil == nil { startCounter() }
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(appActivated(_:)),
-            name: NSWorkspace.didActivateApplicationNotification, object: nil)
-        let timer = Timer.scheduledTimer(withTimeInterval: Self.pollSeconds, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
-        timer.tolerance = 0.5
-        RunLoop.main.add(timer, forMode: .common)
-        pollTimer = timer
-        tick()
+        performSync(.start)
     }
 
     /// Ends the record cleanly on quit. Synchronous on the main queue on purpose: a nested Task
@@ -211,7 +670,10 @@ public final class ActivityRecorder: ObservableObject {
                     guard let self else { return }
                     // Stop first: its forced flush writes the open minute of input against the
                     // segment that is still open, before the process exits.
+                    self.collectedInput = []
                     self.counter.stop()
+                    self.pendingInput += self.collectedInput ?? []
+                    self.collectedInput = nil
                     let now = self.nowMs()
                     self.closeCurrentSegment(at: now)
                     self.openGap("app_not_running", at: now)
@@ -220,24 +682,13 @@ public final class ActivityRecorder: ObservableObject {
     }
 
     public func stop() {
-        invalidateProbes()
-        if remoteCommand != nil {
-            isCapturing = false
-            return
-        }
-        guard isCapturing else { return }
-        NSWorkspace.shared.notificationCenter.removeObserver(self)
-        pollTimer?.invalidate()
-        pollTimer = nil
-        lastTickMs = nil
-        counter.stop()
-        closeCurrentSegment(at: nowMs())
-        current = nil // as in pauseCapture: `start()` must open a fresh segment
-        isCapturing = false
-        openGap("capture_off", at: nowMs())
+        if deferUI(.stop) { return }
+        if remoteCommand != nil { isCapturing = false; return }
+        performSync(.stop)
     }
 
     public func apply(settings newValue: FocusSettings) {
+        if deferUI(.settings(newValue)) { return }
         if remoteCommand != nil { settings = newValue; return }
         invalidateProbes()
         let wasEnabled = settings.captureEnabled
@@ -252,29 +703,13 @@ public final class ActivityRecorder: ObservableObject {
     /// Pauses capture for a while. The current segment closes immediately — a paused recorder
     /// must never leave a segment open that later looks like hours of focus.
     public func pauseCapture(until date: Date) {
+        if deferUI(.pause(date)) { return }
         if let remoteCommand {
             do { remoteCommand("focus.capture.pause", try JSONEncoder().encode(date)) }
             catch { FlowFocusLog.focus.error("capture pause encoding failed: \(error.localizedDescription)") }
             return
         }
-        invalidateProbes()
-        pausedUntil = date
-        // Stop first: its final flush is written against the segment that is still open.
-        counter.stop()
-        closeCurrentSegment(at: nowMs())
-        // Nothing is current once the segment is closed. A stale snapshot would make the first
-        // probe after the pause look like "same segment", and no segment would open until the
-        // user switched windows; a phase change during the pause (`attach`) would reopen it.
-        current = nil
-        // A pause is recorded, so the range reads as "not measured" rather than "you did
-        // nothing" when someone looks at it a week later. Its deadline is recorded with it, so the
-        // next owner keeps the pause (closeDowntime).
-        let untilMs = Int64(date.timeIntervalSince1970 * 1000)
-        if openGapReason == "capture_paused", let id = openGapId {
-            persist("capture pause deadline") { try store.setGapUntil(id: id, untilMs: untilMs) }
-        } else {
-            openGap("capture_paused", at: nowMs(), untilMs: untilMs)
-        }
+        performSync(.pause(date))
     }
 
     /// Counting key presses and clicks needs Accessibility. A missing grant opens the permission dialog (an
@@ -296,17 +731,15 @@ public final class ActivityRecorder: ObservableObject {
     /// An open gap is a stop on purpose: an excluded app or site counts no input. The probe that closes it starts the
     /// counter (`applyProbe`), so a grant that arrives meanwhile must not.
     func accessibilityWasGranted() {
+        if deferUI(.permission) { return }
         guard isCapturing, liveServices, pausedUntil == nil, openGapId == nil else { return }
         startCounter()
     }
 
     public func resumeCapture() {
+        if deferUI(.resume) { return }
         if let remoteCommand { remoteCommand("focus.capture.resume", Data()); return }
-        pausedUntil = nil
-        closeOpenGap(only: ["capture_paused"])
-        guard isCapturing, liveServices else { return }
-        startCounter()
-        tick()
+        performSync(.resume)
     }
 
     /// False while a timed pause is still running. Once it has run out, capture comes back and
@@ -316,40 +749,29 @@ public final class ActivityRecorder: ObservableObject {
         if remoteCommand != nil { return pausedUntil.map { now >= $0 } ?? true }
         guard let until = pausedUntil else { return true }
         if now < until { return false }
-        pausedUntil = nil
-        closeOpenGap(only: ["capture_paused"])
-        if isCapturing, liveServices { startCounter() }
-        return true
+        if performing || !requests.isEmpty {
+            requests.append(.transition(.expirePause(now), nil))
+            runNextRequest()
+            return false
+        }
+        performSync(.expirePause(now))
+        return pausedUntil == nil
     }
 
     private func openGap(_ reason: String, at ms: Int64, untilMs: Int64? = nil) {
-        guard openGapId == nil else { return }
-        openGapId = persist("capture gap") {
-            try store.recordGap(startedMs: ms, endedMs: nil, reason: reason, untilMs: untilMs)
-        }
-        openGapReason = openGapId == nil ? nil : reason
+        var state = captureState
+        state.openGap(store: store, reason: reason, at: ms, until: untilMs)
+        applyCaptureState(state)
     }
 
     /// `only`: close the open gap only when it was opened for one of these reasons.
-    private func closeOpenGap(only reasons: Set<String>? = nil) {
-        guard let id = openGapId else { return }
-        if let reasons, let reason = openGapReason, !reasons.contains(reason) { return }
-        persist("gap close") { try store.closeGap(id: id, at: nowMs()) }
-        openGapId = nil
-        openGapReason = nil
-    }
 
     /// The pomodoro engine calls this on every phase boundary: the current segment is split so
     /// no segment ever straddles two sessions.
     public func attach(sessionId newValue: Int64?) {
+        if deferUI(.attach(newValue)) { return }
         guard remoteCommand == nil else { return }
-        let now = nowMs()
-        let snapshot = current
-        closeCurrentSegment(at: now)
-        sessionId = newValue
-        sessionStartedMs = newValue == nil ? nil : now
-        if newValue == nil { currentMix = [] }
-        if let snapshot { openSegment(for: snapshot, at: now, idle: isIdle) }
+        performSync(.attach(newValue))
     }
 
     // MARK: - Polling
@@ -361,49 +783,28 @@ public final class ActivityRecorder: ObservableObject {
 
     private func tick() {
         guard isCapturing, liveServices else { return }
-        guard resumeIfPauseExpired() else {
-            lastTickMs = nil
-            return
-        }
-        retryPendingCloses()
-        counter.flush(now: Date().timeIntervalSince1970 * 1000)
-        recordInputSample()
-        recomputeMix()
-        noteTick(at: nowMs())
+        guard !requests.contains(where: { if case .transition(.poll, _) = $0 { return true }; return false }) else { return }
+        requests.append(.transition(.poll, nil))
+        runNextRequest()
+    }
 
-        let idleSeconds = Self.idleSeconds()
-        let nowIdle = idleSeconds >= Double(settings.idleThresholdSec)
-
-        guard let app = NSWorkspace.shared.frontmostApplication,
-              let bundle = app.bundleIdentifier
-        else { return }
-        let name = app.localizedName ?? bundle
+    private func requestLiveProbe() {
+        guard isCapturing, liveServices, pausedUntil == nil else { return }
+        let idle = Self.idleSeconds() >= Double(settings.idleThresholdSec)
+        guard let app = NSWorkspace.shared.frontmostApplication, let bundle = app.bundleIdentifier else { return }
         guard settings.records(bundle: bundle) else {
-            excludeCurrent(reason: "excluded_app")
+            requests.append(.transition(.exclude("excluded_app"), nil))
+            runNextRequest()
             return
         }
-
-        requestProbe(pid: app.processIdentifier, bundle: bundle, appName: name, idle: nowIdle)
+        requestProbe(pid: app.processIdentifier, bundle: bundle, appName: app.localizedName ?? bundle, idle: idle)
     }
 
     /// Ticks stop while the Mac sleeps. A silence far longer than the poll interval was never
     /// observed, so it ends the open segment where the last tick saw it instead of stretching it.
     func noteTick(at now: Int64) {
-        if let last = lastTickMs, now - last > Self.unobservedGapMs {
-            closeCurrentSegment(at: last)
-            current = nil
-            do { try store.recordGap(startedMs: last, endedMs: now, reason: "system_sleep") }
-            catch { FlowFocusLog.focus.error("sleep gap record failed: \(error.localizedDescription)") }
-        }
-        lastTickMs = now
-        // Provisional end, moved forward every tick. If the app dies here, the record stops
-        // within one tick of the truth instead of running to "now" forever.
-        // Never waits for the disk: this runs on the main thread every tick.
-        if let id = segmentId {
-            store.touchSegmentLater(id: id, at: now) { error in
-                FlowFocusLog.focus.error("focus ledger segment touch failed: \(error.localizedDescription)")
-            }
-        }
+        if deferUI(.noteTick(now)) { return }
+        performSync(.noteTick(now))
     }
 
     private func invalidateProbes() {
@@ -425,60 +826,17 @@ public final class ActivityRecorder: ObservableObject {
             guard let self, self.probeGeneration == generation else { return }
             self.probing = false
             guard self.isCapturing, self.pausedUntil == nil, self.settings.captureEnabled else { return }
-            self.applyProbe(probe, bundle: bundle, appName: appName, settings: self.settings, idle: idle)
+            await self.enqueue(.generatedProbe(probe, bundle, appName, idle, generation))
         }
     }
 
-    private func excludeCurrent(reason: String) {
-        invalidateProbes()
-        counter.stop()
-        closeCurrentSegment(at: nowMs())
-        current = nil
-        openGap(reason, at: nowMs())
-    }
 
     /// Direct probe application also enforces privacy; test sources use the same persistence path.
     public func applyProbe(_ probe: AXFocusProbe.Result, bundle: String, appName: String,
                             settings: FocusSettings, idle: Bool) {
-        guard remoteCommand == nil, pausedUntil == nil else { return }
-        guard settings.captureEnabled else { excludeCurrent(reason: "capture_off"); return }
-        guard settings.records(bundle: bundle) else { excludeCurrent(reason: "excluded_app"); return }
-        if let raw = probe.url, let host = URL(string: raw)?.host, !settings.records(host: host) {
-            excludeCurrent(reason: "excluded_host")
-            return
-        }
-        let hadGap = openGapId != nil
-        closeOpenGap()
-        if hadGap, isCapturing, liveServices, pausedUntil == nil { startCounter() }
-        let parts = settings.urlParts(probe.url)
-        let cmux = CmuxAttribution.parse(title: probe.title, bundle: bundle)
-        let project = settings.project(cmuxSession: cmux.session, title: probe.title,
-                                       host: probe.url.flatMap { URL(string: $0)?.host })
-        let snapshot = FocusSnapshot(
-            appBundle: bundle,
-            appName: appName,
-            windowTitle: settings.title(probe.title, appName: appName),
-            urlHost: parts.host,
-            urlPath: parts.path,
-            cmuxSession: settings.titleMode == .appOnly ? nil : settings.title(cmux.session, appName: appName),
-            cmuxPane: settings.titleMode == .appOnly ? nil : settings.title(cmux.pane, appName: appName),
-            displayId: probe.displayId,
-            project: project)
-
-        let now = nowMs()
-        let changedSegment = current.map { !$0.sameSegment(as: snapshot) } ?? true
-        let changedIdle = idle != isIdle
-
-        // A segment whose insert failed (a busy ledger) is opened again on the next probe of the same window;
-        // otherwise recording would stay off until the window changed.
-        if changedSegment || changedIdle || segmentId == nil {
-            closeCurrentSegment(at: now)
-            isIdle = idle
-            current = snapshot
-            openSegment(for: snapshot, at: now, idle: idle)
-        } else {
-            current = snapshot
-        }
+        if deferUI(.probe(probe, bundle, appName, settings, idle)) { return }
+        guard remoteCommand == nil else { return }
+        performSync(.probe(probe, bundle, appName, settings, idle))
     }
 
     /// One sample per tick. A flushed bucket resets the counter, so a negative delta means the
@@ -493,48 +851,19 @@ public final class ActivityRecorder: ObservableObject {
 
     /// @Published has no value-skip, so a 30 Hz-equivalent republish of an identical array would
     /// invalidate the HUD for nothing. Compare before assigning.
-    private func recomputeMix() {
-        guard let started = sessionStartedMs else {
-            if !currentMix.isEmpty { currentMix = [] }
-            return
-        }
-        let mix = appMix(from: started, to: nowMs())
-        if mix != currentMix { currentMix = mix }
-    }
 
     // MARK: - Segment plumbing
 
-    private func openSegment(for snapshot: FocusSnapshot, at ms: Int64, idle: Bool) {
-        var segment = ActivityStore.Segment(
-            startedMs: ms,
-            appBundle: snapshot.appBundle,
-            appName: snapshot.appName,
-            windowTitle: snapshot.windowTitle)
-        segment.sessionId = sessionId
-        segment.urlHost = snapshot.urlHost
-        segment.urlPath = snapshot.urlPath
-        segment.cmuxSession = snapshot.cmuxSession
-        segment.cmuxPane = snapshot.cmuxPane
-        segment.displayId = snapshot.displayId
-        segment.idle = idle
-        segment.project = snapshot.project
-        segmentId = persist("segment open") { try store.openSegment(segment) }
-        segmentStartedMs = ms
-    }
 
     private func closeCurrentSegment(at ms: Int64) {
-        retryPendingCloses()
-        guard let id = segmentId else { return }
-        // The minute's input so far belongs to this segment: flush it before the next one opens, or it would be
-        // filed under whatever segment is current when the minute ends.
+        collectedInput = []
         counter.flush(now: Double(ms), force: true)
-        segmentId = nil
-        do {
-            try store.closeSegment(id: id, at: ms)
-        } catch {
-            pendingCloses[id] = ms
-            FlowFocusLog.focus.error("segment \(id) close failed, retried on the next tick: \(error.localizedDescription)")
-        }
+        var state = captureState
+        state.inputs += collectedInput ?? []
+        collectedInput = nil
+        state.flushInput(store: store)
+        state.closeSegment(store: store, at: ms)
+        applyCaptureState(state)
     }
 
     /// The ledger just forgot `from..<to` (`ActivityStore.forget`). A segment that started before the range keeps its
@@ -549,30 +878,8 @@ public final class ActivityRecorder: ObservableObject {
         guard remoteCommand == nil, from < to else { return }
         fence(from: from, to: to)
         counter.discardPending(overlapping: from, to: to)
-        if let gap = openGapId {
-            do {
-                openGapId = try store.openGapAfterForget(id: gap, to: to)
-                if openGapId == nil { openGapReason = nil }
-            } catch {
-                FlowFocusLog.focus.error("capture gap \(gap) not reread after a deletion: \(error.localizedDescription)")
-            }
-        }
-        guard let id = segmentId else { return }
-        do {
-            if let started = try store.segmentStartedMs(id: id) {
-                segmentStartedMs = started
-            } else {
-                segmentId = nil
-            }
-        } catch {
-            FlowFocusLog.focus.error("segment \(id) not reread after a deletion: \(error.localizedDescription)")
-            // The ledger's own rule for an open segment, without reading it back.
-            if segmentStartedMs >= from, segmentStartedMs < to {
-                segmentId = nil
-            } else if segmentStartedMs < from {
-                segmentStartedMs = to
-            }
-        }
+        if deferUI(.forgotten(from, to)) { return }
+        performSync(.forgotten(from, to))
     }
 
     /// The hold one running deletion has on the recorder's input (`ledgerForgetting`). Each deletion has its own, so
@@ -597,6 +904,7 @@ public final class ActivityRecorder: ObservableObject {
     /// The deletion that took `fence` is over, committed or refused. Call it after `ledgerForgot` on a commit, so
     /// the range is never unfenced in between.
     public func ledgerForgetEnded(_ fence: DeletionFence) {
+        if deferUI(.forgetEnded(fence)) { return }
         runningDeletions[fence] = nil
     }
 
@@ -610,17 +918,31 @@ public final class ActivityRecorder: ObservableObject {
         forgottenRanges.append((from, to))
     }
 
-    private func persistInput(bucketMs: Int64, counts: ActivityStore.InputCounts) {
+    private func persistInput(bucketMs: Int64, counts: ActivityStore.InputCounts, target: InputTarget?) {
         // The ledger deletes a minute by its start, so a forgotten one is fenced by its start too.
         guard !forgottenRanges.contains(where: { bucketMs >= $0.from && bucketMs < $0.to }),
               !runningDeletions.values.contains(where: { bucketMs >= $0.from && bucketMs < $0.to }) else { return }
-        guard let id = segmentId else { return }
-        persist("input bucket") { try store.appendInput(bucketMs: bucketMs, segmentId: id, counts: counts) }
+        if case .segment(let id) = target, collectedInput != nil {
+            collectedInput?.append(InputWrite(bucket: bucketMs, segment: id, counts: counts))
+            return
+        }
+        requests.append(.input(bucketMs, counts, target))
+        runNextRequest()
     }
 
     /// One key press into the live counter, for tests that drive `applyProbe` without an event tap.
     func recordKeyForTesting() {
         counter.recordForTesting(type: .keyDown)
+    }
+
+    var counterEmissionExtractedForTesting: (() -> Void)? {
+        get { counter.emissionExtractedForTesting }
+        set { counter.emissionExtractedForTesting = newValue }
+    }
+
+    func flushOffMainAsynchronouslyForTesting() -> Task<Void, Never> {
+        let counter = self.counter
+        return Task.detached { counter.flush(now: Date().timeIntervalSince1970 * 1000, force: true) }
     }
 
     /// The counter's flush timer, off the main thread: the open minute's counts leave the counter there and reach
@@ -637,47 +959,12 @@ public final class ActivityRecorder: ObservableObject {
         }
     }
 
-    private func retryPendingCloses() {
-        for (id, ms) in pendingCloses {
-            do {
-                try store.closeSegment(id: id, at: ms)
-                pendingCloses[id] = nil
-            } catch {
-                FlowFocusLog.focus.error("segment \(id) close retry failed: \(error.localizedDescription)")
-            }
-        }
-    }
 
-    /// A ledger write whose failure is logged with what it was, never swallowed; nil when it failed.
-    @discardableResult
-    private func persist<T>(_ what: String, _ write: () throws -> T) -> T? {
-        do {
-            return try write()
-        } catch {
-            FlowFocusLog.focus.error("focus ledger \(what) failed: \(error.localizedDescription)")
-            return nil
-        }
-    }
 
     /// The HUD's live mix: which apps this stretch of time actually went to.
     public func appMix(from: Int64, to: Int64, limit: Int = 3) -> [AppShare] {
         guard let rows = try? store.segments(from: from, to: to) else { return [] }
-        var totals: [String: (ms: Int64, bundleId: String)] = [:]
-        let now = nowMs()
-        for row in rows where !row.idle {
-            let start = max(row.startedMs, from)
-            let end = min(row.endedMs ?? now, to)
-            guard end > start else { continue }
-            var entry = totals[row.appName] ?? (0, row.appBundle)
-            entry.ms += end - start
-            totals[row.appName] = entry
-        }
-        let sum = totals.values.reduce(Int64(0)) { $0 + $1.ms }
-        guard sum > 0 else { return [] }
-        return totals.sorted { $0.value.ms > $1.value.ms }.prefix(limit).map {
-            AppShare(appName: $0.key, bundleId: $0.value.bundleId, ms: $0.value.ms,
-                     share: Double($0.value.ms) / Double(sum))
-        }
+        return CaptureState.appMix(rows: rows, from: from, to: to, now: nowMs(), limit: limit)
     }
 
     /// Counts in the bucket still open, for the sparkline.
