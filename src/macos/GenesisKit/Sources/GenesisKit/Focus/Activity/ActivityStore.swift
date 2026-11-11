@@ -296,13 +296,26 @@ public final class ActivityStore {
     /// a segment that is still open on disk is never more than one tick stale. That is what lets
     /// a crash or a quit be bounded: whatever the last touch says is where the record stops.
     public func touchSegment(id: Int64, at endedMs: Int64) throws {
-        try queue.sync {
-            let stmt = try prepare("UPDATE activity_segment SET ended_ms=MAX(COALESCE(ended_ms,started_ms),?) WHERE id=? AND is_closed=0;")
-            defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_int64(stmt, 1, endedMs)
-            sqlite3_bind_int64(stmt, 2, id)
-            guard sqlite3_step(stmt) == SQLITE_DONE else { throw StoreError.sqlite(lastMessage()) }
+        try queue.sync { try touchSegmentOnQueue(id: id, at: endedMs) }
+    }
+
+    /// `touchSegment` without waiting: the write runs on the store's serial queue, in order with
+    /// every other write, and the caller goes on. The recorder's tick calls this on the main
+    /// thread; waiting there for the disk froze Genesis for 1.7 s (2026-11-11 19:32, a busy disk:
+    /// every one of 67 main-thread samples sat in this UPDATE's WAL write). `failed` runs on the
+    /// store's queue.
+    public func touchSegmentLater(id: Int64, at endedMs: Int64, failed: @escaping @Sendable (Error) -> Void) {
+        queue.async { [self] in
+            do { try touchSegmentOnQueue(id: id, at: endedMs) } catch { failed(error) }
         }
+    }
+
+    private func touchSegmentOnQueue(id: Int64, at endedMs: Int64) throws {
+        let stmt = try prepare("UPDATE activity_segment SET ended_ms=MAX(COALESCE(ended_ms,started_ms),?) WHERE id=? AND is_closed=0;")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, endedMs)
+        sqlite3_bind_int64(stmt, 2, id)
+        guard sqlite3_step(stmt) == SQLITE_DONE else { throw StoreError.sqlite(lastMessage()) }
     }
 
     /// The last moment anything was recorded, across segments and input buckets. Launch uses it

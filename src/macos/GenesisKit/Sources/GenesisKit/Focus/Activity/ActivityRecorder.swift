@@ -398,7 +398,12 @@ public final class ActivityRecorder: ObservableObject {
         lastTickMs = now
         // Provisional end, moved forward every tick. If the app dies here, the record stops
         // within one tick of the truth instead of running to "now" forever.
-        if let id = segmentId { persist("segment touch") { try store.touchSegment(id: id, at: now) } }
+        // Never waits for the disk: this runs on the main thread every tick.
+        if let id = segmentId {
+            store.touchSegmentLater(id: id, at: now) { error in
+                FlowFocusLog.focus.error("focus ledger segment touch failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func invalidateProbes() {
