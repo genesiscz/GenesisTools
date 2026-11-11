@@ -602,8 +602,10 @@ extension ListsSketchA {
                 .padding(.horizontal, 10)
                 .padding(.top, 8)
                 .instantTooltip(bucket.tooltip)
-                if inbox.showsQuiet {
-                    ForEach(rows) { entry in row(entry, current: current) }
+                // Folded, the section still shows the open question, so the reader never loses it.
+                ForEach(inbox.showsQuiet ? rows : rows.filter { $0.id == current }) { entry in
+                    row(entry, current: current)
+                        .transition(.genReveal)
                 }
             } else {
                 Section {

@@ -145,7 +145,8 @@ struct UsageSettingsSketchDaemonB: View {
         let running = store.runningNow.contains(task.name)
         return UsageSettingsSketchSectionB(task.name, subtitle: task.description) {
             NativeSettingsRow(
-                DaemonFormat.stateTitle(enabled: task.enabled, stats: stats, running: running, lastRunInFlight: false),
+                DaemonFormat.stateTitle(enabled: task.enabled, stats: stats, running: running,
+                                         lastRunInFlight: DaemonTaskCard.lastRunInFlight(task, stats)),
                 detail: "\(task.schedule) · timeout \(DaemonFormat.duration(Double(task.timeoutMs))) · priority \(task.priority) · \(Plural.count(task.retries, "retry", "retries"))"
             ) {
                 Button(running ? "Running…" : "Run now") { store.runNow(task) }

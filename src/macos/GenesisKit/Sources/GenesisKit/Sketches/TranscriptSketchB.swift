@@ -157,41 +157,11 @@ struct TranscriptSketchBTitle: View {
                 .disabled(actions.openTerminal == nil && actions.focus == nil)
                 .fixedSize()
                 .instantTooltip(info.livenessNote)
-                if let model = info.model, !model.isEmpty {
-                    SessionPill(text: model).fixedSize()
-                }
-                if let account = info.account, !account.isEmpty {
-                    Text(verbatim: "@\(account)")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(SessionPalette.dim)
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-                if let cwd = info.cwd, !cwd.isEmpty {
-                    fact("folder", (cwd as NSString).lastPathComponent, tip: cwd)
-                }
-                if let branch = info.branch {
-                    fact("arrow.triangle.branch", branch, tip: "Git branch of the session folder")
-                }
-                if let last = info.lastActivityAt {
-                    LiveTime(date: last) { "active \($0)" }
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(SessionPalette.dim)
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-                Spacer(minLength: 8)
-                if let context = info.contextTokens {
-                    Text(verbatim: "ctx \(SessionFormat.tokens(context))")
-                        .font(SessionPalette.mono(11, weight: .semibold))
-                        .foregroundStyle(SessionPalette.secondary)
-                        .fixedSize()
-                }
-                if info.errorCount > 0 {
-                    Text(verbatim: "\(info.errorCount) failed")
-                        .font(SessionPalette.mono(11, weight: .semibold))
-                        .foregroundStyle(SessionPalette.red)
-                        .fixedSize()
+                // A narrow pane keeps the status, reload and sidebar buttons: the facts drop first, then the counters.
+                ViewThatFits(in: .horizontal) {
+                    facts(full: true)
+                    facts(full: false)
+                    Spacer(minLength: 0)
                 }
                 HStack(spacing: 4) {
                     IconButton(systemName: "arrow.clockwise", tooltip: actions.refreshTooltip ?? "Reload the session and its transcript", action: actions.refresh)
@@ -212,6 +182,49 @@ struct TranscriptSketchBTitle: View {
             Rectangle().fill(SessionPalette.hairline).frame(height: 1)
         }
         .accessibilityIdentifier("session-details-header")
+    }
+
+    /// The header's middle: the model and the counters, plus the account, folder, branch and last activity when `full`.
+    @ViewBuilder
+    private func facts(full: Bool) -> some View {
+        HStack(spacing: 12) {
+            if let model = info.model, !model.isEmpty {
+                SessionPill(text: model).fixedSize()
+            }
+            if full, let account = info.account, !account.isEmpty {
+                Text(verbatim: "@\(account)")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(SessionPalette.dim)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            if full, let cwd = info.cwd, !cwd.isEmpty {
+                fact("folder", (cwd as NSString).lastPathComponent, tip: cwd)
+            }
+            if full, let branch = info.branch {
+                fact("arrow.triangle.branch", branch, tip: "Git branch of the session folder")
+            }
+            if full, let last = info.lastActivityAt {
+                LiveTime(date: last) { "active \($0)" }
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(SessionPalette.dim)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            Spacer(minLength: 8)
+            if let context = info.contextTokens {
+                Text(verbatim: "ctx \(SessionFormat.tokens(context))")
+                    .font(SessionPalette.mono(11, weight: .semibold))
+                    .foregroundStyle(SessionPalette.secondary)
+                    .fixedSize()
+            }
+            if info.errorCount > 0 {
+                Text(verbatim: "\(info.errorCount) failed")
+                    .font(SessionPalette.mono(11, weight: .semibold))
+                    .foregroundStyle(SessionPalette.red)
+                    .fixedSize()
+            }
+        }
     }
 
     private func fact(_ symbol: String, _ text: String, tip: String) -> some View {

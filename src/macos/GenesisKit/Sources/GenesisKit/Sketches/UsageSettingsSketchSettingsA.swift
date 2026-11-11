@@ -155,6 +155,7 @@ struct UsageSettingsSketchPanesA: View {
                     selection: Binding(
                         get: { GitCommitClickMode(rawValue: commitClick) ?? .chooseThenShow }, set: { commitClick = $0.rawValue }))
             }
+            // `hub.panes#lists` opens the page at the PR row settings, as the current page does.
             UsageSettingsSketchGroupA("Pull requests", symbol: "arrow.triangle.pull") {
                 NativeSettingsToggle(
                     "Show each PR's whole description",
@@ -174,6 +175,7 @@ struct UsageSettingsSketchPanesA: View {
                     selection: Binding(get: { HubPRRowHoverChecks.stored(prHoverChecks) }, set: { prHoverChecks = $0.rawValue }),
                     minSegmentWidth: 90)
             }
+            .nativeSettingsAnchor("lists")
             UsageSettingsSketchGroupA("Inbox", symbol: "tray") {
                 NativeSettingsToggle(
                     "Show each decision's context in full",
