@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runSessionCompaction } from "@app/ai-proxy/commands/session-use";
@@ -11,6 +11,7 @@ import {
     routeDenial,
     sessionKeyRejection,
 } from "@app/ai-proxy/lib/clients";
+import { captureUpstreamFailure } from "@app/ai-proxy/lib/debug-capture";
 import { loadCompaction, restoreCompaction } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import {
     _resetSessionKeyIndexForTest,
@@ -161,6 +162,32 @@ describe("session records", () => {
         expect(readFileSync(result.backup ?? "", "utf8")).toBe("unreadable original");
         expect(loadCompaction(marker)?.id).toBe(marker);
         expect(statSync(destination).mode & 0o777).toBe(0o600);
+    });
+
+    it("writes the debug capture, which holds the request body unredacted, 0600 in a 0700 folder", () => {
+        const dir = join(getAiProxyStorage().getBaseDir(), "debug");
+        // An older proxy left the folder 0755.
+        mkdirSync(dir, { recursive: true });
+        chmodSync(dir, 0o755);
+        env.testing.set("AI_PROXY_DEBUG_CAPTURE", "1");
+
+        try {
+            captureUpstreamFailure({
+                provider: "openai-sub",
+                account: "work",
+                model: "gpt-fixture",
+                status: 400,
+                requestBody: '{"input":"a pasted key"}',
+                responseBody: "bad request",
+            });
+        } finally {
+            env.testing.unset("AI_PROXY_DEBUG_CAPTURE");
+        }
+
+        const path = join(dir, "last-openai-sub-failure.json");
+        expect(readFileSync(path, "utf8")).toContain("a pasted key");
+        expect(statSync(path).mode & 0o777).toBe(0o600);
+        expect(statSync(dir).mode & 0o777).toBe(0o700);
     });
 
     it("writes the record 0600 in a 0700 folder, with the key's hash and never the key", () => {
