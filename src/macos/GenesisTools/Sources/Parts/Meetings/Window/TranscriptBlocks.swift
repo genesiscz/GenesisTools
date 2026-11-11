@@ -166,6 +166,7 @@ struct TranscriptBlocksList: View {
     let play: (Double) -> Void
     /// A ⇧ or ⌘ click on a line (R43).
     var select: (TranscriptBlockLine, TranscriptLineClick) -> Void = { _, _ in }
+    var selectWords: (TranscriptBlockLine, NSRange) -> Void = { _, _ in }
 
     var body: some View {
         let speakerNames = Set(blocks.map(\.speaker)).sorted()
@@ -178,7 +179,7 @@ struct TranscriptBlocksList: View {
                     past: dimsPast && isPast(block),
                     showsAvatar: showsAvatar,
                     play: play,
-                    select: select
+                    select: select, selectWords: selectWords
                 )
                 .equatable()
                 .environment(\.meetingSpeakerNames, speakerNames)
@@ -210,6 +211,7 @@ struct TranscriptBlockView: View, Equatable {
     var showsAvatar = true
     let play: (Double) -> Void
     var select: (TranscriptBlockLine, TranscriptLineClick) -> Void = { _, _ in }
+    var selectWords: (TranscriptBlockLine, NSRange) -> Void = { _, _ in }
 
     nonisolated static func == (a: TranscriptBlockView, b: TranscriptBlockView) -> Bool {
         a.block == b.block && a.heardLineID == b.heardLineID && a.selected == b.selected && a.past == b.past
@@ -232,7 +234,7 @@ struct TranscriptBlockView: View, Equatable {
                 ForEach(block.lines) { line in
                     TranscriptBlockLineView(
                         line: line, speaker: SpeakerChip(speaker: block.speaker).name, heard: line.id == heardLineID,
-                        selected: selected.contains(line.id), past: past, play: play, select: select
+                        selected: selected.contains(line.id), past: past, play: play, select: select, selectWords: selectWords
                     )
                 }
             }
@@ -313,15 +315,16 @@ private struct TranscriptBlockLineView: View {
     let past: Bool
     let play: (Double) -> Void
     let select: (TranscriptBlockLine, TranscriptLineClick) -> Void
+    let selectWords: (TranscriptBlockLine, NSRange) -> Void
     @Environment(\.rowLive) private var live
     @State private var hovering = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(verbatim: line.text)
-                .font(.system(size: 13))
-                .foregroundStyle(textStyle)
-                .underline(line.marks.contains(.corrected), pattern: .dot, color: KitPalette.renamed)
+            TranscriptWordText(text: line.text,
+                               color: heard || selected ? .labelColor : (past ? .tertiaryLabelColor : .secondaryLabelColor),
+                               corrected: line.marks.contains(.corrected), click: click,
+                               selected: { selectWords(line, $0) })
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 3)
                 .padding(.vertical, 1)
@@ -344,11 +347,10 @@ private struct TranscriptBlockLineView: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { click() }
         .onHover { inside in
             if live || !inside { hovering = inside && line.startSec != nil }
         }
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { if let start = line.startSec { play(start) } }

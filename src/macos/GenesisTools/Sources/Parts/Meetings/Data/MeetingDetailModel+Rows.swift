@@ -546,8 +546,7 @@ extension MeetingDetailModel {
 
     // MARK: The writes, through the service or the command
 
-    /// `decision.apply` as the window (`onDecided: refuse`). Without a service the command makes the decisions it has
-    /// (confirm, reject, reopen, an answer); the rest need the service, which the window starts by itself.
+    /// `decision.apply` as the window (`onDecided: refuse`), with the same action vocabulary through the command adapter.
     static func applyDecision(meeting: String, action: DecisionAction, reason: String?,
                               service: MeetingsService?, lowPriority: MeetingsPreferences.Rows.LowPriority = .hide) async throws -> DecisionResult {
         if let service {
@@ -566,15 +565,20 @@ extension MeetingDetailModel {
         return try await decodedDecision(args)
     }
 
-    /// `decision.plan`: what a decision would do and reach; nil when no service answers (the decision then goes ahead).
+    /// `decision.plan`: the same reach preview through the service or its command adapter.
     static func planDecision(meeting: String, action: DecisionAction, reason: String?,
                              service: MeetingsService?) async throws -> MeetingsAPI.DecisionPlan.Result? {
-        guard let service else { return nil }
-        do {
-            return try await service.call(MeetingsAPI.DecisionPlan.self, .init(meeting: meeting, action: action, reason: reason))
-        } catch is MeetingsService.Unavailable {
-            return nil
+        if let service {
+            do {
+                return try await service.call(MeetingsAPI.DecisionPlan.self, .init(meeting: meeting, action: action, reason: reason))
+            } catch is MeetingsService.Unavailable {
+                try Task.checkCancellation()
+            }
         }
+        guard let args = journalCommand(meeting: meeting, action: action, reason: reason) else {
+            throw MeetingsCLI.Failure(sentence: "The decision cannot be encoded.", detail: action.kind)
+        }
+        return try await MeetingsCLI.json(MeetingsAPI.DecisionPlan.Result.self, args + ["--plan"])
     }
 
     /// `decision.revert`, or `reopen <items> --token` when no service answers.
@@ -611,14 +615,25 @@ extension MeetingDetailModel {
             return ["reopen", meeting] + (action.items ?? []) + why + ["--json"]
         case "answer":
             // The command passes excluded items and the earlier answer's token through to the same journal.
-            guard let question = action.question, let answer = action.answer, action.lookAlikes == nil else { return nil }
+            guard let question = action.question, let answer = action.answer, action.lookAlikes == nil else {
+                return journalCommand(meeting: meeting, action: action, reason: reason)
+            }
             var args = ["listen", meeting, "--item", question, "--answer", answer]
             if let except = action.except, !except.isEmpty { args += ["--except"] + except }
             if let replaces = action.replaces { args += ["--replaces", replaces] }
             return args + why + ["--json"]
         default:
-            return nil
+            return journalCommand(meeting: meeting, action: action, reason: reason)
         }
+    }
+
+    /// The complete decision vocabulary stays in the engine; the command transports its typed action unchanged.
+    static func journalCommand(meeting: String, action: DecisionAction, reason: String?) -> [String]? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(action) else { return nil }
+        return ["decide", meeting, "--action", String(decoding: data, as: UTF8.self)]
+            + (reason.map { ["--reason", $0] } ?? []) + ["--json"]
     }
 
     /// A command's `--json` answer as a decision result; a command that printed another shape decided what it says.

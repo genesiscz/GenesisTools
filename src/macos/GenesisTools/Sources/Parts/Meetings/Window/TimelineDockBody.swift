@@ -48,6 +48,7 @@ struct TimelineDockState: Equatable {
     var legend: [VoiceLegend] = []
     /// Rows the pins have in whole-meeting mode.
     var pinLanes: Int = 2
+    var toneEnabled = true
 
     /// A zoomed range in words: "48:46 to 1:27:00".
     static func viewTitle(_ range: ClosedRange<Double>) -> String {
@@ -66,6 +67,7 @@ struct TimelineDockState: Equatable {
 /// Wiring section).
 struct TimelineDockActions {
     var togglePause: () -> Void = {}
+    var setToneEnabled: (Bool) -> Void = { _ in }
     /// Seek by a number of seconds (negative: back).
     var skip: (Double) -> Void = { _ in }
     /// Play from a second (a waveform click, a flag click with its G-PLAY-3 target).
@@ -189,6 +191,9 @@ struct TimelineDockBody<Trailing: View>: View {
                 GhostButton("Replay clip", symbol: "arrow.counterclockwise", tooltip: "Play this clip again from its start",
                             identifier: "meetings.dock.replay", action: actions.playAgain)
             }
+            KitToggleChip("Tone", isOn: Binding(get: { state.toneEnabled }, set: actions.setToneEnabled),
+                          hue: .play, size: .small, tooltip: "Play a tone before the asked spot in the next clip",
+                          identifier: "meetings.dock.tone")
             PositionClock(position: position)
             Spacer(minLength: 8)
             // Only while a zoomed range shows; it stands in the free room before the view choice, so nothing moves.

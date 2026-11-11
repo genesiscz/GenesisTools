@@ -342,12 +342,14 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(ReviewRowView.sourceQuote("Who speaks?", in: rows[0]), "Who speaks?", "a row that quotes nothing keeps its source's words")
     }
 
-    func testOnlyThisQuestionNeedsTheServiceAndKeepsItsWireKey() throws {
+    func testOnlyThisQuestionKeepsItsWireKeyWithoutTheService() throws {
         var only = DecisionAction.answer("q1", "Dana Example")
         XCTAssertNotNil(MeetingDetailModel.commandArgs(meeting: "m", action: only, reason: nil))
         only.lookAlikes = "leave"
-        XCTAssertNil(MeetingDetailModel.commandArgs(meeting: "m", action: only, reason: nil),
-                     "R22: the command always settles the look-alikes, so this answer waits for the service")
+        let args = try XCTUnwrap(MeetingDetailModel.commandArgs(meeting: "m", action: only, reason: nil))
+        XCTAssertEqual(Array(args.prefix(3)), ["decide", "m", "--action"])
+        let decoded = try JSONDecoder().decode(DecisionAction.self, from: Data(args[3].utf8))
+        XCTAssertEqual(decoded, only)
         let wire = try XCTUnwrap(String(data: JSONEncoder().encode(only), encoding: .utf8))
         XCTAssertTrue(wire.contains(#""lookAlikes":"leave""#), wire)
     }
@@ -484,8 +486,8 @@ final class MeetingsReviewRowTests: XCTestCase {
         var bulk = DecisionAction.confirm([])
         bulk.minConfidence = 0.8
         XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: bulk, reason: nil), ["confirm", "m", "--min-confidence", "0.8", "--json"])
-        XCTAssertNil(MeetingDetailModel.commandArgs(meeting: "m", action: .respell("i2", to: "EMP"), reason: nil),
-                     "a respell needs the service")
+        XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: .respell("i2", to: "EMP"), reason: nil)?.first,
+                       "decide", "respelling uses the complete decision command")
     }
 
     func testTheActorAndTheActionReadAsTheEnginesWords() throws {

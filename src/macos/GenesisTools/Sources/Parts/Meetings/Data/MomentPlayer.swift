@@ -282,7 +282,8 @@ final class MomentPlayer {
         }
         let layer = MomentLayer(meeting: meeting, target: target, source: source, kind: .moment, label: Self.provisionalLabel(target))
         place(layer, Self.placement(for: source, clickInQuestion: MeetingsPreferences.Playback.clickInQuestion.value(defaults)))
-        cut(layer.id, MeetingsAPI.MomentParams(meeting: meeting, target: target, lengthSec: lengthSec))
+        cut(layer.id, MeetingsAPI.MomentParams(meeting: meeting, target: target,
+                                               tone: source == .outside ? false : nil, lengthSec: lengthSec))
     }
 
     /// A transcript time (a line, the timeline): inside the loaded clip it seeks there; outside it, the Moment at that
@@ -443,6 +444,7 @@ final class MomentPlayer {
             stop()
             return
         }
+        abortCut()
         drop(top.id)
         stack.removeLast()
         guard let below = stack.last else { return }
@@ -512,7 +514,7 @@ final class MomentPlayer {
     /// Why `target` of `meeting` cannot play, when the player knows: the meeting's state (no audio on this Mac, still
     /// recording, no ffmpeg), or the target's own refusal. A play control is disabled with these words.
     func reason(_ target: MomentTarget, in meeting: String) -> MomentCannot? {
-        cannot[meeting] ?? cannot[Self.key(MeetingsAPI.MomentParams(meeting: meeting, target: target))]
+        cannot[meeting] ?? cannot[Self.key(MeetingsAPI.MomentParams(meeting: meeting, target: target, screen: false))]
     }
 
     /// Asks the engine once whether a Moment of `meeting` can play (the rows ask it for their first target when they
@@ -742,27 +744,24 @@ final class MomentPlayer {
 
     /// One stretch of a whole-meeting play: no pad, so the stretches meet end to start.
     static func rollingParams(_ meeting: String, from second: Double) -> MeetingsAPI.MomentParams {
-        MeetingsAPI.MomentParams(meeting: meeting, target: .range(from: second, to: second + rollingSec), padSec: 0, screen: false)
+        MeetingsAPI.MomentParams(meeting: meeting, target: .range(from: second, to: second + rollingSec), padSec: 0, tone: false, screen: false)
     }
 
-    /// The clip's identity: the same meeting, target, pad and length cut the same clip.
+    /// Every option that changes the clip or its metadata is part of its identity.
     static func key(_ params: MeetingsAPI.MomentParams) -> String {
         // Sorted keys: an encoder may write the same target's keys in another order, and the key must not change.
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let target = (try? encoder.encode(params.target)).map { String(decoding: $0, as: UTF8.self) } ?? "?"
-        return [params.meeting, target, params.padSec.map { "\($0)" } ?? "-", params.lengthSec.map { "\($0)" } ?? "-"]
-            .joined(separator: "|")
+        return (try? encoder.encode(params)).map { String(decoding: $0, as: UTF8.self) } ?? "?"
     }
 }
 
 extension MomentPlayer.Engine {
-    /// The Moment engine through the Meetings service, and through `tools meetings play --target … --clip --json` (the
-    /// same Moment and path) when no service answers; that command takes no pad or length, so those use the settings.
+    /// The same Moment options reach the service and its command adapter.
     static let live = MomentPlayer.Engine(
         cut: { params in
             try await MeetingsRead.service(MeetingsAPI.MomentClipCut.self, params,
-                                           orRun: ["play", params.meeting, "--target", MomentPlayer.Engine.targetJSON(params.target), "--clip", "--json"],
+                                           orRun: command(params) + ["--clip"],
                                            timeoutSeconds: 120).run()
         },
         plan: { params in
@@ -771,8 +770,7 @@ extension MomentPlayer.Engine {
                     return try await service.call(MeetingsAPI.MomentPlan.self, params)
                 } catch is MeetingsService.Unavailable {}
             }
-            let moment = try await MeetingsCLI.json(Moment.self, ["play", params.meeting, "--target", MomentPlayer.Engine.targetJSON(params.target),
-                                                                  "--no-start", "--json"])
+            let moment = try await MeetingsCLI.json(Moment.self, command(params) + ["--no-start"])
             return MeetingsAPI.MomentPlan.Result(moment: moment, cannot: nil)
         },
         audio: { meeting in
@@ -781,6 +779,19 @@ extension MomentPlayer.Engine {
             }
             return try await service.call(MeetingsAPI.MeetingAudio.self, .init(meeting: meeting))
         })
+
+    static func command(_ params: MeetingsAPI.MomentParams) -> [String] {
+        var args = ["play", params.meeting, "--target", targetJSON(params.target), "--json"]
+        if let value = params.padSec { args += ["--pad-before", String(value)] }
+        if let value = params.padAfterSec { args += ["--pad-after", String(value)] }
+        if let value = params.lengthSec { args += ["--length", String(value)] }
+        if params.tone == false { args += ["--no-tone"] }
+        else if let sound = params.toneSound, let data = try? JSONEncoder().encode(sound) {
+            args += ["--tone", String(decoding: data, as: UTF8.self)]
+        }
+        if params.screen == false { args += ["--no-screen"] }
+        return args
+    }
 
     static func targetJSON(_ target: MomentTarget) -> String {
         (try? JSONEncoder().encode(target)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"

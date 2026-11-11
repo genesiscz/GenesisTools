@@ -30,6 +30,7 @@ final class MeetingDetailModel {
     /// The tab is the one the meeting opened on by itself, not one a request named or the reader picked.
     var tabIsDefault = false
     private(set) var record: Loadable<MeetingRecordView> = .idle
+    private(set) var lastSuccessfulRead: Date?
     private(set) var transcript: Loadable<MeetingTranscript> = .idle
     private(set) var timeline: Loadable<ScreenTimeline> = .idle
     /// `meeting.speakers`: talk time per label with its spans (the Speakers tab's lanes, R40) and the hints.
@@ -340,6 +341,7 @@ final class MeetingDetailModel {
 
     /// Sets a part only when it changes: `@Observable` redraws every view that reads a property on each set, equal or not.
     func settle<Value: Equatable>(_ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>, _ new: Loadable<Value>) {
+        if case .loaded = new { lastSuccessfulRead = Date() }
         if self[keyPath: part] != new { self[keyPath: part] = new }
     }
 

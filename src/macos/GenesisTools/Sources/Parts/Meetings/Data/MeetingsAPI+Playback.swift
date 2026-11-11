@@ -176,18 +176,21 @@ extension MeetingsAPI {
         var padAfterSec: Double?
         /// This tone for the call instead of the saved one; it sounds even while the saved tone is off.
         var toneSound: MeetingsAPI.ToneSoundSetting?
+        /// False suppresses the tone for this call, even when an explicit sound is supplied.
+        var tone: Bool?
         /// False skips the screen frames at the spot.
         var screen: Bool?
         /// At most this long from the span's start ("Clip 5s": 5); the pad stays.
         var lengthSec: Double?
 
         init(meeting: String, target: MomentTarget, padSec: Double? = nil, padAfterSec: Double? = nil,
-             toneSound: MeetingsAPI.ToneSoundSetting? = nil, screen: Bool? = nil, lengthSec: Double? = nil) {
+             toneSound: MeetingsAPI.ToneSoundSetting? = nil, tone: Bool? = nil, screen: Bool? = nil, lengthSec: Double? = nil) {
             self.meeting = meeting
             self.target = target
             self.padSec = padSec
             self.padAfterSec = padAfterSec
             self.toneSound = toneSound
+            self.tone = tone
             self.screen = screen
             self.lengthSec = lengthSec
         }

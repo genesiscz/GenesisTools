@@ -49,6 +49,7 @@ private final class FakeEngine {
     var audio: MeetingsAPI.MeetingAudio.Result?
     /// A cut waits until the test lets it go.
     var holdCuts = false
+    var cancelledCuts = 0
     private var held: [CheckedContinuation<Void, Never>] = []
     let folder: URL
 
@@ -74,6 +75,7 @@ private final class FakeEngine {
             cut: { [unowned self] params in
                 self.cuts.append(params)
                 if self.holdCuts { await withCheckedContinuation { self.held.append($0) } }
+                if Task.isCancelled { self.cancelledCuts += 1 }
                 try Task.checkCancellation()
                 if let cutFailure = self.cutFailure { throw cutFailure }
                 let spot: Double
@@ -181,6 +183,23 @@ final class MeetingsPlayerTests: XCTestCase {
                           MomentPlayer.key(MeetingsAPI.MomentParams(meeting: "m", target: .item("i1"))))
     }
 
+    func testClipIdentityAndCommandKeepEveryPlaybackOverride() {
+        let plain = MeetingsAPI.MomentParams(meeting: "m", target: .item("i1"))
+        let quiet = MeetingsAPI.MomentParams(meeting: "m", target: .item("i1"), tone: false)
+        let padded = MeetingsAPI.MomentParams(meeting: "m", target: .item("i1"), padAfterSec: 7)
+        XCTAssertNotEqual(MomentPlayer.key(plain), MomentPlayer.key(quiet))
+        XCTAssertNotEqual(MomentPlayer.key(plain), MomentPlayer.key(padded))
+        let rolling = MomentPlayer.rollingParams("m", from: 20)
+        XCTAssertEqual(rolling.tone, false)
+        let args = MomentPlayer.Engine.command(rolling)
+        XCTAssertTrue(args.contains("--no-tone"))
+        XCTAssertTrue(args.contains("--no-screen"))
+        XCTAssertTrue(args.contains("--pad-before"))
+        let bounded = MeetingsAPI.MomentParams(meeting: "m", target: .item("i1"), padSec: 2, padAfterSec: 7, lengthSec: 5)
+        let command = MomentPlayer.Engine.command(bounded)
+        XCTAssertEqual(Array(command.suffix(6)), ["--pad-before", "2.0", "--pad-after", "7.0", "--length", "5.0"])
+    }
+
     func testCuttingWordsWaitTwoHundredMillisecondsAndCancelFiveSeconds() {
         XCTAssertFalse(MomentPlayer.cuttingShows(elapsed: 0.15).words)
         XCTAssertTrue(MomentPlayer.cuttingShows(elapsed: 0.2).words)
@@ -257,11 +276,12 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001, "inside the clip: a seek, no new cut")
         XCTAssertEqual(engine.cuts.count, 1)
 
-        player.playTime(600, in: "m")
+        player.playTime(600, in: "m", from: .row)
         XCTAssertEqual(player.stack.count, 1)
         XCTAssertEqual(player.top?.target, .time(600), "outside the clip: the Moment at that time takes the top's place (G-PLAY-1)")
         try await until("the new Moment plays") { player.phase == .playing && self.sounds.count == 2 }
         XCTAssertTrue(sounds[0].stopped)
+        XCTAssertEqual(engine.cuts.last?.tone, false, "outside playback must not add a tone")
     }
 
     func testTheEndOfAClipOffersMoreAndPlaysTheNextStretch() async throws {
@@ -291,6 +311,31 @@ final class MeetingsPlayerTests: XCTestCase {
         player.dismissFailure()
         XCTAssertEqual(player.phase, .idle)
         XCTAssertTrue(player.stack.isEmpty)
+    }
+
+    func testPoppingACuttingTopCancelsItsEngineRequest() async throws {
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("the first clip plays") { player.phase == .playing }
+        engine.holdCuts = true
+        player.play(.stretch(atSec: 40, speaker: "Dana Example"), in: "m", from: .speakerChip)
+        try await until("the pushed request is waiting") { self.engine.cuts.count == 2 }
+        player.pop()
+        XCTAssertEqual(player.top?.target, .item("i1"))
+        XCTAssertEqual(player.phase, .playing)
+        engine.release()
+        try await until("the request sees cancellation") { self.engine.cancelledCuts == 1 }
+        XCTAssertEqual(player.top?.target, .item("i1"))
+        XCTAssertEqual(player.phase, .playing)
+    }
+
+    func testTargetRefusalsAreFoundWithScreenSuppressed() async throws {
+        engine.planAnswer = .init(moment: nil, cannot: MomentCannot(code: "unknown-item", message: "No such item."))
+        let player = makePlayer()
+        player.checkPlayable(.item("missing"), in: "m")
+        try await until("the target refusal is known") { player.reason(.item("missing"), in: "m") != nil }
+        XCTAssertEqual(player.reason(.item("missing"), in: "m")?.code, "unknown-item")
+        XCTAssertNil(player.reason(.item("other"), in: "m"))
     }
 
     func testARowsPlayControlCutsAgainAfterAFailedCut() async throws {

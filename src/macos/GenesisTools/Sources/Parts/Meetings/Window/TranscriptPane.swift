@@ -46,6 +46,7 @@ struct TranscriptBlocksPane: View {
     /// Follows the playback now: the setting's value until the reader scrolls away, then off until "Jump to now".
     @State private var following: Bool?
     @State private var selection: Set<String> = []
+    @State private var wordSelection: TranscriptSelection?
     @State private var anchor: TranscriptBlockLine?
     @State private var popoverLine: String?
     @State private var jump = 0
@@ -61,7 +62,7 @@ struct TranscriptBlocksPane: View {
                 FollowingBlocks(blocks: blocks, player: detail.window?.player, meeting: detail.id, follows: isFollowing,
                                 jump: jump, selection: selection, popoverLine: popoverLine, dimsPast: dimPast, showsAvatar: avatars,
                                 play: { detail.play(at: $0, from: .transcript) },
-                                select: select,
+                                select: select, selectWords: selectWords,
                                 scrolledAway: { if isFollowing { following = false } },
                                 popover: { popover(blocks) },
                                 closePopover: { popoverLine = nil })
@@ -122,6 +123,7 @@ struct TranscriptBlocksPane: View {
     /// ⇧ extends from the last clicked line through the lines between; ⌘ adds or removes one. The popover opens at the
     /// line clicked last.
     private func select(_ line: TranscriptBlockLine, _ click: TranscriptLineClick) {
+        wordSelection = nil
         switch click {
         case .play:
             return
@@ -139,12 +141,20 @@ struct TranscriptBlocksPane: View {
         popoverLine = selection.isEmpty ? nil : line.id
     }
 
+    private func selectWords(_ line: TranscriptBlockLine, _ range: NSRange) {
+        guard let chosen = TranscriptSelection.words(line, range: range) else { return }
+        wordSelection = chosen
+        selection = [line.id]
+        anchor = line
+        popoverLine = line.id
+    }
+
     private var selectedLines: [TranscriptBlockLine] {
         built.flatMap(\.lines).filter { selection.contains($0.id) }
     }
 
     private func popover(_ blocks: [TranscriptBlock]) -> AnyView {
-        guard let chosen = TranscriptSelection.lines(selectedLines) else { return AnyView(EmptyView()) }
+        guard let chosen = wordSelection ?? TranscriptSelection.lines(selectedLines) else { return AnyView(EmptyView()) }
         return AnyView(SelectionPopover(
             selection: chosen,
             clipLengthSec: clipSec > 0 ? clipSec : MeetingsPreferences.Transcript.clipSec.defaultValue,
@@ -162,6 +172,7 @@ struct TranscriptBlocksPane: View {
     }
 
     private func clearSelection() {
+        wordSelection = nil
         selection = []
         anchor = nil
         popoverLine = nil
@@ -198,6 +209,7 @@ private struct FollowingBlocks: View {
     let showsAvatar: Bool
     let play: (Double) -> Void
     let select: (TranscriptBlockLine, TranscriptLineClick) -> Void
+    let selectWords: (TranscriptBlockLine, NSRange) -> Void
     let scrolledAway: () -> Void
     let popover: () -> AnyView
     let closePopover: () -> Void
@@ -207,7 +219,7 @@ private struct FollowingBlocks: View {
         FollowingList(blocks: blocks, heard: TranscriptBlock.heard(in: blocks, at: position),
                       passedEnd: dimsPast ? TranscriptBlock.passedEnd(in: blocks, at: position) : nil,
                       follows: follows, jump: jump, selection: selection, popoverLine: popoverLine, dimsPast: dimsPast,
-                      showsAvatar: showsAvatar, play: play, select: select, scrolledAway: scrolledAway, popover: popover,
+                      showsAvatar: showsAvatar, play: play, select: select, selectWords: selectWords, scrolledAway: scrolledAway, popover: popover,
                       closePopover: closePopover)
             .equatable()
     }
@@ -230,6 +242,7 @@ private struct FollowingList: View, Equatable {
     let showsAvatar: Bool
     let play: (Double) -> Void
     let select: (TranscriptBlockLine, TranscriptLineClick) -> Void
+    let selectWords: (TranscriptBlockLine, NSRange) -> Void
     let scrolledAway: () -> Void
     let popover: () -> AnyView
     let closePopover: () -> Void
@@ -248,7 +261,7 @@ private struct FollowingList: View, Equatable {
                 TranscriptBlocksList(blocks: blocks, heard: heard, selection: selection, dimsPast: dimsPast,
                                      showsAvatar: showsAvatar, pastBefore: passedEnd,
                                      popoverLine: popoverLine, popover: popover, closePopover: closePopover,
-                                     play: play, select: select)
+                                     play: play, select: select, selectWords: selectWords)
                     .padding(.vertical, 4)
                     .background(UserScrollProbe(onUserScroll: scrolledAway))
             }

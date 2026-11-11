@@ -193,6 +193,8 @@ struct ReviewRowView: View, Equatable {
         case .asks(let pieces):
             pieceLine(pieces, symbol: "questionmark.bubble", size: 13, weight: row.isQuestion ? .medium : .regular,
                       glyph: asks ? KitHue.ask.ink : nil)
+                .onTapGesture(count: 2) { if row.edit != "none" { detail.edit(row) } }
+                .instantTooltip(row.edit == "none" ? "" : "Double-click to edit the answer")
         case .settles(let text, let items):
             settlesLine(text, items: items)
         case .reason(let pieces):

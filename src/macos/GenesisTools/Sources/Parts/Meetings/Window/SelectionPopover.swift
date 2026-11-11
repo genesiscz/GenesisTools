@@ -24,6 +24,20 @@ struct TranscriptSelection: Equatable, Hashable {
         return start == end ? start : "\(start) to \(end)"
     }
 
+    static func words(_ line: TranscriptBlockLine, range: NSRange) -> TranscriptSelection? {
+        let count = line.text.utf16.count
+        guard let second = line.startSec, count > 0, range.length > 0,
+              range.location <= count, range.length <= count - range.location,
+              let indices = Range(range, in: line.text) else { return nil }
+        let quote = String(line.text[indices])
+        guard quote.utf16.count == range.length,
+              line.text[..<indices.lowerBound].utf16.count == range.location else { return nil }
+        return TranscriptSelection(
+            from: LinePoint(atSec: second, line: line.index, fraction: Double(range.location) / Double(count)),
+            to: LinePoint(atSec: second, line: line.index, fraction: Double(range.location + range.length) / Double(count)),
+            quote: quote)
+    }
+
     /// The selection of whole lines, from the first line's start to the last line's start (fraction 1).
     static func lines(_ lines: [TranscriptBlockLine]) -> TranscriptSelection? {
         let sorted = lines.sorted { $0.index < $1.index }

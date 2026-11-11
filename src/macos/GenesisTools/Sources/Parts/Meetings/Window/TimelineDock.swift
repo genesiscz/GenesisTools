@@ -61,7 +61,8 @@ struct TimelineDock: View {
                 views: dock.trail(of: top.id),
                 voices: talk.spans,
                 legend: talk.legend,
-                pinLanes: pinLanes > 0 ? pinLanes : MeetingsPreferences.Panes.pinLanes.defaultValue)
+                pinLanes: pinLanes > 0 ? pinLanes : MeetingsPreferences.Panes.pinLanes.defaultValue,
+                toneEnabled: window?.settingsRaw?.at(["global", "playback", "listen", "tone", "enabled"]) != .bool(false))
             dockBody(state: state, screen: screen, meeting: meeting, top: top)
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
                 .modifier(PinCardPresenter(hovered: dock.hoveredPin, openDelayMs: hoverDelayMs,
@@ -179,6 +180,10 @@ struct TimelineDock: View {
         let dock = player.timeline
         var actions = TimelineDockActions()
         actions.togglePause = { player.togglePause() }
+        actions.setToneEnabled = { enabled in
+            window?.setConfig(["global", "playback", "listen", "tone", "enabled"], .bool(enabled),
+                              done: enabled ? "Tone on for the next clip" : "Tone off for the next clip")
+        }
         actions.skip = { delta in player.skip(by: delta) }
         // A click inside the loaded clip seeks; outside it the Moment at that time takes the top's place (G-PLAY-1).
         actions.seek = { second in player.playTime(second, in: meeting, from: .outside) }

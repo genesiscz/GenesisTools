@@ -137,6 +137,19 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     // MARK: Selection popover and staged comments
 
+    func testWordSelectionKeepsItsQuoteAndLineFractions() throws {
+        let line = TranscriptBlockLine(id: "l1", index: 4, startSec: 10, endSec: 20, text: "Hi 🌍 alpha beta")
+        let range = (line.text as NSString).range(of: "alpha")
+        let chosen = try XCTUnwrap(TranscriptSelection.words(line, range: range))
+        XCTAssertEqual(chosen.quote, "alpha")
+        XCTAssertEqual(chosen.from.line, 4)
+        XCTAssertEqual(chosen.from.fraction, Double(range.location) / Double(line.text.utf16.count))
+        XCTAssertEqual(chosen.to.fraction, Double(range.location + range.length) / Double(line.text.utf16.count))
+        XCTAssertNil(TranscriptSelection.words(line, range: NSRange(location: 0, length: 0)))
+        XCTAssertNil(TranscriptSelection.words(line, range: NSRange(location: NSNotFound, length: 1)))
+        XCTAssertNil(TranscriptSelection.words(line, range: NSRange(location: 3, length: 1)), "never split a surrogate pair")
+    }
+
     func testASelectionOfLinesRunsFromTheFirstStartToTheLastLine() throws {
         let blocks = TranscriptBlock.build(from: Self.entries)
         let lines = [blocks[5].lines[0], blocks[4].lines[0]]
