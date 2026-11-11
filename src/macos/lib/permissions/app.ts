@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import { restartDaemonOnNewApp } from "@app/daemon/lib/launchd";
 import { isInteractive, spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
@@ -1528,6 +1529,15 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
 
     step("reap stale app-face processes");
     await reapStaleAppFaces({ step, relaunch, parts });
+
+    // The daemon runs under the launcher too, but the reap never touches a launcher process: it is restarted on the
+    // new bundle instead, or its tasks keep asking macOS for grants as the retired copy.
+    step("restart the daemon on the new bundle");
+    const daemon = await restartDaemonOnNewApp().catch((err: unknown) => {
+        logger.warn({ err }, "the daemon could not be restarted on the new bundle");
+        return "failed" as const;
+    });
+    logger.info({ daemon }, "daemon after the bundle swap");
 
     logger.info({ bundlePath, signedWith: signature.authority }, "GenesisTools.app built");
 
