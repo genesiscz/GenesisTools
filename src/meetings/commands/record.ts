@@ -208,7 +208,7 @@ async function start(opts: {
         );
         ui.dim(`Pause: ${TOOL} record pause · stop: ${TOOL} record stop · status: ${TOOL} record status`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -248,11 +248,11 @@ async function callRunning<T>(
             recorder.close();
         }
     } catch (err) {
-        fail(
+        const message =
             err instanceof RpcError
                 ? `${err.message} (code ${err.code})`
-                : `${errorText(err)}. The recorder (pid ${running.pid}) may be from an older version; stop it: kill ${running.pid}`
-        );
+                : `${errorText(err)}. The recorder (pid ${running.pid}) may be from an older version; stop it: kill ${running.pid}`;
+        fail(new Error(message, { cause: err }));
         return undefined;
     }
 }
@@ -348,7 +348,7 @@ async function setSettings(opts: SetSettingsFlags): Promise<void> {
     try {
         patch = settingsPatchFromFlags(opts);
     } catch (error) {
-        fail(errorText(error));
+        fail(error);
         return;
     }
 
@@ -588,7 +588,7 @@ async function timeline(store: MeetingStore, record: MeetingRecord, opts: Screen
             ui.warn(`${ocrPendingNote(view.pending)}. Read them now: ${TOOL} ocr ${record.id}`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -622,7 +622,7 @@ async function cost(opts: { json?: boolean }): Promise<void> {
             out.println(`  threshold: ${view.thresholdNote}`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

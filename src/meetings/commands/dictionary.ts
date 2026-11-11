@@ -11,7 +11,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { suggestDictionary } from "../lib/dictionary-suggest";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
+import { fail, resolveEnum, TOOL } from "../lib/shared";
 import { isMeetingSourceId, meetingSource } from "../lib/sources";
 import { windowJson } from "../lib/window-reads";
 
@@ -46,7 +46,7 @@ async function show(opts: { project?: string; json?: boolean }): Promise<void> {
         out.println(table.toString());
         ui.dim(`abbreviations expand: ${view.abbrExpansion} · config: ${store.path}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -120,7 +120,7 @@ async function add(
             `${entry.type} ${entry.value} saved to the ${opts.project ? `project ${opts.project}` : "global"} dictionary${opts.replace && opts.replace !== entry.value ? ` in place of ${opts.replace}` : ""}.`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -138,7 +138,7 @@ async function remove(value: string, opts: { project?: string }): Promise<void> 
             fail(`${value} is not in the ${level} dictionary.`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -170,7 +170,7 @@ async function expansion(mode: string | undefined, opts: { project?: string }): 
             `Abbreviations in the ${opts.project ? `project ${opts.project}` : "global"} dictionary expand: ${picked}.`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -255,7 +255,7 @@ async function suggest(opts: {
             `Save some: ${toolCommand("meetings", "dictionary", "suggest")}${opts.project ? ` --project ${opts.project}` : ""} --apply 1,3 (or --apply all)`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -285,7 +285,7 @@ async function test(phrase: string, opts: { project?: string; json?: boolean }):
             ui.dim(`  close to ${suggestion.value}: "${suggestion.heard}" (${suggestion.score})`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

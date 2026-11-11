@@ -52,7 +52,7 @@ import {
 } from "../lib/questions";
 import { speakerAnswerScores } from "../lib/review-rows";
 import { openMeetingsClient } from "../lib/service/client";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 
 const PAD_CHOICES = [5, 10] as const;
 const AGAIN = "\u0000again";
@@ -554,7 +554,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     try {
         meeting = store.resolve(ref);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -596,7 +596,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                 ui.ok(`${opts.item} answered: ${opts.answer}`);
             }
         } catch (error) {
-            fail(errorText(error));
+            fail(error);
         } finally {
             client.close();
         }
@@ -631,7 +631,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             const questions = openQuestions(meeting).filter((item) => !itemId || item.id === itemId);
             await clipsOut({ store, meeting, questions, dir: opts.clipOut, json: opts.json });
         } catch (err) {
-            fail(errorText(err));
+            fail(err);
         }
 
         return;
@@ -706,7 +706,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             out.result(SafeJSON.stringify(entry, null, 2));
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

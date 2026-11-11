@@ -8,7 +8,7 @@ import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { CallTimeline } from "../lib/call-timeline";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 
 async function attendance(ref: string, opts: { from?: string; json?: boolean }): Promise<void> {
     const store = new MeetingStore();
@@ -55,7 +55,7 @@ async function attendance(ref: string, opts: { from?: string; json?: boolean }):
 
         out.println(table.toString());
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

@@ -7,18 +7,56 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Command } from "commander";
+import { z } from "zod";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
 import { journalEntrySchema } from "./decision-actions";
 import { meetingListRow, selectMeetings } from "./list-rows";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
-import { enumHint, errorText, formatFlag } from "./shared";
+import { enumHint, errorText, fail, formatFlag } from "./shared";
 import { linkedSource } from "./sources";
 
 /**
  * What the `tools meetings` commands promise a script or the Meetings window: a refusal names a command that runs,
  * an error code leads its sentence, a JSON shape stays. Each test pins one promise.
  */
+const failureRecordSchema = z.object({
+    error: z.object({
+        message: z.string(),
+        stack: z.string(),
+        issue: z.object({ tool: z.string(), title: z.string().optional() }),
+    }),
+});
+
+test("a CLI failure emits its original stack and issue as redacted JSON on stderr", () => {
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const error = Object.assign(new Error("refused"), { issue: { title: "Original refusal" } });
+    error.stack =
+        "Error: refused\n    at originalThrow (/fixture/source.ts:12:3) sk-ant-abcdefghijklmnopqrstuvwxyz0123";
+    try {
+        fail(error);
+        expect(process.exitCode).toBe(1);
+        expect(human).toHaveBeenCalledWith("refused");
+        expect(raw).toHaveBeenCalledTimes(1);
+        const record = failureRecordSchema.parse(SafeJSON.parse(raw.mock.calls[0][0]));
+        expect(record.error.message).toBe("refused");
+        expect(record.error.stack).toContain("at originalThrow (/fixture/source.ts:12:3)");
+        expect(record.error.stack).not.toContain("sk-ant-abcdefghijklmnopqrstuvwxyz0123");
+        expect(record.error.issue).toEqual({ tool: "meetings", title: "Original refusal" });
+        raw.mockClear();
+        fail(new Error("Context: refused", { cause: error }));
+        const contextual = failureRecordSchema.parse(SafeJSON.parse(raw.mock.calls[0][0]));
+        expect(contextual.error.message).toBe("Context: refused");
+        expect(contextual.error.stack).toBe(record.error.stack);
+        expect(contextual.error.issue).toEqual(record.error.issue);
+    } finally {
+        raw.mockRestore();
+        human.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 describe("enum refusals print a command that runs", () => {
     const argv = process.argv;
 
@@ -219,12 +257,16 @@ describe("a meeting without a transcript source", () => {
         const err = spyOn(ui, "err").mockImplementation((line: string) => {
             errors.push(line);
         });
+        const raw = spyOn(ui, "raw").mockImplementation(() => {});
 
         try {
             const program = new Command().exitOverride();
             await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "evidence" });
             await program.parseAsync(["evidence", created.id], { from: "user" });
+            const record = failureRecordSchema.parse(SafeJSON.parse(raw.mock.calls[0][0]));
+            expect(record.error.stack).toContain("at linkedSource");
         } finally {
+            raw.mockRestore();
             err.mockRestore();
             process.exitCode = 0;
         }

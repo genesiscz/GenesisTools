@@ -8,7 +8,7 @@ import type { Command } from "commander";
 import { CallTimeline } from "../lib/call-timeline";
 import { hasFrameIndex, ocrBacklog, ocrPendingNote } from "../lib/frame-index";
 import { writeScreenNote } from "../lib/screen-note";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 
 async function screenNote(ref: string, opts: { out?: string; json?: boolean }): Promise<void> {
     const store = new MeetingStore();
@@ -62,7 +62,7 @@ async function screenNote(ref: string, opts: { out?: string; json?: boolean }): 
             ui.warn(`${result.missing.length} frames are not on disk; the note says so where they would be.`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

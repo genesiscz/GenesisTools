@@ -9,7 +9,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import type { MeetingsParams, MeetingsResult } from "../lib/service/api";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 import { assignmentText } from "../lib/speaker-assign";
 
 const MEETING_REF = "meeting id, a unique prefix, last, or wisprflow:<id>";
@@ -71,7 +71,7 @@ async function list(query: string | undefined, opts: ListOptions): Promise<void>
     try {
         known = await withMeetingsClient((client) => client.call("people.known", params));
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -133,7 +133,7 @@ async function add(name: string, opts: { email?: string; note?: string; json?: b
                 : `${personText(added.person)} was in the people book: updated${shown}.`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -155,7 +155,7 @@ async function hide(person: string, opts: { show?: boolean; json?: boolean }): P
                 : `${personText(hidden.person)} was ${opts.show ? "not hidden" : "hidden already"}.`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -208,7 +208,7 @@ async function merge(a: string, b: string, opts: { name?: string; yes?: boolean;
         printPlan(merged.plan);
         ui.ok(`Merged into ${merged.merge.name}. Undo: ${TOOL} people unmerge ${merged.merge.token}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -223,7 +223,7 @@ async function unmerge(token: string, opts: { json?: boolean }): Promise<void> {
 
         ui.ok(`${removed.people.map(personText).join(" and ")} are two people again.`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -325,7 +325,7 @@ async function assign(meeting: string, person: string, opts: AssignOptions): Pro
         ui.ok(`${given.map(assignmentText).join(", ")} → ${person.trim()}`);
         ui.dim(`Undo: ${TOOL} people unassign ${meeting} ${decided.entry.token}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -343,7 +343,7 @@ async function unassign(meeting: string, token: string, opts: { reason?: string;
         const back = reverted.entry?.assignments?.length ?? 0;
         ui.ok(back > 0 ? `Undone: ${back} assignment${back === 1 ? "" : "s"} put back.` : "Nothing to undo.");
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

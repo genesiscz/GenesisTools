@@ -292,7 +292,7 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
             ? out.result(SafeJSON.stringify({ ...shown, pid: child.pid }, null, 2))
             : ui.ok(`Playing ${record.id} from ${formatClock(plan.startSec)} in ${plan.player}.`);
     } catch (err) {
-        fail(momentFailure(err));
+        fail(new Error(momentFailure(err), { cause: err }));
     }
 }
 

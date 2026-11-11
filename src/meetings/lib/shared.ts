@@ -1,7 +1,10 @@
 import { formatMissingEnumHelp, isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { redactCurrentRunText } from "@genesiscz/utils/cli/failures/watch";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import * as p from "@genesiscz/utils/prompts/p";
+import { rpcErrorBody } from "@genesiscz/utils/rpc/errors";
 
 export const TOOL = "tools meetings";
 
@@ -89,8 +92,30 @@ export function localStamp(at: Date): string {
     return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}`;
 }
 
-export function fail(message: string): void {
-    ui.err(message);
+/** An additive stderr record for native callers; stdout remains the command's result. */
+export function errorJSON(error: unknown): string {
+    const body = rpcErrorBody(error, "meetings");
+    const cause =
+        error instanceof Error && error.cause instanceof Error ? rpcErrorBody(error.cause, "meetings") : undefined;
+    const stack = cause?.stack ?? body.stack;
+    const title = body.issue.title ?? cause?.issue.title;
+    return SafeJSON.stringify({
+        error: {
+            code: body.code,
+            message: redactCurrentRunText(errorText(error)),
+            ...(stack ? { stack: redactCurrentRunText(stack) } : {}),
+            issue: {
+                tool: body.issue.tool,
+                ...(title ? { title: redactCurrentRunText(title) } : {}),
+            },
+        },
+    });
+}
+
+export function fail(error: unknown): void {
+    const failure = error instanceof Error ? error : new Error(errorText(error));
+    ui.raw(errorJSON(failure));
+    ui.err(errorText(error));
     process.exitCode = 1;
 }
 

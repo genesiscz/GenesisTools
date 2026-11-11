@@ -59,7 +59,7 @@ function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undef
 
         return record;
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return undefined;
     }
 }
@@ -149,7 +149,7 @@ async function rows(ref: string, opts: { all?: boolean; json?: boolean }): Promi
     try {
         answer = await readRows(record.id, opts.all === true);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -249,7 +249,7 @@ async function suggest(
         printItems(store.read(record.id) ?? record, fresh);
         ui.dim(`Confirm or reject: ${TOOL} confirm ${record.id} <ids> · ${TOOL} reject ${record.id} <ids>`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -372,7 +372,7 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
             ? SafeJSON.parse(readFileSync(opts.fromFile, "utf8"), { strict: true })
             : [findingFromFlags(opts)];
     } catch (err) {
-        fail(`--from-file ${opts.fromFile}: ${errorText(err)}`);
+        fail(new Error(`--from-file ${opts.fromFile}: ${errorText(err)}`, { cause: err }));
         return;
     }
 
@@ -444,7 +444,7 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
                 : `${added.length} items added to ${record.id} (${added[0]?.id} to ${added.at(-1)?.id}).`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -509,7 +509,7 @@ async function decide(
             `${status} ${result.decided.join(" ")} in ${record.id} (undo: ${TOOL} reopen ${record.id} ${result.decided.join(" ")} --token ${result.token})`
         );
     } catch (err) {
-        fail(errorText(err).replace(/^minConfidence/, "--min-confidence"));
+        fail(new Error(errorText(err).replace(/^minConfidence/, "--min-confidence"), { cause: err }));
     }
 }
 
@@ -551,7 +551,7 @@ async function reopen(
             ui.ok(`suggested again: ${result.reopened.join(" ")} in ${record.id}`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -585,7 +585,7 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
             ...(platform ? { attendance: `${platform} attendance` } : {}),
         });
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -619,7 +619,7 @@ async function speakersRename(ref: string, label: string, name: string, opts: { 
                 : `${record.id}: ${label} → ${name.trim()} (transcripts of this meeting use it now)`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -694,7 +694,7 @@ async function transcript(
             `${[record.title, localTime(record.start), "", ...transcriptTextLines(groupTurns(applied.entries), opts.timestamps === true)].join("\n").trimEnd()}\n`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

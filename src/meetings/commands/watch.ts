@@ -7,7 +7,7 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
 import { askAtMeetingEnd, hasOpenAssignSteps } from "../lib/assign";
-import { errorText, fail, resolveEnum } from "../lib/shared";
+import { fail, resolveEnum } from "../lib/shared";
 import { watchLoop, watchOnce } from "../lib/watch";
 
 const { log } = logger.scoped("meetings-watch-cmd");
@@ -100,7 +100,7 @@ async function watch(opts: { once?: boolean }): Promise<void> {
             clearPidFile(watcherPidPath(store));
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -137,7 +137,7 @@ async function autostart(mode: string | undefined): Promise<void> {
             `Recording starts with Wispr Flow: ${enabled ? "on" : "off"}. Watcher: ${enabled && (running || picked === "on") ? "running" : "not running"}.`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

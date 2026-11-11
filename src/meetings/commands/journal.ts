@@ -8,7 +8,7 @@ import pc from "picocolors";
 import { actorText, itemIdOf, type JournalReadEntry } from "../lib/decision-journal";
 import { questionLabel } from "../lib/questions";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 import { assignmentText } from "../lib/speaker-assign";
 
 /** At most this many items are named on an entry's line; the rest are counted. */
@@ -86,7 +86,7 @@ async function journal(ref: string, opts: JournalOptions): Promise<void> {
     try {
         record = store.resolve(ref);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -110,7 +110,7 @@ async function journal(ref: string, opts: JournalOptions): Promise<void> {
             client.call("journal.read", { meeting: record.id, ...(item ? { item } : {}), ...(limit ? { limit } : {}) })
         ));
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 

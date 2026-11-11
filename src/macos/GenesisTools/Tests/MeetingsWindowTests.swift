@@ -124,6 +124,31 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertNil(MeetingsCLI.sentence(fromStderr: "  \n"))
     }
 
+    func testCLIFallbackKeepsTheOriginalStackAndIssueInTheFailureReport() throws {
+        let stderr = #"{"error":{"message":"[config-stale] global.capture changed","stack":"Error: refused\n    at originalThrow (/fixture/source.ts:12:3)","issue":{"tool":"meetings","title":"Original refusal"}}}"# + "\n✗ [config-stale] global.capture changed\n"
+        let failure = MeetingsCLI.failure(ToolsRunResult(stdout: "", stderr: stderr, exitCode: 1, wallMs: 0), args: ["config", "set"])
+        XCTAssertEqual(failure.sentence, "Global.capture changed.")
+        XCTAssertEqual(failure.code, "config-stale")
+        XCTAssertEqual(failure.command, "tools meetings config set")
+        XCTAssertEqual(failure.stack, "Error: refused\n    at originalThrow (/fixture/source.ts:12:3)")
+        XCTAssertEqual(failure.issue, FailureIssue(tool: "meetings", title: "Original refusal"))
+        let report = failure.report()
+        XCTAssertEqual(report.stack, failure.stack)
+        XCTAssertEqual(report.issue, failure.issue)
+        XCTAssertTrue(report.rawText().contains("at originalThrow"))
+
+        let legacy = MeetingsCLI.failure(ToolsRunResult(stdout: "", stderr: "✗ [config-stale] global.capture changed\n", exitCode: 1, wallMs: 0), args: ["config", "set"])
+        XCTAssertEqual(legacy.sentence, failure.sentence)
+        XCTAssertEqual(legacy.code, failure.code)
+        XCTAssertNil(legacy.stack)
+        let invalid = MeetingsCLI.failure(ToolsRunResult(stdout: "", stderr: "{broken JSON}\n✗ refused\n", exitCode: 1, wallMs: 0), args: [])
+        XCTAssertEqual(invalid.sentence, "Refused.")
+        let multilineJSON = #"{"error":{"message":"[config-stale] global.capture changed\nTry tools meetings config show"}}"#
+        let multiline = MeetingsCLI.failure(ToolsRunResult(stdout: "", stderr: multilineJSON, exitCode: 1, wallMs: 0), args: [])
+        XCTAssertEqual(multiline.sentence, "Global.capture changed.")
+        XCTAssertEqual(multiline.code, "config-stale")
+    }
+
     func testAConfigPathKeepsAProjectNameWithADotWhole() {
         XCTAssertEqual(MeetingsCLI.path("projects", "side.quest", "labels"), #"["projects","side.quest","labels"]"#)
         XCTAssertEqual(MeetingsCLI.jsonArgument(0.05), "0.05")

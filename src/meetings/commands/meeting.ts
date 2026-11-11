@@ -18,7 +18,7 @@ import { setMeetingFields } from "../lib/meeting-fields";
 import { mergeMeetings } from "../lib/merge";
 import { resolveProject } from "../lib/project";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
 import { windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
@@ -39,7 +39,7 @@ function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undef
 
         return record;
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return undefined;
     }
 }
@@ -105,7 +105,7 @@ async function create(
         );
         ui.ok(`Created ${record.id}${project ? ` (project ${project})` : ""}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -125,7 +125,7 @@ async function list(opts: { project?: string; json?: boolean; full?: boolean; li
                 client.call("meetings.list", { project: opts.project, limit, full: opts.full === true })
             );
         } catch (err) {
-            fail(errorText(err));
+            fail(err);
             return;
         }
 
@@ -140,7 +140,7 @@ async function list(opts: { project?: string; json?: boolean; full?: boolean; li
             (await client.call("meetings.list", { project: opts.project, limit, full: true })).filter(isRecord)
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -191,7 +191,7 @@ async function revisions(ref: string, opts: { json?: boolean }): Promise<void> {
             }
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -201,7 +201,7 @@ async function show(ref: string, opts: { json?: boolean }): Promise<void> {
     try {
         record = await withMeetingsClient((client) => client.call("meeting.show", { ref }));
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -243,7 +243,7 @@ async function set(
             `${record.id}: ${changes.join(", ")}${updated.labels.length > 0 ? ` (labels: ${updated.labels.join(", ")})` : ""}`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -266,7 +266,7 @@ async function link(ref: string, sourceRef: string, opts: { project?: string }):
             await askProjectAtEnd(store, record.id);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -309,7 +309,7 @@ async function merge(fromRef: string, opts: { into: string; dryRun?: boolean; js
             ui.dim(`  backup and restore steps: ${result.backup}/README.md`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -324,7 +324,7 @@ async function duplicate(ref: string, opts: { title?: string; json?: boolean }):
 
         ui.ok(`Duplicated ${result.from} as ${result.id} ("${result.title}")`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -380,7 +380,7 @@ async function contextAdd(
         );
         ui.ok(`${updated.context.at(-1)!.id} added to ${record.id}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -429,7 +429,7 @@ async function contextRemove(ref: string, id: string): Promise<void> {
         });
         ui.ok(`Removed ${id} from ${record.id}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

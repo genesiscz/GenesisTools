@@ -6,7 +6,7 @@ import { languageSettings, MeetingsConfigStore } from "@genesiscz/utils/meetings
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { Command } from "commander";
 import { meetingOcrSettings, runOcrWorker } from "../lib/ocr-worker";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 
 const { log } = logger.scoped("meetings-ocr-cmd");
 
@@ -92,7 +92,7 @@ async function ocr(ref: string, opts: OcrOptions): Promise<void> {
         }
     } catch (err) {
         log.error({ err, meeting: record.id }, "the OCR worker failed");
-        fail(errorText(err));
+        fail(err);
     }
 }
 
