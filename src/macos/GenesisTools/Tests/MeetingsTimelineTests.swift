@@ -231,6 +231,20 @@ final class MeetingsTimelineTests: XCTestCase {
         XCTAssertEqual(TimelinePin(row: TimelineFixture.questionRow, playing: true)?.state, .playing)
     }
 
+    /// The pins follow `meetings.rows.stateLook`: hue and glyph by default, the older flags and tints under Shade.
+    func testThePinsFollowTheStateLookSetting() {
+        let rejected = TimelinePin(id: "r", sec: 1, text: "x", state: .rejected)
+        XCTAssertEqual(rejected.symbol(.hueAndGlyph), "xmark")
+        XCTAssertEqual(rejected.symbol(.shade), "checkmark", "the shade look has no rejected pin of its own")
+        XCTAssertEqual(TimelinePin.State.rejected.hue(.shade), .done)
+        let open = TimelinePin(id: "o", sec: 1, text: "x", state: .open)
+        XCTAssertEqual(open.symbol(.hueAndGlyph), "sparkles")
+        XCTAssertEqual(open.symbol(.shade), "flag.fill")
+        XCTAssertEqual(TimelinePin.State.open.hue(.hueAndGlyph), .play)
+        XCTAssertEqual(TimelinePin.State.open.hue(.shade), .care)
+        XCTAssertEqual(TimelinePin(id: "p", sec: 1, text: "x", state: .playing).symbol(.shade), "flag.fill")
+    }
+
     // MARK: - Snapshots
 
     func testSnapshotsOfTheZoomedTimeline() throws {
