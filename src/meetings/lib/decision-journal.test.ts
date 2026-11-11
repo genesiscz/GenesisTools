@@ -9,6 +9,7 @@ import type { SpeakerHint } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
 import { actorOf, actorText, callerActor, DecisionJournal, decisionReach, JOURNAL_FILE } from "./decision-journal";
+import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
 import { correctTranscript } from "./transcript-corrections";
 
@@ -444,10 +445,11 @@ describe("decision journal", () => {
             repeats: 2,
         });
 
+        // i1 is the question's own target inside the span it asks about: the same question, not a look-alike. i2
+        // goes with the look-alike question i4 that decides it.
         expect(reach.items).toEqual([
-            { id: "i4", match: "same" },
-            { id: "i1", match: "same" },
-            { id: "i2", match: "same" },
+            { id: "i4", match: "same", role: "look-alike", after: "ADO" },
+            { id: "i1", match: "same", role: "same", before: "ADA", after: "ADO" },
         ]);
         expect(reach.lines).toBe(1);
         expect(reach.dictionary).toEqual([
@@ -633,5 +635,134 @@ describe("speaker assignments (assign)", () => {
             { label: "S1", fromSec: 0, toSec: 35, lines: 1, why: "hint-range" },
             { label: "S1", fromSec: 60, toSec: 90, lines: 1, why: "present-set" },
         ]);
+    });
+});
+
+/**
+ * A word question with a target inside its span (i1) and one outside it (i5), a look-alike over another span (i4,
+ * deciding i2) and one over the same span (i6, deciding i7).
+ */
+const transaction = () => [
+    term("i1", 50, { proposed: "ADA" }),
+    term("i2", 70, { proposed: "ADA" }),
+    term("i5", 120, { proposed: "ADA" }),
+    term("i7", 51, { proposed: "ADA" }),
+    question("i3", { decides: ["i1", "i5"] }),
+    question("i4", { fromSec: 70, toSec: 74, decides: ["i2"] }),
+    question("i6", { decides: ["i7"] }),
+];
+
+describe("a decision and what it carries are one transaction", () => {
+    test("the reach never lists the asked span again, sorts targets from look-alikes, and quotes each item", async () => {
+        const fx = await fixture(transaction());
+        const record = fx.store.read(fx.meeting.id)!;
+        const transcript: TranscriptEntry[] = [
+            { speaker: "S1", text: "ada said so", startSec: 50 },
+            { speaker: "S2", text: "ada again much later", startSec: 120 },
+        ];
+        const planned = await fx.journal.plan({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO" },
+            actor: person,
+        });
+        const reach = decisionReach({
+            entry: planned.entry!,
+            named: ["i3"],
+            record,
+            rowOf: (item) => reviewRow(record, item, transcript),
+            ledger: [],
+            repeats: 2,
+        });
+
+        expect(reach.items.map((item) => [item.id, item.role])).toEqual([
+            ["i6", "same"],
+            ["i4", "look-alike"],
+            ["i1", "same"],
+            ["i5", "sets"],
+        ]);
+        const outside = reach.items.find((item) => item.id === "i5");
+        expect(outside).toMatchObject({ before: "ADA", after: "ADO", row: { id: "i5", target: { id: "i5" } } });
+        expect(outside?.row?.parts).toContainEqual({ kind: "said", text: "ada again much later" });
+        expect(reach.items.find((item) => item.id === "i4")?.row?.label).toBe("Q2");
+    });
+
+    test("a struck target and a struck look-alike stay as they were and leave it: the Undo does not touch them", async () => {
+        const fx = await fixture(transaction());
+        const { entry } = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO", except: ["i5", "i4"] },
+            actor: person,
+        });
+
+        expect(entry).toMatchObject({ settled: ["i6"] });
+        expect(entry?.decided).not.toContain("i5");
+        expect(fx.item("i3")).toMatchObject({ status: "confirmed", decides: ["i1"] });
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        expect(fx.item("i7")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        expect(fx.item("i5")).toMatchObject({ status: "suggested", proposed: "ADA" });
+        expect(fx.item("i4")).toMatchObject({ status: "suggested" });
+
+        await fx.journal.revert({ meeting: fx.meeting.id, token: entry!.token, actor: person });
+
+        // One Undo takes back the answer and everything it carried, in one step.
+        for (const id of ["i1", "i3", "i6", "i7"]) {
+            expect(fx.item(id)).toMatchObject({ status: "suggested" });
+            expect(fx.item(id)).not.toHaveProperty("decision");
+        }
+
+        expect(fx.item("i3")).toMatchObject({ decides: ["i1", "i5"] });
+        expect(fx.item("i7")).toMatchObject({ proposed: "ADA" });
+        expect(fx.item("i5")).not.toHaveProperty("decision");
+    });
+
+    test("a changed answer replaces the earlier one in one entry, keeps the struck items out, and its Undo brings the earlier answer back", async () => {
+        const fx = await fixture(transaction());
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO", except: ["i5"] },
+            actor: person,
+        });
+        const change = { kind: "answer", question: "i3", answer: "ADA", replaces: first.entry!.token } as const;
+        const planned = await fx.journal.plan({ meeting: fx.meeting.id, action: change, actor: person });
+        const reach = decisionReach({
+            entry: planned.entry!,
+            named: ["i3"],
+            record: fx.store.read(fx.meeting.id)!,
+            struck: ["i5"],
+            ledger: [],
+            repeats: 2,
+        });
+
+        // The carried items are asked again with the new answer; the one struck before is struck again.
+        expect(reach.items.map((item) => [item.id, item.role, item.after, item.struck ?? false])).toEqual([
+            ["i6", "same", "ADA", false],
+            ["i4", "look-alike", "ADA", false],
+            ["i1", "same", "ADA", false],
+            ["i5", "sets", "ADA", true],
+        ]);
+
+        const second = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { ...change, except: ["i5"] },
+            actor: person,
+        });
+
+        expect(fx.item("i3")).toMatchObject({ status: "confirmed", answer: "ADA", decides: ["i1"] });
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADA" });
+        expect(fx.item("i2")).toMatchObject({ status: "confirmed", proposed: "ADA" });
+        expect(fx.item("i5")).toMatchObject({ status: "suggested" });
+        expect(fx.item("i5")).not.toHaveProperty("decision");
+        expect(fx.journal.read(fx.meeting.id).find((one) => one.token === first.entry!.token)?.revertedBy).toBe(
+            second.entry!.token
+        );
+
+        await fx.journal.revert({ meeting: fx.meeting.id, token: second.entry!.token, actor: person });
+
+        expect(fx.item("i3")).toMatchObject({ status: "confirmed", answer: "ADO", decides: ["i1"] });
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        // The look-alike the earlier answer settled is back on that answer too.
+        expect(fx.item("i4")).toMatchObject({ status: "confirmed", answer: "ADO" });
+        expect(fx.item("i2")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        expect(fx.item("i5")).toMatchObject({ status: "suggested", proposed: "ADA" });
     });
 });

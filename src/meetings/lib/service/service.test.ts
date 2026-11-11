@@ -482,6 +482,51 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect((await client.call("journal.read", { meeting: REVIEW.id })).entries).toEqual([]);
     });
 
+    test("decision.plan of an answer lists a target outside the asked span with its own quote, value and time", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        await store.update(REVIEW.id, { command: "test", change: "a question" }, (record) => {
+            record.items.push(
+                {
+                    kind: "speaker-range",
+                    label: "Speaker 2",
+                    fromSec: 0,
+                    toSec: 20,
+                    candidates: ["Alex Example", "Dana Example"],
+                    id: "i2",
+                    status: "suggested",
+                    rules: [],
+                    suggestedAt: "2026-11-03T09:47:00.000Z",
+                },
+                {
+                    kind: "question",
+                    about: "speaker",
+                    fromSec: 25,
+                    toSec: 30,
+                    question: "Who speaks under Speaker 2?",
+                    choices: ["Alex Example", "Dana Example"],
+                    decides: ["i2"],
+                    id: "i3",
+                    status: "suggested",
+                    rules: [],
+                    suggestedAt: "2026-11-03T09:47:00.000Z",
+                }
+            );
+        });
+        const planned = await client.call("decision.plan", {
+            meeting: REVIEW.id,
+            action: { kind: "answer", question: "i3", answer: "Alex Example" },
+        });
+        const [target] = planned.reach.items;
+
+        expect(planned.reach.items).toHaveLength(1);
+        expect(target).toMatchObject({ id: "i2", role: "sets", before: "Speaker 2", after: "Alex Example" });
+        // Its own voice only: Dana's line in the same span is not its evidence.
+        expect(target?.row?.parts).toContainEqual({ kind: "said", text: "The button moved to the right." });
+        expect(target?.row?.parts).toContainEqual(
+            expect.objectContaining({ kind: "when", target: { kind: "item", id: "i2" } })
+        );
+    });
+
     test("onDecided refuse: an item decided since is refused with already-decided and the entry that decided it", async () => {
         const { client } = await ADAPTERS[kind](agentHello);
         const first = await client.call("decision.apply", {

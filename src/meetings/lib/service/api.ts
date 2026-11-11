@@ -39,7 +39,7 @@ import {
     toneSoundSchema,
 } from "../moment-schema";
 import type { MeetingsOverview } from "../overview";
-import { reviewRowsSchema } from "../review-row-schema";
+import { reviewRowSchema, reviewRowsSchema } from "../review-row-schema";
 
 /**
  * The Meetings service's interface: one descriptor for the window, every `tools meetings` command, the REPL and an MCP
@@ -219,7 +219,22 @@ const decidedSchema = z.object({
 
 /** What a planned decision reaches beyond the items it names (`DecisionReach`, decision-journal.ts). */
 export const decisionReachSchema = z.object({
-    items: z.array(z.object({ id: z.string(), match: z.literal("same") })),
+    /**
+     * `role`: `sets` (a target of the question outside the asked span), `look-alike` (settled the same way), `same`
+     * (the same question over the same span, closed with it). Each carries its own row (quote, time, play target)
+     * and its value before and after; `struck`: the answer this one replaces left it out.
+     */
+    items: z.array(
+        z.object({
+            id: z.string(),
+            match: z.literal("same"),
+            role: z.enum(["sets", "look-alike", "same"]),
+            before: z.string().optional(),
+            after: z.string().optional(),
+            row: reviewRowSchema.optional(),
+            struck: z.boolean().optional(),
+        })
+    ),
     lines: z.number().int().nonnegative().optional(),
     dictionary: z.array(
         z.object({

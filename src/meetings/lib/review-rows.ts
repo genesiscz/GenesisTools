@@ -173,12 +173,31 @@ function cut(text: string): string {
     return text.length > SAID_CHARS ? `${text.slice(0, SAID_CHARS)}…` : text;
 }
 
-/** The words said from one time to another, each line that starts in the span. */
-function saidBetween(lines: TranscriptLines, fromSec: number, toSec: number): string {
-    return lines.entries
-        .filter((entry) => entry.startSec !== undefined && entry.startSec >= fromSec - 0.5 && entry.startSec < toSec)
-        .map((entry) => entry.text)
-        .join(" ");
+/**
+ * The words said from one time to another, each line that starts in the span. With `voices`, only the lines of those
+ * voices (a speaker range quotes its own speaker, not the people talking over it); all lines when none of theirs is
+ * in the span.
+ */
+function saidBetween(lines: TranscriptLines, fromSec: number, toSec: number, voices: readonly string[] = []): string {
+    const inSpan = lines.entries.filter(
+        (entry) => entry.startSec !== undefined && entry.startSec >= fromSec - 0.5 && entry.startSec < toSec
+    );
+    const own = inSpan.filter((entry) => voices.some((voice) => sameName(voice, entry.speaker)));
+    return (own.length > 0 ? own : inSpan).map((entry) => entry.text).join(" ");
+}
+
+/**
+ * The names a speaker range's lines carry: its label, or the label's name in this meeting. Not the range's proposed
+ * speaker: that may be someone else talking in the same span.
+ */
+function voicesOf(record: MeetingRecord, item: MeetingItem): string[] {
+    if (item.kind !== "speaker-range") {
+        return [];
+    }
+
+    return [item.label, record.speakers.labels[item.label]].filter(
+        (name): name is string => typeof name === "string" && name.length > 0
+    );
 }
 
 /** The answer an earlier question about the same words got, as `listen` offers it ("as at 1:49:54"). */
@@ -486,7 +505,7 @@ function partsOf(record: MeetingRecord, item: MeetingItem, lines: TranscriptLine
                 : item.kind === "term"
                   ? line?.entry.text
                   : lines
-                    ? saidBetween(lines, item.fromSec, item.toSec)
+                    ? saidBetween(lines, item.fromSec, item.toSec, voicesOf(record, item))
                     : undefined;
 
         if (said) {

@@ -15,6 +15,7 @@ import {
 } from "../decision-journal";
 import { CORRECTION_REPEATS } from "../dictionary-suggest";
 import { setMeetingFields } from "../meeting-fields";
+import { reviewRow } from "../review-rows";
 import { type AssignReachStretch, assignmentReach } from "../speaker-assign";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
 import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
@@ -195,19 +196,32 @@ async function reachOf(
         return { ...empty, stretches: await assignReachOf(store, record, planned.entry, deps) };
     }
 
-    const teaches = planned.entry.corrections.some((line) => line.kind === "term" && line.scope === "everywhere");
-    const transcript = teaches
-        ? await splitInputsOf(store, deps)
-              .transcript(record)
-              .catch((error: unknown) => {
-                  log.debug({ error, meeting: record.id }, "a plan's reach reads no transcript lines");
-                  return undefined;
-              })
-        : undefined;
+    const { entry } = planned;
+    const teaches = entry.corrections.some((line) => line.kind === "term" && line.scope === "everywhere");
+    const named = namedItems(record, action);
+    // Each reached item shows its own quote and time, so the transcript is read whenever there is one to show.
+    const reaches = [...entry.settled, ...entry.decided].some((id) => !named.includes(id) && id !== entry.question);
+    const transcript =
+        teaches || reaches
+            ? await splitInputsOf(store, deps)
+                  .transcript(record)
+                  .catch((error: unknown) => {
+                      log.debug({ error, meeting: record.id }, "a plan's reach reads no transcript lines");
+                      return undefined;
+                  })
+            : undefined;
+    const replaced =
+        action.kind === "answer" && action.replaces
+            ? new DecisionJournal({ store }).read(record.id).find((one) => one.token === action.replaces)
+            : undefined;
+    const struck = replaced?.action.kind === "answer" ? (replaced.action.except ?? []) : [];
     return decisionReach({
-        entry: planned.entry,
-        named: namedItems(record, action),
-        ...(transcript ? { transcript } : {}),
+        entry,
+        named,
+        record,
+        rowOf: (item) => reviewRow(record, item, transcript),
+        ...(struck.length > 0 ? { struck: struck.map((ref) => itemIdOf(record, ref)) } : {}),
+        ...(transcript && teaches ? { transcript } : {}),
         ledger: teaches ? (deps.readLedger ?? readCorrections)() : [],
         repeats: CORRECTION_REPEATS,
     });
@@ -277,6 +291,9 @@ function refuseDecided(store: MeetingStore, record: MeetingRecord, action: Decis
         if (action.minConfidence !== undefined) {
             return;
         }
+    } else if (action.kind === "answer" && action.replaces) {
+        // A changed answer names the decision it replaces; the journal refuses it when that is no longer the one.
+        return;
     } else if (!["respell", "answer", "skip", "split"].includes(action.kind)) {
         return;
     }

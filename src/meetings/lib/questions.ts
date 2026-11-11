@@ -273,7 +273,7 @@ const PROPAGATED_MAX = 0.9;
 export function propagateAnswer(
     record: MeetingRecord,
     answered: QuestionItem,
-    options: { answer: string; listenBelow: number; now: string }
+    options: { answer: string; listenBelow: number; now: string; except?: readonly string[] }
 ): string[] {
     if (answered.about !== "speaker" || !answered.signature || options.answer.toLowerCase() === NONE_OF_THESE) {
         return [];
@@ -292,6 +292,7 @@ export function propagateAnswer(
         const otherLabels = question.evidence?.labels;
         if (
             question.id === answered.id ||
+            options.except?.includes(question.id) ||
             question.signature !== answered.signature ||
             !offers ||
             question.fromSec !== answered.fromSec ||
@@ -496,7 +497,7 @@ export function splitQuestion(
 export function answerQuestion(
     record: MeetingRecord,
     id: string,
-    options: { answer: string; comment?: string; now: string }
+    options: { answer: string; comment?: string; now: string; except?: readonly string[] }
 ): Correction[] {
     const question = record.items.find((item): item is QuestionItem => item.id === id && item.kind === "question");
 
@@ -517,6 +518,13 @@ export function answerQuestion(
 
     if (options.comment?.trim()) {
         question.comment = options.comment.trim();
+    }
+
+    // A target struck from the answer leaves the question: it stays as it was, for its own decision.
+    const except = new Set(options.except ?? []);
+
+    if (question.decides.some((target) => except.has(target))) {
+        question.decides = question.decides.filter((target) => !except.has(target));
     }
 
     const ledger: Correction[] = [];
@@ -752,7 +760,7 @@ function heardKey(question: QuestionItem): string | undefined {
 export function settleLookAlikes(
     record: MeetingRecord,
     answered: QuestionItem,
-    options: { answer: string; listenBelow: number; now: string }
+    options: { answer: string; listenBelow: number; now: string; except?: readonly string[] }
 ): { settled: string[]; corrections: Correction[] } {
     if (answered.about === "speaker") {
         return { settled: propagateAnswer(record, answered, options), corrections: [] };
@@ -779,6 +787,7 @@ export function settleLookAlikes(
     for (const question of openQuestions(record)) {
         if (
             question.id === answered.id ||
+            options.except?.includes(question.id) ||
             question.about === "speaker" ||
             heardKey(question) !== heard ||
             !globalTerms(question) ||

@@ -50,6 +50,7 @@ import {
     skipQuestion,
     splitQuestion,
 } from "./questions";
+import type { ReviewRow } from "./review-row-schema";
 import { TOOL } from "./shared";
 import {
     type AssignReachStretch,
@@ -610,26 +611,33 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
         },
     },
     answer: {
-        mutate: (record, action, { now, listenBelow }) => {
+        mutate: (record, action, context) => {
+            const { now, listenBelow } = context;
+            // A changed answer: the earlier one is undone first, in this same entry, so its Undo brings it back.
+            const undone = action.replaces
+                ? ACTIONS.revert.mutate(record, { kind: "revert", token: action.replaces }, context).corrections
+                : [];
             const { question, skip } = openQuestion(record, action.question);
 
             if (!question) {
                 return { history: { command: "listen", change: "" }, skipped: skip ? [skip] : [], stamps: true };
             }
 
+            const except = (action.except ?? []).map((ref) => itemIdOf(record, ref));
             const corrections = answerQuestion(record, question.id, {
                 answer: action.answer,
                 ...(action.comment ? { comment: action.comment } : {}),
                 now,
+                except,
             });
             const alike =
                 action.lookAlikes === "leave"
                     ? { settled: [], corrections: [] }
-                    : settleLookAlikes(record, question, { answer: action.answer, listenBelow, now });
+                    : settleLookAlikes(record, question, { answer: action.answer, listenBelow, now, except });
             return {
                 history: { command: "listen", change: `${question.id} → ${action.answer}` },
                 settled: alike.settled,
-                corrections: [...corrections, ...alike.corrections],
+                corrections: [...(undone ?? []), ...corrections, ...alike.corrections],
                 question: question.id,
                 stamps: true,
             };
@@ -1010,12 +1018,38 @@ export function actorOf(item: MeetingItem): DecisionActor {
  * What a planned decision reaches beyond the items it names, for the window's "This also affects" sheet (R22, G9,
  * G26, G27): the other items it changes, the transcript lines a spelling changes, and the dictionary it teaches.
  */
+/**
+ * How a reached item stands to the decision. `sets`: a target of the decided question outside the span it asks
+ * about, which the answer also sets ("This answer also sets"); `look-alike`: another question or item the engine
+ * settles the same way; `same`: the same question again (a target inside the asked span, a look-alike over the same
+ * span), closed with it and never asked twice (genesiscz.md 9).
+ */
+export type ReachRole = "sets" | "look-alike" | "same";
+
+/** One item a decision reaches beyond the ones it names, with the evidence a person judges it by. */
+export interface ReachItem {
+    id: string;
+    match: "same";
+    role: ReachRole;
+    /** What a person sees the item as before the decision and after it: a speaker, a spelling, an answer. */
+    before?: string;
+    after?: string;
+    /** The item's own review row (`reviewRow`): its quote, its time and its play target, as the row list shows them. */
+    row?: ReviewRow;
+    /** The answer this one replaces left it out: the sheet shows it struck, and one click puts it back. */
+    struck?: boolean;
+}
+
+/**
+ * What a planned decision reaches beyond the items it names, for the window's "This also affects" sheet (R22, G9,
+ * G26, G27): the other items it changes, the transcript lines a spelling changes, and the dictionary it teaches.
+ */
 export interface DecisionReach {
     /**
-     * Items besides the named ones: the look-alike questions an answer settles and the items it decides. `same`: the
-     * engine settles only questions with the same evidence (heard words and choices, or the same voice signature).
+     * Items besides the named ones: the targets an answer also sets, the look-alikes it settles, and the same question
+     * over the same span (closed with it). A look-alike question's own targets go with it and are not listed apart.
      */
-    items: Array<{ id: string; match: "same" }>;
+    items: ReachItem[];
     /** Transcript lines whose heard words a confirmed spelling fixes (a term fixed everywhere); absent without a transcript. */
     lines?: number;
     /**
@@ -1031,20 +1065,102 @@ export interface DecisionReach {
     stretches?: AssignReachStretch[];
 }
 
+/** Where an item sits in the meeting: a range, or one point for a word. */
+function spanOf(item: MeetingItem): { fromSec: number; toSec: number } | undefined {
+    if (item.kind === "term" || item.kind === "join") {
+        return item.atSec === undefined ? undefined : { fromSec: item.atSec, toSec: item.atSec };
+    }
+
+    return { fromSec: item.fromSec, toSec: item.toSec };
+}
+
+/** What a person sees an item as: a range's speaker, a word's spelling, a question's answer. */
+function shownValue(item: MeetingItem | undefined): string | undefined {
+    switch (item?.kind) {
+        case "speaker-range":
+            return item.speaker ?? item.label;
+        case "term":
+            return item.proposed ?? item.heard;
+        case "question":
+            return item.answer;
+        default:
+            return undefined;
+    }
+}
+
+/** A tolerance for "the same span": the engine's times are rounded to tenths, a hand-made range to seconds. */
+const SAME_SPAN_SEC = 0.5;
+
 /** The reach of a planned entry, from the record it was planned on, its transcript (when read) and the ledger. */
 export function decisionReach(options: {
     entry: JournalEntry;
     /** The items the action names, which are not reach. */
     named: string[];
+    /** The record the decision was planned on (before it): the decided question's targets and each item's span. */
+    record?: MeetingRecord;
+    /** The review row of a reached item, built from the record before the decision (its quote, time and target). */
+    rowOf?: (item: MeetingItem) => ReviewRow | undefined;
+    /** Items the answer this one replaces left out: shown struck. */
+    struck?: readonly string[];
     transcript?: readonly TranscriptEntry[];
     ledger: readonly Correction[];
     repeats: number;
 }): DecisionReach {
     const { entry } = options;
     const named = new Set([...options.named, ...(entry.question ? [entry.question] : [])]);
-    const items = [...new Set([...entry.settled, ...entry.decided])]
-        .filter((id) => !named.has(id))
-        .map((id) => ({ id, match: "same" as const }));
+    const before = new Map((options.record?.items ?? []).map((item) => [item.id, item]));
+    const changeOf = new Map(entry.changes.map((change) => [change.id, change]));
+    const itemOf = (id: string) => before.get(id) ?? changeOf.get(id)?.before ?? changeOf.get(id)?.after;
+    const decidesOf = (id: string): string[] => {
+        const versions = [before.get(id), changeOf.get(id)?.before, changeOf.get(id)?.after];
+        return versions.flatMap((item) => (item?.kind === "question" ? item.decides : []));
+    };
+    const asked = entry.question ? itemOf(entry.question) : undefined;
+    const askedSpan = asked ? spanOf(asked) : undefined;
+    const targets = new Set(entry.question ? decidesOf(entry.question) : []);
+    const namedSpans = [...named].flatMap((id) => {
+        const item = itemOf(id);
+        const span = item ? spanOf(item) : undefined;
+        return span ? [span] : [];
+    });
+    // A look-alike question carries its own targets; they are judged with it, not one by one.
+    const carried = new Set(entry.settled.flatMap((id) => decidesOf(id)));
+    const struck = new Set(options.struck ?? []);
+    const sameSpan = (span: { fromSec: number; toSec: number }) =>
+        namedSpans.some(
+            (one) =>
+                Math.abs(one.fromSec - span.fromSec) <= SAME_SPAN_SEC &&
+                Math.abs(one.toSec - span.toSec) <= SAME_SPAN_SEC
+        );
+    const insideAsked = (span: { fromSec: number; toSec: number }) =>
+        askedSpan !== undefined &&
+        span.fromSec >= askedSpan.fromSec - SAME_SPAN_SEC &&
+        span.toSec <= askedSpan.toSec + SAME_SPAN_SEC;
+    const items = [...new Set([...entry.settled, ...entry.decided, ...[...struck].filter((id) => targets.has(id))])]
+        .filter((id) => !named.has(id) && !(carried.has(id) && !targets.has(id)))
+        .map((id): ReachItem => {
+            const item = itemOf(id);
+            const span = item ? spanOf(item) : undefined;
+            const role: ReachRole = targets.has(id)
+                ? span && insideAsked(span)
+                    ? "same"
+                    : "sets"
+                : span && sameSpan(span)
+                  ? "same"
+                  : "look-alike";
+            const was = shownValue(changeOf.get(id)?.before ?? before.get(id));
+            const will = shownValue(changeOf.get(id)?.after);
+            const row = item ? options.rowOf?.(item) : undefined;
+            return {
+                id,
+                match: "same",
+                role,
+                ...(was ? { before: was } : {}),
+                ...(will ? { after: will } : {}),
+                ...(row ? { row } : {}),
+                ...(struck.has(id) ? { struck: true } : {}),
+            };
+        });
     const taught = entry.corrections.filter(
         (correction) => correction.kind === "term" && correction.scope === "everywhere" && !correction.retracted
     );
@@ -1188,6 +1304,12 @@ export class DecisionJournal {
 
         // An Undo that gave back every item its entry decided (the window and `reopen --token` name them) undid it whole.
         for (const entry of entries) {
+            // A changed answer undid the answer it replaces whole, in its own entry.
+            if (entry.action.kind === "answer" && entry.action.replaces && byToken.has(entry.action.replaces)) {
+                revertedBy.set(entry.action.replaces, entry.token);
+                continue;
+            }
+
             const target = entry.action.kind === "revert" ? byToken.get(entry.action.token) : undefined;
             const undone = new Set(entry.changes.map((change) => change.id));
             const decided = target?.decided.length ? target.decided : target?.changes.map((change) => change.id);
@@ -1311,8 +1433,12 @@ export class DecisionJournal {
                     (change) =>
                         change.before &&
                         change.after &&
+                        // An item a changed answer gave back and left open is not decided by it.
+                        change.after.status !== "suggested" &&
                         (change.before.status !== change.after.status ||
-                            change.before.decidedAt !== change.after.decidedAt)
+                            change.before.decidedAt !== change.after.decidedAt ||
+                            // A changed answer took the earlier decision off it and made this one.
+                            change.before.decision?.token !== change.after.decision?.token)
                 )
                 .map((change) => change.id);
 

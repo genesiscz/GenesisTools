@@ -41,6 +41,17 @@ export const DECISION_ACTION_OPTIONS = [
          * settles them with the same answer, as `listen` does.
          */
         lookAlikes: z.enum(["settle", "leave"]).optional(),
+        /**
+         * Items this answer must not change: targets of the question or look-alike questions struck in the window's
+         * "This also affects" sheet. A struck target leaves the question (it no longer decides it) and stays as it
+         * was; a struck look-alike question stays open. Either leaves the transaction, so an Undo never touches it.
+         */
+        except: z.array(itemRef).optional(),
+        /**
+         * The token of this question's earlier answer that this one replaces (the window's "change the answer"): the
+         * earlier entry is undone and this answer made in one entry, so its Undo brings the earlier answer back.
+         */
+        replaces: z.string().min(1).optional(),
     }),
     z.object({ kind: z.literal("skip"), question: itemRef }),
     /** "Several voices": the question is cut into one question per line and voice. */
