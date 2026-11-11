@@ -346,7 +346,15 @@ export async function guardResume(host: Host, e: ToolCallInput): Promise<string 
         matches.length === 1 ? matches[0] : matches.length === 0 && to ? await finishedAgent(host, to) : undefined;
 
     if (!agent) {
-        await log({ decision: "skipped", reason: matches.length > 1 ? "ambiguous" : "not-an-agent" });
+        const dir = await sessionDirOf(host).catch(() => undefined);
+        const direct = dir && to ? `${dir}/subagents/agent-${to}.jsonl` : undefined;
+        await log({
+            decision: "skipped",
+            reason: matches.length > 1 ? "ambiguous" : "not-an-agent",
+            // Why a finished agent's transcript was not found, when the name looked like an agent id.
+            looked: direct ?? null,
+            found: direct ? await host.exists(direct).catch((error) => String(error)) : null,
+        });
         return undefined;
     }
 
