@@ -834,8 +834,8 @@ async function listProcesses(): Promise<Array<{ pid: number; command: string }>>
         return table.filter((row) => !row.zombie).map((row) => ({ pid: row.pid, command: row.comm }));
     }
 
-    const { listPsRows } = await import("@genesiscz/utils/process/ps");
-    return (await listPsRows({ timeoutMs: 10_000 })).map((row) => ({ pid: row.pid, command: row.command }));
+    const { listProcessRows } = await import("@genesiscz/utils/process/processes");
+    return (await listProcessRows({ timeoutMs: 10_000 })).map((row) => ({ pid: row.pid, command: row.command }));
 }
 
 /**
@@ -850,7 +850,7 @@ async function processBlockers(path: string): Promise<string[]> {
         return ["The process list could not be read, so a process working inside the worktree cannot be ruled out."];
     }
 
-    const { batchCwd } = await import("@genesiscz/utils/process/ps");
+    const { batchCwd } = await import("@genesiscz/utils/process/cwd");
     const cwds = batchCwd(rows.map((row) => row.pid));
 
     if (!cwds.has(process.pid)) {
