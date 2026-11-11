@@ -123,7 +123,10 @@ public struct FailureReport: Codable, Equatable, Sendable {
         if call != nil { FailureCapture.record(self) }
     }
 
-    public var hasLog: Bool { !log.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    public var hasLog: Bool {
+        !log.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !(stack ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     /// The checkbox lines of the bug form's Impact question (GitHub task list markdown): the poster ticks one.
     public static let impactChoices = [

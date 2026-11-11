@@ -47,6 +47,40 @@ final class FailureNoticeTests: XCTestCase {
     failed, nothing was recorded: The camera was asked for, but it did not start: the camera needs GenesisTools.app's recorder face connected to the recorder service as its host
     """
 
+    @MainActor
+    func testStacksAreCachedForTheDisclosureAndStackOnlyFailuresHaveDetails() {
+        let stack = "Error: refused\n    at origin (/fixture/source.ts:12:3)"
+        let report = FailureReport(headline: "Refused", stack: stack)
+        XCTAssertTrue(report.hasLog)
+        let model = FailureNoticeModel(report: report, detailsOpen: true, retry: nil, dismiss: {})
+        XCTAssertTrue(model.detailsOpen)
+        XCTAssertFalse(model.stackOpen)
+        XCTAssertEqual(model.stackText, stack)
+        model.report = FailureReport(headline: "The camera failed.", log: Self.cameraFailure)
+        XCTAssertTrue(model.stackText?.contains("startRecordingCamera") == true)
+        model.report = FailureReport(headline: "No stack", log: "error: refused")
+        XCTAssertNil(model.stackText)
+    }
+
+    @MainActor
+    func testDetailsOfferAFoldableStackTrace() throws {
+        let report = FailureReport(headline: "The camera failed.", log: Self.cameraFailure)
+        let model = FailureNoticeModel(report: report, detailsOpen: true, retry: nil, dismiss: {})
+        let view = FailureNoticeView(model: model)
+            .frame(width: 620, height: 700).background(Color(white: 0.1))
+        let host = NSHostingView(rootView: view)
+        host.frame = CGRect(x: 0, y: 0, width: 620, height: 700)
+        host.layoutSubtreeIfNeeded()
+        let image = try XCTUnwrap(HostedShot.bitmap(host)?.cgImage)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        XCTAssertTrue(text.contains("Stack trace"), text)
+        XCTAssertFalse(text.contains("startRecordingCamera"), "the full stack starts folded")
+    }
+
     // MARK: - Headline
 
     /// The defect: the notice's title read "The recording stopped at once (exit 1): {." because the first line that
