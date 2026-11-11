@@ -319,7 +319,12 @@ final class MeetingsWindowModel {
             let next: Loadable<MeetingsSettings>
             do {
                 let shown = try await Self.settingsRead.run(service: service)
-                if settingsRaw != shown.raw { settingsRaw = shown.raw }
+                if settingsRaw != shown.raw {
+                    if settingsRaw?.at(["global", "playback", "listen"]) != shown.raw.at(["global", "playback", "listen"]) {
+                        player.invalidateClipCache()
+                    }
+                    settingsRaw = shown.raw
+                }
                 next = .loaded(shown.value)
             } catch {
                 next = .failed(asFailure(error), previous: settings.value)
@@ -338,6 +343,7 @@ final class MeetingsWindowModel {
         Task {
             do {
                 try await write.run(service: service)
+                if path.starts(with: ["global", "playback", "listen"]) { player.invalidateClipCache() }
                 // The next write at this path names this value, not the one before it, even before the read lands.
                 if let value { settingsRaw = settingsRaw?.setting(path, to: value) }
                 if let done { notices.push(StackedNotice(text: done)) }
@@ -548,9 +554,10 @@ final class MeetingsWindowModel {
 
     /// An event the window itself answers: the sidebar's counts, and a notice for a decision someone else made.
     private func receive(_ event: MeetingsEvent) {
+        if case .peopleChanged = event, place == .contacts { people.load() }
         if Self.changesOverview(event) { scheduleOverviewRefresh(event) }
-        guard let entry = event.entry, entry.actor.kind != DecisionActor.window.kind else { return }
-        noteDecision(entry, meeting: event.meeting)
+        guard let entry = event.entry, let meeting = event.meeting, entry.actor.kind != DecisionActor.window.kind else { return }
+        noteDecision(entry, meeting: meeting)
     }
 
     /// Whether an event can change the overview. The overview is read from the meeting records alone (`meeting.json`,
@@ -560,6 +567,7 @@ final class MeetingsWindowModel {
         switch event {
         case .meetingChanged(let changed): changed.parts.contains("show")
         case .decisionApplied, .decisionReverted, .commentSent: true
+        case .peopleChanged: false
         }
     }
 

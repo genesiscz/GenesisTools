@@ -219,6 +219,16 @@ final class MomentPlayer {
     @ObservationIgnored private var cutKey: String?
     @ObservationIgnored private var inFlight: [String: Task<MomentClip, Error>] = [:]
     @ObservationIgnored private var clips: [(key: String, clip: MomentClip)] = []
+    @ObservationIgnored private var clipEpoch = 0
+
+    func invalidateClipCache() {
+        clipEpoch += 1
+        clips = []
+    }
+
+    private func cacheKey(_ params: MeetingsAPI.MomentParams) -> String {
+        "\(clipEpoch):\(Self.key(params))"
+    }
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var repeated: Set<UUID> = []
 
@@ -361,7 +371,7 @@ final class MomentPlayer {
     func precut(_ target: MomentTarget, in meeting: String) {
         guard inFlight.isEmpty else { return }
         let params = MeetingsAPI.MomentParams(meeting: meeting, target: target)
-        guard cachedClip(Self.key(params)) == nil else { return }
+        guard cachedClip(cacheKey(params)) == nil else { return }
         Task { [weak self] in _ = try? await self?.clip(params) }
     }
 
@@ -570,10 +580,10 @@ final class MomentPlayer {
     private func cut(_ id: UUID, _ params: MeetingsAPI.MomentParams, paused: Bool = false) {
         phase = .cutting(since: Date())
         cutTask?.cancel()
-        let key = Self.key(params)
-        cutKey = key
         cutTask = Task { [weak self] in
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
+            let key = self.cacheKey(params)
+            self.cutKey = key
             do {
                 let clip = try await self.clip(params)
                 guard !Task.isCancelled, self.top?.id == id else { return }
@@ -607,14 +617,14 @@ final class MomentPlayer {
     /// about 130 ms). Past the meeting's end the engine refuses, which is the end.
     private func precutStretch(_ meeting: String, from second: Double) {
         let params = Self.rollingParams(meeting, from: second)
-        let key = Self.key(params)
+        let key = cacheKey(params)
         guard cachedClip(key) == nil, inFlight[key] == nil else { return }
         Task { [weak self] in _ = try? await self?.clip(params) }
     }
 
     /// A clip from the kept ones, the cut that runs for the same Moment, or a new cut.
     private func clip(_ params: MeetingsAPI.MomentParams) async throws -> MomentClip {
-        let key = Self.key(params)
+        let key = cacheKey(params)
         if let kept = cachedClip(key) { return kept }
         if let running = inFlight[key] { return try await running.value }
         let task = Task { @MainActor in try await engine.cut(params) }

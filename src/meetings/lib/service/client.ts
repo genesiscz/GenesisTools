@@ -88,7 +88,10 @@ export function subscriptionHears(
     params: unknown
 ): boolean {
     const events = filter.events ?? [];
-    return (events.length === 0 || events.includes(event)) && (!filter.meeting || filter.meeting === meetingOf(params));
+    return (
+        (events.length === 0 || events.includes(event)) &&
+        (event === "people.changed" || !filter.meeting || filter.meeting === meetingOf(params))
+    );
 }
 
 /**

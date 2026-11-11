@@ -479,7 +479,7 @@ extension MeetingDetailModel {
     /// An event of this meeting: a decision updates the rows in place at once and reads them again; a change outside
     /// the service reads the parts it names.
     func receive(_ event: MeetingsEvent) {
-        guard event.meeting == id || event.meeting == record.value?.id else { return }
+        guard let meeting = event.meeting, meeting == id || meeting == record.value?.id else { return }
         switch event {
         case .decisionApplied(let applied):
             receiveDecision(applied.entry)
@@ -493,7 +493,7 @@ extension MeetingDetailModel {
             if changed.parts.contains("transcript") { transcriptChanged() }
             if changed.parts.contains("speakers"), speakers != .idle { readSpeakers(quiet: true) }
             if changed.parts.contains("timeline"), timeline != .idle { readTimeline(quiet: true) }
-        case .commentSent:
+        case .commentSent, .peopleChanged:
             break
         }
     }

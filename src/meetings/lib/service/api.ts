@@ -1108,7 +1108,13 @@ export const MEETING_PARTS = ["show", "transcript", "speakers", "timeline"] as c
  * The events a subscriber can name. A decision through the service tells `decision.applied` or `decision.reverted`
  * with its journal entry; a write by anyone else (the recorder, an import, a hand edit) tells `meeting.changed`.
  */
-export const MEETINGS_EVENTS = ["meeting.changed", "decision.applied", "decision.reverted", "comment.sent"] as const;
+export const MEETINGS_EVENTS = [
+    "meeting.changed",
+    "decision.applied",
+    "decision.reverted",
+    "comment.sent",
+    "people.changed",
+] as const;
 export type MeetingsEvent = (typeof MEETINGS_EVENTS)[number];
 
 export const subscribeParamsSchema = z.object({
@@ -1120,6 +1126,7 @@ export const subscribeParamsSchema = z.object({
 export const subscribeResultSchema = z.object({ events: z.array(z.string()) });
 
 export const NOTIFICATION_SCHEMAS = {
+    "people.changed": z.object({}),
     /** A meeting's files changed: the parts whose `meeting.revisions` token would differ now. */
     "meeting.changed": z.object({ meeting: z.string(), parts: z.array(z.enum(MEETING_PARTS)).min(1) }),
     /** A decision was made through the service: its journal entry, with its actor, reason and every item it changed. */

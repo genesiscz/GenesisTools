@@ -338,6 +338,17 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertNil(player.reason(.item("other"), in: "m"))
     }
 
+    func testChangedPlaybackSettingsCutTheNextClipAgain() async throws {
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("the first clip plays") { player.phase == .playing }
+        player.stop()
+        player.invalidateClipCache()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("the changed clip plays") { player.phase == .playing }
+        XCTAssertEqual(engine.cuts.count, 2, "a cached tone or pad must not outlive its setting")
+    }
+
     func testARowsPlayControlCutsAgainAfterAFailedCut() async throws {
         engine.cutFailure = MeetingsCLI.Failure(sentence: "The clip could not be cut.", detail: "ffmpeg exited 1")
         let player = makePlayer()

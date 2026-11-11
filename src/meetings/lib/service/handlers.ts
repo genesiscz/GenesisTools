@@ -190,6 +190,11 @@ const comments = () => import("./comment-handlers");
 const people = () => import("./people-handlers");
 const library = () => import("./library-handlers");
 
+function changedPeople<T>(value: T, context: MeetingsCallContext): T {
+    context.emit?.("people.changed", {});
+    return value;
+}
+
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
     const storeOf = deps.store ?? (() => new MeetingStore());
@@ -252,11 +257,15 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "comment.send": async (params, context) => (await comments()).sendComments(params, context, storeOf(), deps),
         // The people directory loads Contacts (darwinkit) only when a call asks for people.
         "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
-        "people.add": async (params) => (await people()).addPerson(params, storeOf(), deps),
-        "people.hide": async (params) => (await people()).hidePerson(params, storeOf(), deps),
+        "people.add": async (params, context) =>
+            changedPeople(await (await people()).addPerson(params, storeOf(), deps), context),
+        "people.hide": async (params, context) =>
+            changedPeople(await (await people()).hidePerson(params, storeOf(), deps), context),
         "people.planMerge": async (params) => (await people()).planPeopleMerge(params, storeOf(), deps),
-        "people.merge": async (params) => (await people()).mergePeople(params, storeOf(), deps),
-        "people.unmerge": async (params) => (await people()).unmergePeople(params, storeOf(), deps),
+        "people.merge": async (params, context) =>
+            changedPeople(await (await people()).mergePeople(params, storeOf(), deps), context),
+        "people.unmerge": async (params, context) =>
+            changedPeople(await (await people()).unmergePeople(params, storeOf(), deps), context),
         // The library (the settings page's projects, dictionary and source rules) loads its writers only when asked.
         "projects.add": async (params) => (await library()).addProject(params, deps),
         "projects.rename": async (params) => (await library()).renameKnownProject(params, storeOf(), deps),

@@ -1143,6 +1143,17 @@ describe("the Meetings service's connections", () => {
         expect(second).toMatchObject({ status: "running", entry: { pid: service.entry.pid, code: CODE } });
     });
 
+    test("the people book invalidates Contacts even on a meeting-scoped subscription", async () => {
+        const folder = fakeFolderEvents();
+        const { service, store } = await startService({ watch: { subscribe: folder.subscribe, coalesceMs: 0 } });
+        const client = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => client.close());
+        const heard = eventQueue();
+        await client.subscribe({ meeting: REVIEW.id, events: ["people.changed"] }, heard.push);
+        folder.raise(join(store.root, "people.json"));
+        expect(await heard.next()).toEqual({ method: "people.changed", params: {} });
+    });
+
     test("the folder watch tells meeting.changed for a write outside the service, once per meeting and burst, and never for its own decisions, clips or journal lines", async () => {
         const folder = fakeFolderEvents();
         const { service, store } = await startService({ watch: { subscribe: folder.subscribe, coalesceMs: 0 } });
@@ -1367,8 +1378,16 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meeting.revisions", { ref: REVIEW.id });
     await ask(window, "meetings.list", { limit: 0 }, "A bad param: -32602 before any handler.");
     await ask(window, SUBSCRIBE, { meeting: REVIEW.id, events: ["meeting.changed"] });
+    await ask(window, SUBSCRIBE, { meeting: REVIEW.id, events: ["meeting.changed", "people.changed"] });
     service.emit("meeting.changed", { meeting: REVIEW.id, parts: ["show", "transcript"] });
+    service.emit("people.changed", {});
     await ask(window, "meetings.list", { limit: 1 }, "Sent after the event, so the event is in before its reply.");
+
+    examples.push({
+        method: "people.changed",
+        direction: "service→client",
+        notification: window.lines.find((line) => line.method === "people.changed"),
+    });
     const notification = window.lines.find((line) => line.method === "meeting.changed");
     examples.push({
         method: "meeting.changed",
@@ -1731,7 +1750,13 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
             const document = {
                 protocol: MEETINGS_PROTOCOL,
                 about: "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these; src/meetings/lib/service/service.test.ts checks every one against the method's schemas and against a live service. Regenerate: set examples to [] and run bun run test src/meetings/lib/service/service.test.ts",
-                examples: captured,
+                examples: SafeJSON.parse(
+                    SafeJSON.stringify(captured, { strict: true }).replace(
+                        /"stack":"(?:[^"\\]|\\.)*"/g,
+                        '"stack":"<stack>"'
+                    ),
+                    { strict: true }
+                ),
             };
             mkdirSync(join(import.meta.dir, "__fixtures__"), { recursive: true });
             writeFileSync(path, `${SafeJSON.stringify(document, { strict: true }, 2)}\n`);

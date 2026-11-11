@@ -253,6 +253,11 @@ final class MeetingsServiceTests: XCTestCase {
                 let changed = try MeetingsService.decode(MeetingsAPI.MeetingChanged.self, notification)
                 XCTAssertEqual(changed.meeting, Self.design)
                 XCTAssertEqual(changed.parts, ["show", "transcript"])
+            case MeetingsAPI.PeopleChanged.name:
+                let notification = try XCTUnwrap((example["notification"] as? [String: Any])?["params"])
+                let event = try XCTUnwrap(MeetingsAPI.eventDecoders[method])(notification)
+                XCTAssertNil(event.meeting, "a people-book change is not scoped to one meeting")
+                XCTAssertFalse(MeetingsWindowModel.changesOverview(event))
             case MeetingsAPI.DecisionApplied.name, MeetingsAPI.DecisionReverted.name, MeetingsAPI.CommentSent.name:
                 // Every event decodes through the table the connection uses.
                 let notification = try XCTUnwrap((example["notification"] as? [String: Any])?["params"])

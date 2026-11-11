@@ -205,10 +205,15 @@ enum MeetingsAPI {
         DecisionApplied.name: { .decisionApplied(try MeetingsService.decode(DecisionApplied.self, $0)) },
         DecisionReverted.name: { .decisionReverted(try MeetingsService.decode(DecisionReverted.self, $0)) },
         CommentSent.name: { .commentSent(try MeetingsService.decode(CommentSent.self, $0)) },
+        PeopleChanged.name: { .peopleChanged(try MeetingsService.decode(PeopleChanged.self, $0)) },
     ]
 
     /// The events the window subscribes to.
-    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name]
+    struct PeopleChanged: Decodable, Equatable {
+        static let name = "people.changed"
+    }
+
+    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, PeopleChanged.name]
 }
 
 /// One event of the Meetings service, as the window hears it.
@@ -217,14 +222,16 @@ enum MeetingsEvent: Equatable {
     case decisionApplied(MeetingsAPI.DecisionApplied)
     case decisionReverted(MeetingsAPI.DecisionReverted)
     case commentSent(MeetingsAPI.CommentSent)
+    case peopleChanged(MeetingsAPI.PeopleChanged)
 
     /// The meeting the event is about.
-    var meeting: String {
+    var meeting: String? {
         switch self {
         case .meetingChanged(let event): return event.meeting
         case .decisionApplied(let event): return event.meeting
         case .decisionReverted(let event): return event.meeting
         case .commentSent(let event): return event.meeting
+        case .peopleChanged: return nil
         }
     }
 
@@ -233,7 +240,7 @@ enum MeetingsEvent: Equatable {
         switch self {
         case .decisionApplied(let event): return event.entry
         case .decisionReverted(let event): return event.entry
-        case .meetingChanged, .commentSent: return nil
+        case .meetingChanged, .commentSent, .peopleChanged: return nil
         }
     }
 }

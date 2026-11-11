@@ -2,6 +2,7 @@ import { join, relative } from "node:path";
 import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { createWatcher, type WatcherOptions, type WatcherSubscription } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
+import { PEOPLE_FILE } from "@genesiscz/utils/meetings/people-book";
 import { MEETING_FILE, MOMENTS_FOLDER } from "@genesiscz/utils/meetings/record";
 import { MEETING_PARTS } from "./api";
 
@@ -47,6 +48,7 @@ export interface FolderWatchOptions {
     root: string;
     /** Tells the subscribers of a meeting what changed. */
     emit: (meeting: string, parts: MeetingPart[]) => void;
+    peopleChanged?: () => void;
     /** The event source; @parcel/watcher's when absent (tests pass a fake, as createWatcher allows). */
     subscribe?: WatcherOptions["subscribe"];
     coalesceMs?: number;
@@ -68,7 +70,10 @@ export class MeetingsFolderWatch {
         this.subscription = await createWatcher(this.options.root, (events) => this.heard(events), {
             debounceMs: this.options.coalesceMs ?? FOLDER_WATCH_COALESCE_MS,
             ignorePatterns: [`**/${MOMENTS_FOLDER}/**`, "**/evidence/**", "**/.*"],
-            filter: (event) => partsOfPath(relative(this.options.root, event.path)) !== undefined,
+            filter: (event) => {
+                const path = relative(this.options.root, event.path);
+                return path === PEOPLE_FILE || partsOfPath(path) !== undefined;
+            },
             ...(this.options.subscribe ? { subscribe: this.options.subscribe } : {}),
         });
         log.debug({ root: this.options.root }, "meetings folder watched");
@@ -89,9 +94,14 @@ export class MeetingsFolderWatch {
 
     private heard(events: Array<{ path: string }>): void {
         const changed = new Map<string, Set<MeetingPart>>();
+        let peopleChanged = false;
 
         for (const event of events) {
             const relativePath = relative(this.options.root, event.path);
+            if (relativePath === PEOPLE_FILE) {
+                peopleChanged = true;
+                continue;
+            }
             const found = partsOfPath(relativePath);
 
             if (!found || (found.parts.length === MEETING_PARTS.length && this.isOwn(found.meeting))) {
@@ -105,6 +115,10 @@ export class MeetingsFolderWatch {
             }
 
             changed.set(found.meeting, parts);
+        }
+
+        if (peopleChanged) {
+            this.options.peopleChanged?.();
         }
 
         for (const [meeting, parts] of changed) {

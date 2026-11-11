@@ -59,10 +59,14 @@ struct TranscriptWordText: NSViewRepresentable {
             guard range.length > 0 else { reportedRange = nil; return }
             guard range != reportedRange else { return }
             reportedRange = range
-            DispatchQueue.main.async { [weak self] in self?.selected?(range) }
+            DispatchQueue.main.async { [weak self] in
+                self?.selected?(range)
+                self?.reportedRange = nil
+            }
         }
 
         override func mouseDown(with event: NSEvent) {
+            reportedRange = nil
             if !event.modifierFlags.intersection([.command, .shift]).isEmpty {
                 click?()
                 return
