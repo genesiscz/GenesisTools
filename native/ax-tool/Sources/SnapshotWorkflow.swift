@@ -1350,7 +1350,8 @@ func cmdAct(appName _: String) {
     }
     switch action {
     case "get":
-        jsonOutput(["ok": true, "element": tree.rows[elementIndex].filter { $0.key != "identity" }, "windowId": window.id])
+        jsonOutput(["ok": true, "element": tree.rows[elementIndex].filter { $0.key != "identity" }, "windowId": window.id,
+                    "elementWindowId": nativeAXWindowID(element) ?? window.id])
         return
     case "press":
         workflowAXAction(element, action: "AXPress")
