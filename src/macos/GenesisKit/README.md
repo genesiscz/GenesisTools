@@ -1655,10 +1655,15 @@ Copy log, Open log) and **Report a bug** (the issue draft window). Never a raw e
   strip, a row or a card, and it wraps under the buttons in a narrow row. The headline is announced to VoiceOver when
   the view appears; the buttons are `KitButton`s with tooltips and identifiers (`<identifier>.retry|details|report`).
 - `FailureReporter.shared`, `@MainActor`: the one failure window and issue target for failures shown in place, so a hub
-  pane, a widget card and a settings page reach the same window. `showDetails(_:retry:)`, `reportBug(_:)` (reads the
-  environment facts once per run; waits at most 4 s), `prefetchEnvironment()`. `issueTarget`, `options` and
+  pane, a widget card and a settings page reach the same window. `prepare(_:)` starts at the failure, and
+  `showDetails(_:retry:)` and `reportBug(_:)` reuse that failure's captured context. `issueTarget`, `options` and
   `environment` are closures a host or a test replaces; `defaultIssueTarget(defaults:dryRunKey:)` posts to
   `FailureReporter.issueRepo` (the recorder uses it with its own dry-run switch).
+- `FailureCapture.enable()` is installed once by the app host. Failed `ToolsBridge` calls, including older callers
+  without a task ledger, and failures delivered or shown through the shared notice controls are captured before any Details click. A visible notice pins its first report across parent redraws, so it cannot launch triage on every render. A small report
+  is saved first under `logs/failure-reports/`, then bounded triage and nearby call logs enrich it atomically. The
+  archive keeps the failure time and context collection time separately. Credentials hidden in argv are masked in
+  persisted error text too. Tests and library hosts do not start capture unless they explicitly install it.
 - `NoticeFix.details(_ report:retry:)` and `StackedNotice.Action.details(_:retry:)`: "Details" on a notice (class B, an
   action that failed); the notice stays.
 - `FailureReport.toolsCall(_ error:, outcome:, action:, call:, argv:, title:, area:, expected:)`: the one report of a

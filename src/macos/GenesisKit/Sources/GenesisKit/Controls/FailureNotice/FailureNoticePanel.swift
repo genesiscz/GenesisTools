@@ -76,6 +76,7 @@ public final class FailureNoticePanel: NSObject, NSWindowDelegate {
     public func show(_ report: FailureReport, options: FailureNoticeOptions = FailureNoticeOptions(),
                      retry: (@MainActor () -> Void)? = nil, issue: FailureNoticeIssueTarget? = nil,
                      environment: (@Sendable () async -> FailureEnvironment?)? = nil) {
+        FailureCapture.record(report)
         generation += 1
         let shown = generation
         let anchor = anchor()

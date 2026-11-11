@@ -478,6 +478,107 @@ final class FailureInlineTests: XCTestCase {
         XCTAssertTrue(outside.calls.isEmpty, "a call outside `record` is not noted")
     }
 
+    func testFailureIsPreparedAndPersistedBeforeDetailsAndReusesItsSnapshotAfterRestart() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("failure-capture-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let began = expectation(description: "triage starts at the error, without Details")
+        let probe = FailureCaptureProbe()
+        FailureCapture.enable(directory: directory, environment: {
+            let number = probe.next()
+            began.fulfill()
+            return FailureEnvironment(markdown: "snapshot \(number)")
+        }, enrich: { $0 })
+        defer { FailureCapture.disable() }
+        let report = FailureReport.unexpected("fixture error", outcome: "The fixture did not load", action: "Read fixture",
+                                              time: Date(timeIntervalSince1970: 1000), home: directory.path)
+        let fix = await NoticeFix.details(report)
+        await MainActor.run { fix.preparation?() } // the notice appears; no Details action is pressed
+        var redraw = report
+        redraw.time = Date(timeIntervalSince1970: 1001)
+        let redrawnFix = await NoticeFix.details(redraw)
+        XCTAssertEqual(fix.id, redrawnFix.id, "a parent redraw retains the visible notice's first prepared report")
+        await fulfillment(of: [began], timeout: 2)
+        let prepared = await FailureCapture.prepared(report)
+        XCTAssertTrue(prepared.environment?.markdown.hasSuffix("snapshot 1") == true)
+        XCTAssertEqual(probe.count, 1)
+
+        let reopened = FailureCaptureStore(directory: directory, environment: {
+            XCTFail("Details must reuse the event snapshot, including after a restart")
+            return nil
+        }, enrich: { $0 })
+        let reopenedRecord = await reopened.read(report)
+        let stored = try XCTUnwrap(reopenedRecord)
+        XCTAssertEqual(stored.version, 1)
+        XCTAssertEqual(stored.report.time, report.time)
+        XCTAssertEqual(FailureCaptureStore.key(stored.report), FailureCaptureStore.key(report))
+        XCTAssertNotNil(stored.contextCapturedAt)
+        let reread = await reopened.prepared(report)
+        XCTAssertTrue(reread.environment?.markdown.hasSuffix("snapshot 1") == true)
+        let bytes = try Data(contentsOf: reopened.file(for: report))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        XCTAssertEqual(object["version"] as? Int, 1)
+        XCTAssertNotNil(object["contextCapturedAt"])
+    }
+
+    func testLaterFailuresGetFreshContextAndOldArchivesKeepTheirOriginalEventTime() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("failure-capture-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let probe = FailureCaptureProbe()
+        let store = FailureCaptureStore(directory: directory, environment: {
+            FailureEnvironment(markdown: "snapshot \(probe.next())")
+        }, enrich: { $0 })
+        let first = FailureReport(headline: "First", time: Date(timeIntervalSince1970: 1000))
+        let second = FailureReport(headline: "First", time: Date(timeIntervalSince1970: 2000))
+        let a = await store.prepared(first)
+        let b = await store.prepared(second)
+        XCTAssertTrue(a.environment?.markdown.hasSuffix("snapshot 1") == true)
+        XCTAssertTrue(b.environment?.markdown.hasSuffix("snapshot 2") == true)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let old = FailureReport(headline: "Older failure", time: Date(timeIntervalSince1970: 500))
+        let oldObject = try JSONSerialization.jsonObject(with: encoder.encode(old))
+        let oldFile = store.file(for: old)
+        try JSONSerialization.data(withJSONObject: ["report": oldObject]).write(to: oldFile)
+        let oldArchive = await store.read(old)
+        let oldRecord = try XCTUnwrap(oldArchive)
+        XCTAssertEqual(oldRecord.version, 1)
+        XCTAssertEqual(oldRecord.recordedAt, old.time)
+        XCTAssertNil(oldRecord.contextCapturedAt)
+        let prepared = await store.prepared(old)
+        XCTAssertEqual(prepared.time, old.time)
+        let currentArchive = await store.read(old)
+        let current = try XCTUnwrap(currentArchive)
+        XCTAssertGreaterThan(try XCTUnwrap(current.contextCapturedAt), old.time)
+    }
+
+    func testCallsWithoutALedgerReachFailureCaptureButTriageFailuresCannotRecurse() {
+        let probe = FailureCaptureProbe()
+        ToolsCallTrace.observeFailures { _ in _ = probe.next() }
+        defer { ToolsCallTrace.observeFailures(nil) }
+        ToolsCallTrace.record(traceId: "fixture-1", via: "process", argv: ["fixture", "read"], started: Date(),
+                              exit: 1, outBytes: 0, stderr: "failed")
+        XCTAssertEqual(probe.count, 1)
+        for command in ["triage", "env"] {
+            ToolsCallTrace.record(traceId: "fixture-2", via: "process", argv: ["genesis-tools", command], started: Date(),
+                                  exit: 1, outBytes: 0, stderr: "failed")
+        }
+        XCTAssertEqual(probe.count, 1)
+    }
+
+    func testPersistedFailureDoesNotRepeatACredentialFromItsCall() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("failure-capture-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { $0 })
+        let call = ToolsCallLedger.Call(traceId: "fixture-secret", argv: ["fixture", "--token", "invented-secret"],
+                                        started: Date(), via: "process", exit: 1, stderr: "rejected invented-secret")
+        let report = FailureReport(headline: "rejected invented-secret", log: "rejected invented-secret", call: call)
+        _ = await store.prepared(report)
+        let text = try String(contentsOf: store.file(for: report), encoding: .utf8)
+        XCTAssertFalse(text.contains("invented-secret"))
+        XCTAssertTrue(text.contains("***"))
+    }
+
     // MARK: - The inline view
 
     @MainActor
@@ -552,4 +653,11 @@ final class FailureInlineTests: XCTestCase {
         XCTAssertEqual(opened, ["issue"])
         XCTAssertNil(reporter.issueTarget())
     }
+}
+
+private final class FailureCaptureProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func next() -> Int { lock.withLock { value += 1; return value } }
 }

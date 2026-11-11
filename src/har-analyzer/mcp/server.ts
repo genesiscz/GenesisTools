@@ -11,6 +11,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { recordMcpTransport } from "@genesiscz/utils/mcp/record-call";
 import {
     type CallToolResult,
     type ListToolsResult,
@@ -493,5 +494,5 @@ export async function startMcpServer(): Promise<void> {
     });
 
     const transport = new StdioServerTransport();
-    await server.connect(transport);
+    await server.connect(recordMcpTransport({ transport, server: "har-analyzer" }));
 }

@@ -13,12 +13,13 @@ public extension FailureReport {
     /// The log is empty here; `addingCallLog()` reads it off the main thread.
     static func toolsCall(_ error: Error, outcome: String, action: String, call: ToolsCallLedger.Call? = nil,
                           argv: [String]? = nil, title: String? = nil, area: String? = nil, expected: String? = nil,
-                          time: Date = Date(), home: String = GenesisToolsHome.home()) -> FailureReport {
+                          time: Date? = nil, home: String = GenesisToolsHome.home()) -> FailureReport {
         let argv = call?.argv ?? argv
+        let time = time ?? call?.ended ?? Date()
         let cause = ToolsCallCause(error: error, call: call)
         let words = argv.map(Self.commandWords)
         let headline = FailureLog.sentence("\(outcome): \(cause.clause(command: words))") ?? outcome
-        var report = FailureReport(
+        let report = FailureReport(
             title: title ?? outcome,
             headline: headline,
             summary: cause.summary(command: words),
@@ -30,8 +31,8 @@ public extension FailureReport {
             time: time,
             app: FailureAppFacts.current(home: home),
             expected: expected,
-            area: area)
-        report.call = call
+            area: area,
+            call: call)
         return report
     }
 
@@ -315,6 +316,7 @@ public extension FailureReport {
     /// `isCurrent` says a newer load or a success took its place.
     @MainActor
     func deliver(_ set: @escaping @MainActor (FailureReport) -> Void, isCurrent: @escaping @MainActor (FailureReport) -> Bool) {
+        FailureCapture.record(self)
         set(self)
         let shown = self
         Task { @MainActor in

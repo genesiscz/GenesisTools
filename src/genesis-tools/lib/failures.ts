@@ -60,6 +60,8 @@ export function matchesFailure(failure: ToolFailure, filter: FailureFilter): boo
             failure.argv.join(" "),
             failure.stderrTail ?? "",
             failure.child?.command.join(" ") ?? "",
+            failure.operation?.server ?? "",
+            failure.operation?.name ?? "",
         ].join("\n");
         if (!haystack.toLowerCase().includes(needle)) {
             return false;

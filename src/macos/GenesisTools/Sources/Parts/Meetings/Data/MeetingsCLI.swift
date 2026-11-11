@@ -15,7 +15,12 @@ enum MeetingsCLI {
         var code: String? = nil
         /// A Meetings service refusal's `data` (`already-decided` names the entry that decided the items).
         var data: Data? = nil
+        let occurredAt = Date()
         var description: String { sentence }
+
+        static func == (lhs: Failure, rhs: Failure) -> Bool {
+            lhs.sentence == rhs.sentence && lhs.detail == rhs.detail && lhs.code == rhs.code && lhs.data == rhs.data
+        }
 
         func decodeData<T: Decodable>(_ type: T.Type) -> T? {
             data.flatMap { try? JSONDecoder().decode(T.self, from: $0) }

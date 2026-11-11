@@ -117,6 +117,16 @@ final class LauncherFailuresTests: XCTestCase {
                        "a day older than yesterday is not read")
     }
 
+    func testHardCrashesPrepareContextButInterruptsAndDiagnosticCrashesDoNotRecurse() {
+        let given = run("fixture-run", startedAt: Date())
+        let record: [String: Any] = ["kind": "crash", "id": "fixture-id", "at": "2026-01-02T03:04:05.000Z"]
+        XCTAssertEqual(LauncherFailures.contextArguments(run: given, record: record),
+                       ["genesis-tools", "logs", "prepare", "fixture-id", "--at", "2026-01-02T03:04:05.000Z"])
+        XCTAssertNil(LauncherFailures.contextArguments(run: given, record: ["kind": "interrupt"]))
+        let diagnostic = LauncherFailures.Run(tool: "genesis-tools", toolsRoot: "/repo", runId: "diagnostic")
+        XCTAssertNil(LauncherFailures.contextArguments(run: diagnostic, record: record))
+    }
+
     func testTheDirectoryFollowsGenesisToolsHome() {
         XCTAssertEqual(LauncherFailures.failuresDirectory(environment: ["GENESIS_TOOLS_HOME": "/sandbox"]).path,
                        "/sandbox/.genesis-tools/logs")

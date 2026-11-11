@@ -22,11 +22,11 @@ extension StackedNotice {
 }
 
 extension MeetingsCLI.Failure {
-    /// The failure window's report: the CLI's sentence as the headline, its own text as the log. Made at the click,
-    /// so no view body reads the app's build facts from disk.
+    /// The report retains the failure's event time. Cached app facts avoid disk reads in a view body.
     @MainActor
     func report(outcome: String = "A Meetings read failed", action: String = "Use the Meetings window") -> FailureReport {
-        var report = FailureReport.unexpected(detail, outcome: outcome, action: action, title: outcome, area: "meetings")
+        var report = FailureReport.unexpected(detail, outcome: outcome, action: action, title: outcome, area: "meetings",
+                                              time: occurredAt, app: .launch)
         report.headline = FailureLog.sentence(sentence) ?? sentence
         return report
     }
@@ -34,7 +34,7 @@ extension MeetingsCLI.Failure {
     /// "Details" on a notice pill: the failure window on this failure, with Try again.
     @MainActor
     func detailsFix(retry: (@MainActor () -> Void)? = nil) -> NoticeFix {
-        .button("Details", symbol: "doc.text.magnifyingglass") { FailureReporter.shared.showDetails(report(), retry: retry) }
+        .details(report(), retry: retry)
     }
 }
 

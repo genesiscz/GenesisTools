@@ -6,6 +6,7 @@ import { env } from "@genesiscz/utils/env/envVariables";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type NativeInboxState, nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
+import { recordMcpCall } from "@genesiscz/utils/mcp/record-call";
 import { type ToolEntry, toolCallResult } from "@genesiscz/utils/mcp/tool-entry";
 import type { LoadedToolGroup, ToolGroupRow } from "@genesiscz/utils/mcp/tool-group";
 import {
@@ -429,26 +430,38 @@ export async function createGenesisToolsServer(opts: {
     );
 
     server.setRequestHandler("tools/call", async (request, context): Promise<CallToolResult> => {
-        const entry = registry[request.params.name];
-        if (!entry) {
-            throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
-        }
+        return runCall(() =>
+            recordMcpCall({
+                server: "genesis-tools-mcp",
+                name: request.params.name,
+                run: async () => {
+                    const entry = registry[request.params.name];
+                    if (!entry) {
+                        throw new ProtocolError(
+                            ProtocolErrorCode.MethodNotFound,
+                            `Unknown tool: ${request.params.name}`
+                        );
+                    }
 
-        try {
-            const answer = await runCall(() =>
-                entry.handler((request.params.arguments ?? {}) as Record<string, unknown>, {
-                    signal: context.mcpReq.signal,
-                })
-            );
-            return toolCallResult(answer);
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            log.warn({ err, tool: request.params.name }, "mcp tool handler failed");
-            return {
-                content: [{ type: "text" as const, text: `${request.params.name} failed: ${message}` }],
-                isError: true,
-            };
-        }
+                    try {
+                        const answer = await entry.handler(
+                            (request.params.arguments ?? {}) as Record<string, unknown>,
+                            {
+                                signal: context.mcpReq.signal,
+                            }
+                        );
+                        return toolCallResult(answer);
+                    } catch (err) {
+                        const message = err instanceof Error ? err.message : String(err);
+                        log.warn({ err, tool: request.params.name }, "mcp tool handler failed");
+                        return {
+                            content: [{ type: "text" as const, text: `${request.params.name} failed: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                },
+            })
+        );
     });
 
     return { server, tools: Object.keys(registry), ...context };

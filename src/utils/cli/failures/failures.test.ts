@@ -8,9 +8,12 @@ import { deadlineRecording, Executor } from "@genesiscz/utils/cli/executor";
 import { compressFile } from "@genesiscz/utils/compress/file";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { recordMcpCall, recordMcpTransport } from "@genesiscz/utils/mcp/record-call";
 import { Command } from "commander";
 import { claudeProjectFolder, failureCaller, failureCallerOf, transcriptOf } from "./caller";
+import { enrichFailureContext, readFailureContext } from "./context";
 import { deadlineCaller } from "./deadline";
+import { recordHandledFailure } from "./handled";
 import { recordSignalEnd, signalEnd, signalOfStatus, WITHHELD_ARGV } from "./launcher";
 import { appendFailure, failureDays, failureLogPath, readFailures, type ToolFailure } from "./record";
 import { RUN_ID_ENV } from "./run-id";
@@ -25,6 +28,143 @@ import {
     secretsFromArgv,
     WITHHELD_TEXT,
 } from "./watch";
+
+describe("handled call failures", () => {
+    it("persists the failure before the live process exits, using the existing v1 reader", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-handled-failure-"));
+        const day = formatLocalDate(new Date());
+        const written = recordHandledFailure({
+            tool: "fixture",
+            call: "read",
+            error: new Error("fixture failed"),
+            dir,
+            caller: null,
+        });
+        const reopened = [...readFailures({ fromDay: day, toDay: day, dir })];
+        expect(reopened).toHaveLength(1);
+        const persisted = reopened[0];
+        if (!persisted) {
+            throw new Error("the failure event must be persisted");
+        }
+
+        const context = readFailureContext({ failure: persisted, dir });
+        expect(context.failureAt).toBe(persisted.at);
+        expect(context.runtime.state).toBe("captured");
+        expect(context.preparedAt).not.toBeNull();
+        expect(context.markdown).toContain("fixture failed");
+        enrichFailureContext({
+            failure: persisted,
+            dir,
+            triage: { capturedAt: persisted.at, markdown: "Full fixture triage" },
+        });
+        const enriched = readFailureContext({ failure: persisted, dir });
+        expect(enriched.runtime).toEqual(context.runtime);
+        expect(enriched.triage?.markdown).toBe("Full fixture triage");
+        expect(enriched.markdown).toContain("Full fixture triage");
+        const legacy = readFailureContext({ failure: { ...persisted, id: "legacy-no-context" }, dir });
+        expect(legacy.runtime.state).toBe("unavailable");
+        expect(legacy.preparedAt).toBeNull();
+        expect(legacy.markdown).toContain("fixture failed");
+        expect(reopened[0]).toMatchObject({
+            id: written?.id,
+            v: 1,
+            command: "fixture",
+            argv: [],
+            operation: { transport: "mcp", server: "fixture", name: "read" },
+            fatal: false,
+            exitCode: null,
+            message: "fixture failed",
+            caller: null,
+        });
+    });
+
+    it("masks a live server's declared short secret alias in handled error text", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-handled-secret-"));
+        const script = [
+            `import { watchToolRun } from "${join(import.meta.dir, "watch.ts")}";`,
+            `import { recordHandledFailure } from "${join(import.meta.dir, "handled.ts")}";`,
+            `watchToolRun({ tool: "fixture", argv: ["mcp", "-t", "fixture-password"], secrets: () => ({ flags: ["-t"], indexes: [] }), caller: () => null });`,
+            `recordHandledFailure({ tool: "fixture", call: "read", error: new Error("refused fixture-password"), dir: ${SafeJSON.stringify(dir)}, caller: null });`,
+        ].join("\n");
+        const child = Bun.spawnSync([process.execPath, "-e", script], {
+            cwd: process.cwd(),
+            env: process.env,
+            stderr: "pipe",
+            stdout: "pipe",
+        });
+        expect(child.exitCode).toBe(0);
+        const day = formatLocalDate(new Date());
+        const records = [...readFailures({ fromDay: day, toDay: day, dir })];
+        expect(records).toHaveLength(1);
+        expect(records[0]?.argv).toEqual(["mcp", "-t", "[redacted]"]);
+        expect(records[0]?.message).toContain("[redacted]");
+        expect(SafeJSON.stringify(records)).not.toContain("fixture-password");
+    });
+
+    it("records returned errors and exceptions, preserving the HTTP/embedded protocol result", async () => {
+        const calls: Parameters<typeof recordHandledFailure>[0][] = [];
+        const record: typeof recordHandledFailure = (options) => {
+            calls.push(options);
+            return null;
+        };
+        const answer = { isError: true, content: [{ type: "text" as const, text: "fixture failed" }] };
+        expect(await recordMcpCall({ server: "fixture", name: "read", run: async () => answer, record })).toBe(answer);
+        const error = new Error("thrown failure");
+        await expect(
+            recordMcpCall({
+                server: "fixture",
+                name: "write",
+                run: async () => {
+                    throw error;
+                },
+                record,
+            })
+        ).rejects.toBe(error);
+        expect(calls.map((call) => call.call)).toEqual(["read", "write"]);
+        expect(calls[1]?.error).toBe(error);
+        await recordMcpCall({ server: "fixture", name: "list", run: async () => ({ content: [] }), record });
+        expect(calls).toHaveLength(2);
+    });
+
+    it("covers custom stdio handlers without retaining arguments or changing messages", async () => {
+        const failures: Parameters<typeof recordHandledFailure>[0][] = [];
+        const record: typeof recordHandledFailure = (options) => {
+            failures.push(options);
+            return null;
+        };
+        const received: unknown[] = [];
+        const sent: unknown[] = [];
+        const underlying = {
+            onmessage: (_message: unknown) => {},
+            async send(message: unknown) {
+                sent.push(message);
+            },
+            async close() {},
+        };
+        const transport = recordMcpTransport({ transport: underlying, server: "fixture", record });
+        transport.onmessage = (message) => {
+            received.push(message);
+        };
+        const request = {
+            id: 1,
+            method: "tools/call",
+            params: { name: "read", arguments: { privateInput: "never persist this" } },
+        };
+        underlying.onmessage(request);
+        const response = { id: 1, result: { isError: true, content: [{ type: "text", text: "fixture error" }] } };
+        await transport.send(response);
+        expect(received[0]).toBe(request);
+        expect(sent[0]).toBe(response);
+        expect(failures).toHaveLength(1);
+        expect(failures[0]?.call).toBe("read");
+        expect(SafeJSON.stringify(failures)).not.toContain("never persist this");
+        underlying.onmessage({ id: "1", method: "tools/call", params: { name: "unknown" } });
+        const protocolError = { id: "1", error: { code: -32601, message: "unknown tool" } };
+        await transport.send(protocolError);
+        expect(sent[1]).toBe(protocolError);
+        expect(failures).toHaveLength(2);
+    });
+});
 
 describe("redactArgv", () => {
     it("masks the value of a secret-named flag in both spellings and keeps the rest", () => {

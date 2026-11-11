@@ -141,7 +141,9 @@ func waitAndExit(_ pid: pid_t, run: LauncherFailures.Run? = nil) -> Never {
     let signalNumber = status & 0x7f
     if signalNumber != 0 {
         if let run, !stoppedForParentDeath {
-            LauncherFailures.recordSignalDeath(run: run, signal: signalNumber)
+            if let record = LauncherFailures.recordSignalDeath(run: run, signal: signalNumber) {
+                LauncherFailures.prepareContext(run: run, record: record)
+            }
         }
         exit(128 + signalNumber)
     }

@@ -1,4 +1,5 @@
 import { parseVariadic } from "@genesiscz/utils/cli";
+import { enrichFailureContext, readFailureContext } from "@genesiscz/utils/cli/failures/context";
 import { FAILURE_KINDS, type FailureKind, failuresDir, type ToolFailure } from "@genesiscz/utils/cli/failures/record";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
@@ -11,12 +12,17 @@ import { crashReports, crashReportsDir } from "../lib/crash-reports";
 import { LEVELS, type LevelName, levelName, queryDayLog } from "../lib/day-log";
 import { type FailureFilter, GROUP_KEYS, groupFailures, isGroupKey, loadFailures, usageGaps } from "../lib/failures";
 import { queryProfileLog } from "../lib/profile-log";
+import { gatherTriage, triageDocument } from "../lib/triage";
 import { daysIn, resolveWindow, type TimeWindow } from "../lib/window";
 
 interface WindowOptions {
     since?: string;
     until?: string;
     json?: boolean;
+}
+
+interface ShowOptions extends WindowOptions {
+    context?: boolean;
 }
 
 interface FilterOptions extends WindowOptions {
@@ -219,7 +225,8 @@ function registerShow(logs: Command): void {
         .argument("<id>", "The failure id (from the list), or its leading part")
         .option("--since <when>", "How far back to look for the id", "7d")
         .option("--json", "Print JSON")
-        .action(async (id: string, options: WindowOptions) => {
+        .option("--context", "Print the prepared report; historical machine state is never replaced with current facts")
+        .action(async (id: string, options: ShowOptions) => {
             const failure = loadFailures({ window: windowOf(options), filter: { interrupts: true } })
                 .reverse()
                 .find((candidate) => candidate.id.startsWith(id));
@@ -234,8 +241,14 @@ function registerShow(logs: Command): void {
                 pid: failure.pid,
                 limit: 200,
             });
+            const context = readFailureContext({ failure, dir: failuresDir() });
             if (options.json) {
-                out.result({ failure, dayLog: lines.map((line) => line.record) });
+                out.result({ failure, dayLog: lines.map((line) => line.record), context });
+                return;
+            }
+
+            if (options.context) {
+                out.println(context.markdown);
                 return;
             }
 
@@ -244,6 +257,12 @@ function registerShow(logs: Command): void {
                 ["kind", `${failure.kind}${failure.fatal ? "" : " (the process went on)"}`],
                 ["at", new Date(failure.at).toLocaleString()],
                 ["command", `tools ${failure.tool} ${failure.argv.join(" ")}`],
+                [
+                    "operation",
+                    failure.operation
+                        ? `${failure.operation.transport} ${failure.operation.server}: ${failure.operation.name}`
+                        : null,
+                ],
                 ["exit", String(failure.exitCode ?? "-")],
                 ["message", failure.message],
                 ["cwd", failure.cwd],
@@ -424,6 +443,24 @@ export function registerLogsCommand(program: Command): void {
     registerCrashes(logs);
     registerDay(logs);
     registerProfile(logs);
+    // Started when the event is written, so capture survives even an explicit process.exit().
+    logs.command("prepare <id>", { hidden: true })
+        .requiredOption("--at <iso>", "The exact failure timestamp")
+        .action(async (id: string, options: { at: string }) => {
+            const at = new Date(options.at);
+            const failure = loadFailures({ window: { from: at, to: at }, filter: { interrupts: true } }).find(
+                (candidate) => candidate.id === id && candidate.at === options.at
+            );
+            if (!failure) {
+                throw new Error("The failure event could not be found.");
+            }
+            const triage = await gatherTriage();
+            enrichFailureContext({
+                failure,
+                dir: failuresDir(),
+                triage: { capturedAt: triage.at, markdown: triageDocument(triage) },
+            });
+        });
     logs.command("paths")
         .description("Where each log lives")
         .action(() => {

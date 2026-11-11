@@ -125,6 +125,12 @@ public enum PerfLog {
         }
     }
 
+    /// Functional diagnostic evidence must remain available when optional performance profiling is disabled.
+    public static func diagnostic(_ label: String) {
+        guard PerfConfiguration.current.enabledByDefault || enabled else { return }
+        append("mark \(label)")
+    }
+
     private static func emit(_ label: String, ms: Double) {
         log.info("\(label, privacy: .public) \(ms, format: .fixed(precision: 1))ms")
         append(String(format: "%@ %.1fms", label, ms))

@@ -1,11 +1,11 @@
 import { existsSync, statfsSync } from "node:fs";
-import { cpus, freemem, homedir, loadavg, totalmem } from "node:os";
+import { homedir } from "node:os";
 import { basename } from "node:path";
 import { askHubServer } from "@app/hub/server/client";
+import { runtimeLoad, runtimeMemory, runtimeProcesses } from "@genesiscz/utils/diagnostics/runtime";
 import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { captureSync } from "@genesiscz/utils/process/capture";
-import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { crashReports } from "./crash-reports";
 import { type EnvironmentReport, environmentMarkdown, gatherEnvironment } from "./environment";
@@ -317,10 +317,7 @@ export function realTriageSources(): TriageSources {
     return {
         now: () => new Date(),
         environment: () => gatherEnvironment(),
-        load: () => {
-            const [one, five, fifteen] = loadavg();
-            return { one, five, fifteen, cores: cpus().length };
-        },
+        load: runtimeLoad,
         memory: () => {
             let pressure: string | null = null;
             let swapUsedGb: number | null = null;
@@ -331,17 +328,9 @@ export function realTriageSources(): TriageSources {
                 swapUsedGb = used ? Number(used[1]) / 1024 : null;
             }
 
-            return { totalGb: totalmem() / GB, freeGb: freemem() / GB, pressure, swapUsedGb };
+            return { ...runtimeMemory(), pressure, swapUsedGb };
         },
-        processes: () =>
-            listProcessesWithUsage({ cpuPercent: true }).map((entry) => ({
-                pid: entry.pid,
-                name: entry.name,
-                command: entry.command,
-                cpuPercent: entry.cpuPercent ?? null,
-                rssBytes: entry.usage?.rssBytes ?? 0,
-                startMs: entry.startMs,
-            })),
+        processes: runtimeProcesses,
         hubServer: async () => {
             const probe = await askHubServer("health", { timeoutMs: HUB_SERVER_ASK_MS });
             if (probe.state !== "answers") {

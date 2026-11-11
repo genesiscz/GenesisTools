@@ -2,6 +2,7 @@ import { createEvaluator, type Evaluator, lazyEvaluator } from "@genesiscz/utils
 import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { recordMcpTransport } from "@genesiscz/utils/mcp/record-call";
 import { profiler } from "@genesiscz/utils/profile";
 import {
     type CallToolResult,
@@ -140,6 +141,6 @@ export async function startJevMcpServer(options: { deps?: JevRouteDeps } = {}): 
     process.stdin.once("end", stop);
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
-    await server.connect(transport);
+    await server.connect(recordMcpTransport({ transport, server: "jev" }));
     logger.info("Jev MCP server is listening on stdio");
 }

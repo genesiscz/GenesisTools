@@ -57,6 +57,34 @@ enum LauncherFailures {
         return nil
     }
 
+    /// A hard crash cannot reach the TypeScript watcher. Its parent has already saved the event and starts the
+    /// same preparation command before exiting. Interrupts stay cheap; a crashed diagnostics tool cannot recurse.
+    static func contextArguments(run: Run, record: [String: Any]) -> [String]? {
+        guard record["kind"] as? String == "crash", run.tool != "genesis-tools", !run.toolsRoot.isEmpty,
+              let id = record["id"] as? String, let at = record["at"] as? String else { return nil }
+        return ["genesis-tools", "logs", "prepare", id, "--at", at]
+    }
+
+    static func prepareContext(run: Run, record: [String: Any], environment: [String: String] = ProcessInfo.processInfo.environment) {
+        guard let arguments = contextArguments(run: run, record: record) else { return }
+        let binary = URL(fileURLWithPath: run.toolsRoot).appendingPathComponent("tools").path
+        let plan = ToolsBridge.launchPlan(binaryPath: binary, argv: arguments)
+        let process = Process()
+        process.executableURL = plan.executable
+        process.arguments = plan.arguments
+        process.currentDirectoryURL = plan.workingDirectory
+        var childEnvironment = environment
+        for key in [runIdVariable, toolVariable, rootVariable] { childEnvironment.removeValue(forKey: key) }
+        childEnvironment["GENESIS_TOOLS_DETACHED"] = "1"
+        childEnvironment["GENESIS_TOOLS_NO_APP"] = "1"
+        process.environment = childEnvironment
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() }
+        catch { warn("failures: cannot start context preparation: \(error.localizedDescription)") }
+    }
+
     /// record.ts `failuresDir()`: storage/root.ts `genesisToolsDir("logs")`, under GENESIS_TOOLS_HOME when it is set.
     static func failuresDirectory(environment: [String: String]) -> URL {
         GenesisToolsHome.url("logs", environment: environment)

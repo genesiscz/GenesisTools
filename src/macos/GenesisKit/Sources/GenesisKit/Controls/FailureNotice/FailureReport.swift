@@ -2,7 +2,7 @@ import Foundation
 
 /// What the app knows about its own build, for a report an agent acts on: the version, and the checkout, branch and
 /// commit the installed bundle was built from (`~/.genesis-tools/app/manifest.json`, written by every build).
-public struct FailureAppFacts: Equatable, Sendable {
+public struct FailureAppFacts: Codable, Equatable, Sendable {
     public var name: String
     public var version: String?
     public var branch: String?
@@ -35,6 +35,7 @@ public struct FailureAppFacts: Equatable, Sendable {
         return facts
     }
 
+
     /// "GenesisTools 1.4, feat/x @ d9695acca149 (uncommitted changes), checkout `/…`".
     var line: String {
         var parts = [[name, version].compactMap { $0 }.joined(separator: " ")]
@@ -54,7 +55,7 @@ public struct FailureAppFacts: Equatable, Sendable {
 
 /// A failure a person reads and an agent can act on: a one-sentence headline, what ran, where its output and files
 /// are, and the raw output. The notice draws `detailsMarkdown()`; "Copy context for agents" copies `agentContext()`.
-public struct FailureReport: Equatable, Sendable {
+public struct FailureReport: Codable, Equatable, Sendable {
     /// The window's title, a few words on what failed ("Recording failed").
     public var title: String
     /// The real error in one sentence (`FailureLog.headline`), never a cut line of raw output.
@@ -93,7 +94,7 @@ public struct FailureReport: Equatable, Sendable {
                 action: String? = nil, command: String? = nil, exitStatus: Int32? = nil, folder: String? = nil,
                 logFile: String? = nil, logLine: Int? = nil, dayLog: String? = nil, log: String = "", time: Date = Date(),
                 app: FailureAppFacts? = nil, expected: String? = nil, area: String? = nil,
-                environment: FailureEnvironment? = nil) {
+                environment: FailureEnvironment? = nil, call: ToolsCallLedger.Call? = nil) {
         self.title = title
         self.headline = headline
         self.summary = summary
@@ -111,6 +112,8 @@ public struct FailureReport: Equatable, Sendable {
         self.expected = expected
         self.area = area
         self.environment = environment
+        self.call = call
+        if call != nil { FailureCapture.record(self) }
     }
 
     public var hasLog: Bool { !log.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -335,8 +338,8 @@ public struct FailureReport: Equatable, Sendable {
 
 /// What `tools genesis-tools triage --json` (or `env --json`) answered: the environment bullets, the bug form's fields in order (empty when
 /// the checkout has no `.github/ISSUE_TEMPLATE/bug_report.yml`), and the environment answers by field id.
-public struct FailureEnvironment: Equatable, Sendable {
-    public struct Field: Equatable, Sendable {
+public struct FailureEnvironment: Codable, Equatable, Sendable {
+    public struct Field: Codable, Equatable, Sendable {
         public var id: String
         public var label: String
         public var type: String
@@ -377,8 +380,11 @@ public struct FailureEnvironment: Equatable, Sendable {
     /// failed and the calls that were slow just before). A checkout without `triage` answers through `env --json`,
     /// which has the same shape without the state. Nil when both fail.
     public static func load(bridge: ToolsBridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())) async -> FailureEnvironment? {
+        let deadline = Date().addingTimeInterval(4)
         for command in ["triage", "env"] {
-            if let run = try? await bridge.run(subcommand: "genesis-tools", args: [command, "--json"], timeoutSeconds: 20),
+            let remaining = Int(deadline.timeIntervalSinceNow.rounded(.down))
+            guard remaining > 0 else { break }
+            if let run = try? await bridge.run(subcommand: "genesis-tools", args: [command, "--json"], timeoutSeconds: remaining),
                run.exitCode == 0, let environment = parse(json: run.stdout) {
                 return environment
             }
