@@ -153,6 +153,35 @@ export function collapsePath(p: string): string {
 }
 
 /**
+ * Every mention of the current user's home in `text` as `~`: `/Users/<user>` (macOS), `/home/<user>` (Linux),
+ * `<drive>:\\Users\\<user>` with either slash and any case (Windows), and the home itself wherever it is (`/root`).
+ * The rest of each path is kept as it was. For reports, logs and issue bodies, where a path sits inside prose or a
+ * stack trace; `collapsePath()` is for a value that is one path. `home` is a test seam.
+ */
+export function shortenHomePaths(text: string, home: string = homedir()): string {
+    const trimmedHome = home.replace(/[/\\]+$/, "");
+    const user = trimmedHome.split(/[/\\]/).filter(Boolean).pop();
+    if (!text || !user) {
+        return text;
+    }
+
+    const name = escapeRegExp(user);
+    const slash = "[\\\\/]+";
+    const homes = [
+        escapeRegExp(trimmedHome).replace(/(?:\\\\|\/)/g, slash),
+        `/Users/${name}`,
+        `/home/${name}`,
+        `[A-Za-z]:${slash}Users${slash}${name}`,
+    ];
+    const pattern = new RegExp(`(?<![\\w.-])(?:${homes.join("|")})(?![\\w.-])`, "gi");
+    return text.replace(pattern, "~");
+}
+
+function escapeRegExp(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Collapse home for display in browser or Node. Uses `collapsePath()` when
  * `homedir()` is available; otherwise falls back to `/Users/*` / `/home/*` heuristics.
  */
