@@ -2,6 +2,8 @@ import type { SessionMeta } from "./session-meta";
 import type { AgentJoinedEvent, AgentLeftEvent, AgentRecord, FeedEvent, MessageEvent, PresenceMode } from "./types";
 
 export interface VisibilityOptions {
+    /** The session's meta; its `debug` shows lifecycle events and every join and leave. */
+    meta?: SessionMeta;
     /** The login's `--presence`; absent means the default for this agent (see `presenceModeFor`). */
     presence?: PresenceMode;
 }
@@ -11,7 +13,15 @@ export interface VisibilityOptions {
  * join and leave, main gets the real changes (it steers the swarm and nudges a peer that lapsed), and every other
  * agent gets none: in the 2026-11-08 swarm 28% of the child turns woke only on a peer's join or leave.
  */
-export function presenceModeFor(agent: AgentRecord, meta?: SessionMeta, explicit?: PresenceMode): PresenceMode {
+export function presenceModeFor({
+    agent,
+    meta,
+    explicit,
+}: {
+    agent: AgentRecord;
+    meta?: SessionMeta;
+    explicit?: PresenceMode;
+}): PresenceMode {
     if (explicit) {
         return explicit;
     }
@@ -38,12 +48,9 @@ function visiblePresence(event: AgentJoinedEvent | AgentLeftEvent, mode: Presenc
     return !REARM_LEAVE_REASONS.has(event.reason);
 }
 
-export function isVisibleToAgent(
-    event: FeedEvent,
-    agent: AgentRecord,
-    meta?: SessionMeta,
-    options: VisibilityOptions = {}
-): boolean {
+export function isVisibleToAgent(event: FeedEvent, agent: AgentRecord, options: VisibilityOptions = {}): boolean {
+    const { meta } = options;
+
     if (event.type === "message") {
         return visibleMessage(event, agent);
     }
@@ -62,7 +69,7 @@ export function isVisibleToAgent(
             return false;
         }
 
-        return visiblePresence(event, presenceModeFor(agent, meta, options.presence));
+        return visiblePresence(event, presenceModeFor({ agent, meta, explicit: options.presence }));
     }
 
     return false;
@@ -113,11 +120,6 @@ function visibleLifecycle(event: FeedEvent, agent: AgentRecord, meta?: SessionMe
     return false;
 }
 
-export function filterForAgent(
-    events: FeedEvent[],
-    agent: AgentRecord,
-    meta?: SessionMeta,
-    options: VisibilityOptions = {}
-): FeedEvent[] {
-    return events.filter((e) => isVisibleToAgent(e, agent, meta, options));
+export function filterForAgent(events: FeedEvent[], agent: AgentRecord, options: VisibilityOptions = {}): FeedEvent[] {
+    return events.filter((e) => isVisibleToAgent(e, agent, options));
 }

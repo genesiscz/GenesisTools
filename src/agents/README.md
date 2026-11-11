@@ -287,8 +287,15 @@ joins, so presence costs one event at each end and nothing per message or per re
 `--once --timeout`, or as a reaped dead login writes `logged_out` with `login_id` and `rearm_until` (90 s later) and
 no leave. The agent stays on the bus, and its next login inside the grace is silent. When no new login came by
 `rearm_until`, one `agent_left` with `reason: "lapsed"` and `lapsed_since` is written. Every watching login checks
-for a due lapse every 5 s, and every `login`, `message` and `listen` checks once; the decision is made under the feed
-lock, so a lapse is written once.
+for a due lapse every 5 s, and every `login`, `message`, `discover` and `listen` checks once; the decision is made
+under the feed lock, so a lapse is written once. A login that a later login of the same agent already replaced
+cannot start a grace: its late `logged_out` is ignored.
+
+**A hard-killed login.** A login killed with `SIGKILL` (or a crash) writes no `logged_out`, and a watching login does
+not look for dead slots. Its grace starts only when a stale-lock sweep reaps the dead lock, and every `login`,
+`message`, `discover` and `listen` runs that sweep first. Until one of them runs, the agent stays on the bus and no
+lapse is written. To recover, run `tools agents discover --session <id>` (or send the agent a message): the sweep
+writes the `logged_out` with `rearm_until`, and the lapse follows 90 s later when no new login comes.
 
 **Leaving.** `{"type":"agent_left","agent_name":…,"reason":…,"remaining":[…]}` is written when an agent runs `leave`
 (`leave`, with its `--note`), when a re-arm lapses (`lapsed`), when a stream login stops on its own (`ended`), and
@@ -298,7 +305,12 @@ and `dead_pid` leaves.
 
 **Send receipt.** `message` adds `not_listening` (`[{agent_id, name, state, since, reason}]`, state `rearming`,
 `left` or `never_logged_in`) and a one-sentence `note` to its JSON result when a named recipient will not read the
-message now. The message is stored either way and is delivered at the recipient's next login. This is how an agent
+message now. A recipient must be registered (its first login registers it): an unknown name fails the send and
+stores nothing, so `never_logged_in` names only an agent that is registered and has no login yet. For a registered
+recipient the message is stored whether it listens or not, and it reaches the recipient at its next login whose
+filters (`--kinds`, `--exclude-kinds`, `--filter`) let it through; a login that filters it out moves its cursor past
+it (see [Delivery and latency limits](#delivery-and-latency-limits)). The sender is never in `not_listening`: its own
+login never shows its own message, and `message` warns when the sender is among the recipients. This is how an agent
 without presence events learns that its peer is away.
 
 ### Output formats

@@ -42,7 +42,7 @@ Measured in one real team session: 12 to 33 minutes for working teammates, 0 to 
 
 - **The cap is 30 minutes, whatever you ask for.** Measured on 2026-10-13: `timeout_ms: 3600000` answered "Monitor started ... expires in 30m". Pass `timeout_ms: 1800000` and expect the expiry notice ("Monitor expired after 30m ...") every 30 minutes for as long as you are on the bus.
 - **When the expiry notice arrives, your NEXT tool call is the re-arm**: the same `Monitor` call with the exact same command and `timeout_ms: 1800000`. Not after the current step, not at the end of the turn, not "when mail is expected". Mail queued in between is not lost (the cursor holds it); it reaches you only after the re-arm.
-- **A re-arm is silent; a missing one is announced.** The killed login posts no leave: the agent stays on the bus for 90 s, and a re-arm inside that time posts nothing. When no new login comes within 90 s, the bus posts one `agent_left` with `reason: "lapsed"`, which main receives. (Before 2026-11-10 every expiry posted a `signal` leave and a join to every peer, and 28% of the child turns in one swarm woke only on those.)
+- **A re-arm is silent; a missing one is announced.** The killed login posts no leave: the agent stays on the bus for 90 s, and a re-arm inside that time posts nothing. When no new login comes within 90 s, the bus posts one `agent_left` with `reason: "lapsed"`, which main receives. (Before 2026-11-10 every expiry posted a `signal` leave and a join to every peer, and 28% of the child turns in one swarm woke only on those.) A hard-killed login (`SIGKILL`, a crash) writes nothing, and no watching login looks for dead slots: its 90 s start only when a stale-lock sweep reaps its dead lock, and every `tools agents login`, `message`, `discover` and `listen` runs that sweep first. If nothing runs one, no lapse comes. A lead that waits too long on a quiet peer runs `tools agents discover --session <id>` (or messages the peer); the lapse follows 90 s later when the peer does not log in again.
 - **The lead (or observer) watches for it.** On `agent_left` with `reason: "lapsed"` for a peer, nudge it once through its own channel: a payload-free `SendMessage` for a Claude teammate ("Your bus Monitor expired. Re-arm it now with the same command."), `tools codex steer` or `tools grok steer` for a worker, `tools claude message <session>` for a separate Claude session. Then record the nudge; do not loop on it. A peer that finished on purpose sends `reason: "leave"` with a `note` instead, and needs no nudge.
 - **🛑 Finishing is not lapsing: say so on the bus.** When an agent stops listening for good, its LAST bus action, before it stops its Monitor, is `tools agents leave --agent-name <me> --session <id> --note "done: <one-line status and the report path>"`. Peers then get one `agent_left` with `reason: "leave"` and the note, and the killed Monitor afterwards posts nothing more (an agent that already left is not announced twice). Stopping the Monitor without it looks exactly like a failed re-arm: 90 s later the lead gets `reason: "lapsed"` and sends a needless nudge (observed 2026-10-13: a tester that had just reported DONE).
 - **🛑 Wait for a long job in the background, never in a foreground loop.** Start a test suite or a build with `run_in_background: true` and act on its completion notice. A foreground wait (`until grep -q done log; do sleep 5; done`) holds every bus event, the Monitor expiry notice too, until the loop ends. Observed 2026-11-08: a runner's expiry notice was queued at 16:04:37 and reached it only at 16:05:04, when the lead's steer ended its loop.
@@ -112,6 +112,7 @@ A standalone stream with nobody consuming its terminal output can advance its cu
 <!-- added 2026-10-08 19:25: a peer could not tell whether anyone still read its mail -->
 
 <!-- updated 2026-11-10: presence goes to main by default, a re-arm is silent, a failed one is `lapsed` -->
+<!-- updated 2026-11-11 02:38: a hard-killed login, the registered-recipient and filter limits of the send receipt (#769 review) -->
 
 The bus announces presence by itself. **The login's `--presence` mode decides who receives it:**
 
@@ -124,13 +125,15 @@ The bus announces presence by itself. **The login's `--presence` mode decides wh
 - `agent_joined` (`present: [...]`): an agent's first login, or its first after a leave or a lapse. A Monitor re-arm and later `--once` cycles are not joins.
 - `agent_left` (`reason`, `remaining: [...]`): `leave` (the agent ran `tools agents leave`, with its note), `lapsed` (its login was killed or timed out, or died, and no new login came within 90 s), `ended` (a stream login stopped on its own), `cap` (a `--once` receiver waited the whole cap).
 
-An agent without presence events still learns that a peer is away when it matters: `tools agents message` adds `not_listening` and a `note` to its result when a recipient is re-arming, has left, or never logged in. The message is stored and delivered at the recipient's next login.
+An agent without presence events still learns that a peer is away when it matters: `tools agents message` adds `not_listening` and a `note` to its result when a recipient is re-arming, has left, or is registered but never logged in (an unknown name fails the send and stores nothing). The message is stored and reaches the recipient at its next login whose `--kinds`, `--exclude-kinds` and `--filter` let it through; a login that filters it out moves its cursor past it for good. You are never in `not_listening` yourself: your own login never shows your own message.
 
 **🛑 A presence event needs no reply.** If your login receives one (you asked for it with `--presence`), act on it only when it changes your work, for example the peer you wait for lapsed. Never write a sentence about a join or a leave: in T3 the last sentence of every child turn goes to the lead as a notice, and on 2026-11-08 38 of the 61 notices a lead received were a child saying that a peer joined or left.
 
 When you stop on purpose, say why in the same event:
 
-    tools agents leave --agent-name <me> --session <s> --note "<one-line status>"
+```bash
+tools agents leave --agent-name <me> --session <s> --note "<one-line status>"
+```
 
 Starting the receiver again after a leave or a lapse is a new `agent_joined`; it needs no message.
 

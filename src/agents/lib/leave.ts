@@ -52,18 +52,28 @@ export function presentAgents(events: readonly FeedEvent[]): Map<string, string>
  * written) must not take the replacement off the bus. A leave without a login id (`tools agents leave`) ends
  * whichever login is current.
  */
-function presence(events: readonly FeedEvent[]): Map<string, { name: string; loginId: string | undefined }> {
-    const present = new Map<string, { name: string; loginId: string | undefined }>();
+function presence(events: readonly FeedEvent[]): Map<string, CurrentLogin> {
+    const present = new Map<string, CurrentLogin>();
 
     for (const event of events) {
-        if (event.type === "logged_in") {
-            present.set(event.agent_id, { name: event.agent_name, loginId: event.login_id });
-        } else if (event.type === "agent_left" && endsCurrentLogin(present.get(event.agent_id), event.login_id)) {
-            present.delete(event.agent_id);
-        }
+        trackPresence(present, event);
     }
 
     return present;
+}
+
+/** An agent on the bus, with the login that put it there (undefined for a login from before login ids). */
+interface CurrentLogin {
+    name: string;
+    loginId: string | undefined;
+}
+
+function trackPresence(present: Map<string, CurrentLogin>, event: FeedEvent): void {
+    if (event.type === "logged_in") {
+        present.set(event.agent_id, { name: event.agent_name, loginId: event.login_id });
+    } else if (event.type === "agent_left" && endsCurrentLogin(present.get(event.agent_id), event.login_id)) {
+        present.delete(event.agent_id);
+    }
 }
 
 function endsCurrentLogin(current: { loginId: string | undefined } | undefined, leaving: string | undefined): boolean {
@@ -176,33 +186,70 @@ export async function announceLeave(
 }
 
 /**
- * Fold one feed event into the map of pending re-arms (agent id to the login that ended and may come back). Every
- * watching login keeps this map from the events it reads, so it can tell when a lapse is due without reading the
- * whole feed; `pendingRearms` is the same fold over a whole feed.
+ * The re-arm fold: who is on the bus with which login, and the logins that ended with a `rearm_until` and were not
+ * replaced. Every watching login keeps one from the events it reads, so it can tell when a lapse is due without
+ * reading the whole feed; `pendingRearms` is the same fold over a whole feed.
  */
-export function trackRearm(pending: Map<string, PendingRearm>, event: FeedEvent): void {
-    if (event.type === "logged_out" && event.rearm_until && event.login_id) {
-        pending.set(event.agent_id, { loginId: event.login_id, since: event.ts, until: event.rearm_until });
-    } else if (event.type === "logged_in" || event.type === "agent_left") {
-        pending.delete(event.agent_id);
+export interface RearmTracker {
+    present: Map<string, CurrentLogin>;
+    pending: Map<string, PendingRearm>;
+}
+
+/**
+ * The re-arm fold over a whole feed. Folding the feed's later events once more leaves it as it is, so a login can seed
+ * it from the whole feed and then fold everything after its cursor.
+ */
+export function rearmTrackerFrom(events: readonly FeedEvent[]): RearmTracker {
+    const tracker: RearmTracker = { present: new Map(), pending: new Map() };
+
+    for (const event of events) {
+        trackRearm(tracker, event);
     }
+
+    return tracker;
+}
+
+/**
+ * Fold one feed event into `tracker`. A `logged_out` or `agent_left` counts only when it ends the agent's current
+ * login: the slot is released before the old login writes its `logged_out`, so a replacement can log in, and even
+ * end with its own grace, before the old one's late `logged_out` lands. That late event must not overwrite the
+ * replacement's grace.
+ */
+export function trackRearm(tracker: RearmTracker, event: FeedEvent): void {
+    if (event.type === "logged_out") {
+        const current = tracker.present.get(event.agent_id);
+
+        if (event.rearm_until && event.login_id && current && endsCurrentLogin(current, event.login_id)) {
+            tracker.pending.set(event.agent_id, {
+                loginId: event.login_id,
+                since: event.ts,
+                until: event.rearm_until,
+            });
+        }
+
+        return;
+    }
+
+    const endsLogin =
+        event.type === "logged_in" ||
+        (event.type === "agent_left" && endsCurrentLogin(tracker.present.get(event.agent_id), event.login_id));
+
+    if (endsLogin) {
+        tracker.pending.delete(event.agent_id);
+    }
+
+    trackPresence(tracker.present, event);
 }
 
 /** The agents on the bus whose current login ended with a `rearm_until` and was not replaced. */
 export function pendingRearms(events: readonly FeedEvent[]): Map<string, PendingRearm & { agentName: string }> {
-    const pending = new Map<string, PendingRearm>();
-
-    for (const event of events) {
-        trackRearm(pending, event);
-    }
-
-    const present = presence(events);
+    const tracker = rearmTrackerFrom(events);
     const result = new Map<string, PendingRearm & { agentName: string }>();
 
-    for (const [agentId, entry] of pending) {
-        const current = present.get(agentId);
+    for (const [agentId, entry] of tracker.pending) {
+        const current = tracker.present.get(agentId);
 
-        if (current && endsCurrentLogin(current, entry.loginId)) {
+        if (current) {
             result.set(agentId, { ...entry, agentName: current.name });
         }
     }
@@ -254,6 +301,28 @@ export async function announceLapses(paths: SessionPaths, now: number = Date.now
 
     if (appended.length > 0) {
         log.debug({ agents: appended.map((event) => event.type === "agent_left" && event.agent_name) }, "lapsed");
+    }
+
+    return appended;
+}
+
+/**
+ * Announce the lapses due at `now`, then drop from `pending` every re-arm due at that same `now`. One cutoff for
+ * both: a re-arm that falls due while `announceLapses` waits for the feed lock was not announced, so it must stay for
+ * the next check. A dropped one is settled: its lapse is in the feed (written here or by another watcher), or a new
+ * login replaced it.
+ */
+export async function announceDueLapses(
+    paths: SessionPaths,
+    pending: Map<string, PendingRearm>,
+    now: number = Date.now()
+): Promise<FeedEvent[]> {
+    const appended = await announceLapses(paths, now);
+
+    for (const [agentId, entry] of pending) {
+        if (Date.parse(entry.until) <= now) {
+            pending.delete(agentId);
+        }
     }
 
     return appended;

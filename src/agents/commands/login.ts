@@ -24,14 +24,14 @@ import {
 import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
 import {
-    announceLapses,
+    announceDueLapses,
     announceLeave,
     endsInRearm,
     hasDueRearm,
     leaveReasonOf,
     logInAndAnnounceJoin,
-    type PendingRearm,
-    pendingRearms,
+    type RearmTracker,
+    rearmTrackerFrom,
     rearmUntil,
     trackRearm,
 } from "../lib/leave";
@@ -103,7 +103,7 @@ interface ActiveLogin {
     /** The `--presence` flag; absent means the agent's default (`presenceModeFor`). */
     presence: PresenceMode | undefined;
     /** Logins that ended with a `rearm_until`, kept from every event read; a due one is announced as lapsed. */
-    rearms: Map<string, PendingRearm>;
+    rearms: RearmTracker;
     /** True while a lapse check holds the feed lock, so the timer never stacks two. */
     lapseCheckRunning: boolean;
 }
@@ -346,7 +346,7 @@ function claimSlot({
 }
 
 function isDeliverable(event: FeedEvent, active: ActiveLogin): boolean {
-    if (!active.observer && !isVisibleToAgent(event, active.record, active.meta, { presence: active.presence })) {
+    if (!active.observer && !isVisibleToAgent(event, active.record, { meta: active.meta, presence: active.presence })) {
         return false;
     }
 
@@ -413,23 +413,16 @@ async function drainPending(active: ActiveLogin): Promise<number> {
  * decides under the feed lock, so the watchers never write one lapse twice.
  */
 async function checkLapses(active: ActiveLogin): Promise<void> {
-    if (active.lapseCheckRunning || !hasDueRearm(active.rearms)) {
+    const now = Date.now();
+
+    if (active.lapseCheckRunning || !hasDueRearm(active.rearms.pending, now)) {
         return;
     }
 
     active.lapseCheckRunning = true;
 
     try {
-        await announceLapses(active.paths);
-        const now = Date.now();
-
-        // Drop what was due: a lapse this login lost the race to write is in the feed already, and the agent_left
-        // it reads next would drop it anyway.
-        for (const [agentId, entry] of active.rearms) {
-            if (Date.parse(entry.until) <= now) {
-                active.rearms.delete(agentId);
-            }
-        }
+        await announceDueLapses(active.paths, active.rearms.pending, now);
     } catch (err) {
         log.warn({ err }, "lapse check failed; the next check retries");
     } finally {
@@ -669,7 +662,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             }),
             presence,
             // Seeded from the whole feed: a re-arm that started before this login's cursor can still lapse.
-            rearms: new Map(pendingRearms(feedAtLogin)),
+            rearms: rearmTrackerFrom(feedAtLogin),
             lapseCheckRunning: false,
         };
 
