@@ -48,7 +48,7 @@ Every hooks command that writes something is a **dry run by default**. Add `--wr
 | `login` | Attach as an agent and receive messages. Registers a new `--agent-name` on first use. |
 | `message [body...]` | Send a message: direct (`--to`), broadcast (no `--to`), reply (`--reply`) or pure ack. |
 | `request` | Send a message to one agent and block until the correlated reply arrives. |
-| `leave` | Announce that an agent stops listening. Every other agent gets `agent_left`. |
+| `leave` | Announce that an agent stops listening: one `agent_left`, which a login receives by its `--presence` mode (main by default). A Monitor re-arm posts no leave; a re-arm that fails posts one `lapsed` leave after 90 s. |
 | `discover` | List every registered agent of the session. |
 | `listen` | Follow a session feed in human-friendly form. Read-only. |
 
