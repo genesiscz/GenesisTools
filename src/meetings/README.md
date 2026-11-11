@@ -40,6 +40,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `record display list\|add <id>\|remove <id>\|switch <id>\|mode <policy>` | Which displays the running recording records; a change applies at once |
 | `screen <meeting> --at 1:23:50 [--window 30s]` | The OCR text of each recorded screen around a transcript time |
 | `screen <meeting> [--at <time>] --boxes [--match <text>] [--level block\|line] --out <dir>` | The OCR boxes of those frames in frame pixels: the ones holding `--match`, or without it the ones that changed since the display's frame before, drawn numbered on each frame (`<frame>.boxes.png`) with a PNG crop of each (`<frame>.<n>.png`). `--match` without `--at` searches every frame (`--limit 5`). REPL: `meetings.open(id).screen({ at, match, boxes: { outDir } })`, and `editorProject()` makes the recording an editor project (`tools recorder proxy <meeting>` does the same) |
+| `ocr <meeting> [--follow] [--retry-failed] [--reread-empty-since <time>] [--json]` | Read the screen text of the meeting's kept frames that have no `ocr.jsonl` row yet (the recorder starts it with `--follow`, and the watcher starts it again for a recent meeting with frames left). `--retry-failed` reads the rows marked `failed` again, `--reread-empty-since 15:56` (local time of the meeting's day, or a full date) the rows with no text from then on; both rewrite `ocr.jsonl` in place, in its order |
 | `screen-note <meeting> [--out <note.md>]` | Write the screen OCR as a note: one section per frame whose text changed on its display, with its picture and its text (default `<meeting folder>/<id>.ScreenOCR.md`). Each picture is an APFS clone in `<note name>.frames/` beside the note (no extra disk space; a plain copy where the volume cannot clone, and the log says so), linked by a relative path, so Genesis Markdown shows it in a vault note. A second run adds nothing, and an `--out` that is another note is refused |
 | `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
 | `watch [--once]` | The watcher behind autostart and "ask each time"; the daemon starts it at login when autostart is on or a project question waits |
@@ -142,10 +143,20 @@ The recorder is a frame recorder from `src/utils/screen-recorder/` (`capture.bac
 own `ax-tool capture`, by default; or `peekaboo`). It records in 30 s pieces with the capture policy every recorder follows (`capture.activeFps`,
 `idleFps`, `threshold`, `resolutionCap`) plus the recorder's own block (`capture.recorders.native`: `quietMs`,
 `heartbeatSec`, `maxMb`, unset keeps ax-tool's own; `capture.recorders.peekaboo` has no keys of its own), converts
-each frame to JPEG under the meeting's `frames/` as `<HH-MM-SS-mmm>-d<displayId>.jpg`, and appends Vision OCR to
-`ocr.jsonl` (each line names its `displayId`) in the OCR languages of the meeting language
-(`languages.<global.language>.ocr`, `cs-CZ` and `en-US` for `cs`). Each capture ends at its duration plus 30 s; a
-hung one is stopped and counts as a failed capture.
+each frame to JPEG under the meeting's `frames/` as `<HH-MM-SS-mmm>-d<displayId>.jpg`, and lists it in the frame
+index `frames.jsonl` (`file`, `at`, `displayId`, `changePercent`, `reason`, `motionBoxes`). Each capture ends at its
+duration plus 30 s; a hung one is stopped and counts as a failed capture.
+
+OCR is a second phase in a process of its own, so a stuck OCR never holds or stops the capture. The recorder starts
+`tools meetings ocr <meeting> --follow` at its start: one worker per meeting (`ocr.pid` in the meeting folder) reads
+each indexed frame that has no `ocr.jsonl` row yet, in index order, with Vision in the OCR languages of the meeting
+language (`languages.<global.language>.ocr`, `cs-CZ` and `en-US` for `cs`), appends its row (each names its
+`displayId`), and ends once the recording stopped and every frame has a row. A restart goes on where `ocr.jsonl` ends.
+A read that throws is tried again; after 3 failed reads in a row the worker starts a fresh OCR helper (a long-lived
+one answered every read with `CRImageReaderError error 1` for an hour on 2026-11-11), and a frame the fresh helper
+cannot read either gets a row with `failed` and no text, which `ocr --retry-failed` reads again. The watcher starts a
+worker for a meeting of the last two days whose index lists frames without a row while no worker runs. A meeting
+recorded before the index has only `ocr.jsonl`; every reader takes its rows as the frame list.
 
 `capture.ocr` decides which kept frames OCR reads. `threshold` (0 to 1, default 0) is an OCR-only change threshold
 beside `capture.threshold`: a kept frame that changed less keeps the previous frame's text for its display.
@@ -176,8 +187,8 @@ main one); or a screen index. Each piece reads the display list again by id, so 
 the next piece and one that is removed leaves without an error. When an asked index is not connected, the main
 display stands in and the warning says since when.
 
-Frames stay on this Mac and never go into an export. Once a day the watcher moves the `frames/`, `ocr.jsonl`,
-`audio/` and `audio.jsonl` of each meeting whose newest capture file (a frame, an OCR line or a sound track) is older
+Frames stay on this Mac and never go into an export. Once a day the watcher moves the `frames/`, `frames.jsonl`,
+`ocr.jsonl`, `audio/` and `audio.jsonl` of each meeting whose newest capture file (a frame, an OCR line or a sound track) is older
 than `capture.retentionDays` (30) into the GenesisTools trash (`tools rm` rules, restorable with
 `tools rm restore <batch>`), so a recording with sound only expires too. The editor files made from them
 (`recording.json`, `proxy.mp4`, `proxy.transcript.json`) go with them; opening the editor rewrites those files, so it
