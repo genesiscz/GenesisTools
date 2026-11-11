@@ -6,12 +6,11 @@
 // of 8 runs, a piped `cat` in 0 of 8, and a subagent exploring with `rg` and `sed -n` in 1 of 7. So an agent could
 // answer about an area, or a subagent could explore it, without ever seeing that area's rules.
 //
-// PostToolUse on Grep, Glob and Bash: this hook finds the project paths the call touched and tells the agent about
-// each matching area file once per agent. A Bash command that writes into an area gets the file's text (`full`);
-// any other call gets one pointer line (`pointer`), and a later write into the same area upgrades it to the text
-// once. The levels are settings (`areaRules` in `~/.genesis-tools/agents/hooks.json`, per harness): the full text on
-// every search was 51.7% of all hook context in the 10 days before 2026-11-11, and Claude Code ships with both
-// levels off, because it loads a rule file by itself when the agent reads or edits a file there.
+// PostToolUse on Bash: a command that writes into an area (a redirect, `sed -i`, fable-replace, an inline script)
+// gets the area file once per agent, as its text (`full`) or one pointer line (`pointer`). That write passes
+// Claude Code's own loader by, and Codex and Grok have none. A read gets nothing (Martin, 2026-11-11): the full text
+// on every search and listing was 51.7% of all hook context in the 10 days before, and a sample of 63 such
+// injections found 16 useful. The levels are settings (`areaRules` in `~/.genesis-tools/agents/hooks.json`).
 //
 // On Read, Write and Edit it only records the areas Claude Code loads by itself, so it does not add them a second
 // time. After a compaction the agent that compacted forgets what was added, because the compaction summary does not
@@ -39,8 +38,6 @@ import { lockWorktreesForToolUse } from "./worktree-lock";
 
 const SafeJSON = JSON;
 
-/** A response spanning more areas than this is a broad search: only the areas its input names are added. */
-const BROAD_SEARCH_AREAS = 2;
 const MAX_SCAN_CHARS = 200_000;
 /** State key prefix: `@compact:<agent>` holds the time of a compaction that agent has not been checked against. */
 const COMPACT_MARK = "@compact:";
@@ -75,9 +72,8 @@ export type AreaLevel = "full" | "pointer" | "off";
 /** What a subagent gets: the same as the main agent, at most a pointer, or nothing. */
 export type AreaAgents = "same" | "pointer" | "off";
 
+/** A stored `read` key from the first version of these settings is ignored: a read gets nothing. */
 export interface AreaRulesLevels {
-    /** A call that lists, reads, searches or runs something. */
-    read: AreaLevel;
     /** A Bash command that writes into the area. */
     write: AreaLevel;
     agents: AreaAgents;
@@ -93,24 +89,16 @@ export const AREA_AGENTS: readonly AreaAgents[] = ["same", "pointer", "off"];
 
 /**
  * The shipped settings. Mirrors `AREA_RULES_HOOK_SECTION.defaults()` in `src/agents/lib/hooks/sections/area-rules.ts`,
- * which this standalone hook cannot import; `hooks.test.ts` holds the two equal. A harness that loads a rule file by
- * itself on a read, write or edit of a matching file (the `loadsRuleFilesItself` fact) gets nothing here.
+ * which this standalone hook cannot import; `hooks.test.ts` holds the two equal.
  */
 export const AREA_RULES_DEFAULTS: AreaRulesSettings = {
-    read: "pointer",
     write: "full",
     agents: "same",
-    harnesses: byHarness((harness) =>
-        HARNESS_FACTS[harness].loadsRuleFilesItself ? { read: "off", write: "off" } : {}
-    ),
+    harnesses: byHarness(() => ({})),
 };
 
 const LEVEL_RANK: Readonly<Record<AreaLevel, number>> = { off: 0, pointer: 1, full: 2 };
 const AGENT_CAP: Readonly<Record<AreaAgents, AreaLevel>> = { same: "full", pointer: "pointer", off: "off" };
-
-function higher(a: AreaLevel, b: AreaLevel): AreaLevel {
-    return LEVEL_RANK[a] >= LEVEL_RANK[b] ? a : b;
-}
 
 function lower(a: AreaLevel, b: AreaLevel): AreaLevel {
     return LEVEL_RANK[a] <= LEVEL_RANK[b] ? a : b;
@@ -146,11 +134,9 @@ function levelsOver(
 ): Partial<AreaRulesLevels> {
     const field = <T extends string>(key: keyof AreaRulesLevels, choices: readonly T[]) =>
         overrideOf({ value: stored[key], shipped: shipped?.[key], hasShipped: shipped !== undefined, choices });
-    const read = field("read", AREA_LEVELS);
     const write = field("write", AREA_LEVELS);
     const agents = field("agents", AREA_AGENTS);
     return {
-        ...(read ? { read } : {}),
         ...(write ? { write } : {}),
         ...(agents ? { agents } : {}),
     };
@@ -199,17 +185,16 @@ export function areaRulesSettings(configPath = hooksConfigPath()): AreaRulesSett
 /** One harness's levels: its overrides over the shared ones. */
 export function levelsFor(settings: AreaRulesSettings, harness: Harness): AreaRulesLevels {
     return {
-        read: settings.read,
         write: settings.write,
         agents: settings.agents,
         ...settings.harnesses[harness],
     };
 }
 
-/** Whether a Grep, Glob or Bash call of this agent can add anything at all; false lets the hook exit at once. */
+/** Whether a Bash call of this agent can add anything at all; false lets the hook exit at once. */
 export function canInject(levels: AreaRulesLevels, isSubagent: boolean): boolean {
     const cap = isSubagent ? AGENT_CAP[levels.agents] : "full";
-    return lower(higher(levels.read, levels.write), cap) !== "off";
+    return lower(levels.write, cap) !== "off";
 }
 
 export function projectRoot(start: string): string | null {
@@ -606,6 +591,27 @@ function editedFiles(args: string[], scriptFlag: (arg: string) => boolean): stri
 }
 
 /**
+ * An interpreter that runs code from the command itself (`python3 -c`, `bun -e`, `node --eval`), or from a
+ * here-document in the same command (`python3 - <<EOF`, a script written by `cat > x.ts <<EOF` and run after it):
+ * the code is in view but its writes are not, so every path the command names counts as written (Martin,
+ * 2026-11-11: "bash python scripts"), but only when the code calls something that writes: a probe script that only
+ * reads and prints names many paths, and got 10.7 KB of rules on its first try. Running a script file alone stays a
+ * read: `bun scripts/test.ts src/x` writes nothing it names.
+ */
+const WRITE_CALL = /write|rename|appendFile|copyFile|unlink|\bopen\([^)]*["'][wax]|\.replace_all|shutil\.(copy|move)/i;
+
+function inlineScript(args: string[], command: string, inlineFlags: readonly string[]): WriteTargets | null {
+    const inline = args.some(
+        (arg) => inlineFlags.includes(arg) || inlineFlags.some((flag) => arg.startsWith(`${flag}=`))
+    );
+    if ((!inline && !command.includes("<<")) || !WRITE_CALL.test(command)) {
+        return null;
+    }
+
+    return written(pathTokens(command));
+}
+
+/**
  * Commands that write files, by program. Anything not here (and no `>` redirect) is a read: list, read, search,
  * show, diff, log, run a test or a tool. When unsure, a rule answers null, and the call stays a read.
  */
@@ -619,11 +625,15 @@ export const WRITE_RULES: readonly WriteRule[] = [
     },
     {
         programs: ["perl"],
-        targets: (args) =>
+        targets: (args, command) =>
             // `-pi`, `-i.bak`, `-0777pi`; not `-Mlib` or `-mstrict`, whose letters after M are a module name.
             args.some((arg) => /^-[0-9a-ln-zA-LN-Z]*i/.test(arg))
                 ? written(editedFiles(args, (arg) => /^-\w*[eE]$/.test(arg)))
-                : null,
+                : inlineScript(args, command, ["-e", "-E"]),
+    },
+    {
+        programs: ["python", "python3", "node", "bun", "deno", "ruby", "tsx"],
+        targets: (args, command) => inlineScript(args, command, ["-c", "-e", "--eval", "-p", "--print"]),
     },
     { programs: ["mv", "cp", "ln"], targets: destination },
     { programs: ["tee", "touch", "mkdir"], targets: (args) => written(operands(args, ["-m", "--mode"])) },
@@ -970,21 +980,16 @@ export function decide(input: {
     const command = tool === "Bash" && typeof toolInput.command === "string" ? toolInput.command : "";
     const writes = command ? writeTargets(command) : { paths: [], output: false };
     const writePaths = projectPaths(writes.paths, { root, cwd });
-    const found = projectPaths(unalias(pathTokens(textOf(payload.tool_response)), { aliases, root }), { root, cwd });
-    const readPaths = named.filter((path) => !writePaths.includes(path));
-    const writeAreas = areasOf(writes.output ? [...writePaths, ...found] : writePaths, true);
-    const foundAreas = writes.output ? [] : areasOf(found, false);
-    const readAreas = [...areasOf(readPaths, false), ...(foundAreas.length <= BROAD_SEARCH_AREAS ? foundAreas : [])];
+    const found = writes.output
+        ? projectPaths(unalias(pathTokens(textOf(payload.tool_response)), { aliases, root }), { root, cwd })
+        : [];
+    const writeAreas = areasOf([...writePaths, ...found], true);
 
     const cap = payload.agent_id ? AGENT_CAP[levels.agents] : "full";
     const full: string[] = [];
     const pointer: string[] = [];
-    for (const area of new Set([...writeAreas, ...readAreas])) {
-        const wanted = higher(
-            writeAreas.includes(area) ? levels.write : "off",
-            readAreas.includes(area) ? levels.read : "off"
-        );
-        const level = lower(wanted, cap);
+    for (const area of writeAreas) {
+        const level = lower(levels.write, cap);
         if (level === "full" && !seen.includes(area)) {
             full.push(area);
         } else if (level === "pointer" && !seen.includes(area) && !pointed.includes(area)) {
@@ -1018,7 +1023,7 @@ export function pointerLine(root: string, area: string): string {
 }
 
 export function contextFor(root: string, areas: { full: string[]; pointer: string[] }, tool: string): string {
-    const head = `The ${tool} call touched files whose area rules were not in your context yet (Claude Code loads them only when a file is read or edited). Follow them like the root CLAUDE.md:`;
+    const head = `The ${tool} call writes into an area whose rules were not in your context yet (Claude Code loads them only on its Read, Write and Edit tools). Follow them like the root CLAUDE.md:`;
     const pointers =
         areas.pointer.length > 0
             ? [

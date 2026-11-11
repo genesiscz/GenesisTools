@@ -675,9 +675,7 @@ describe("the hook sections", () => {
         ]);
         expect(rows.find(([label]) => label === "guard rules")?.[1]).toBe("3 built-in, 1 custom");
         expect(rows.find(([label]) => label === "rules switched off")?.[1]).toBe("none");
-        expect(rows.find(([label]) => label === "areaRules")?.[1]).toBe(
-            "read pointer, write full, agents same; claude: read off, write off"
-        );
+        expect(rows.find(([label]) => label === "areaRules")?.[1]).toBe("write full, agents same");
     });
 
     it("the default config wires the guard, the diff and the unpushed reminder's Stop entry, and nothing else", () => {
@@ -893,11 +891,12 @@ describe("applySetting", () => {
         expect(() => describeSetting(config, "mods.resumeGuard")).toThrow("No single setting");
         expect(() => describeSetting(config, "mods.nothing.here")).toThrow("No single setting");
         // An unset per-harness key shows the shared value it takes; a set one shows its own.
-        expect(describeSetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.codex.read")).toMatchObject({
-            value: "pointer",
-            defaultValue: "pointer",
+        expect(describeSetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.codex.write")).toMatchObject({
+            value: "full",
+            defaultValue: "full",
         });
-        expect(describeSetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.claude.read").value).toBe("off");
+        const codexPointer = applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.codex.write", "pointer");
+        expect(describeSetting(codexPointer, "areaRules.harnesses.codex.write").value).toBe("pointer");
     });
 
     it("reads the mods plugin's row from claude plugin list --json", () => {
@@ -995,24 +994,33 @@ describe("applySetting", () => {
 
     it("areaRules: per-harness levels, named values, the plugin hook's own reader agrees", () => {
         expect(DEFAULT_HOOKS_CONFIG.areaRules).toEqual(AREA_RULES_DEFAULTS);
-        expect(DEFAULT_HOOKS_CONFIG.areaRules.harnesses.claude).toEqual({ read: "off", write: "off" });
+        expect(DEFAULT_HOOKS_CONFIG.areaRules.harnesses.claude).toEqual({});
 
-        const old = applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.claude.read", "full");
-        expect(old.areaRules.harnesses.claude).toEqual({ read: "full", write: "off" });
+        const quiet = applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.claude.write", "pointer");
+        expect(quiet.areaRules.harnesses.claude).toEqual({ write: "pointer" });
         expect(applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents", "off").areaRules.agents).toBe("off");
-        expect(applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.write", "pointer").areaRules.write).toBe("pointer");
-        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.read", "same")).toThrow("full, pointer or off");
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.write", "off").areaRules.write).toBe("off");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.write", "same")).toThrow("full, pointer or off");
         expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents", "full")).toThrow("same, pointer or off");
-        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.vim.read", "full")).toThrow("unknown key");
+        // A read gets nothing, so there is no read level to set.
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.read", "full")).toThrow("unknown key");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.vim.write", "full")).toThrow(
+            "unknown key"
+        );
 
-        const described = describeSetting(old, "areaRules.harnesses.claude.read");
-        expect(described).toMatchObject({ value: "full", defaultValue: "off", named: "full" });
-        expect(described.presets.map((preset) => preset.name)).toEqual(["pointer", "full", "off"]);
+        const described = describeSetting(quiet, "areaRules.harnesses.claude.write");
+        expect(described).toMatchObject({ value: "pointer", defaultValue: "full", named: "pointer" });
+        expect(described.presets.map((preset) => preset.name)).toEqual(["full", "pointer", "off"]);
         expect(describeSetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents").presets).toHaveLength(3);
 
         const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-area-")), "hooks.json");
         const stored = {
-            areaRules: { read: "loud", agents: "pointer", harnesses: { codex: { write: "pointer" }, claude: 3 } },
+            areaRules: {
+                read: "pointer",
+                write: "loud",
+                agents: "pointer",
+                harnesses: { codex: { write: "pointer" }, claude: 3 },
+            },
         };
         writeFileSync(path, SafeJSON.stringify(stored));
         const loaded = loadHooksConfig(path).areaRules;
@@ -1021,7 +1029,8 @@ describe("applySetting", () => {
             agents: "pointer",
             harnesses: { ...AREA_RULES_DEFAULTS.harnesses, codex: { write: "pointer" } },
         });
-        expect(lastConfigProblems()).toEqual(['areaRules.read is "loud", not full, pointer or off; ignored']);
+        // The `read` key of the first version is ignored without a problem; a bad `write` is named.
+        expect(lastConfigProblems()).toEqual(['areaRules.write is "loud", not full, pointer or off; ignored']);
         expect(mergeAreaRules(stored)).toEqual(loaded);
     });
 
@@ -2838,7 +2847,6 @@ describe("HARNESS_HOOK_FACTS", () => {
             promisesFileTracking: true,
             compactBoundaryRows: true,
             compactedSince: claudeCompactedSince,
-            loadsRuleFilesItself: true,
             homeBindsAccount: false,
             launchAuthFromAncestor: true,
             journalOmitsProvider: true,
@@ -2859,7 +2867,6 @@ describe("HARNESS_HOOK_FACTS", () => {
             promisesFileTracking: false,
             compactBoundaryRows: false,
             compactedSince: expect.any(Function),
-            loadsRuleFilesItself: false,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,
@@ -2880,7 +2887,6 @@ describe("HARNESS_HOOK_FACTS", () => {
             promisesFileTracking: false,
             compactBoundaryRows: false,
             compactedSince: codexCompactedSince,
-            loadsRuleFilesItself: false,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,

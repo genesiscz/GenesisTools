@@ -24,7 +24,6 @@ export const grokHooks: HookFacts = {
         `When agents must talk to each other WHILE they work, read the \`agents-talk\` skill and follow its Grok section: wrap \`${tool("agents login")}\` in the \`monitor\` tool (\`persistent: true\`), which pushes each mail line into the chat, and pass \`--session <id>\` explicitly on every \`${tool("agents")}\` call, because a grok worker's environment may be stripped. An idle grok subagent is not woken by its mail; the parent resumes it with \`spawn_subagent\` \`resume_from\`.`,
     promisesFileTracking: false,
     compactBoundaryRows: false,
-    loadsRuleFilesItself: false,
     // Grok keeps only a compaction count (signals.json), with no time, so no compaction can be placed after a moment.
     compactedSince: () => true,
     homeBindsAccount: true,
