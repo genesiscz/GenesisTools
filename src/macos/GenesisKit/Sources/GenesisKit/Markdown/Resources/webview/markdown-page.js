@@ -277,7 +277,7 @@
             return gnRefusedImage(hit, meta.target).outerHTML;
         }
         if (meta.embed && GN_IMG_EXT.test(meta.target)) {
-            return gnMissingImage(meta.target).outerHTML;
+            return gnMissingImageHTML(meta.target);
         }
         if (meta.embed) {
             // `![[Other note]]`: drawn as a stub, and a click opens the note like its wikilink.
@@ -736,23 +736,25 @@
             hit.reason === "outsideRoots" ? "Allow its folder in Settings" : ""
         );
     }
-    function gnMissingImage(ref, alt, why, action) {
+    function gnMissingImageHTML(ref, alt, why, action) {
         var text = (why || "Picture not found") + ": " + (alt || ref);
-        var s = document.createElement("span");
-        s.className = "dd-md-embed-stub gn-img-missing";
-        s.title = ref;
-        s.setAttribute("role", action ? "group" : "img");
-        s.setAttribute("aria-label", text);
-        s.innerHTML = '<span class="dd-md-embed-icon" aria-hidden="true">⧉</span> ';
-        s.appendChild(document.createTextNode(text));
-        if (action) {
-            var b = document.createElement("button");
-            b.type = "button";
-            b.className = "gn-img-allow";
-            b.textContent = action;
-            s.appendChild(b);
-        }
-        return s;
+        return (
+            '<span class="dd-md-embed-stub gn-img-missing" title="' +
+            gnEsc(ref) +
+            '" role="' +
+            (action ? "group" : "img") +
+            '" aria-label="' +
+            gnEsc(text) +
+            '"><span class="dd-md-embed-icon" aria-hidden="true">⧉</span> ' +
+            gnEsc(text) +
+            (action ? '<button type="button" class="gn-img-allow">' + gnEsc(action) + "</button>" : "") +
+            "</span>"
+        );
+    }
+    function gnMissingImage(ref, alt, why, action) {
+        var template = document.createElement("template");
+        template.innerHTML = gnMissingImageHTML(ref, alt, why, action);
+        return template.content.firstElementChild;
     }
     // The vault scan has not answered yet: a quiet box, no "not found", until Swift renders again.
     function gnPendingHTML(ref) {

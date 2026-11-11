@@ -27,6 +27,17 @@ describe("markdown page text passes", () => {
         expect(text.render("`[[Other]]`")).not.toContain("data-wikilink");
     });
 
+    test("renders missing picture embeds without a DOM", () => {
+        const text = createMarkdownText(markdownit);
+        for (const note of ["![[diagram.png]]", "![[diagram.svg|600x400]]"]) {
+            const html = text.render(note);
+            expect(html).toContain('class="dd-md-embed-stub gn-img-missing"');
+            expect(html).toContain('role="img"');
+            expect(html).toContain("Picture not found: diagram.");
+        }
+        expect(text.render("![[Other]]")).toContain('data-wikilink="Other"');
+    });
+
     test("renders task boxes at their original lines, including callout bodies", () => {
         const html = createMarkdownText(markdownit).render("> [!note]\n> - [x] Quoted\n\n- [ ] Open\n\nCode: [x] text");
         expect(html).toContain('data-task-line="1" data-task-text="Quoted" checked disabled');
