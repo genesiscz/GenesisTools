@@ -7,12 +7,14 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
     GENESIS_APP_BUNDLE_ID,
+    genesisAppLauncherPath,
     isGenesisAppDisabledByMarker,
     type ResponsibleIdentity,
     responsibleIdentity,
 } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { type AppStatus, appStatus } from "./app";
+import { type PermissionKindId, parsePermissionStatusLines, permissionStatusLabel } from "./kinds";
 import {
     type LocalNetworkAnswer,
     localNetworkAnswer,
@@ -69,13 +71,15 @@ export function grantsFor(
     client: string,
     user: TccReadResult,
     system: TccReadResult,
-    services: readonly TccService[] = TCC_SERVICES
+    services: readonly TccService[] = TCC_SERVICES,
+    live: ReadonlyMap<PermissionKindId, string> | null = null
 ): ServiceGrant[] {
     return services.map((service) => {
         const source = service.db === "user" ? user : system;
 
         if (!source.readable) {
-            return { service, label: "unknown (database not readable)" };
+            const wire = service.kind ? live?.get(service.kind) : undefined;
+            return wire ? { service, ...liveGrant(wire) } : { service, label: "unknown (database not readable)" };
         }
 
         const rows = source.rows.filter((r) => r.service === service.id && r.client === client);
@@ -98,6 +102,58 @@ export function grantsFor(
 
         return { service, granted: isTccGranted(rows[0]), label: rows[0].label };
     });
+}
+
+/** The app's own answer as a grant row: `granted` reads "allowed" like a TCC row, the rest as the app words it. */
+function liveGrant(wire: string): { granted?: boolean; label: string } {
+    if (wire === "granted") {
+        return { granted: true, label: "allowed" };
+    }
+
+    const label = permissionStatusLabel(wire);
+    return wire === "denied" || wire === "notDetermined" ? { granted: false, label } : { label };
+}
+
+/**
+ * Every grant as GenesisTools.app itself reads it (`GenesisTools --permission-status all`, the check `tools macos
+ * permissions request` makes): the macOS APIs, no TCC database. The per-user TCC.db is behind Full Disk Access, so
+ * without that grant this is the only way to read Microphone, Camera, Calendars and the rest. Null when the app is
+ * not built, is a build that answers one kind per call, or does not answer within `timeoutMs`.
+ */
+export function liveGrantStatuses(timeoutMs = 3_000): Map<PermissionKindId, string> | null {
+    const launcher = genesisAppLauncherPath();
+    if (!existsSync(launcher)) {
+        return null;
+    }
+
+    const run = Bun.spawnSync([launcher, "--permission-status", "all"], {
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: timeoutMs,
+    });
+    const statuses = run.exitCode === 0 ? parsePermissionStatusLines(run.stdout.toString()) : new Map();
+    logger.debug(
+        { launcher, exitCode: run.exitCode, kinds: statuses.size, stderr: run.stderr.toString().slice(0, 300) },
+        "permissions: the app's own grant check"
+    );
+    return statuses.size > 0 ? statuses : null;
+}
+
+/**
+ * The grants of GenesisTools.app for `services`: the TCC rows, and the app's own check for a service whose database
+ * this process cannot open. The app is asked only then, once.
+ */
+export function genesisAppGrants(services: readonly TccService[] = TCC_SERVICES): {
+    grants: ServiceGrant[];
+    user: TccReadResult;
+    system: TccReadResult;
+} {
+    const ids = services.map((s) => s.id);
+    const user = readTccRows({ dbPath: TCC_USER_DB_PATH, services: ids, client: GENESIS_APP_BUNDLE_ID });
+    const system = readTccRows({ dbPath: TCC_SYSTEM_DB_PATH, services: ids, client: GENESIS_APP_BUNDLE_ID });
+    const closed = services.some((service) => !(service.db === "user" ? user : system).readable);
+    const live = closed ? liveGrantStatuses() : null;
+    return { grants: grantsFor(GENESIS_APP_BUNDLE_ID, user, system, services, live), user, system };
 }
 
 const LAUNCH_AGENTS_DIR = join(homedir(), "Library", "LaunchAgents");
@@ -152,7 +208,7 @@ export function collectProblems(report: Omit<PermissionsReport, "problems">): st
     // GenesisTools.app is a positive probe: FDA is missing, and so are Mail, Messages and Voice Memos.
     if (report.identity.kind === "genesis-app" && report.app.built && !report.userDb.readable) {
         problems.push(
-            `Full Disk Access is not granted to GenesisTools: Mail, Messages, Voice Memos and the grant table below are unavailable. Run \`${toolCommand("macos permissions open", "--pane", "full-disk-access")}\`; the picker lists GenesisTools under Applications.`
+            `Full Disk Access is not granted to GenesisTools: Mail, Messages and Voice Memos are unavailable, and the per-user grants below come from the app's own check. Run \`${toolCommand("macos permissions open", "--pane", "full-disk-access")}\`; the picker lists GenesisTools under Applications.`
         );
     }
 
@@ -186,16 +242,14 @@ export function collectProblems(report: Omit<PermissionsReport, "problems">): st
 }
 
 export function permissionsReport(): PermissionsReport {
-    const services = TCC_SERVICES.map((s) => s.id);
-    const user = readTccRows({ dbPath: TCC_USER_DB_PATH, services, client: GENESIS_APP_BUNDLE_ID });
-    const system = readTccRows({ dbPath: TCC_SYSTEM_DB_PATH, services, client: GENESIS_APP_BUNDLE_ID });
+    const { grants, user, system } = genesisAppGrants();
     const app = appStatus();
     const lanRules = app.built ? readLocalNetworkRules(app.launcherPath) : null;
     const partial = {
         identity: responsibleIdentity(),
         hostBundleId: env.device.getHostBundleIdentifier(),
         app,
-        grants: grantsFor(GENESIS_APP_BUNDLE_ID, user, system),
+        grants,
         localNetwork: app.built ? localNetworkAnswer(lanRules) : ("unknown" as const),
         oldBuilds: app.built ? oldBuildsInUse(app.launcherPath, lanRules) : [],
         launchdJobsOutsideApp: app.built ? launchdJobsOutsideApp(app.launcherPath) : [],

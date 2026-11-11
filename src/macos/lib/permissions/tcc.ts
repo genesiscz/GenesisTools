@@ -2,10 +2,11 @@ import { Database } from "bun:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import type { PermissionKindId } from "./kinds";
 
-/** Per-user grants: Calendar, Reminders, Contacts, folders, Automation, Speech, Microphone. */
+/** Per-user grants: Calendar, Reminders, Contacts, folders, Automation, Speech, Microphone, Camera. */
 export const TCC_USER_DB_PATH = join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db");
-/** System-wide grants: Full Disk Access, Accessibility, Screen Recording. Readable only with Full Disk Access. */
+/** System-wide grants: Full Disk Access, Input Monitoring, Accessibility, Screen Recording. */
 export const TCC_SYSTEM_DB_PATH = "/Library/Application Support/com.apple.TCC/TCC.db";
 
 export interface TccService {
@@ -15,36 +16,73 @@ export interface TccService {
     db: "user" | "system";
     /** System Settings pane id for `tools macos permissions open` */
     pane: string;
+    /** The grant's id in GenesisTools.app's own check (`GenesisTools --permission-status <kind>`), when it has one. */
+    kind?: PermissionKindId;
 }
 
 export const TCC_SERVICES: readonly TccService[] = [
-    { id: "kTCCServiceCalendar", label: "Calendars", db: "user", pane: "Privacy_Calendars" },
-    { id: "kTCCServiceReminders", label: "Reminders", db: "user", pane: "Privacy_Reminders" },
-    { id: "kTCCServiceAddressBook", label: "Contacts", db: "user", pane: "Privacy_Contacts" },
-    { id: "kTCCServiceAppleEvents", label: "Automation", db: "user", pane: "Privacy_Automation" },
-    { id: "kTCCServiceSpeechRecognition", label: "Speech Recognition", db: "user", pane: "Privacy_SpeechRecognition" },
-    { id: "kTCCServiceMicrophone", label: "Microphone", db: "user", pane: "Privacy_Microphone" },
+    { id: "kTCCServiceCalendar", label: "Calendars", db: "user", pane: "Privacy_Calendars", kind: "calendar" },
+    { id: "kTCCServiceReminders", label: "Reminders", db: "user", pane: "Privacy_Reminders", kind: "reminders" },
+    { id: "kTCCServiceAddressBook", label: "Contacts", db: "user", pane: "Privacy_Contacts", kind: "contacts" },
+    { id: "kTCCServiceAppleEvents", label: "Automation", db: "user", pane: "Privacy_Automation", kind: "automation" },
+    {
+        id: "kTCCServiceSpeechRecognition",
+        label: "Speech Recognition",
+        db: "user",
+        pane: "Privacy_SpeechRecognition",
+        kind: "speech",
+    },
+    { id: "kTCCServiceCamera", label: "Camera", db: "user", pane: "Privacy_Camera", kind: "camera" },
+    { id: "kTCCServiceMicrophone", label: "Microphone", db: "user", pane: "Privacy_Microphone", kind: "microphone" },
     {
         id: "kTCCServiceSystemPolicyDesktopFolder",
         label: "Desktop folder",
         db: "user",
         pane: "Privacy_FilesAndFolders",
+        kind: "desktop",
     },
     {
         id: "kTCCServiceSystemPolicyDocumentsFolder",
         label: "Documents folder",
         db: "user",
         pane: "Privacy_FilesAndFolders",
+        kind: "documents",
     },
     {
         id: "kTCCServiceSystemPolicyDownloadsFolder",
         label: "Downloads folder",
         db: "user",
         pane: "Privacy_FilesAndFolders",
+        kind: "downloads",
     },
-    { id: "kTCCServiceSystemPolicyAllFiles", label: "Full Disk Access", db: "system", pane: "Privacy_AllFiles" },
-    { id: "kTCCServiceAccessibility", label: "Accessibility", db: "system", pane: "Privacy_Accessibility" },
-    { id: "kTCCServiceScreenCapture", label: "Screen Recording", db: "system", pane: "Privacy_ScreenCapture" },
+    {
+        id: "kTCCServiceSystemPolicyAllFiles",
+        label: "Full Disk Access",
+        db: "system",
+        pane: "Privacy_AllFiles",
+        kind: "full-disk-access",
+    },
+    {
+        id: "kTCCServiceListenEvent",
+        label: "Input Monitoring",
+        db: "system",
+        pane: "Privacy_ListenEvent",
+        kind: "input-monitoring",
+    },
+    {
+        id: "kTCCServiceAccessibility",
+        label: "Accessibility",
+        db: "system",
+        pane: "Privacy_Accessibility",
+        kind: "accessibility",
+    },
+    {
+        id: "kTCCServiceScreenCapture",
+        label: "Screen Recording",
+        db: "system",
+        pane: "Privacy_ScreenCapture",
+        kind: "screen-recording",
+    },
 ];
 
 export interface TccRow {

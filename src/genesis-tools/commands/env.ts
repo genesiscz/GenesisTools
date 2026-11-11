@@ -1,4 +1,5 @@
 import { out } from "@genesiscz/utils/logger";
+import { shortenHomePaths } from "@genesiscz/utils/paths";
 import type { Command } from "commander";
 import { environmentMarkdown, gatherEnvironment, issueEnvironmentValues, readBugTemplate } from "../lib/environment";
 
@@ -15,13 +16,16 @@ export function registerEnvCommand(program: Command): void {
         .option("--json", "Print the facts and their markdown section as JSON")
         .action((options: { json?: boolean }) => {
             const report = gatherEnvironment();
-            const markdown = environmentMarkdown(report);
+            const markdown = shortenHomePaths(environmentMarkdown(report));
 
             if (options.json) {
                 // `issue`: the bug form's fields in order and the environment answers by field id, so a drafted issue
                 // has the form's sections with its exact names.
                 const template = readBugTemplate();
-                out.result({ ...report, markdown, issue: { ...template, values: issueEnvironmentValues(report) } });
+                const values = Object.fromEntries(
+                    Object.entries(issueEnvironmentValues(report)).map(([id, value]) => [id, shortenHomePaths(value)])
+                );
+                out.result({ ...report, markdown, issue: { ...template, values } });
                 return;
             }
 

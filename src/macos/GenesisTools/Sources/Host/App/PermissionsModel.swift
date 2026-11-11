@@ -68,6 +68,7 @@ final class PermissionsModel: ObservableObject {
         (.contacts, "tools macos mail / messages (sender names)"),
         (.speechRecognition, "tools transcribe, voice-memos transcribe, Flow dictation"),
         (.microphone, "tools ask (voice dictation), Flow, Voice Notes"),
+        (.camera, "the recorder's camera bubble"),
         (.fullDiskAccess, "tools macos mail, messages, voice-memos"),
         (.accessibility, "tools macos control, tools control, Flow paste, Focus activity"),
         (.inputMonitoring, "Clicky keyboard sounds"),

@@ -29,7 +29,7 @@ function sources(overrides: Partial<EnvironmentSources> = {}): EnvironmentSource
         }),
         bunVersion: "1.3.13",
         macos: () => ({ version: "27.2", build: "26B118" }),
-        machine: () => ({ chip: "Apple M4 Pro", arch: "arm64" }),
+        machine: () => ({ chip: "Apple M4 Pro", model: "Mac16,7", memoryGb: 48, arch: "arm64" }),
         grants: () => [
             { name: "Screen Recording", state: "granted" },
             { name: "Microphone", state: "granted" },
@@ -37,6 +37,7 @@ function sources(overrides: Partial<EnvironmentSources> = {}): EnvironmentSource
             { name: "Accessibility", state: "unknown (database not readable)" },
         ],
         recorder: () => ({ facePids: [61240], service: { pid: 5120, startedAt: "2026-11-09T11:00:00Z" } }),
+        caller: () => ({ agent: "claude-code", sessionId: "s-1", others: ["codex t-2"] }),
         ...overrides,
     };
 }
@@ -69,9 +70,11 @@ describe("gatherEnvironment", () => {
         expect(markdown).toContain("- **Built:** 2026-11-09 10:32 UTC (1 h 27 min ago)");
         expect(markdown).toContain("- **tools checkout:** `aaaabbbbcccc` on `feat/x` (differs from the app's build)");
         expect(markdown).toContain("- **Bun:** 1.3.13");
-        expect(markdown).toContain("- **macOS:** 27.2 (26B118), Apple M4 Pro, arm64");
+        expect(markdown).toContain("- **macOS:** 27.2 (26B118)");
+        expect(markdown).toContain("- **Mac:** Apple M4 Pro, Mac16,7, 48 GB, arm64");
+        expect(markdown).toContain("- **Calling agent:** claude-code session s-1 (also codex t-2)");
         expect(markdown).toContain(
-            "- **Privacy grants:** Screen Recording granted, Microphone granted, Camera not asked yet, Accessibility unknown (database not readable)"
+            "- **Privacy grants of GenesisTools.app:** Screen Recording granted, Microphone granted, Camera not asked yet, Accessibility unknown (database not readable)"
         );
         expect(markdown).toContain("- **Recorder:** face pid 61240, service pid 5120 (since 2026-11-09 11:00 UTC)");
     });
@@ -82,6 +85,7 @@ describe("gatherEnvironment", () => {
                 manifest: () => null,
                 commitDate: () => null,
                 recorder: () => ({ facePids: [], service: null }),
+                caller: () => null,
             })
         );
         const markdown = environmentMarkdown(report);
@@ -90,6 +94,7 @@ describe("gatherEnvironment", () => {
         expect(report.tools.differsFromApp).toBe(false);
         expect(markdown).toContain("- **GenesisTools build:** unknown (no ~/.genesis-tools/app/manifest.json)");
         expect(markdown).toContain("- **Recorder:** face not running, service not running");
+        expect(markdown).not.toContain("Calling agent");
     });
 });
 
@@ -140,7 +145,8 @@ body:
         expect(values.commit).toBe("d9695acca149+dirty, 3 h old");
         expect(values.branch).toBe("feat/x");
         expect(values.macos).toBe("27.2 (26B118)");
-        expect(values.chip).toBe("Apple M4 Pro");
+        expect(values.chip).toBe("Apple M4 Pro, Mac16,7, 48 GB, arm64");
+        expect(values.agent).toBe("claude-code session s-1 (also codex t-2)");
         expect(values.bun).toBe("1.3.13");
         expect(values.permissions).toBe(
             "Screen Recording: granted\nMicrophone: granted\nCamera: not asked yet\nAccessibility: unknown (database not readable)"
@@ -160,9 +166,10 @@ describe("triage", () => {
         toolsHead: () => ({ checkout: "/repo", head: null, branch: null }),
         bunVersion: "1.3.13",
         macos: () => ({ version: "27.2", build: "26B1" }),
-        machine: () => ({ chip: "Apple M4", arch: "arm64" }),
+        machine: () => ({ chip: "Apple M4", model: null, memoryGb: null, arch: "arm64" }),
         grants: () => [],
         recorder: () => ({ facePids: [], service: null }),
+        caller: () => null,
     });
     const sources = (): TriageSources => ({
         now: () => new Date("2026-11-10T18:00:00Z"),

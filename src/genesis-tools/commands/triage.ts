@@ -1,4 +1,5 @@
 import { out } from "@genesiscz/utils/logger";
+import { shortenHomePaths } from "@genesiscz/utils/paths";
 import type { Command } from "commander";
 import { environmentMarkdown, issueEnvironmentValues, readBugTemplate } from "../lib/environment";
 import { gatherTriage, triageDocument, triageMarkdown } from "../lib/triage";
@@ -27,19 +28,26 @@ export function registerTriageCommand(program: Command): void {
                 const values = environment ? issueEnvironmentValues(environment) : {};
                 // The bug form has no field for the Mac's state: it goes under the app build, the nearest one.
                 const state = triageMarkdown(report);
+                const appBuild = [values["app-build"], state].filter(Boolean).join("\n\n");
+                // Every text a person posts or pastes names the home as ~, never /Users/<name>.
                 out.result({
                     ...(environment ?? {}),
-                    markdown: triageDocument(report),
-                    environmentMarkdown: environment ? environmentMarkdown(environment) : null,
+                    markdown: shortenHomePaths(triageDocument(report)),
+                    environmentMarkdown: environment ? shortenHomePaths(environmentMarkdown(environment)) : null,
                     issue: {
                         ...template,
-                        values: { ...values, "app-build": [values["app-build"], state].filter(Boolean).join("\n\n") },
+                        values: Object.fromEntries(
+                            Object.entries({ ...values, "app-build": appBuild }).map(([id, value]) => [
+                                id,
+                                shortenHomePaths(value),
+                            ])
+                        ),
                     },
                     triage: report,
                 });
                 return;
             }
 
-            out.println(triageDocument(report));
+            out.println(shortenHomePaths(triageDocument(report)));
         });
 }

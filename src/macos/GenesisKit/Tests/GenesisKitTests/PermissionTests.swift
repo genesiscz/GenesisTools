@@ -69,19 +69,19 @@ final class PermissionTests: XCTestCase {
         let aliases: [String: PermissionKind] = [
             "input": .inputMonitoring, "keyboard": .inputMonitoring, "ax": .accessibility, "mic": .microphone,
             "dictation": .speechRecognition, "screen": .screenRecording, "capture": .screenRecording,
-            "calendars": .calendars, "fda": .fullDiskAccess, "lan": .localNetwork,
+            "calendars": .calendars, "fda": .fullDiskAccess, "lan": .localNetwork, "cam": .camera,
         ]
         for (alias, kind) in aliases {
             XCTAssertEqual(PermissionKind(id: alias), kind, alias)
         }
-        XCTAssertNil(PermissionKind(id: "camera"))
+        XCTAssertNil(PermissionKind(id: "webcam"))
         XCTAssertNil(PermissionKind(id: ""))
     }
 
     func testEveryKindOpensItsExactPrivacyPane() {
         let anchors: [PermissionKind: String] = [
             .inputMonitoring: "Privacy_ListenEvent", .accessibility: "Privacy_Accessibility",
-            .microphone: "Privacy_Microphone", .speechRecognition: "Privacy_SpeechRecognition",
+            .microphone: "Privacy_Microphone", .camera: "Privacy_Camera", .speechRecognition: "Privacy_SpeechRecognition",
             .screenRecording: "Privacy_ScreenCapture", .calendars: "Privacy_Calendars",
             .reminders: "Privacy_Reminders", .contacts: "Privacy_Contacts", .fullDiskAccess: "Privacy_AllFiles",
             .automation: "Privacy_Automation", .desktopFolder: "Privacy_FilesAndFolders",

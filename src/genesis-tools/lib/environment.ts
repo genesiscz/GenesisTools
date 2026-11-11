@@ -1,16 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { grantsFor } from "@app/macos/lib/permissions/report";
-import {
-    readTccRows,
-    TCC_SERVICES,
-    TCC_SYSTEM_DB_PATH,
-    TCC_USER_DB_PATH,
-    type TccService,
-} from "@app/macos/lib/permissions/tcc";
+import { genesisAppGrants } from "@app/macos/lib/permissions/report";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { agentSessionIds } from "@genesiscz/utils/agent/host";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { GENESIS_APP_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
 import { captureSync } from "@genesiscz/utils/process/capture";
 import { readLiveService } from "@genesiscz/utils/screen-recorder/service-link";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -26,8 +21,24 @@ export interface ManifestFacts {
 
 export interface GrantState {
     name: string;
-    /** "granted", "denied", "not asked yet", "unknown (database not readable)". */
+    /** "allowed", "denied", "not asked yet", "asks on first use", "unknown (database not readable)". */
     state: string;
+}
+
+/** The agent session that ran this command, from its environment; null outside an agent. */
+export interface CallerState {
+    agent: string;
+    sessionId: string | null;
+    /** Other session ids the environment carries (a Codex worker inside a Claude session), as `agent id`. */
+    others: string[];
+}
+
+/** The Mac itself: the chip, the model id (`Mac15,9`), the memory, the CPU architecture. */
+export interface MachineFacts {
+    chip: string | null;
+    model: string | null;
+    memoryGb: number | null;
+    arch: string;
 }
 
 export interface RecorderState {
@@ -46,9 +57,10 @@ export interface EnvironmentSources {
     toolsHead: () => { checkout: string; head: string | null; branch: string | null };
     bunVersion: string;
     macos: () => { version: string | null; build: string | null };
-    machine: () => { chip: string | null; arch: string };
+    machine: () => MachineFacts;
     grants: () => GrantState[];
     recorder: () => RecorderState;
+    caller: () => CallerState | null;
 }
 
 export interface EnvironmentReport {
@@ -73,9 +85,10 @@ export interface EnvironmentReport {
     };
     bun: string;
     macos: { version: string | null; build: string | null };
-    machine: { chip: string | null; arch: string };
+    machine: MachineFacts;
     grants: GrantState[];
     recorder: RecorderState;
+    caller: CallerState | null;
     timeZone: string;
 }
 
@@ -118,6 +131,7 @@ export function gatherEnvironment(sources: EnvironmentSources = realSources()): 
         machine: sources.machine(),
         grants: sources.grants(),
         recorder: sources.recorder(),
+        caller: sources.caller(),
         timeZone: sources.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
 }
@@ -149,9 +163,16 @@ export function environmentMarkdown(report: EnvironmentReport): string {
     const macos = [report.macos.version ?? "unknown", report.macos.build ? `(${report.macos.build})` : null]
         .filter(Boolean)
         .join(" ");
-    lines.push(`- **macOS:** ${[macos, report.machine.chip, report.machine.arch].filter(Boolean).join(", ")}`);
+    lines.push(`- **macOS:** ${macos}`);
+    lines.push(`- **Mac:** ${machineLine(report.machine)}`);
+    if (report.caller) {
+        lines.push(`- **Calling agent:** ${callerLine(report.caller)}`);
+    }
+
     if (report.grants.length > 0) {
-        lines.push(`- **Privacy grants:** ${report.grants.map((g) => `${g.name} ${g.state}`).join(", ")}`);
+        lines.push(
+            `- **Privacy grants of GenesisTools.app:** ${report.grants.map((g) => `${g.name} ${g.state}`).join(", ")}`
+        );
     }
 
     const face =
@@ -161,6 +182,17 @@ export function environmentMarkdown(report: EnvironmentReport): string {
         : "service not running";
     lines.push(`- **Recorder:** ${face}, ${service}`);
     return lines.join("\n");
+}
+
+/** "Apple M3 Max, Mac15,9, 64 GB, arm64". */
+function machineLine(machine: MachineFacts): string {
+    const memory = machine.memoryGb === null ? null : `${machine.memoryGb} GB`;
+    return [machine.chip, machine.model, memory, machine.arch].filter(Boolean).join(", ");
+}
+
+function callerLine(caller: CallerState): string {
+    const own = `${caller.agent}${caller.sessionId ? ` session ${caller.sessionId}` : ""}`;
+    return caller.others.length > 0 ? `${own} (also ${caller.others.join(", ")})` : own;
 }
 
 /** One field of a GitHub issue form, as `.github/ISSUE_TEMPLATE/bug_report.yml` declares it. */
@@ -259,9 +291,10 @@ export function issueEnvironmentValues(report: EnvironmentReport): Record<string
         macos: [report.macos.version ?? "unknown", report.macos.build ? `(${report.macos.build})` : null]
             .filter(Boolean)
             .join(" "),
-        chip: report.machine.chip ?? report.machine.arch,
+        chip: machineLine(report.machine),
         bun: report.bun,
         permissions: report.grants.map((grant) => `${grant.name}: ${grant.state}`).join("\n"),
+        ...(report.caller ? { agent: callerLine(report.caller) } : {}),
     };
 }
 
@@ -306,15 +339,6 @@ function shownTime(iso: string, timeZone: string): string {
 }
 
 // MARK: - The real sources
-
-/** The recorder's grants: the three TCC_SERVICES the recorder needs, plus the camera. */
-const CAMERA: TccService = { id: "kTCCServiceCamera", label: "Camera", db: "user", pane: "Privacy_Camera" };
-const RECORDER_SERVICES: readonly TccService[] = [
-    "kTCCServiceScreenCapture",
-    "kTCCServiceMicrophone",
-    "kTCCServiceCamera",
-    "kTCCServiceAccessibility",
-].flatMap((id) => [...TCC_SERVICES, CAMERA].filter((service) => service.id === id));
 
 function run(argv: string[], cwd?: string): string | null {
     const result = Bun.spawnSync(argv, { cwd, stdout: "pipe", stderr: "pipe", timeout: 3_000 });
@@ -376,15 +400,38 @@ export function realSources(): EnvironmentSources {
         },
         bunVersion: Bun.version,
         macos: () => ({ version: run(["sw_vers", "-productVersion"]), build: run(["sw_vers", "-buildVersion"]) }),
-        machine: () => ({ chip: run(["sysctl", "-n", "machdep.cpu.brand_string"]), arch: process.arch }),
-        grants: () => {
-            const ids = RECORDER_SERVICES.map((s) => s.id);
-            const user = readTccRows({ dbPath: TCC_USER_DB_PATH, services: ids, client: GENESIS_APP_BUNDLE_ID });
-            const system = readTccRows({ dbPath: TCC_SYSTEM_DB_PATH, services: ids, client: GENESIS_APP_BUNDLE_ID });
-            return grantsFor(GENESIS_APP_BUNDLE_ID, user, system, RECORDER_SERVICES).map((grant) => ({
-                name: grant.service.label,
-                state: grant.label,
-            }));
+        machine: () => {
+            // One sysctl for the three; a name the kernel does not have prints nothing for it.
+            const [chip, model, memsize] = (
+                run(["sysctl", "-n", "machdep.cpu.brand_string", "hw.model", "hw.memsize"]) ?? ""
+            )
+                .split("\n")
+                .map((line) => line.trim() || null);
+            const bytes = Number(memsize);
+            return {
+                chip: chip ?? null,
+                model: model ?? null,
+                memoryGb: Number.isFinite(bytes) && bytes > 0 ? Math.round(bytes / 1024 ** 3) : null,
+                arch: process.arch,
+            };
+        },
+        // Every grant `tools macos permissions` lists, with the app's own check where TCC.db is closed to this process.
+        grants: () => genesisAppGrants().grants.map((grant) => ({ name: grant.service.label, state: grant.label })),
+        caller: () => {
+            const caller = whoIsCallingHere();
+            const ids = agentSessionIds(env.getProcessEnv());
+            if (!caller.isInAgent && ids.length === 0) {
+                return null;
+            }
+
+            const others = ids
+                .filter((entry) => entry.id !== caller.sessionId)
+                .map((entry) => `${entry.agent} ${entry.id}`);
+            return {
+                agent: caller.isInAgent ? caller.agent : (ids[0]?.agent ?? "unknown"),
+                sessionId: caller.sessionId ?? ids[0]?.id ?? null,
+                others: caller.sessionId ? others : others.slice(1),
+            };
         },
         recorder: () => {
             // lint-rules-ignore: the recorder faces are found by their command line, which only ps lists (registered in scripts/benchmarks/process/call-sites.ts)
