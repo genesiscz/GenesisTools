@@ -28,11 +28,9 @@ export interface LazyRegistrar {
 const BOOLEAN_ROOT_FLAGS = new Set(["-v", "-vv", "-h", "--verbose", "--trace", "--readme", "--help", "--version"]);
 
 /**
- * The first argv token that is a subcommand, after skipping root flags such as `-v`.
- *
- * Entrypoints used to pass `process.argv[2]`, so `tools ai -v accounts` loaded every tree
- * because `-v` is not a registrar name. Boolean root flags are skipped; `--flag=value` is
- * consumed as one token; an unknown `--flag value` pair skips the value too.
+ * The first subcommand after known boolean root flags such as `-v`.
+ * Root help and unrecognized root options load every tree, so Commander's root help and
+ * usage errors retain the complete command list even when a known name follows the flag.
  */
 export function requestedCommandFromArgv(argv: readonly string[]): string | undefined {
     const args = argv.slice(2);
@@ -48,13 +46,15 @@ export function requestedCommandFromArgv(argv: readonly string[]): string | unde
             return arg;
         }
 
-        if (arg.includes("=") || BOOLEAN_ROOT_FLAGS.has(arg)) {
+        if (arg === "-h" || arg === "--help") {
+            return undefined;
+        }
+
+        if (BOOLEAN_ROOT_FLAGS.has(arg)) {
             continue;
         }
 
-        if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-            i += 1;
-        }
+        return undefined;
     }
 }
 

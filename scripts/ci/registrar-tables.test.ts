@@ -73,10 +73,19 @@ describe.each(Object.entries(TABLES))("%s registrar table", (tool, registrars) =
         }
     });
 
-    test("an unknown name and bare --help register every tree, in the table order", async () => {
+    test("root help and unknown root options register every tree, even before a known command", async () => {
+        const firstName = registrars[0]?.names[0];
+        if (!firstName) {
+            throw new Error("A registrar table must declare a command");
+        }
+
         for (const argv of [
             ["bun", tool, "not-a-command"],
             ["bun", tool, "--help"],
+            ["bun", tool, "--help", firstName],
+            ["bun", tool, "-h", firstName],
+            ["bun", tool, "--unknown=value", firstName],
+            ["bun", tool, "--unknown", "value", firstName],
         ]) {
             const program = new Command();
             await registerRequestedTrees({ program, registrars, requested: requestedCommandFromArgv(argv) });
