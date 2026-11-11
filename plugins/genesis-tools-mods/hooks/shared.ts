@@ -63,6 +63,8 @@ export interface Host {
     env: (name: "HOME" | "GENESIS_TOOLS_HOME") => Promise<string | undefined>;
     cwd: () => Promise<string>;
     sessionId: () => Promise<string>;
+    /** The model the main loop runs on now. */
+    model: () => Promise<string>;
     messages: () => Promise<readonly { role: string; text: string }[]>;
     agents: () => Promise<AgentInfo[]>;
     every: (ms: number, fn: () => void) => void;

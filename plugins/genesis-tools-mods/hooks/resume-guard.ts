@@ -19,7 +19,7 @@
 import type { AgentInfo, ModelUsage, ToolCallInput, TurnUsage } from "claude-code";
 import { agentActiveAt, agentClockTime } from "./agent-clock";
 import { sessionDirOf } from "./agents-band";
-import { loopModelOf, noteLoopModel } from "./loop-model";
+import { loopModel, loopModelOf, noteLoopModel } from "./loop-model";
 import {
     METRICS_SPOOL_VERSION,
     type MetricDefinition,
@@ -378,7 +378,7 @@ async function report(
             kind: kindOf(facts.agent),
             idleSeconds: idleBucket(facts.idleMs),
             outcome: facts.outcome,
-            model: loopModelOf(facts.agent.id),
+            model: await loopModel(host, facts.agent.id),
             ...(facts.agent.name ? { name: facts.agent.name } : {}),
         },
         context: {

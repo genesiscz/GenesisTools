@@ -572,6 +572,7 @@ function hostOf($: EngineInterface): Host {
         env: (name) => (name === "HOME" ? $.env.get("HOME") : $.env.get("GENESIS_TOOLS_HOME")),
         cwd: () => $.session.cwd(),
         sessionId: () => $.session.id(),
+        model: () => $.session.model(),
         messages: () => $.session.messages(),
         agents: () => $.agent.list(),
         every: (ms, fn) => {
