@@ -332,3 +332,20 @@ final class LineSplitterTests: XCTestCase {
         XCTAssertLessThan(seconds, 0.5)
     }
 }
+
+final class GenesisToolsHomeTests: XCTestCase {
+    func testASandboxHomeMovesTheWholeTreeAndTheServerSocket() {
+        let sandbox = ["GENESIS_TOOLS_HOME": "/tmp/sandbox"]
+        XCTAssertEqual(GenesisToolsHome.home(environment: sandbox), "/tmp/sandbox")
+        XCTAssertEqual(GenesisToolsHome.path("hub/server/hub.sock", environment: sandbox),
+                       "/tmp/sandbox/.genesis-tools/hub/server/hub.sock")
+        XCTAssertEqual(GenesisToolsHome.path(environment: sandbox), "/tmp/sandbox/.genesis-tools")
+        XCTAssertEqual(ToolsServerClient.defaultSocketPath(home: "/tmp/sandbox"), "/tmp/sandbox/.genesis-tools/hub/server/hub.sock")
+    }
+
+    func testAnEmptyOrBlankOverrideIsTheHomeFolder() {
+        XCTAssertEqual(GenesisToolsHome.home(environment: [:]), NSHomeDirectory())
+        XCTAssertEqual(GenesisToolsHome.home(environment: ["GENESIS_TOOLS_HOME": " "]), NSHomeDirectory())
+        XCTAssertEqual(GenesisToolsHome.path("logs", environment: [:]), NSHomeDirectory() + "/.genesis-tools/logs")
+    }
+}

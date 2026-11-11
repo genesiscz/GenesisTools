@@ -22,10 +22,10 @@ public struct FailureAppFacts: Equatable, Sendable {
 
     /// The running bundle's version and the build manifest under `home`. Reads one small file; call it when a
     /// failure is reported, not in a view body.
-    public static func current(home: String = NSHomeDirectory(), bundle: Bundle = .main) -> FailureAppFacts {
+    public static func current(home: String = GenesisToolsHome.home(), bundle: Bundle = .main) -> FailureAppFacts {
         let name = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "GenesisTools"
         var facts = FailureAppFacts(name: name, version: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
-        let manifest = URL(fileURLWithPath: home).appendingPathComponent(".genesis-tools/app/manifest.json")
+        let manifest = GenesisToolsHome.url("app/manifest.json", in: home)
         guard let data = try? Data(contentsOf: manifest),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return facts }
         facts.branch = object["sourceBranch"] as? String
@@ -116,12 +116,12 @@ public struct FailureReport: Equatable, Sendable {
     public var hasLog: Bool { !log.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     /// `<home>/.genesis-tools/logs/<local date>.log`, the file every `tools` process and the app log to that day.
-    public static func dayLogPath(home: String = NSHomeDirectory(), time: Date = Date(), timeZone: TimeZone = .current) -> String {
+    public static func dayLogPath(home: String = GenesisToolsHome.home(), time: Date = Date(), timeZone: TimeZone = .current) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd"
-        return URL(fileURLWithPath: home).appendingPathComponent(".genesis-tools/logs/\(formatter.string(from: time)).log").path
+        return GenesisToolsHome.url("logs/\(formatter.string(from: time)).log", in: home).path
     }
 
     // MARK: - Markdown

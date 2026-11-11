@@ -16,6 +16,7 @@
 // in `daemonNotifyHours`; the audit line is written for every pass.
 
 import Foundation
+import GenesisKitBase
 import UserNotifications
 
 struct VaultAutoAllowSettings: Decodable, Equatable {
@@ -136,7 +137,7 @@ enum VaultAutoAllow {
     /// The checkout this app was built from (the build manifest's `sourceRoot`), as its main checkout: a worktree's
     /// `.git` file names `<main>/.git/worktrees/<name>`.
     static func trustedRoot(home: String = genesisHome()) -> String? {
-        let manifest = (home as NSString).appendingPathComponent(".genesis-tools/app/manifest.json")
+        let manifest = GenesisToolsHome.path("app/manifest.json", in: home)
         guard let data = FileManager.default.contents(atPath: manifest),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let source = object["sourceRoot"] as? String, !source.isEmpty else { return nil }

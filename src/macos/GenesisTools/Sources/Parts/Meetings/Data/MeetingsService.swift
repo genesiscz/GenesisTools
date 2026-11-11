@@ -308,7 +308,7 @@ final class MeetingsService {
               environment["GENESIS_MEETINGS_SERVICE"] != "0",
               UserDefaults.standard.object(forKey: "meetings.service") as? Bool ?? true else { return nil }
         let overridden = environment["GENESIS_TOOLS_HOME"] != nil || environment["GENESIS_TOOLS_BIN"] != nil
-        return MeetingsService(folder: URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/meetings-service"),
+        return MeetingsService(folder: GenesisToolsHome.url("meetings-service"),
                                checkout: .init(root: { ToolsBridge.workingDirectory(forBinary: ToolsBridge.defaultBinaryPath()).path },
                                                acceptsUnnamed: !overridden))
     }()

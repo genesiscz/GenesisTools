@@ -39,8 +39,10 @@ public final class ToolsServerClient: @unchecked Sendable {
         }
     }
 
-    public static func defaultSocketPath(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> String {
-        home.appendingPathComponent(".genesis-tools/hub/server/hub.sock").path
+    /// Under `GENESIS_TOOLS_HOME` when it is set, like the server's own `hubServerSocketPath()`: a sandboxed app
+    /// that asked the real home's socket got the real server's sessions (2026-11-10).
+    public static func defaultSocketPath(home: String? = nil) -> String {
+        GenesisToolsHome.path("hub/server/hub.sock", in: home)
     }
 
     /// The server a `ToolsBridge` built without one asks first. An app sets it once at launch, before it builds a

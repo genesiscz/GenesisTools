@@ -290,7 +290,7 @@ private func buildAction(_ action: NotifyAction) -> UNNotificationAction {
 /// waiting CLI watches the directory. One file per notification id, overwritten if the same
 /// notification is answered twice.
 func notificationReplyDir() -> String {
-    (genesisHome() as NSString).appendingPathComponent(".genesis-tools/app/replies")
+    GenesisToolsHome.path("app/replies")
 }
 
 /// Notification ids are path components of the reply file. A slash or `..` would let `notify.reply`
@@ -311,8 +311,7 @@ func isSafeNotificationId(_ id: String) -> Bool {
 /// or a raw `--rpc` that omitted `genesisHome`). Prefers `GENESIS_TOOLS_HOME` when this
 /// process inherited it — the `--rpc` poster does; a Launch Services relaunch does not.
 package func genesisHome() -> String {
-    let override = ProcessInfo.processInfo.environment["GENESIS_TOOLS_HOME"]
-    return override?.isEmpty == false ? override! : NSHomeDirectory()
+    GenesisToolsHome.home()
 }
 
 private func resolvedReplyDir(_ params: NotifyPostParams) -> String {
@@ -376,7 +375,7 @@ private func writeReply(notificationId: String, actionId: String, text: String?,
 /// a silent no-op is indistinguishable from a click that never arrived. This file is the only way
 /// to tell those apart after the fact.
 func logClick(_ message: String) {
-    let dir = (genesisHome() as NSString).appendingPathComponent(".genesis-tools/app")
+    let dir = GenesisToolsHome.path("app")
     let path = (dir as NSString).appendingPathComponent("notify-clicks.log")
     let stamp = ISO8601DateFormatter().string(from: Date())
     // Several faces of the bundle write here (the relay, a window, a click-launched instance): the pid tells them apart.
@@ -411,7 +410,7 @@ private func clickGivesFocusBack(userInfo: [AnyHashable: Any], actionIdentifier:
 /// When a notification was last clicked, for every face of the bundle: a click also sends the running relay a
 /// "reopen", which must not open a window on top of what the click did (LinkRelay.swift).
 func lastNotificationClickPath() -> String {
-    ((genesisHome() as NSString).appendingPathComponent(".genesis-tools/app") as NSString)
+    (GenesisToolsHome.path("app") as NSString)
         .appendingPathComponent("last-notification-click")
 }
 

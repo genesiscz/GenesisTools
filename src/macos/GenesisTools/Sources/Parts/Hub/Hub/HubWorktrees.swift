@@ -152,7 +152,7 @@ enum HubMarkdownExport {
               let json = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         else { return "Could not build the JSON for json2md." }
 
-        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/hub/exports", isDirectory: true)
+        let dir = GenesisToolsHome.url("hub/exports", isDirectory: true)
         let input = dir.appendingPathComponent("\(fileStem).json")
         let output = dir.appendingPathComponent("\(fileStem).md")
         do {

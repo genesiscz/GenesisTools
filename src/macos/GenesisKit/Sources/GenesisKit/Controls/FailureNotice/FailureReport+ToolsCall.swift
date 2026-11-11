@@ -13,7 +13,7 @@ public extension FailureReport {
     /// The log is empty here; `addingCallLog()` reads it off the main thread.
     static func toolsCall(_ error: Error, outcome: String, action: String, call: ToolsCallLedger.Call? = nil,
                           argv: [String]? = nil, title: String? = nil, area: String? = nil, expected: String? = nil,
-                          time: Date = Date(), home: String = NSHomeDirectory()) -> FailureReport {
+                          time: Date = Date(), home: String = GenesisToolsHome.home()) -> FailureReport {
         let argv = call?.argv ?? argv
         let cause = ToolsCallCause(error: error, call: call)
         let words = argv.map(Self.commandWords)
@@ -331,7 +331,7 @@ public extension FailureReport {
     /// sentence, the raw text as the log. Builds no app facts from disk when `app` is given, so it is cheap to call.
     static func unexpected(_ message: String, outcome: String, action: String, title: String? = nil, area: String? = nil,
                            log: String? = nil, time: Date = Date(), app: FailureAppFacts? = nil,
-                           home: String = NSHomeDirectory()) -> FailureReport {
+                           home: String = GenesisToolsHome.home()) -> FailureReport {
         let clause = ToolsCallCause.lowered(message.components(separatedBy: .newlines).first ?? message)
         return FailureReport(
             title: title ?? outcome,

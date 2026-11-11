@@ -165,7 +165,7 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
     static let messageName = "genesisReviewState"
     /// Under `genesisHome()`, like the face records: a sandboxed GENESIS_TOOLS_HOME keeps unsent text in the sandbox.
     static var directory: URL {
-        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/review/state", isDirectory: true)
+        GenesisToolsHome.url("review/state", isDirectory: true)
     }
 
     static let store = DiskCache(directory: directory, namespace: "window")

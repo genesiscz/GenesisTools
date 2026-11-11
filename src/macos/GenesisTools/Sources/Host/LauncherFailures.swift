@@ -6,6 +6,7 @@
 
 import Darwin
 import Foundation
+import GenesisKitBase
 
 enum LauncherFailures {
     /// src/utils/cli/failures/run-id.ts `RUN_ID_ENV`: the run's id; a record that carries it is never written twice.
@@ -58,9 +59,7 @@ enum LauncherFailures {
 
     /// record.ts `failuresDir()`: storage/root.ts `genesisToolsDir("logs")`, under GENESIS_TOOLS_HOME when it is set.
     static func failuresDirectory(environment: [String: String]) -> URL {
-        let override = environment[homeVariable]?.trimmingCharacters(in: .whitespaces) ?? ""
-        let home = override.isEmpty ? NSHomeDirectory() : override
-        return URL(fileURLWithPath: home).appendingPathComponent(".genesis-tools").appendingPathComponent("logs")
+        GenesisToolsHome.url("logs", environment: environment)
     }
 
     /// record.ts `failureLogPath(day)`: `<dir>/<YYYY-MM-DD>-failures.jsonl`, the day in local time (date.ts

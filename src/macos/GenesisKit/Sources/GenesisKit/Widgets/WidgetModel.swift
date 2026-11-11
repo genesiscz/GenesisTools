@@ -790,8 +790,7 @@ public final class WidgetModel: ObservableObject {
         if let stateRoot {
             return URL(fileURLWithPath: stateRoot).standardizedFileURL.appendingPathComponent("state.json").path
         }
-        let home = environment["GENESIS_TOOLS_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
-        return URL(fileURLWithPath: home).appendingPathComponent(".genesis-tools/hub/widget/state.json").path
+        return GenesisToolsHome.path("hub/widget/state.json", environment: environment)
     }
 
     private func watchSettingsState() {

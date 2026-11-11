@@ -1503,8 +1503,21 @@ const SWIFT_ENTRY_MACRO_RULE = {
 };
 const SWIFT_ENTRY_MACRO = /@Entry\b/;
 
+const SWIFT_HAND_JOINED_HOME_RULE = {
+    name: "swift-hand-joined-genesis-tools",
+    severity: "error" as const,
+    message:
+        "A `.genesis-tools` path joined by hand ignores `GENESIS_TOOLS_HOME`: a sandboxed hub asked the real hub " +
+        "server's socket and drew the real sessions into a picture (2026-11-10). Use `GenesisToolsHome.url(_:)` or " +
+        "`GenesisToolsHome.path(_:)` (GenesisKitBase/Paths/GenesisToolsHome.swift).",
+};
+const SWIFT_HAND_JOINED_HOME = /appendingPathComponent\(\s*"\.genesis-tools\b/;
+/** The helper itself and the tests, which build expected paths on purpose. */
+const SWIFT_HAND_JOINED_HOME_ALLOWED = /(?:^|\/)Tests\/|GenesisToolsHome\.swift$/;
+
 const SWIFT_LINE_RULES = [
     { rule: SWIFT_WAIT_RULE, pattern: SWIFT_BARE_WAIT },
+    { rule: SWIFT_HAND_JOINED_HOME_RULE, pattern: SWIFT_HAND_JOINED_HOME },
     { rule: SWIFT_CLICK_COUNT_RULE, pattern: SWIFT_CURRENT_EVENT_CLICK_COUNT },
     { rule: SWIFT_ENTRY_MACRO_RULE, pattern: SWIFT_ENTRY_MACRO },
 ];
@@ -1932,6 +1945,10 @@ export function checkSwiftSource(
         }
 
         for (const { rule, pattern } of SWIFT_LINE_RULES) {
+            if (rule === SWIFT_HAND_JOINED_HOME_RULE && SWIFT_HAND_JOINED_HOME_ALLOWED.test(file)) {
+                continue;
+            }
+
             const column = (rule === SWIFT_ENTRY_MACRO_RULE ? codeLines[index] : text).search(pattern);
 
             if (column === -1) {

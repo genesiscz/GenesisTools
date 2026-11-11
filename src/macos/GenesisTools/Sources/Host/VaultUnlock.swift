@@ -20,6 +20,7 @@
 import AppKit
 import Darwin
 import Foundation
+import GenesisKitBase
 import LocalAuthentication
 import Security
 
@@ -404,7 +405,7 @@ enum VaultGrants {
     }
 
     static var directory: String {
-        (genesisHome() as NSString).appendingPathComponent(".genesis-tools/ai/gate")
+        GenesisToolsHome.path("ai/gate")
     }
 
     static var path: String {

@@ -58,6 +58,27 @@ function rules(source: string, file = "src/example.ts"): string[] {
     return checkSource(file, source).map((f) => f.rule);
 }
 
+describe("swift-hand-joined-genesis-tools", () => {
+    const join = 'let socket = home.appendingPathComponent(".genesis-tools/hub/server/hub.sock")';
+
+    test("a .genesis-tools path joined to a home by hand is flagged", () => {
+        expect(checkSwiftSource("Sources/Host/Example.swift", join)).toMatchObject([
+            { rule: "swift-hand-joined-genesis-tools", line: 1 },
+        ]);
+    });
+
+    test("the helper, a test, the helper call and the other .genesis tree pass", () => {
+        expect(checkSwiftSource("Sources/GenesisKitBase/Paths/GenesisToolsHome.swift", join)).toEqual([]);
+        expect(checkSwiftSource("Tests/GenesisKitTests/ExampleTests.swift", join)).toEqual([]);
+        expect(
+            checkSwiftSource("Sources/Host/Example.swift", 'let socket = GenesisToolsHome.path("hub/server/hub.sock")')
+        ).toEqual([]);
+        expect(
+            checkSwiftSource("Sources/Host/Example.swift", 'let log = home.appendingPathComponent(".genesis/flow")')
+        ).toEqual([]);
+    });
+});
+
 describe("swift struct and chain rules (dense rows, Observation)", () => {
     const swiftRules = (source: string) => checkSwiftSource("Sources/Example.swift", source).map((f) => f.rule);
 

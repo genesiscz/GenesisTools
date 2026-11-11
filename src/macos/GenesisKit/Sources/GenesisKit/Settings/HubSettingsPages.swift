@@ -271,7 +271,7 @@ private struct HubHistorySettings: View {
     @ObservedObject var preferences: HubPreferences
 
     /// Where `tools hub nav` keeps the places.
-    static let logPath = (NSHomeDirectory() as NSString).appendingPathComponent(".genesis-tools/hub/data.db")
+    static let logPath = GenesisToolsHome.path("hub/data.db")
 
     var body: some View {
         VStack(spacing: 18) {
