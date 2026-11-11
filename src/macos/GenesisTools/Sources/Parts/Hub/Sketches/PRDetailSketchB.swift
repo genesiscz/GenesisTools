@@ -6,7 +6,7 @@ import SwiftUI
 // and under it ONE full-width pane: no overview column beside the diff, no Files pane, no threads bar
 // (catalog C13, C14, C62, C27). The file tree opens on demand from the Changes tab's Files button.
 // The current view is `PRDetailView` (Hub/HubPRs.swift); this file is the whole option, so a pick is one move and the
-// losing option is one deleted file. Notes: the 2026-11-10-UXRedesign notes folder.sketches/prDetail/NOTES.md.
+// losing option is one deleted file. Notes: the 2026-11-10-UXRedesign notes folder, sketches/prDetail/NOTES.md.
 
 /// The document's tabs, in their ⌘⌥1 to ⌘⌥5 order.
 private enum DocumentTab: String, CaseIterable, Hashable {
