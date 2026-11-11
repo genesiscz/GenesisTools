@@ -5,7 +5,7 @@ import SwiftUI
 // middle with ONE toolbar of its own, and one trailing inspector whose tabs (About, Files, Threads, Checks, Commits)
 // replace the fixed overview column, the Files pane and the threads bar (catalog C13, C14, C62, C27).
 // The current view is `PRDetailView` (Hub/HubPRs.swift); this file is the whole option, so a pick is one move and the
-// losing option is one deleted file. Notes: the 2026-11-10-UXRedesign notes folder.sketches/prDetail/NOTES.md.
+// losing option is one deleted file. Notes: the 2026-11-10-UXRedesign notes folder, sketches/prDetail/NOTES.md.
 
 /// The inspector's tabs, in their ⌘⌥1 to ⌘⌥5 order.
 private enum InspectorTab: String, CaseIterable, Hashable {
