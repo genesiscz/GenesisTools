@@ -29,6 +29,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RmRequest } from "@genesiscz/utils/rm";
+import { AREA_RULES_DEFAULTS, mergeAreaRules } from "../../../../plugins/genesis-tools/hooks/area-rules";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
 import {
     DEFAULT_HOOKS_CONFIG,
@@ -663,6 +664,7 @@ describe("the hook sections", () => {
             "diff per harness",
             "questions per harness",
             "agentsTalk.hint",
+            "areaRules",
             "decisions.stopHook",
             "decisions.questionNudge",
             "decisions.chatAnswers",
@@ -673,6 +675,9 @@ describe("the hook sections", () => {
         ]);
         expect(rows.find(([label]) => label === "guard rules")?.[1]).toBe("3 built-in, 1 custom");
         expect(rows.find(([label]) => label === "rules switched off")?.[1]).toBe("none");
+        expect(rows.find(([label]) => label === "areaRules")?.[1]).toBe(
+            "read pointer, write full, agents same; claude: read off, write off"
+        );
     });
 
     it("the default config wires the guard, the diff and the unpushed reminder's Stop entry, and nothing else", () => {
@@ -980,6 +985,38 @@ describe("applySetting", () => {
         expect(loadHooksConfig(path).agentsTalk.hint).toBe(false);
         writeFileSync(path, SafeJSON.stringify({ agentsTalk: { hint: "no" } }));
         expect(loadHooksConfig(path).agentsTalk.hint).toBe(true);
+    });
+
+    it("areaRules: per-harness levels, named values, the plugin hook's own reader agrees", () => {
+        expect(DEFAULT_HOOKS_CONFIG.areaRules).toEqual(AREA_RULES_DEFAULTS);
+        expect(DEFAULT_HOOKS_CONFIG.areaRules.harnesses.claude).toEqual({ read: "off", write: "off" });
+
+        const old = applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.claude.read", "full");
+        expect(old.areaRules.harnesses.claude).toEqual({ read: "full", write: "off" });
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents", "off").areaRules.agents).toBe("off");
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.write", "pointer").areaRules.write).toBe("pointer");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.read", "same")).toThrow("full, pointer or off");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents", "full")).toThrow("same, pointer or off");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.vim.read", "full")).toThrow("unknown key");
+
+        const described = describeSetting(old, "areaRules.harnesses.claude.read");
+        expect(described).toMatchObject({ value: "full", defaultValue: "off", named: "full" });
+        expect(described.presets.map((preset) => preset.name)).toEqual(["pointer", "full", "off"]);
+        expect(describeSetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents").presets).toHaveLength(3);
+
+        const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-area-")), "hooks.json");
+        const stored = {
+            areaRules: { read: "loud", agents: "pointer", harnesses: { codex: { write: "pointer" }, claude: 3 } },
+        };
+        writeFileSync(path, SafeJSON.stringify(stored));
+        const loaded = loadHooksConfig(path).areaRules;
+        expect(loaded).toEqual({
+            ...AREA_RULES_DEFAULTS,
+            agents: "pointer",
+            harnesses: { ...AREA_RULES_DEFAULTS.harnesses, codex: { write: "pointer" } },
+        });
+        expect(lastConfigProblems()).toEqual(['areaRules.read is "loud", not full, pointer or off; ignored']);
+        expect(mergeAreaRules(stored)).toEqual(loaded);
     });
 
     it("refuses a count outside its domain, in set and on load alike", () => {
@@ -2093,6 +2130,12 @@ describe("hook state across processes", () => {
                     .guard.explained
             ).toEqual({ main: { r: 5 } });
             expect(migrateHookState(written)).toEqual(written);
+            // A version 2 file from before `explained` existed reads as nothing explained, and keeps what it has.
+            expect(migrateHookState({ ...written, guard: { contextNotes: { "rule-x": 4 } } })).toEqual(written);
+            expect(
+                migrateHookState({ ...written, guard: { contextNotes: {}, explained: { main: { r: 5, bad: "x" } } } })
+                    .guard.explained
+            ).toEqual({ main: { r: 5 } });
         });
     });
 
@@ -2789,6 +2832,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             promisesFileTracking: true,
             compactBoundaryRows: true,
             compactedSince: claudeCompactedSince,
+            loadsRuleFilesItself: true,
             homeBindsAccount: false,
             launchAuthFromAncestor: true,
             journalOmitsProvider: true,
@@ -2809,6 +2853,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             promisesFileTracking: false,
             compactBoundaryRows: false,
             compactedSince: expect.any(Function),
+            loadsRuleFilesItself: false,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,
@@ -2829,6 +2874,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             promisesFileTracking: false,
             compactBoundaryRows: false,
             compactedSince: codexCompactedSince,
+            loadsRuleFilesItself: false,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,

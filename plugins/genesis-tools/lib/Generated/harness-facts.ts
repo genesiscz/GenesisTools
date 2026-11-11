@@ -37,6 +37,8 @@ export interface HarnessFacts {
     promisesFileTracking: boolean;
     /** Its transcript marks a compaction with a boundary row. */
     compactBoundaryRows: boolean;
+    /** It loads an area rule file by itself on a read, write or edit of a matching file. */
+    loadsRuleFilesItself: boolean;
     /** It writes a session's sub-agents beside it (`<session>/subagents/agent-<id>.jsonl`). */
     subagentsOnDisk: boolean;
     /** The provider plugin whose login in the session's home bills a terminal not started by `tools`, or null. */
@@ -55,6 +57,7 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
             "Invoke the `genesis-tools:agents-talk` skill first when agents must talk to each other WHILE they work: a `gt:handoff-to` swarm, or an agent team whose lead may need to steer a teammate in the middle of its task (team mail to a busy teammate waits until its turn ends). Ordinary subagents that report back when finished need nothing from it. The Skill tool only accepts that full id — `gt:agents-talk` is not a valid skill name.",
         promisesFileTracking: true,
         compactBoundaryRows: true,
+        loadsRuleFilesItself: true,
         subagentsOnDisk: true,
         accountHomeProvider: null,
         launchAuthFromAncestor: true,
@@ -68,6 +71,7 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
             "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: it needs a Monitor tool Codex does not have. For subagent communication use Codex's native collaboration tools (send_message for active peers, followup_task for idle ones).",
         promisesFileTracking: false,
         compactBoundaryRows: false,
+        loadsRuleFilesItself: false,
         subagentsOnDisk: false,
         accountHomeProvider: "openai-sub",
         launchAuthFromAncestor: false,
@@ -81,11 +85,17 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
             "When agents must talk to each other WHILE they work, read the `agents-talk` skill and follow its Grok section: wrap `tools agents login` in the `monitor` tool (`persistent: true`), which pushes each mail line into the chat, and pass `--session <id>` explicitly on every `tools agents` call, because a grok worker's environment may be stripped. An idle grok subagent is not woken by its mail; the parent resumes it with `spawn_subagent` `resume_from`.",
         promisesFileTracking: false,
         compactBoundaryRows: false,
+        loadsRuleFilesItself: false,
         subagentsOnDisk: false,
         accountHomeProvider: "grok-sub",
         launchAuthFromAncestor: false,
     },
 };
+
+/** A value for every harness, so a plugin file that needs a table per harness names none. */
+export function byHarness<T>(pick: (harness: Harness) => T): Readonly<Record<Harness, T>> {
+    return { claude: pick("claude"), codex: pick("codex"), grok: pick("grok") };
+}
 
 /** The harness whose journal lines (pins, cmux records) omit `provider`: a line without one is its. */
 export const JOURNAL_DEFAULT_HARNESS: Harness = "claude";

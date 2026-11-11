@@ -15,6 +15,7 @@ import type { DiffCategory } from "./diff/classify";
 import type { FullDiffMode } from "./diff/full";
 import type { DiffThemeName } from "./diff/theme";
 import { AGENTS_TALK_HOOK_SECTION, type AgentsTalkConfig } from "./sections/agents-talk";
+import { AREA_RULES_HOOK_SECTION, type AreaRulesConfig } from "./sections/area-rules";
 import { CORE_HOOK_SECTION, defaultLogPath } from "./sections/core";
 import type { FillMode, Highlighter, HighlightMode } from "./sections/diff";
 import { DIFF_HOOK_SECTION, diffForHarness } from "./sections/diff";
@@ -429,6 +430,7 @@ export interface HooksConfig extends CoreHooksConfig {
     decisions: DecisionsHookConfig;
     questions: QuestionsConfig;
     agentsTalk: AgentsTalkConfig;
+    areaRules: AreaRulesConfig;
     mods: ModsConfig;
     unpushed: UnpushedConfig;
 }
@@ -457,6 +459,7 @@ export const HOOK_SECTION_NAMES = [
     "diff",
     "questions",
     "agentsTalk",
+    "areaRules",
     "decisions",
     "unpushed",
     "mods",
@@ -476,6 +479,7 @@ export const HOOK_CONFIG_SECTIONS: {
     diff: DIFF_HOOK_SECTION,
     questions: QUESTIONS_HOOK_SECTION,
     agentsTalk: AGENTS_TALK_HOOK_SECTION,
+    areaRules: AREA_RULES_HOOK_SECTION,
     decisions: DECISIONS_HOOK_SECTION,
     unpushed: UNPUSHED_HOOK_SECTION,
     mods: MODS_HOOK_SECTION,
@@ -502,6 +506,7 @@ const SECTION_SLOTS: {
     diff: { get: (config) => config.diff, put: (config, diff) => ({ ...config, diff }) },
     questions: { get: (config) => config.questions, put: (config, questions) => ({ ...config, questions }) },
     agentsTalk: { get: (config) => config.agentsTalk, put: (config, agentsTalk) => ({ ...config, agentsTalk }) },
+    areaRules: { get: (config) => config.areaRules, put: (config, areaRules) => ({ ...config, areaRules }) },
     decisions: { get: (config) => config.decisions, put: (config, decisions) => ({ ...config, decisions }) },
     unpushed: { get: (config) => config.unpushed, put: (config, unpushed) => ({ ...config, unpushed }) },
     mods: { get: (config) => config.mods, put: (config, mods) => ({ ...config, mods }) },
@@ -593,6 +598,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
     decisions: DECISIONS_HOOK_SECTION.defaults(),
     questions: QUESTIONS_HOOK_SECTION.defaults(),
     agentsTalk: AGENTS_TALK_HOOK_SECTION.defaults(),
+    areaRules: AREA_RULES_HOOK_SECTION.defaults(),
     mods: MODS_HOOK_SECTION.defaults(),
     unpushed: UNPUSHED_HOOK_SECTION.defaults(),
     ...CORE_HOOK_SECTION.defaults(),
@@ -656,6 +662,7 @@ export function mergeStoredConfig(stored: Record<string, unknown>): HooksConfig 
         decisions: DECISIONS_HOOK_SECTION.merge(part(DECISIONS_HOOK_SECTION), lastProblems),
         questions: QUESTIONS_HOOK_SECTION.merge(part(QUESTIONS_HOOK_SECTION), lastProblems),
         agentsTalk: AGENTS_TALK_HOOK_SECTION.merge(part(AGENTS_TALK_HOOK_SECTION), lastProblems),
+        areaRules: AREA_RULES_HOOK_SECTION.merge(part(AREA_RULES_HOOK_SECTION), lastProblems),
         mods: MODS_HOOK_SECTION.merge(part(MODS_HOOK_SECTION), lastProblems),
         unpushed: UNPUSHED_HOOK_SECTION.merge(part(UNPUSHED_HOOK_SECTION), lastProblems),
         ...CORE_HOOK_SECTION.merge(part(CORE_HOOK_SECTION), lastProblems),
