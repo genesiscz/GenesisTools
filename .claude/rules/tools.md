@@ -9,40 +9,21 @@ paths:
 
 Loaded by Claude Code when you read, write or edit TypeScript under `src/` or `scripts/`: tool structure, shared utilities, logging and output, spawning, ports, databases.
 
-## Key Components
-
--   **Logger** (`src/logger.ts`): Centralized logging using pino, writes day-stamped files under `~/.genesis-tools/logs/`
--   **MCP Integration**: Several tools implement Model Context Protocol servers for AI assistant integration
--   **No Build Step**: Bun executes TypeScript directly without compilation
-
 ## Utility Convention
 
 Whenever you write a helper, in a new tool or in a change to an existing one, ask whether another tool could use it. If so, it goes in `src/utils/`, not in `src/<tool>/`. The tells: it parses a format another tool also reads (a transcript, a git output, a config file), it wraps a CLI or an OS service, or a second tool already has a private copy (`tools ts refactors <paths> --include shadowed` lists those). A transcript fact is a provider reader member: `.claude/rules/agent-transcripts.md`.
 
 **🛑 `src/utils/**` is the `@genesiscz/utils` package and can NEVER import `@app/*`.** That includes every subfolder (`src/utils/claude/`, `src/utils/ai/`, …); there is no exception for a folder named after a tool. If code you are writing under `src/utils/` needs an `@app/<tool>/...` module, that module belongs in `src/utils/**` too: move it there (with its tests) and import it via `@genesiscz/utils/...`. Never solve it by moving YOUR file out to the tool directory, and never by a relative `../../<tool>/` path. `scripts/ci/check-package-boundaries.ts` fails CI on any `@app/*` import under `src/utils/**`; run it before you commit a move.
 
-- `src/utils/format.ts` - Formatting: `formatDuration()`, `formatBytes()`, `formatTokens()`, `formatNumber()`, `formatList()`, `formatTimestamp()`, `createStopwatch()`
-- `src/utils/Stopwatch.ts` - High-res stopwatch class: `elapsed()`, `lap()`, `stamp()` (wall-clock + elapsed), `now()` (HH:MM:SS.mmm)
-- `src/utils/table.ts` - CLI tables: `formatTable()` (plain padded), **`createBoxTable()` / `renderCliHeader()` / `formatDotStatus()`** (port-style boxed inventories via `cli-table3`)
-- `src/utils/string.ts` - String utilities (glob matching, ANSI stripping)
-- `src/utils/cli/executor.ts` - CLI helpers: `suggestCommand()`, `isInteractive()`, `buildCommand()`, `Executor`, `enhanceHelp()`
-- `src/utils/storage/storage.ts` - Config & cache management
-- `src/utils/fs/module-dir.ts` - `moduleDir(import.meta)` (this module's folder) and `requireSibling(import.meta, name)` (a lazy load beside it). Bun-only `import.meta.dir`/`.dirname` and a bare `require()` break every Vite dashboard that loads the module; lint-rules `no-bun-only-import-meta` and `no-bare-require-in-utils` fail them
-- `src/utils/storage/root.ts` - `toolDataDir(tool, ...)` / `genesisToolsDir(...)`: every `~/.genesis-tools/...` path (honours `GENESIS_TOOLS_HOME`, no logger import); `genesisToolsDirIn(home, ...)` for an explicit sandbox or fixture home. Never hand-join any home with `".genesis-tools"`: lint-rules `no-hand-joined-genesis-tools` fails it outside tests and `plugins/**`
-- `src/utils/async.ts` - Async helpers (concurrency, retry, etc.)
-- `src/utils/json-schema.ts` - JSON schema inference: `inferSchema()`, `formatSchema(value, "skeleton"|"typescript"|"schema")`
-- `src/utils/ai/local/device.ts` - ONNX Runtime device detection: `detectDevice()`, `resolveDevice()` (CoreML/CUDA/DML/CPU)
-- `src/utils/audio/converter.ts` - Audio transcode helpers: `convertToWhisperWav()`, `convertFileToMonoMp3()`, `MONO_MP3_BITRATE_KBPS`, `toFloat32Audio()`
-- `src/utils/audio/detect-format.ts` - Magic-byte audio sniffing: `detectAudioFormat()`, `sniffAudioExt()`
-- `src/utils/cli/quiet-spinner.ts` - No-op spinner for non-TTY (`createQuietSpinner()`); pair with `isQuietOutput()` from `src/utils/cli/output-mode.ts`
-- `src/utils/cli/interrupt.ts` - `withInterrupt(fn)`: Ctrl-C as an AbortSignal. Use it instead of `process.once("SIGINT")`: `./tools` and the app launcher forward each Ctrl-C, and a `once` listener lets the second copy kill the process mid-cleanup
-- `src/utils/repo-context/` - Repository context gatherers (agent instruction files, owning project + package manager + test runner, test commands) over a caller-supplied reader; `gatherRepoContext()`, `defaultGatherers()`
-- `src/utils/ai/evaluation/spend.ts` - All Jev spend from the usage ledger: `jevSpend()`, `jevCalls()` (by feature label, model, day)
-- `src/utils/browser-router/router-link.ts` - Every link to a GenesisTools app: `routerLink({ preset, action, data, via?, when?, render?, fallback })` returns `{ result, link, via, error? }`, the link only when it opens on this Mac (router installed, the https handler, preset routed; or the app installed for its scheme) and the fallback with a coded reason otherwise; `schemeLink()` for a link the code opens itself. A new kind of link is a new entry in its `LinkTargets` table, never a URL at a call site: lint-rules `no-raw-genesis-link` fails a `genesis.tools/`, `genesis-md://` or `genesis-tools://` literal anywhere else
-- `src/utils/rm/` - Safe deletion (`tools rm`): `planRemoval()` (a verdict per path from the rule table: hard-deny, git, session scratch, own files, presets, trusted roots), `moveToTrash()`, `drainDue()`, `restoreBatch()`, `kickDrainer()`. A tool that deletes user files or caches goes through it instead of `rmSync`; `tools doctor` does through `removeForDoctor()` (`src/doctor/lib/remove.ts`: the hard-deny verdict first, then the trash with no grace), and in a test process the trash refuses any path outside the test's temp folder
-- `src/utils/mcp/` - One MCP tool group per tool: `ToolEntry` and `toolCallResult()` (`tool-entry.ts`), `ToolGroupRow` with its lazy `load` (`tool-group.ts`), `serveToolGroup(row, info)` for a standalone stdio server (`serve-group.ts`). The aggregator's table is `TOOL_GROUPS` in `src/genesis-tools-mcp/lib/groups.ts`; a new group is one row there and one `src/<tool>/mcp/genesis-tools.ts` that exports `toolGroup()`
-- `src/utils/genesis-tools/probe.ts` - What of GenesisTools this Mac has and which link kinds (`md`, `finder`, `hub`, `claude-find`) a click opens: `probeGenesisTools()`, `linkState(url, facts)`; `tools genesis-tools probe` prints it. `src/utils/macos/launch-services.ts` `appPathForBundleId()` is the app lookup (`open -b`'s, not Spotlight's). Rules: `.claude/rules/genesis-links.md`
-- `src/utils/genesis-tools/tools/` - Every `tools …` command a util names, one function per command: `ai.ts` (accounts, defaults, the vault, provider logins), `system.ts` (agent bus, terminals, browser router, macOS grants, git, search, speech), `services.ts` (dashboards and local servers), all built with `toolCommand()` alone; `suggest.ts` for a line built with `suggestCommand()`, only in a util that already loads the executor. A util imports the function (`import { claudeLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai"`) and calls it; it never writes `tools …` or calls `toolCommand()` itself, and lint-rules `no-tool-command-in-utils` fails that outside this folder. A new command is a new function there. A copy of `src/utils` in another repository edits only this folder
+Rules from the shared utilities (the rest of the catalog: `tools ts skeleton src/utils --exported --top-level`):
+
+- A module's folder is `moduleDir(import.meta)`, a lazy load beside it `requireSibling(import.meta, name)` (`src/utils/fs/module-dir.ts`). Bun-only `import.meta.dir`/`.dirname` and a bare `require()` break every Vite dashboard that loads the module; lint-rules `no-bun-only-import-meta` and `no-bare-require-in-utils` fail them.
+- Every `~/.genesis-tools/...` path comes from `toolDataDir(tool, ...)` / `genesisToolsDir(...)` (`src/utils/storage/root.ts`, honours `GENESIS_TOOLS_HOME`), or `genesisToolsDirIn(home, ...)` for a sandbox or fixture home. Never hand-join any home with `".genesis-tools"`: lint-rules `no-hand-joined-genesis-tools` fails it outside tests and `plugins/**`.
+- Ctrl-C is `withInterrupt(fn)` (`src/utils/cli/interrupt.ts`), never `process.once("SIGINT")`: `./tools` and the app launcher forward each Ctrl-C, and a `once` listener lets the second copy kill the process mid-cleanup.
+- A tool that deletes user files or caches goes through `src/utils/rm/` (`planRemoval()`, `moveToTrash()`), never `rmSync`; `tools doctor` uses `removeForDoctor()` (`src/doctor/lib/remove.ts`). In a test process the trash refuses any path outside the test's temp folder.
+- A new MCP tool group is one row in `TOOL_GROUPS` (`src/genesis-tools-mcp/lib/groups.ts`) and one `src/<tool>/mcp/genesis-tools.ts` that exports `toolGroup()` (`src/utils/mcp/`).
+- A util never writes `tools …` or calls `toolCommand()` itself: it imports the command's function from `src/utils/genesis-tools/tools/` (`ai.ts`, `system.ts`, `services.ts`; `suggest.ts` only in a util that already loads the executor), and a new command is a new function there. lint-rules `no-tool-command-in-utils` fails it outside that folder. A copy of `src/utils` in another repository edits only that folder.
+- A link to a GenesisTools app comes from `routerLink()`, a new kind of link is a new `LinkTargets` entry: `.claude/rules/genesis-links.md`.
 
 Tool-specific logic stays in the tool directory (e.g., `src/har-analyzer/core/`).
 
@@ -81,13 +62,7 @@ Most tools follow these common patterns:
     - non-TTY, or an invalid value: print `suggestEnumFlag("tools my-tool", "--flag", VALUES)` from `@genesiscz/utils/cli` (possible values plus a filled `suggestCommand` line), set `process.exitCode = 1`, return. Do not prompt.
     - Reference: `src/config/commands/profiling.ts` (`--scopes`, `--detail`).
 
-**Output Handling**:
-
--   Support multiple output destinations: file, clipboard, stdout
--   Use `clipboardy` for clipboard operations
--   Use `picocolors` (or `chalk`) for colored terminal output (but strip ANSI codes for non-TTY)
--   Respect `--silent` and `--verbose` flags
--   **Human inventory lists (models, accounts, ports, processes, …):** do **not** dump multi-column data via clack `out.log.info`. Use the port-style table helpers from `@genesiscz/utils/table` + `out.println` — see **CLI inventory tables** below.
+**Output Handling**: multiple destinations, colors, `--silent` / `--verbose`, and human inventory lists (never multi-column data through `out.log.info`): `.claude/rules/logging.md`.
 
 **Process Execution**:
 
@@ -99,75 +74,21 @@ Most tools follow these common patterns:
     a call leaves it only when it really needs its own bound.
 -   Use `Bun.spawn()` for executing external commands
 -   Handle stdout/stderr streams properly using `new Response(proc.stdout).text()`
-
-**File Operations**:
-
--   Use Bun's native file APIs (`Bun.write()`) for better performance
+-   Write files with Bun's native file APIs (`Bun.write()`).
 
 ## How to Write Tools
 
 See `docs/tool-template.md` for complete templates (@inquirer + @clack/prompts), common patterns, and best practices.
 
-## Performance Benchmarks (2026-03-16, hyperfine, Apple Silicon)
+## Logging & output (core)
 
-| What | Mean | Notes |
-|---|---|---|
-| Bun tool invocation (`tools <cmd>`) | **~86ms** | Baseline for any tool |
-| `osascript` notification | **~120ms** | Unreliable banners on modern macOS |
-| `terminal-notifier` native binary | **~295ms** | Reliable; bypass rbenv shim (adds +120ms) |
+Read `.claude/rules/logging.md` before you add or change console output, a log line, a table, a profiler timer, or code that reads the day logs. It loads by itself with `commands/`, entry points, `src/utils/logger/`, `src/utils/cli/`, `src/utils/table.ts` and `scripts/`.
 
-When spawning tools from shell hooks, always background (`&`) — 86ms Bun startup is invisible when async.
-
-## Debugging & Logging
-
-- **Triage from logs first.** When any tool misbehaves, the FIRST step is to read `~/.genesis-tools/logs/<today>.log` (and recent days) and `rg` for the tool name / error string — *before* forming hypotheses or reproducing. Logs are day-stamped pino JSON. This bug (`sqlite-vec extension failed to load`) was in the logs for weeks before it was triaged; checking them first collapses hours of guessing into one `rg`. `tools genesis-tools logs failures` lists the failed runs (each with its stderr tail and caller), `logs day --level warn --tool <name>` filters the day log through rg, and `logs profile` lists slow timers.
-- **Only today and yesterday stay plain.** The daily pass (started by the logger once a day, `src/utils/logger/daily-trigger.ts`) stores every older `<date>.log`, `<date>-profiling.log` and `<date>-failures.jsonl` as `<name>.zst`. Read an older day with `tools genesis-tools logs day|failures|profile --since <when>` (they open either form), `tools compress cat <plain name> | rg <pattern>` (the plain name finds the `.zst`; no CLI needed), or `rg -z <pattern> <file>.zst` (rg runs the `zstd` CLI); `rg -z` also reads plain files, so `rg -z <pattern> ~/.genesis-tools/logs/2026-10-0*` covers both. Code that reads a day file goes through `dayLogPath` / `listDayLogs` (`@genesiscz/utils/logger/day-logs`, kind `log`, `profiling` or `failures`), the readers in `@genesiscz/utils/fs/read-lines` (`readLinesSync`, `readLastLines`) and `ripgrepFiles` (`@genesiscz/utils/compress/search`), which open either form; never build `<date>.log` by hand. Details: `.claude/rules/compress.md`.
-- **Profiling lines live in their own file:** `~/.genesis-tools/logs/<date>-profiling.log` (e.g. `2026-09-03-profiling.log`; `.zst` after yesterday, `tools genesis-tools logs profile` reads both), one `[profile:<scope>] <label> <ms>` line per measurement plus a `── <title> ──` summary table per scope. Enable per run with `PROFILE=1`, `PROFILE=*` or `PROFILE=<scope,scope>` (scope names in `src/utils/profile/scopes.ts`); an env `PROFILE` also echoes to stderr, `PROFILE_TO_STDERR=0` silences that. Persistent profiling comes from `tools config profiling`.
-- **To ADD a measurement, use the shared profiler, never a hand-rolled `performance.now()` pair.** `import { profiler } from "@genesiscz/utils/profile"`, then one module-level `const prof = profiler.scope("<scope>")` (see `src/du/lib/engine.ts:21`). Verbs: `prof.measure(label, fn)` / `prof.measureAsync(label, fn)` wrap a call, `prof.start(label)` returns a stop function, `prof.section(label)` works with `using`, `prof.mark(label)` records a point in time, `prof.summary(title)` prints the table at the end. A disabled scope is a no-op, so a timer may sit in a hot path; put only work you would not otherwise do behind `prof.enabled`, and hide per-file or per-item timers behind `profiler.detail === "all"` so `--detail phases` stays readable. **A new scope name must be added to `PROFILER_SCOPE_NAMES` in `src/utils/profile/scopes.ts`**, or `--scopes` cannot offer it and `PROFILE=<name>` is a guess.
-- **Log enough to triage from logs alone.** Every tool must emit enough via `@genesiscz/utils/logger` that a future reader can reconstruct what happened without re-running it: log key decision branches, every external-resource access (DB opens with their paths, spawned commands, API URLs), mode/config resolution, and result counts.
-- **Never swallow errors.** A bare `catch {}` is forbidden. At minimum `logger.debug` (or `.warn`) the caught error with context. A swallowed error is a future debugging session that did not have to happen.
-
-- **Day-log lines from before 2026-10-12 include test output**: until #490 every `bun test` process wrote into the real day log. Before fixing a logged error from then, check whether its pid also logged a `gt-test-tmp` path or a `*.test.ts:<line>` frame that day (`tools compress cat ~/.genesis-tools/logs/<date>.log | rg <pid>`: those days are `.zst`); if so it is a fixture.
-
-## Logging & output
-
-Two cleanly separated layers (the 2026-05 logger+out overhaul):
-
-- **`logger` — diagnostics.** `import { logger } from "@genesiscz/utils/logger"` (named only; there is **no** default export and no `consoleLog` — they were removed). Writes to the day-stamped file **always** (debug+), and to the console **on stderr**, gated by level. `logger.*` is **never** the result channel. Global `-v` promotes file-only `logger.debug` to the console; `-vv` → trace (only on tools that opted into `--trace`).
-- **`out` — user-facing.** `import { out } from "@genesiscz/utils/logger"` (or `const { log, out } = logger.scoped("comp")`). clack-shaped. **`out.result(data)` / `out.print(raw)` are the ONLY writers to stdout** (the machine result). `out.log.*` / spinners / notes / prompts → stderr. Never emit a serialized result via `logger.*` — that is `out.result()`'s job (CI guard enforces this).
-- **`const { log, out } = logger.scoped("comp")`:** `log.*` = logger-only (diagnostics); `log.out.*` / `log.tee.*` = both (component-tagged single mirror); destructured `out.*` = only-out (no logger mirror).
-- **Every commander entrypoint** ends with `await runTool(program, { tool })` (from `@genesiscz/utils/cli`) — it owns `-v`/`--readme`/help registration, console-level resolution, and the `{tool}` log binding, then `parseAsync`. It also records each failed run into the failures log (`src/utils/cli/failures/`); an entry point without commander calls `watchToolRun({ tool })` itself and `noteUsageError(message)` when its own parser refuses the command line. The subprocess **spawner** is `execTool` (renamed from the old `runTool`).
-- **`scripts/ci/logging-guard.sh`** enforces this convention repo-wide in CI: no default/extension/relative-path/any-name import of the logger module (root `./tools` and `scripts/` included — not just `src/`), no bare `logger.*(SafeJSON.stringify(…))` result dumps, no reintroduced transitional shims, and that the browser-client isolation test exists. Browser-client trees never value-importing `@genesiscz/utils/logger` is authoritatively enforced by `src/logger/client-isolation.test.ts`.
-- **`@genesiscz/utils/cli/ui` — high-density CLI status.** For tools that emit many short status lines per command (e.g. `tools stash`), clack's `│ ◆ ●` box-drawing is the wrong texture. Import `{ ui }` from `@genesiscz/utils/cli/ui` to get plain stderr writes with chalk decoration (`ui.ok/info/warn/err/dim/header/kv/section/raw`). Use this INSTEAD of `out.log.*` for high-density status; keep `out.log.*` for clack-shaped task lifecycles. `out.print()` / `out.result()` are still the only writers to stdout for machine-readable output.
-- **CLI inventory tables (port-style) — prefer this for multi-column human output.** Canonical helpers live in `@genesiscz/utils/table` (not reimplemented per tool). Reference UIs: `tools port`, `tools ai-proxy models`, `tools macos swap`.
-
-  | Need | API | Notes |
-  |---|---|---|
-  | Boxed inventory table | `createBoxTable(headers)` | `cli-table3` + shared box chars; `table.push(row)` then `out.println(table.toString())` |
-  | Title box | `renderCliHeader(title, subtitle)` | Cyan frame via `out.println` |
-  | Section + key rows | `renderCliSection` / `renderCliKeyRow` | Column legends, detail blocks |
-  | Status cell | `formatDotStatus("ok"\|"warn"\|"err"\|"dim", label)` | `● ok` / `● fail` coloring |
-  | Cell truncate | `truncateDisplay(value, max)` | Em dash for empty; `…` ellipsis |
-  | Plain padded table | `formatTable(rows, headers)` | Dense / non-TTY dumps without box borders |
-  | Machine-readable | `out.result(...)` + `--json` | Never put JSON through the table path |
-
-  Pattern:
-
-  ```typescript
-  import { out } from "@genesiscz/utils/logger";
-  import { suggestCommand } from "@genesiscz/utils/cli";
-  import { createBoxTable, formatDotStatus, renderCliHeader, renderCliSection } from "@genesiscz/utils/table";
-  import pc from "picocolors";
-
-  renderCliHeader("Proxy Models", "ids clients can call");
-  const table = createBoxTable(["PROXY ID", "PROBE"]);
-  table.push([pc.white(id), formatDotStatus("ok", "ok")]);
-  out.println(table.toString());
-  renderCliSection("Columns");
-  // footer: counts · Next/Debug via suggestCommand("tools <tool>", { replaceCommand: [...] })
-  ```
-
-  **Do not** hand-roll `new Table({ chars: … })` or copy/paste box-drawing from `src/port/` — import from `@genesiscz/utils/table`. Keep domain coloring (framework names, etc.) in the tool's `display.ts`; keep the table chrome shared.
+- **`logger` is diagnostics, `out` is user-facing.** `import { logger, out } from "@genesiscz/utils/logger"` (named only). `logger.*` writes the day file always and stderr by level, and is **never** the result channel.
+- **`out.result(data)` / `out.print(raw)` are the ONLY writers to stdout.** Never emit a serialized result via `logger.*` (`scripts/ci/logging-guard.sh` enforces it).
+- **Every commander entrypoint ends with `await runTool(program, { tool })`** (`@genesiscz/utils/cli`); the subprocess spawner is `execTool`.
+- **Triage from logs first, and log enough to triage from logs alone.** Read `~/.genesis-tools/logs/<today>.log` (or `tools genesis-tools logs failures`) before any hypothesis. Code that reads a day file goes through `dayLogPath` / `listDayLogs` and the readers that open `.zst` too; never build `<date>.log` by hand.
+- **Never swallow errors.** A bare `catch {}` is forbidden; at minimum `logger.debug` (or `.warn`) the caught error with context. A new timer is `profiler.scope("<scope>")` from `@genesiscz/utils/profile`, never a hand-rolled `performance.now()` pair, and a new scope name goes into `PROFILER_SCOPE_NAMES`.
 
 ## Spawning a tool vs calling its library
 
@@ -202,6 +123,8 @@ own CLI to reach `summarize`.
 [[reference_tools_path_runs_main_repo]]. Use `execTool` / `execToolInteractive` from
 `@genesiscz/utils/cli`: they resolve the binary worktree-safely and route through the real
 wrapper, and therefore through the launcher.
+
+From a shell hook, start `tools` in the background (`&`): Bun's start costs about 86 ms (hyperfine, 2026-03-16), invisible when async.
 
 ## Web servers & ports
 

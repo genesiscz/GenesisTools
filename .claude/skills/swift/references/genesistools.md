@@ -15,6 +15,18 @@ GenesisTools checkout.
 - The data comes from the `tools` CLI (TypeScript, Bun). Data handling and caching belong on the
   TypeScript side, because the CLI serves more than the app (Martin, 2026-10-08).
 
+## Spans in every load
+
+Moved here from `.claude/rules/macos-app.md` (2026-11-11), which keeps the rule that every load runs in a span.
+Every load that can be slow runs in a span: `HubPerf.begin("area.what", detail)` then `span.end()`, or
+`HubPerf.measure(...)`. Spans, stalls and hang samples go to `~/.genesis-tools/logs/app-perf.log` (stolen `PerfLog`;
+a `.main` suffix means it ran on the main thread; `SLOW` marks at 100 ms). `HangWatch` samples the main thread into
+`~/.genesis-tools/logs/hangs/` after 1 s. Summary: `bun scripts/perf-report.ts --tail 5000` (run in
+`src/macos/GenesisTools`). Watch it while you click: `tail -f ~/.genesis-tools/logs/app-perf.log | rg 'SLOW|stall|main '`.
+A span times work, not the SwiftUI layout it causes: after a state change the renderer runs in the next run-loop
+passes. `HubMainBusy.measure("area.what")` (HubPerf.swift) logs the main thread's busy time over the next 600 ms,
+which is what an append or a reload really costs on screen.
+
 ## Measuring here
 
 - `tools hub dev monitor --min-delay-ms 30000` under the Monitor tool (re-arm every 30 min).
