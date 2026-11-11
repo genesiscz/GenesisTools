@@ -2,7 +2,7 @@
 // (2026-11-10): a run record, a journal, transcripts with a response written as two rows, an agent only the journal
 // knows, and a run that left no record. Ported from the session-analyzer skill's `scripts/workflows.test.ts`.
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claudeHooks } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/harness-hooks";
@@ -408,6 +408,37 @@ describe("a session's agent listing", () => {
 
     test("`ids` reads only the named agents, in a run folder too", () => {
         expect(listSubagents(resolved, { ids: ["ccc3"] }).subagents.map((agent) => agent.id)).toEqual(["ccc3"]);
+    });
+
+    test("a workflow agent the lead revived is one sub-agent with both files, not two agents with one id", () => {
+        const local = buildSession();
+        const folder = join(local.replace(/\.jsonl$/, ""), "subagents");
+        const first = join(folder, "workflows", RUN_A, "agent-aaa1.jsonl");
+        const revival = join(folder, "agent-aaa1.jsonl");
+        // A revival has no meta file: the harness writes the SendMessage and the reply into the direct folder.
+        writeFileSync(
+            revival,
+            jsonl([
+                {
+                    type: "user",
+                    timestamp: "2026-11-01T11:00:00.000Z",
+                    message: { role: "user", content: "one more thing" },
+                },
+                assistantRow("msg_9", "2026-11-01T11:00:05.000Z", { type: "text", text: "done" }),
+            ])
+        );
+        const agents = listSubagents({ ...resolved, filePath: local }).subagents;
+        expect(agents.map((agent) => agent.id)).toEqual(["direct1", "aaa1", "ccc3", "ddd4"]);
+
+        const revived = agents.find((agent) => agent.id === "aaa1");
+        expect(revived).toMatchObject({
+            workflow: { runId: RUN_A, label: "review:bugs", phase: "Review" },
+            description: "review:bugs",
+            startedAt: "2026-11-01T10:00:05.000Z",
+            filePath: revival,
+            files: [first, revival],
+            bytes: statSync(first).size + statSync(revival).size,
+        });
     });
 });
 

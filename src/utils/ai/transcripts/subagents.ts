@@ -75,8 +75,16 @@ export interface SessionSubagent {
     /** When its transcript was last written. */
     lastAt: string;
     state: SubagentState;
+    /** The size of every file in `files`. */
     bytes: number;
+    /** The transcript it wrote last: the one to tail. */
     filePath: string;
+    /**
+     * Every transcript of this agent id, oldest first. Almost always one. A workflow agent that the lead revives with
+     * SendMessage keeps its first transcript in the run folder and writes the revival into a second file directly in
+     * the sub-agent folder, with no meta file.
+     */
+    files: string[];
 }
 
 export interface SessionSubagents {
@@ -330,6 +338,7 @@ function readAgentFresh(
             lastAt: new Date(stat.mtimeMs).toISOString(),
             bytes: stat.size,
             filePath,
+            files: [filePath],
             ...(scanned ? { toolCalls: scanned.toolCalls, agentCalls: scanned.agentCalls } : {}),
         };
         return { agent, working, stat: { ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs } };
@@ -344,8 +353,57 @@ function readAgentFresh(
 }
 
 /**
- * Every sub-agent of a Claude session, oldest first: the agents the session and its agents started, and the agents
- * of its Workflow tool runs (each with `workflow.runId`). Other providers have none on disk: an empty list.
+ * One agent from the several files that carry its id, oldest first. Who it is comes from the oldest file that says
+ * (the run folder's file has the meta; the revival file has none), where it stands comes from the newest.
+ */
+function mergeAgentFiles(parts: SessionSubagent[]): SessionSubagent {
+    const newest = parts.at(-1);
+    const [oldest] = parts;
+
+    if (!oldest || !newest || parts.length === 1) {
+        return parts[0] as SessionSubagent;
+    }
+
+    const firstOf = <K extends keyof SessionSubagent>(key: K): SessionSubagent[K] =>
+        (parts.find((part) => part[key] !== null && part[key] !== undefined) ?? oldest)[key];
+    const toolCalls = parts.some((part) => part.toolCalls !== undefined)
+        ? parts.reduce((sum, part) => sum + (part.toolCalls ?? 0), 0)
+        : undefined;
+    const agentCalls = parts.some((part) => part.agentCalls !== undefined)
+        ? parts.flatMap((part) => part.agentCalls ?? [])
+        : undefined;
+
+    return {
+        ...oldest,
+        workflow: firstOf("workflow"),
+        name: firstOf("name"),
+        description: firstOf("description"),
+        agentType: firstOf("agentType"),
+        model: firstOf("model"),
+        toolUseId: firstOf("toolUseId"),
+        spawnDepth: firstOf("spawnDepth"),
+        requestShape: firstOf("requestShape"),
+        teamName: firstOf("teamName"),
+        taskKind: firstOf("taskKind"),
+        spawnPrompt: firstOf("spawnPrompt"),
+        startedAt: firstOf("startedAt"),
+        isFork: parts.some((part) => part.isFork),
+        transcriptModel: newest.transcriptModel ?? firstOf("transcriptModel"),
+        lastAt: newest.lastAt,
+        state: newest.state,
+        bytes: parts.reduce((sum, part) => sum + part.bytes, 0),
+        filePath: newest.filePath,
+        files: parts.flatMap((part) => part.files),
+        ...(toolCalls === undefined ? {} : { toolCalls }),
+        ...(agentCalls === undefined ? {} : { agentCalls }),
+    };
+}
+
+/**
+ * Every sub-agent of a Claude session, oldest first, one per agent id: the agents the session and its agents started,
+ * and the agents of its Workflow tool runs (each with `workflow.runId`). An id with two files is one agent
+ * (`files`): listed per file, session 1d7131fa had 7 ids twice, and a tree of them had two nodes with one id
+ * (2026-11-10). Other providers have none on disk: an empty list.
  */
 export function listSubagents(resolved: ResolvedTranscript, options: ListSubagentsOptions = {}): SessionSubagents {
     const now = options.now ?? Date.now();
@@ -356,7 +414,7 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
 
     // Most sessions never spawn a sub-agent: a missing folder lists as nothing and is not logged.
     const wanted = options.ids ? new Set(options.ids) : null;
-    const subagents = claudeSubagentTranscripts(resolved.filePath)
+    const files = claudeSubagentTranscripts(resolved.filePath)
         .filter((file) => (wanted ? wanted.has(file.agentId) : true))
         .map((file) =>
             readAgent(file.dir, basename(file.transcript), {
@@ -368,6 +426,16 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
         )
         .filter((agent): agent is SessionSubagent => agent !== null)
         .sort((a, b) => (a.startedAt ?? a.lastAt).localeCompare(b.startedAt ?? b.lastAt));
-    logger.trace({ session: resolved.filePath, count: subagents.length }, "[transcripts] listed sub-agents");
+    const byId = new Map<string, SessionSubagent[]>();
+
+    for (const file of files) {
+        byId.set(file.id, [...(byId.get(file.id) ?? []), file]);
+    }
+
+    const subagents = [...byId.values()].map(mergeAgentFiles);
+    logger.trace(
+        { session: resolved.filePath, count: subagents.length, files: files.length },
+        "[transcripts] listed sub-agents"
+    );
     return { sessionId: resolved.sessionId, subagents };
 }
