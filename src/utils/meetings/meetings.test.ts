@@ -288,6 +288,27 @@ describe("meetings config", () => {
         expect(sourceFolders(await config.read(), "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);
     });
 
+    test("version 6 nests repeat without losing either setting, and persists the migration once", async () => {
+        const config = store();
+        await config.storage.setConfig({
+            version: 5,
+            global: { playback: { listen: { repeat: false, repeatGapSec: 2.5 } } },
+        });
+        const read = await config.read();
+        expect(read.global.playback.listen.repeat).toEqual({ enabled: false, gapSec: 2.5 });
+        const reopened = await config.storage.getConfig();
+        expect(reopened).toMatchObject({
+            version: 6,
+            global: { playback: { listen: { repeat: { enabled: false, gapSec: 2.5 } } } },
+        });
+        expect(SafeJSON.stringify(reopened)).not.toContain("repeatGapSec");
+        const nested = meetingsConfigSchema.parse({
+            version: 5,
+            global: { playback: { listen: { repeat: { enabled: true, gapSec: 3 }, repeatGapSec: 9 } } },
+        });
+        expect(nested.global.playback.listen.repeat).toEqual({ enabled: true, gapSec: 3 });
+    });
+
     test("a version 3 file nests the tone under listen.tone, and a key already there wins", async () => {
         const v3 = { version: 3, global: { playback: { listen: { beep: false, beepLeadSec: 0.8, repeat: false } } } };
         const raw: Record<string, unknown> = structuredClone(v3);
@@ -295,7 +316,7 @@ describe("meetings config", () => {
         expect(migrateMeetingsConfig(raw)).toBe(true);
         expect(raw).toEqual({
             version: MEETINGS_CONFIG_VERSION,
-            global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: false } } },
+            global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: { enabled: false } } } },
         });
         expect(migrateMeetingsConfig(raw)).toBe(false);
         expect(meetingsConfigSchema.parse(v3).global.playback.listen.tone).toEqual({
@@ -312,7 +333,7 @@ describe("meetings config", () => {
         expect((await config.read()).global.playback.listen.tone.leadSec).toBe(0.8);
         expect(await config.storage.getConfig()).toEqual({
             version: MEETINGS_CONFIG_VERSION,
-            global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: false } } },
+            global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: { enabled: false } } } },
         });
     });
 

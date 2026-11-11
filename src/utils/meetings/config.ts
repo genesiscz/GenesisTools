@@ -37,7 +37,7 @@ export const projectNameSchema = z
 const strings = z.array(z.string().trim().min(1)).default([]);
 
 /** The config shape this code writes. Older files are migrated on the first read (`migrateMeetingsConfig`). */
-export const MEETINGS_CONFIG_VERSION = 5;
+export const MEETINGS_CONFIG_VERSION = 6;
 
 /**
  * How a meeting finds its project, by the facts every meeting has: its calendar entry, its title and its people. A
@@ -309,9 +309,13 @@ const listenSchema = z.object({
     /** The tone before the asked spot (version 3 kept `beep` and `beepLeadSec` flat here). */
     tone: toneSchema.prefault({}),
     /** Plays the clip again each time it ends, until the question is answered, so it can be heard while typing. */
-    repeat: z.boolean().default(true),
-    /** The pause between two plays of a repeated clip. */
-    repeatGapSec: z.number().min(0).max(10).default(1),
+    repeat: z
+        .object({
+            enabled: z.boolean().default(true),
+            /** The pause between two plays of a repeated clip. */
+            gapSec: z.number().min(0).max(10).default(1),
+        })
+        .prefault({}),
     /**
      * The longest stretch a Moment of an item or a speaker's turn plays: a longer one plays its first this many seconds
      * and its label says so. A range or a selection the caller bounds itself is not capped.
@@ -652,6 +656,29 @@ function migrateToV5(raw: Record<string, unknown>): void {
     delete listen.padSec;
 }
 
+/** Version 6 groups the repeat switch with its gap. A value already in the new place wins. */
+function migrateToV6(raw: Record<string, unknown>): void {
+    const global = isObject(raw.global) ? raw.global : undefined;
+    const playback = global && isObject(global.playback) ? global.playback : undefined;
+    const listen = playback && isObject(playback.listen) ? playback.listen : undefined;
+    if (!listen || (listen.repeat === undefined && listen.repeatGapSec === undefined)) {
+        return;
+    }
+
+    const previous = listen.repeat;
+    const repeat = isObject(previous) ? previous : {};
+    if (typeof previous === "boolean") {
+        repeat.enabled = previous;
+    }
+
+    if (listen.repeatGapSec !== undefined) {
+        repeat.gapSec ??= listen.repeatGapSec;
+    }
+
+    listen.repeat = repeat;
+    delete listen.repeatGapSec;
+}
+
 /**
  * Moves an older config to the current places, in place, one version step at a time. A file without a version is
  * version 1. Returns whether anything changed; a current config is left alone, so a second run changes nothing.
@@ -673,6 +700,7 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
 
     migrateToV4(raw);
     migrateToV5(raw);
+    migrateToV6(raw);
     raw.version = MEETINGS_CONFIG_VERSION;
     return true;
 }

@@ -400,7 +400,7 @@ class TerminalAdapter implements ListenAdapter {
             player: this.deps.player,
             vocabulary: this.deps.vocabulary,
             delayMs: listen.delaySec * 1000,
-            ...(listen.repeat ? { repeatGapMs: listen.repeatGapSec * 1000 } : {}),
+            ...(listen.repeat.enabled ? { repeatGapMs: listen.repeat.gapSec * 1000 } : {}),
             ...(view.said ? { said: view.said } : {}),
             ...(view.context ? { context: view.context } : {}),
             ...(asked.earlier ? { earlier: asked.earlier } : {}),

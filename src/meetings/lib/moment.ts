@@ -111,7 +111,7 @@ export interface Moment {
     tone?: { atSec: number; sound: ToneSound };
     /** Seconds a surface waits before it plays the clip, so what it shows is read first. */
     delaySec: number;
-    /** The pause before the clip plays again; absent when `playback.listen.repeat` is off. */
+    /** The pause before the clip plays again; absent when `playback.listen.repeat.enabled` is off. */
     repeatGapSec?: number;
     /** The frame on each recorded display at the spot; absent without a screen recording there. */
     screen?: MomentFrame[];
@@ -473,7 +473,7 @@ function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment 
               }
             : {}),
         delaySec: listen.delaySec,
-        ...(listen.repeat ? { repeatGapSec: listen.repeatGapSec } : {}),
+        ...(listen.repeat.enabled ? { repeatGapSec: listen.repeat.gapSec } : {}),
     };
 }
 
