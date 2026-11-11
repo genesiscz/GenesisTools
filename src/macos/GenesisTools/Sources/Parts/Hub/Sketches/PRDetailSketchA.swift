@@ -156,7 +156,7 @@ struct PRDetailSketchA: View {
                     }
                     .font(.system(size: 11.5, design: .monospaced))
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(Text(verbatim: "\(add) lines added, \(del) removed"))
+                    .accessibilityLabel(Text(verbatim: "\(Plural.count(add, "line")) added, \(del) removed"))
                 }
                 if let approvals = pr.approvals, approvals > 0 {
                     Label("\(approvals)", systemImage: "hand.thumbsup").instantTooltip(Plural.count(approvals, "approval"))

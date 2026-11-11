@@ -152,6 +152,7 @@ private struct UsageSketchDaemonRowA: View {
         if !task.enabled { return ("pause.circle", .secondary, "Off") }
         guard let stats, let last = stats.lastRun else { return ("circle.dashed", .secondary, "No run in 24 hours") }
         if last.status == "failed" || last.status == "killed" { return ("xmark.octagon.fill", .red, "Last run failed") }
+        if last.status == "unfinished" { return ("questionmark.circle.fill", .orange, "Last run did not finish") }
         if trouble != nil { return ("exclamationmark.triangle.fill", .orange, "Some runs failed") }
         return ("checkmark.circle.fill", .green, "Last run ok")
     }

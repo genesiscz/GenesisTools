@@ -116,6 +116,7 @@ struct UsageSettingsSketchPanesB: View {
     @Environment(\.nativeSettingsIndexing) private var indexing
     /// The open tab. View state only: the page opens on Sessions.
     @State private var tab: UsageSketchPaneTabB = .sessions
+    @ObservedObject private var center = NativeSettingsHighlightCenter.shared
     @AppStorage(GitCommitClickMode.defaultsKey) private var commitClick = GitCommitClickMode.chooseThenShow.rawValue
     @AppStorage(HubResizeGrips.key) private var resizeGrips = HubResizeGrips.auto.rawValue
     @AppStorage(HubDiffLayout.key) private var diffLayout = HubDiffLayout.auto.rawValue
@@ -143,11 +144,42 @@ struct UsageSettingsSketchPanesB: View {
                 section(tab)
             }
         }
+        // A search hit or the `lists` anchor opens the tab that holds its row first, so the row is on screen to pulse.
+        .onChange(of: center.token, initial: true) {
+            guard let anchor = center.anchor, let owner = Self.tab(for: anchor),
+                  let at = center.requestedAt, Date().timeIntervalSince(at) < 3 else { return }
+            tab = owner
+        }
     }
 
+    /// The tab of each searchable row, by its settings identifier.
+    static let tabOfKey: [String: UsageSketchPaneTabB] = [
+        "hub.sessions.hideShared": .sessions, "sessionTranscript.outputFold": .sessions,
+        "hub.diff.layout": .changes, "hub.files.foldAbove": .changes, "hub.commitPicker.click": .changes,
+        "hub.prs.descriptionWhole": .prs, "hub.prs.rowCI": .prs, "hub.prs.hoverChecks": .prs,
+        "hub.inbox.contextOpen": .inbox,
+        "hub.activity.allActions": .activity, "hub.activity.commitPrefix": .activity,
+        "hub.agents.openNewest": .agents, "hub.agents.foldFinished": .agents, "hub.agents.motion": .agents,
+        "hub.procs.energy": .agents,
+        "hub.cleanup.idleDays": .worktrees,
+        "hub.resizeGrips": .window, "hub.chrome.glassButton": .window,
+    ]
+
+    static func tab(for anchor: String) -> UsageSketchPaneTabB? {
+        if anchor == "lists" { return .prs }
+        guard anchor.hasPrefix("search/") else { return nil }
+        return tabOfKey.first { anchor.hasSuffix("/" + $0.key) }?.value
+    }
+
+    @ViewBuilder
     private func section(_ tab: UsageSketchPaneTabB) -> some View {
-        UsageSettingsSketchSectionB(tab.title, subtitle: tab.subtitle) {
+        let page = UsageSettingsSketchSectionB(tab.title, subtitle: tab.subtitle) {
             rows(tab)
+        }
+        if tab == .prs {
+            page.nativeSettingsAnchor("lists")
+        } else {
+            page
         }
     }
 

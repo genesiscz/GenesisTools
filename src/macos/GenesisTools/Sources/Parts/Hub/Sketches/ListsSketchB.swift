@@ -608,7 +608,8 @@ extension ListsSketchB {
             let shown = all.filter { entry in
                 (pick.bucket == nil || entry.bucket == pick.bucket) && (pick.project == nil || entry.session.projectName == pick.project)
             }
-            let open = pick.open ?? shown.first?.id
+            // An open id that the filters hide no longer opens anything: the first shown line opens instead.
+            let open = pick.open.flatMap { id in shown.contains { $0.id == id } ? id : nil } ?? shown.first?.id
             VStack(spacing: 0) {
                 header(all: all, shown: shown.count)
                 ScrollView {
@@ -850,12 +851,13 @@ extension ListsSketchB {
             // A push takes the commits from its head down to the next older push's head (or the end of the page).
             var groups: [CommitGroup] = []
             var taken = Set<String>()
+            let pushHeads = Set(pushes.compactMap(\.sha))
             for push in pushes {
                 guard let head = push.sha, let start = commits.firstIndex(where: { $0.sha == head }) else { continue }
                 var run: [TimelineEvent] = []
                 for commit in commits[start...] {
                     if taken.contains(commit.id) { break }
-                    if commit.id != commits[start].id, pushes.contains(where: { $0.sha == commit.sha }) { break }
+                    if commit.id != commits[start].id, let sha = commit.sha, pushHeads.contains(sha) { break }
                     run.append(commit)
                     taken.insert(commit.id)
                 }

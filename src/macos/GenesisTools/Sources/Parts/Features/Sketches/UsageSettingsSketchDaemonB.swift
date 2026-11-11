@@ -140,12 +140,19 @@ struct UsageSettingsSketchDaemonB: View {
 
     // MARK: Detail
 
+    /// An unfinished last run still inside its timeout is running, as option A and the current page read it.
+    private static func lastRunInFlight(_ task: DaemonTaskConfig, _ stats: DaemonTaskStats?) -> Bool {
+        guard let last = stats?.lastRun, last.status == "unfinished", let started = SessionFormat.parseISO(last.startedAt) else { return false }
+        return Date().timeIntervalSince(started) * 1000 < Double(task.timeoutMs)
+    }
+
     private func detail(_ task: DaemonTaskConfig) -> some View {
         let stats = store.stats(for: task.name)
         let running = store.runningNow.contains(task.name)
         return UsageSettingsSketchSectionB(task.name, subtitle: task.description) {
             NativeSettingsRow(
-                DaemonFormat.stateTitle(enabled: task.enabled, stats: stats, running: running, lastRunInFlight: false),
+                DaemonFormat.stateTitle(enabled: task.enabled, stats: stats, running: running,
+                                         lastRunInFlight: Self.lastRunInFlight(task, stats)),
                 detail: "\(task.schedule) · timeout \(DaemonFormat.duration(Double(task.timeoutMs))) · priority \(task.priority) · \(Plural.count(task.retries, "retry", "retries"))"
             ) {
                 Button(running ? "Running…" : "Run now") { store.runNow(task) }

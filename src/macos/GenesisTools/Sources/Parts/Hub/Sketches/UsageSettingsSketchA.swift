@@ -76,13 +76,23 @@ struct UsageSettingsSketchLimitsA: View {
                            text: "No account has a polled limit yet.",
                            detail: "The usage poller records each account's windows (tools ai usage daemon register).")
             } else {
-                HStack(alignment: .top, spacing: 0) {
-                    accounts
-                        .frame(width: allWindows ? 900 : 470, alignment: .topLeading)
-                    Divider()
-                        .padding(.horizontal, 16)
-                    lanes
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                if allWindows {
+                    // Every window is a wide table: the lanes go below it, not beside a fixed 900 pt column.
+                    VStack(alignment: .leading, spacing: 16) {
+                        accounts
+                        Divider()
+                        lanes
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    HStack(alignment: .top, spacing: 0) {
+                        accounts
+                            .frame(width: 470, alignment: .topLeading)
+                        Divider()
+                            .padding(.horizontal, 16)
+                        lanes
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
                 }
             }
             spikes
@@ -395,6 +405,8 @@ struct UsageSketchAccountRowA: View, Equatable {
         if let room { parts.append("\(room.left) percent of the \(room.window) window left") } else { parts.append("no reading") }
         if !resetText.isEmpty { parts.append("resets in \(resetText)") }
         if !runOutText.isEmpty { parts.append(runOutText == "lasts" ? "lasts to its reset" : "runs out \(runOutText)") }
+        if let health = row.health { parts.append("poll \(health)") }
+        if let verdict = row.verdict { parts.append(verdict) }
         return parts.joined(separator: ", ")
     }
 }

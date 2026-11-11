@@ -180,7 +180,8 @@ struct UsageSketchSidebarAccountRowB: View, Equatable {
         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.white.opacity(0.1) : .clear))
         .liveRow(selected: selected)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: "\(row.account.accountName), \(room.map { "\($0.left) percent of the \($0.window) window left" } ?? "no reading"), \(resetLine)"))
+        .accessibilityLabel(Text(verbatim: [row.account.accountName, room.map { "\($0.left) percent of the \($0.window) window left" } ?? "no reading", resetLine,
+                                            row.health.map { "poll \($0)" } ?? "", row.verdict ?? ""].filter { !$0.isEmpty }.joined(separator: ", ")))
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
     }
 
@@ -206,14 +207,23 @@ struct UsageSettingsSketchLimitsB: View {
                 UsageEmpty(loading: usage.loading.contains(.limits), symbol: "gauge.with.dots.needle.0percent",
                            text: "No account has a polled limit yet.",
                            detail: "The usage poller records each account's windows (tools ai usage daemon register).")
-            } else if usage.selectedAccounts.isEmpty {
+            } else if picked.isEmpty {
                 overview
             } else {
-                ForEach(usage.table.rows.filter { usage.selectedAccounts.contains($0.id) }) { row in
+                ForEach(picked) { row in
                     accountPage(row)
                 }
             }
         }
+        // An account that left the table leaves the selection, so the page never shows an empty pick.
+        .onChange(of: usage.table.rows.map(\.id)) { _, ids in
+            let kept = usage.selectedAccounts.filter(ids.contains)
+            if kept != usage.selectedAccounts { usage.selectedAccounts = kept }
+        }
+    }
+
+    private var picked: [UsageTableRow] {
+        usage.table.rows.filter { usage.selectedAccounts.contains($0.id) }
     }
 
     // MARK: All accounts
@@ -468,7 +478,7 @@ struct UsageSketchRoomRowB: View, Equatable {
         .rowButton(cornerRadius: 6, action)
         .liveRow(selected: false)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: [row.account.accountName, room.map { "\($0.left) percent of the \($0.window) window left" } ?? "no reading", resetText, runOutText].filter { !$0.isEmpty }.joined(separator: ", ")))
+        .accessibilityLabel(Text(verbatim: [row.account.accountName, room.map { "\($0.left) percent of the \($0.window) window left" } ?? "no reading", resetText, runOutText, row.health.map { "poll \($0)" } ?? "", row.verdict ?? ""].filter { !$0.isEmpty }.joined(separator: ", ")))
         .accessibilityHint(Text("Opens this account's page"))
         .accessibilityAddTraits(.isButton)
     }
