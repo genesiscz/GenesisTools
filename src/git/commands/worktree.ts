@@ -447,15 +447,41 @@ function printResult(result: WorktreeBackupResult): void {
     ui.ok("Backed up. The worktree stays (no --remove).");
 }
 
-async function runBackup(path: string, options: BackupOptions): Promise<number> {
-    const maxCopyMb = Number(options.maxCopyMb ?? DEFAULT_WORKTREE_BACKUP_MAX_COPY_BYTES / (1024 * 1024));
+/**
+ * The `--max-copy-mb` value in bytes, or null for anything but a plain decimal number of MiB: `Number()` alone reads
+ * `""` as 0 and `0x10` as 16.
+ */
+export function parseMaxCopyMb(value: string | undefined): number | null {
+    if (value === undefined) {
+        return DEFAULT_WORKTREE_BACKUP_MAX_COPY_BYTES;
+    }
 
-    if (!Number.isFinite(maxCopyMb) || maxCopyMb < 0) {
+    if (!/^(\d+(\.\d*)?|\.\d+)$/.test(value)) {
+        return null;
+    }
+
+    return Math.round(Number(value) * 1024 * 1024);
+}
+
+/**
+ * 0 when the backup did what was asked, 2 when it is proven but `--remove` kept the worktree (a change or a process
+ * during the backup), 1 for any other refusal: a script can tell a usable backup from a failed one.
+ */
+export function backupExitCode(result: Pick<WorktreeBackupResult, "refusal" | "proven">): number {
+    if (result.refusal === null) {
+        return 0;
+    }
+
+    return result.proven ? 2 : 1;
+}
+
+async function runBackup(path: string, options: BackupOptions): Promise<number> {
+    const maxCopyBytes = parseMaxCopyMb(options.maxCopyMb);
+
+    if (maxCopyBytes === null) {
         out.log.error(`--max-copy-mb takes a number of MiB, such as 512; got "${options.maxCopyMb}".`);
         return 1;
     }
-
-    const maxCopyBytes = Math.round(maxCopyMb * 1024 * 1024);
 
     try {
         if (options.dryRun) {
@@ -480,7 +506,7 @@ async function runBackup(path: string, options: BackupOptions): Promise<number> 
             printResult(result);
         }
 
-        return result.refusal === null ? 0 : 1;
+        return backupExitCode(result);
     } catch (err) {
         out.log.error(err instanceof Error ? err.message : String(err));
         return 1;

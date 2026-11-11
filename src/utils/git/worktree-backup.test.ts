@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ExecCallOptions, Executor } from "@genesiscz/utils/cli/executor";
 import { TestRepo } from "./test-repo";
@@ -239,6 +239,73 @@ describe("worktree backup", () => {
         expect(result.refusal).toContain("locked (busy)");
         expect(result.folder).toBeNull();
         expect(existsSync(spare)).toBe(true);
+    });
+
+    it("a same-day backup in another root keeps the first safety ref, and copies a name ending in a backslash", async () => {
+        const first = "refs/backups/worktrees/2026-11-09-repo-detached";
+        const firstHead = await repo.git(["rev-parse", "--verify", first]);
+        await repo.commit({ file: "later.txt", content: "later\n", message: "later lost commit", cwd: detached });
+        repo.write({ file: "trail\\", content: "backslash\n", cwd: detached });
+        const result = await backupWorktree({ path: detached, backupRoot: join(repo.root, "backups-other"), now });
+
+        expect(result.refusal).toBeNull();
+        expect(result.ref).toBe(`${first}-2`);
+        expect(await repo.git(["rev-parse", "--verify", first])).toBe(firstHead);
+        expect(await repo.git(["rev-parse", "--verify", result.ref ?? ""])).toBe(result.plan.head);
+        expect(result.plan.untracked).toEqual(["trail\\"]);
+        expect(result.proof.copies).toBe("ok");
+        expect(readFileSync(join(result.folder ?? "", "untracked", "trail\\"), "utf8")).toBe("backslash\n");
+    });
+
+    it("refuses a backup root inside the worktree, also through a symlink, before writing", async () => {
+        const link = join(repo.root, "spare-link");
+        symlinkSync(spare, link);
+        const result = await backupWorktree({ path: spare, backupRoot: join(link, "node_modules", "backups"), now });
+
+        expect(result.refusal).toContain("lies inside the worktree");
+        expect(result.folder).toBeNull();
+        expect(existsSync(join(spare, "node_modules"))).toBe(false);
+    });
+
+    it("refuses when assume-unchanged or skip-worktree hides an edit from git diff", async () => {
+        await repo.git(["update-index", "--assume-unchanged", "README.md"], { cwd: spare });
+        await repo.git(["update-index", "--skip-worktree", ".gitignore"], { cwd: spare });
+        // The flags alone hide nothing.
+        expect((await planWorktreeBackup({ path: spare })).blockers).toEqual([]);
+
+        repo.write({ file: "README.md", content: "hidden edit\n", cwd: spare });
+        const plan = await planWorktreeBackup({ path: spare });
+
+        expect(plan.changed).toEqual([]);
+        expect(plan.blockers).toHaveLength(1);
+        expect(plan.blockers[0]).toContain("skip-worktree hides them from git diff (README.md)");
+    });
+
+    it("takes the base from the other branches when no candidate gives one, and refuses --remove without a base", async () => {
+        const lone = await TestRepo.create({ prefix: "gt-wt-backup-nobase-" });
+
+        try {
+            await lone.branch("side");
+            const side = await lone.worktreeAdd({ name: "side", ref: "side" });
+            await lone.commit({ file: "side.txt", content: "side\n", message: "side work", cwd: side });
+            // No origin and a detached main checkout, as in a bare clone: no candidate gives a merge base.
+            await lone.git(["checkout", "-q", "--detach"]);
+            const result = await backupWorktree({ path: side, backupRoot: join(lone.root, "backups"), now });
+
+            expect(result.plan.base?.sha).toBe(await lone.git(["rev-parse", "master"]));
+            expect(result.plan.commits.map((commit) => commit.subject)).toEqual(["side work"]);
+            expect(result.proof.commits).toBe("ok");
+            expect(readdirSync(join(result.folder ?? "", "commits"))).toHaveLength(1);
+
+            await lone.git(["checkout", "-q", "--orphan", "alone"], { cwd: side });
+            await lone.commit({ file: "root.txt", content: "root\n", message: "orphan root", cwd: side });
+            const orphan = await planWorktreeBackup({ path: side, remove: true });
+
+            expect(orphan.base).toBeNull();
+            expect(orphan.blockers.some((blocker) => blocker.startsWith("No base commit was found"))).toBe(true);
+        } finally {
+            lone.cleanup();
+        }
     });
 
     it("throws for a main checkout and for a folder outside git", async () => {

@@ -30,7 +30,7 @@ mock.module("@clack/prompts", () => ({
     confirm: async () => answer("confirm"),
 }));
 
-const { runConfig } = await import("./worktree");
+const { backupExitCode, parseMaxCopyMb, runConfig } = await import("./worktree");
 
 describe("tools git worktree config, the guided edit", () => {
     let repo: TestRepo;
@@ -164,5 +164,23 @@ describe("tools git worktree config, the guided edit", () => {
 
         expect(readFileSync(localPath, "utf8")).toBe(before);
         expect(asked).toEqual([]);
+    });
+});
+
+describe("tools git worktree backup, the CLI values", () => {
+    test("--max-copy-mb takes a plain decimal number of MiB only", () => {
+        expect(parseMaxCopyMb(undefined)).toBe(512 * 1024 * 1024);
+        expect(parseMaxCopyMb("0")).toBe(0);
+        expect(parseMaxCopyMb("1.5")).toBe(1.5 * 1024 * 1024);
+
+        for (const bad of ["", " ", "0x10", "1e3", "-1", "12 ", "Infinity"]) {
+            expect(parseMaxCopyMb(bad)).toBeNull();
+        }
+    });
+
+    test("a proven backup whose removal was refused exits 2, a failed one 1", () => {
+        expect(backupExitCode({ refusal: null, proven: true })).toBe(0);
+        expect(backupExitCode({ refusal: "changed during the backup", proven: true })).toBe(2);
+        expect(backupExitCode({ refusal: "The proof failed", proven: false })).toBe(1);
     });
 });
