@@ -2,12 +2,14 @@ import type { SessionTargetsResult } from "@app/claude/lib/cmux/resolve";
 import type { DeliverDeps } from "./deliver";
 
 /**
- * No live Claude receiver and no Grok leader. Delivery reads both from the real machine by default (the peer
- * registry in the Claude home and the leader sockets), so a test that does not script them passes these.
+ * No live Claude receiver, no Grok leader and no T3 Code thread. Delivery reads them from the real machine by default
+ * (the peer registry in the Claude home, the leader sockets, T3 Code's state database), so a test that does not
+ * script them passes these.
  */
 export const noNativeReceivers = {
     claudePeers: () => [],
     grokLeaderSockets: () => [],
+    t3ThreadFor: () => undefined,
 } satisfies DeliverDeps;
 
 /**

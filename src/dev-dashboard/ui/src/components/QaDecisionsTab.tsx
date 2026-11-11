@@ -135,6 +135,7 @@ const DELIVERED_LINES = {
         `Delivered: sent to the live Claude session${result.detail ? ` (${result.detail})` : ""}.`,
     "grok-leader": (result) =>
         `Delivered: prompted through the Grok leader${result.detail ? ` (${result.detail})` : ""}.`,
+    t3: (result) => `Delivered: sent to the session's T3 Code thread${result.detail ? ` (${result.detail})` : ""}.`,
     resume: (result) =>
         `Delivered: the answers ride the first prompt of the resumed turn${result.detail ? ` (${result.detail})` : ""}.`,
     prompt: () => "Delivered: the session sent the answers with its own prompt.",

@@ -43,6 +43,8 @@ import { logger } from "@genesiscz/utils/logger";
 import { runsAgent } from "@genesiscz/utils/process/classify";
 import { readProcessRows } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { t3SessionThreads } from "@genesiscz/utils/t3code/session-threads";
+import { sendT3ThreadMessage, t3CliPath } from "@genesiscz/utils/t3code/thread-cli";
 import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { z } from "zod";
@@ -59,7 +61,7 @@ const { log } = logger.scoped("question-deliver");
  * or left for its next prompt.
  */
 /** `prompt`: the session sent the answers itself, through its own prompt (the mods Decisions sidebar). */
-export type DeliveryChannel = "cmux" | "codex" | "claude-peer" | "grok-leader" | "resume" | "queued" | "prompt";
+export type DeliveryChannel = "cmux" | "codex" | "claude-peer" | "grok-leader" | "t3" | "resume" | "queued" | "prompt";
 
 export interface DeliveryResult {
     channel: DeliveryChannel;
@@ -153,6 +155,8 @@ export type DeliveryTarget =
     | { kind: "claude-peer"; label: string; peer: ClaudeLiveSession }
     /** The Grok leader sockets that may hold the session; which one does is asked when the answer is sent. */
     | { kind: "grok-leader"; label: string; sockets: string[] }
+    /** The T3 Code thread that runs the session: T3 Code takes the answer as the thread's next user message. */
+    | { kind: "t3"; label: string; threadId: string }
     | { kind: "none"; reason: string };
 
 type NoTarget = Extract<DeliveryTarget, { kind: "none" }>;
@@ -243,6 +247,9 @@ interface DeliveryEdges {
     grokLeaderSockets: (sessionId: string) => string[];
     /** An ACP client on one leader socket; the leader module's own client when absent. */
     grokLeaderClient?: (socket: string) => GrokLeaderClient;
+    /** The T3 Code thread that runs the session (from T3 Code's own state database), or undefined. */
+    t3ThreadFor: (sessionId: string) => string | undefined;
+    sendT3: typeof sendT3ThreadMessage;
 }
 
 export type DeliverDeps = Partial<DeliveryEdges> & {
@@ -292,6 +299,8 @@ const LIVE_EDGES: DeliveryEdges = {
     // State signals only (the hook records, then the transcript's turn state), the same guard `cmux send` asks.
     openDialog: (input) => sessionOpenDialog({ sessionId: input.sessionId, provider: input.provider }),
     grokLeaderSockets: (sessionId) => leaderSocketsFor(sessionId),
+    t3ThreadFor: (sessionId) => (t3CliPath() ? t3SessionThreads().get(sessionId)?.threadId : undefined),
+    sendT3: sendT3ThreadMessage,
 };
 
 /** The caller's edges over the live ones; an edge given as undefined stays live. */
@@ -308,6 +317,8 @@ function edgesOf(deps: DeliverDeps): DeliveryEdges {
         openDialog: deps.openDialog ?? LIVE_EDGES.openDialog,
         grokLeaderSockets: deps.grokLeaderSockets ?? LIVE_EDGES.grokLeaderSockets,
         grokLeaderClient: deps.grokLeaderClient,
+        t3ThreadFor: deps.t3ThreadFor ?? LIVE_EDGES.t3ThreadFor,
+        sendT3: deps.sendT3 ?? LIVE_EDGES.sendT3,
     };
 }
 
@@ -729,6 +740,38 @@ export const grokLeaderRoute: AnswerRoute = {
                 }
 
                 return { kind: "absent", reason: sent.reason };
+            },
+        };
+    },
+};
+
+/**
+ * The T3 Code thread that runs the session, through T3 Code's own `t3 thread send`. A host route, shared by the
+ * harnesses T3 Code runs: a Codex thread T3 Code started has no `tools codex` worker, and a finished T3 Code Claude
+ * thread has no peer socket, so without it their answers had nowhere to go (2026-11-11: "No Codex worker runs this
+ * conversation"). A session no T3 Code thread runs passes to the next route.
+ */
+export const t3ThreadRoute: AnswerRoute = {
+    async find({ session }, edges) {
+        const threadId = edges.t3ThreadFor(session);
+        if (!threadId) {
+            return undefined;
+        }
+
+        const target: TargetOf<"t3"> = { kind: "t3", label: "T3 Code thread", threadId };
+        return {
+            target,
+            async send({ text }) {
+                const sent = await edges.sendT3(threadId, text);
+                log.info({ session, threadId, outcome: sent.kind }, "decision answers sent to a T3 Code thread");
+
+                if (sent.kind === "sent") {
+                    return { kind: "delivered", channel: "t3", target: `${target.label} · ${sent.delivery}` };
+                }
+
+                return sent.kind === "unknown"
+                    ? { kind: "unknown", reason: `${sent.reason} Check the T3 Code thread before retrying.` }
+                    : { kind: "refused", reason: `T3 Code refused the message: ${sent.reason}` };
             },
         };
     },

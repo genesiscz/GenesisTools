@@ -88,6 +88,63 @@ export async function showT3Thread(
     };
 }
 
+/** How long a send may take: the CLI asks the running T3 Code server once and returns its receipt. */
+const SEND_TIMEOUT_MS = 30_000;
+
+/**
+ * What one `t3 thread send` came to. `sent` carries T3 Code's receipt (`delivery` is `started`, `queued`, `steered` or
+ * `restarted`). `refused` is an exit with an error before T3 Code took the message (no T3 Code, no server, no thread),
+ * so nothing reached the thread. `unknown` is a send with no readable receipt: it may have arrived.
+ */
+export type T3SendOutcome =
+    | { kind: "sent"; messageId: string; runId: string | null; delivery: string }
+    | { kind: "refused"; reason: string }
+    | { kind: "unknown"; reason: string };
+
+/**
+ * Sends a message to a T3 Code thread as its user (`t3 thread send --json <thread> <message>`): a busy thread gets it
+ * as its next turn, nothing is interrupted. It reaches a session that only T3 Code runs, such as a Codex thread T3 Code
+ * started, which has no worker, peer socket or terminal of ours.
+ */
+export async function sendT3ThreadMessage(
+    threadId: string,
+    message: string,
+    cli = t3CliPath()
+): Promise<T3SendOutcome> {
+    if (!cli) {
+        return { kind: "refused", reason: "T3 Code is not installed here (no t3 CLI)" };
+    }
+
+    const result = await boundedCommand({
+        command: [cli, "thread", "send", "--json", threadId, message],
+        timeoutMs: SEND_TIMEOUT_MS,
+    });
+
+    if (result.status === null) {
+        log.warn({ threadId, signal: result.signal }, "t3 thread send did not finish in time");
+        return { kind: "unknown", reason: "T3 Code did not answer in time; the message may have arrived." };
+    }
+
+    if (result.status !== 0) {
+        const reason = firstLine(result.stderr) || firstLine(result.stdout) || `t3 exited ${result.status}`;
+        log.info({ threadId, status: result.status, reason }, "t3 thread send was refused");
+        return { kind: "refused", reason };
+    }
+
+    const receipt = parseJson(result.stdout);
+    const messageId = isObject(receipt) ? text(receipt.messageId) : null;
+    if (!isObject(receipt) || !messageId) {
+        return { kind: "unknown", reason: "T3 Code printed no receipt; the message may have arrived." };
+    }
+
+    return {
+        kind: "sent",
+        messageId,
+        runId: text(receipt.runId),
+        delivery: text(receipt.delivery) ?? "sent",
+    };
+}
+
 /**
  * The desktop app's link to a thread, from the web link `t3 thread show` prints
  * (`https://app.t3.codes/threads/<environment>/<thread>`): `t3code://threads/<environment>/<thread>`, the thread id

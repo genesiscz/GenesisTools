@@ -1156,6 +1156,7 @@ public struct LiveWidgetView: View {
         case "queued": return "queued for the session"
         case "resume": return "by resuming the session"
         case "grok-leader": return "through its Grok leader"
+        case "t3": return "through its T3 Code thread"
         default: return nil
         }
     }
