@@ -10,7 +10,6 @@ import {
     byHarness,
     type PerHarness,
 } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /** How an area file reaches the agent: its whole text, one pointer line, or not at all. */
@@ -18,10 +17,16 @@ export type AreaRuleLevel = "full" | "pointer" | "off";
 /** What a subagent gets: the same as the main agent, at most a pointer, or nothing. */
 export type AreaRuleAgents = "same" | "pointer" | "off";
 
+/**
+ * Only a write gets the rules (Martin, 2026-11-11: a read never needs them). Claude Code loads a rule file by itself on
+ * its Read, Write and Edit tools; a Bash write passes that loader by, and Codex and Grok have no such loader at all.
+ * A stored `read` key from the first version of this section is ignored.
+ */
 export interface AreaRulesLevels {
-    /** A Grep, Glob or Bash call that lists, reads, searches or runs something in the area. */
-    read: AreaRuleLevel;
-    /** A Bash command that writes into the area (a redirect, `sed -i`, `mv` into it, a formatter with `--write`). */
+    /**
+     * A Bash command that writes into the area: a redirect, `sed -i`, `mv` into it, a formatter with `--write`,
+     * fable-replace, or an inline script (`python3 -c`, `bun -e`, an interpreter fed a here-document).
+     */
     write: AreaRuleLevel;
     agents: AreaRuleAgents;
 }
@@ -36,55 +41,34 @@ export interface AreaRulesConfig extends AreaRulesLevels {
 
 const LEVELS: readonly AreaRuleLevel[] = ["full", "pointer", "off"];
 const AGENTS: readonly AreaRuleAgents[] = ["same", "pointer", "off"];
-const FIELDS = ["read", "write", "agents"] as const;
+const FIELDS = ["write", "agents"] as const;
 type Field = (typeof FIELDS)[number];
-const CHOICES: { readonly [Name in Field]: readonly string[] } = { read: LEVELS, write: LEVELS, agents: AGENTS };
+const CHOICES: { readonly [Name in Field]: readonly string[] } = { write: LEVELS, agents: AGENTS };
 
-/**
- * Claude Code loads a rule file by itself on a Read, Write or Edit of a matching file, so the hook adds nothing
- * there; Codex and Grok load no rule file by themselves. `AREA_RULES_DEFAULTS` in the plugin hook mirrors this, and
- * `hooks.test.ts` holds the two equal.
- */
+/** `AREA_RULES_DEFAULTS` in the plugin hook mirrors this, and `hooks.test.ts` holds the two equal. */
 const DEFAULT_AREA_RULES: AreaRulesConfig = {
-    read: "pointer",
     write: "full",
     agents: "same",
-    harnesses: byHarness((harness) =>
-        harnessHooks(harness).loadsRuleFilesItself ? { read: "off", write: "off" } : {}
-    ),
+    harnesses: byHarness(() => ({})),
 };
 
-const OFF_REASON =
-    "Nothing from this hook. Claude Code still loads a rule file by itself on a Read, Write or Edit of a matching file, but an agent that only searches or runs shell commands in an area does not see its rules until it reads or edits a file there. Codex and Grok load no rule file, so they never see it.";
-
-const LEVEL_PRESETS: { readonly [Name in "read" | "write"]: readonly ConfigPreset[] } = {
-    read: [
-        {
-            name: "pointer",
-            value: "pointer",
-            why: "One line per rule file: its path, its length and its scope, with an instruction to read it before changing code there. About 40 tokens instead of 1,210 on average.",
-        },
-        {
-            name: "full",
-            value: "full",
-            why: "The old behavior: the whole rule file on the first search, listing or test run that names the area. It was 51.7% of all hook context in 10 days (6.3M tokens), and a sample of 63 such injections in agents found 16 useful.",
-        },
-        { name: "off", value: "off", why: OFF_REASON },
-    ],
-    write: [
-        {
-            name: "full",
-            value: "full",
-            why: "The whole rule file when a Bash command writes into the area, once per agent: the change is being made, so the rules must be in context.",
-        },
-        {
-            name: "pointer",
-            value: "pointer",
-            why: "One pointer line even for a write; the agent reads the file itself when it decides it needs it.",
-        },
-        { name: "off", value: "off", why: OFF_REASON },
-    ],
-};
+const WRITE_PRESETS: readonly ConfigPreset[] = [
+    {
+        name: "full",
+        value: "full",
+        why: "The whole rule file when a Bash command writes into the area, once per agent and not when Claude Code already loaded it: the change is being made, so the rules must be in context.",
+    },
+    {
+        name: "pointer",
+        value: "pointer",
+        why: "One line per rule file (its path, its length and its scope) with an instruction to read it before changing code there. About 40 tokens instead of 1,210 on average.",
+    },
+    {
+        name: "off",
+        value: "off",
+        why: "Nothing from this hook. Claude Code still loads a rule file on its own Read, Write and Edit tools, but a Bash write (`sed -i`, an inline script, fable-replace) gets no rules, and Codex and Grok get none at all.",
+    },
+];
 
 const AGENT_PRESETS: readonly ConfigPreset[] = [
     { name: "same", value: "same", why: "A subagent gets what the main agent would get." },
@@ -101,7 +85,7 @@ const AGENT_PRESETS: readonly ConfigPreset[] = [
 ];
 
 function presetsOf(field: Field): readonly ConfigPreset[] {
-    return field === "agents" ? AGENT_PRESETS : LEVEL_PRESETS[field];
+    return field === "agents" ? AGENT_PRESETS : WRITE_PRESETS;
 }
 
 const AREA_RULES_PRESETS: Record<string, readonly ConfigPreset[]> = Object.fromEntries(
@@ -207,7 +191,6 @@ export const AREA_RULES_HOOK_SECTION: HookConfigSection<AreaRulesConfig> = {
         return { ...merged, ...checkedLevels(part, "areaRules", problems) };
     },
     settable: [
-        "areaRules.read",
         "areaRules.write",
         "areaRules.agents",
         `areaRules.harnesses.<${ACCOUNT_PROVIDER_ALIASES.join("|")}>.<${FIELDS.join("|")}>`,

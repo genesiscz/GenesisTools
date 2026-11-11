@@ -291,11 +291,6 @@ export interface HookFacts {
     /** Its transcript marks a compaction with a boundary row, which the plugin's `area-rules.ts` reads. */
     readonly compactBoundaryRows: boolean;
     /**
-     * It loads a project's area rule file (`.claude/rules/*.md`) by itself when the agent reads, writes or edits a
-     * matching file, so the plugin's `area-rules.ts` adds nothing there by default.
-     */
-    readonly loadsRuleFilesItself: boolean;
-    /**
      * Whether the transcript records a compaction at or after `sinceMs` (epoch ms), read from a bounded tail. True
      * when it cannot tell: the shell guard then explains a rule in full again, which costs context, never a fix.
      */

@@ -77,7 +77,7 @@ describe("pathTokens", () => {
 });
 
 describe("decide", () => {
-    it("adds a folder's CLAUDE.md and its area rule after a search, but not the broad code rule", () => {
+    it("a search adds nothing, whatever its output names", () => {
         const decision = decide({
             payload: {
                 cwd: root,
@@ -89,10 +89,10 @@ describe("decide", () => {
             rules,
             seen: [],
         });
-        expect(decision.pointer.sort()).toEqual([".claude/rules/ai.md", "src/du/CLAUDE.md"]);
+        expect(decision).toEqual({ full: [], pointer: [], native: [] });
     });
 
-    it("records what Claude Code loads by itself on Read, so a later search does not add it again", () => {
+    it("records what Claude Code loads by itself on Read, so a later write does not add it again", () => {
         const read = decide({
             payload: { cwd: root, tool_name: "Read", tool_input: { file_path: join(root, "src/du/lib/engine.ts") } },
             root,
@@ -102,45 +102,29 @@ describe("decide", () => {
         expect(read.full).toEqual([]);
         expect(read.native.sort()).toEqual([".claude/rules/code.md", "src/du/CLAUDE.md"]);
 
-        const search = decide({
-            payload: { cwd: root, tool_name: "Bash", tool_input: { command: "rg x src/du" }, tool_response: "" },
+        const write = decide({
+            payload: { cwd: root, tool_name: "Bash", tool_input: { command: "touch src/du/x.ts" }, tool_response: "" },
             root,
             rules,
             seen: read.native,
         });
-        expect(search.pointer).toEqual([]);
+        expect(write).toEqual({ full: [], pointer: [], native: [] });
     });
 
-    it("finds the area behind a tsconfig import name in search output", () => {
-        const decision = decide({
-            payload: {
-                cwd: root,
-                tool_name: "Bash",
-                tool_input: { command: "rg -n resolve src/indexer" },
-                tool_response: { stdout: 'src/indexer/store.ts:3:import { bind } from "@lib/ai/providers/bind";' },
-            },
-            root,
-            rules,
-            seen: [],
-            aliases: tsconfigAliases(root),
-        });
-        expect(decision.pointer).toEqual([".claude/rules/ai.md"]);
-    });
-
-    it("resolves an import name from the project root when the session runs in a subfolder", () => {
+    it("a write that prints its files (patch, git apply, fable-replace) adds the areas its output names", () => {
         const decision = decide({
             payload: {
                 cwd: join(root, "src", "du"),
                 tool_name: "Bash",
-                tool_input: { command: "rg -n bind ." },
-                tool_response: { stdout: 'store.ts:3:import { bind } from "@lib/ai/providers/bind";' },
+                tool_input: { command: "patch -p1 < fix.patch" },
+                tool_response: { stdout: "patching file @lib/ai/providers/bind.ts" },
             },
             root,
             rules,
             seen: [],
             aliases: tsconfigAliases(root),
         });
-        expect(decision.pointer).toEqual([".claude/rules/ai.md"]);
+        expect(decision.full).toContain(".claude/rules/ai.md");
     });
 
     it("adds nothing for paths outside the project or without an area", () => {
@@ -225,18 +209,12 @@ describe("compaction", () => {
     });
 
     it("a compaction re-adds the areas of the agent that compacted, and only of it (real hook processes)", async () => {
-        // The old behavior, full text on every search, is `read: full`; Claude ships with it off.
-        mkdirSync(join(root, "home", ".genesis-tools", "agents"), { recursive: true });
-        writeFileSync(
-            join(root, "home", ".genesis-tools", "agents", "hooks.json"),
-            JSON.stringify({ areaRules: { harnesses: { claude: { read: "full" } } } })
-        );
         const mainSearch = {
             hook_event_name: "PostToolUse",
             tool_name: "Bash",
-            tool_input: { command: "rg x src/du" },
+            tool_input: { command: "touch src/du/x.md" },
         };
-        const subSearch = { ...mainSearch, agent_id: "a1", tool_input: { command: "rg x src/utils/ai" } };
+        const subSearch = { ...mainSearch, agent_id: "a1", tool_input: { command: "touch src/utils/ai/x.md" } };
 
         for (const compacting of ["subagent", "main"]) {
             const session = `s-${compacting}`;
@@ -303,6 +281,10 @@ describe("writeTargets", () => {
         ],
         ["FOO=1 touch src/a.ts && mkdir -p src/du/new", ["src/a.ts", "src/du/new"]],
         ["echo x > ~/notes.txt", [join(homedir(), "notes.txt")]],
+        [`python3 -c 'open("src/a.ts", "w").write("x")'`, ["src/a.ts"]],
+        [`bun -e 'await Bun.write("src/du/a.ts", "x")'`, ["src/du/a.ts"]],
+        ["python3 - <<'PY'\nopen('src/du/a.ts', 'w')\nPY", ["src/du/a.ts"]],
+        ["cat > \"$S/x.ts\" <<'EOF'\nwriteFileSync('src/du/a.ts', s)\nEOF\nbun \"$S/x.ts\"", ["src/du/a.ts"]],
     ];
     const reads = [
         "ls src/du",
@@ -315,6 +297,10 @@ describe("writeTargets", () => {
         "git diff src/a.ts && git log -3",
         "sed -n '1,5p' src/a.ts",
         "perl -Mstrict -e 'print 1' src/a.ts",
+        "bun scripts/test.ts src/du",
+        "python3 scripts/x.py src/du",
+        `python3 -c 'print(open("src/a.ts").read())'`,
+        "cat > \"$S/p.ts\" <<'EOF'\nconsole.log(readFileSync('src/du/a.ts'))\nEOF\nbun \"$S/p.ts\"",
         "bunx biome check src/a.ts",
         "wc -l < src/a.ts",
         "cat src/a.ts # > not/a/write",
@@ -341,7 +327,7 @@ describe("writeTargets", () => {
     });
 });
 
-const LEVELS: AreaRulesLevels = { read: "pointer", write: "full", agents: "same" };
+const LEVELS: AreaRulesLevels = { write: "full", agents: "same" };
 const bash = (command: string, extra: Record<string, unknown> = {}) => ({
     cwd: root,
     tool_name: "Bash",
@@ -367,38 +353,33 @@ describe("levels", () => {
             levels: input.levels ?? LEVELS,
         });
 
-    it("a read gets a pointer, a write into the area gets the text, and code.md only with the write", () => {
-        expect(run({ command: "ls src/utils/ai" })).toEqual({ full: [], pointer: [".claude/rules/ai.md"], native: [] });
+    it("a read gets nothing, a write into the area gets the text, and code.md only with the write", () => {
+        expect(run({ command: "ls src/utils/ai" })).toEqual({ full: [], pointer: [], native: [] });
         expect(run({ command: "echo x > src/utils/ai/a.ts" }).full.sort()).toEqual([
             ".claude/rules/ai.md",
             ".claude/rules/code.md",
         ]);
         const copy = run({ command: "cp src/du/lib/engine.ts src/utils/ai/engine.ts" });
         expect(copy.full.sort()).toEqual([".claude/rules/ai.md", ".claude/rules/code.md"]);
-        expect(copy.pointer).toEqual(["src/du/CLAUDE.md"]);
+        expect(copy.pointer).toEqual([]);
     });
 
     it("a pointer is given once, a later write upgrades it once, and the text is never repeated", () => {
-        const first = run({ command: "rg x src/utils/ai" });
+        const pointerOnly = { ...LEVELS, write: "pointer" as const };
+        const first = run({ command: "touch src/utils/ai/x.md", levels: pointerOnly });
         expect(first.pointer).toEqual([".claude/rules/ai.md"]);
-        expect(run({ command: "ls src/utils/ai", pointed: first.pointer }).pointer).toEqual([]);
+        expect(
+            run({ command: "touch src/utils/ai/y.md", levels: pointerOnly, pointed: first.pointer }).pointer
+        ).toEqual([]);
         const upgrade = run({ command: "sed -i 's/a/b/' src/utils/ai/x.md", pointed: first.pointer });
         expect(upgrade.full).toEqual([".claude/rules/ai.md"]);
         const seen = upgrade.full;
         expect(run({ command: "sed -i 's/a/b/' src/utils/ai/x.md", seen, pointed: first.pointer }).full).toEqual([]);
-        expect(run({ command: "ls src/utils/ai", seen }).pointer).toEqual([]);
     });
 
-    it("honours each value of read, write and agents", () => {
-        const read = "ls src/utils/ai";
+    it("honours each value of write and agents", () => {
         const write = "touch src/utils/ai/x.md";
         const ai = [".claude/rules/ai.md"];
-        expect(run({ command: read, levels: { ...LEVELS, read: "full" } }).full).toEqual(ai);
-        expect(run({ command: read, levels: { ...LEVELS, read: "off" } })).toEqual({
-            full: [],
-            pointer: [],
-            native: [],
-        });
         expect(run({ command: write, levels: { ...LEVELS, write: "pointer" } }).pointer).toEqual(ai);
         expect(run({ command: write, levels: { ...LEVELS, write: "off" } })).toEqual({
             full: [],
@@ -414,10 +395,10 @@ describe("levels", () => {
         });
         expect(canInject({ ...LEVELS, agents: "off" }, true)).toBe(false);
         expect(canInject({ ...LEVELS, agents: "off" }, false)).toBe(true);
-        expect(canInject({ ...LEVELS, read: "off", write: "off" }, false)).toBe(false);
+        expect(canInject({ ...LEVELS, write: "off" }, false)).toBe(false);
     });
 
-    it("Grep and Glob get a pointer", () => {
+    it("Grep and Glob get nothing", () => {
         for (const tool_name of ["Grep", "Glob"]) {
             const decision = decide({
                 payload: { cwd: root, tool_name, tool_input: { pattern: "x", path: "src/utils/ai" } },
@@ -426,7 +407,7 @@ describe("levels", () => {
                 seen: [],
                 levels: LEVELS,
             });
-            expect(decision.pointer).toEqual([".claude/rules/ai.md"]);
+            expect(decision).toEqual({ full: [], pointer: [], native: [] });
         }
     });
 });
@@ -435,7 +416,7 @@ describe("the injection text", () => {
     it("keeps the first line, adds the instruction and one parseable pointer line per file", () => {
         const text = contextFor(root, { full: ["src/du/CLAUDE.md"], pointer: [".claude/rules/ai.md"] }, "Bash");
         const lines = text.split("\n");
-        expect(lines[0]).toContain("area rules were not in your context");
+        expect(lines[0]).toContain("rules were not in your context");
         expect(lines[1]).toBe("Read the named file before you change code in that area or state one of its rules.");
         expect(lines[2]).toBe(
             `Area rules (pointer): ${join(root, ".claude/rules/ai.md")} (8 lines): Loaded by Claude Code when you read, write or edit a file in the AI folders.`
@@ -454,8 +435,8 @@ describe("settings", () => {
     const dir = join(root, "settings");
     mkdirSync(dir, { recursive: true });
 
-    it("ships Claude off and Codex and Grok at pointer for a read and the text for a write", () => {
-        expect(levelsFor(AREA_RULES_DEFAULTS, "claude")).toEqual({ read: "off", write: "off", agents: "same" });
+    it("ships the text on a write for every harness, Claude included", () => {
+        expect(levelsFor(AREA_RULES_DEFAULTS, "claude")).toEqual(LEVELS);
         expect(levelsFor(AREA_RULES_DEFAULTS, "codex")).toEqual(LEVELS);
         expect(levelsFor(AREA_RULES_DEFAULTS, "grok")).toEqual(LEVELS);
     });
@@ -464,7 +445,7 @@ describe("settings", () => {
         expect(areaRulesSettings(join(dir, "missing.json"))).toEqual(AREA_RULES_DEFAULTS);
         writeFileSync(join(dir, "broken.json"), "{ areaRules: ");
         expect(areaRulesSettings(join(dir, "broken.json"))).toEqual(AREA_RULES_DEFAULTS);
-        expect(mergeAreaRules({ areaRules: { read: "loud", harnesses: { claude: "on" } } })).toEqual(
+        expect(mergeAreaRules({ areaRules: { read: "full", write: "loud", harnesses: { claude: "on" } } })).toEqual(
             AREA_RULES_DEFAULTS
         );
     });
@@ -472,25 +453,23 @@ describe("settings", () => {
     it("reads a hand-written file with comments, and a value equal to the stored shipped copy is no choice", () => {
         writeFileSync(
             join(dir, "hooks.json"),
-            '{\n  // hand edit\n  "areaRules": { "agents": "off", "harnesses": { "claude": { "read": "pointer" } } },\n}\n'
+            '{\n  // hand edit\n  "areaRules": { "agents": "off", "harnesses": { "claude": { "write": "pointer" } } },\n}\n'
         );
         const settings = areaRulesSettings(join(dir, "hooks.json"));
-        expect(levelsFor(settings, "claude")).toEqual({ read: "pointer", write: "off", agents: "off" });
+        expect(levelsFor(settings, "claude")).toEqual({ write: "pointer", agents: "off" });
         expect(
             mergeAreaRules({
-                areaRules: { read: "pointer", write: "pointer", harnesses: { claude: { read: "off", write: "full" } } },
-                _shippedDefaults: {
-                    areaRules: { read: "pointer", write: "full", harnesses: { claude: { read: "off" } } },
-                },
+                areaRules: { write: "pointer", harnesses: { claude: { write: "full", agents: "off" } } },
+                _shippedDefaults: { areaRules: { write: "full", harnesses: { claude: { write: "full" } } } },
             })
         ).toEqual({
             ...AREA_RULES_DEFAULTS,
             write: "pointer",
-            harnesses: { ...AREA_RULES_DEFAULTS.harnesses, claude: { read: "off", write: "full" } },
+            harnesses: { ...AREA_RULES_DEFAULTS.harnesses, claude: { agents: "off" } },
         });
     });
 
-    it("the hook process: Claude adds nothing by default, Codex gets a pointer, a broken file keeps the defaults", async () => {
+    it("the hook process: a search adds nothing, a write adds the text in Claude and Codex, a broken file keeps the defaults", async () => {
         const home = join(root, "home-defaults");
         const run = async (payload: Record<string, unknown>) => {
             const child = Bun.spawn(["bun", join(import.meta.dir, "area-rules.ts")], {
@@ -507,15 +486,17 @@ describe("settings", () => {
         const call = { tool_name: "Bash", tool_input: { command: "rg x src/utils/ai" } };
         const codex = { ...call, transcript_path: join(root, ".codex", "sessions", "rollout-1.jsonl") };
 
+        const write = { command: "touch src/utils/ai/y.md" };
+        const ai = `Contents of ${join(root, ".claude/rules/ai.md")} (area rules)`;
         expect(await run({ ...call, session_id: "c1", transcript_path: join(root, "c1.jsonl") })).toBe("");
+        expect(
+            await run({ ...call, session_id: "c1", transcript_path: join(root, "c1.jsonl"), tool_input: write })
+        ).toContain(ai);
         mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
         writeFileSync(join(home, ".genesis-tools", "agents", "hooks.json"), "not json");
         expect(await run({ ...call, session_id: "c2", transcript_path: join(root, "c2.jsonl") })).toBe("");
-        const first = await run({ ...codex, session_id: "x1" });
-        expect(first).toContain("Area rules (pointer): ");
-        expect(first).not.toContain("Contents of");
         expect(await run({ ...codex, session_id: "x1" })).toBe("");
-        const upgrade = await run({ ...codex, session_id: "x1", tool_input: { command: "touch src/utils/ai/y.md" } });
-        expect(upgrade).toContain(`Contents of ${join(root, ".claude/rules/ai.md")} (area rules)`);
+        expect(await run({ ...codex, session_id: "x1", tool_input: write })).toContain(ai);
+        expect(await run({ ...codex, session_id: "x1", tool_input: write })).toBe("");
     });
 });

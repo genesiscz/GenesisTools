@@ -781,27 +781,24 @@ skill. The plugin hook reads the key itself, so these hooks wire nothing for it.
 
 ### Area rules
 
-The genesis-tools plugin's PostToolUse hook (`plugins/genesis-tools/hooks/area-rules.ts`) tells an agent about the
-`.claude/rules/*.md` file and the folder `CLAUDE.md` of each project area a Grep, Glob or Bash call touched, once per
-agent. It has two levels. `full` adds the file's text. `pointer` adds one line,
-`Area rules (pointer): <path> (<n> lines): <scope>`, and an instruction to read the file before changing code in that
-area. A Bash command that writes into the area (a `>` or `>>` redirect, `tee`, `sed -i`, `perl -i`, `mv`, `cp` or
-`ln` into it, `git apply`, `git am`, `patch`, `git checkout|restore -- <path>`, `biome --write`, `prettier --write`,
-fable-replace, `touch`, `mkdir`) is a write; every other call is a read. A pointer is not repeated, a later write
-upgrades it to the text once, and a compaction clears what the compacting agent was given.
+The genesis-tools plugin's PostToolUse hook (`plugins/genesis-tools/hooks/area-rules.ts`) gives an agent the
+`.claude/rules/*.md` file and the folder `CLAUDE.md` of each project area a Bash command WRITES into, once per agent:
+a `>` or `>>` redirect, `tee`, `sed -i`, `perl -i`, `mv`, `cp` or `ln` into it, `git apply`, `git am`, `patch`,
+`git checkout|restore -- <path>`, `biome --write`, `prettier --write`, fable-replace, `touch`, `mkdir`, and an inline
+script that calls something that writes (`python3 -c`, `bun -e`, `node --eval`, an interpreter fed a here-document,
+or a script written by a here-document and run in the same command). A read, a search or a listing gets nothing
+(Martin, 2026-11-11): the old hook gave the whole file on every search, which was 51.7% of all hook context in ten
+days, and a sample of 63 such injections found 16 useful.
 
-The `areaRules` keys set the level per harness. `read` (`pointer`), `write` (`full`) and `agents` (`same`; `pointer`
-caps a subagent at pointer lines, `off` gives it nothing) apply to every harness, and
-`areaRules.harnesses.<claude|codex|grok>.<read|write|agents>` overrides one harness. Claude ships with `read` and
-`write` off: Claude Code loads a rule file by itself only on a Read, Write or Edit of a matching file, so with `off`
-a Claude agent that only searches or runs shell commands in an area does not see that area's rules until it reads or
-edits a file there. That is a deliberate choice. Codex and Grok load no rule file by themselves, so they keep the
-shared levels. `config set areaRules.harnesses.claude.read full --write` brings back the old behavior (the whole file
-on every first touch) for Claude. `config describe <key>` gives each value's reason.
-
-Measured on 2026-11-11 by replaying the tool calls of two large sessions (17,860 Grep, Glob and Bash calls, 7,041 of
-them in subagents): the old hook pushed 5.49 M characters in 437 injections. `read pointer, write full` pushes 2.64 M
-(52% less; 85% less in subagents), `read pointer, write pointer` 0.27 M (95% less), and the Claude default nothing.
+Claude Code loads a rule file by itself on its Read, Write and Edit tools; the hook records those and does not add
+them again. A Bash write passes that loader by, so Claude gets the hook too; Codex and Grok load no rule file by
+themselves. `areaRules.write` is `full` (the text), `pointer` (one line,
+`Area rules (pointer): <path> (<n> lines): <scope>`, with an instruction to read the file) or `off`;
+`areaRules.agents` is `same`, `pointer` (a subagent gets pointer lines at most) or `off`;
+`areaRules.harnesses.<claude|codex|grok>.<write|agents>` overrides one harness. A pointer is not repeated, a later
+`full` write upgrades it once, and a compaction clears what the compacting agent was given. The hook runs on Bash
+and on the Read, Write and Edit tools only, so a Grep or Glob call starts no process. A stored `areaRules.read` from
+the first version of this section is ignored.
 
 ### The Claude Code mods
 
@@ -1155,8 +1152,8 @@ the config in effect. `doctor` reports a value that does not parse, and the defa
 | `questions`, `questions.<harness>` | off | See [Structural questions](#structural-questions-questions). |
 | `questions.notify` | `true` | Banner for a new open question. |
 | `agentsTalk.hint` | `true` | The agents-talk SessionStart reminder. |
-| `areaRules.read` / `.write` / `.agents` | `pointer` / `full` / `same` | See [Area rules](#area-rules). |
-| `areaRules.harnesses.<harness>.<field>` | Claude: `read` and `write` `off` | Per-harness area-rules levels. |
+| `areaRules.write` / `.agents` | `full` / `same` | See [Area rules](#area-rules). |
+| `areaRules.harnesses.<harness>.<field>` | none | Per-harness area-rules levels. |
 | `mods.*` | see above | See [The Claude Code mods](#the-claude-code-mods). |
 
 `config set --help` prints the full key list. Keys in the file that `set` does not take: `logPath` (the decision log,
