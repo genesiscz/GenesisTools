@@ -659,6 +659,8 @@ describe("the hook sections", () => {
             "longCommand",
             "corrected command",
             "contextCapPerSession",
+            "quietMinutes",
+            "metrics",
             "diff.enabled",
             "diff.maxFiles",
             "diff.standDownWhenNative",
@@ -2118,7 +2120,7 @@ describe("hook state across processes", () => {
         };
         const expected: HookSessionState = {
             version: 2,
-            guard: { contextNotes: { "rule-x": 3 }, explained: {} },
+            guard: { contextNotes: { "rule-x": 3 }, explained: {}, seen: {} },
             decisions: {
                 stopBlocks: 1,
                 nudge: { blocks: 2, lastTurn: 77 },
@@ -2139,7 +2141,7 @@ describe("hook state across processes", () => {
             await bumpContextCounts("sess-old", ["rule-x"]);
 
             const written = SafeJSON.parse(readFileSync(path, "utf8"));
-            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 }, explained: {} } });
+            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 }, explained: {}, seen: {} } });
             expect(migrateHookState(written)).toEqual(written);
             // A version 2 file from before `explained` existed reads as nothing explained, and keeps what it has.
             expect(migrateHookState({ ...written, guard: { contextNotes: { "rule-x": 4 } } })).toEqual(written);

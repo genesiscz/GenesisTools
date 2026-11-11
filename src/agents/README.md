@@ -495,6 +495,23 @@ session)", and a block keeps the first sentence of its reason. After the loop co
 Claude and Codex place a compaction by the rows of their transcripts; Grok keeps only a count, so a Grok session that
 has compacted at least once always gets the full form. The `systemMessage` the user sees is unchanged.
 
+A warn or a context note of a rule that the same loop saw within `guard.quietMinutes` (10) minutes, and has not
+compacted since, is not shown at all: the command ran, and the loop already read that rule. A block always shows,
+because the command did not run. The window starts again at each message that shows the rule; `0` turns it off.
+
+Each firing rule is one `agent-context / guard.verdict` event for `tools metrics` (`guard.metrics`, on by default).
+The value is the estimated tokens (characters / 4) of the message the model got, split evenly over the rules in it;
+a rule that showed nothing counts 0. Dims: `session`, `agent` (`main` or the subagent id), `harness`, `model` (null
+when the payload has none), `rule`, `kind` (`misread` or `destructive`), `outcome`, `delivery` (`block`, `warn`,
+`context`, `quiet`, `capped`, `behind-block`), `form` (`full`, `compact`, `none`), `demoted` and `shadow`. The hook
+writes one spool line per rule when it exits; it starts no service.
+
+```bash
+tools metrics query agent-context guard.verdict --group-by kind,outcome --agg count,sum
+tools metrics query agent-context guard.verdict --group-by rule,delivery --agg count,sum
+tools metrics query agent-context guard.verdict --group-by agent --where delivery=quiet --agg count
+```
+
 ### Custom rules
 
 Personal rules live in your own folder and run in the same guard. Point the config at files or folders (`~` expands;
@@ -1139,6 +1156,8 @@ the config in effect. `doctor` reports a value that does not parse, and the defa
 | `guard.longCommand.lines` / `.chars` | `30` / `2500` | Long-command downgrade. |
 | `guard.corrected.wholeMaxChars` / `.partMaxChars` | `200` / `400` | How much of a corrected command a message prints. |
 | `guard.contextCapPerSession` | `3` | Context notes per rule per session. |
+| `guard.quietMinutes` | `10` | Minutes a loop does not see a warn or a note of a rule it just saw. `0`: off. |
+| `guard.metrics` | `true` | Record each firing as `agent-context / guard.verdict`. |
 | `guard.customRules` | empty | Comma list of rule files or folders. |
 | `diff.enabled` | `true` | The Bash diff (Grok: off). |
 | `diff.maxFiles` / `diff.maxLinesPerFile` | `15` / `30` | Files and lines per message. |

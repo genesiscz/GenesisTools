@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { guardRules, logCustomRuleProblems } from "../lib/hooks/custom-rules";
 import { evaluateGuard, guardLoop } from "../lib/hooks/guard";
+import { recordGuardVerdict } from "../lib/hooks/guard-metrics";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, parseHookPayload } from "../lib/hooks/payload";
 import { recordGuardShown, safeSessionId } from "../lib/hooks/state";
@@ -49,7 +50,9 @@ logDecision(
     config.logPath
 );
 
-if (!verdict) {
+recordGuardVerdict({ payload, verdict, config });
+
+if (!verdict || verdict.outcome === "allow") {
     process.exit(0);
 }
 
@@ -62,11 +65,12 @@ if (config.shadow) {
 
 const sessionId = safeSessionId(payload.sessionId);
 
-if (sessionId && (verdict.shownContextRules.length > 0 || verdict.explainedRules.length > 0)) {
+if (sessionId && verdict.seenRules.length > 0) {
     await recordGuardShown(sessionId, {
         contextRules: verdict.shownContextRules,
         loop: guardLoop(payload),
         explainedRules: verdict.explainedRules,
+        seenRules: verdict.seenRules,
         at: Date.now(),
     });
 }

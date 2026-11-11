@@ -31,6 +31,8 @@ const DEFAULT_GUARD: GuardConfig = {
     // cut the corrected commands from 416k to 88k characters, and the change itself is never cut.
     corrected: { wholeMaxChars: 200, partMaxChars: 400 },
     contextCapPerSession: 3,
+    quietMinutes: 10,
+    metrics: true,
     customRules: [],
 };
 
@@ -115,6 +117,13 @@ function merge(value: unknown, problems: string[]): GuardConfig {
             fallback: base.contextCapPerSession,
             min: 0,
         }),
+        quietMinutes: countOr(problems, {
+            field: "guard.quietMinutes",
+            value: guard?.quietMinutes,
+            fallback: base.quietMinutes,
+            min: 0,
+        }),
+        metrics: typeof guard?.metrics === "boolean" ? guard.metrics : base.metrics,
         customRules: pathListOr(problems, "guard.customRules", guard?.customRules, base.customRules),
     };
 }
@@ -136,6 +145,8 @@ const GUARD_KEYS: ReadonlySet<string> = new Set([
     "guard.corrected.wholeMaxChars",
     "guard.corrected.partMaxChars",
     "guard.contextCapPerSession",
+    "guard.quietMinutes",
+    "guard.metrics",
     "guard.customRules",
 ]);
 const RULE_KEY = /^rules\.(.+)$/;
@@ -167,6 +178,16 @@ function set(current: GuardConfig, key: string, value: string, { ruleIds }: Hook
 
     if (key === "guard.contextCapPerSession") {
         next.contextCapPerSession = asCount(key, value, 0);
+        return next;
+    }
+
+    if (key === "guard.quietMinutes") {
+        next.quietMinutes = asCount(key, value, 0);
+        return next;
+    }
+
+    if (key === "guard.metrics") {
+        next.metrics = asBoolean(key, value);
         return next;
     }
 
@@ -218,6 +239,8 @@ export const GUARD_HOOK_SECTION: HookConfigSection<GuardConfig, HookDoctorFacts,
         "guard.corrected.wholeMaxChars",
         "guard.corrected.partMaxChars",
         "guard.contextCapPerSession",
+        "guard.quietMinutes",
+        "guard.metrics",
         "guard.customRules",
         "rules.<rule-id>",
         `harnesses.<${ACCOUNT_PROVIDER_ALIASES.join("|")}>.<rule-id>`,
@@ -237,5 +260,7 @@ export const GUARD_HOOK_SECTION: HookConfigSection<GuardConfig, HookDoctorFacts,
             `whole up to ${guard.corrected.wholeMaxChars} chars, part up to ${guard.corrected.partMaxChars}`,
         ],
         ["contextCapPerSession", String(guard.contextCapPerSession)],
+        ["quietMinutes", guard.quietMinutes > 0 ? `${guard.quietMinutes} min per loop` : "off"],
+        ["metrics", guard.metrics ? "agent-context / guard.verdict" : "off"],
     ],
 };

@@ -267,6 +267,13 @@ export interface GuardConfig {
     /** Context notes shown per rule per session before the rule goes quiet. */
     contextCapPerSession: number;
     /**
+     * Minutes a loop (the main agent or one subagent) does not see a warn or a context note of a rule again after it
+     * saw that rule's message, unless it compacted since. A block is always shown, in the compact form. 0 turns it off.
+     */
+    quietMinutes: number;
+    /** Record each firing as `agent-context / guard.verdict` for `tools metrics`. */
+    metrics: boolean;
+    /**
      * Your own rule modules, loaded beside the built-in ones: files, or folders whose top-level
      * `.ts`/`.js` files are each one module (`*.test.*` and names starting with `_` or `.` are
      * skipped). `~/` expands; a relative path resolves against the home folder. Each module

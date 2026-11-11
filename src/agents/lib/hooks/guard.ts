@@ -27,6 +27,10 @@ export interface GuardVerdict {
     demoted: string[];
     /** Context notes shown this run; the caller bumps their per-session counters. */
     shownContextRules: string[];
+    /** Rules whose text is in `message`; the caller records the time the loop saw them. */
+    seenRules: string[];
+    /** Warns and context notes left out because the loop saw them within `guard.quietMinutes`. */
+    quieted: string[];
 }
 
 const OUTCOME_RANK: Record<HookOutcome, number> = { allow: 0, context: 1, warn: 2, block: 3 };
@@ -44,6 +48,8 @@ export interface EvaluateOptions {
     rules?: readonly ShellRule[];
     /** Whether this loop already read the rule in full since its last compaction; it then gets the compact form. */
     explainedEarlier?: (ruleId: string) => boolean;
+    /** Whether this loop saw the rule's message within `guard.quietMinutes`; a warn or a note is then left out. */
+    seenRecently?: (ruleId: string) => boolean;
 }
 
 /**
@@ -117,6 +123,7 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
 
     const blocks = resolved.filter((violation) => violation.outcome === "block");
     const explainedEarlier = options.explainedEarlier ?? (() => false);
+    const seenRecently = options.seenRecently ?? (() => false);
     const render = (shown: readonly GuardViolation[], heading: string, denied: boolean) => {
         const explained = new Set(
             shown.map((violation) => violation.ruleId).filter((ruleId) => explainedEarlier(ruleId))
@@ -139,11 +146,19 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
             tags: resolved.map((violation) => violation.ruleId),
             demoted,
             shownContextRules: [],
+            seenRules: [...new Set(blocks.map((violation) => violation.ruleId))],
+            quieted: [],
         };
     }
 
+    // A block always shows (the command did not run). A warn or a note the loop saw a few minutes ago says nothing new.
+    const quieted = [
+        ...new Set(resolved.map((violation) => violation.ruleId).filter((ruleId) => seenRecently(ruleId))),
+    ];
     const shown = resolved.filter(
-        (violation) => violation.outcome !== "context" || (counts[violation.ruleId] ?? 0) < cap
+        (violation) =>
+            !quieted.includes(violation.ruleId) &&
+            (violation.outcome !== "context" || (counts[violation.ruleId] ?? 0) < cap)
     );
 
     if (shown.length === 0) {
@@ -156,6 +171,8 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
             tags: resolved.map((violation) => violation.ruleId),
             demoted,
             shownContextRules: [],
+            seenRules: [],
+            quieted,
         };
     }
 
@@ -174,6 +191,8 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
         shownContextRules: shown
             .filter((violation) => violation.outcome === "context")
             .map((violation) => violation.ruleId),
+        seenRules: [...new Set(shown.map((violation) => violation.ruleId))],
+        quieted,
     };
 }
 
@@ -205,6 +224,27 @@ export function guardLoop(payload: HookPayload): string {
  * compaction since, because a compaction summary does not keep the explanation. The transcript is only read for a
  * rule the loop was told before, so a first firing costs no read.
  */
+/**
+ * Whether the loop saw a rule's message within `quietMinutes` and has not compacted since. Only the clock and the
+ * state file decide a rule the loop never saw, so the common case costs no transcript read.
+ */
+function seenRecentlyIn(options: {
+    seen: Record<string, number>;
+    quietMinutes: number;
+    now: number;
+    explainedEarlier: (ruleId: string) => boolean;
+}): (ruleId: string) => boolean {
+    return (ruleId) => {
+        const at = options.seen[ruleId];
+
+        if (options.quietMinutes <= 0 || at === undefined || options.now - at >= options.quietMinutes * 60_000) {
+            return false;
+        }
+
+        return options.explainedEarlier(ruleId);
+    };
+}
+
 function explainedEarlierIn(payload: HookPayload, explained: Record<string, number>): (ruleId: string) => boolean {
     let transcript: string | undefined | null = null;
 
@@ -241,14 +281,23 @@ export function evaluateGuard(
 
     const sessionId = safeSessionId(payload.sessionId);
     const state = sessionId ? readHookState(sessionId).guard : null;
+    const loop = guardLoop(payload);
+    const explainedEarlier = explainedEarlierIn(payload, state?.explained[loop] ?? {});
     const verdict = evaluateCommand(payload.command, config, {
         model: modelFor(payload, config),
         harness: payload.harness,
         contextCounts: state?.contextNotes ?? {},
         cwd: payload.cwd,
         rules,
-        explainedEarlier: explainedEarlierIn(payload, state?.explained[guardLoop(payload)] ?? {}),
+        explainedEarlier,
+        seenRecently: seenRecentlyIn({
+            seen: state?.seen[loop] ?? {},
+            quietMinutes: config.guard.quietMinutes,
+            now: Date.now(),
+            explainedEarlier,
+        }),
     });
 
-    return verdict.outcome === "allow" ? null : verdict;
+    // A firing that is all quiet still comes back, so the hook can count it; it shows nothing.
+    return verdict.outcome === "allow" && verdict.quieted.length === 0 ? null : verdict;
 }

@@ -14,6 +14,7 @@ import { diffFor, keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/
 import { guardRules, logCustomRuleProblems } from "../lib/hooks/custom-rules";
 import { capturePre } from "../lib/hooks/diff/capture";
 import { evaluateGuard, guardLoop } from "../lib/hooks/guard";
+import { recordGuardVerdict } from "../lib/hooks/guard-metrics";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
 import { recordGuardShown, safeSessionId } from "../lib/hooks/state";
@@ -61,6 +62,8 @@ logDecision(
     config.logPath
 );
 
+recordGuardVerdict({ payload, verdict, config });
+
 const denied = verdict?.outcome === "block" && !config.shadow;
 
 // Per harness, exactly as the post phase reads it. The shared `config.diff` captured for a
@@ -92,7 +95,7 @@ if (!denied && diff.enabled) {
     );
 }
 
-if (!verdict || config.shadow) {
+if (!verdict || config.shadow || verdict.outcome === "allow") {
     // Shadowed: it decided, it logged, and it says nothing. That pair is the point. The
     // context counters stay untouched, because a note nobody saw must not count towards the
     // per-session cap the moment shadow is switched off.
@@ -101,11 +104,12 @@ if (!verdict || config.shadow) {
 
 const sessionId = safeSessionId(payload.sessionId);
 
-if (sessionId && (verdict.shownContextRules.length > 0 || verdict.explainedRules.length > 0)) {
+if (sessionId && verdict.seenRules.length > 0) {
     await recordGuardShown(sessionId, {
         contextRules: verdict.shownContextRules,
         loop: guardLoop(payload),
         explainedRules: verdict.explainedRules,
+        seenRules: verdict.seenRules,
         at: Date.now(),
     });
 }
