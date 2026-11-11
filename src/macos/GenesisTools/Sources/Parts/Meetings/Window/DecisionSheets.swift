@@ -1,48 +1,29 @@
 import SwiftUI
 
 /// "This also affects" (R22, G9, G26, G28): what a decision reaches beyond its row, from `decision.plan`, before it is
-/// saved. The look-alikes it settles are playable, so each can be checked at once; "Do not ask again" turns
-/// `meetings.rows.askReach` to never.
+/// saved (genesiscz.md 6 and 9). The question's own targets outside the span it asks about ("This answer also sets")
+/// and the look-alikes it settles are listed apart, each with its own quote, time and play control; the same question
+/// over the same span is never asked again. Each item can be struck (it stays as it is and leaves the decision) and put
+/// back by one more click; Save applies only the rest. "Do not ask again" turns `meetings.rows.askReach` to never.
 struct ReachSheet: View {
     let pending: MeetingDetailModel.PendingReach
     let detail: MeetingDetailModel
     @State private var askAgain = true
 
     var body: some View {
+        let struck = detail.pendingStruck.intersection(pending.reach.judged.map(\.id))
         VStack(alignment: .leading, spacing: 12) {
             Text("This also affects").font(.system(size: 15, weight: .semibold))
-            Text(verbatim: "Besides \(pending.row.label), this decision also changes:")
+            Text(verbatim: Self.lead(pending))
                 .font(.system(size: 12.5)).foregroundStyle(.secondary)
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    if !pending.reach.items.isEmpty {
-                        Text(verbatim: "\(Plural.count(pending.reach.items.count, "look-alike item")) it settles the same way")
-                            .font(.system(size: 12, weight: .semibold))
-                        ForEach(pending.reach.items, id: \.id) { item in
-                            HStack(spacing: 8) {
-                                if let player = detail.window?.player {
-                                    MomentButton(player: player, meeting: detail.id, target: .item(item.id), label: detail.rowLabel(item.id), source: .speakerChip)
-                                }
-                                // What the question asks: its one-line text starts with the time the button beside
-                                // it already shows.
-                                Text(verbatim: detail.rows.value?.rows.first { $0.id == item.id }.map(ReviewRowView.title) ?? item.id)
-                                    .font(.system(size: 12.5)).lineLimit(2)
-                            }
-                        }
-                    }
-                    if let lines = pending.reach.lines, lines > 1 {
-                        Label("\(Plural.count(lines, "line")) of the transcript", systemImage: "text.alignleft").font(.system(size: 12.5))
-                    }
-                    ForEach(pending.reach.dictionary.filter(\.teaches), id: \.self) { entry in
-                        Label("The \(entry.project ?? "meeting") dictionary learns “\(entry.heard)” → “\(entry.fixed)”"
-                              + (entry.seenBefore > 0 ? ", seen \(Plural.count(entry.seenBefore, "time")) before" : ""),
-                              systemImage: "character.book.closed")
-                            .font(.system(size: 12.5))
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                ReachList(pending: pending, detail: detail)
             }
-            .frame(maxHeight: 320)
+            .frame(maxHeight: 360)
+            if !struck.isEmpty {
+                Text(verbatim: "\(Plural.count(struck.count, "struck item")) \(struck.count == 1 ? "stays" : "stay") as \(struck.count == 1 ? "it is" : "they are") and \(struck.count == 1 ? "is" : "are") not part of this decision.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
+            }
             Toggle("Do not ask again", isOn: Binding(get: { !askAgain }, set: { askAgain = !$0 }))
                 .toggleStyle(.checkbox).font(.system(size: 12))
             HStack {
@@ -52,13 +33,134 @@ struct ReachSheet: View {
                     Button("Only this question") { detail.applyOnlyThis(pending) }
                         .instantTooltip("Answer \(pending.row.label) and what it decides. The questions that look alike stay open.")
                 }
-                Button("Save") { detail.applyReach(pending, askAgain: askAgain) }.keyboardShortcut(.defaultAction)
+                Button(struck.isEmpty ? "Save" : "Save the rest") { detail.applyReach(pending, askAgain: askAgain) }
+                    .keyboardShortcut(.defaultAction)
+                    .instantTooltip(struck.isEmpty ? "Save the answer and everything listed" : "Save the answer and every item that is not struck")
             }
         }
         .padding(18)
-        .frame(width: 460)
+        .frame(width: 520)
     }
 
+    /// "Besides Q11 (→ Ussov Stanislav), this decision also changes:" — a changed answer says so.
+    static func lead(_ pending: MeetingDetailModel.PendingReach) -> String {
+        let answer = pending.action.answer.map { " (→ \($0))" } ?? ""
+        let verb = pending.action.replaces == nil ? "this decision also changes" : "the changed answer also changes"
+        return "Besides \(pending.row.label)\(answer), \(verb):"
+    }
+}
+
+/// The sheet's list: what the answer also sets, the look-alikes, and the same question as one line. Apart from the
+/// sheet's scroll view, so a test can render it (`ImageRenderer` draws no scroll view's content).
+struct ReachList: View {
+    let pending: MeetingDetailModel.PendingReach
+    let detail: MeetingDetailModel
+
+    var body: some View {
+        let judged = pending.reach.judged
+        let sets = judged.filter { $0.role == .sets }
+        let alike = judged.filter { $0.role == .lookAlike }
+        let same = pending.reach.items.filter { $0.role == .same }
+        VStack(alignment: .leading, spacing: 12) {
+            if !sets.isEmpty {
+                section("This answer also sets", items: sets)
+            }
+            if !alike.isEmpty {
+                section("\(Plural.count(alike.count, "look-alike")) it settles the same way", items: alike)
+            }
+            if !same.isEmpty {
+                Text(verbatim: Self.sameLine(same, detail: detail))
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let lines = pending.reach.lines, lines > 1 {
+                Label("\(Plural.count(lines, "line")) of the transcript", systemImage: "text.alignleft").font(.system(size: 12.5))
+            }
+            ForEach(pending.reach.dictionary.filter(\.teaches), id: \.self) { entry in
+                Label("The \(entry.project ?? "meeting") dictionary learns “\(entry.heard)” → “\(entry.fixed)”"
+                      + (entry.seenBefore > 0 ? ", seen \(Plural.count(entry.seenBefore, "time")) before" : ""),
+                      systemImage: "character.book.closed")
+                    .font(.system(size: 12.5))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// "It also closes Q12, about the same span: …"; a question no row names is counted, never shown by its id.
+    static func sameLine(_ same: [DecisionReach.Item], detail: MeetingDetailModel) -> String {
+        let labels = same.compactMap { item in item.row?.label ?? (detail.rowLabel(item.id) == item.id ? nil : detail.rowLabel(item.id)) }
+        let named = labels.count == same.count ? labels.joined(separator: ", ") : Plural.count(same.count, "question")
+        return "It also closes \(named), about the same span: the same question, not asked again."
+    }
+
+    private func section(_ title: String, items: [DecisionReach.Item]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(verbatim: title).font(.system(size: 12, weight: .semibold))
+            ForEach(items) { item in
+                ReachItemRow(item: item, struck: detail.pendingStruck.contains(item.id), detail: detail)
+            }
+        }
+    }
+}
+
+/// One reached item, judged as its own row is: the strike toggle, its time as a play control, what it is, its value
+/// before and after (each in its state's look), and the words of its own speaker. Never a bare item id.
+private struct ReachItemRow: View {
+    let item: DecisionReach.Item
+    let struck: Bool
+    let detail: MeetingDetailModel
+
+    var body: some View {
+        let name = Self.name(item, detail: detail)
+        HStack(alignment: .top, spacing: 8) {
+            IconButton(systemName: struck ? "arrow.uturn.backward.circle" : "xmark.circle",
+                       tooltip: struck ? "Put \(name) back into this decision" : "Strike \(name): it stays as it is and leaves this decision") {
+                detail.toggleStruck(item.id)
+            }
+            .accessibilityLabel(struck ? "Put back \(name)" : "Strike \(name)")
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    if let player = detail.window?.player {
+                        MomentButton(player: player, meeting: detail.id, target: item.row?.target ?? .item(item.id),
+                                     label: item.row?.whenText, source: .speakerChip)
+                    }
+                    Text(verbatim: name).font(.system(size: 12.5, weight: .medium)).lineLimit(2)
+                        .strikethrough(struck)
+                }
+                if let after = item.after {
+                    HStack(spacing: 5) {
+                        if let before = item.before, before != after {
+                            DecisionStateValue(text: before, state: DecisionState.of(status: item.row?.status ?? "suggested"))
+                            Image(systemName: "arrow.right").font(.system(size: 9.5)).foregroundStyle(.secondary).accessibilityLabel("becomes")
+                        }
+                        DecisionStateValue(text: after, state: struck ? .rejected : .confirmed)
+                    }
+                }
+                if let quote = Self.quote(item.row) {
+                    Text(verbatim: quote).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .opacity(struck ? 0.55 : 1)
+        }
+        .animation(.easeOut(duration: 0.15), value: struck)
+    }
+
+    /// What a person sees the item as: a question by its label and text, anything else by its kind and time.
+    static func name(_ item: DecisionReach.Item, detail: MeetingDetailModel) -> String {
+        guard let row = item.row else { return MeetingDetailModel.sentenceStart(detail.rowName(item.id)) }
+        return row.isQuestion ? "\(row.label) \(ReviewRowView.title(row))" : ReviewRowView.reference(row)
+    }
+
+    /// The words of the item's own speaker, as its row quotes them: "Speaker 2: “…”".
+    static func quote(_ row: ReviewRow?) -> String? {
+        guard let row else { return nil }
+        for part in row.parts {
+            if case .said(let text, let speaker, _) = part, !text.isEmpty {
+                return speaker.map { "\($0): “\(text)”" } ?? "“\(text)”"
+            }
+        }
+        return nil
+    }
 }
 
 /// The meeting's decision journal, or one row's (G43): who decided what, when and why, newest first, each with an Undo

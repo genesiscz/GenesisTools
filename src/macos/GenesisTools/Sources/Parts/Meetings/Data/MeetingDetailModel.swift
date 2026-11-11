@@ -82,6 +82,10 @@ final class MeetingDetailModel {
     var decidedMeanwhile: [String: JournalEntry] = [:]
     /// The "This also affects" sheet waiting for an answer (R22).
     var pendingReach: PendingReach?
+    /// The sheet's struck items: they leave the decision (genesiscz.md 6).
+    var pendingStruck: Set<String> = []
+    /// What this window's last answer to a question row left out, by row id: a changed answer strikes it again.
+    @ObservationIgnored var carriedStruck: [String: [String]] = [:]
     /// The History sheet: the meeting's journal, or one row's (G43).
     var history: HistorySheet?
     /// Rows this window just answered that keep their open height until the reader scrolls, so the rows under them do

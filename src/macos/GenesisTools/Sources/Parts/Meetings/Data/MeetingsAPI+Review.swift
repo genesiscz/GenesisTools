@@ -47,6 +47,11 @@ struct DecisionAction: Codable, Equatable, Hashable {
     var comment: String?
     /// answer: "leave" keeps the questions that look alike open ("Only this question"); nil settles them.
     var lookAlikes: String?
+    /// answer: the targets and look-alikes struck in the "This also affects" sheet; they stay as they were and leave
+    /// the decision, so its Undo never touches them.
+    var except: [String]?
+    /// answer: the token of the question's earlier answer this one replaces (a changed answer, one Undo).
+    var replaces: String?
     /// rename: a diarization label and its name for this meeting.
     var label: String?
     var name: String?
@@ -230,7 +235,47 @@ struct DecisionResult: Decodable, Equatable {
 /// What a planned decision reaches beyond the items it names (`DecisionReach`): look-alikes it settles, the lines a
 /// spelling changes, the dictionary entries it teaches.
 struct DecisionReach: Decodable, Equatable {
-    struct Item: Decodable, Equatable, Hashable { let id: String; let match: String }
+    /// One reached item (`ReachItem`, decision-journal.ts) with the evidence it is judged by.
+    struct Item: Decodable, Equatable, Identifiable {
+        /// `sets`: a target of the question outside the asked span; `lookAlike`: settled the same way; `same`: the
+        /// same question over the same span, closed with it and never asked again.
+        enum Role: String, Decodable { case sets, lookAlike = "look-alike", same }
+
+        let id: String
+        let match: String
+        let role: Role
+        /// What a person sees the item as before and after: a speaker, a spelling, an answer.
+        let before: String?
+        let after: String?
+        /// Its own review row: its quote of its own speaker, its time and its play target.
+        let row: ReviewRow?
+        /// The answer this one replaces left it out: shown struck at first.
+        let struck: Bool
+
+        init(id: String, match: String = "same", role: Role, before: String? = nil, after: String? = nil, row: ReviewRow? = nil, struck: Bool = false) {
+            self.id = id
+            self.match = match
+            self.role = role
+            self.before = before
+            self.after = after
+            self.row = row
+            self.struck = struck
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            match = try container.decodeIfPresent(String.self, forKey: .match) ?? "same"
+            // An engine older than the roles listed only look-alikes.
+            role = (try? container.decodeIfPresent(Role.self, forKey: .role)) ?? .lookAlike
+            before = try container.decodeIfPresent(String.self, forKey: .before)
+            after = try container.decodeIfPresent(String.self, forKey: .after)
+            row = try? container.decodeIfPresent(ReviewRow.self, forKey: .row)
+            struck = try container.decodeIfPresent(Bool.self, forKey: .struck) ?? false
+        }
+
+        private enum CodingKeys: String, CodingKey { case id, match, role, before, after, row, struck }
+    }
     struct Dictionary: Decodable, Equatable, Hashable {
         let project: String?
         let heard: String
@@ -243,8 +288,11 @@ struct DecisionReach: Decodable, Equatable {
     let lines: Int?
     let dictionary: [Dictionary]
 
-    /// Nothing beyond the named items: no sheet to show.
-    var isEmpty: Bool { items.isEmpty && (lines ?? 0) <= 1 && dictionary.allSatisfy { !$0.teaches } }
+    /// The items a person judges in the sheet; `same` ones are the asked question itself and are never asked again.
+    var judged: [Item] { items.filter { $0.role != .same } }
+
+    /// Nothing beyond the named items: no sheet to show. The same question over the same span is not a reach.
+    var isEmpty: Bool { judged.isEmpty && (lines ?? 0) <= 1 && dictionary.allSatisfy { !$0.teaches } }
 }
 
 /// A refusal's `data` for `already-decided`: the items and the entry that decided them since the caller saw them.

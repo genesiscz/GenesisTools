@@ -211,6 +211,96 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertTrue(wire.contains(#""lookAlikes":"leave""#), wire)
     }
 
+    // MARK: A decision and what it carries (genesiscz.md 6, 9, 12a)
+
+    /// A plan's reach as `decision.plan` sends it: a target outside the asked span with its own row, a look-alike, the
+    /// same question over the same span, and one item struck by the answer this one replaces.
+    static let reachJSON = Data("""
+    {"items":[
+     {"id":"i3","match":"same","role":"sets","before":"Speaker 3","after":"Dana Example",
+      "row":{"id":"i3","label":"i3","kind":"speaker-range","status":"suggested","what":"Speaker 3 00:12–00:30","edit":"person","sources":[],
+             "parts":[{"kind":"said","text":"The button moved."},{"kind":"when","from":{"sec":12,"text":"00:12"},"to":{"sec":30,"text":"00:30"},"target":{"kind":"item","id":"i3"}}],
+             "choices":[],"target":{"kind":"item","id":"i3"}}},
+     {"id":"q2","match":"same","role":"look-alike","after":"Dana Example","struck":true},
+     {"id":"q3","match":"same","role":"same","after":"Dana Example"}],
+     "dictionary":[]}
+    """.utf8)
+
+    func testTheReachSortsTargetsFromLookAlikesAndNeverAsksTheSameQuestionTwice() throws {
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Self.reachJSON)
+        XCTAssertEqual(reach.items.map(\.role), [.sets, .lookAlike, .same])
+        XCTAssertEqual(reach.judged.map(\.id), ["i3", "q2"], "the same question over the same span is not judged again")
+        XCTAssertEqual(reach.items[0].row?.whenText, "00:12–00:30", "each item carries its own time and play target")
+        let onlySame = DecisionReach(items: [.init(id: "q3", role: .same)], lines: nil, dictionary: [])
+        XCTAssertTrue(onlySame.isEmpty, "a reach that is only the asked question itself opens no sheet")
+        let old = try JSONDecoder().decode(DecisionReach.self, from: Data(#"{"items":[{"id":"q2","match":"same"}],"dictionary":[]}"#.utf8))
+        XCTAssertEqual(old.items.first?.role, .lookAlike, "an engine older than the roles listed only look-alikes")
+
+        let pending = MeetingDetailModel.PendingReach(row: try rows().rows[0], action: .answer("q1", "Dana Example"), reason: nil, reach: reach)
+        XCTAssertEqual(pending.initiallyStruck(), ["q2"], "what the replaced answer left out starts struck")
+        XCTAssertEqual(pending.initiallyStruck(remembered: ["i3", "gone"]), ["q2", "i3"], "only items the sheet shows can start struck")
+    }
+
+    /// The sheet as a picture (`MEETINGS_UI_SNAPSHOTS=<folder>` keeps it): one target struck, one look-alike, the same
+    /// question as a line, and the strike toggle comes undone with one more click.
+    func testTheReachSheetStrikesAndUnstrikesAnItemAndRenders() throws {
+        let window = MeetingsWindowModel(defaults: try XCTUnwrap(UserDefaults(suiteName: "meetings.rows.tests.\(UUID().uuidString)")),
+                                         noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        detail.rows = .loaded(try rows())
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Self.reachJSON)
+        let pending = MeetingDetailModel.PendingReach(row: try rows().rows[0], action: .answer("q1", "Dana Example"), reason: nil, reach: reach)
+        detail.pendingReach = pending
+        detail.pendingStruck = pending.initiallyStruck()
+        detail.toggleStruck("i3")
+        XCTAssertEqual(detail.pendingStruck, ["q2", "i3"])
+        try TimelineSnapshot.write(ReachList(pending: pending, detail: detail).padding(18), name: "reach-sheet", width: 520, scheme: .dark)
+        detail.toggleStruck("i3")
+        XCTAssertEqual(detail.pendingStruck, ["q2"], "a second click puts the item back")
+        try TimelineSnapshot.write(ReachList(pending: pending, detail: detail).padding(18), name: "reach-sheet-unstruck", width: 520, scheme: .light)
+        XCTAssertEqual(ReachSheet.lead(pending), "Besides Q1 (→ Dana Example), this decision also changes:")
+        XCTAssertEqual(ReachList.sameLine(reach.items.filter { $0.role == .same }, detail: detail),
+                       "It also closes 1 question, about the same span: the same question, not asked again.",
+                       "a question no row names is counted, never shown by its item id")
+        detail.cancelReach()
+        XCTAssertTrue(detail.pendingStruck.isEmpty)
+    }
+
+    func testAStruckItemLeavesTheAnswerAndAChangedAnswerNamesTheOneItReplaces() throws {
+        let rows = try rows().rows
+        let answer = DecisionAction.answer("q1", "Dana Example")
+        XCTAssertNil(MeetingDetailModel.striking(answer, []).except)
+        let struck = MeetingDetailModel.striking(answer, ["q2", "i3"])
+        XCTAssertEqual(struck.except, ["i3", "q2"])
+        XCTAssertNil(MeetingDetailModel.commandArgs(meeting: "m", action: struck, reason: nil), "the command cannot strike: it waits for the service")
+
+        XCTAssertNil(MeetingDetailModel.changing(answer, on: rows[0]).replaces, "an open question is answered, not changed")
+        let decided = try JSONDecoder().decode(ReviewRow.self, from: Data("""
+        {"id":"q1","label":"Q1","kind":"question","status":"confirmed","what":"Who says this?","edit":"answer","sources":[],"parts":[],
+         "choices":[{"value":"Dana Example","label":"Dana Example","role":"suggested","action":{"kind":"answer","answer":"Dana Example"}},
+                    {"value":"Alex Example","label":"Alex Example","role":"candidate","action":{"kind":"answer","answer":"Alex Example"}}],
+         "target":{"kind":"item","id":"q1"},"answer":"Alex Example",
+         "decision":{"token":"t-old","actor":{"kind":"window"},"by":"you","action":"answer"}}
+        """.utf8))
+        let changed = MeetingDetailModel.changing(answer, on: decided)
+        XCTAssertEqual(changed.replaces, "t-old", "a choice on an answered question changes that answer in one entry")
+        let wire = try XCTUnwrap(String(data: JSONEncoder().encode(MeetingDetailModel.striking(changed, ["i3"])), encoding: .utf8))
+        XCTAssertTrue(wire.contains(#""replaces":"t-old""#) && wire.contains(#""except":["i3"]"#), wire)
+
+        // Suggested, confirmed and rejected each have their own state, so their own hue and glyph.
+        XCTAssertEqual(DecisionState.of(rows[0].choices[0], in: rows[0]), .suggested)
+        XCTAssertEqual(DecisionState.of(decided.choices[1], in: decided), .confirmed, "the answer of a decided row is confirmed")
+        XCTAssertEqual(DecisionState.of(decided.choices[0], in: decided), .suggested)
+        for state in [DecisionState.suggested, .confirmed, .rejected] {
+            XCTAssertNotNil(state.glyph(.hueAndGlyph))
+            XCTAssertNotNil(state.hue(.hueAndGlyph))
+        }
+        XCTAssertNotEqual(DecisionState.suggested.glyph(.hueAndGlyph), DecisionState.confirmed.glyph(.hueAndGlyph))
+        XCTAssertNotEqual(DecisionState.suggested.hue(.hueAndGlyph), DecisionState.confirmed.hue(.hueAndGlyph))
+        XCTAssertNil(DecisionState.confirmed.hue(.shade), "the older look stays reachable as a setting")
+        XCTAssertEqual(MeetingsPreferences.Rows.stateLook.defaultValue, .hueAndGlyph)
+    }
+
     func testANoticeNamesAQuestionByItsLabel() throws {
         let answer = try entry(token: "t1", action: #"{"kind":"answer","question":"q1","answer":"Dana Example"}"#, changes: [("q1", "suggested", "confirmed")])
         XCTAssertEqual(MeetingsWords.entryAction(answer), "answered q1: Dana Example")

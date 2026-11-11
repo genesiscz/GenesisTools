@@ -12,6 +12,13 @@ extension MeetingDetailModel {
         let action: DecisionAction
         let reason: String?
         let reach: DecisionReach
+
+        /// The items struck when the sheet opens: what the answer this one replaces left out (the engine's `struck`),
+        /// and what this window's earlier answer to the row left out before a "Revert and edit".
+        func initiallyStruck(remembered: [String] = []) -> Set<String> {
+            let shown = Set(reach.judged.map(\.id))
+            return Set(reach.judged.filter(\.struck).map(\.id)).union(remembered.filter(shown.contains))
+        }
     }
 
     /// The History sheet: the meeting's journal, or one row's (`item`).
@@ -113,8 +120,11 @@ extension MeetingDetailModel {
     func decide(_ row: ReviewRow, _ action: DecisionAction, askReach: Bool = true) {
         guard !busyItems.contains(row.id) else { return }
         let reason = reasons[row.id].flatMap(MeetingsWords.typedAnswer)
-        let asks = askReach && MeetingsPreferences.Rows.askReach.value(defaults) == .always && Self.mayReach(action)
-        guard asks else {
+        let action = Self.changing(action, on: row)
+        let asking = askReach && MeetingsPreferences.Rows.askReach.value(defaults) == .always
+        // A changed answer always plans: what the earlier answer carried is asked again with the new answer, and what
+        // it left out stays out even when the sheet does not show.
+        guard (asking && Self.mayReach(action)) || action.replaces != nil else {
             apply(row, action, reason: reason)
             return
         }
@@ -122,12 +132,37 @@ extension MeetingDetailModel {
         Task {
             let plan = try? await Self.planDecision(meeting: id, action: action, reason: reason, service: service)
             busyItems.remove(row.id)
-            if let reach = plan?.reach, !reach.isEmpty {
-                pendingReach = PendingReach(row: row, action: action, reason: reason, reach: reach)
-            } else {
+            guard let reach = plan?.reach, !reach.isEmpty else {
                 apply(row, action, reason: reason)
+                return
+            }
+            let pending = PendingReach(row: row, action: action, reason: reason, reach: reach)
+            let struck = pending.initiallyStruck(remembered: carriedStruck[row.id] ?? [])
+            if asking {
+                pendingReach = pending
+                pendingStruck = struck
+            } else {
+                apply(row, Self.striking(action, struck), reason: reason)
             }
         }
+    }
+
+    /// A choice on a row that is already answered changes that answer (genesiscz.md 6): the new answer names the
+    /// earlier one, so the engine undoes it and answers in one entry, and asks again about what it carried.
+    static func changing(_ action: DecisionAction, on row: ReviewRow) -> DecisionAction {
+        guard action.kind == "answer", row.isQuestion, !row.isOpen, action.replaces == nil,
+              let token = row.decision?.token else { return action }
+        var changed = action
+        changed.replaces = token
+        return changed
+    }
+
+    /// The action with the struck items left out of it (`except`); nil when none is struck.
+    static func striking(_ action: DecisionAction, _ struck: Set<String>) -> DecisionAction {
+        guard action.kind == "answer" else { return action }
+        var striking = action
+        striking.except = struck.isEmpty ? nil : struck.sorted()
+        return striking
     }
 
     /// Only these can reach beyond their row: an answer settles look-alike questions, a spelling changes other lines and
@@ -136,30 +171,40 @@ extension MeetingDetailModel {
         ["answer", "respell", "confirm"].contains(action.kind)
     }
 
-    /// The sheet's Apply; `askAgain` false is its "Do not ask again", which turns `meetings.rows.askReach` to never.
+    /// The sheet's Save: only the items that are not struck (`pendingStruck`) go with the decision. `askAgain` false is
+    /// its "Do not ask again", which turns `meetings.rows.askReach` to never.
     func applyReach(_ pending: PendingReach, askAgain: Bool = true) {
+        let struck = pendingStruck
         pendingReach = nil
+        pendingStruck = []
         if !askAgain { defaults.set(MeetingsPreferences.Rows.AskReach.never.rawValue, forKey: MeetingsPreferences.Rows.askReach.key) }
-        apply(pending.row, pending.action, reason: pending.reason)
+        apply(pending.row, Self.striking(pending.action, struck), reason: pending.reason)
+    }
+
+    /// Strikes one item of the sheet out of the decision, or puts a struck one back (genesiscz.md 6).
+    func toggleStruck(_ id: String) {
+        if pendingStruck.contains(id) { pendingStruck.remove(id) } else { pendingStruck.insert(id) }
     }
 
     func cancelReach() {
         pendingReach = nil
+        pendingStruck = []
     }
 
     /// The questions among a planned decision's reach that an answer would settle the same way; the other items in
     /// the reach are the ones the question itself decides.
     func lookAlikes(of pending: PendingReach) -> [String] {
         guard pending.action.kind == "answer" else { return [] }
-        let questions = Set((rows.value?.rows ?? []).filter(\.isQuestion).map(\.id))
-        return pending.reach.items.map(\.id).filter(questions.contains)
+        return pending.reach.items.filter { $0.role == .lookAlike }.map(\.id)
     }
 
     /// "Only this question" (R22): the answer goes to this question and what it decides; the questions that look
     /// alike stay open for their own answers.
     func applyOnlyThis(_ pending: PendingReach) {
+        let struck = pendingStruck
         pendingReach = nil
-        var action = pending.action
+        pendingStruck = []
+        var action = Self.striking(pending.action, struck)
         action.lookAlikes = "leave"
         apply(pending.row, action, reason: pending.reason)
     }
@@ -199,6 +244,8 @@ extension MeetingDetailModel {
             return
         }
         ownTokens.insert(entry.token)
+        // What this answer left out stays out when it is changed after a "Revert and edit".
+        if entry.action.kind == "answer" { carriedStruck[row.id] = entry.action.except }
         drafts[row.id] = nil
         reasons[row.id] = nil
         decidedMeanwhile[row.id] = nil
@@ -490,7 +537,8 @@ extension MeetingDetailModel {
             return ["reopen", meeting] + (action.items ?? []) + why + ["--json"]
         case "answer":
             // The command settles the look-alikes; an answer that leaves them needs the service.
-            guard let question = action.question, let answer = action.answer, action.lookAlikes == nil else { return nil }
+            guard let question = action.question, let answer = action.answer, action.lookAlikes == nil,
+                  action.except == nil, action.replaces == nil else { return nil }
             return ["listen", meeting, "--item", question, "--answer", answer] + why + ["--json"]
         default:
             return nil
