@@ -378,15 +378,6 @@ describe("Executor bounded calls", () => {
         expect(result).toMatchObject({ success: true, stdout: "ran" });
     });
 
-    test("trim false keeps the leading space of NUL-delimited output, and the default still trims", async () => {
-        const script = "process.stdout.write(' lead.txt\\0next.txt\\0\\n')";
-        const raw = await new Executor().exec([process.execPath, "-e", script], { trim: false });
-        const trimmed = await new Executor().exec([process.execPath, "-e", script]);
-
-        expect(raw.stdout).toBe(" lead.txt\0next.txt\0\n");
-        expect(trimmed.stdout).toBe("lead.txt\0next.txt\0");
-    });
-
     test("the call's bound wins over the executor's, which wins over the default", () => {
         expect(resolveExecDeadline(undefined, undefined)).toEqual({ ms: 60_000, reason: null, source: "default" });
         expect(resolveExecDeadline(undefined, { ms: 5_000, reason: "slow host" })).toEqual({
@@ -462,6 +453,15 @@ describe("Executor bounded calls", () => {
                 timeout: { ms: 300, reason: "a test bound" },
             })
         ).rejects.toThrow("this call's bound: a test bound");
+    });
+
+    test("trim false keeps the leading space of NUL-delimited output, and the default still trims", async () => {
+        const script = "process.stdout.write(' lead.txt\\0next.txt\\0\\n')";
+        const raw = await new Executor().exec([process.execPath, "-e", script], { trim: false });
+        const trimmed = await new Executor().exec([process.execPath, "-e", script]);
+
+        expect(raw.stdout).toBe(" lead.txt\0next.txt\0\n");
+        expect(trimmed.stdout).toBe("lead.txt\0next.txt\0");
     });
 });
 

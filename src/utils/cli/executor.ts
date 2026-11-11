@@ -700,10 +700,10 @@ export class Executor {
         const cmd = this.prefix ? [this.prefix, ...args] : args;
         const cwd = options?.cwd ?? this.cwd;
         const env = this.buildEnv(options?.env);
-        const finish = (text: string): string => (options?.trim === false ? text : text.trim());
         const deadline = resolveExecDeadline(options?.timeout, this.timeout);
         // Taken before the first await, while the caller is still on the stack: an expiry record names the call site.
         const callSite = new Error("exec call site").stack ?? null;
+        const finish = (text: string): string => (options?.trim === false ? text : text.trim());
 
         if (this.verbose) {
             out.println(pc.gray(`  $ ${cmd.join(" ")}`));
