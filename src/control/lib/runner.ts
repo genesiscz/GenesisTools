@@ -1,5 +1,18 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import {
+    appendFileSync,
+    chmodSync,
+    constants,
+    copyFileSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    rmSync,
+    statSync,
+    utimesSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { agentSessionIds } from "@genesiscz/utils/agent/host";
 import { whoIsCalling } from "@genesiscz/utils/agent/identity";
@@ -321,6 +334,76 @@ export function ensureBinary(trigger = "first-use"): string {
             `Build it with: bun run build:native  (or: cd ${SWIFT_SOURCE} && swift build -c release)\n` +
             `Requires: macOS with Swift toolchain (Xcode or swift.org toolchain)`
     );
+}
+
+/** Where `pinBinary` keeps one copy of each ax-tool build a long-lived capture ran, by content. */
+export const PINNED_AX_TOOL_DIR = genesisToolsDir("native", "ax-tool");
+/** Pinned copies used within this long stay; older ones go, except the newest `PINNED_KEEP_NEWEST`. */
+const PINNED_KEEP_MS = 3 * 24 * 60 * 60_000;
+const PINNED_KEEP_NEWEST = 3;
+
+/**
+ * A copy of `binary` that no build replaces: `<root>/<sha256 prefix>/ax-tool`. A build relinks
+ * `.build/release/ax-tool` in place, so for a moment the path is missing and a capture that starts then exits 127
+ * (2026-11-11 17:35: a meeting recording stopped after three such pieces). A recording runs its pinned copy for its
+ * whole life. The copy is written beside its target and renamed in, and checked against the hash it is named by, so
+ * a copy taken while a build rewrote the source is refused rather than kept.
+ */
+export function pinBinary(binary: string, root = PINNED_AX_TOOL_DIR): string {
+    const hash = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex").slice(0, 16);
+    const id = hash(readFileSync(binary));
+    const dir = join(root, id);
+    const target = join(dir, "ax-tool");
+
+    if (!existsSync(target)) {
+        mkdirSync(dir, { recursive: true });
+        const tmp = join(dir, `.ax-tool.${process.pid}.tmp`);
+        copyFileSync(binary, tmp, constants.COPYFILE_FICLONE);
+
+        if (hash(readFileSync(tmp)) !== id) {
+            rmSync(tmp, { force: true });
+            throw new Error(`ax-tool changed while it was copied from ${binary}; try again after the build`);
+        }
+
+        chmodSync(tmp, 0o755);
+        renameSync(tmp, target);
+        logger.info({ binary, target }, "ax-tool pinned for long captures");
+    }
+
+    const now = new Date();
+    utimesSync(dir, now, now);
+    prunePinnedBinaries(root, Date.now());
+    return target;
+}
+
+/** Drops pinned copies nobody pinned for `PINNED_KEEP_MS`, keeping the newest `PINNED_KEEP_NEWEST` whatever their age. */
+export function prunePinnedBinaries(root: string, now: number): void {
+    const entries = readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => ({ path: join(root, entry.name), usedAt: statSync(join(root, entry.name)).mtimeMs }))
+        .sort((a, b) => b.usedAt - a.usedAt);
+
+    for (const entry of entries.slice(PINNED_KEEP_NEWEST)) {
+        if (now - entry.usedAt > PINNED_KEEP_MS) {
+            rmSync(entry.path, { recursive: true, force: true });
+        }
+    }
+}
+
+let pinnedBinary: string | null = null;
+
+/**
+ * `ensureBinaryAsync` for a capture that runs for a long time (a meeting, a screen recording): the binary is built
+ * when stale, then pinned once per process (`pinBinary`), so a later build of ax-tool never pulls it from under a
+ * running recording.
+ */
+export async function ensurePinnedBinaryAsync(options: Parameters<typeof ensureBinaryAsync>[0] = {}): Promise<string> {
+    if (pinnedBinary !== null && existsSync(pinnedBinary)) {
+        return pinnedBinary;
+    }
+
+    pinnedBinary = pinBinary(await ensureBinaryAsync(options));
+    return pinnedBinary;
 }
 
 interface PendingBuild {

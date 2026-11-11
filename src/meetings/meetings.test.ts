@@ -1142,6 +1142,43 @@ describe("watchOnce", () => {
         };
     }
 
+    test("a recorder that died without a stop (a reinstall, a kill) starts again at the next look; one dead too long is ended as interrupted", async () => {
+        const dead = (meetingId: string) => ({
+            running: false,
+            state: { meetingId, pid: 999_999, startedAt: "2026-11-02T15:00:00.000Z", display: 1, frames: 4, bytes: 10 },
+        });
+        const ended: string[] = [];
+        const recent = harness({
+            recorder: () => dead("m-dead-recent"),
+            recording: () => ({ status: "recording" }),
+            lastFrameAt: () => now - 30_000,
+            endInterrupted: async (meetingId) => {
+                ended.push(meetingId);
+            },
+        });
+
+        expect(await watchOnce(recent.store, { deps: recent.deps, now })).toBe("started");
+        expect(recent.runs).toEqual([["meetings", "record", "start", "--meeting", "m-dead-recent", "--yes"]]);
+        // A start that died again at once is not repeated within RESUME_GAP_MS.
+        expect(await watchOnce(recent.store, { deps: recent.deps, now: now + 10_000 })).toBe("idle");
+        expect(recent.runs).toHaveLength(1);
+        expect(ended).toEqual([]);
+
+        const old = harness({
+            recorder: () => dead("m-dead-old"),
+            recording: () => ({ status: "recording" }),
+            liveRecording: async () => null,
+            lastFrameAt: () => now - 20 * 60_000,
+            endInterrupted: async (meetingId) => {
+                ended.push(meetingId);
+            },
+        });
+
+        expect(await watchOnce(old.store, { deps: old.deps, now })).toBe("idle");
+        expect(old.runs).toEqual([]);
+        expect(ended).toEqual(["m-dead-old"]);
+    });
+
     test("a recorder whose capture failed starts again after a pause, the notice left to the recorder; a stop asked for stays", async () => {
         const failed = {
             status: "stopped",
@@ -2516,7 +2553,7 @@ describe("the meetings recorder loop", () => {
     let stores = 0;
 
     /** `stream`: the capture's stream failed, but it returns the frame it kept before. */
-    type Step = "frames" | "empty" | "fail" | "hang" | "timeout" | "stream" | "removed";
+    type Step = "frames" | "empty" | "fail" | "hang" | "timeout" | "stream" | "removed" | "denied";
 
     /** A recorder that follows a script per capture; after the script it waits for the stop the test sends. */
     class ScriptedRecorder extends FrameRecorder {
@@ -2733,6 +2770,14 @@ describe("the meetings recorder loop", () => {
             if (step === "timeout") {
                 this.script.onFail?.();
                 throw new CaptureError("timeout", "ax-tool capture did not end within 1 s + 30 s");
+            }
+
+            if (step === "denied") {
+                this.script.onFail?.();
+                throw new CaptureError(
+                    "no-permission",
+                    "ax-tool capture: the screen recording permission was declined"
+                );
             }
 
             if (step === "stream") {
@@ -3267,21 +3312,40 @@ describe("the meetings recorder loop", () => {
         expect(Date.parse(run.saved!.recording!.displaySpans!.at(-1)!.to!)).toBeLessThanOrEqual(stopAnswerAt);
     });
 
-    test("captures that fail three times stop it as failed, with one notice and the reason in recorder-last.json", async () => {
-        const run = await recordWith({ displays: [[builtIn]], steps: ["timeout", "fail", "timeout"] });
+    test("captures refused the permission three times stop it as failed, with one notice and the reason in recorder-last.json", async () => {
+        const run = await recordWith({ displays: [[builtIn]], steps: ["denied", "denied", "denied"] });
         const last = SafeJSON.parse(readFileSync(join(run.folder, "recorder-last.json"), "utf8"), { strict: true });
 
         expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "failed" });
         expect(run.saved?.recording?.warning).toContain("capture failed 3 times in a row");
         expect(run.saved?.recording?.warning).toContain("No frame was recorded");
         expect(run.saved?.recording?.failureNotifiedAt).toEqual(expect.any(String));
-        expect(last).toMatchObject({ stopReason: "failed", warning: expect.stringContaining("did not end within") });
+        expect(last).toMatchObject({
+            stopReason: "failed",
+            warning: expect.stringContaining("permission was declined"),
+        });
         expect(run.notes.map((note) => note.title)).toEqual(["Screen recording stopped"]);
         expect(run.notes[0]?.message).toContain("record start --meeting");
     });
 
+    test("captures that fail for any other reason (a rebuilt ax-tool, a timeout) keep the recording: one 'failing' notice, then 'works again'", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["timeout", "fail", "timeout", "fail", "frames", "hang"],
+        });
+
+        expect(run.rejected).toBeUndefined();
+        expect(run.recorder.requests).toHaveLength(6);
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "requested", frames: 1 });
+        expect(run.notes.map((note) => note.title)).toEqual([
+            "Screen capture is failing",
+            "Screen recording works again",
+        ]);
+        expect(run.notes[0]?.message).toContain("keeps trying");
+    });
+
     test("exhausted capture retries persist failure without capturing a frame, and the recorder reports the failure", async () => {
-        const run = await recordWith({ displays: [[builtIn]], steps: ["fail", "fail", "fail"] });
+        const run = await recordWith({ displays: [[builtIn]], steps: ["denied", "denied", "denied"] });
 
         expect(run.rejected).toBeInstanceOf(RecorderFailedError);
         expect(run.rejected?.message).toContain("capture failed 3 times in a row");
@@ -3295,7 +3359,7 @@ describe("the meetings recorder loop", () => {
         let liveState: string | undefined;
         const run = await recordWith({
             displays: [[builtIn]],
-            steps: ["fail", "fail", "fail"],
+            steps: ["denied", "denied", "denied"],
             duringNotify: async (call, liveDir) => {
                 liveState = listLiveRecordings(liveDir).at(0)?.state;
                 return [
@@ -3315,12 +3379,16 @@ describe("the meetings recorder loop", () => {
         expect(run.saved?.history.map((entry) => entry.change)).not.toContain("paused");
     });
 
-    test("captures whose stream failed keep their frames but count as failures, so three in a row stop it as failed", async () => {
+    test("captures whose stream failed keep their frames but count as failures, and three in a row keep the recording trying", async () => {
         const run = await recordWith({ displays: [[builtIn]], steps: ["stream", "stream", "stream"] });
 
-        expect(run.recorder.requests).toHaveLength(3);
-        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "failed", frames: 3 });
-        expect(run.rejected?.message).toContain("capture failed 3 times in a row");
+        expect(run.recorder.requests).toHaveLength(4);
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "requested", frames: 3 });
+        expect(run.rejected).toBeUndefined();
+        expect(run.notes.map((note) => note.title)).toEqual([
+            "Screen capture is failing",
+            "Screen recording works again",
+        ]);
         expect(readdirSync(join(run.folder, "frames"))).toHaveLength(3);
     });
 

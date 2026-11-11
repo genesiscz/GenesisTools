@@ -538,11 +538,29 @@ export class NativeFrameRecorder extends FrameRecorder {
         };
     }
 
+    /**
+     * The ax-tool argv. A binary that cannot be had now (a build relinks it, a build failed) is a `CaptureError`, so a
+     * recording counts it as a failed piece and tries again, instead of ending on an unknown error.
+     */
     private async axTool(signal?: AbortSignal): Promise<string[]> {
-        const axTool = await this.context.axTool({
-            signal,
-            onBuild: () => log.info("building ax-tool before the capture"),
-        });
+        let axTool: string[];
+
+        try {
+            axTool = await this.context.axTool({
+                signal,
+                onBuild: () => log.info("building ax-tool before the capture"),
+            });
+        } catch (error) {
+            if (signal?.aborted || error instanceof CaptureError) {
+                throw error;
+            }
+
+            throw new CaptureError(
+                "unavailable",
+                `ax-tool is not available: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
+
         this.flags = await detectFlags(axTool);
         return axTool;
     }

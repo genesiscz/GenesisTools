@@ -2,8 +2,10 @@ import { existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { MeetingRun } from "@app/meetings/lib/meeting-run";
 import {
+    captureKeepsTrying,
     defaultDeps,
     errorText,
+    failureBackoffMs,
     framesOnDisk,
     log,
     MAX_FAILURES,
@@ -79,6 +81,9 @@ function meetingRecorderConfig(run: MeetingRun) {
                 failures: {
                     max: MAX_FAILURES,
                     pauseMs: deps.failurePauseMs,
+                    backoffMs: (failures) => failureBackoffMs(failures, deps.failurePauseMs),
+                    keepTrying: captureKeepsTrying,
+                    struggling: (count, err) => run.captureStruggling(count, err),
                     verdict: captureErrorVerdict,
                     gaveUp: (count, err) => {
                         run.note(`capture failed ${count} times in a row: ${errorText(err)}`);

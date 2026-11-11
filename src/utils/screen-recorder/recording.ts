@@ -149,10 +149,19 @@ export function emptyPieceVerdict(piece: PieceResult): PieceVerdict {
 }
 
 export interface PieceFailureRule {
-    /** Failed pieces in a row after which the recording ends. */
+    /** Failed pieces in a row after which the recording ends, unless `keepTrying` says the failure passes. */
     max: number;
-    /** The wait after a failed piece; a stop cuts it short. */
+    /** The wait after a failed piece; a stop cuts it short. `backoffMs` replaces it when given. */
     pauseMs: number;
+    /** The wait after the `failures`-th failed piece in a row (a growing backoff). */
+    backoffMs?(failures: number): number;
+    /**
+     * Whether `max` failures in a row of this kind still keep the recording: a binary being rebuilt, a capture that
+     * timed out. False (or absent) ends the recording through `gaveUp`.
+     */
+    keepTrying?(error: unknown): boolean;
+    /** `max` failures in a row that `keepTrying` keeps: said once per run of failures; `recorded` follows a recovery. */
+    struggling?(count: number, error: unknown): Promise<void> | void;
     /** The verdict on a piece. Throwing ends the recording with that error (`hooks.onError`). */
     verdict(piece: PieceResult, now: { paused: boolean; stopping: boolean }): PieceVerdict;
     /** `max` pieces failed in a row, so the recording ends; `error` is the last failure's. */
@@ -895,12 +904,20 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 log.warn({ err: error, failures, id: this.config.live.id }, "capture piece failed");
 
                 if (failures >= rule.max) {
-                    rule.gaveUp(failures, error);
-                    return;
+                    if (!rule.keepTrying?.(error)) {
+                        rule.gaveUp(failures, error);
+                        return;
+                    }
+
+                    if (failures === rule.max) {
+                        await rule.struggling?.(failures, error);
+                    }
                 }
 
-                if (rule.pauseMs > 0) {
-                    await abortableSleep(rule.pauseMs, this.backoff.signal).catch(() => undefined);
+                const pauseMs = rule.backoffMs?.(failures) ?? rule.pauseMs;
+
+                if (pauseMs > 0) {
+                    await abortableSleep(pauseMs, this.backoff.signal).catch(() => undefined);
                 }
             }
 

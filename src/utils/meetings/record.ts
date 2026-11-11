@@ -243,8 +243,12 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
 ]);
 export type MeetingItem = z.infer<typeof meetingItemSchema>;
 
-/** Why a recorded span ended: asked for (`record stop`, a stop command, a signal), a pause, failed captures, an error. */
-export const RECORDING_STOP_REASONS = ["requested", "paused", "failed", "error"] as const;
+/**
+ * Why a recorded span ended: asked for (`record stop`, a stop command, a signal), a pause, failed captures, an error,
+ * or `interrupted`: the recorder process died without a stop (a reinstall, a crash, a kill), and the next start closed
+ * its span.
+ */
+export const RECORDING_STOP_REASONS = ["requested", "paused", "failed", "error", "interrupted"] as const;
 export type RecordingStopReason = (typeof RECORDING_STOP_REASONS)[number];
 
 const recordingSpanSchema = z.object({

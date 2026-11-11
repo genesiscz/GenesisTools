@@ -345,6 +345,8 @@ struct MeetingsSettings: Decodable, Equatable {
             let idleFps: Double
             let threshold: Double
             let retentionDays: Int
+            /// `failing-and-recovered`, `failing` or `off`; absent in a config written before the key.
+            let failureNotices: String?
         }
         struct Assign: Decodable, Equatable {
             let ask: Bool

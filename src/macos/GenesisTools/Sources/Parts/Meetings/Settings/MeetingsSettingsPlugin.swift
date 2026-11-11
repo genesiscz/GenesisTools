@@ -178,6 +178,17 @@ struct MeetingsRecordingPage: View {
                                      identifier: "meetings.capture.retention",
                                      options: Array(Set([7, 14, 30, 90, capture.retentionDays])).sorted().map { NativeSettingsOption($0, Plural.count($0, "day")) },
                                      selection: Binding(get: { capture.retentionDays }, set: { model.set(["global", "capture", "retentionDays"], $0) }))
+                Divider()
+                NativeSettingsPicker("Notices while a capture fails",
+                                     detail: "The recording keeps trying after failed captures; a stopped recording always says so.",
+                                     identifier: "meetings.capture.failureNotices",
+                                     options: [
+                                         NativeSettingsOption("failing-and-recovered", "When it fails and when it works again"),
+                                         NativeSettingsOption("failing", "Only when it starts failing"),
+                                         NativeSettingsOption("off", "None"),
+                                     ],
+                                     selection: Binding(get: { capture.failureNotices ?? "failing-and-recovered" },
+                                                        set: { model.set(["global", "capture", "failureNotices"], $0) }))
             }
 
             OcrLanguagesCard(model: model, language: settings.global.language, languages: settings.meetingLanguage?.ocr ?? [])

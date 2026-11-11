@@ -1,8 +1,9 @@
-import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
     defaultOcrLanguages,
     EMPTY_FRAME_CHARS,
+    errorText,
     frameName,
     framesOnDisk,
     log,
@@ -50,6 +51,8 @@ export class MeetingRun {
     readonly displays: PolicyDisplays;
     private readonly stateFile: RecorderStateFile<RecorderState>;
     private failureNoticeOpen: boolean;
+    /** When the current run of failed captures that the recording outlives began; undefined while captures work. */
+    private strugglingSince?: number;
     private runFrames = 0;
     private audioFiles = 0;
     private zeroMs?: number;
@@ -135,11 +138,19 @@ export class MeetingRun {
         return this.zeroMs;
     }
 
+    /** When the last frame landed in the meeting's frames folder (its mtime), or now when it has none. */
+    private lastFrameAt(): string {
+        const at = existsSync(this.framesDir) ? statSync(this.framesDir).mtime : new Date();
+        return at.toISOString();
+    }
+
     /** The loop starts: an empty piece folder, the state file, an open span, and the record's recording block. */
     async begin(recording: FrameRecording<string[]>): Promise<void> {
         rmSync(this.pieceDir, { recursive: true, force: true });
         mkdirSync(this.pieceDir, { recursive: true });
         this.saveState();
+        // A span still open here is a run whose process died without a stop: it ends at its last kept frame.
+        this.recordingRecord.closeSpan("interrupted", this.lastFrameAt());
         this.recordingRecord.openSpan();
         await this.recordingRecord.start({
             startedAt: this.state.startedAt,
@@ -149,7 +160,7 @@ export class MeetingRun {
         });
     }
 
-    /** A capture recorded again: an open failure notice in the record is cleared. */
+    /** A capture recorded again: an open failure notice in the record is cleared, and a "keeps failing" one is answered. */
     async captureWorksAgain(): Promise<void> {
         if (this.failureNoticeOpen) {
             this.failureNoticeOpen = false;
@@ -157,6 +168,46 @@ export class MeetingRun {
                 delete recordingBlock.failureNotifiedAt;
             });
         }
+
+        if (this.strugglingSince !== undefined) {
+            const lostSec = Math.round((Date.now() - this.strugglingSince) / 1000);
+            this.strugglingSince = undefined;
+            log.info({ lostSec, meeting: this.meetingId }, "capture works again after failures");
+
+            if (this.capture.failureNotices !== "failing-and-recovered") {
+                return;
+            }
+
+            await this.deps.notify({
+                title: "Screen recording works again",
+                message: `The capture records again after about ${lostSec} s of failures.`,
+                open: this.folder,
+            });
+        }
+    }
+
+    /**
+     * `count` captures in a row failed with an error the recording outlives (an ax-tool being rebuilt, a timeout): the
+     * recording goes on trying, and says so once until a capture records again.
+     */
+    async captureStruggling(count: number, err: unknown): Promise<void> {
+        if (this.strugglingSince !== undefined) {
+            return;
+        }
+
+        this.strugglingSince = Date.now();
+        this.note(`capture failed ${count} times in a row: ${errorText(err)}; it keeps trying`);
+        log.warn({ err, count, meeting: this.meetingId }, "capture keeps failing; the recording keeps trying");
+
+        if (this.capture.failureNotices === "off") {
+            return;
+        }
+
+        await this.deps.notify({
+            title: "Screen capture is failing",
+            message: `${errorText(err)}. The recording keeps trying every minute until it works again.`,
+            open: this.folder,
+        });
     }
 
     /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */

@@ -94,6 +94,10 @@ const recordersSchema = z.object({
 }) satisfies z.ZodType<Record<FrameRecorderId, object>>;
 
 /** The capture policy every recorder follows, the recorder that runs, and each recorder's own keys. */
+/** Which notices a recording that keeps trying after failed captures posts (`capture.failureNotices`). */
+export const CAPTURE_FAILURE_NOTICES = ["failing-and-recovered", "failing", "off"] as const;
+export type CaptureFailureNotices = (typeof CAPTURE_FAILURE_NOTICES)[number];
+
 const captureSchema = z.object({
     /** The frame recorder: GenesisTools' own ScreenCaptureKit recorder (`native`) or `peekaboo`. */
     backend: z.enum(FRAME_RECORDER_IDS).default("native"),
@@ -127,6 +131,12 @@ const captureSchema = z.object({
      * trash this many days after its newest capture file; the meeting record stays.
      */
     retentionDays: z.number().int().positive().default(30),
+    /**
+     * The notices of a capture that keeps failing while the recording goes on trying (an ax-tool being rebuilt, a
+     * timeout): `failing-and-recovered` says when it starts failing and when it records again, `failing` only the first,
+     * `off` neither. A recording that stops (a refused permission) always says so.
+     */
+    failureNotices: z.enum(CAPTURE_FAILURE_NOTICES).default("failing-and-recovered"),
     recorders: recordersSchema.prefault({}),
 });
 

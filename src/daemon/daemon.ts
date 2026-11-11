@@ -23,6 +23,8 @@ export const EXIT_LOST_TAKEOVER_RACE = 2;
 
 const STALE_TAKEOVER_MAX_ATTEMPTS = 3;
 const STALE_TAKEOVER_RETRY_MS = 50;
+/** How often the daemon checks that the meetings watcher runs (a pid file read; it starts one only when it is gone). */
+const WATCHER_CHECK_MS = 60_000;
 
 // The atomic stale-takeover protocol now lives in the shared pidfile util;
 // re-exported so daemon.test.ts (and older callers) keep their import path.
@@ -83,8 +85,19 @@ export async function startDaemon(): Promise<void> {
     ensureWatcher()
         .then((result) => log.info({ result }, "[daemon] meetings watcher at start"))
         .catch((err) => log.warn({ err }, "[daemon] meetings watcher start failed"));
+    // A watcher killed later (a reinstall, a crash) comes back within a minute; it resumes a recording whose recorder died.
+    const watcherCheck = setInterval(() => {
+        ensureWatcher()
+            .then((result) => {
+                if (result === "started") {
+                    log.info("[daemon] meetings watcher was gone; started it again");
+                }
+            })
+            .catch((err) => log.warn({ err }, "[daemon] meetings watcher check failed"));
+    }, WATCHER_CHECK_MS);
 
     const cleanup = () => {
+        clearInterval(watcherCheck);
         // Guarded: a daemon that lost its claim must not delete the winner's file.
         clearPidFile(pidFile);
         log.info("[daemon] stopped");
