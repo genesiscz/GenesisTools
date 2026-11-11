@@ -1,5 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { Dims, DimValue, StoredEvent } from "./types";
+import type { Dims, DimValue, MetricCheckpointInput, StoredEvent } from "./types";
 
 /**
  * The one check between a dim name and SQL text: the query builder writes a dim name into a JSON path and an index
@@ -30,7 +30,7 @@ export function assertDimName(name: string): string {
     return name;
 }
 
-export function assertName(kind: "project" | "metric", name: string): string {
+export function assertName(kind: "project" | "metric" | "checkpoint", name: string): string {
     if (!NAME.test(name)) {
         throw new MetricsInputError(
             `${kind} name ${SafeJSON.stringify(name)} must start with a letter or digit and use only letters, digits, ".", "_", ":" or "-" (100 at most)`
@@ -139,4 +139,78 @@ export function checkEvent(raw: unknown, now: number): EventCheck {
     }
 
     return { ok: true, event };
+}
+
+/** The largest text of a checkpoint's `commit`, `repo` or `note`. */
+const MAX_CHECKPOINT_TEXT = 2_000;
+
+export type CheckpointCheck =
+    | { ok: true; checkpoint: Omit<MetricCheckpointInput, "at"> & { at?: number }; dataJson?: string }
+    | { ok: false; reason: string };
+
+/**
+ * An untrusted checkpoint (a spool line, an RPC call, the CLI) as the store takes it, or why it is refused. `at` stays
+ * absent when not given: the store then keeps an existing checkpoint's time, or takes `now` for a new one.
+ */
+export function checkCheckpoint(raw: unknown, now: number): CheckpointCheck {
+    if (!isRecord(raw)) {
+        return { ok: false, reason: "a checkpoint is a JSON object" };
+    }
+
+    const { project, name } = raw;
+
+    if (typeof project !== "string" || typeof name !== "string") {
+        return { ok: false, reason: "project and name are strings" };
+    }
+
+    if (!NAME.test(project) || !NAME.test(name)) {
+        return { ok: false, reason: `project or checkpoint name not allowed: ${project} / ${name}` };
+    }
+
+    const at = raw.at === undefined ? undefined : atOf(raw.at, now);
+
+    if (raw.at !== undefined && at === undefined) {
+        return { ok: false, reason: "at is epoch ms or an ISO time" };
+    }
+
+    const texts: Record<string, string> = {};
+
+    for (const field of ["commit", "repo", "note"] as const) {
+        const value = raw[field];
+
+        if (value === undefined || value === null) {
+            continue;
+        }
+
+        if (typeof value !== "string" || value.length > MAX_CHECKPOINT_TEXT) {
+            return { ok: false, reason: `${field} is a string of at most ${MAX_CHECKPOINT_TEXT} characters` };
+        }
+
+        texts[field] = value;
+    }
+
+    let dataJson: string | undefined;
+
+    if (raw.data !== undefined) {
+        dataJson = SafeJSON.stringify(raw.data, { strict: true });
+
+        if (dataJson.length > MAX_CONTEXT_CHARS) {
+            return {
+                ok: false,
+                reason: `data is ${dataJson.length} characters of JSON, more than ${MAX_CONTEXT_CHARS}`,
+            };
+        }
+    }
+
+    return {
+        ok: true,
+        checkpoint: {
+            project,
+            name,
+            ...(at === undefined ? {} : { at }),
+            ...texts,
+            ...(raw.data === undefined ? {} : { data: raw.data }),
+        },
+        ...(dataJson === undefined ? {} : { dataJson }),
+    };
 }

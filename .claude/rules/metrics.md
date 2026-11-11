@@ -21,7 +21,15 @@ spool writer. The design: `.claude/plans/2026-11-11-MetricsTool.md`; the user do
   context?}`, `at` in epoch ms (set by the writer; an absent one reads as the drain's time), file name
   `<writer>-<local YYYY-MM-DD>.jsonl`. The drain takes whole lines only, and writes the events and the new offset in
   one transaction. A line `{"v":1,"define":{project, metric, unit?, description?, dims?}}` declares a metric (a
-  plugin cannot call `define`). A change of the shape is a new `v`, and the drain keeps reading the old one.
+  plugin cannot call `define`), and a line `{"v":1,"checkpoint":{project, name, at?, commit?, repo?, note?, data?}}`
+  adds or updates a checkpoint (an upsert, so a line read twice changes nothing). A change of the shape is a new `v`,
+  and the drain keeps reading the old one.
+- **Checkpoints** (`checkpoints` table, `checkpoints.ts` for the labels and spans): a checkpoint belongs to a project,
+  its name is unique there and follows the project and metric name rule. The group key and `where` dim `checkpoint`
+  is computed from `at` in `sql.ts` (a CASE over bound times and names, or one SELECT per span joined by UNION ALL
+  when it is grouped with time buckets at most); `checkpoint.list` reads only, like `catalog`. Commands: `checkpoint
+  add|list|rm`, `query --group-by checkpoint`, `--where checkpoint=<name>`, `--since|--until checkpoint:<name>`,
+  `events --checkpoint`, `tail --checkpoint`.
 - **The dim-name rule.** A dim name matches `^[A-Za-z][A-Za-z0-9_]{0,39}$`, checked by `assertDimName` / `isDimName`
   in `dims.ts`, the one check between a name and SQL text. Every door calls it; values are always bound parameters.
   Build SQL only in `sql.ts`; a caller passes a `MetricQuery`, never SQL.

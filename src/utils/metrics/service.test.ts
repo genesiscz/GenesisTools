@@ -105,6 +105,58 @@ describe("metrics service", () => {
         ).rejects.toThrow(/dim name/);
     });
 
+    test("checkpoints: add, list and remove, a labelled tail, and a query grouped by checkpoint", async () => {
+        const { client } = await started();
+        const now = Date.now();
+        const heard: MetricsEventNotification[] = [];
+        const plain: MetricsEventNotification[] = [];
+        const both = Promise.withResolvers<void>();
+        await client.subscribe({ project: "shop", withCheckpoint: true }, (event) => {
+            heard.push(event);
+
+            if (heard.length === 2) {
+                both.resolve();
+            }
+        });
+        const other = await MetricsServiceClient.connect(client.entry);
+        closing.push(() => other.close());
+        await other.subscribe({ project: "shop" }, (event) => plain.push(event));
+
+        const added = await client.call("checkpoint.add", {
+            project: "shop",
+            name: "v1",
+            at: now - 60_000,
+            commit: "abc",
+        });
+        expect(added).toEqual({ project: "shop", name: "v1", at: now - 60_000, commit: "abc" });
+        await client.call("ingest", {
+            events: [
+                { project: "shop", metric: "cart.items", value: 1, at: now - 120_000 },
+                { project: "shop", metric: "cart.items", value: 2, at: now },
+            ],
+        });
+        await Promise.race([both.promise, Bun.sleep(2_000)]);
+        expect(heard.map((event) => event.checkpoint)).toEqual(["(before v1)", "v1"]);
+        expect(plain.map((event) => event.checkpoint)).toEqual([undefined, undefined]);
+
+        const grouped = await client.call("query", {
+            project: "shop",
+            metric: "cart.items",
+            groupBy: ["checkpoint"],
+            sort: { by: "checkpoint", descending: false },
+        });
+        expect(grouped.rows.map((row) => [row.group.checkpoint, row.values.sum, row.span !== undefined])).toEqual([
+            ["(before v1)", 1, true],
+            ["v1", 2, true],
+        ]);
+        expect(await client.call("checkpoint.list", { project: "shop" })).toEqual([added]);
+        expect(await client.call("checkpoint.remove", { project: "shop", name: "v1" })).toEqual({ removed: true });
+        expect(await client.call("checkpoint.list", {})).toEqual([]);
+        await expect(client.call("checkpoint.add", { project: "shop", name: "no good" })).rejects.toThrow(
+            /checkpoint name not allowed/
+        );
+    });
+
     test("an import batch writes its offset with its events; a repeat of the same lines adds nothing", async () => {
         const { client } = await started();
         const batch = {

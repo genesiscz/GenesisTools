@@ -5,6 +5,7 @@ import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { type ServiceEntry, type ServiceHost, startServiceHost } from "@genesiscz/utils/rpc/service-host";
 import type { RpcConnection } from "@genesiscz/utils/rpc/socket-server";
 import type { z } from "zod";
+import { type CheckpointMark, checkpointAt } from "./checkpoints";
 import { checkEvent, MetricsInputError } from "./dims";
 import {
     METRICS_EVENT,
@@ -42,7 +43,7 @@ const MAX_REASONS = 10;
 interface ConnectionState {
     id: number;
     /** The subscription's filter; undefined until the connection subscribes. */
-    filter?: { project?: string; metric?: string };
+    filter?: { project?: string; metric?: string; withCheckpoint?: boolean };
 }
 
 export interface MetricsServiceOptions {
@@ -146,6 +147,21 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
             return;
         }
 
+        const labelled = listening.some((connection) => connection.state.filter?.withCheckpoint === true);
+        const marks = new Map<string, CheckpointMark[]>();
+        const labelOf = (event: StoredEvent): string => {
+            let held = marks.get(event.project);
+
+            if (!held) {
+                held = storeNow()
+                    .checkpoints(event.project)
+                    .map((checkpoint) => ({ name: checkpoint.name, at: checkpoint.at }));
+                marks.set(event.project, held);
+            }
+
+            return checkpointAt(held, event.at);
+        };
+
         for (const event of events) {
             const notification: MetricsEventNotification = {
                 project: event.project,
@@ -156,13 +172,21 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
                 ...(event.context === undefined ? {} : { context: event.context }),
                 door,
             };
-            host?.emit(METRICS_EVENT, { ...notification }, (connection) => {
+            const matches = (connection: RpcConnection<ConnectionState>, withCheckpoint: boolean): boolean => {
                 const filter = connection.state.filter;
                 return (
+                    (filter?.withCheckpoint === true) === withCheckpoint &&
                     (!filter?.project || filter.project === event.project) &&
                     (!filter?.metric || filter.metric === event.metric)
                 );
-            });
+            };
+            host?.emit(METRICS_EVENT, { ...notification }, (connection) => matches(connection, false));
+
+            if (labelled) {
+                host?.emit(METRICS_EVENT, { ...notification, checkpoint: labelOf(event) }, (connection) =>
+                    matches(connection, true)
+                );
+            }
         }
     };
 
@@ -293,6 +317,16 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
             spool: { dir: spool, files: storeNow().spoolFiles(), badLines, drains },
         })),
         prune: handler("prune", METRICS_METHODS.prune, (params) => ({ removed: storeNow().prune(params.before) })),
+        "checkpoint.add": handler("checkpoint.add", METRICS_METHODS["checkpoint.add"], (params) =>
+            storeNow().addCheckpoint(params)
+        ),
+        // Reads only, like `catalog`: a checkpoint still in the spool shows after the next drain.
+        "checkpoint.list": handler("checkpoint.list", METRICS_METHODS["checkpoint.list"], (params) =>
+            storeNow().checkpoints(params.project)
+        ),
+        "checkpoint.remove": handler("checkpoint.remove", METRICS_METHODS["checkpoint.remove"], (params) => ({
+            removed: storeNow().removeCheckpoint(params.project, params.name),
+        })),
     };
 
     const start = await startServiceHost<ConnectionState>({
@@ -321,6 +355,7 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
             connection.state.filter = {
                 ...(parsed.data.project ? { project: parsed.data.project } : {}),
                 ...(parsed.data.metric ? { metric: parsed.data.metric } : {}),
+                ...(parsed.data.withCheckpoint ? { withCheckpoint: true } : {}),
             };
         },
         idleMs: options.idleMs ?? METRICS_SERVICE_IDLE_MS,

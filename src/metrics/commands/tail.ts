@@ -8,13 +8,18 @@ import { withService } from "../lib/service";
 
 interface TailFlags {
     json?: boolean;
+    checkpoint?: boolean;
 }
 
 async function tail(project: string | undefined, metric: string | undefined, flags: TailFlags): Promise<void> {
     await withService(async (client) => {
         await withInterrupt(async (signal) => {
             const stop = await client.subscribe(
-                { ...(project ? { project } : {}), ...(metric ? { metric } : {}) },
+                {
+                    ...(project ? { project } : {}),
+                    ...(metric ? { metric } : {}),
+                    ...(flags.checkpoint ? { withCheckpoint: true } : {}),
+                },
                 (event) => {
                     if (flags.json) {
                         out.print(`${SafeJSON.stringify(event, { strict: true })}\n`);
@@ -41,6 +46,7 @@ export function registerTailCommand(program: Command): void {
         .command("tail [project] [metric]")
         .description("Print events as the service takes them in (from the spool, ingest and imports) until Ctrl-C")
         .option("--json", "one JSON event per line")
+        .option("--checkpoint", "name the checkpoint each event falls under")
         .action((project: string | undefined, metric: string | undefined, flags: TailFlags) =>
             tail(project, metric, flags)
         );

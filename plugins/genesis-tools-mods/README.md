@@ -52,7 +52,11 @@ The full reference of every mod is the "The Claude Code mods" section of [the ag
 - `tmpUsage`: what the session keeps on disk and the free disk (`/mod-tmp`).
 - `agentsBand`: one band row per working subagent with model, age, idle time and tool calls (`/mod-agents`).
 - `hooks` and `hooksDedupe`: a band chip that counts what the hooks hand the model (`/mod-hooks`), and a dedupe of
-  repeated blocks.
+  repeated blocks. With `mods.hooks.metrics` each injection is also a `tools metrics` event, `agent-context /
+  hook.injection`, with the dims `session`, `agent`, `agentType`, `event`, `source`, `rule`, `dropped`, `model`
+  (the model of the loop it went to, null while unknown) and `delivery` (`full` for an area rule's text, `pointer`
+  for an `Area rules (pointer): ...` line, null for other sources):
+  `tools metrics query agent-context hook.injection --group-by source,delivery,model --agg count,sum`.
 - `stall`: a band row with `continue` when a reply ends on what it was about to do and nothing can wake the session.
 - `resumeGuard`: refuses once a SendMessage that would resume an agent whose prompt cache went cold while it holds a
   large context. See below.
@@ -89,8 +93,28 @@ When either stays unknown, the message goes through and the mod log says why.
 Every decision goes to `~/.genesis-tools/agents/mods-log/resume-guard.jsonl`: the reason, the agent, its idle
 seconds, its context and where each came from. Each decision on a known size is also a `tools metrics` event,
 project `agent-context`, metric `agent.resume`, value the context in tokens, with the dims `session`, `agent`,
-`agentType`, `kind` (`subagent` or `teammate`), `idleSeconds` (`<5m`, `5-15m`, `15-60m`, `60m+`) and `outcome`
-(`refused`, `resent`, `passed-warm`, `passed-small`).
+`agentType`, `kind` (`subagent` or `teammate`), `idleSeconds` (`<5m`, `5-15m`, `15-60m`, `60m+`), `outcome`
+(`refused`, `resent`, `passed-warm`, `passed-small`), `model` (the agent's model, null while unknown) and `name`
+(when the agent has one). Its context holds the exact numbers: `{ idleSeconds, contextTokens, thresholds: {
+idleSeconds, minTokens } }`. A refusal after a reload of the mods counts too, with the idle time and the size the
+transcript gave.
+
+```bash
+tools metrics query agent-context agent.resume --group-by outcome,idleSeconds --agg count,sum
+```
+
+A message that goes through (`resent`, `passed-warm`, `passed-small`) is remembered until the agent's next model
+response, and that response's usage is one `agent-context / agent.resume.result` event: value the cache-write tokens
+(the context written again), dims `session`, `agent`, `agentType`, `kind`, `model` (the model that answered),
+`idleSeconds`, `decision` (the outcome that let it through) and `cache`: `hit` when the cache read is 90% or more of
+the context before the pause, `miss` at 10% or less, `partial` between (the rule of the session-analyzer's
+`agent-resumes.ts`). Its context is `{ idleSeconds, contextBefore, input, cacheRead, cacheWrite, output }`. One
+result per passed message: a later response records nothing. A compaction of the agent forgets its remembered size,
+so a refusal after it never names the size from before.
+
+```bash
+tools metrics query agent-context agent.resume.result --group-by decision,cache --agg count,sum
+```
 
 ### Settings
 

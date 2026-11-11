@@ -12,10 +12,22 @@
 // when the clock has not seen it (a reload of the mods). The context is the agent's last model call, input plus cache
 // read plus cache write plus output, as its `turn.step` stop chunk reported it, or the last usage in its transcript's end. When either
 // stays unknown the send goes through: an unknown size is no reason to block.
-import type { AgentInfo, ModelUsage, ToolCallInput } from "claude-code";
+//
+// Each decision on a known size is one `agent-context / agent.resume` event with the exact numbers in its context. A
+// message that went through is remembered per agent until that agent's next model response, whose usage becomes one
+// `agent-context / agent.resume.result` event: what the resume really wrote to the cache, and whether the cache held.
+import type { AgentInfo, ModelUsage, ToolCallInput, TurnUsage } from "claude-code";
 import { agentActiveAt, agentClockTime } from "./agent-clock";
 import { sessionDirOf } from "./agents-band";
-import { METRICS_SPOOL_VERSION, RESUME_DEFINITION, type SpoolEvent, spoolEvents } from "./metrics";
+import { loopModelOf, noteLoopModel } from "./loop-model";
+import {
+    METRICS_SPOOL_VERSION,
+    type MetricDefinition,
+    RESUME_DEFINITION,
+    RESUME_RESULT_DEFINITION,
+    type SpoolEvent,
+    spoolEvents,
+} from "./metrics";
 import {
     appendJsonl,
     type Feature,
@@ -33,6 +45,18 @@ export type ResumeSettings = ModsSettings["resumeGuard"];
 const contexts = new Map<string, number>();
 /** The refusals the agent has not yet answered by running: when, and the size the refusal named, by agent id. */
 const refusals = new Map<string, { at: number; tokens: number; idleMs: number }>();
+
+/** A message the guard let through, waiting for the agent's next model response to show what the resume cost. */
+interface PassedResume {
+    agent: ResumeTarget;
+    outcome: Exclude<ResumeOutcome, "refused">;
+    idleMs: number;
+    /** The context at the agent's last call before the pause. */
+    contextBefore: number;
+}
+
+/** The passed messages whose result is not recorded yet, by agent id: one result per passed message. */
+const passed = new Map<string, PassedResume>();
 
 /** A loop in these states makes its calls now, so its cache is warm. */
 const RUNNING = new Set(["pending", "running"]);
@@ -177,6 +201,25 @@ export function decideResume(settings: ResumeSettings, facts: ResumeFacts): Resu
     return { refuse: true, reason: "cold-and-large", outcome: "refused" };
 }
 
+/** Share of the context before the pause that the next call read from the cache: a hit at 90% or more, a miss at 10% or less. */
+const HIT_SHARE = 0.9;
+const MISS_SHARE = 0.1;
+
+/** How much of `expected` tokens the cache held (`hit`, `partial`, `miss`); the session-analyzer's `agent-resumes.ts` rule. */
+export function cacheOutcome(expected: number, cacheRead: number): "hit" | "partial" | "miss" {
+    if (expected <= 0) {
+        return "miss";
+    }
+
+    const share = cacheRead / expected;
+
+    if (share >= HIT_SHARE) {
+        return "hit";
+    }
+
+    return share <= MISS_SHARE ? "miss" : "partial";
+}
+
 /** The `idleSeconds` dim: `<5m`, `5-15m`, `15-60m` or `60m+`. */
 export function idleBucket(idleMs: number): string {
     const minutes = idleMs / 60_000;
@@ -281,10 +324,11 @@ async function readTranscript(
     return { path, mtimeMs: stat?.mtimeMs, tokens, tail };
 }
 
-/** One `agent-context / agent.resume` event in the `tools metrics` spool; a failure never reaches the call. */
-async function report(
+/** One event of `definition` in the `tools metrics` spool. */
+async function spool(
     host: Host,
-    facts: { agent: ResumeTarget; outcome: ResumeOutcome; tokens: number; idleMs: number; at: number }
+    definition: MetricDefinition,
+    event: Omit<SpoolEvent, "v" | "project" | "metric">
 ): Promise<void> {
     const home = (await host.env("GENESIS_TOOLS_HOME")) ?? (await host.env("HOME"));
 
@@ -292,28 +336,82 @@ async function report(
         return;
     }
 
-    const event: SpoolEvent = {
-        v: METRICS_SPOOL_VERSION,
-        project: RESUME_DEFINITION.define.project,
-        metric: RESUME_DEFINITION.define.metric,
+    await spoolEvents({
+        append: (path, record) => appendJsonl(host, path, record),
+        home,
+        definition,
+        events: [
+            {
+                v: METRICS_SPOOL_VERSION,
+                project: definition.define.project,
+                metric: definition.define.metric,
+                ...event,
+            },
+        ],
+        at: event.at,
+    });
+}
+
+function kindOf(agent: ResumeTarget): "subagent" | "teammate" {
+    return agent.teammateId === undefined ? "subagent" : "teammate";
+}
+
+/** One `agent-context / agent.resume` event, the exact numbers in its context; a failure never reaches the call. */
+async function report(
+    host: Host,
+    facts: {
+        agent: ResumeTarget;
+        outcome: ResumeOutcome;
+        tokens: number;
+        idleMs: number;
+        at: number;
+        settings: ResumeSettings;
+    }
+): Promise<void> {
+    await spool(host, RESUME_DEFINITION, {
         at: facts.at,
         value: facts.tokens,
         dims: {
             session: await host.sessionId(),
             agent: facts.agent.id,
             agentType: facts.agent.type,
-            kind: facts.agent.teammateId === undefined ? "subagent" : "teammate",
+            kind: kindOf(facts.agent),
             idleSeconds: idleBucket(facts.idleMs),
             outcome: facts.outcome,
+            model: loopModelOf(facts.agent.id),
+            ...(facts.agent.name ? { name: facts.agent.name } : {}),
         },
-    };
+        context: {
+            idleSeconds: Math.round(facts.idleMs / 1000),
+            contextTokens: facts.tokens,
+            thresholds: { idleSeconds: facts.settings.idleSeconds, minTokens: facts.settings.minTokens },
+        },
+    });
+}
 
-    await spoolEvents({
-        append: (path, record) => appendJsonl(host, path, record),
-        home,
-        definition: RESUME_DEFINITION,
-        events: [event],
-        at: facts.at,
+/** The `agent-context / agent.resume.result` event of a passed message: the agent's next response's real cost. */
+async function reportResult(host: Host, resume: PassedResume, usage: TurnUsage, at: number): Promise<void> {
+    await spool(host, RESUME_RESULT_DEFINITION, {
+        at,
+        value: usage.cache_creation_input_tokens,
+        dims: {
+            session: await host.sessionId(),
+            agent: resume.agent.id,
+            agentType: resume.agent.type,
+            kind: kindOf(resume.agent),
+            model: usage.model || loopModelOf(resume.agent.id),
+            idleSeconds: idleBucket(resume.idleMs),
+            decision: resume.outcome,
+            cache: cacheOutcome(resume.contextBefore, usage.cache_read_input_tokens),
+        },
+        context: {
+            idleSeconds: Math.round(resume.idleMs / 1000),
+            contextBefore: resume.contextBefore,
+            input: usage.input_tokens,
+            cacheRead: usage.cache_read_input_tokens,
+            cacheWrite: usage.cache_creation_input_tokens,
+            output: usage.output_tokens,
+        },
     });
 }
 
@@ -414,7 +512,14 @@ export async function guardResume(host: Host, e: ToolCallInput): Promise<string 
     });
 
     if (decision.outcome !== undefined && tokens !== undefined && idleMs !== undefined) {
-        await report(host, { agent, outcome: decision.outcome, tokens, idleMs, at: now }).catch(() => undefined);
+        await report(host, { agent, outcome: decision.outcome, tokens, idleMs, at: now, settings }).catch(
+            () => undefined
+        );
+
+        // The first passed message waits for the agent's next response; a second one before it adds nothing.
+        if (decision.outcome !== "refused" && !passed.has(agent.id)) {
+            passed.set(agent.id, { agent, outcome: decision.outcome, idleMs, contextBefore: tokens });
+        }
     }
 
     if (!decision.refuse || facts.tokens === undefined || facts.idleMs === undefined) {
@@ -428,9 +533,24 @@ export async function guardResume(host: Host, e: ToolCallInput): Promise<string 
 
 export const resumeGuard: Feature = {
     guardTool: guardResume,
-    afterStep(_host, e, usage) {
-        if (usage) {
-            contexts.set(e.agentId, contextTokens(usage));
+    afterStep(host, e, usage) {
+        if (!usage) {
+            return;
+        }
+
+        contexts.set(e.agentId, contextTokens(usage));
+        noteLoopModel(e.agentId, usage.model);
+        const resume = passed.get(e.agentId);
+
+        if (resume) {
+            passed.delete(e.agentId);
+            void reportResult(host, resume, usage, agentClockTime.now()).catch(() => undefined);
+        }
+    },
+    // A compacted agent holds a new, smaller context: a refusal after it reads the size again.
+    compacted(_host, agentId) {
+        if (agentId !== undefined) {
+            contexts.delete(agentId);
         }
     },
 };
@@ -439,4 +559,5 @@ export const resumeGuard: Feature = {
 export function forgetResumeGuard(): void {
     contexts.clear();
     refusals.clear();
+    passed.clear();
 }

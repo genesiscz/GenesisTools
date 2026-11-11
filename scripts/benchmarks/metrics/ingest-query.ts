@@ -10,7 +10,9 @@
  * - spool-drain: 50 000 spool lines drained into an empty store (events/s).
  * - rpc-ingest: 20 000 events through a service's `ingest` in batches of 1000, over its socket (events/s).
  * - q100k-* / q1m-*: one query each at 100 k and 1 M events of one metric (ms): group by a declared dim, by two dims,
- *   by `time:hour`, a filter on a declared dim, a filter on an undeclared dim, and p90 by a declared dim.
+ *   by `time:hour`, a filter on a declared dim, a filter on an undeclared dim, p90 by a declared dim, and by
+ *   `checkpoint` (5 checkpoints of the project: four in the first 160 s, so the 100 k metric's 259 s split into five
+ *   groups, and one at day 15 of the 1 M metric's 30 days).
  * Each arm reports min / median / max of wall time and the process CPU time of the median run. The native-code gate
  * of the design: a median query above 250 ms at 1 M events, or a door's ingest below 50 000 events per second.
  */
@@ -182,6 +184,10 @@ for (const [metric, count] of [
     queryStore.define({ project: "bench", metric, unit: "chars", dims: ["agent", "event"] });
 }
 
+for (const [index, at] of [40_000, 80_000, 120_000, 160_000, 15 * 86_400_000].entries()) {
+    queryStore.addCheckpoint({ project: "bench", name: `cp${index + 1}`, at: T0 + at });
+}
+
 const queries: Record<string, Omit<MetricQuery, "project" | "metric">> = {
     "group-declared": { groupBy: ["agent"] },
     "group-two": { groupBy: ["agent", "tool"] },
@@ -189,6 +195,7 @@ const queries: Record<string, Omit<MetricQuery, "project" | "metric">> = {
     "filter-declared": { where: [{ dim: "event", op: "=", value: "Stop" }], groupBy: ["agent"] },
     "filter-undeclared": { where: [{ dim: "tool", op: "=", value: "Bash" }], groupBy: ["agent"] },
     p90: { groupBy: ["agent"], aggregates: ["count", "p90"] },
+    "group-checkpoint": { groupBy: ["checkpoint"] },
 };
 
 const drain = drainArm();

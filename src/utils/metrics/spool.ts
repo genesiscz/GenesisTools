@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { assertDimName, assertName, checkEvent } from "./dims";
+import { assertDimName, assertName, checkCheckpoint, checkEvent } from "./dims";
 import type { MetricsStore } from "./store";
-import type { MetricDefinition, MetricEvent, StoredEvent } from "./types";
+import type { MetricCheckpointInput, MetricDefinition, MetricEvent, StoredEvent } from "./types";
 
 const { log } = logger.scoped("metrics-spool");
 
@@ -62,6 +62,14 @@ export function spoolLine(event: MetricEvent): string {
     return `${SafeJSON.stringify({ v: SPOOL_VERSION, ...event }, { strict: true })}\n`;
 }
 
+/**
+ * One checkpoint line, newline included: `{"v":1,"checkpoint":{...}}`. A producer without the service marks a
+ * checkpoint with it; set `at`, or the drain's time stands for a new name.
+ */
+export function checkpointSpoolLine(checkpoint: MetricCheckpointInput): string {
+    return `${SafeJSON.stringify({ v: SPOOL_VERSION, checkpoint }, { strict: true })}\n`;
+}
+
 /** Appends whole lines to today's file of `writer`, making the folder when missing. */
 export function appendSpoolLines(options: { dir?: string; writer: string; lines: readonly string[]; now?: number }) {
     if (options.lines.length === 0) {
@@ -78,6 +86,8 @@ export interface DrainResult {
     files: number;
     lines: number;
     events: number;
+    /** Checkpoint lines taken in (added or updated). */
+    checkpoints: number;
     /** Lines that did not parse or did not pass the event check; each is logged with its file and line number. */
     bad: number;
     /** Finished files of an earlier day that were deleted. */
@@ -144,6 +154,7 @@ function definitionOf(raw: unknown): MetricDefinition | undefined {
 interface ParsedLines {
     events: StoredEvent[];
     definitions: MetricDefinition[];
+    checkpoints: MetricCheckpointInput[];
     lines: number;
     bad: number;
 }
@@ -153,6 +164,7 @@ function parseLines(text: string, context: { path: string; firstLine: number; no
     const lines = text.split("\n");
     const events: StoredEvent[] = [];
     const definitions: MetricDefinition[] = [];
+    const checkpoints: MetricCheckpointInput[] = [];
     let bad = 0;
 
     for (const [index, line] of lines.entries()) {
@@ -200,6 +212,24 @@ function parseLines(text: string, context: { path: string; firstLine: number; no
             continue;
         }
 
+        const checkpoint = Reflect.get(Object(parsed), "checkpoint");
+
+        if (checkpoint !== undefined) {
+            const checked = checkCheckpoint(checkpoint, context.now);
+
+            if (checked.ok) {
+                checkpoints.push(checked.checkpoint);
+            } else {
+                bad += 1;
+                log.warn(
+                    { path: context.path, line: context.firstLine + index, reason: checked.reason },
+                    "a metrics spool checkpoint line is not a checkpoint"
+                );
+            }
+
+            continue;
+        }
+
         const check = checkEvent(parsed, context.now);
 
         if (!check.ok) {
@@ -214,7 +244,7 @@ function parseLines(text: string, context: { path: string; firstLine: number; no
         events.push(check.event);
     }
 
-    return { events, definitions, lines: lines.length, bad };
+    return { events, definitions, checkpoints, lines: lines.length, bad };
 }
 
 /** Reads one file from its stored offset; answers the counts of what it took in, and whether it is read to the end. */
@@ -227,12 +257,12 @@ function drainFile(
         staleTail: boolean;
         onEvents?: (events: readonly StoredEvent[]) => void;
     }
-): { lines: number; events: number; bad: number; atEnd: boolean } {
+): { lines: number; events: number; checkpoints: number; bad: number; atEnd: boolean } {
     const size = statSync(path).size;
     const stored = store.spoolFile(path);
     let offset = stored?.offset ?? 0;
     let lineNo = stored?.lines ?? 0;
-    const counts = { lines: 0, events: 0, bad: 0 };
+    const counts = { lines: 0, events: 0, checkpoints: 0, bad: 0 };
 
     if (offset > size) {
         log.warn({ path, offset, size }, "a metrics spool file is shorter than its read offset; reading it again");
@@ -258,7 +288,7 @@ function drainFile(
         const parsed =
             last >= 0
                 ? parseLines(text, { path, firstLine: lineNo + 1, now: options.now })
-                : { events: [], definitions: [], lines: 1, bad: 1 };
+                : { events: [], definitions: [], checkpoints: [], lines: 1, bad: 1 };
 
         if (last < 0) {
             log.warn({ path, line: lineNo + 1, bytes: take }, "a metrics spool line has no end; skipped");
@@ -270,6 +300,11 @@ function drainFile(
             store.define(definition);
         }
 
+        // An upsert, so a line read again after a crash before its offset was written changes nothing.
+        for (const checkpoint of parsed.checkpoints) {
+            store.addCheckpoint(checkpoint, options.now);
+        }
+
         store.insert(parsed.events, { path, offset, lines: lineNo });
 
         if (parsed.events.length > 0) {
@@ -278,6 +313,7 @@ function drainFile(
 
         counts.lines += parsed.lines;
         counts.events += parsed.events.length;
+        counts.checkpoints += parsed.checkpoints.length;
         counts.bad += parsed.bad;
     }
 
@@ -293,7 +329,7 @@ export function drainSpool(store: MetricsStore, options: DrainOptions = {}): Dra
     const dir = options.dir ?? spoolDir();
     const now = options.now ?? Date.now();
     const today = localDay(now);
-    const result: DrainResult = { files: 0, lines: 0, events: 0, bad: 0, removed: [] };
+    const result: DrainResult = { files: 0, lines: 0, events: 0, checkpoints: 0, bad: 0, removed: [] };
     let names: string[];
 
     try {
@@ -328,6 +364,7 @@ export function drainSpool(store: MetricsStore, options: DrainOptions = {}): Dra
 
             result.lines += read.lines;
             result.events += read.events;
+            result.checkpoints += read.checkpoints;
             result.bad += read.bad;
 
             if (earlier && read.atEnd) {

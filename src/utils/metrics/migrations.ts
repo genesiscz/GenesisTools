@@ -47,4 +47,25 @@ export const METRICS_MIGRATIONS: Migration[] = [
             )`);
         },
     },
+    {
+        id: "2026-11-metrics-checkpoints",
+        description: "checkpoints: named points in a project's time to group and compare its metrics by",
+        apply(db) {
+            // `commit` is an SQL keyword, so the SHA is `commit_sha`.
+            db.run(`CREATE TABLE checkpoints (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                name TEXT NOT NULL,
+                at INTEGER NOT NULL,
+                commit_sha TEXT,
+                repo TEXT,
+                note TEXT,
+                data TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(project_id, name)
+            )`);
+            db.run("CREATE INDEX checkpoints_project_at ON checkpoints(project_id, at)");
+        },
+    },
 ];
