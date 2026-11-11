@@ -663,6 +663,7 @@ The main-actor observable model for the whole feature. It saves `preferences` an
 - `observeSystemEvents: Bool = true`: when false, the model does not watch app activation, sleep and wake, app termination or the notification permission.
 - `notificationClient: NativeNotificationClient? = nil`: nil uses the system notification center.
 - `presentPermission: (@MainActor (PermissionNeed) -> Void)? = nil`: how a permission request is shown. Nil uses `PermissionCenter.shared.require`.
+- `permissionAccess: PermissionAccess = .live`: where the system event tap reads the Input Monitoring and Accessibility grants, and what `openInputSettings()` opens a System Settings pane through. Tests pass a `PermissionAccess` over a fake `PermissionSystem`.
 
 Properties:
 
@@ -945,6 +946,7 @@ The protocol for the source of key events. The model uses the system listen-only
 @MainActor
 final class FakeMonitor: ClickyInputMonitoring {
     var hasPermission = true
+    var grantPane: PermissionKind? { hasPermission ? .inputMonitoring : nil }
     func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult { .started }
     func reenable() {}
     func stop() {}

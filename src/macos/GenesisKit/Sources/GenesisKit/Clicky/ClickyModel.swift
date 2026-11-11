@@ -73,19 +73,22 @@ public final class ClickyModel: ObservableObject {
     private let previewOnly: Bool
     private let notificationClient: NativeNotificationClient
     private let presentPermission: @MainActor (PermissionNeed) -> Void
+    private let permissionAccess: PermissionAccess
 
     public init(
         defaults: UserDefaults = .standard, previewOnly: Bool = false, appearance: NativeSettingsAppearance? = nil,
         inputMonitor: (any ClickyInputMonitoring)? = nil, observeSystemEvents: Bool = true,
         notificationClient: NativeNotificationClient? = nil,
-        presentPermission: (@MainActor (PermissionNeed) -> Void)? = nil
+        presentPermission: (@MainActor (PermissionNeed) -> Void)? = nil,
+        permissionAccess: PermissionAccess = .live
     ) {
         self.defaults = defaults
         self.presentPermission = presentPermission ?? { PermissionCenter.shared.require($0) }
+        self.permissionAccess = permissionAccess
         soundLibrary = ClickySoundLibrary(defaults: defaults)
         self.previewOnly = previewOnly
         self.notificationClient = notificationClient ?? .system
-        self.inputMonitor = inputMonitor ?? SystemClickyInputMonitor()
+        self.inputMonitor = inputMonitor ?? SystemClickyInputMonitor(access: permissionAccess)
         self.appearance =
             appearance ?? NativeSettingsAppearance(defaults: defaults, observeExternalChanges: !previewOnly)
         if let data = defaults.data(forKey: "clicky.preferences.v1") {
@@ -449,7 +452,7 @@ public final class ClickyModel: ObservableObject {
     /// is allowed.
     public func openInputSettings() {
         if let pane = inputMonitor.grantPane {
-            PermissionAccess.live.openSettings(pane)
+            permissionAccess.openSettings(pane)
         } else {
             presentPermission(inputMonitoringNeed(activatesWhenGranted: false))
         }

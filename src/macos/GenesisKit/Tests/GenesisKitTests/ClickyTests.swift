@@ -839,6 +839,42 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(ClickyModel.inputPermissionTitle(.accessibility), "Key presses are allowed through Accessibility")
     }
 
+    /// The production monitor picks the pane from the system grants, and the settings button opens that pane: the stub
+    /// above reimplements the pick, so it alone would pass with either half of the fix reverted.
+    @MainActor
+    func testTheSystemMonitorPicksThePaneAndTheSettingsButtonOpensIt() {
+        let system = PermissionTests.FakePermissionSystem()
+        let suite = "dev.genesis.clicky.test.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let appearance = NativeSettingsAppearance(
+            defaults: defaults, notificationNamespace: suite, observeExternalChanges: false)
+        var dialogs: [PermissionKind] = []
+        let model = ClickyModel(
+            defaults: defaults, appearance: appearance, observeSystemEvents: false,
+            presentPermission: { dialogs.append($0.kind) }, permissionAccess: PermissionAccess(system: system))
+        defer {
+            model.shutdown()
+            disposeIntegrationDefaults(defaults, suite: suite)
+        }
+
+        XCTAssertNil(model.inputPermissionPane)
+        model.openInputSettings()
+        XCTAssertEqual(dialogs, [.inputMonitoring], "a missing grant shows the permission dialog")
+        XCTAssertEqual(system.opened, [])
+
+        system.statuses[.inputMonitoring] = .granted
+        XCTAssertEqual(model.inputPermissionPane, .inputMonitoring)
+        model.openInputSettings()
+        XCTAssertEqual(system.opened, [.inputMonitoring])
+
+        // Accessibility lets the tap read keys and lists the app there only, so the button opens that pane.
+        system.statuses[.accessibility] = .granted
+        XCTAssertEqual(model.inputPermissionPane, .accessibility)
+        model.openInputSettings()
+        XCTAssertEqual(system.opened, [.inputMonitoring, .accessibility])
+        XCTAssertEqual(dialogs, [.inputMonitoring], "a granted key-press permission never shows the dialog again")
+    }
+
     @MainActor
     func testTapFailureAndPermissionRevocationNeverClaimListening() {
         for result in [ClickyInputStartResult.unavailable, .permissionRequired] {
