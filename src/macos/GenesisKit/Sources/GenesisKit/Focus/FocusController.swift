@@ -32,7 +32,7 @@ public final class FocusController: ObservableObject {
 
     private var intentTimer: Timer?
     private var interruptionStartedAt: Date?
-    private var settings = FocusSettings()
+    private(set) var settings = FocusSettings()
     private var flowAnchorBundle: String?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -333,11 +333,18 @@ public final class FocusController: ObservableObject {
 
     public func apply(appConfig: [String: Any]) {
         let previousRetention = settings.retentionDays
-        settings = FocusSettings.from(appConfig: appConfig)
+        applyPresentation(appConfig: appConfig)
         recorder?.apply(settings: settings)
-        if settings.timerWindow == .off { hud?.hide() }
         engine?.plan = PomodoroPlan.from(appConfig: appConfig)
         if settings.retentionDays != previousRetention { pruneExpiredActivity() }
+    }
+
+    /// The part of a settings change that every host applies, a runtime client too: each host has its own timer
+    /// window, so each one reads Show timer window from its own copy of the settings. Off hides a window that is up.
+    /// The recorder, the clock and the ledger stay the owner's (`apply(appConfig:)`).
+    func applyPresentation(appConfig: [String: Any]) {
+        settings = FocusSettings.from(appConfig: appConfig)
+        if settings.timerWindow == .off { hud?.hide() }
     }
 
     /// When the next retention prune is due: a day after one that succeeded, a few minutes after one that failed.

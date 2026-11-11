@@ -364,7 +364,12 @@ public final class FlowFocusRuntime: ObservableObject {
                 MainActor.assumeIsolated { self?.configuration.reload() }
             }
         configuration.$revision.dropFirst().sink { [weak self] _ in
-            guard let self, self.role.isOwner else { return }
+            guard let self else { return }
+            guard self.role.isOwner else {
+                // A client shows its own timer window, so it follows Show timer window too.
+                if case .client = self.role { self.focus.applyPresentation(appConfig: self.configuration.app) }
+                return
+            }
             self.focus.apply(appConfig: self.configuration.app)
             self.flow.setLabEnabled(self.configuration.dictationEnabled)
             self.schedulePublication()
