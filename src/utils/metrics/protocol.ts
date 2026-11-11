@@ -6,6 +6,7 @@ import {
     type IngestResult,
     METRIC_AGGREGATES,
     type MetricCatalogEntry,
+    type MetricCheckpoint,
     type MetricEventsResult,
     type MetricQueryResult,
     type SpoolFileState,
@@ -39,6 +40,8 @@ const filterSchema = z.object({
     metric: z.string().min(1),
     since: z.number().optional(),
     until: z.number().optional(),
+    sinceCheckpoint: z.string().min(1).optional(),
+    untilCheckpoint: z.string().min(1).optional(),
     where: z
         .array(
             z.object({
@@ -58,7 +61,21 @@ export const queryParamsSchema = filterSchema.extend({
     limit: z.number().int().positive().optional(),
 });
 
-export const eventsParamsSchema = filterSchema.extend({ limit: z.number().int().positive().optional() });
+export const eventsParamsSchema = filterSchema.extend({
+    limit: z.number().int().positive().optional(),
+    withCheckpoint: z.boolean().optional(),
+});
+
+/** A checkpoint to add or update; `checkCheckpoint` (`dims.ts`) checks the names, the time and the sizes. */
+export const checkpointAddParamsSchema = z.object({
+    project: z.string().min(1),
+    name: z.string().min(1),
+    at: z.union([z.number(), z.string()]).optional(),
+    commit: z.string().optional(),
+    repo: z.string().optional(),
+    note: z.string().optional(),
+    data: z.unknown().optional(),
+});
 
 export const ingestParamsSchema = z.object({
     events: z.array(z.unknown()).max(MAX_INGEST_EVENTS),
@@ -80,6 +97,8 @@ export const subscribeParamsSchema = z.object({
     events: z.array(z.literal(METRICS_EVENT)).optional(),
     project: z.string().min(1).optional(),
     metric: z.string().min(1).optional(),
+    /** Each notification carries the checkpoint its event falls under. */
+    withCheckpoint: z.boolean().optional(),
 });
 
 export const METRICS_METHODS = {
@@ -97,6 +116,10 @@ export const METRICS_METHODS = {
     drain: z.object({}),
     status: z.object({}),
     prune: z.object({ before: z.number() }),
+    "checkpoint.add": checkpointAddParamsSchema,
+    /** Reads only, like `catalog`: it never drains the spool. */
+    "checkpoint.list": z.object({ project: z.string().min(1).optional() }),
+    "checkpoint.remove": z.object({ project: z.string().min(1), name: z.string().min(1) }),
 } as const;
 
 export type MetricsMethod = keyof typeof METRICS_METHODS;
@@ -125,6 +148,9 @@ export interface MetricsResults {
     drain: DrainResult;
     status: MetricsStatus;
     prune: { removed: number };
+    "checkpoint.add": MetricCheckpoint;
+    "checkpoint.list": MetricCheckpoint[];
+    "checkpoint.remove": { removed: boolean };
 }
 
 export type MetricsResult<M extends MetricsMethod> = MetricsResults[M];
@@ -138,6 +164,8 @@ export interface MetricsEventNotification {
     dims: Record<string, string | number | boolean | null>;
     context?: unknown;
     door: MetricsDoor;
+    /** For a subscription with `withCheckpoint`: the checkpoint the event falls under. */
+    checkpoint?: string;
 }
 
 /** How an event reached the store: the `door` dim of the service's own `ingest.events`. */
@@ -153,6 +181,7 @@ export const eventNotificationSchema = z.object({
     dims: z.record(z.string(), dimValue),
     context: z.unknown().optional(),
     door: z.enum(METRICS_DOORS),
+    checkpoint: z.string().optional(),
 });
 
 /** The checkout this code runs from; a module of it that changed makes the service exit. */

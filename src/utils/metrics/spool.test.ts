@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createMetricsRecorder } from "./client";
-import { drainSpool, localDay, spoolLine } from "./spool";
+import { checkpointSpoolLine, drainSpool, localDay, spoolLine } from "./spool";
 import { MetricsStore } from "./store";
 
 const NOW = Date.UTC(2026, 10, 11, 12, 0, 0);
@@ -39,6 +39,21 @@ describe("metrics spool", () => {
 
         expect(drainSpool(store, { dir, now: NOW })).toMatchObject({ lines: 3, events: 1, bad: 1 });
         expect(store.catalog()[0]).toMatchObject({ metric: "cart.items", unit: "count", dims: ["kind"], count: 1 });
+    });
+
+    test("a checkpoint line marks a checkpoint, a repeat updates it, and a bad one is one bad line", () => {
+        const { dir, store } = setup();
+        writeFileSync(
+            join(dir, `writer-${localDay(NOW)}.jsonl`),
+            `${checkpointSpoolLine({ project: "shop", name: "v1", at: NOW - 1_000, commit: "abc1234" })}${line(4)}${checkpointSpoolLine({ project: "shop", name: "v1", note: "cache on" })}${checkpointSpoolLine({ project: "shop", name: "no good" })}`
+        );
+
+        expect(drainSpool(store, { dir, now: NOW })).toMatchObject({ lines: 4, events: 1, checkpoints: 2, bad: 1 });
+        expect(store.checkpoints("shop")).toEqual([
+            { project: "shop", name: "v1", at: NOW - 1_000, commit: "abc1234", note: "cache on" },
+        ]);
+        const grouped = store.query({ project: "shop", metric: "cart.items", groupBy: ["checkpoint"] });
+        expect(grouped.rows.map((row) => [row.group.checkpoint, row.values.count])).toEqual([["v1", 1]]);
     });
 
     test("a partial last line waits for its end, and a second drain adds nothing", () => {

@@ -9,6 +9,7 @@ export const METRICS_REGISTRARS: LazyRegistrar[] = [
         names: ["define", "list", "status", "prune"],
         load: async () => (await import("./commands/catalog")).registerCatalogCommands,
     },
+    { names: ["checkpoint"], load: async () => (await import("./commands/checkpoint")).registerCheckpointCommand },
     { names: ["connect"], load: async () => (await import("./commands/connect")).registerConnectCommand },
     { names: ["import"], load: async () => (await import("./commands/import")).registerImportCommand },
     { names: ["serve"], load: async () => (await import("./commands/serve")).registerServeCommand },

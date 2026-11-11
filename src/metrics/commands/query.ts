@@ -51,7 +51,11 @@ async function query(project: string, metric: string, given: QueryFlags): Promis
 
 async function events(project: string, metric: string, flags: FilterFlags): Promise<void> {
     const limit = eventsLimitOf(flags);
-    const request = { ...filterOf(project, metric, flags, "events"), ...(limit ? { limit } : {}) };
+    const request = {
+        ...filterOf(project, metric, flags, "events"),
+        ...(limit ? { limit } : {}),
+        ...(flags.checkpoint ? { withCheckpoint: true } : {}),
+    };
     await withService(async (client) => {
         const result = await client.call("events", request);
 
@@ -66,9 +70,14 @@ async function events(project: string, metric: string, flags: FilterFlags): Prom
 
 function filterOptions(command: Command): Command {
     return command
-        .option("--since <when>", "from this long ago (10d, 2h, 30m) or this date or time")
-        .option("--until <when>", "before this long ago, date or time")
-        .option("--where <filter>", "dim=value, dim=a,b (one of), dim!=value or dim~glob (repeat it)", collect, [])
+        .option("--since <when>", "from this long ago (10d, 2h, 30m), this date or time, or checkpoint:<name>")
+        .option("--until <when>", "before this long ago, date or time, or checkpoint:<name>")
+        .option(
+            "--where <filter>",
+            "dim=value, dim=a,b (one of), dim!=value or dim~glob (repeat it); checkpoint=<name> is the checkpoint's span",
+            collect,
+            []
+        )
         .option("--json", "print the answer as JSON");
 }
 
@@ -76,9 +85,14 @@ export function registerQueryCommands(program: Command): void {
     filterOptions(
         program
             .command("query <project> <metric>")
-            .description("Group, aggregate and sort a metric's events: by dims and by time:hour or time:day")
+            .description(
+                "Group, aggregate and sort a metric's events: by dims, by time:hour or time:day, and by checkpoint"
+            )
     )
-        .option("--group-by <names>", "dims to group by, comma-separated, and time:hour or time:day")
+        .option(
+            "--group-by <names>",
+            "dims to group by, comma-separated, and time:hour, time:day or checkpoint (alone it adds each span and the per-day rates)"
+        )
         .option("--agg [list]", `aggregates, comma-separated: ${METRIC_AGGREGATES.join(", ")} (default count,sum)`)
         .option("--sort <key>", "an aggregate or a group key; a leading - sorts descending (default -sum)")
         .option("--limit <n>", "the most rows (default 50)")
@@ -90,6 +104,7 @@ export function registerQueryCommands(program: Command): void {
             .description("The single events of a metric with their dims and context, newest first")
     )
         .option("--limit <n>", "the most events (default 20)")
+        .option("--checkpoint", "name the checkpoint each event falls under")
         .action((project: string, metric: string, flags: FilterFlags) =>
             withFlags(() => events(project, metric, flags))
         );

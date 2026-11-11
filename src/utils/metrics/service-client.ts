@@ -42,9 +42,12 @@ export class MetricsServiceClient {
         return this.socket.call<MetricsResult<M>>(method, params, options);
     }
 
-    /** Hears the events the service takes in, of one project and metric when given, until the function it returns. */
+    /**
+     * Hears the events the service takes in, of one project and metric when given, until the function it returns.
+     * `withCheckpoint` labels each event with the checkpoint it falls under.
+     */
     async subscribe(
-        filter: { project?: string; metric?: string },
+        filter: { project?: string; metric?: string; withCheckpoint?: boolean },
         listener: (event: MetricsEventNotification) => void
     ): Promise<() => void> {
         const stop = this.socket.onNotification((notification) => {

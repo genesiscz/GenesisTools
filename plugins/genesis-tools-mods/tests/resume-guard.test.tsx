@@ -1,7 +1,8 @@
 import type { AgentInfo, ToolCallInput } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
 import { agentClock, agentClockTime, noteAgentActive } from "../hooks/agent-clock";
-import { forgetAgentDetails } from "../hooks/agents-band";
+import { forgetAgentDetails, metas } from "../hooks/agents-band";
+import { forgetLoopModels, loopModelOf, noteLoopModel } from "../hooks/loop-model";
 import {
     agentsNamed,
     decideResume,
@@ -29,6 +30,7 @@ function fixture(mods: Record<string, unknown> = { resumeGuard: { enabled: true 
     forgetSettings();
     forgetAgentDetails();
     forgetResumeGuard();
+    forgetLoopModels();
     const agents: AgentInfo[] = [];
     const lines: Fixture["lines"] = [];
     const files = new Map<string, { text: string; mtimeMs: number }>([
@@ -130,11 +132,33 @@ function guardLog(lines: Fixture["lines"]): Record<string, unknown>[] {
     return lines.filter((line) => line.path.endsWith("/mods-log/resume-guard.jsonl")).map((line) => line.record);
 }
 
-function resumeEvents(lines: Fixture["lines"]): Record<string, unknown>[] {
+function resumeEvents(lines: Fixture["lines"], metric = "agent.resume"): Record<string, unknown>[] {
     return lines
         .filter((line) => line.path.includes("/metrics/spool/mods-"))
         .map((line) => line.record)
-        .filter((record) => record.metric === "agent.resume");
+        .filter((record) => record.metric === metric);
+}
+
+/** The agent's next model response after a message: `cacheRead` of its context came from the cache. */
+function responds(host: Host, agentId: string, usage: { cacheRead: number; cacheWrite: number }): void {
+    resumeGuard.afterStep?.(
+        host,
+        { agentId },
+        {
+            model: "fixture-model-2",
+            input_tokens: 3,
+            cache_read_input_tokens: usage.cacheRead,
+            cache_creation_input_tokens: usage.cacheWrite,
+            output_tokens: 200,
+        }
+    );
+}
+
+/** Lets the result event's appends, started by `afterStep` without a wait, land. */
+async function settled(): Promise<void> {
+    for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+    }
 }
 
 test("resume guard: a cold, large agent is refused once, and the same send then goes through", async () => {
@@ -163,11 +187,18 @@ test("resume guard: a cold, large agent is refused once, and the same send then 
             kind: "subagent",
             idleSeconds: "5-15m",
             outcome: "refused",
+            model: "fixture-model",
+            name: "scout",
         },
         expect.objectContaining({ outcome: "resent" }),
         expect.objectContaining({ outcome: "resent" }),
     ]);
     expect(resumeEvents(lines)[0]?.value).toBe(240_000);
+    expect(resumeEvents(lines)[0]?.context).toEqual({
+        idleSeconds: 420,
+        contextTokens: 240_000,
+        thresholds: { idleSeconds: 295, minTokens: 150_000 },
+    });
     const defines = lines.filter((line) => line.record.define !== undefined);
     expect(defines.map((line) => line.record.define)).toEqual([
         expect.objectContaining({ project: "agent-context", metric: "agent.resume", unit: "tokens" }),
@@ -262,7 +293,7 @@ test("resume guard: a finished agent the engine no longer lists is found by its 
 });
 
 test("resume guard: after a reload the transcript's mtime gives the idle time", async () => {
-    const { host, agents, files } = fixture();
+    const { host, agents, files, lines } = fixture();
     agents.push(agent("wf-agent"));
     files.set(`${SESSION_DIR}/subagents/agent-wf-agent.jsonl`, {
         text: `${JSON.stringify({ message: { usage: { input_tokens: 200_000, output_tokens: 10 } } })}\n`,
@@ -270,6 +301,103 @@ test("resume guard: after a reload the transcript's mtime gives the idle time", 
     });
 
     expect(await guardResume(host, send("wf-agent"))).toContain("is idle for 12 min");
+    // The refusal is counted with the numbers the transcript gave; the model is unknown until a response is seen.
+    expect(resumeEvents(lines)).toEqual([
+        expect.objectContaining({
+            value: 200_010,
+            dims: expect.objectContaining({ outcome: "refused", model: null, name: "wf-agent", idleSeconds: "5-15m" }),
+            context: { idleSeconds: 720, contextTokens: 200_010, thresholds: { idleSeconds: 295, minTokens: 150_000 } },
+        }),
+    ]);
+});
+
+test("resume guard: an override's next response is one result event, a miss, and a second response adds none", async () => {
+    const { host, agents, lines } = fixture();
+    agents.push(agent("scout"));
+    ranBefore(host, "scout", 7, 240_000);
+
+    expect(await guardResume(host, send("scout"))).toContain("Not sent");
+    expect(await guardResume(host, send("scout"))).toBeUndefined();
+    expect(resumeEvents(lines, "agent.resume.result")).toEqual([]);
+
+    responds(host, "scout", { cacheRead: 0, cacheWrite: 239_000 });
+    responds(host, "scout", { cacheRead: 239_000, cacheWrite: 900 });
+    await settled();
+    const results = resumeEvents(lines, "agent.resume.result");
+    expect(results).toEqual([
+        {
+            v: 1,
+            project: "agent-context",
+            metric: "agent.resume.result",
+            at: expect.any(Number),
+            value: 239_000,
+            dims: {
+                session: "sess-1",
+                agent: "scout",
+                agentType: "general-purpose",
+                kind: "subagent",
+                model: "fixture-model-2",
+                idleSeconds: "5-15m",
+                decision: "resent",
+                cache: "miss",
+            },
+            context: {
+                idleSeconds: 420,
+                contextBefore: 240_000,
+                input: 3,
+                cacheRead: 0,
+                cacheWrite: 239_000,
+                output: 200,
+            },
+        },
+    ]);
+    const defines = lines.filter((line) => line.record.define !== undefined).map((line) => line.record.define);
+    expect(defines).toContainEqual(
+        expect.objectContaining({
+            metric: "agent.resume.result",
+            dims: ["session", "agent", "agentType", "kind", "model", "idleSeconds", "decision", "cache"],
+        })
+    );
+    expect(loopModelOf("scout")).toBe("fixture-model-2");
+});
+
+test("resume guard: a warm pass's next response is a hit, a partial read is partial", async () => {
+    const { host, agents, lines } = fixture();
+    agents.push(agent("warm"), agent("half"));
+    ranBefore(host, "warm", 4, 400_000);
+    ranBefore(host, "half", 40, 90_000);
+
+    expect(await guardResume(host, send("warm"))).toBeUndefined();
+    expect(await guardResume(host, send("half"))).toBeUndefined();
+    responds(host, "warm", { cacheRead: 399_000, cacheWrite: 1_200 });
+    responds(host, "half", { cacheRead: 45_000, cacheWrite: 45_000 });
+    await settled();
+    expect(
+        resumeEvents(lines, "agent.resume.result").map((event) => {
+            const dims = event.dims as Record<string, unknown>;
+            return [dims.agent, dims.decision, dims.cache, event.value];
+        })
+    ).toEqual([
+        ["warm", "passed-warm", "hit", 1_200],
+        ["half", "passed-small", "partial", 45_000],
+    ]);
+});
+
+test("resume guard: a compaction clears the agent's remembered size, and the model comes from the band first", async () => {
+    const { host, agents, lines } = fixture();
+    agents.push(agent("scout"));
+    ranBefore(host, "scout", 7, 240_000);
+    await resumeGuard.compacted?.(host, "scout");
+
+    // No size from a step and no transcript: the send passes and names no old size.
+    expect(await guardResume(host, send("scout"))).toBeUndefined();
+    expect(guardLog(lines).at(-1)).toMatchObject({ reason: "size-unknown", tokens: null });
+
+    noteLoopModel("main", "fixture-main");
+    metas.set("scout", { model: "fixture-meta" });
+    expect(loopModelOf("scout")).toBe("fixture-meta");
+    expect(loopModelOf("main")).toBe("fixture-main");
+    expect(loopModelOf("nobody")).toBeNull();
 });
 
 test("resume guard: another session, a structured message, a subscription and a teammate with teammates off pass", async () => {

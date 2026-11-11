@@ -1,7 +1,9 @@
 import type { SQLQueryBindings } from "bun:sqlite";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { beforeLabel, type CheckpointMark, checkpointWindows, NO_CHECKPOINT } from "./checkpoints";
 import { assertDimName, MetricsInputError } from "./dims";
 import {
+    CHECKPOINT_GROUP,
     METRIC_AGGREGATES,
     type MetricAggregate,
     type MetricEventsQuery,
@@ -68,10 +70,10 @@ export function dimIndexSql(metricId: number, dim: string): string {
  * parses each row's JSON (731 ms against 49 ms at 1 M events).
  */
 function indexHint(metricId: number, query: MetricQuery, declared: readonly string[]): string {
-    const first = query.groupBy?.find((name) => !isTimeGroup(name));
+    const first = query.groupBy?.find((name) => !readsTimeOnly(name));
     const touched = new Set([
-        ...(query.groupBy ?? []).filter((name) => !isTimeGroup(name)),
-        ...(query.where ?? []).map((where) => where.dim),
+        ...(query.groupBy ?? []).filter((name) => !readsTimeOnly(name)),
+        ...(query.where ?? []).map((where) => where.dim).filter((dim) => !readsTimeOnly(dim)),
     ]);
 
     if (!first || touched.size !== 1 || !declared.includes(first)) {
@@ -85,10 +87,43 @@ function isTimeGroup(name: string): name is TimeGroup {
     return Object.hasOwn(TIME_GROUPS, name);
 }
 
-function groupExpr(name: string): string {
+function isCheckpointGroup(name: string): boolean {
+    return name === CHECKPOINT_GROUP;
+}
+
+/** A time bucket and the checkpoint read only `at`, so a declared dim's index (which carries `at`) still answers. */
+function readsTimeOnly(name: string): boolean {
+    return isTimeGroup(name) || isCheckpointGroup(name);
+}
+
+/**
+ * The label of the checkpoint an event falls under, as `checkpointAt` computes it: the latest checkpoint at or before
+ * its time, `(before <first>)`, or `(none)`. Times and names are bound parameters, pushed in text order.
+ */
+function checkpointExpr(marks: readonly CheckpointMark[], params: SQLQueryBindings[]): string {
+    const first = marks[0];
+
+    if (!first) {
+        params.push(NO_CHECKPOINT);
+        return "?";
+    }
+
+    const whens = [...marks].reverse().map((mark) => {
+        params.push(Math.floor(mark.at), mark.name);
+        return "WHEN at >= ? THEN ?";
+    });
+    params.push(beforeLabel(first.name));
+    return `(CASE ${whens.join(" ")} ELSE ? END)`;
+}
+
+function groupExpr(name: string, marks: readonly CheckpointMark[], params: SQLQueryBindings[]): string {
     if (isTimeGroup(name)) {
         const size = TIME_GROUPS[name];
         return `((at / ${size}) * ${size})`;
+    }
+
+    if (isCheckpointGroup(name)) {
+        return checkpointExpr(marks, params);
     }
 
     return dimExpr(name);
@@ -106,8 +141,37 @@ function bindable(value: unknown, dim: string): SQLQueryBindings {
     throw new MetricsInputError(`where ${dim}: ${SafeJSON.stringify(value)} is not a string, number or boolean`);
 }
 
-function whereClause(where: MetricWhere, params: SQLQueryBindings[]): string {
-    const expr = dimExpr(where.dim);
+/**
+ * `checkpoint = <name>` reads the checkpoint's time range, so the `(metric_id, at)` index answers it; any other
+ * operator, and a label such as `(before v1)`, compares the label expression.
+ */
+function checkpointWhere(where: MetricWhere, marks: readonly CheckpointMark[], params: SQLQueryBindings[]): string {
+    const index = where.op === "=" ? marks.findIndex((mark) => mark.name === where.value) : -1;
+    const mark = marks[index];
+
+    if (mark) {
+        const next = marks[index + 1];
+        params.push(Math.floor(mark.at));
+
+        if (!next) {
+            return "at >= ?";
+        }
+
+        params.push(Math.floor(next.at));
+        return "(at >= ? AND at < ?)";
+    }
+
+    if (where.op === "=" && typeof where.value === "string" && !checkpointWindows(marks).has(where.value)) {
+        throw new MetricsInputError(
+            `where checkpoint = ${SafeJSON.stringify(where.value)}: no such checkpoint in this project (${[...checkpointWindows(marks).keys()].join(", ")})`
+        );
+    }
+
+    return whereClause(where, params, checkpointExpr(marks, params));
+}
+
+function whereClause(where: MetricWhere, params: SQLQueryBindings[], dimText?: string): string {
+    const expr = dimText ?? dimExpr(where.dim);
     const { value } = where;
 
     switch (where.op) {
@@ -149,7 +213,12 @@ function whereClause(where: MetricWhere, params: SQLQueryBindings[]): string {
     }
 }
 
-function filterSql(metricId: number, filter: MetricFilter, params: SQLQueryBindings[]): string {
+function filterSql(
+    metricId: number,
+    filter: Pick<MetricFilter, "since" | "until" | "where">,
+    marks: readonly CheckpointMark[],
+    params: SQLQueryBindings[]
+): string {
     const clauses = [`metric_id = ${metricIdText(metricId)}`];
 
     if (filter.since !== undefined) {
@@ -163,7 +232,7 @@ function filterSql(metricId: number, filter: MetricFilter, params: SQLQueryBindi
     }
 
     for (const where of filter.where ?? []) {
-        clauses.push(whereClause(where, params));
+        clauses.push(isCheckpointGroup(where.dim) ? checkpointWhere(where, marks, params) : whereClause(where, params));
     }
 
     return clauses.join(" AND ");
@@ -235,18 +304,83 @@ function sortSql(query: MetricQuery, built: Pick<AggregateSql, "groups" | "aggre
     return `${fallback?.alias ?? "a_count"} DESC`;
 }
 
-/** How the store answers: its percentile function, and the metric's declared (indexed) dims. */
+/** How the store answers: its percentile function, the metric's declared (indexed) dims, the project's checkpoints. */
 export interface AggregateOptions {
     percentiles: PercentileMode;
     declared: readonly string[];
+    /** Sorted by time; read only when the query names `checkpoint`. */
+    checkpoints?: readonly CheckpointMark[];
+}
+
+/** Whether a query or an events read names the checkpoint, so the store reads the project's checkpoints first. */
+export function namesCheckpoint(filter: MetricFilter & { groupBy?: string[]; withCheckpoint?: boolean }): boolean {
+    return (
+        filter.withCheckpoint === true ||
+        filter.sinceCheckpoint !== undefined ||
+        filter.untilCheckpoint !== undefined ||
+        (filter.groupBy ?? []).some(isCheckpointGroup) ||
+        (filter.where ?? []).some((where) => isCheckpointGroup(where.dim))
+    );
+}
+
+/**
+ * A group by `checkpoint` (with time buckets at most) as one SELECT per checkpoint span, joined by UNION ALL: each
+ * reads its time range from the `(metric_id, at)` index and needs no sort of the whole metric. At 1 M events and 5
+ * checkpoints that is 32 ms against 218 ms for one pass that groups by the label (benchmark, 2026-11-11).
+ */
+function checkpointRangeSql(context: {
+    metricId: number;
+    query: MetricQuery;
+    marks: readonly CheckpointMark[];
+    groups: ReadonlyArray<{ name: string; alias: string }>;
+    aggregates: ReadonlyArray<{ name: MetricAggregate; alias: string }>;
+    order: string;
+    limit: number;
+}): BuiltSql {
+    const params: SQLQueryBindings[] = [];
+    const buckets = context.groups.filter((group) => !isCheckpointGroup(group.name));
+    const arms = [...checkpointWindows(context.marks)].map(([label, window]) => {
+        const select = [
+            ...context.groups.map((group) => {
+                if (isCheckpointGroup(group.name)) {
+                    params.push(label);
+                    return `? AS ${group.alias}`;
+                }
+
+                return `${groupExpr(group.name, context.marks, params)} AS ${group.alias}`;
+            }),
+            ...context.aggregates.map((aggregate) => `${simpleAggregate(aggregate.name)} AS ${aggregate.alias}`),
+        ].join(", ");
+        const clauses = [filterSql(context.metricId, context.query, context.marks, params)];
+
+        if (window.from !== undefined) {
+            clauses.push("at >= ?");
+            params.push(Math.floor(window.from));
+        }
+
+        if (window.to !== undefined) {
+            clauses.push("at < ?");
+            params.push(Math.floor(window.to));
+        }
+
+        // Without a GROUP BY an aggregate answers one row even for no events; HAVING drops an empty span.
+        const grouping = buckets.length
+            ? ` GROUP BY ${buckets.map((group) => groupExpr(group.name, context.marks, params)).join(", ")}`
+            : " HAVING COUNT(*) > 0";
+        return `SELECT ${select} FROM events WHERE ${clauses.join(" AND ")}${grouping}`;
+    });
+    params.push(context.limit);
+    return {
+        sql: `SELECT * FROM (${arms.join(" UNION ALL ")}) ORDER BY ${context.order} LIMIT ?`,
+        params,
+    };
 }
 
 /** The SQL of one `query`: filter, group by dims and time buckets, aggregates, sort and limit. */
 export function buildAggregateSql(metricId: number, query: MetricQuery, options: AggregateOptions): AggregateSql {
     const { percentiles } = options;
-    const params: SQLQueryBindings[] = [];
+    const marks = options.checkpoints ?? [];
     const groupNames = [...new Set(query.groupBy ?? [])];
-    const groups = groupNames.map((name, index) => ({ name, alias: `g${index}`, expr: groupExpr(name) }));
     const aggregateNames = [...new Set(query.aggregates?.length ? query.aggregates : (["count", "sum"] as const))];
 
     for (const name of aggregateNames) {
@@ -255,12 +389,32 @@ export function buildAggregateSql(metricId: number, query: MetricQuery, options:
         }
     }
 
+    for (const name of groupNames) {
+        if (!readsTimeOnly(name)) {
+            assertDimName(name);
+        }
+    }
+
     const aggregates = aggregateNames.map((name) => ({ name, alias: `a_${name}` }));
-    const where = filterSql(metricId, query, params);
-    const order = sortSql(query, { groups, aggregates });
+    const aliases = groupNames.map((name, index) => ({ name, alias: `g${index}` }));
+    const order = sortSql(query, { groups: aliases, aggregates });
     const limit = limitOf(query.limit, DEFAULT_QUERY_LIMIT);
-    const groupList = groups.map((group) => group.alias).join(", ");
     const needsWindow = percentiles === "window" && aggregates.some((aggregate) => percentOf(aggregate.name));
+
+    if (!needsWindow && groupNames.some(isCheckpointGroup) && groupNames.every(readsTimeOnly)) {
+        const built = checkpointRangeSql({ metricId, query, marks, groups: aliases, aggregates, order, limit });
+        return { ...built, groups: aliases, aggregates };
+    }
+
+    // The SELECT list comes first in the text, so its parameters (the checkpoint labels) are bound first.
+    const params: SQLQueryBindings[] = [];
+    const groups = aliases.map(({ name, alias }) => {
+        const expr = groupExpr(name, marks, params);
+        // A checkpoint label is grouped by its alias, so its bound parameters are written once.
+        return { name, alias, expr, ref: isCheckpointGroup(name) ? alias : expr };
+    });
+    const where = filterSql(metricId, query, marks, params);
+    const groupList = groups.map((group) => group.alias).join(", ");
     const from = `events${indexHint(metricId, query, options.declared)}`;
     let sql: string;
 
@@ -269,7 +423,7 @@ export function buildAggregateSql(metricId: number, query: MetricQuery, options:
             ...groups.map((group) => `${group.expr} AS ${group.alias}`),
             ...aggregates.map((aggregate) => `${simpleAggregate(aggregate.name)} AS ${aggregate.alias}`),
         ].join(", ");
-        const groupBy = groups.length ? ` GROUP BY ${groups.map((group) => group.expr).join(", ")}` : "";
+        const groupBy = groups.length ? ` GROUP BY ${groups.map((group) => group.ref).join(", ")}` : "";
         sql = `SELECT ${select} FROM ${from} WHERE ${where}${groupBy} ORDER BY ${order} LIMIT ?`;
     } else {
         const base = [...groups.map((group) => `${group.expr} AS ${group.alias}`), "value"].join(", ");
@@ -289,18 +443,23 @@ export function buildAggregateSql(metricId: number, query: MetricQuery, options:
     }
 
     params.push(limit);
-    return {
-        sql,
-        params,
-        groups: groups.map(({ name, alias }) => ({ name, alias })),
-        aggregates,
-    };
+    return { sql, params, groups: aliases, aggregates };
+}
+
+/** The first event's time in a time window, for the open start of a checkpoint span; `where` is not applied. */
+export function buildFirstAtSql(metricId: number, window: { since?: number; until?: number }): BuiltSql {
+    const params: SQLQueryBindings[] = [];
+    return { sql: `SELECT MIN(at) AS first FROM events WHERE ${filterSql(metricId, window, [], params)}`, params };
 }
 
 /** The SQL of one `events` call: the single events with their context, newest first. */
-export function buildEventsSql(metricId: number, query: MetricEventsQuery): BuiltSql {
+export function buildEventsSql(
+    metricId: number,
+    query: MetricEventsQuery,
+    checkpoints: readonly CheckpointMark[] = []
+): BuiltSql {
     const params: SQLQueryBindings[] = [];
-    const where = filterSql(metricId, query, params);
+    const where = filterSql(metricId, query, checkpoints, params);
     params.push(limitOf(query.limit, DEFAULT_EVENTS_LIMIT));
     return {
         sql: `SELECT id, at, value, dims, context FROM events WHERE ${where} ORDER BY at DESC, id DESC LIMIT ?`,

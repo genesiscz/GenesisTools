@@ -5,6 +5,7 @@ const facts = {
     session: "s-1",
     agent: "main",
     agentType: null,
+    model: "fixture-model",
     event: "PostToolUse",
     tool: "Bash",
     harness: "claude",
@@ -31,8 +32,18 @@ test("metrics: an area-rules entry is one event per rule file, a dropped rule ke
         project: "agent-context",
         metric: "hook.injection",
         at: 1_000,
-        dims: { session: "s-1", agent: "main", event: "PostToolUse", tool: "Bash", harness: "claude", kind: "context" },
+        dims: {
+            session: "s-1",
+            agent: "main",
+            event: "PostToolUse",
+            tool: "Bash",
+            harness: "claude",
+            kind: "context",
+            model: "fixture-model",
+            delivery: "full",
+        },
     });
+    expect(events[0]?.dims.delivery).toBe("full");
     expect(events[1]?.context.length).toBe(100);
 });
 
@@ -56,4 +67,33 @@ test("metrics: sources by first line, a receipt names what it replaced, and the 
     expect(modsSpoolPath("/home/fixture", new Date(2026, 10, 11, 9, 30).getTime())).toBe(
         "/home/fixture/.genesis-tools/metrics/spool/mods-2026-11-11.jsonl"
     );
+});
+
+test("metrics: a pointer line is one area-rules event with its path and length; other sources have no delivery", () => {
+    const pointer = "Area rules (pointer): /r/.claude/rules/ai.md (8 lines): files under src/utils/ai/";
+    const text = `The Bash call touched files whose area rules were not in your context yet. Follow them:\n${pointer}\n${area("/r/b.md")}`;
+    const events = injectionEvents(
+        { ...facts, model: null },
+        {
+            entries: [
+                { text, whole: false, droppedRules: [] },
+                { text: "⚠️ Shell hygiene (the command ran as written): ...", whole: false, droppedRules: [] },
+                { text: `Preface\n${pointer}`, whole: true, droppedRules: [] },
+            ],
+            block: "",
+            at: 3_000,
+        }
+    );
+
+    expect(
+        events.map((event) => [event.dims.source, event.dims.rule, event.dims.delivery, event.dims.dropped])
+    ).toEqual([
+        ["area-rules", "/r/.claude/rules/ai.md", "pointer", false],
+        ["area-rules", null, "full", false],
+        ["area-rules", "/r/b.md", "full", false],
+        ["shell-hygiene", null, null, false],
+        ["area-rules", null, "pointer", true],
+    ]);
+    expect(events[0]?.value).toBe(pointer.length);
+    expect(events.every((event) => event.dims.model === null)).toBe(true);
 });

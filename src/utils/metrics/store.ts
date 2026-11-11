@@ -5,21 +5,40 @@ import { runMigrations } from "@genesiscz/utils/database/migrations";
 import { applyPragmas } from "@genesiscz/utils/database/pragmas";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { assertDimName, assertName, isDimName } from "./dims";
+import {
+    type CheckpointMark,
+    checkpointAt,
+    checkpointSpan,
+    checkpointWindows,
+    resolveCheckpointBounds,
+} from "./checkpoints";
+import { assertDimName, assertName, checkCheckpoint, isDimName, MetricsInputError } from "./dims";
 import { METRICS_MIGRATION_SCOPE, METRICS_MIGRATIONS } from "./migrations";
-import { type AggregateOptions, buildAggregateSql, buildEventsSql, dimIndexSql, type PercentileMode } from "./sql";
-import type {
-    Dims,
-    MetricCatalogEntry,
-    MetricDefinition,
-    MetricEventRow,
-    MetricEventsQuery,
-    MetricEventsResult,
-    MetricQuery,
-    MetricQueryResult,
-    MetricQueryRow,
-    SpoolFileState,
-    StoredEvent,
+import {
+    type AggregateOptions,
+    buildAggregateSql,
+    buildEventsSql,
+    buildFirstAtSql,
+    dimIndexSql,
+    namesCheckpoint,
+    type PercentileMode,
+} from "./sql";
+import {
+    CHECKPOINT_GROUP,
+    type Dims,
+    type MetricCatalogEntry,
+    type MetricCheckpoint,
+    type MetricCheckpointInput,
+    type MetricDefinition,
+    type MetricEventRow,
+    type MetricEventsQuery,
+    type MetricEventsResult,
+    type MetricQuery,
+    type MetricQueryResult,
+    type MetricQueryRow,
+    RATE_AGGREGATES,
+    type SpoolFileState,
+    type StoredEvent,
 } from "./types";
 
 const { log } = logger.scoped("metrics-store");
@@ -37,6 +56,31 @@ export interface MetricsStoreOptions {
     /** Forces how percentiles are computed; by default SQLite's `percentile()` when this build has it. */
     percentiles?: PercentileMode;
 }
+
+interface CheckpointRow {
+    project: string;
+    name: string;
+    at: number;
+    commit_sha: string | null;
+    repo: string | null;
+    note: string | null;
+    data: string | null;
+}
+
+function checkpointOf(row: CheckpointRow): MetricCheckpoint {
+    return {
+        project: row.project,
+        name: row.name,
+        at: row.at,
+        ...(row.commit_sha === null ? {} : { commit: row.commit_sha }),
+        ...(row.repo === null ? {} : { repo: row.repo }),
+        ...(row.note === null ? {} : { note: row.note }),
+        ...(row.data === null ? {} : { data: SafeJSON.parse(row.data, { strict: true }) }),
+    };
+}
+
+const CHECKPOINT_COLUMNS =
+    "projects.name AS project, checkpoints.name AS name, checkpoints.at AS at, checkpoints.commit_sha AS commit_sha, checkpoints.repo AS repo, checkpoints.note AS note, checkpoints.data AS data";
 
 interface MetricRow {
     id: number;
@@ -95,7 +139,9 @@ export class MetricsStore {
     private constructor(
         private readonly db: Database,
         readonly path: string,
-        percentiles: PercentileMode | undefined
+        percentiles: PercentileMode | undefined,
+        /** False for a read-only store whose file predates the checkpoints migration. */
+        private readonly hasCheckpoints = true
     ) {
         this.percentiles = percentiles ?? probePercentile(db);
         this.insertEvent = db.prepare(
@@ -128,19 +174,22 @@ export class MetricsStore {
         }
 
         const db = new Database(path, { readonly: true });
-        const tables = db
-            .query<{ name: string }, []>(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('events', 'metrics', 'projects', 'spool_files')"
-            )
-            .all();
+        const tables = new Set(
+            db
+                .query<{ name: string }, []>(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('events', 'metrics', 'projects', 'spool_files', 'checkpoints')"
+                )
+                .all()
+                .map((row) => row.name)
+        );
 
-        if (tables.length < 4) {
+        if (!["events", "metrics", "projects", "spool_files"].every((name) => tables.has(name))) {
             db.close();
             return undefined;
         }
 
-        log.debug({ path }, "metrics store opened read-only");
-        return new MetricsStore(db, path, undefined);
+        log.debug({ path, checkpoints: tables.has("checkpoints") }, "metrics store opened read-only");
+        return new MetricsStore(db, path, undefined, tables.has("checkpoints"));
     }
 
     close(): void {
@@ -179,23 +228,12 @@ export class MetricsStore {
 
         const key = `${project}\u0000${metric}`;
         const now = Date.now();
-        this.db.run("INSERT INTO projects (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING", [
-            project,
-            now,
-        ]);
-        const projectRow = this.db
-            .query<{ id: number }, [string]>("SELECT id FROM projects WHERE name = ?")
-            .get(project);
-
-        if (!projectRow) {
-            throw new Error(`metrics project ${project} was not created`);
-        }
-
+        const projectId = this.ensureProjectId(project, now);
         const inserted = this.db
             .query<{ id: number }, [number, string, number]>(
                 "INSERT INTO metrics (project_id, name, created_at) VALUES (?, ?, ?) RETURNING id"
             )
-            .get(projectRow.id, metric, now);
+            .get(projectId, metric, now);
 
         if (!inserted) {
             throw new Error(`metric ${project}/${metric} was not created`);
@@ -204,6 +242,98 @@ export class MetricsStore {
         log.debug({ project, metric, id: inserted.id }, "metric created");
         this.ids.set(key, inserted.id);
         return inserted.id;
+    }
+
+    /** The project's id, creating the project when it is new. */
+    private ensureProjectId(project: string, now: number): number {
+        this.db.run("INSERT INTO projects (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING", [
+            project,
+            now,
+        ]);
+        const row = this.db.query<{ id: number }, [string]>("SELECT id FROM projects WHERE name = ?").get(project);
+
+        if (!row) {
+            throw new Error(`metrics project ${project} was not created`);
+        }
+
+        return row.id;
+    }
+
+    /**
+     * Adds a checkpoint, or updates the one of that name: a field given replaces the stored one, a field left out keeps
+     * it. `at` is now for a new checkpoint without one, and stays for an existing one.
+     */
+    addCheckpoint(input: MetricCheckpointInput, now = Date.now()): MetricCheckpoint {
+        const check = checkCheckpoint(input, now);
+
+        if (!check.ok) {
+            throw new MetricsInputError(`checkpoint: ${check.reason}`);
+        }
+
+        const { checkpoint } = check;
+        this.db.transaction(() => {
+            const projectId = this.ensureProjectId(checkpoint.project, now);
+            this.db.run(
+                "INSERT INTO checkpoints (project_id, name, at, commit_sha, repo, note, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, name) DO UPDATE SET at = COALESCE(?, checkpoints.at), commit_sha = COALESCE(excluded.commit_sha, checkpoints.commit_sha), repo = COALESCE(excluded.repo, checkpoints.repo), note = COALESCE(excluded.note, checkpoints.note), data = COALESCE(excluded.data, checkpoints.data), updated_at = excluded.updated_at",
+                [
+                    projectId,
+                    checkpoint.name,
+                    checkpoint.at ?? now,
+                    checkpoint.commit ?? null,
+                    checkpoint.repo ?? null,
+                    checkpoint.note ?? null,
+                    check.dataJson ?? null,
+                    now,
+                    now,
+                    checkpoint.at ?? null,
+                ]
+            );
+        })();
+
+        const stored = this.checkpoints(checkpoint.project).find((each) => each.name === checkpoint.name);
+
+        if (!stored) {
+            throw new Error(`checkpoint ${checkpoint.project}/${checkpoint.name} is missing after add`);
+        }
+
+        log.debug({ project: stored.project, name: stored.name, at: stored.at }, "metrics checkpoint added");
+        return stored;
+    }
+
+    /** The checkpoints of one project, or of every project, by project and time. */
+    checkpoints(project?: string): MetricCheckpoint[] {
+        if (!this.hasCheckpoints) {
+            return [];
+        }
+
+        const from = `SELECT ${CHECKPOINT_COLUMNS} FROM checkpoints JOIN projects ON projects.id = checkpoints.project_id`;
+        const order = "ORDER BY projects.name, checkpoints.at, checkpoints.id";
+
+        if (project === undefined) {
+            return this.db.query<CheckpointRow, []>(`${from} ${order}`).all().map(checkpointOf);
+        }
+
+        return this.db
+            .query<CheckpointRow, [string]>(`${from} WHERE projects.name = ? ${order}`)
+            .all(project)
+            .map(checkpointOf);
+    }
+
+    /** Removes a checkpoint; answers whether one was there. */
+    removeCheckpoint(project: string, name: string): boolean {
+        const removed = this.db.run(
+            "DELETE FROM checkpoints WHERE name = ? AND project_id = (SELECT id FROM projects WHERE name = ?)",
+            [name, project]
+        ).changes;
+        log.debug({ project, name, removed }, "metrics checkpoint removed");
+        return removed > 0;
+    }
+
+    /** The checkpoints a query reads, sorted by time; none when it does not name the checkpoint. */
+    private marksFor(filter: Parameters<typeof namesCheckpoint>[0]): CheckpointMark[] {
+        return namesCheckpoint(filter)
+            ? this.checkpoints(filter.project).map((checkpoint) => ({ name: checkpoint.name, at: checkpoint.at }))
+            : [];
     }
 
     /** Declares a metric: its unit, description and the dims that get an index. A later call adds dims. */
@@ -280,8 +410,10 @@ export class MetricsStore {
         return events.length;
     }
 
-    query(query: MetricQuery): MetricQueryResult {
+    query(asked: MetricQuery): MetricQueryResult {
         const started = performance.now();
+        const marks = this.marksFor(asked);
+        const query = resolveCheckpointBounds(asked, marks);
         const id = this.findMetricId(query.project, query.metric);
         const base = {
             project: query.project,
@@ -291,7 +423,7 @@ export class MetricsStore {
         };
 
         // Built even for an unknown metric, so a bad dim name or sort key is refused the same way.
-        const built = buildAggregateSql(id ?? 1, query, this.aggregateOptions(id));
+        const built = buildAggregateSql(id ?? 1, query, { ...this.aggregateOptions(id), checkpoints: marks });
 
         if (id === undefined) {
             return {
@@ -310,7 +442,56 @@ export class MetricsStore {
                 built.aggregates.map((aggregate) => [aggregate.name, numberOrNull(row[aggregate.alias])])
             ),
         }));
-        return { ...base, aggregates: [...base.aggregates], rows, known: true, ms: performance.now() - started };
+        const spanned =
+            base.groupBy.length === 1 && base.groupBy[0] === CHECKPOINT_GROUP
+                ? this.withSpans(rows, { id, query, marks })
+                : rows;
+        return {
+            ...base,
+            aggregates: [...base.aggregates],
+            rows: spanned,
+            known: true,
+            ms: performance.now() - started,
+        };
+    }
+
+    /**
+     * Each checkpoint group's span and its count and sum per day: the spans differ in length, so a raw sum misleads.
+     * An open start is the query's `since`, else the window's first event.
+     */
+    private withSpans(
+        rows: readonly MetricQueryRow[],
+        context: { id: number; query: Pick<MetricQuery, "since" | "until">; marks: readonly CheckpointMark[] }
+    ): MetricQueryRow[] {
+        const windows = checkpointWindows(context.marks);
+        const firstSql = buildFirstAtSql(context.id, context.query);
+        const first = this.db
+            .query<{ first: number | null }, typeof firstSql.params>(firstSql.sql)
+            .get(...firstSql.params)?.first;
+        const bounds = {
+            since: context.query.since,
+            until: context.query.until,
+            firstAt: first ?? undefined,
+            now: Date.now(),
+        };
+
+        return rows.map((row) => {
+            const label = row.group[CHECKPOINT_GROUP];
+            const window = typeof label === "string" ? windows.get(label) : undefined;
+
+            if (!window) {
+                return row;
+            }
+
+            const span = checkpointSpan(window, bounds);
+            const perDay = Object.fromEntries(
+                RATE_AGGREGATES.filter((name) => row.values[name] !== undefined).map((name) => {
+                    const value = row.values[name];
+                    return [name, span.days > 0 && typeof value === "number" ? value / span.days : null];
+                })
+            );
+            return { ...row, span, perDay };
+        });
     }
 
     /** The percentile mode and the metric's declared dims, whose indexes a query may name. */
@@ -337,9 +518,11 @@ export class MetricsStore {
             .map((row) => row.detail);
     }
 
-    events(query: MetricEventsQuery): MetricEventsResult {
+    events(asked: MetricEventsQuery): MetricEventsResult {
+        const marks = this.marksFor(asked);
+        const query = resolveCheckpointBounds(asked, marks);
         const id = this.findMetricId(query.project, query.metric);
-        const built = buildEventsSql(id ?? 1, query);
+        const built = buildEventsSql(id ?? 1, query, marks);
 
         if (id === undefined) {
             return { project: query.project, metric: query.metric, known: false, rows: [] };
@@ -358,6 +541,7 @@ export class MetricsStore {
                     value: row.value,
                     dims: dimsOf(row.dims),
                     ...(row.context === null ? {} : { context: SafeJSON.parse(row.context, { strict: true }) }),
+                    ...(query.withCheckpoint ? { checkpoint: checkpointAt(marks, row.at) } : {}),
                 })
             );
         return { project: query.project, metric: query.metric, known: true, rows };

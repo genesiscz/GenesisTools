@@ -1,11 +1,13 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import type {
-    DimValue,
-    MetricCatalogEntry,
-    MetricEventRow,
-    MetricEventsResult,
-    MetricQueryResult,
+import {
+    type DimValue,
+    type MetricCatalogEntry,
+    type MetricCheckpoint,
+    type MetricEventRow,
+    type MetricEventsResult,
+    type MetricQueryResult,
+    RATE_AGGREGATES,
 } from "@genesiscz/utils/metrics/types";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
@@ -49,12 +51,28 @@ export function printQuery(result: MetricQueryResult): void {
     }
 
     renderCliHeader(`${result.project} / ${result.metric}`, `${result.rows.length} rows · ${result.ms.toFixed(1)} ms`);
-    const table = createBoxTable([...result.groupBy, ...result.aggregates]);
+    // Grouped by checkpoint alone: each span and the per-day rates, since the spans differ in length.
+    const spans = result.rows.some((row) => row.span);
+    const rates = spans ? RATE_AGGREGATES.filter((name) => result.aggregates.includes(name)) : [];
+    const table = createBoxTable([
+        ...result.groupBy,
+        ...(spans ? ["from", "to", "days"] : []),
+        ...result.aggregates,
+        ...rates.map((name) => `${name}/day`),
+    ]);
 
     for (const row of result.rows) {
         table.push([
             ...result.groupBy.map((name) => groupCell(name, row.group[name] ?? null)),
+            ...(spans
+                ? [
+                      row.span ? localTime(row.span.from) : "",
+                      row.span ? localTime(row.span.to) : "",
+                      row.span ? row.span.days.toFixed(2) : "",
+                  ]
+                : []),
             ...result.aggregates.map((aggregate) => number(row.values[aggregate])),
+            ...rates.map((name) => number(row.perDay?.[name])),
         ]);
     }
 
@@ -70,8 +88,15 @@ function contextText(row: MetricEventRow): string {
     return truncateDisplay(text.replace(/\s+/g, " "), 80);
 }
 
-export function eventLine(row: { at: number; value: number; dims: Record<string, DimValue>; context?: unknown }) {
-    return `${pc.dim(localTime(row.at, true))}  ${pc.white(number(row.value).padStart(8))}  ${dimsText(row.dims)}`;
+export function eventLine(row: {
+    at: number;
+    value: number;
+    dims: Record<string, DimValue>;
+    context?: unknown;
+    checkpoint?: string;
+}) {
+    const checkpoint = row.checkpoint === undefined ? "" : `${pc.cyan(`[${row.checkpoint}]`)}  `;
+    return `${pc.dim(localTime(row.at, true))}  ${pc.white(number(row.value).padStart(8))}  ${checkpoint}${dimsText(row.dims)}`;
 }
 
 export function printEvents(result: MetricEventsResult): void {
@@ -105,6 +130,24 @@ export function printCatalog(entries: readonly MetricCatalogEntry[], note: strin
             entry.first ? localTime(entry.first) : "",
             entry.last ? localTime(entry.last) : "",
             entry.dims.join(", "),
+        ]);
+    }
+
+    out.println(table.toString());
+}
+
+export function printCheckpoints(checkpoints: readonly MetricCheckpoint[], note: string): void {
+    renderCliHeader("Checkpoints", note);
+    const table = createBoxTable(["PROJECT", "NAME", "AT", "COMMIT", "REPO", "NOTE"]);
+
+    for (const checkpoint of checkpoints) {
+        table.push([
+            checkpoint.project,
+            pc.white(checkpoint.name),
+            localTime(checkpoint.at),
+            checkpoint.commit ? truncateDisplay(checkpoint.commit, 12) : "",
+            checkpoint.repo ? truncateDisplay(checkpoint.repo, 30) : "",
+            checkpoint.note ? truncateDisplay(checkpoint.note, 50) : "",
         ]);
     }
 

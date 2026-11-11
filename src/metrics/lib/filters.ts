@@ -17,6 +17,8 @@ export interface FilterFlags {
     where?: string[];
     limit?: string;
     json?: boolean;
+    /** `events`: each row names the checkpoint its event falls under. */
+    checkpoint?: boolean;
 }
 
 export interface QueryFlags extends FilterFlags {
@@ -109,16 +111,45 @@ function limitOf(text: string | undefined): number | undefined {
     return limit;
 }
 
+const CHECKPOINT_PREFIX = "checkpoint:";
+
+/** `--since` or `--until`: `checkpoint:<name>` names a checkpoint, anything else a time. */
+function boundOf(
+    text: string | undefined,
+    flag: "--since" | "--until"
+): { at?: number; checkpoint?: string } | undefined {
+    if (!text) {
+        return undefined;
+    }
+
+    if (!text.startsWith(CHECKPOINT_PREFIX)) {
+        return { at: parseWhen(text, flag) };
+    }
+
+    const name = text.slice(CHECKPOINT_PREFIX.length).trim();
+
+    if (!name) {
+        throw new FlagError(`${flag} ${text}: name the checkpoint, as in ${flag} checkpoint:v2`);
+    }
+
+    return { checkpoint: name };
+}
+
 export function callerOf(reason: string): MetricCaller {
     return { tool: "metrics-cli", pid: process.pid, reason };
 }
 
 export function filterOf(project: string, metric: string, flags: FilterFlags, reason: string): MetricFilter {
+    const since = boundOf(flags.since, "--since");
+    const until = boundOf(flags.until, "--until");
+
     return {
         project,
         metric,
-        ...(flags.since ? { since: parseWhen(flags.since, "--since") } : {}),
-        ...(flags.until ? { until: parseWhen(flags.until, "--until") } : {}),
+        ...(since?.at === undefined ? {} : { since: since.at }),
+        ...(since?.checkpoint === undefined ? {} : { sinceCheckpoint: since.checkpoint }),
+        ...(until?.at === undefined ? {} : { until: until.at }),
+        ...(until?.checkpoint === undefined ? {} : { untilCheckpoint: until.checkpoint }),
         ...(flags.where?.length ? { where: flags.where.map(parseWhere) } : {}),
         caller: callerOf(reason),
     };

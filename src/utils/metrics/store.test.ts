@@ -186,3 +186,110 @@ describe("metrics store", () => {
         expect(store.eventCount()).toBe(6);
     });
 });
+
+describe("metrics checkpoints", () => {
+    const query = (store: MetricsStore, extra: Partial<Parameters<MetricsStore["query"]>[0]>) =>
+        store.query({
+            project: "shop",
+            metric: "checkout.ms",
+            sort: { by: "checkpoint", descending: false },
+            ...extra,
+        });
+
+    /** The seeded events (four at T0, six an hour later) with v1 between them, half an hour after T0. */
+    function marked(percentiles?: "native" | "window"): MetricsStore {
+        const store = seeded(percentiles);
+        store.addCheckpoint({ project: "shop", name: "v1", at: T0 + HOUR / 2, commit: "abc1234", note: "cache on" });
+        return store;
+    }
+
+    test("a checkpoint is added, updated by name with the fields given, listed and removed", () => {
+        const store = open();
+        const added = store.addCheckpoint({ project: "shop", name: "v1", commit: "abc1234", data: { pr: 7 } }, T0);
+        expect(added).toEqual({ project: "shop", name: "v1", at: T0, commit: "abc1234", data: { pr: 7 } });
+
+        const noted = store.addCheckpoint({ project: "shop", name: "v1", note: "cache on" }, T0 + HOUR);
+        expect(noted).toEqual({ ...added, note: "cache on" });
+        expect(store.addCheckpoint({ project: "shop", name: "v1", at: T0 + 5 }).at).toBe(T0 + 5);
+
+        store.addCheckpoint({ project: "side", name: "v0", at: T0 - HOUR });
+        expect(store.checkpoints().map((each) => `${each.project}/${each.name}`)).toEqual(["shop/v1", "side/v0"]);
+        expect(store.checkpoints("shop")).toHaveLength(1);
+        expect(() => store.addCheckpoint({ project: "shop", name: "no good" })).toThrow(MetricsInputError);
+        expect(store.removeCheckpoint("shop", "v1")).toBe(true);
+        expect(store.removeCheckpoint("shop", "v1")).toBe(false);
+    });
+
+    test("group by checkpoint: each event under the latest checkpoint at or before it, else before the first", () => {
+        expect(
+            query(seeded(), { groupBy: ["checkpoint"] }).rows.map((row) => [row.group.checkpoint, row.values])
+        ).toEqual([["(none)", { count: 10, sum: 55 }]]);
+
+        const store = marked();
+        const rows = query(store, { groupBy: ["checkpoint"], since: T0, until: T0 + 2 * HOUR }).rows;
+        expect(rows.map((row) => [row.group.checkpoint, row.values])).toEqual([
+            ["(before v1)", { count: 4, sum: 10 }],
+            ["v1", { count: 6, sum: 45 }],
+        ]);
+        // Half an hour before v1 and an hour and a half after it: the same events per hour read as different rates.
+        expect(rows[0]?.span).toEqual({ from: T0, to: T0 + HOUR / 2, days: 1 / 48 });
+        expect(rows[0]?.perDay).toEqual({ count: 192, sum: 480 });
+        expect(rows[1]?.span).toEqual({ from: T0 + HOUR / 2, to: T0 + 2 * HOUR, days: 1 / 16 });
+        expect(rows[1]?.perDay).toEqual({ count: 96, sum: 720 });
+
+        const mixed = query(store, {
+            groupBy: ["agent", "checkpoint"],
+            where: [{ dim: "agent", op: "=", value: "main" }],
+        });
+        expect(mixed.rows.map((row) => [row.group.checkpoint, row.values.count])).toEqual([
+            ["(before v1)", 4],
+            ["v1", 2],
+        ]);
+        expect(mixed.rows[0]?.span).toBeUndefined();
+
+        // Grouped by checkpoint (and time buckets) the spans are read as time ranges: no sort of the whole metric.
+        expect(
+            store.plan({ project: "shop", metric: "checkout.ms", groupBy: ["checkpoint"] }).join("\n")
+        ).not.toContain("TEMP B-TREE FOR GROUP BY");
+        const hourly = query(store, {
+            groupBy: ["checkpoint", "time:hour"],
+            where: [{ dim: "agent", op: "=", value: "main" }],
+        });
+        expect(hourly.rows.map((row) => [row.group.checkpoint, row.group["time:hour"], row.values.count])).toEqual([
+            ["(before v1)", T0, 4],
+            ["v1", T0 + HOUR, 2],
+        ]);
+
+        const windowed = query(marked("window"), { groupBy: ["checkpoint"], aggregates: ["count", "p50"] });
+        expect(windowed.rows.map((row) => [row.group.checkpoint, row.values])).toEqual([
+            ["(before v1)", { count: 4, p50: 2.5 }],
+            ["v1", { count: 6, p50: 7.5 }],
+        ]);
+    });
+
+    test("where checkpoint, since and until checkpoint, and events labelled with their checkpoint", () => {
+        const store = marked();
+        store.addCheckpoint({ project: "shop", name: "v2", at: T0 + HOUR + 6 });
+        const count = (extra: Partial<Parameters<MetricsStore["query"]>[0]>) =>
+            store.query({ project: "shop", metric: "checkout.ms", ...extra }).rows[0]?.values.count;
+
+        expect(count({ where: [{ dim: "checkpoint", op: "=", value: "v1" }] })).toBe(2);
+        expect(count({ where: [{ dim: "checkpoint", op: "=", value: "v2" }] })).toBe(4);
+        expect(count({ where: [{ dim: "checkpoint", op: "=", value: "(before v1)" }] })).toBe(4);
+        expect(count({ where: [{ dim: "checkpoint", op: "!=", value: "v2" }] })).toBe(6);
+        expect(count({ where: [{ dim: "checkpoint", op: "in", value: ["v1", "v2"] }] })).toBe(6);
+        expect(() => count({ where: [{ dim: "checkpoint", op: "=", value: "v9" }] })).toThrow(/no such checkpoint/);
+        expect(count({ sinceCheckpoint: "v1" })).toBe(6);
+        expect(count({ sinceCheckpoint: "v1", untilCheckpoint: "v2" })).toBe(2);
+        expect(count({ untilCheckpoint: "v1" })).toBe(4);
+        expect(() => count({ sinceCheckpoint: "v9" })).toThrow(/no such checkpoint in project shop/);
+
+        const events = store.events({ project: "shop", metric: "checkout.ms", limit: 20, withCheckpoint: true });
+        expect(events.rows.map((row) => row.checkpoint)).toEqual([
+            ...Array(4).fill("v2"),
+            ...Array(2).fill("v1"),
+            ...Array(4).fill("(before v1)"),
+        ]);
+        expect(store.events({ project: "shop", metric: "checkout.ms", limit: 1 }).rows[0]?.checkpoint).toBeUndefined();
+    });
+});

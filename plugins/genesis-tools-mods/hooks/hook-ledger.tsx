@@ -7,10 +7,11 @@
 // entry, or an area-rule block inside one, already handed to the same loop since its last compaction becomes a
 // one-line receipt. Each injection and each drop goes to `mods-log/hooks.jsonl`. With `mods.hooks.metrics` (on by
 // default) each injection is also one `agent-context / hook.injection` event in the `tools metrics` spool, with its
-// session, agent, source and rule file (`metrics.ts`).
+// session, agent, the model of its loop (`loop-model.ts`), source, rule file and how an area rule came (`metrics.ts`).
 import type { ElementTable, RenderElement } from "claude-code";
 import type { HookCount, HookLedger } from "../types";
 import { liveSince } from "./live";
+import { loopModelOf, noteLoopModel } from "./loop-model";
 import { AREA_BLOCK, INJECTION_DEFINITION, type InjectionEntry, injectionEvents, spoolEvents } from "./metrics";
 import { agentsDir, appendJsonl, type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
 import { barText, dimNote, divider, headerRow, type Kit, listRow, plural, sectionTitle, sidebarFrame } from "./sidebar";
@@ -178,6 +179,7 @@ async function spoolMetrics(
                 session: await host.sessionId(),
                 agent: answer.agent,
                 agentType: typeof input.agent_type === "string" ? input.agent_type : null,
+                model: loopModelOf(answer.agent),
                 event: answer.event,
                 tool: typeof input.tool_name === "string" ? input.tool_name : null,
                 harness: "claude",
@@ -304,6 +306,13 @@ export const hookLedger: Feature = {
     },
     compacted(_host, agentId) {
         seen.delete(agentId ?? "main");
+    },
+    // The model of each loop's last response, for the `model` dim; the main loop's is known only from its turns.
+    afterStep(_host, e, usage) {
+        noteLoopModel(e.agentId, usage?.model);
+    },
+    async afterTurn(_host, e) {
+        noteLoopModel(e.agentId ?? "main", e.usage?.model);
     },
     sidebars: [{ id: HOOKS_PANE, title: "Hooks", draw: hooksPane }],
     commands: [

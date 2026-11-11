@@ -36,10 +36,10 @@ import { toolLabel } from "./spinner";
 
 export const AGENTS_PANE = "mods-agents";
 
-let spawned: SpawnedAgents = {};
+export let spawned: SpawnedAgents = {};
 const activity = new Map<string, { lastTool: string; tools: number; recent: Recent[] }>();
 /** What `agent-<id>.meta.json` said; null once read and found without a model. */
-const metas = new Map<string, { model: string; at?: number } | null>();
+export const metas = new Map<string, { model: string; at?: number } | null>();
 const pendingMetas = new Map<string, Promise<void>>();
 const transcripts = new Map<string, string>();
 let refreshing: Promise<void> | undefined;
