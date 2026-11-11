@@ -33,7 +33,7 @@ import {
     ocrPath,
     readFrameIndex,
 } from "./frame-index";
-import { readRecorderState } from "./recorder-shared";
+import { EMPTY_FRAME_CHARS, readRecorderState } from "./recorder-shared";
 
 /**
  * The second phase of a meeting recording: OCR of the kept frames, in a process of its own (`tools meetings ocr`).
@@ -415,6 +415,14 @@ class OcrWorker {
 
             this.options.signal?.throwIfAborted();
             const row = await this.readFrame(entry);
+
+            if (this.done.size === 0 && row.failed === undefined && row.text.trim().length < EMPTY_FRAME_CHARS) {
+                log.warn(
+                    { meeting: this.options.meetingId, file: entry.file, chars: row.text.trim().length },
+                    "the first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop), or the text is too small for capture.resolutionCap"
+                );
+            }
+
             appendFileSync(this.ocrFile, `${SafeJSON.stringify(row)}\n`, { mode: CAPTURE_FILE_MODE });
             this.done.add(entry.file);
             this.result.read += 1;

@@ -20,7 +20,7 @@ import {
 import { writeMeetingRecordingManifest } from "@app/meetings/lib/recording-manifest";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
-import { FrameOutput, JsonlOcrSink } from "@genesiscz/utils/screen-recorder/frame-output";
+import { FrameOutput } from "@genesiscz/utils/screen-recorder/frame-output";
 import {
     captureErrorVerdict,
     defineRecorderConfig,
@@ -30,6 +30,7 @@ import {
 import { settingsChange } from "@genesiscz/utils/screen-recorder/session";
 import { CaptureError } from "@genesiscz/utils/screen-recorder/types";
 import { collectRecord } from "./collect";
+import { startOcrWorker } from "./ocr-worker";
 import { claimRecorderPid, RecorderStateFile } from "./recorder-adapters";
 
 /**
@@ -40,17 +41,12 @@ import { claimRecorderPid, RecorderStateFile } from "./recorder-adapters";
 function meetingRecorderConfig(run: MeetingRun) {
     const { store, meetingId, deps, state } = run;
     return defineRecorderConfig<string[]>((recording) => {
+        // No OCR here: each kept frame goes into the frame index, and the meeting's OCR worker reads it (ocr-worker.ts).
         const output = new FrameOutput({
             folder: run.folder,
             naming: "absolute",
             format: { kind: "jpeg", quality: run.capture.jpegQuality },
             convert: deps.toJpeg,
-            ocr: {
-                settings: () => recording.settings.ocr,
-                sink: new JsonlOcrSink(join(run.folder, "ocr.jsonl")),
-                recognize: deps.ocr,
-                onError: (err, jpg) => log.warn({ err, jpg }, "OCR failed for a frame"),
-            },
         });
 
         return {
@@ -137,7 +133,7 @@ function meetingRecorderConfig(run: MeetingRun) {
                 captures: {
                     onResult: async (entry, result) => {
                         run.keepTracks(result, entry.target);
-                        await recording.jobs.task("ocr", (ctx) =>
+                        await recording.jobs.task("frames", (ctx) =>
                             run.keepFrames({
                                 recording,
                                 output,
@@ -262,12 +258,13 @@ async function saveFailedRun(store: MeetingStore, meetingId: string, err: unknow
 
 /**
  * The recorder process (`tools meetings record run`): captures the screen in pieces until a stop (a live recording
- * command, `record stop`, or a signal), converts each new frame to JPEG under the meeting's `frames/`, runs Vision
- * OCR on it into `ocr.jsonl`, and keeps the meeting's `recording` block. Pause and resume end and start a span.
+ * command, `record stop`, or a signal), converts each new frame to JPEG under the meeting's `frames/`, lists it in
+ * `frames.jsonl`, and keeps the meeting's `recording` block. Pause and resume end and start a span. The OCR is a
+ * second phase: the recorder starts the meeting's OCR worker (`tools meetings ocr --follow`) and never waits on it.
  */
 export async function runRecorder(options: RunRecorderOptions): Promise<RecorderState> {
     const { store, meetingId } = options;
-    const deps: RecorderDeps = { ...defaultDeps(options.capture), ...options.deps };
+    const deps: RecorderDeps = { ...defaultDeps(options.capture), startOcr: startOcrWorker, ...options.deps };
     const files = recorderFiles(store);
     const initial = store.read(meetingId);
     const claim = await claimRecorderPid(files.pid);

@@ -2812,11 +2812,6 @@ describe("the meetings recorder loop", () => {
         steps: Step[];
         failOnJpeg?: boolean;
         beforeJpeg?: (png: string) => Promise<void>;
-        ocrBlocks?: Array<{
-            text: string;
-            confidence: number;
-            bounds: { x: number; y: number; width: number; height: number };
-        }>;
         liveControl?: boolean;
         liveSettings?: boolean;
         liveRates?: boolean;
@@ -2863,6 +2858,7 @@ describe("the meetings recorder loop", () => {
         );
         const liveDir = mkdtempSync(join(tmpdir(), "live-meeting-"));
         const notes: RecorderNote[] = [];
+        const ocrStarts: string[] = [];
         const seenLive: string[] = [];
         const answers: unknown[] = [];
         let notified: unknown;
@@ -2923,10 +2919,9 @@ describe("the meetings recorder loop", () => {
 
                     await Bun.write(jpg, "jpeg");
                 },
-                ocr: async () => ({
-                    text: "Quarterly planning board with several readable lines",
-                    blocks: options.ocrBlocks ?? [],
-                }),
+                startOcr: (_store, meetingId) => {
+                    ocrStarts.push(meetingId);
+                },
                 notify: async (note) => {
                     notes.push(note);
                     notified = await options.duringNotify?.(call, liveDir);
@@ -2950,6 +2945,7 @@ describe("the meetings recorder loop", () => {
             store,
             state,
             notes,
+            ocrStarts,
             recorder,
             liveDir,
             seenLive,
@@ -2967,14 +2963,14 @@ describe("the meetings recorder loop", () => {
             steps: ["frames", "frames", "frames"],
         });
         const frames = readdirSync(join(run.folder, "frames")).sort();
-        const ocr = readFileSync(join(run.folder, "ocr.jsonl"), "utf8")
+        const index = readFileSync(join(run.folder, "frames.jsonl"), "utf8")
             .trim()
             .split("\n")
             .map((row) => SafeJSON.parse(row, { strict: true }));
 
         expect(frames.filter((name) => name.endsWith("-d1.jpg"))).toHaveLength(2);
         expect(frames.filter((name) => name.endsWith("-d4.jpg"))).toHaveLength(1);
-        expect(ocr.map((line: { displayId: number }) => line.displayId).sort()).toEqual([1, 1, 4]);
+        expect(index.map((line: { displayId: number }) => line.displayId).sort()).toEqual([1, 1, 4]);
         expect(run.recorder.requests.slice(0, 3).map((request) => request.target)).toEqual([
             { kind: "display", displayId: 1 },
             { kind: "display", displayId: 4 },
@@ -3002,25 +2998,23 @@ describe("the meetings recorder loop", () => {
         expect(recordingSummary(run.saved!).join("\n")).toContain("Built-in (1) 2, External (4) 1");
     });
 
-    test("each piece's frames land as dated UTC JPEG names with one ocr.jsonl row each before the recording stops", async () => {
-        const blocks = [{ text: "Quarterly", confidence: 0.9, bounds: { x: 0.1, y: 0.8, width: 0.3, height: 0.05 } }];
+    test("each piece's frames land as dated UTC JPEG names with one frames.jsonl line each before the recording stops, and OCR is left to the worker it starts", async () => {
         let midway: { frames: string[]; rows: number } | undefined;
         const run = await recordWith({
             displays: [[builtIn]],
             steps: ["frames", "hang"],
-            ocrBlocks: blocks,
             actions: [
                 async (send, live) => {
                     midway = {
                         frames: readdirSync(join(live.folder, "frames")),
-                        rows: readFileSync(join(live.folder, "ocr.jsonl"), "utf8").trim().split("\n").length,
+                        rows: readFileSync(join(live.folder, "frames.jsonl"), "utf8").trim().split("\n").length,
                     };
                     return send("stop");
                 },
             ],
         });
         const frames = readdirSync(join(run.folder, "frames"));
-        const rows = readFileSync(join(run.folder, "ocr.jsonl"), "utf8")
+        const rows = readFileSync(join(run.folder, "frames.jsonl"), "utf8")
             .trim()
             .split("\n")
             .map((row) => SafeJSON.parse(row, { strict: true }));
@@ -3029,16 +3023,17 @@ describe("the meetings recorder loop", () => {
         expect(frames).toHaveLength(1);
         expect(frames[0]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-d1\.jpg$/);
         expect(rows).toEqual([
-            {
+            expect.objectContaining({
                 file: `frames/${frames[0]}`,
                 at: expect.any(String),
                 displayId: 1,
                 changePercent: 10,
                 reason: "first",
-                text: "Quarterly planning board with several readable lines",
-                blocks,
-            },
+            }),
         ]);
+        expect(rows[0].text).toBeUndefined();
+        expect(existsSync(join(run.folder, "ocr.jsonl"))).toBe(false);
+        expect(run.ocrStarts).toEqual([run.saved!.id]);
         const at = new Date(rows[0].at);
         expect(frames[0]).toBe(`${at.toISOString().replace(/[:.]/g, "-")}-d1.jpg`);
         expect(run.state.frames).toBe(1);
@@ -3302,7 +3297,7 @@ describe("the meetings recorder loop", () => {
                 },
             ],
         });
-        const frame = SafeJSON.parse(readFileSync(join(run.folder, "ocr.jsonl"), "utf8").trim(), { strict: true });
+        const frame = SafeJSON.parse(readFileSync(join(run.folder, "frames.jsonl"), "utf8").trim(), { strict: true });
         const at = Date.parse(frame.at);
         expect(
             run.saved?.recording?.displaySpans?.some(

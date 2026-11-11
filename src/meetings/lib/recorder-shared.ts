@@ -19,13 +19,7 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import type { AudioSource } from "@genesiscz/utils/screen-recorder/control";
-import {
-    absoluteFrameName,
-    type JpegConverter,
-    type OcrRecognizer,
-    sipsJpeg,
-    visionOcr,
-} from "@genesiscz/utils/screen-recorder/frame-output";
+import { absoluteFrameName, type JpegConverter, sipsJpeg } from "@genesiscz/utils/screen-recorder/frame-output";
 import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
 import { CaptureError, type FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
@@ -178,7 +172,8 @@ export interface RecorderNote {
 export interface RecorderDeps {
     recorder: FrameRecorder;
     toJpeg: JpegConverter;
-    ocr: OcrRecognizer;
+    /** Starts the meeting's OCR worker (a process of its own); the recorder never waits on it or fails by it. */
+    startOcr: (store: MeetingStore, meetingId: string) => void;
     notify: (note: RecorderNote) => Promise<void>;
     /** Where the live recording entry goes (the genesis-tools root's `recordings/live/` by default). */
     liveDir?: string;
@@ -190,13 +185,13 @@ export function defaultOcrLanguages(): string[] {
     return languageSettings(meetingsConfigSchema.parse({})).ocr;
 }
 
-export function defaultDeps(capture: MeetingsConfig["global"]["capture"]): RecorderDeps {
+/** The recorder's own parts; `runRecorder` adds the OCR worker start (`ocr-worker.ts` reads the recorder state). */
+export function defaultDeps(capture: MeetingsConfig["global"]["capture"]): Omit<RecorderDeps, "startOcr"> {
     return {
         recorder: FRAME_RECORDERS[capture.backend]({
             axTool: async (options) => [await ensurePinnedBinaryAsync(options)],
         }),
         toJpeg: sipsJpeg,
-        ocr: visionOcr,
         notify: async (note) => {
             await sendNotification({ ...note, group: "meetings" }).catch((err: unknown) =>
                 log.warn({ err }, "notification failed")

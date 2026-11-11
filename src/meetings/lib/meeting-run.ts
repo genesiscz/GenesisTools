@@ -2,7 +2,6 @@ import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } f
 import { join } from "node:path";
 import {
     defaultOcrLanguages,
-    EMPTY_FRAME_CHARS,
     errorText,
     frameName,
     framesOnDisk,
@@ -23,6 +22,8 @@ import type { FrameRecording } from "@genesiscz/utils/screen-recorder/recording"
 import type { PieceTarget } from "@genesiscz/utils/screen-recorder/targets";
 import type { CaptureResult } from "@genesiscz/utils/screen-recorder/types";
 import { CallTimeline } from "./call-timeline";
+import { appendFrameIndex } from "./frame-index";
+import { meetingOcrSettings } from "./ocr-worker";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingMovieZeroMs } from "./recording-manifest";
 import { meetingSource, sourceRefOf } from "./sources";
@@ -82,16 +83,7 @@ export class MeetingRun {
             threshold: capture.threshold * 100,
             maxLongSide: capture.resolutionCap,
             heartbeatSec: nativeKeys.heartbeatSec ?? 0,
-            ocr: {
-                enabled: true,
-                languages: options.ocrLanguages ?? defaultOcrLanguages(),
-                minChars: 0,
-                threshold: capture.ocr.threshold * 100,
-                skipTextless: capture.ocr.skipTextless,
-                region: capture.ocr.region,
-                read: capture.ocr.read,
-                tilePx: capture.ocr.tilePx,
-            },
+            ocr: meetingOcrSettings(capture, options.ocrLanguages ?? defaultOcrLanguages()),
         };
         this.audio = {
             sources: options.audio ?? audioConfig?.sources ?? [],
@@ -144,7 +136,10 @@ export class MeetingRun {
         return at.toISOString();
     }
 
-    /** The loop starts: an empty piece folder, the state file, an open span, and the record's recording block. */
+    /**
+     * The loop starts: an empty piece folder, the state file, an open span, the record's recording block, and the
+     * meeting's OCR worker.
+     */
     async begin(recording: FrameRecording<string[]>): Promise<void> {
         rmSync(this.pieceDir, { recursive: true, force: true });
         mkdirSync(this.pieceDir, { recursive: true });
@@ -158,6 +153,16 @@ export class MeetingRun {
             displayPolicy: this.displays.policy,
             displaySpans: recording.displayBook.intervals,
         });
+
+        // The second phase: the meeting's OCR worker follows the frame index until this recording stops.
+        try {
+            this.deps.startOcr(this.store, this.meetingId);
+        } catch (err) {
+            log.warn(
+                { err, meeting: this.meetingId },
+                "the OCR worker could not be started; the watcher starts it later"
+            );
+        }
     }
 
     /** A capture recorded again: an open failure notice in the record is cleared, and a "keeps failing" one is answered. */
@@ -236,7 +241,10 @@ export class MeetingRun {
         }
     }
 
-    /** Keeps a capture's frames as JPEGs with their OCR. `streamed`: the socket announced them as they landed. */
+    /**
+     * Keeps a capture's frames as JPEGs, each listed in the frame index for the OCR worker. `streamed`: the socket
+     * announced them as they landed.
+     */
     async keepFrames({
         recording,
         output,
@@ -264,16 +272,11 @@ export class MeetingRun {
                     originMs: Date.parse(state.startedAt),
                     displayId: frame.displayId ?? target.displayId,
                 });
+                appendFrameIndex(this.folder, kept);
             } catch (err) {
-                // A frame that cannot be kept (its conversion failed) costs that frame, not the recording.
+                // A frame that cannot be kept (its conversion or its index line failed) costs that frame, not the recording.
                 log.warn({ err, frame: frame.path }, "a frame could not be kept; frame skipped");
                 continue;
-            }
-
-            if (kept.read && state.frames === 0 && kept.read.text.trim().length < EMPTY_FRAME_CHARS) {
-                this.note(
-                    `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`
-                );
             }
 
             state.frames += 1;
