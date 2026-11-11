@@ -17,6 +17,8 @@ import {
     FIRST_FRAME_HINT,
     LiveOcrSettings,
     OCR_FAILURES_BEFORE_RESTART,
+    OCR_MAX_ATTEMPTS,
+    OCR_OUTAGE_BACKOFF_MS,
     OCR_PID_FILE,
     OCR_SETTINGS_FILE,
     runOcrWorker,
@@ -269,7 +271,7 @@ describe("the frame index and the OCR worker (two phases)", () => {
         ]);
     });
 
-    it("retries a read that throws, then starts a fresh helper, then writes a failed row that --retry-failed reads again in place", async () => {
+    it("retries a read that throws, starts a fresh helper, writes a failed row when the next frame reads, retries it once reads work, and --retry-failed reads it again in place", async () => {
         const meeting = await meetingWith([
             { name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" },
             { name: "f2-d1.jpg", at: "2026-11-11T14:00:02.000Z" },
@@ -279,13 +281,13 @@ describe("the frame index and the OCR worker (two phases)", () => {
         const stuck = fakeEngine((name, attempt) => (name === "f1-d1.jpg" && attempt <= 2) || name === "f2-d1.jpg");
         const first = await runOcrWorker({ store: meeting.store, meetingId: meeting.id, settings, engine: stuck });
 
-        expect(first).toMatchObject({ status: "done", read: 3, failed: 1, restarts: 1 });
-        expect(stuck.restarts).toBe(1);
-        expect(stuck.reads.filter((name) => name === "f2-d1.jpg")).toHaveLength(2 * OCR_FAILURES_BEFORE_RESTART);
-        expect(rows(meeting.dir).map((row) => [row.file, row.text, row.failed])).toEqual([
-            ["frames/f1-d1.jpg", "text of f1-d1.jpg", undefined],
-            ["frames/f2-d1.jpg", "", "TextRecognition.CRImageReaderError error 1"],
-            ["frames/f3-d1.jpg", "text of f3-d1.jpg", undefined],
+        // f2's first round, then its automatic second round after f3 read: a frame that read is the control.
+        expect(first).toMatchObject({ status: "done", read: 3, reread: 1, failed: 2, restarts: 2, outages: 0 });
+        expect(stuck.reads.filter((name) => name === "f2-d1.jpg")).toHaveLength(4 * OCR_FAILURES_BEFORE_RESTART);
+        expect(rows(meeting.dir).map((row) => [row.file, row.text, row.failed, row.attempts])).toEqual([
+            ["frames/f1-d1.jpg", "text of f1-d1.jpg", undefined, undefined],
+            ["frames/f2-d1.jpg", "", "TextRecognition.CRImageReaderError error 1", 2],
+            ["frames/f3-d1.jpg", "text of f3-d1.jpg", undefined, undefined],
         ]);
         expect(existsSync(join(meeting.dir, OCR_PID_FILE))).toBe(false);
 
@@ -304,6 +306,103 @@ describe("the frame index and the OCR worker (two phases)", () => {
             ["frames/f1-d1.jpg", "text of f1-d1.jpg", undefined],
             ["frames/f2-d1.jpg", "text of f2-d1.jpg", undefined],
             ["frames/f3-d1.jpg", "text of f3-d1.jpg", undefined],
+        ]);
+    });
+
+    it("waits out an OCR outage on the same frame, says so once and again on recovery, and writes no failed row", async () => {
+        for (const failureNotices of ["failing-and-recovered", "failing", "off"] as const) {
+            const meeting = await meetingWith([
+                { name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" },
+                { name: "f2-d1.jpg", at: "2026-11-11T14:00:02.000Z" },
+                { name: "f3-d1.jpg", at: "2026-11-11T14:00:03.000Z" },
+            ]);
+            let down = true;
+            // f1 reads once; then every read fails, also of f1 (the control), until the second wait ends.
+            const engine = fakeEngine((name, attempt) => !(name === "f1-d1.jpg" && attempt === 1) && down);
+            const sleeps: number[] = [];
+            const notices: string[] = [];
+            const result = await runOcrWorker({
+                store: meeting.store,
+                meetingId: meeting.id,
+                settings,
+                engine,
+                follow: true,
+                pollMs: 100,
+                recording: () => false,
+                failureNotices,
+                notify: (note) => {
+                    notices.push(note.message);
+                },
+                sleep: async (ms) => {
+                    sleeps.push(ms);
+                    down = sleeps.length < 2;
+                },
+            });
+
+            expect(sleeps).toEqual([OCR_OUTAGE_BACKOFF_MS[0], OCR_OUTAGE_BACKOFF_MS[1]]);
+            expect(result).toMatchObject({ read: 3, failed: 0, outages: 1 });
+            expect(rows(meeting.dir).map((row) => [row.text, row.failed])).toEqual([
+                ["text of f1-d1.jpg", undefined],
+                ["text of f2-d1.jpg", undefined],
+                ["text of f3-d1.jpg", undefined],
+            ]);
+            expect(notices).toEqual(
+                {
+                    "failing-and-recovered": [
+                        "Text reading (OCR) fails on this Mac; frames are kept and are read when it works again.",
+                        "Text reading works again.",
+                    ],
+                    failing: [
+                        "Text reading (OCR) fails on this Mac; frames are kept and are read when it works again.",
+                    ],
+                    off: [],
+                }[failureNotices]
+            );
+        }
+    });
+
+    it("gives a bad frame at most 3 rounds of reads, each after reads worked again, and a frame that reads on a later round gets its text", async () => {
+        const meeting = await meetingWith([
+            { name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" },
+            { name: "f2-d1.jpg", at: "2026-11-11T14:00:02.000Z" },
+            { name: "f3-d1.jpg", at: "2026-11-11T14:00:03.000Z" },
+        ]);
+        const round = 2 * OCR_FAILURES_BEFORE_RESTART;
+        // f2 never reads; f3 fails as f2's probe and in its own first round, then reads.
+        const engine = fakeEngine(
+            (name, attempt) => name === "f2-d1.jpg" || (name === "f3-d1.jpg" && attempt <= round + 1)
+        );
+        const run = () =>
+            runOcrWorker({
+                store: meeting.store,
+                meetingId: meeting.id,
+                settings,
+                engine,
+                sleep: async () => {
+                    throw new Error("no outage here: f1 reads as the control");
+                },
+            });
+        const rowOf = (file: string) => rows(meeting.dir).find((row) => row.file === file);
+
+        await run();
+        expect(rowOf("frames/f2-d1.jpg")).toMatchObject({ failed: expect.any(String), attempts: 2 });
+        expect(rowOf("frames/f3-d1.jpg")).toMatchObject({ text: "text of f3-d1.jpg" });
+        expect(rowOf("frames/f3-d1.jpg")?.failed).toBeUndefined();
+
+        meeting.add({ name: "f4-d1.jpg", at: "2026-11-11T14:00:04.000Z" });
+        await run();
+        expect(rowOf("frames/f2-d1.jpg")).toMatchObject({ attempts: OCR_MAX_ATTEMPTS });
+
+        meeting.add({ name: "f5-d1.jpg", at: "2026-11-11T14:00:05.000Z" });
+        const before = engine.reads.filter((name) => name === "f2-d1.jpg").length;
+        await run();
+        expect(engine.reads.filter((name) => name === "f2-d1.jpg")).toHaveLength(before);
+        expect(rows(meeting.dir).map((row) => row.file)).toEqual([
+            "frames/f1-d1.jpg",
+            "frames/f2-d1.jpg",
+            "frames/f3-d1.jpg",
+            "frames/f4-d1.jpg",
+            "frames/f5-d1.jpg",
         ]);
     });
 

@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -7,8 +7,9 @@ import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos/darwinkit";
+import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import type { OcrResult } from "@genesiscz/utils/macos/types";
-import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import type { CaptureFailureNotices, MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import { type RecorderSettings, recorderSettingsSchema } from "@genesiscz/utils/screen-recorder/control";
@@ -18,6 +19,7 @@ import {
     type ImageCropper,
     type OcrRecognizer,
     type OcrRow,
+    type OcrRowFrame,
     ocrRowOf,
     visionOcr,
 } from "@genesiscz/utils/screen-recorder/frame-output";
@@ -49,6 +51,14 @@ const { log } = logger.scoped("meetings-ocr");
 export const OCR_PID_FILE = "ocr.pid";
 /** Reads that throw in a row, after which the worker starts a fresh OCR helper (and after the next run, gives up). */
 export const OCR_FAILURES_BEFORE_RESTART = 3;
+/** Rounds of reads a failed frame gets in all (its first and the worker's own retries) before it stays failed. */
+export const OCR_MAX_ATTEMPTS = 3;
+/** The waits on a frame while every read fails, also of a frame that read before: then every 5 minutes. */
+export const OCR_OUTAGE_BACKOFF_MS = [30_000, 60_000, 120_000, 300_000];
+/** Beside the meeting folders while OCR is down: the first worker that sees it says so, the one that sees it end too. */
+const OCR_OUTAGE_FILE = "ocr-outage.json";
+/** An outage stamp older than this is from a worker that died; the next outage says so again. */
+const OCR_OUTAGE_STAMP_MS = 6 * 3_600_000;
 /** How often a following worker looks at the index when no file event came. */
 const FOLLOW_POLL_MS = 5_000;
 /** A following worker ends after this even while the recorder runs; the watcher starts the next one. */
@@ -189,6 +199,7 @@ const storedOcrRowSchema = z.looseObject({
     skipped: z.enum(OCR_SKIP_REASONS).optional(),
     regions: z.array(z.tuple([z.number(), z.number(), z.number(), z.number()])).optional(),
     failed: z.string().optional(),
+    attempts: z.number().optional(),
 });
 
 /**
@@ -239,6 +250,7 @@ function parseOcrLine(line: string, path: string): OcrLine {
         ...(stored.skipped ? { skipped: stored.skipped } : {}),
         ...(stored.regions ? { regions: stored.regions } : {}),
         ...(stored.failed !== undefined ? { failed: stored.failed } : {}),
+        ...(stored.attempts !== undefined ? { attempts: stored.attempts } : {}),
     };
     return { line, row, file: row.file };
 }
@@ -299,6 +311,12 @@ export interface OcrWorkerOptions {
     recording?: () => boolean;
     pollMs?: number;
     signal?: AbortSignal;
+    /** Which notices an OCR outage posts (`capture.failureNotices`); default `failing-and-recovered`. */
+    failureNotices?: CaptureFailureNotices;
+    /** Default: a macOS notification in the meetings group. */
+    notify?: (note: { title: string; message: string }) => Promise<void> | void;
+    /** The wait between tries while OCR is down; default a timer that an abort ends. */
+    sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export interface OcrWorkerResult {
@@ -314,7 +332,16 @@ export interface OcrWorkerResult {
     failed: number;
     /** Times the OCR helper was thrown away for a fresh one. */
     restarts: number;
+    /** Times every read failed, also of a frame that read before, so the worker waited for Vision. */
+    outages: number;
 }
+
+type FrameOutcome =
+    | { kind: "read"; row: OcrRow }
+    | { kind: "bad"; row: OcrRow }
+    | { kind: "failed"; row: OcrRow; error: string };
+
+type Probe = { kind: "next"; row: OcrRow } | { kind: "control" } | { kind: "down" };
 
 class OcrWorker {
     readonly folder: string;
@@ -323,8 +350,14 @@ class OcrWorker {
     readonly result: OcrWorkerResult;
     private readonly engine: OcrEngine;
     private readonly reader: FrameReader;
-    private failuresInRow = 0;
     private readonly done = new Set<string>();
+    /** The failed rows and their rounds of reads so far: the ones under `OCR_MAX_ATTEMPTS` get another round. */
+    private readonly failedAttempts = new Map<string, number>();
+    /** A frame that read: the control that tells a bad frame from Vision being down. */
+    private lastGood?: string;
+    /** A read worked since the last round of failed rows. */
+    private readSinceRetry = false;
+    private outage?: { since: number };
     private readonly liveSettings: LiveOcrSettings;
     /** When the recording's last run began: its first frame gets the "almost no text" check. */
     private runStartMs = 0;
@@ -342,91 +375,297 @@ class OcrWorker {
             recognize: (image, languages, readOptions) => engine.recognize(image, languages, readOptions),
             crop: options.crop,
         });
-        this.result = { meetingId: options.meetingId, status: "done", read: 0, reread: 0, failed: 0, restarts: 0 };
+        this.result = {
+            meetingId: options.meetingId,
+            status: "done",
+            read: 0,
+            reread: 0,
+            failed: 0,
+            restarts: 0,
+            outages: 0,
+        };
     }
 
-    /**
-     * One frame's row. A read that throws is tried again; after `OCR_FAILURES_BEFORE_RESTART` in a row the helper is
-     * thrown away, and when the fresh one fails as often, the row says `failed` instead of holding an empty read.
-     */
-    async readFrame(entry: FrameIndexRow): Promise<OcrRow> {
-        const settings = this.settings();
-        const frame = {
+    private frameOf(entry: FrameIndexRow): OcrRowFrame {
+        return {
             file: entry.file,
             at: entry.at,
             displayId: entry.displayId,
             changePercent: entry.changePercent,
             reason: entry.reason,
         };
+    }
 
-        if (!settings.enabled) {
-            return ocrRowOf(frame, undefined, settings.minChars);
-        }
+    /** A row for a frame no read could take: no text, the last error, and how many rounds of reads failed. */
+    private failedRow(entry: FrameIndexRow, error: string, attempts: number): OcrRow {
+        return { ...ocrRowOf(this.frameOf(entry), undefined, this.settings().minChars), failed: error, attempts };
+    }
 
+    /** One read of a frame through the reader: its row, or the error the read threw. */
+    private async attemptOnce(entry: FrameIndexRow): Promise<{ row: OcrRow } | { error: unknown }> {
+        const settings = this.settings();
         const path = join(this.folder, entry.file);
 
-        if (!existsSync(path)) {
-            this.result.failed += 1;
+        try {
+            const outcome = await this.reader.read({ frame: entry, path, displayId: entry.displayId, settings });
+            this.noteRead(path);
+            return { row: ocrRowOf(this.frameOf(entry), outcome, settings.minChars) };
+        } catch (error) {
+            log.warn({ err: error, meeting: this.options.meetingId, file: entry.file }, "an OCR read failed");
+            return { error };
+        }
+    }
+
+    private noteRead(path: string): void {
+        this.lastGood = path;
+        this.readSinceRetry = true;
+    }
+
+    /**
+     * One frame's row. A read that throws is tried again; after `OCR_FAILURES_BEFORE_RESTART` in a row the helper is
+     * thrown away and the fresh one tries as often. `failed` when it fails too: the caller decides whether the frame
+     * is bad or Vision is down (`settle`). `bad` is a frame no read can take (its file is gone).
+     */
+    async readFrame(entry: FrameIndexRow, priorAttempts = 0): Promise<FrameOutcome> {
+        const settings = this.settings();
+
+        if (!settings.enabled) {
+            return { kind: "read", row: ocrRowOf(this.frameOf(entry), undefined, settings.minChars) };
+        }
+
+        if (!existsSync(join(this.folder, entry.file))) {
             log.warn({ meeting: this.options.meetingId, file: entry.file }, "a frame in the index is not on disk");
-            return { ...ocrRowOf(frame, undefined, settings.minChars), failed: "the frame file is missing" };
+            return { kind: "bad", row: this.failedRow(entry, "the frame file is missing", OCR_MAX_ATTEMPTS) };
         }
 
         let restarted = false;
+        let failures = 0;
 
         for (;;) {
-            try {
-                const outcome = await this.reader.read({ frame: entry, path, displayId: entry.displayId, settings });
-                this.failuresInRow = 0;
-                return ocrRowOf(frame, outcome, settings.minChars);
-            } catch (err) {
-                this.failuresInRow += 1;
-                log.warn(
-                    { err, meeting: this.options.meetingId, file: entry.file, failuresInRow: this.failuresInRow },
-                    "an OCR read failed"
-                );
+            const attempt = await this.attemptOnce(entry);
 
-                if (this.failuresInRow < OCR_FAILURES_BEFORE_RESTART) {
-                    continue;
-                }
-
-                this.failuresInRow = 0;
-
-                if (restarted) {
-                    this.result.failed += 1;
-                    log.error(
-                        { err, meeting: this.options.meetingId, file: entry.file },
-                        "a frame could not be read, also by a fresh OCR helper; its row says failed"
-                    );
-                    return { ...ocrRowOf(frame, undefined, settings.minChars), failed: errorText(err) };
-                }
-
-                this.engine.restart();
-                this.result.restarts += 1;
-                restarted = true;
-                log.warn({ meeting: this.options.meetingId }, "the OCR helper failed in a row; a fresh one starts");
+            if ("row" in attempt) {
+                return { kind: "read", row: attempt.row };
             }
+
+            failures += 1;
+
+            if (failures < OCR_FAILURES_BEFORE_RESTART) {
+                continue;
+            }
+
+            if (restarted) {
+                const error = errorText(attempt.error);
+                return { kind: "failed", row: this.failedRow(entry, error, priorAttempts + 1), error };
+            }
+
+            this.restartEngine("the OCR helper failed in a row; a fresh one starts");
+            restarted = true;
+            failures = 0;
+        }
+    }
+
+    private restartEngine(why: string): void {
+        this.engine.restart();
+        this.result.restarts += 1;
+        log.warn({ meeting: this.options.meetingId }, why);
+    }
+
+    /**
+     * Whether Vision reads at all now: a different frame right after the failed one. The next frame waiting (its row
+     * is kept), else a frame that read before (only the read counts, its row stays). `down` when neither reads.
+     */
+    private async probe(next: FrameIndexRow | undefined): Promise<Probe> {
+        if (next) {
+            const attempt = await this.attemptOnce(next);
+
+            if ("row" in attempt) {
+                return { kind: "next", row: attempt.row };
+            }
+        }
+
+        if (this.lastGood && existsSync(this.lastGood)) {
+            const settings = this.settings();
+
+            try {
+                await this.engine.recognize(this.lastGood, settings.languages, {
+                    read: settings.read,
+                    tilePx: settings.tilePx,
+                });
+                this.readSinceRetry = true;
+                return { kind: "control" };
+            } catch (error) {
+                log.warn({ err: error, control: this.lastGood }, "a frame that read before does not read now");
+            }
+        }
+
+        return { kind: "down" };
+    }
+
+    /**
+     * A frame whose reads all failed. When another frame reads right after it, the frame is bad: its row says
+     * `failed` and the worker moves on. Else Vision is down on this Mac: the worker waits on the same frame (30 s,
+     * 1 min, 2 min, then every 5 min) and tries it again, and says so once per outage.
+     */
+    private async settle(queue: FrameIndexRow[], failedRow: OcrRow, tail: FrameIndexTail): Promise<void> {
+        const entry = queue[0];
+        let verdict = await this.probe(queue[1]);
+        let row = failedRow;
+        let waited = 0;
+
+        while (verdict.kind === "down") {
+            await this.startOutage(row.failed ?? "every read failed");
+            const wait = OCR_OUTAGE_BACKOFF_MS[Math.min(waited, OCR_OUTAGE_BACKOFF_MS.length - 1)];
+            log.info({ meeting: this.options.meetingId, file: entry.file, waitMs: wait }, "OCR is down; waiting");
+            await this.sleep(wait, this.options.signal);
+            this.options.signal?.throwIfAborted();
+            waited += 1;
+            queue.push(...this.newEntries(tail, queue));
+            const again = await this.attemptOnce(entry);
+
+            if ("row" in again) {
+                await this.endOutage();
+                await this.writeRow(entry, again.row);
+                queue.shift();
+                return;
+            }
+
+            row = this.failedRow(entry, errorText(again.error), 1);
+
+            if (waited % OCR_FAILURES_BEFORE_RESTART === 0) {
+                this.restartEngine("OCR is still down; a fresh helper starts");
+            }
+
+            verdict = await this.probe(queue[1]);
+        }
+
+        await this.endOutage();
+        log.error({ meeting: this.options.meetingId, file: entry.file, error: row.failed }, "a frame cannot be read");
+        await this.writeRow(entry, row);
+        queue.shift();
+
+        if (verdict.kind === "next") {
+            await this.writeRow(queue[0], verdict.row);
+            queue.shift();
+        }
+    }
+
+    /** The first failed frame of an outage: one notice for all workers (a stamp beside the meetings), as set. */
+    private async startOutage(error: string): Promise<void> {
+        if (this.outage) {
+            return;
+        }
+
+        this.outage = { since: Date.now() };
+        this.result.outages += 1;
+        log.warn({ meeting: this.options.meetingId, error }, "OCR fails on this Mac; the frames wait");
+        const stamp = join(this.options.store.root, OCR_OUTAGE_FILE);
+
+        if (existsSync(stamp) && Date.now() - statSync(stamp).mtimeMs < OCR_OUTAGE_STAMP_MS) {
+            return;
+        }
+
+        atomicWriteFileSync(stamp, SafeJSON.stringify({ since: new Date().toISOString(), error }), {
+            mode: CAPTURE_FILE_MODE,
+        });
+
+        if (this.failureNotices() !== "off") {
+            await this.notify({
+                title: "Text reading (OCR) fails",
+                message: "Text reading (OCR) fails on this Mac; frames are kept and are read when it works again.",
+            });
+        }
+    }
+
+    private async endOutage(): Promise<void> {
+        if (!this.outage) {
+            return;
+        }
+
+        log.info({ meeting: this.options.meetingId, downMs: Date.now() - this.outage.since }, "OCR works again");
+        this.outage = undefined;
+        const stamp = join(this.options.store.root, OCR_OUTAGE_FILE);
+
+        try {
+            unlinkSync(stamp);
+        } catch (error) {
+            // Another worker saw the recovery first and said so.
+            log.debug({ error, stamp }, "the OCR outage stamp is gone already");
+            return;
+        }
+
+        if (this.failureNotices() === "failing-and-recovered") {
+            await this.notify({ title: "Text reading works again", message: "Text reading works again." });
+        }
+    }
+
+    private failureNotices(): CaptureFailureNotices {
+        return this.options.failureNotices ?? "failing-and-recovered";
+    }
+
+    private async notify(note: { title: string; message: string }): Promise<void> {
+        const send =
+            this.options.notify ??
+            ((one: { title: string; message: string }) =>
+                sendNotification({ ...one, group: "meetings", open: this.folder }));
+
+        await Promise.resolve(send(note)).catch((err: unknown) =>
+            log.warn({ err, meeting: this.options.meetingId }, "the OCR notice could not be posted")
+        );
+    }
+
+    private sleep(ms: number, signal?: AbortSignal): Promise<void> {
+        if (this.options.sleep) {
+            return this.options.sleep(ms, signal);
+        }
+
+        return new Promise((resolve) => {
+            const timer = setTimeout(resolve, ms);
+            signal?.addEventListener(
+                "abort",
+                () => {
+                    clearTimeout(timer);
+                    resolve();
+                },
+                { once: true }
+            );
+        });
+    }
+
+    /** The lines the recorder appended to the index since the last look that no row and no queued frame has. */
+    private newEntries(tail: FrameIndexTail, queue: FrameIndexRow[]): FrameIndexRow[] {
+        const queued = new Set(queue.map((entry) => entry.file));
+        return tail.readNew().filter((entry) => !this.done.has(entry.file) && !queued.has(entry.file));
+    }
+
+    /** Appends a frame's row (the first frame of the run gets its text check) and counts it. */
+    private async writeRow(entry: FrameIndexRow, row: OcrRow): Promise<void> {
+        if (!this.firstChecked && Date.parse(entry.at) >= this.runStartMs) {
+            this.firstChecked = true;
+            await this.checkFirstFrame(row);
+        }
+
+        appendFileSync(this.ocrFile, `${SafeJSON.stringify(row)}\n`, { mode: CAPTURE_FILE_MODE });
+        this.done.add(entry.file);
+        this.result.read += 1;
+
+        if (row.failed !== undefined) {
+            this.result.failed += 1;
+            this.failedAttempts.set(row.file, row.attempts ?? 1);
         }
     }
 
     /**
-     * `--retry-failed` and `--reread-empty-since`: the chosen rows are read again in file order (each display's
-     * earlier rows stand for its previous read), and `ocr.jsonl` is replaced in one atomic write. Lines appended while
-     * it read are kept after the rewritten ones.
+     * Rewrites the chosen rows of `ocr.jsonl` in place: each is read again in file order (each display's earlier rows
+     * stand for its previous read), and the file is replaced in one atomic write. Lines appended while it read are
+     * kept after the rewritten ones. `auto` (the worker's own retry of failed rows) stops at the first failure while a
+     * frame that read before does not read either: Vision is down, and that try does not count.
      */
-    async rewrite(): Promise<void> {
-        const { retryFailed, rereadEmptySince } = this.options;
-
-        if ((!retryFailed && !rereadEmptySince) || !existsSync(this.ocrFile)) {
-            return;
+    private async rewriteRows(target: (row: OcrRow) => boolean, auto: boolean): Promise<number> {
+        if (!existsSync(this.ocrFile)) {
+            return 0;
         }
 
-        if (this.recording() && !existsSync(this.indexFile)) {
-            throw new Error(
-                `${this.options.meetingId} is recorded by a recorder that writes ocr.jsonl itself; read its rows again after it stops`
-            );
-        }
-
-        const sinceMs = rereadEmptySince?.getTime();
         const size = statSync(this.ocrFile).size;
         const lines = readOcrLines(this.ocrFile, size);
         const motion = new Map<string, MotionBox[]>();
@@ -446,13 +685,8 @@ class OcrWorker {
                 continue;
             }
 
-            const failed = row.failed !== undefined;
-            const target =
-                (retryFailed && failed) ||
-                (sinceMs !== undefined && row.text.trim() === "" && Date.parse(row.at) >= sinceMs);
-
-            if (!target) {
-                if (!failed) {
+            if (!target(row)) {
+                if (row.failed === undefined) {
                     this.reader.seed(row.displayId, readOf(row));
                 }
 
@@ -460,21 +694,83 @@ class OcrWorker {
             }
 
             this.options.signal?.throwIfAborted();
-            const next = await this.readFrame(indexRowOf(row, motion.get(row.file)));
-            lines[i] = { line: SafeJSON.stringify(next), row: next };
+            const priorAttempts = row.failed === undefined ? 0 : (row.attempts ?? 1);
+            const outcome = await this.readFrame(indexRowOf(row, motion.get(row.file)), priorAttempts);
+
+            if (outcome.kind === "failed" && auto && (await this.probe(undefined)).kind === "down") {
+                log.warn({ meeting: this.options.meetingId, file: row.file }, "OCR is down; the failed rows wait");
+                break;
+            }
+
+            lines[i] = { line: SafeJSON.stringify(outcome.row), row: outcome.row, file: outcome.row.file };
             changed += 1;
+
+            if (outcome.row.failed === undefined) {
+                this.failedAttempts.delete(row.file);
+            } else {
+                this.result.failed += 1;
+                this.failedAttempts.set(row.file, outcome.row.attempts ?? priorAttempts + 1);
+            }
         }
 
         if (changed === 0) {
-            log.info({ meeting: this.options.meetingId }, "no ocr.jsonl row to read again");
-            return;
+            return 0;
         }
 
         const appended = readBytes(this.ocrFile, size, statSync(this.ocrFile).size);
         const body = `${lines.map((one) => one.line).join("\n")}\n${appended}`;
         atomicWriteFileSync(this.ocrFile, body, { mode: CAPTURE_FILE_MODE });
         this.result.reread += changed;
-        log.info({ meeting: this.options.meetingId, changed }, "ocr.jsonl rows read again");
+        log.info({ meeting: this.options.meetingId, changed, auto }, "ocr.jsonl rows read again");
+        return changed;
+    }
+
+    /**
+     * `--retry-failed` and `--reread-empty-since`: every failed row, and every row with no text from that time on.
+     */
+    async rewrite(): Promise<void> {
+        const { retryFailed, rereadEmptySince } = this.options;
+
+        if ((!retryFailed && !rereadEmptySince) || !existsSync(this.ocrFile)) {
+            return;
+        }
+
+        if (this.recording() && !existsSync(this.indexFile)) {
+            throw new Error(
+                `${this.options.meetingId} is recorded by a recorder that writes ocr.jsonl itself; read its rows again after it stops`
+            );
+        }
+
+        const sinceMs = rereadEmptySince?.getTime();
+        const changed = await this.rewriteRows(
+            (row) =>
+                (retryFailed === true && row.failed !== undefined) ||
+                (sinceMs !== undefined && row.text.trim() === "" && Date.parse(row.at) >= sinceMs),
+            false
+        );
+
+        if (changed === 0) {
+            log.info({ meeting: this.options.meetingId }, "no ocr.jsonl row to read again");
+        }
+    }
+
+    /**
+     * Failed rows are read again by themselves once reads work: after a drain in which a frame read, every failed row
+     * with fewer than `OCR_MAX_ATTEMPTS` rounds gets one more.
+     */
+    private async retryFailedRows(): Promise<void> {
+        const due = [...this.failedAttempts.values()].some((attempts) => attempts < OCR_MAX_ATTEMPTS);
+
+        if (!this.readSinceRetry || !due) {
+            return;
+        }
+
+        if (this.recording() && !existsSync(this.indexFile)) {
+            return;
+        }
+
+        this.readSinceRetry = false;
+        await this.rewriteRows((row) => row.failed !== undefined && (row.attempts ?? 1) < OCR_MAX_ATTEMPTS, true);
     }
 
     /** The rows already written: which frames are done, and each display's last read for the next frame's plan. */
@@ -496,6 +792,12 @@ class OcrWorker {
 
             last.set(row.displayId, row.failed === undefined ? row : undefined);
 
+            if (row.failed !== undefined) {
+                this.failedAttempts.set(row.file, row.attempts ?? 1);
+            } else if (row.text.trim()) {
+                this.lastGood = join(this.folder, row.file);
+            }
+
             if (Date.parse(row.at) >= this.runStartMs) {
                 this.firstChecked = true;
             }
@@ -515,25 +817,31 @@ class OcrWorker {
         log.info({ meeting: this.options.meetingId, done: this.done.size }, "OCR resumes after the written rows");
     }
 
-    /** Reads every indexed frame that has no row yet, in index order, appending one row each. */
+    /**
+     * Reads every indexed frame that has no row yet, in index order, appending one row each; a failed frame is settled
+     * first (`settle`), and the failed rows get their next round when reads work.
+     */
     async drain(tail: FrameIndexTail): Promise<void> {
-        for (const entry of tail.readNew()) {
-            if (this.done.has(entry.file)) {
-                continue;
-            }
+        const queue = this.newEntries(tail, []);
 
+        while (queue.length > 0) {
             this.options.signal?.throwIfAborted();
-            const row = await this.readFrame(entry);
+            const entry = queue[0];
+            const outcome = await this.readFrame(entry);
 
-            if (!this.firstChecked && Date.parse(entry.at) >= this.runStartMs) {
-                this.firstChecked = true;
-                await this.checkFirstFrame(row);
+            if (outcome.kind === "failed") {
+                await this.settle(queue, outcome.row, tail);
+            } else {
+                await this.writeRow(entry, outcome.row);
+                queue.shift();
             }
 
-            appendFileSync(this.ocrFile, `${SafeJSON.stringify(row)}\n`, { mode: CAPTURE_FILE_MODE });
-            this.done.add(entry.file);
-            this.result.read += 1;
+            if (queue.length === 0) {
+                queue.push(...this.newEntries(tail, queue));
+            }
         }
+
+        await this.retryFailedRows();
     }
 
     /** The settings for the next frame: the recording's live ones when it wrote them, else the ones it started with. */

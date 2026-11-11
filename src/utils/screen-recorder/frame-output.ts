@@ -173,6 +173,8 @@ export interface OcrRow {
      * `tools meetings ocr --retry-failed` can read it again): the last error.
      */
     failed?: string;
+    /** With `failed`: the rounds of reads that failed so far (the worker retries a frame up to 3 rounds). */
+    attempts?: number;
 }
 
 /** Where a kept frame's OCR goes. `row.text` is empty when the read held fewer than `minChars` characters. */

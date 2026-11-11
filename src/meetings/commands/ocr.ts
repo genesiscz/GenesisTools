@@ -66,6 +66,7 @@ async function ocr(ref: string, opts: OcrOptions): Promise<void> {
                 follow: opts.follow,
                 retryFailed: opts.retryFailed,
                 rereadEmptySince: since,
+                failureNotices: config.global.capture.failureNotices,
                 signal,
             })
         );

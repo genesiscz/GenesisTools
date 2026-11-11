@@ -153,8 +153,14 @@ each indexed frame that has no `ocr.jsonl` row yet, in index order, with Vision 
 language (`languages.<global.language>.ocr`, `cs-CZ` and `en-US` for `cs`), appends its row (each names its
 `displayId`), and ends once the recording stopped and every frame has a row. A restart goes on where `ocr.jsonl` ends.
 A read that throws is tried again; after 3 failed reads in a row the worker starts a fresh OCR helper (a long-lived
-one answered every read with `CRImageReaderError error 1` for an hour on 2026-11-11), and a frame the fresh helper
-cannot read either gets a row with `failed` and no text, which `ocr --retry-failed` reads again. The watcher starts a
+one answered every read with `CRImageReaderError error 1` for an hour on 2026-11-11). When the fresh helper fails too,
+the worker reads a different frame right after: when that one reads, the first frame is bad and gets a row with
+`failed`, `attempts` and no text. When it fails as well, Vision is down on this Mac (on 2026-11-11 every read timed
+out for hours while `ANECompilerService` ran at 96% CPU): the worker writes nothing, waits on the same frame (30 s,
+1 min, 2 min, then every 5 min) and tries it again, and a `--follow` worker keeps waiting through the outage. One
+notice per outage says "Text reading (OCR) fails on this Mac", and "Text reading works again" at its end, as
+`capture.failureNotices` sets (`failing-and-recovered`, `failing` or `off`). After reads work again the worker gives
+each failed row another round, at most 3 rounds per frame; `ocr --retry-failed` reads every failed row again. The watcher starts a
 worker for a meeting of the last two days whose index lists frames without a row while no worker runs. A meeting
 recorded before the index has only `ocr.jsonl`; every reader takes its rows as the frame list.
 
