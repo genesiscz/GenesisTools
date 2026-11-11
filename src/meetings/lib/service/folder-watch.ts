@@ -29,7 +29,13 @@ export function partsOfPath(relativePath: string): { meeting: string; parts: Mee
         return { meeting, parts: [...MEETING_PARTS] };
     }
 
-    if (first === "ocr.jsonl" || first === "frames" || first === "recording.json" || first === "recorder-last.json") {
+    if (
+        first === "ocr.jsonl" ||
+        first === "frames.jsonl" ||
+        first === "frames" ||
+        first === "recording.json" ||
+        first === "recorder-last.json"
+    ) {
         return { meeting, parts: ["timeline"] };
     }
 

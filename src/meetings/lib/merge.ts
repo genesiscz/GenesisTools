@@ -29,14 +29,14 @@ import { sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-merge");
 
-/** The one field a merge sorts rows by: `ocr.jsonl` and `audio.jsonl` rows both carry their wall time. */
+/** The one field a merge sorts rows by: `frames.jsonl`, `ocr.jsonl` and `audio.jsonl` rows all carry their wall time. */
 const rowTime = z.looseObject({ at: z.string().optional() });
 
 /** The title `record start` gives a meeting without a calendar entry (`commands/record.ts`). */
 const GENERATED_TITLE = /^Meeting \d{1,2}:\d{2}$/;
 
 /** Files a merge moves from one meeting folder into the other, each with its rows. */
-const ROW_FILES = ["ocr.jsonl", "audio.jsonl"] as const;
+const ROW_FILES = ["frames.jsonl", "ocr.jsonl", "audio.jsonl"] as const;
 const MOVED_FOLDERS = ["frames", "audio"] as const;
 /**
  * Files made from the frames (the editor project, the recorder's last state). They describe one record's frames only,

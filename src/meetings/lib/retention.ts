@@ -21,7 +21,7 @@ const { log } = logger.scoped("meetings-retention");
 
 const DAY_MS = 86_400_000;
 /** The capture `capture.retentionDays` removes from a meeting folder, and dates by. The record and its items stay. */
-const CAPTURE_PATHS = ["frames", "ocr.jsonl", "audio", "audio.jsonl"] as const;
+const CAPTURE_PATHS = ["frames", "frames.jsonl", "ocr.jsonl", "audio", "audio.jsonl"] as const;
 /**
  * Made from the capture when the meeting opens in the editor: the frame list, the proxy movie (the same screen, with
  * the meeting audio) and its caption cache. They go with the capture; opening the editor rewrites them, so their

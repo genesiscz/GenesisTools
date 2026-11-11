@@ -121,9 +121,11 @@ export async function revisionsRead(options: {
         }
     }
 
-    // The timeline reads ocr.jsonl and checks each frame file; a frame added or removed changes its folder's identity.
+    // The timeline reads the frame index and ocr.jsonl and checks each frame file; a frame added or removed changes its
+    // folder's identity.
     // Cut Moment clips are no screen data: a play must not make the window read the Screen tab again.
     const screen = [
+        fileIdentity(join(folder, "frames.jsonl")),
         fileIdentity(join(folder, "ocr.jsonl")),
         fileIdentity(folder),
         ...readdirSync(folder, { withFileTypes: true })

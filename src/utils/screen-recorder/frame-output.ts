@@ -168,6 +168,11 @@ export interface OcrRow {
      * lines are the previous frame's. `blocks` are in the whole frame's coordinates either way.
      */
     regions?: MotionBox[];
+    /**
+     * Set when every read of the frame threw (the meetings OCR worker writes such a row instead of an empty read, so
+     * `tools meetings ocr --retry-failed` can read it again): the last error.
+     */
+    failed?: string;
 }
 
 /** Where a kept frame's OCR goes. `row.text` is empty when the read held fewer than `minChars` characters. */
@@ -215,9 +220,9 @@ export interface FrameOutputOptions {
     naming: FrameNaming;
     format: FrameFormat;
     /**
-     * The OCR of each frame and where it goes. The sink gets a row for every kept frame, an empty one while OCR is off
-     * (a meeting's `ocr.jsonl` is also its frame index). The settings are read per frame, so a live change reaches the
-     * next frame. Absent: no OCR and no sink.
+     * The OCR of each frame and where it goes. The sink gets a row for every kept frame, an empty one while OCR is off.
+     * The settings are read per frame, so a live change reaches the next frame. Absent: no OCR and no sink (the
+     * meetings recorder keeps a frame index instead and reads its frames in a worker of its own).
      */
     ocr?: {
         settings: () => RecorderSettings["ocr"];
@@ -247,112 +252,68 @@ export interface KeptFrame {
     read?: OcrResult;
 }
 
-const EMPTY_READ: OcrResult = { text: "", blocks: [] };
+export const EMPTY_READ: OcrResult = { text: "", blocks: [] };
 
-/** Writes kept frames one at a time: the name, the format, and the OCR into its sink. */
-export class FrameOutput {
-    readonly framesDir: string;
-    /** Names given out so far: two frames still converting must not share one. */
-    private readonly named = new Set<string>();
+/** What one frame's OCR gave: the read, and when no new read ran, why; `regions` when only those areas were read. */
+export interface FrameRead {
+    read: OcrResult;
+    skipped?: OcrSkipReason;
+    regions?: MotionBox[];
+}
+
+/** The frame a row describes: everything an `OcrRow` holds besides the text. */
+export type OcrRowFrame = Pick<OcrRow, "file" | "at" | "displayId" | "changePercent" | "reason">;
+
+/** One frame's `ocr.jsonl` row from its read; a read shorter than `minChars` (or none, OCR off) is stored empty. */
+export function ocrRowOf(frame: OcrRowFrame, outcome: FrameRead | undefined, minChars: number): OcrRow {
+    const read = outcome?.read;
+    const used = !read || read.text.trim().length < minChars ? EMPTY_READ : read;
+    return {
+        file: frame.file,
+        at: frame.at,
+        displayId: frame.displayId,
+        changePercent: frame.changePercent,
+        reason: frame.reason,
+        text: used.text,
+        blocks: used.blocks.map((block) => ({ text: block.text, confidence: block.confidence, bounds: block.bounds })),
+        ...(outcome?.skipped ? { skipped: outcome.skipped } : {}),
+        ...(outcome?.regions ? { regions: outcome.regions } : {}),
+    };
+}
+
+/**
+ * Reads kept frames one display after another: each display's previous read decides what the next frame needs
+ * (`planRead`: skip, the changed area, or the whole frame). The capture and the meetings OCR worker share it.
+ */
+export class FrameReader {
     /** The last read of each display, before the `minChars` cut: what a skipped frame keeps. */
     private readonly lastRead = new Map<number, OcrResult>();
     private crops = 0;
-    /** An older frames folder is made owner-only at the first frame, once. */
-    private dirTightened = false;
 
-    constructor(private readonly options: FrameOutputOptions) {
-        this.framesDir = join(options.folder, "frames");
-    }
+    constructor(private readonly options: { recognize?: OcrRecognizer; crop?: ImageCropper } = {}) {}
 
-    /**
-     * Keeps one captured frame. `atMs` is the frame's wall-clock time in ms, `originMs` the recording's start. A frame
-     * whose recorder file is gone is still named (the recorder may have moved it), so a manifest keeps its row.
-     */
-    async keep(frame: CapturedFrame, at: { atMs: number; originMs: number; displayId: number }): Promise<KeptFrame> {
-        const { format, naming } = this.options;
-        const when = new Date(at.atMs);
-        const elapsedMs = at.atMs - at.originMs;
-        const ext = format.kind === "jpeg" ? ".jpg" : extname(frame.path) || ".png";
-        const name = this.freeName((offsetMs) =>
-            frameFileName(naming, {
-                at: new Date(at.atMs + offsetMs),
-                elapsedMs: elapsedMs + offsetMs,
-                displayId: at.displayId,
-                ext,
-            })
-        );
-        const path = join(this.framesDir, name);
-        mkdirSync(this.framesDir, { recursive: true, mode: CAPTURE_DIR_MODE });
-
-        if (!this.dirTightened) {
-            chmodSync(this.framesDir, CAPTURE_DIR_MODE);
-            this.dirTightened = true;
-        }
-
-        if (format.kind === "jpeg") {
-            await (this.options.convert ?? sipsJpeg)(frame.path, path, format.quality);
-        } else if (existsSync(frame.path)) {
-            renameSync(frame.path, path);
-        }
-
-        if (existsSync(path)) {
-            chmodSync(path, CAPTURE_FILE_MODE);
-        }
-
-        const kept: KeptFrame = {
-            path,
-            file: `frames/${name}`,
-            at: when,
-            elapsedMs,
-            displayId: at.displayId,
-            changePercent: frame.changePercent,
-            reason: frame.reason,
-            ...(frame.motionBoxes ? { motionBoxes: frame.motionBoxes } : {}),
-            bytes: existsSync(path) ? statSync(path).size : 0,
-        };
-        const ocr = this.options.ocr;
-
-        if (!ocr) {
-            return kept;
-        }
-
-        const settings = ocr.settings();
-        const outcome = settings.enabled ? await this.read(frame, path, at.displayId, settings) : undefined;
-        const read = outcome?.read;
-        const used = !read || read.text.trim().length < settings.minChars ? EMPTY_READ : read;
-        ocr.sink.write(
-            {
-                file: kept.file,
-                at: when.toISOString(),
-                displayId: at.displayId,
-                changePercent: frame.changePercent,
-                reason: frame.reason,
-                text: used.text,
-                blocks: used.blocks.map((block) => ({
-                    text: block.text,
-                    confidence: block.confidence,
-                    bounds: block.bounds,
-                })),
-                ...(outcome?.skipped ? { skipped: outcome.skipped } : {}),
-                ...(outcome?.regions ? { regions: outcome.regions } : {}),
-            },
-            path
-        );
-        return read ? { ...kept, read } : kept;
+    /** Takes `read` as the display's previous read, as a worker that resumes after a row it wrote earlier. */
+    seed(displayId: number, read: OcrResult): void {
+        this.lastRead.set(displayId, read);
     }
 
     /**
      * The OCR of one kept frame: the previous read of its display when the plan skips it (`planRead`), else a read of
-     * the whole frame. A read that throws counts as an empty one and is reported to `onError`.
+     * the changed area or the whole frame. A whole-frame read that throws forgets the display's previous read (a skip
+     * must not keep a text that only stands for a failure) and throws.
      */
-    private async read(
-        frame: CapturedFrame,
-        path: string,
-        displayId: number,
-        settings: RecorderSettings["ocr"]
-    ): Promise<{ read: OcrResult; skipped?: OcrSkipReason; regions?: MotionBox[] }> {
-        const ocr = this.options.ocr;
-        const recognize = ocr?.recognize ?? visionOcr;
+    async read({
+        frame,
+        path,
+        displayId,
+        settings,
+    }: {
+        frame: Pick<CapturedFrame, "changePercent" | "reason" | "motionBoxes">;
+        path: string;
+        displayId: number;
+        settings: RecorderSettings["ocr"];
+    }): Promise<FrameRead> {
+        const recognize = this.options.recognize ?? visionOcr;
         const previous = this.lastRead.get(displayId);
         let size: { width: number; height: number } | undefined;
         const plan = planRead({
@@ -428,9 +389,108 @@ export class FrameOutput {
             this.lastRead.set(displayId, read);
             return { read };
         } catch (error) {
-            ocr?.onError?.(error, path);
-            // The next frame is read whole: a skip must not keep an empty text that only stands for a failure.
             this.lastRead.delete(displayId);
+            throw error;
+        }
+    }
+}
+
+/** Writes kept frames one at a time: the name, the format, and the OCR into its sink. */
+export class FrameOutput {
+    readonly framesDir: string;
+    /** Names given out so far: two frames still converting must not share one. */
+    private readonly named = new Set<string>();
+    private readonly reader: FrameReader;
+    /** An older frames folder is made owner-only at the first frame, once. */
+    private dirTightened = false;
+
+    constructor(private readonly options: FrameOutputOptions) {
+        this.framesDir = join(options.folder, "frames");
+        this.reader = new FrameReader({ recognize: options.ocr?.recognize, crop: options.crop });
+    }
+
+    /**
+     * Keeps one captured frame. `atMs` is the frame's wall-clock time in ms, `originMs` the recording's start. A frame
+     * whose recorder file is gone is still named (the recorder may have moved it), so a manifest keeps its row.
+     */
+    async keep(frame: CapturedFrame, at: { atMs: number; originMs: number; displayId: number }): Promise<KeptFrame> {
+        const { format, naming } = this.options;
+        const when = new Date(at.atMs);
+        const elapsedMs = at.atMs - at.originMs;
+        const ext = format.kind === "jpeg" ? ".jpg" : extname(frame.path) || ".png";
+        const name = this.freeName((offsetMs) =>
+            frameFileName(naming, {
+                at: new Date(at.atMs + offsetMs),
+                elapsedMs: elapsedMs + offsetMs,
+                displayId: at.displayId,
+                ext,
+            })
+        );
+        const path = join(this.framesDir, name);
+        mkdirSync(this.framesDir, { recursive: true, mode: CAPTURE_DIR_MODE });
+
+        if (!this.dirTightened) {
+            chmodSync(this.framesDir, CAPTURE_DIR_MODE);
+            this.dirTightened = true;
+        }
+
+        if (format.kind === "jpeg") {
+            await (this.options.convert ?? sipsJpeg)(frame.path, path, format.quality);
+        } else if (existsSync(frame.path)) {
+            renameSync(frame.path, path);
+        }
+
+        if (existsSync(path)) {
+            chmodSync(path, CAPTURE_FILE_MODE);
+        }
+
+        const kept: KeptFrame = {
+            path,
+            file: `frames/${name}`,
+            at: when,
+            elapsedMs,
+            displayId: at.displayId,
+            changePercent: frame.changePercent,
+            reason: frame.reason,
+            ...(frame.motionBoxes ? { motionBoxes: frame.motionBoxes } : {}),
+            bytes: existsSync(path) ? statSync(path).size : 0,
+        };
+        const ocr = this.options.ocr;
+
+        if (!ocr) {
+            return kept;
+        }
+
+        const settings = ocr.settings();
+        const outcome = settings.enabled ? await this.read(frame, path, at.displayId, settings) : undefined;
+        ocr.sink.write(
+            ocrRowOf(
+                {
+                    file: kept.file,
+                    at: when.toISOString(),
+                    displayId: at.displayId,
+                    changePercent: frame.changePercent,
+                    reason: frame.reason,
+                },
+                outcome,
+                settings.minChars
+            ),
+            path
+        );
+        return outcome ? { ...kept, read: outcome.read } : kept;
+    }
+
+    /** The frame's read; a read that throws counts as an empty one and is reported to `onError`. */
+    private async read(
+        frame: CapturedFrame,
+        path: string,
+        displayId: number,
+        settings: RecorderSettings["ocr"]
+    ): Promise<FrameRead> {
+        try {
+            return await this.reader.read({ frame, path, displayId, settings });
+        } catch (error) {
+            this.options.ocr?.onError?.(error, path);
             return { read: EMPTY_READ };
         }
     }
