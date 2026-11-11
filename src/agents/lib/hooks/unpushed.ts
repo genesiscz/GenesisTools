@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { assertPrivateFile, makePrivateDir } from "./diff/private-dir";
 import { hookDiag } from "./log";
 import { unpushedRoot } from "./paths";
@@ -57,8 +57,7 @@ interface Cached {
     count: number;
     oldestMs: number;
     history: History;
-    /** Absent in the old upstream-only cache; its first read recomputes the answer. */
-    revisions?: RevisionPair;
+    revisions: RevisionPair;
 }
 
 /** A files-backend preflight only. Git still verifies the snapshot before we reuse ancestry. */
@@ -93,11 +92,47 @@ function unchangedPair(cached: Cached | null): boolean {
     }
 }
 
+function isCached(value: unknown): value is Cached {
+    if (!isJsonObject(value)) {
+        return false;
+    }
+
+    const history = value.history;
+    const revisions = value.revisions;
+    return (
+        typeof value.key === "string" &&
+        typeof value.count === "number" &&
+        Number.isSafeInteger(value.count) &&
+        value.count >= 0 &&
+        typeof value.oldestMs === "number" &&
+        Number.isFinite(value.oldestMs) &&
+        isJsonObject(history) &&
+        typeof history.diverged === "boolean" &&
+        typeof history.rebased === "boolean" &&
+        (!history.rebased || history.diverged) &&
+        Array.isArray(history.merges) &&
+        history.merges.every(
+            (merge: unknown) =>
+                isJsonObject(merge) &&
+                typeof merge.oid === "string" &&
+                typeof merge.subject === "string" &&
+                Array.isArray(merge.brings) &&
+                merge.brings.every((ref: unknown) => typeof ref === "string")
+        ) &&
+        isJsonObject(revisions) &&
+        ["commonDir", "gitDir", "branch", "upstreamRef", "headOid", "upstreamOid"].every((key) => {
+            const field = revisions[key];
+            return typeof field === "string" && field.length > 0;
+        })
+    );
+}
+
 function readCache(root: string): Cached | null {
     try {
-        return SafeJSON.parse(readFileSync(join(unpushedRoot(), `${keyOf(root)}.json`), "utf8"), {
+        const value: unknown = SafeJSON.parse(readFileSync(join(unpushedRoot(), `${keyOf(root)}.json`), "utf8"), {
             strict: true,
-        }) as Cached;
+        });
+        return isCached(value) ? value : null;
     } catch {
         // No cache is the first look at this repository, not a failure.
         return null;
@@ -143,18 +178,22 @@ function recordedRebase({
     ownOids: Set<string>;
 }): boolean {
     try {
-        const descendants = new Set([upstreamOid]);
+        const publishedHistory = new Set([upstreamOid]);
 
         for (const line of readFileSync(reflog, "utf8").split("\n")) {
             const [oldOid, newOid] = line.split(" ", 2);
             const message = line.split("\t")[1] ?? "";
 
-            if (descendants.has(oldOid) && /^(?:commit:|merge )/.test(message)) {
-                descendants.add(newOid);
-            }
-
-            if (descendants.has(oldOid) && ownOids.has(newOid) && message.startsWith("rebase (finish):")) {
-                return true;
+            const isRebase = message.startsWith("rebase (finish):");
+            if (
+                publishedHistory.has(oldOid) &&
+                (/^(?:commit(?: \([^)]*\))?:|merge |cherry-pick:|revert:)/.test(message) || isRebase)
+            ) {
+                // A rewritten tip can be rewritten again before it is pushed.
+                publishedHistory.add(newOid);
+                if (isRebase && ownOids.has(newOid)) {
+                    return true;
+                }
             }
         }
 

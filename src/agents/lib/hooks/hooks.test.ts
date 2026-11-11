@@ -24,7 +24,7 @@ import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex
 import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-model";
 import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RmRequest } from "@genesiscz/utils/rm";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
@@ -2659,6 +2659,33 @@ describe("the unpushed reminder", () => {
         expect(reminderLine(state!, Date.now())).not.toContain("--force-with-lease");
     });
 
+    it.each(["amend", "repeated rebase"])("keeps rebase evidence after %s", (change) => {
+        const { work, run } = pushedClone();
+        run(["commit", "-q", "--allow-empty", "-m", "published change"]);
+        run(["push", "-q"]);
+        run(["commit", "-q", "--allow-empty", "-m", "local change"]);
+        if (change === "amend") {
+            run(["commit", "-q", "--amend", "--allow-empty", "-m", "amended local change"]);
+        }
+
+        run(["checkout", "-q", "-b", "first-base", "HEAD~2"]);
+        run(["commit", "-q", "--allow-empty", "-m", "first shared change"]);
+        run(["update-ref", "refs/remotes/origin/shared", "HEAD"]);
+        run(["checkout", "-q", "master"]);
+        run(["rebase", "--reapply-cherry-picks", "--empty=keep", "--onto", "first-base", "HEAD~2"]);
+        if (change === "repeated rebase") {
+            run(["checkout", "-q", "-b", "second-base", "first-base"]);
+            run(["commit", "-q", "--allow-empty", "-m", "second shared change"]);
+            run(["update-ref", "refs/remotes/origin/shared", "HEAD"]);
+            run(["checkout", "-q", "master"]);
+            run(["rebase", "--reapply-cherry-picks", "--empty=keep", "--onto", "second-base", "first-base"]);
+        }
+
+        const state = unpushedState(work);
+        expect(state?.count).toBe(2);
+        expect(reminderLine(state!, Date.now())).toContain("rebased, push with --force-with-lease");
+    });
+
     it("keeps synced, behind, detached and missing-upstream checkouts quiet", () => {
         const { work, run } = pushedClone();
         expect(unpushedState(work)?.count).toBe(0);
@@ -2687,6 +2714,26 @@ describe("the unpushed reminder", () => {
         expect(fresh.count).toBe(2);
         const saved = SafeJSON.parse(readFileSync(file, "utf8"));
         expect(saved).toMatchObject({ count: 1, history: { diverged: false, rebased: false } });
+        expect((await withSpawnCounter(async () => unpushedState(work))).count).toBe(1);
+    });
+
+    it.each(["history", "count", "revisions"])("recomputes an incomplete cache missing %s", async (field) => {
+        const { work, run } = pushedClone();
+        commit(run, 1);
+        unpushedState(work);
+        const file = join(unpushedRoot(), `${Bun.hash(work).toString(36)}.json`);
+        const partial: unknown = SafeJSON.parse(readFileSync(file, "utf8"));
+        if (!isJsonObject(partial)) {
+            throw new Error("The fixture cache must be an object");
+        }
+
+        delete partial[field];
+        writeFileSync(file, SafeJSON.stringify(partial));
+        const refreshed = await withSpawnCounter(async () => unpushedState(work));
+        expect(refreshed.result?.count).toBe(1);
+        expect(refreshed.count).toBe(2);
+        const persisted = SafeJSON.parse(readFileSync(file, "utf8"));
+        expect(persisted).toMatchObject({ count: 1, history: { diverged: false, rebased: false } });
         expect((await withSpawnCounter(async () => unpushedState(work))).count).toBe(1);
     });
 
