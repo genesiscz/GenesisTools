@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { editOpSchema, editProjectSchema } from "@genesiscz/utils/recording-editor/project";
 import { RECORDER_METHODS } from "@genesiscz/utils/screen-recorder/control";
@@ -36,10 +35,6 @@ export {
 
 export function serviceSocketPath(dir: string): string {
     return liveSocketPath(dir, "service");
-}
-
-export function servicePidPath(dir: string): string {
-    return join(dir, "service.pid");
 }
 
 export const helloParamsSchema = z.object({

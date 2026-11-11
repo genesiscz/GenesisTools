@@ -1,10 +1,9 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { type WatcherSubscription, watchPath } from "@genesiscz/utils/fs/watcher";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { classifyPid } from "@genesiscz/utils/process-identity";
 import { RpcError } from "@genesiscz/utils/rpc/errors";
+import { readLiveServiceEntry, type ServiceEntry, serviceEntryPath } from "@genesiscz/utils/rpc/service-entry";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { z } from "zod";
 import { RPC_ERRORS } from "./control";
@@ -41,40 +40,11 @@ export function recorderServiceDir(): string {
     return dirname(recordingsLibraryDir());
 }
 
-export function serviceEntryPath(dir: string): string {
-    return join(dir, "service.json");
-}
+export { type ServiceEntry, serviceEntryPath, serviceEntrySchema } from "@genesiscz/utils/rpc/service-entry";
 
-/** `service.json`: where the running service listens. */
-export const serviceEntrySchema = z.object({
-    version: z.literal(1),
-    protocol: z.number().int(),
-    pid: z.number().int().positive(),
-    /** The service's command line when it wrote the entry, so a recycled pid reads as gone. */
-    pidCommand: z.string().optional(),
-    socket: z.string(),
-    startedAt: z.string(),
-    /** When the service started, in ms; a module of the repo changed after it makes the service exit. */
-    codeStamp: z.number(),
-});
-export type ServiceEntry = z.infer<typeof serviceEntrySchema>;
-
-/** The running service named in `service.json`, or undefined when there is none or its process is gone. */
+/** The live recorder service, read through the shared lightweight entry reader. */
 export function readLiveService(dir = recorderServiceDir()): ServiceEntry | undefined {
-    const path = serviceEntryPath(dir);
-
-    if (!existsSync(path)) {
-        return undefined;
-    }
-
-    try {
-        const entry = serviceEntrySchema.parse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
-        const status = classifyPid(entry.pid, entry.pidCommand).status;
-        return status === "live" || status === "unverified" ? entry : undefined;
-    } catch (error) {
-        log.debug({ error, path }, "service.json does not read; no service");
-        return undefined;
-    }
+    return readLiveServiceEntry(dir);
 }
 
 /** Connects to the service and says hello in a role; the caller closes the client. */
