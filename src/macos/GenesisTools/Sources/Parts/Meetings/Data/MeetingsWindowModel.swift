@@ -153,6 +153,25 @@ final class MeetingsWindowModel {
     @ObservationIgnored private var listening: MeetingsService.Listening?
     @ObservationIgnored private var liveLostTask: Task<Void, Never>?
     @ObservationIgnored private var overviewRefresh: Task<Void, Never>?
+    /// The events heard since the last overview refresh.
+    @ObservationIgnored private var overviewBurst = OverviewBurst()
+    /// One overview read in flight per service and days, shared by every window model of the process.
+    private static let overviewReads = MeetingsSharedRead<OverviewKey, MeetingsOverview>()
+
+    struct OverviewKey: Hashable {
+        let service: ObjectIdentifier?
+        let days: Int
+    }
+
+    /// The events of one burst, as far as the overview cares.
+    struct OverviewBurst: Equatable {
+        /// The last event's arrival: a read that started after it shows every change of the burst.
+        var heardAt: ContinuousClock.Instant?
+        /// The decision tokens heard.
+        var tokens: Set<String> = []
+        /// An event that is no decision (a changed record, a comment).
+        var other = false
+    }
     /// The notices of other actors' decisions, merged per actor and meeting within `burstSeconds` (G38).
     @ObservationIgnored private var bursts: [String: Burst] = [:]
 
@@ -251,14 +270,20 @@ final class MeetingsWindowModel {
     static let settingsRead: MeetingsRead<ConfigShow> = .service(MeetingsAPI.ConfigShowRead.self, .init(), orRun: ["config", "show", "--json"])
 
     /// `quiet` (a return to the window, an event): the list keeps what it shows until the answer lands.
-    func loadOverview(quiet: Bool = false) {
+    /// `changedAt` is when the change this read must show happened (an event's arrival); a read of another window model
+    /// or caller that started after it answers this one too (`overviewReads`). Nil: now.
+    func loadOverview(quiet: Bool = false, changedAt: ContinuousClock.Instant? = nil) {
         overviewGeneration += 1
         let generation = overviewGeneration
         if !quiet { overview = .loading(previous: overview.value) }
         let days = days
+        let service = service
+        let key = OverviewKey(service: service.map(ObjectIdentifier.init), days: days)
         Task {
             do {
-                let value = try await Self.overviewRead(days: days).run(service: service)
+                let value = try await Self.overviewReads.value(for: key, changedAt: changedAt ?? .now) {
+                    try await Self.overviewRead(days: days).run(service: service)
+                }
                 guard generation == overviewGeneration else { return }
                 receive(value)
             } catch {
@@ -523,18 +548,40 @@ final class MeetingsWindowModel {
 
     /// An event the window itself answers: the sidebar's counts, and a notice for a decision someone else made.
     private func receive(_ event: MeetingsEvent) {
-        scheduleOverviewRefresh()
+        if Self.changesOverview(event) { scheduleOverviewRefresh(event) }
         guard let entry = event.entry, entry.actor.kind != DecisionActor.window.kind else { return }
         noteDecision(entry, meeting: event.meeting)
     }
 
+    /// Whether an event can change the overview. The overview is read from the meeting records alone (`meeting.json`,
+    /// which `show` names), so a `meeting.changed` that names only the timeline (a frame or an OCR line of a live
+    /// recording) changes nothing in it: 506 such events in one evening each cost a full overview read (2026-11-11).
+    static func changesOverview(_ event: MeetingsEvent) -> Bool {
+        switch event {
+        case .meetingChanged(let changed): changed.parts.contains("show")
+        case .decisionApplied, .decisionReverted, .commentSent: true
+        }
+    }
+
+    /// Whether a burst of events still needs the overview read: not when every event in it was a decision this window
+    /// made, because the decision's own path reads the overview when it lands. Checked when the burst ends, since a
+    /// decision's event can arrive before its answer names the token.
+    static func burstNeedsOverview(_ burst: OverviewBurst, own: Set<String>) -> Bool {
+        burst.other || !burst.tokens.isSubset(of: own)
+    }
+
     /// The sidebar reads the overview again once per burst of events, not once per event.
-    private func scheduleOverviewRefresh() {
+    private func scheduleOverviewRefresh(_ event: MeetingsEvent) {
+        overviewBurst.heardAt = .now
+        if let token = event.entry?.token { overviewBurst.tokens.insert(token) } else { overviewBurst.other = true }
         overviewRefresh?.cancel()
         overviewRefresh = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(400))
             guard let self, !Task.isCancelled else { return }
-            self.loadOverview(quiet: true)
+            let burst = self.overviewBurst
+            self.overviewBurst = OverviewBurst()
+            guard Self.burstNeedsOverview(burst, own: self.detail?.ownTokens ?? []) else { return }
+            self.loadOverview(quiet: true, changedAt: burst.heardAt)
         }
     }
 

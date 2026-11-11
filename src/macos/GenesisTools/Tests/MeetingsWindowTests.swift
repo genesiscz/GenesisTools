@@ -488,3 +488,71 @@ final class MeetingsWindowTests: XCTestCase {
         return nil
     }
 }
+
+/// One overview read per burst of events that can change it, shared by every window model while it is in flight.
+@MainActor
+final class MeetingsOverviewRefreshTests: XCTestCase {
+    func testOnlyAChangedRecordOrADecisionCanChangeTheOverview() {
+        let timeline = MeetingsEvent.meetingChanged(.init(meeting: "m", parts: ["timeline"]))
+        let record = MeetingsEvent.meetingChanged(.init(meeting: "m", parts: ["show", "transcript", "speakers", "timeline"]))
+        XCTAssertFalse(MeetingsWindowModel.changesOverview(timeline), "a frame of a live recording reads nothing")
+        XCTAssertTrue(MeetingsWindowModel.changesOverview(record))
+    }
+
+    func testABurstOfTheWindowsOwnDecisionsReadsNoOverview() {
+        var burst = MeetingsWindowModel.OverviewBurst()
+        burst.tokens = ["t1", "t2"]
+        XCTAssertFalse(MeetingsWindowModel.burstNeedsOverview(burst, own: ["t1", "t2", "t0"]), "the decision's own path read it")
+        XCTAssertTrue(MeetingsWindowModel.burstNeedsOverview(burst, own: ["t1"]), "another actor's decision")
+        burst.tokens = []
+        burst.other = true
+        XCTAssertTrue(MeetingsWindowModel.burstNeedsOverview(burst, own: []), "a changed record")
+    }
+
+    /// Callers during a read join it when it started after their change, else wait and share the one read after it:
+    /// four callers, two reads.
+    func testCallersShareTheReadThatStartedAfterTheirChange() async throws {
+        final class Gate {
+            var runs = 0
+            var waiting: [CheckedContinuation<Int, Never>] = []
+        }
+        let gate = Gate()
+        let reads = MeetingsSharedRead<String, Int>()
+        let run: @MainActor () async throws -> Int = {
+            gate.runs += 1
+            let run = gate.runs
+            return await withCheckedContinuation { gate.waiting.append($0) } * 10 + run
+        }
+        func settle(within seconds: TimeInterval = 2, until done: () -> Bool) async {
+            let deadline = Date().addingTimeInterval(seconds)
+            while !done(), Date() < deadline { await Task.yield(); try? await Task.sleep(for: .milliseconds(5)) }
+        }
+
+        let beforeFirst = ContinuousClock.now
+        let first = Task { try await reads.value(for: "k", changedAt: beforeFirst, run: run) }
+        await settle { gate.waiting.count == 1 }
+        let joins = Task { try await reads.value(for: "k", changedAt: beforeFirst, run: run) }
+        let afterFirst = ContinuousClock.now
+        let later = Task { try await reads.value(for: "k", changedAt: afterFirst, run: run) }
+        let alsoLater = Task { try await reads.value(for: "k", changedAt: afterFirst, run: run) }
+        await settle(within: 0.1) { false }
+        XCTAssertEqual(gate.runs, 1, "a read is in flight: nobody starts another")
+
+        gate.waiting.removeFirst().resume(returning: 1)
+        let firstValue = try await first.value
+        await settle { gate.waiting.count == 1 }
+        await settle(within: 0.1) { false }
+        XCTAssertEqual(gate.runs, 2, "the change before the read joined it, and the two later ones share one more read")
+
+        // Every read still waiting is released, so a regression fails here instead of hanging.
+        var round = 2
+        while !gate.waiting.isEmpty, round < 8 {
+            gate.waiting.removeFirst().resume(returning: round)
+            round += 1
+            await settle(within: 0.1) { false }
+        }
+        let values = [firstValue, try await joins.value, try await later.value, try await alsoLater.value]
+        XCTAssertEqual(values, [11, 11, 22, 22])
+        XCTAssertEqual(gate.runs, 2)
+    }
+}
