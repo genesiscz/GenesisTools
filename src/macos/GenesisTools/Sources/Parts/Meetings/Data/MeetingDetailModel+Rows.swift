@@ -49,7 +49,7 @@ extension MeetingDetailModel {
     }
 
     /// Rows that landed: the player learns once whether this meeting's Moments can play (G-STATE-1).
-    private func rowsLanded(_ rows: ReviewRows) {
+    func rowsLanded(_ rows: ReviewRows) {
         if let first = rows.rows.first(where: \.isOpen) ?? rows.rows.first {
             window?.player.checkPlayable(first.target, in: id)
         }
@@ -250,6 +250,7 @@ extension MeetingDetailModel {
             return
         }
         ownTokens.insert(entry.token)
+        refreshedTokens.insert(entry.token)
         // What this answer left out stays out when it is changed after a "Revert and edit".
         if entry.action.kind == "answer" { carriedStruck[row.id] = entry.action.except }
         changingRows.remove(row.id)
@@ -362,6 +363,7 @@ extension MeetingDetailModel {
                 let result = try await Self.revertDecision(meeting: id, token: token, items: items, service: service)
                 if let entry = result.entry {
                     ownTokens.insert(entry.token)
+                    refreshedTokens.insert(entry.token)
                     markRows(entry)
                     // The list keeps the selected row in view. After "Skip" it had moved on to the next open row, so
                     // an Undo reopened a row the reader could not see.
@@ -388,8 +390,7 @@ extension MeetingDetailModel {
     /// After a decision: the rows and the record read again quietly (what is on screen stays until the answer lands),
     /// the list's counts follow, and the transcript reads again where it shows.
     func refreshAfterDecision() {
-        readRecord(quiet: true)
-        if rows != .idle { readRows(quiet: true) }
+        readRecordAndRows()
         window?.loadOverview(quiet: true)
         transcriptChanged()
     }
@@ -451,13 +452,18 @@ extension MeetingDetailModel {
             // A row decided elsewhere while its editor holds a draft keeps the draft and offers "Use mine instead".
             for id in entry.touched where drafts[id] != nil && editingRow == id { decidedMeanwhile[id] = entry }
         }
-        // One re-read per burst of events (an agent's 40 confirms are 40 events).
+        // One re-read per burst of events (an agent's 40 confirms are 40 events), and none for a burst of the window's
+        // own decisions: their path read the record and the rows already. The check runs after the wait, because the
+        // event can arrive before the answer that names the token.
+        eventBurstTokens.insert(entry.token)
         eventRefresh?.cancel()
         eventRefresh = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
             guard let self, !Task.isCancelled else { return }
-            self.readRecord(quiet: true)
-            if self.rows != .idle { self.readRows(quiet: true) }
+            let burst = self.eventBurstTokens
+            self.eventBurstTokens = []
+            guard !burst.isSubset(of: self.refreshedTokens) else { return }
+            self.readRecordAndRows()
             if !entry.labels.isEmpty || !entry.changes.isEmpty { self.transcriptChanged() }
         }
     }

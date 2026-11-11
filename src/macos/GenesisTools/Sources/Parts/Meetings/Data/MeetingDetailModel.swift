@@ -49,6 +49,9 @@ final class MeetingDetailModel {
     /// The read in flight per part. A new read of a part cancels the one before it, which stops its process, its
     /// server call or its Meetings service call (`$/cancel`); `cancelReads()` stops them all.
     @ObservationIgnored private var inFlight: [AnyKeyPath: Task<Void, Never>] = [:]
+    /// The record and rows read together after a decision (`readRecordAndRows`). Kept apart from `inFlight`: a later
+    /// read of one part must not cancel the other part's half.
+    @ObservationIgnored private var pairRead: Task<Void, Never>?
     /// The window let this meeting go (another one opened): no read starts, and one that still lands is ignored.
     @ObservationIgnored private(set) var isDropped = false
     /// Opened before the list showed the meeting: whether proposals read waits for its record.
@@ -95,6 +98,11 @@ final class MeetingDetailModel {
     var heldFolds: Set<String> = []
     /// The row each window decision was about, by its journal token: an event of it is not news.
     @ObservationIgnored var ownTokens: Set<String> = []
+    /// The tokens of the decision events heard since the last event refresh: a burst that holds only decisions whose
+    /// own path already read the record and the rows reads nothing again.
+    @ObservationIgnored var eventBurstTokens: Set<String> = []
+    /// The window's decisions whose own path read the record and the rows again (`refreshAfterDecision`).
+    @ObservationIgnored var refreshedTokens: Set<String> = []
     @ObservationIgnored var autoplayTask: Task<Void, Never>?
     @ObservationIgnored var eventRefresh: Task<Void, Never>?
     /// The Meetings service the writes go through; nil runs the commands (tests, the preview, a service turned off).
@@ -271,6 +279,51 @@ final class MeetingDetailModel {
         }
     }
 
+    /// The record and the rows read again quietly, both at once, and set in one main-actor turn when both answered, so
+    /// the Items list re-runs once for the pair instead of once per part (a decision's refresh). A read of either part
+    /// started meanwhile wins over that part's half.
+    func readRecordAndRows() {
+        guard rows != .idle else { return readRecord(quiet: true) }
+        guard !isDropped else { return }
+        recordGeneration += 1
+        rowsGeneration += 1
+        let recordTurn = recordGeneration, rowsTurn = rowsGeneration
+        let recordSource = Self.recordRead(id)
+        let rowsSource = Self.rowsRead(id, lowPriority: MeetingsPreferences.Rows.lowPriority.value(defaults))
+        inFlight[\MeetingDetailModel.record]?.cancel()
+        inFlight[\MeetingDetailModel.rows]?.cancel()
+        pairRead?.cancel()
+        pairRead = Task { [weak self] in
+            async let record = Self.attempt(recordSource)
+            async let rows = Self.attempt(rowsSource)
+            let (recordResult, rowsResult) = await (record, rows)
+            guard let self, !Task.isCancelled, !self.isDropped else { return }
+            if recordTurn == self.recordGeneration {
+                self.land(\.record, recordResult, revision: .record) { [weak self] in self?.recordLanded($0) }
+            }
+            if rowsTurn == self.rowsGeneration {
+                self.land(\.rows, rowsResult, revision: nil) { [weak self] in self?.rowsLanded($0) }
+            }
+        }
+    }
+
+    private static func attempt<Value>(_ source: MeetingsRead<Value>) async -> Result<Value, Error> {
+        do { return .success(try await source.run()) } catch { return .failure(error) }
+    }
+
+    /// One part's answer of a paired read, set as `read` sets it.
+    private func land<Value: Equatable>(_ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>,
+                                        _ result: Result<Value, Error>, revision: RevisionPart?, then landed: (Value) -> Void) {
+        switch result {
+        case .success(let value):
+            settle(part, .loaded(value))
+            landed(value)
+        case .failure(let error):
+            if let revision { readAt[revision] = nil }
+            settle(part, .failed(asFailure(error), previous: self[keyPath: part].value))
+        }
+    }
+
     /// Sets a part only when it changes: `@Observable` redraws every view that reads a property on each set, equal or not.
     func settle<Value: Equatable>(_ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>, _ new: Loadable<Value>) {
         if self[keyPath: part] != new { self[keyPath: part] = new }
@@ -282,6 +335,7 @@ final class MeetingDetailModel {
         isDropped = true
         for task in inFlight.values { task.cancel() }
         inFlight.removeAll()
+        pairRead?.cancel()
     }
 
     // MARK: - Actions
