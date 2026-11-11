@@ -39,6 +39,7 @@ final class KitCatalogTests: XCTestCase {
         "FrameProbe.swift": "reports a control's frame to a test",
         "GenRenderSwap.swift": "swaps content when it is ready",
         "GenResize.swift": "the state of a resize drag",
+        "KitTextWidth.swift": "measures a label's width for a control that picks its shape",
         "LatestScrollAnchor.swift": "scroll behaviour",
         "MouseClick.swift": "reads the click count of an event",
         "OverlayScrollViewport.swift": "a container",
