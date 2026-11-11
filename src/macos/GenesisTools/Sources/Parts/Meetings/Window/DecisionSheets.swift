@@ -112,6 +112,7 @@ private struct ReachItemRow: View {
     var body: some View {
         let name = Self.name(item, detail: detail)
         HStack(alignment: .top, spacing: 8) {
+            // lint-rules-ignore: short list (a sheet's few reached items; each strike toggle must answer at once)
             IconButton(systemName: struck ? "arrow.uturn.backward.circle" : "xmark.circle",
                        tooltip: struck ? "Put \(name) back into this decision" : "Strike \(name): it stays as it is and leaves this decision") {
                 detail.toggleStruck(item.id)
