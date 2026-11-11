@@ -28,6 +28,27 @@ enum ItemsFilter: String, CaseIterable {
     static func offered(open: Int, questions: Int) -> Bool {
         questions > 0 && open > questions
     }
+
+    /// The shape of the filter's strip in the Items bar.
+    enum Bar: Equatable {
+        /// Each kind with its count, at the strip's own width.
+        case counts
+        /// The titles alone, at the strip's own width.
+        case titles
+        /// The titles sharing the whole room (the narrowest column).
+        case shared
+
+        /// The first shape whose strip fits the room; `counts` before the room is known. The order a `ViewThatFits`
+        /// of the three tried them in.
+        static func pick(room: CGFloat?, counts: CGFloat, titles: CGFloat) -> Bar {
+            guard let room else { return .counts }
+            if counts <= room {
+                return .counts
+            }
+
+            return titles <= room ? .titles : .shared
+        }
+    }
 }
 
 struct ItemsTab: View {
@@ -325,6 +346,9 @@ private struct BulkConfirmBar: View {
     @Binding var filter: ItemsFilter
     /// The config's apply line (`assign.applyAbove`), the default threshold.
     let applyAbove: Double
+    @Environment(\.kitLook) private var look
+    /// The width the filter's slot is offered, in whole points; nil until its first layout.
+    @State private var room: CGFloat?
 
     /// The bar shows while a suggestion waits (a question is answered by ear, not confirmed in bulk).
     static func shows(_ items: [MeetingItem]) -> Bool {
@@ -337,17 +361,19 @@ private struct BulkConfirmBar: View {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     if ItemsFilter.offered(open: open, questions: questions) {
-                        // Both kinds wait: the counts are the filter. Without room for the counts the titles stay.
-                        ViewThatFits(in: .horizontal) {
-                            kinds(counts: true)
-                            kinds(counts: false)
-                            // The narrowest column: the three titles share what the menu leaves.
-                            kinds(counts: false, fills: true)
-                        }
-                        // First in line for the row's width: as one of three equal shares it was offered a third
-                        // of the row and gave up its counts in a wide column.
-                        .layoutPriority(1)
-                        .instantTooltip(ItemsTab.barWords(open: open, atLine: atLine, line: pct(applyAbove), compact: false))
+                        // Both kinds wait: the counts are the filter. Without room for the counts the titles stay;
+                        // in the narrowest column the three titles share what the menu leaves. One strip, picked
+                        // from the room this slot is given (whole points): a `ViewThatFits` of the three built every
+                        // candidate on each measurement, and the list's insets measure the bar many times per pass,
+                        // which was most of the main thread while a Moment played (2026-11-11).
+                        let shape = ItemsFilter.Bar.pick(room: room, counts: kindsWidth(counts: true), titles: kindsWidth(counts: false))
+                        kinds(counts: shape == .counts, fills: shape == .shared)
+                            .instantTooltip(ItemsTab.barWords(open: open, atLine: atLine, line: pct(applyAbove), compact: false))
+                            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded(.down) } action: { room = $0 }
+                            // First in line for the row's width: as one of three equal shares it was offered a third
+                            // of the row and gave up its counts in a wide column.
+                            .layoutPriority(1)
                     } else {
                         ViewThatFits(in: .horizontal) {
                             words(compact: false, atLine: atLine)
@@ -375,11 +401,22 @@ private struct BulkConfirmBar: View {
 
     /// All, Questions, Suggestions: each with the rows that wait, a question in the ask hue.
     private func kinds(counts: Bool, fills: Bool = false) -> some View {
-        GenSegmentedTabs("Rows shown", items: [
-            GenSegmentedTabs.Item(ItemsFilter.all, "All", count: counts ? open : nil),
-            GenSegmentedTabs.Item(ItemsFilter.questions, "Questions", count: counts ? questions : nil, hue: .ask),
-            GenSegmentedTabs.Item(ItemsFilter.suggestions, "Suggestions", count: counts ? open - questions : nil, hue: .care),
-        ], selection: $filter, minSegmentWidth: 0, identifier: "meetings.items.filter", fillsWidth: fills, size: .small)
+        GenSegmentedTabs("Rows shown", items: kindItems(counts: counts), selection: $filter, minSegmentWidth: 0,
+                         identifier: "meetings.items.filter", fillsWidth: fills, size: .small)
+    }
+
+    private func kindItems(counts: Bool) -> [GenSegmentedTabs<ItemsFilter>.Item] {
+        [
+            .init(.all, "All", count: counts ? open : nil),
+            .init(.questions, "Questions", count: counts ? questions : nil, hue: .ask),
+            .init(.suggestions, "Suggestions", count: counts ? open - questions : nil, hue: .care),
+        ]
+    }
+
+    /// The width the strip of `kinds(counts:)` takes at its own size, computed from its titles, not built.
+    private func kindsWidth(counts: Bool) -> CGFloat {
+        GenSegmentedTabs.naturalWidth(items: kindItems(counts: counts), selection: filter, minSegmentWidth: 0,
+                                      size: .small, look: look)
     }
 
     private func words(compact: Bool, atLine: Int) -> some View {

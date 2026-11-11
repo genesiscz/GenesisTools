@@ -133,6 +133,17 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(SelectionPopover.started("Fix the speaker: it is Mira", with: "Make this a question"), "Make this a question: it is Mira")
     }
 
+    /// The filter bar builds one strip, picked from the room its slot has: counts while they fit, then the titles at
+    /// their own width, then the titles sharing the room. The order the `ViewThatFits` it replaced tried them in.
+    func testTheFilterBarPicksOneStripFromItsRoom() {
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: nil, counts: 260, titles: 200), .counts, "before the first layout")
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: 400, counts: 260, titles: 200), .counts)
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: 260, counts: 260, titles: 200), .counts, "a strip that fits exactly")
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: 259, counts: 260, titles: 200), .titles)
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: 199, counts: 260, titles: 200), .shared)
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: 0, counts: 260, titles: 200), .shared)
+    }
+
     func testRowsKeepTheEnginesOrderOrGoByTimeAndDecidedRowsFoldOrLeave() throws {
         let rows = try rows().rows
         XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .priority, decided: .inPlace).map(\.id), ["q1", "i2", "i3"],

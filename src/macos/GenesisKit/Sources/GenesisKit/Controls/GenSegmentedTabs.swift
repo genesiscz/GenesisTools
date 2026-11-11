@@ -48,6 +48,8 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.kitLook) private var look
     @GenReduceMotion private var reduceMotion
+    /// The width a filling strip is offered, in whole points; nil until its first layout.
+    @State private var offered: CGFloat?
 
     /// `identifier` names the group for UI automation; each segment is then `<identifier>.<id>`, the id as
     /// `GenAccessibilityID.suffix` spells it (an enum case's name, a string as it is).
@@ -66,7 +68,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     private enum Layer { case sizing, segment, thumb }
 
     /// How the titles take their width.
-    private enum Fit {
+    enum Fit: CaseIterable {
         /// The strip has its own width: each title with the size's padding.
         case natural
         /// Over a given width, every title whole with 8 pt on each side.
@@ -87,6 +89,13 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         var keepsTitles: Bool { self == .roomy || self == .compact || self == .tight || self == .bare }
 
         var fills: Bool { self != .natural }
+
+        /// The first filling fit whose titles fit the offered width whole, else `scaled`; `roomy` before the width is
+        /// known. The order `ViewThatFits` tried them in.
+        static func filling(_ offered: CGFloat?, need: (Fit) -> CGFloat) -> Fit {
+            guard let offered else { return .roomy }
+            return [Fit.roomy, .compact, .tight, .bare].first { need($0) <= offered } ?? .scaled
+        }
 
         func padding(_ size: KitControlSize) -> CGFloat {
             switch self {
@@ -111,16 +120,50 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
             // Every title at its full size while they fit the width with room around them: a long title takes the
             // room it needs from the short ones. In a narrower column every title steps down one size together
             // (equal segments shrank only the long titles, so one strip drew two text sizes). Only then they scale.
-            ViewThatFits(in: .horizontal) {
-                strip(.roomy)
-                strip(.compact)
-                strip(.tight)
-                strip(.bare)
-                strip(.scaled)
-            }
+            // One strip, its fit picked from the width it is offered, read whole points at a time. A `ViewThatFits`
+            // of the five built and dropped every candidate per measurement, and a list's inset measures its bar
+            // many times per pass: in the Meetings window that was 70 to 81 % of the main thread while a Moment
+            // played (2026-11-11). The frame takes the offer whatever the fit, so the fit cannot change the width.
+            strip(Fit.filling(offered, need: idealWidth))
+                .frame(minWidth: 0, maxWidth: .infinity)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded(.down) } action: { offered = $0 }
         } else {
             strip(.natural)
         }
+    }
+
+    /// The width a strip of these items takes on its own (`fillsWidth: false`), without building it: a caller that
+    /// picks between strips by the room it has compares this with the room, instead of a `ViewThatFits` that builds
+    /// each candidate on every measurement.
+    public static func naturalWidth(items: [Item], selection: ID, minSegmentWidth: CGFloat = 72,
+                                    size: KitControlSize = .regular, look: KitLook) -> CGFloat {
+        Self.idealWidth(items: items, selection: selection, minSegmentWidth: minSegmentWidth, size: size,
+                        inset: look.wellInset, fit: .natural)
+    }
+
+    private func idealWidth(_ fit: Fit) -> CGFloat {
+        Self.idealWidth(items: items, selection: selection, minSegmentWidth: minSegmentWidth, size: size, inset: inset, fit: fit)
+    }
+
+    /// A strip's ideal width, from its titles' measured text: the segments, the 2 pt between them and the well's inset.
+    /// It follows `title(_:_:_:)` term by term.
+    static func idealWidth(items: [Item], selection: ID, minSegmentWidth: CGFloat, size: KitControlSize,
+                           inset: CGFloat, fit: Fit) -> CGFloat {
+        let step: CGFloat = fit == .compact || fit == .tight || fit == .bare ? 1 : 0
+        let segments = items.reduce(CGFloat(0)) { sum, item in
+            var width = KitTextWidth.text(item.title, size: size.font - step,
+                                          weight: item.id == selection ? .semibold : .medium)
+            if let symbol = item.symbol, fit.showsExtras {
+                width += KitTextWidth.symbol(symbol, size: size.glyph - step, weight: .medium) + 5
+            }
+            if let count = item.count, fit.showsExtras {
+                let digits = KitTextWidth.text("\(count)", size: size.font - 1.5, weight: .semibold, monospacedDigits: true)
+                width += max(17, digits + 10) + 5
+            }
+            width += 2 * fit.padding(size)
+            return sum + max(fit.fills ? 0 : minSegmentWidth, width)
+        }
+        return segments + 2 * CGFloat(max(0, items.count - 1)) + 2 * inset
     }
 
     private func strip(_ fit: Fit) -> some View {
