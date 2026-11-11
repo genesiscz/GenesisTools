@@ -4,7 +4,13 @@ import {
     listed,
     partOf,
 } from "@genesiscz/utils/agents/hooks/config-section";
-import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import {
+    ACCOUNT_PROVIDER_ALIASES,
+    type AccountProviderAlias,
+    byHarness,
+    type PerHarness,
+} from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /** How an area file reaches the agent: its whole text, one pointer line, or not at all. */
@@ -25,7 +31,7 @@ export interface AreaRulesLevels {
  * every harness, and each harness's overrides over it. The plugin hook reads this part of `hooks.json` itself.
  */
 export interface AreaRulesConfig extends AreaRulesLevels {
-    harnesses: { [Harness in AccountProviderAlias]: Partial<AreaRulesLevels> };
+    harnesses: PerHarness<Partial<AreaRulesLevels>>;
 }
 
 const LEVELS: readonly AreaRuleLevel[] = ["full", "pointer", "off"];
@@ -43,7 +49,9 @@ const DEFAULT_AREA_RULES: AreaRulesConfig = {
     read: "pointer",
     write: "full",
     agents: "same",
-    harnesses: { claude: { read: "off", write: "off" }, codex: {}, grok: {} },
+    harnesses: byHarness((harness) =>
+        harnessHooks(harness).loadsRuleFilesItself ? { read: "off", write: "off" } : {}
+    ),
 };
 
 const OFF_REASON =
@@ -159,11 +167,7 @@ function checkedLevels(stored: unknown, path: string, problems: string[]): Parti
 function copied(config: AreaRulesConfig): AreaRulesConfig {
     return {
         ...config,
-        harnesses: {
-            claude: { ...config.harnesses.claude },
-            codex: { ...config.harnesses.codex },
-            grok: { ...config.harnesses.grok },
-        },
+        harnesses: byHarness((harness) => ({ ...config.harnesses[harness] })),
     };
 }
 
