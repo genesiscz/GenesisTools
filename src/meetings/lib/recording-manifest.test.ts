@@ -637,4 +637,48 @@ describe("the frame index and the OCR worker (two phases)", () => {
         expect(startedWaiting).toEqual([waiting.id]);
         expect(startedRead).toEqual([]);
     });
+
+    it("an ended meeting's failed rows start a worker at most every 10 minutes, and a run with no new frame retries them once reads work", async () => {
+        const ended = await meetingWith([
+            { name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" },
+            { name: "f2-d1.jpg", at: "2026-11-11T14:00:02.000Z" },
+        ]);
+        // f2 is bad in the first run (f1 reads, so the outage check calls it bad), then reads on its retry.
+        await runOcrWorker({
+            store: ended.store,
+            meetingId: ended.id,
+            settings,
+            engine: fakeEngine((file) => file === "f2-d1.jpg"),
+            sleep: async () => {},
+            notify: () => {},
+        });
+        const failedRows = () =>
+            readFileSync(join(ended.store.folder(ended.id), "ocr.jsonl"), "utf8")
+                .trim()
+                .split("\n")
+                .filter((line) => line.includes('"failed"')).length;
+        const before = failedRows();
+        const started: string[] = [];
+        const at = (min: number) => new Date(Date.parse("2026-11-11T15:00:00.000Z") + min * 60_000);
+
+        await ensureOcrWorkers(ended.store, { now: at(0), start: (id) => started.push(id) });
+        await ensureOcrWorkers(ended.store, { now: at(5), start: (id) => started.push(id) });
+        await ensureOcrWorkers(ended.store, { now: at(11), start: (id) => started.push(id) });
+
+        expect(before).toBeGreaterThan(0);
+        expect(started).toEqual([ended.id, ended.id]);
+
+        const retry = fakeEngine(() => false);
+        await runOcrWorker({
+            store: ended.store,
+            meetingId: ended.id,
+            settings,
+            engine: retry,
+            sleep: async () => {},
+            notify: () => {},
+        });
+
+        expect(failedRows()).toBe(0);
+        expect(retry.reads).toContain("f2-d1.jpg");
+    });
 });

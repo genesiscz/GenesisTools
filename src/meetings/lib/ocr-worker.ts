@@ -761,7 +761,13 @@ class OcrWorker {
     private async retryFailedRows(): Promise<void> {
         const due = [...this.failedAttempts.values()].some((attempts) => attempts < OCR_MAX_ATTEMPTS);
 
-        if (!this.readSinceRetry || !due) {
+        if (!due) {
+            return;
+        }
+
+        // A run that read no new frame (an ended meeting, started only for its failed rows) checks that reads work on
+        // a frame that read before, and retries only then.
+        if (!this.readSinceRetry && (await this.probe(undefined)).kind !== "control") {
             return;
         }
 
@@ -958,7 +964,18 @@ export function startOcrWorker(store: MeetingStore, meetingId: string): number |
 }
 
 /** What `ensureOcrWorkers` last saw of a meeting's two files, so an unchanged meeting is not read again. */
-const backlogSeen = new Map<string, { signature: string; backlog: boolean }>();
+const backlogSeen = new Map<string, { signature: string; backlog: boolean; retryDue: boolean }>();
+/** When a worker last started only to retry a meeting's failed rows: at most one such start per `RETRY_START_GAP_MS`. */
+const retryStartedAt = new Map<string, number>();
+/** The least time between two workers started only for failed rows, so an outage does not start one every tick. */
+export const RETRY_START_GAP_MS = 10 * 60_000;
+
+/** Whether `ocr.jsonl` holds a failed row with rounds left (`OCR_MAX_ATTEMPTS`). */
+function failedRowsDue(folder: string): boolean {
+    return readOcrLines(ocrPath(folder)).some(
+        ({ row }) => row?.failed !== undefined && (row.attempts ?? 1) < OCR_MAX_ATTEMPTS
+    );
+}
 
 function filesSignature(folder: string): string {
     return [frameIndexPath(folder), ocrPath(folder)]
@@ -991,21 +1008,33 @@ export async function ensureOcrWorkers(
     for (const record of records) {
         const folder = store.folder(record.id);
 
-        if (!existsSync(frameIndexPath(folder)) || ocrWorkerRunning(folder)) {
+        if ((!existsSync(frameIndexPath(folder)) && !existsSync(ocrPath(folder))) || ocrWorkerRunning(folder)) {
             continue;
         }
 
         const signature = filesSignature(folder);
-        const seen = backlogSeen.get(folder);
-        let backlog = seen?.signature === signature ? seen.backlog : undefined;
+        let seen = backlogSeen.get(folder);
 
-        if (backlog === undefined) {
-            backlog = ocrBacklog(folder).length > 0;
-            backlogSeen.set(folder, { signature, backlog });
+        if (seen?.signature !== signature) {
+            seen = {
+                signature,
+                backlog: existsSync(frameIndexPath(folder)) && ocrBacklog(folder).length > 0,
+                retryDue: failedRowsDue(folder),
+            };
+            backlogSeen.set(folder, seen);
         }
 
-        if (!backlog) {
+        // Failed rows with rounds left start a worker too (an ended meeting reads no new frame), at most every
+        // RETRY_START_GAP_MS, so a Vision outage does not start one on every tick.
+        const retryOnly =
+            !seen.backlog && seen.retryDue && now.getTime() - (retryStartedAt.get(folder) ?? 0) >= RETRY_START_GAP_MS;
+
+        if (!seen.backlog && !retryOnly) {
             continue;
+        }
+
+        if (retryOnly) {
+            retryStartedAt.set(folder, now.getTime());
         }
 
         try {
