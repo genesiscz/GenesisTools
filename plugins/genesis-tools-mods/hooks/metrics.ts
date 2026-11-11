@@ -1,8 +1,9 @@
-// The hook ledger's lines for `tools metrics`: one `agent-context / hook.injection` event per entry the hooks hand
-// the model, appended to `<genesis-tools>/metrics/spool/mods-<day>.jsonl`. The metrics service drains the spool into
-// its store, so a session needs no service, no SQLite and nothing from `src/`.
+// The mods' lines for `tools metrics`, appended to `<genesis-tools>/metrics/spool/mods-<day>.jsonl` by `spoolEvents`:
+// the hook ledger's `agent-context / hook.injection` (one event per entry the hooks hand the model) and the resume
+// guard's `agent-context / agent.resume` (one event per message to an idle agent). The metrics service drains the
+// spool into its store, so a session needs no service, no SQLite and nothing from `src/`.
 //
-// No engine types here: `src/metrics` imports `injectionSource` for its import of the old `hooks.jsonl`. The ledger
+// No engine types here: `src/metrics` imports `injectionSource` for its import of the old `hooks.jsonl`. A producer
 // passes its own queued appender (`appendJsonl` in `shared.ts`) in.
 //
 // `value` is the characters the hook produced for that part. A part the dedupe replaced by a receipt keeps its own
@@ -16,9 +17,20 @@ export const INJECTION_PROJECT = "agent-context";
 export const INJECTION_METRIC = "hook.injection";
 
 /**
- * The spool line that declares the metric, so the dims a question groups and filters by get their index. The ledger
+ * The spool line that declares a metric, so the dims a question groups and filters by get their index. `spoolEvents`
  * writes it once per plugin load; declaring again changes nothing.
  */
+export interface MetricDefinition {
+    v: number;
+    define: {
+        project: string;
+        metric: string;
+        unit?: string;
+        description?: string;
+        dims?: readonly string[];
+    };
+}
+
 export const INJECTION_DEFINITION = {
     v: METRICS_SPOOL_VERSION,
     define: {
@@ -28,7 +40,21 @@ export const INJECTION_DEFINITION = {
         description: "One additionalContext entry or block reason a hook handed the model",
         dims: ["session", "agent", "agentType", "event", "source", "rule", "dropped"],
     },
-} as const;
+} as const satisfies MetricDefinition;
+
+export const RESUME_METRIC = "agent.resume";
+
+/** The resume guard's metric: `value` is the agent's context in tokens at its last call. */
+export const RESUME_DEFINITION = {
+    v: METRICS_SPOOL_VERSION,
+    define: {
+        project: INJECTION_PROJECT,
+        metric: RESUME_METRIC,
+        unit: "tokens",
+        description: "One message to an agent of the session that was not running, and what the resume guard did",
+        dims: ["session", "agent", "agentType", "kind", "idleSeconds", "outcome"],
+    },
+} as const satisfies MetricDefinition;
 
 /** Where an entry of area-rule blocks splits: before each `Contents of <path> (area rules):`. */
 export const AREA_BLOCK = /(?=Contents of \S+ \(area rules\):)/;
@@ -104,13 +130,16 @@ export interface SpoolEvent {
     at: number;
     value: number;
     dims: Record<string, string | number | boolean | null>;
-    context: string;
+    context?: string;
 }
+
+/** An injection's event always carries the first characters of its text. */
+export type InjectionEvent = SpoolEvent & { context: string };
 
 function eventOf(
     facts: InjectionFacts,
     part: { text: string; at: number; kind: string; rule: string | null; dropped: boolean; source?: string }
-): SpoolEvent {
+): InjectionEvent {
     return {
         v: METRICS_SPOOL_VERSION,
         project: INJECTION_PROJECT,
@@ -140,8 +169,8 @@ function eventOf(
 export function injectionEvents(
     facts: InjectionFacts,
     answer: { entries: readonly InjectionEntry[]; block: string; at: number }
-): SpoolEvent[] {
-    const events: SpoolEvent[] = [];
+): InjectionEvent[] {
+    const events: InjectionEvent[] = [];
     const { at } = answer;
 
     for (const entry of answer.entries) {
@@ -185,12 +214,34 @@ export function injectionEvents(
     return events;
 }
 
-/** Appends each event as one spool line through the ledger's appender; a line that cannot be written is dropped. */
-export async function spoolInjections(
-    append: (path: string, record: Record<string, unknown>) => Promise<void>,
-    path: string,
-    events: readonly SpoolEvent[]
-): Promise<void> {
+/** The metrics this plugin load already declared, by `<project>/<metric>`. */
+const declared = new Set<string>();
+
+/**
+ * Appends `events` to the day's spool file of `at`, one line each, after the metric's define line the first time this
+ * plugin load writes that metric. A line that cannot be written is dropped; a producer never fails on the spool.
+ */
+export async function spoolEvents({
+    append,
+    home,
+    definition,
+    events,
+    at,
+}: {
+    append: (path: string, record: Record<string, unknown>) => Promise<void>;
+    home: string;
+    definition: MetricDefinition;
+    events: readonly SpoolEvent[];
+    at: number;
+}): Promise<void> {
+    const path = modsSpoolPath(home, at);
+    const key = `${definition.define.project}/${definition.define.metric}`;
+
+    if (!declared.has(key)) {
+        declared.add(key);
+        await append(path, { ...definition }).catch(() => undefined);
+    }
+
     for (const event of events) {
         await append(path, { ...event }).catch(() => undefined);
     }

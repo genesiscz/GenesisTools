@@ -54,6 +54,11 @@ export interface ModsSettings {
     log: { readings: boolean };
     sidebar: { hints: boolean; feedback: "line" | "toast" | "both"; focus: "command" | "always" | "never" };
     stall: { enabled: boolean; action: "button" | "auto"; minutes: number };
+    /**
+     * Refuses once a SendMessage to an agent of the session idle for `idleSeconds` (60 to 3600) or more with a context
+     * of `minTokens` (20,000 to 2,000,000) or more; `teammates` covers teammates too.
+     */
+    resumeGuard: { enabled: boolean; idleSeconds: number; minTokens: number; teammates: boolean };
 }
 
 function whole(value: unknown, min: number, max: number, fallback: number): number {
@@ -131,6 +136,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
     const log = part("log");
     const sidebar = part("sidebar");
     const stall = part("stall");
+    const resume = part("resumeGuard");
     const enabled = (key: string, fallback: boolean) => bool(part(key).enabled, fallback);
     const git = part("git");
     const decisions = part("decisions");
@@ -240,6 +246,12 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
             enabled: bool(stall.enabled, d.stall.enabled),
             action: stall.action === "button" || stall.action === "auto" ? stall.action : d.stall.action,
             minutes: whole(stall.minutes, 1, 120, d.stall.minutes),
+        },
+        resumeGuard: {
+            enabled: bool(resume.enabled, d.resumeGuard.enabled),
+            idleSeconds: whole(resume.idleSeconds, 60, 3600, d.resumeGuard.idleSeconds),
+            minTokens: whole(resume.minTokens, 20_000, 2_000_000, d.resumeGuard.minTokens),
+            teammates: bool(resume.teammates, d.resumeGuard.teammates),
         },
     };
 }

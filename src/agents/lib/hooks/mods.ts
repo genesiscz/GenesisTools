@@ -34,6 +34,7 @@ export const MOD_SWITCHES: Record<string, string[]> = {
     hooks: ["mods.hooks.tokens"],
     hooksDedupe: ["mods.hooks.dedupe"],
     stall: ["mods.stall.enabled"],
+    resumeGuard: ["mods.resumeGuard.enabled"],
 };
 
 /** The keys of the named mods (`all` is every one), and the names that are no mod. */

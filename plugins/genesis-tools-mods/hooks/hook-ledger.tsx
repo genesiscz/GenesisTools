@@ -11,14 +11,7 @@
 import type { ElementTable, RenderElement } from "claude-code";
 import type { HookCount, HookLedger } from "../types";
 import { liveSince } from "./live";
-import {
-    AREA_BLOCK,
-    INJECTION_DEFINITION,
-    type InjectionEntry,
-    injectionEvents,
-    modsSpoolPath,
-    spoolInjections,
-} from "./metrics";
+import { AREA_BLOCK, INJECTION_DEFINITION, type InjectionEntry, injectionEvents, spoolEvents } from "./metrics";
 import { agentsDir, appendJsonl, type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
 import { barText, dimNote, divider, headerRow, type Kit, listRow, plural, sectionTitle, sidebarFrame } from "./sidebar";
 
@@ -167,9 +160,6 @@ export function dedupeEntry(
     };
 }
 
-/** True once this plugin load wrote the metric's define line. */
-let declared = false;
-
 /** The injection's events in the `tools metrics` spool; a failure here never reaches the hook's answer. */
 async function spoolMetrics(
     host: Host,
@@ -194,14 +184,13 @@ async function spoolMetrics(
             },
             answer
         );
-        const path = modsSpoolPath(home, answer.at);
-
-        if (!declared) {
-            declared = true;
-            await appendJsonl(host, path, { ...INJECTION_DEFINITION });
-        }
-
-        await spoolInjections((to, record) => appendJsonl(host, to, record), path, events);
+        await spoolEvents({
+            append: (to, record) => appendJsonl(host, to, record),
+            home,
+            definition: INJECTION_DEFINITION,
+            events,
+            at: answer.at,
+        });
     } catch (error) {
         await logMod(host, "hooks", { event: "metrics-failed", error: String(error) }).catch(() => undefined);
     }

@@ -1,5 +1,11 @@
-import { hooksConfigPath } from "@genesiscz/utils/agents/hooks/config-section";
 import {
+    type ConfigPreset,
+    hooksConfigPath,
+    presetNamed,
+    presetValue,
+} from "@genesiscz/utils/agents/hooks/config-section";
+import {
+    DEFAULT_HOOKS_CONFIG,
     HOOK_CONFIG_SECTIONS,
     HOOK_SECTION_NAMES,
     type HookSectionName,
@@ -54,8 +60,45 @@ function withSection<Name extends HookSectionName>(
         return null;
     }
 
-    const next: HookSectionValues[Name] = section.set(sectionValue(config, name), key, value, context);
+    // A named value (`recommended`) stands for its number; any other value goes to the section as typed.
+    const resolved = presetValue(section.presets?.[key], key, value);
+    const next: HookSectionValues[Name] = section.set(sectionValue(config, name), key, resolved, context);
     return withSectionValue(config, name, next);
+}
+
+/** One setting as `config describe` shows it: its value, its default, and its named values with their reasons. */
+export interface SettingDescription {
+    key: string;
+    value: unknown;
+    defaultValue: unknown;
+    /** The named value the current value is, when it is one. */
+    named?: string;
+    presets: readonly ConfigPreset[];
+}
+
+function valueAt(config: HooksConfig, key: string): unknown {
+    return key
+        .split(".")
+        .reduce<unknown>(
+            (at, part) =>
+                typeof at === "object" && at !== null && !Array.isArray(at) ? Reflect.get(at, part) : undefined,
+            config
+        );
+}
+
+/** The setting at a dotted key (`mods.resumeGuard.minTokens`); throws for a key that holds no single value. */
+export function describeSetting(config: HooksConfig, key: string): SettingDescription {
+    const owner = HOOK_SECTION_NAMES.find((name) => HOOK_CONFIG_SECTIONS[name].owns(key));
+    const value = valueAt(config, key);
+
+    if (!owner || value === undefined || (typeof value === "object" && value !== null)) {
+        throw new Error(`No single setting at ${key}. Settable: ${SETTABLE_KEYS.join(", ")}`);
+    }
+
+    const presets = HOOK_CONFIG_SECTIONS[owner].presets?.[key] ?? [];
+    const named = presetNamed(presets, value)?.name;
+
+    return { key, value, defaultValue: valueAt(DEFAULT_HOOKS_CONFIG, key), ...(named ? { named } : {}), presets };
 }
 
 /** Applies one dotted key to a config, validating the key and the value. Pure. */

@@ -29,4 +29,5 @@ export const MODS_DEFAULTS: ModsSettings = {
     log: { readings: false },
     sidebar: { hints: true, feedback: "line", focus: "command" },
     stall: { enabled: false, action: "button", minutes: 5 },
+    resumeGuard: { enabled: false, idleSeconds: 295, minTokens: 150000, teammates: true },
 };

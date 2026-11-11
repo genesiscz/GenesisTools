@@ -178,13 +178,15 @@ tools agents hooks diff show toolu_01abc
 |---|---|
 | `hooks config show` | The config in effect, after defaults. |
 | `hooks config path` | Where the config file lives. |
+| `hooks config describe <key> [--json]` | One setting: its value, its default, and its named values with when to pick each. |
 | `hooks config rules` | Switch rules on and off. A terminal gets a picker. |
 | `hooks config set <key> <value> --write` | Change one setting. |
 
 `hooks config` alone runs `config show`. `config rules` in a terminal opens a picker, and saving the selection is the
 write. Elsewhere, or with flags, it prints the list and takes `--enable <ids>` and `--disable <ids>` (comma lists)
 with `--write`. `config set` takes `--replace-subagent-line` and `--write`. Its keys are listed under
-[Configuration](#configuration).
+[Configuration](#configuration). Where `config describe` lists named values for a key, `config set` takes a name
+(`config set mods.resumeGuard.minTokens recommended --write`) as well as any other value the key takes.
 
 ```bash
 tools agents hooks config set shadow false --write
@@ -205,7 +207,7 @@ tools agents hooks config rules --disable zsh-word-split --write
 
 `hooks mods` alone runs `mods status`. `mods install --scope` is `user` (default), `project` or `local`. The mod
 names are `diff`, `idleCompact`, `agentModel`, `agentRow`, `decisions`, `inbox`, `links`, `git`, `askRow`, `spinner`,
-`cacheBand`, `tmpUsage`, `agentsBand`, `hooks`, `hooksDedupe` and `stall`. `enable` and `disable` take
+`cacheBand`, `tmpUsage`, `agentsBand`, `hooks`, `hooksDedupe`, `stall` and `resumeGuard`. `enable` and `disable` take
 `--replace-subagent-line` for `agentRow`. `mods watch` writes the folder into `CLAUDE_CODE_PLUGIN_DIRS` in the `env`
 block of the Claude settings; `--off` takes it out.
 
@@ -908,6 +910,13 @@ timer until the next turn ends.
   plugin hooks handed the model in this session (`hooks ~38.2k · 41`, characters / 4). A press on it, or `/mod-hooks`,
   opens the Hooks sidebar with the count per event, the latest injections and a dedupe switch for the session. With
   `dedupe`, a block already handed to the same loop since its last compaction is replaced with a one-line receipt.
+- `mods.resumeGuard` (`idleSeconds` 295, `minTokens` 150000, `teammates` on): a SendMessage to an agent of the
+  session that is not running, idle for `idleSeconds` or more and holding `minTokens` or more of context is refused
+  once, with the cost and the two ways on (send the same message again, or start a fresh agent with a brief). The
+  same send again goes through, until the agent has run again. An agent's prompt cache lives 5 minutes, so such a
+  message makes it write its whole context again. Each key has named values (`config describe
+  mods.resumeGuard.minTokens`). The measurements behind the defaults are in the plugin's
+  [README](../../plugins/genesis-tools-mods/README.md#the-resume-guard-modsresumeguard).
 
 The sidebars dock beside the transcript in a fullscreen session and open as a dialog above the prompt otherwise, as
 Claude Code's own `/diff` panel does. The plugin cannot choose (`$.ui.open` takes no placement). A second press on the
