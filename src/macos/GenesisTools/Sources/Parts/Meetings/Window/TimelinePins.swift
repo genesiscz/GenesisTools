@@ -7,8 +7,10 @@ struct TimelinePin: Identifiable, Equatable {
     enum State: Equatable {
         /// Waits for an answer.
         case open
-        /// Decided.
+        /// Confirmed.
         case done
+        /// Rejected (or skipped): its own hue and glyph, as on the row (genesiscz.md 12a).
+        case rejected
         /// A question for the reader.
         case question
         /// The row that plays now.
@@ -31,7 +33,8 @@ struct TimelinePin: Identifiable, Equatable {
             return nil
         }).first ?? row.target.startSec else { return nil }
         self.init(id: row.id, sec: sec, text: TimelinePin.shortText(row.what),
-                  state: playing ? .playing : row.isQuestion && row.isOpen ? .question : row.isOpen ? .open : .done,
+                  state: playing ? .playing : row.isQuestion && row.isOpen ? .question : row.isOpen ? .open
+                    : row.status == "rejected" ? .rejected : .done,
                   dimmed: dimmed)
     }
 
@@ -53,8 +56,11 @@ struct TimelinePin: Identifiable, Equatable {
 
     var symbol: String {
         switch state {
-        case .open, .playing: return "flag.fill"
+        // A suggestion waiting for an answer carries the sparkle its chip carries; a confirmed one the check.
+        case .open: return "sparkles"
+        case .playing: return "play.fill"
         case .done: return "checkmark"
+        case .rejected: return "xmark"
         case .question: return "questionmark"
         }
     }
@@ -62,7 +68,8 @@ struct TimelinePin: Identifiable, Equatable {
     var tint: Color {
         switch state {
         case .open: return .accentColor
-        case .done: return .secondary
+        case .done: return KitHue.done.ink
+        case .rejected: return KitHue.danger.ink
         case .question: return .purple
         case .playing: return .primary
         }
@@ -72,6 +79,7 @@ struct TimelinePin: Identifiable, Equatable {
         switch state {
         case .open: return "open"
         case .done: return "answered"
+        case .rejected: return "rejected"
         case .question: return "question"
         case .playing: return "playing"
         }
@@ -83,8 +91,9 @@ extension TimelinePin.State {
     /// the playing one plays.
     var hue: KitHue {
         switch self {
-        case .open: return .care
+        case .open: return .play
         case .done: return .done
+        case .rejected: return .danger
         case .question: return .ask
         case .playing: return .play
         }
@@ -109,7 +118,7 @@ struct PinCluster: Identifiable, Equatable {
     var dimmed: Bool { pins.allSatisfy(\.dimmed) }
     /// The strongest state in it: playing, then question, then open, then done.
     var state: TimelinePin.State {
-        let order: [TimelinePin.State] = [.playing, .question, .open, .done]
+        let order: [TimelinePin.State] = [.playing, .question, .open, .done, .rejected]
         return order.first { state in pins.contains { $0.state == state } } ?? .done
     }
 

@@ -161,6 +161,10 @@ extension MeetingsPreferences {
         enum LowPriority: String, CaseIterable { case hide, show }
         enum AskReach: String, CaseIterable { case always, never }
         enum AutoplayNext: String, CaseIterable { case off, afterAnswer }
+        /// How suggested, confirmed and rejected values differ (genesiscz.md 12a). `hueAndGlyph`: a suggestion blue with
+        /// a sparkle and its confidence, a confirmed value green with a check, a rejected one red and struck through.
+        /// `shade`: the older look, where a suggestion is only a tint.
+        enum StateLook: String, CaseIterable { case hueAndGlyph, shade }
 
         static let typedAnswer = MeetingsWindowSetting(
             key: MeetingsPreferences.typedAnswerKey, defaultValue: TypedAnswer.always, choices: TypedAnswer.allCases,
@@ -192,6 +196,10 @@ extension MeetingsPreferences {
         static let openPersonPicker = MeetingsWindowSetting(
             key: "meetings.rows.openPersonPicker", defaultValue: true, choices: [true, false],
             title: "Open the people list by itself", detail: "A speaker range's editor opens the person picker with it.")
+        static let stateLook = MeetingsWindowSetting(
+            key: "meetings.rows.stateLook", defaultValue: StateLook.hueAndGlyph, choices: StateLook.allCases,
+            title: "Suggested and confirmed",
+            detail: "Hue and glyph: a suggestion is blue with a sparkle, a confirmed answer green with a check. Shade: a suggestion is only a tint.")
         static let keepPlace = MeetingsWindowSetting(
             key: "meetings.rows.keepPlace", defaultValue: true, choices: [true, false],
             title: "Keep the next row in place",

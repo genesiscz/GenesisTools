@@ -16,6 +16,8 @@ struct ReviewRowView: View {
     /// The entry that decided this row while its editor held a draft (G47, G48).
     var meanwhile: JournalEntry?
     var choiceKeys = true
+    /// How suggested, confirmed and rejected differ (`meetings.rows.stateLook`), read once here for the row's chips.
+    @AppStorage(MeetingsPreferences.Rows.stateLook.key) private var stateLook = MeetingsPreferences.Rows.stateLook.defaultValue
     /// This window just decided the row and it still keeps its place (G33): it stays readable, with how it was decided
     /// where its choices were, until the reader scrolls. A folded line over the row's old height read as a blank gap.
     var held = false
@@ -271,7 +273,8 @@ struct ReviewRowView: View {
     private var choices: some View {
         WrapLayout(spacing: 6, lineSpacing: 6) {
             ForEach(Array(row.choices.enumerated()), id: \.element.id) { index, choice in
-                ChoiceButton(choice: choice, number: choiceKeys && selected && index < 9 ? index + 1 : nil, enabled: !busy) {
+                ChoiceButton(choice: choice, state: DecisionState.of(choice, in: row), stateLook: stateLook,
+                             number: choiceKeys && selected && index < 9 ? index + 1 : nil, enabled: !busy) {
                     detail.choose(choice, on: row)
                 }
             }
@@ -392,8 +395,10 @@ struct ReviewRowView: View {
     }
 
     private var decidedMark: some View {
-        Image(systemName: row.status == "confirmed" ? "checkmark.circle.fill" : "xmark.circle")
-            .foregroundStyle(row.status == "confirmed" ? KitPalette.added : KitPalette.faint)
+        let state = DecisionState.of(status: row.status)
+        return Image(systemName: row.status == "confirmed" ? "checkmark.circle.fill" : "xmark.circle")
+            .foregroundStyle(stateLook == .shade ? (state == .confirmed ? KitPalette.added : KitPalette.faint)
+                             : (state == .rejected ? KitHue.danger.ink : KitHue.done.ink))
             .instantTooltip(Self.decidedWords(row))
             .accessibilityHidden(true)
     }
@@ -580,20 +585,29 @@ struct ReviewRowView: View {
 /// secondary monospaced digits (R49, G66); none where the engine has none.
 private struct ChoiceButton: View {
     let choice: RowChoice
+    /// Suggested, confirmed (the row's answer), rejected or plain: each its own hue and glyph (genesiscz.md 12a).
+    let state: DecisionState
+    /// `meetings.rows.stateLook`, read once by the row.
+    let stateLook: MeetingsPreferences.Rows.StateLook
     let number: Int?
     let enabled: Bool
     let action: () -> Void
     @Environment(\.kitLook) private var look
 
-    /// The chip's ground: in a look, the suggestion is a tint of the play hue and the others are quiet fills.
+    /// The chip's ground. A suggestion is tentative: a tint of its hue with a dashed outline. A confirmed answer is a
+    /// solid tint of the done hue. `shade` keeps the older look, where only the suggestion is tinted.
     @ViewBuilder
     private var ground: some View {
-        let suggested = choice.role == "suggested"
+        let hue = state.hue(stateLook)
+        let shape = RoundedRectangle(cornerRadius: look == .classic ? 6 : look.radius(.soft, height: 22, legacy: 6))
         if look == .classic {
-            RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(suggested ? 0.18 : 0.08))
+            shape.fill(hue.map { $0.ink.opacity(0.18) } ?? Color.secondary.opacity(state == .suggested ? 0.18 : 0.08))
         } else {
-            KitSurfaceBackground(look.surface(suggested ? .tinted : .soft, hue: suggested ? .play : .neutral),
+            KitSurfaceBackground(look.surface(hue == nil ? .soft : .tinted, hue: hue ?? .neutral),
                                  radius: look.radius(.soft, height: 22, legacy: 6), corners: look.corners)
+        }
+        if stateLook == .hueAndGlyph, state.dashed, let hue {
+            shape.strokeBorder(hue.ink.opacity(0.75), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
         }
     }
 
@@ -604,20 +618,36 @@ private struct ChoiceButton: View {
                 if let number {
                     Text(verbatim: "\(number)").font(.system(size: 10, weight: .semibold).monospacedDigit()).foregroundStyle(.tertiary)
                 }
-                Text(verbatim: choice.label).font(.system(size: 12.5, weight: choice.role == "suggested" ? .semibold : .regular))
+                if let glyph = state.glyph(stateLook) {
+                    Image(systemName: glyph).font(.system(size: 10, weight: .semibold))
+                }
+                Text(verbatim: choice.label).font(.system(size: 12.5, weight: state == .plain ? .regular : .semibold))
+                    .strikethrough(state.struck)
                 if let confidence = MeetingsWords.confidence(choice.confidence) {
                     // With its sign, as the row's header writes it: a bare "58" beside a name read as a count.
                     Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
-            .foregroundStyle(look != .classic && choice.role == "suggested" ? AnyShapeStyle(KitHue.play.ink) : AnyShapeStyle(.primary))
+            .foregroundStyle(Self.ink(state: state, stateLook: stateLook, kitLook: look))
             .padding(.horizontal, 8).padding(.vertical, 3)
             .background(ground)
         }
-        .accessibilityLabel(choice.confidence.map { "\(choice.label), \(Int(($0 * 100).rounded())) percent" } ?? choice.label)
+        .accessibilityLabel([choice.label, choice.confidence.map { "\(Int(($0 * 100).rounded())) percent" }, state.words.isEmpty ? nil : state.words]
+            .compactMap { $0 }.joined(separator: ", "))
+    }
+
+    /// The label's ink: the state's hue, except the older look, which tinted only a suggestion and only in a kit look.
+    static func ink(state: DecisionState, stateLook: MeetingsPreferences.Rows.StateLook, kitLook: KitLook) -> AnyShapeStyle {
+        guard let hue = state.hue(stateLook), stateLook == .hueAndGlyph || kitLook != .classic else { return AnyShapeStyle(.primary) }
+        return AnyShapeStyle(hue.ink)
     }
 
     private var tooltip: String {
+        switch state {
+        case .confirmed: return "The confirmed answer"
+        case .rejected: return "Rejected"
+        default: break
+        }
         switch choice.role {
         case "suggested": return "The suggestion"
         case "presumed": return "The best other candidate"
