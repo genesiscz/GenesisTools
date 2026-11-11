@@ -1003,9 +1003,22 @@ export function codesignTrustAnswered(): boolean {
     return existsSync(codesignTrustMarker());
 }
 
-function recordCodesignTrust(answer: "trusted" | "declined"): void {
-    mkdirSync(genesisAppDir(), { recursive: true });
-    writeFileSync(codesignTrustMarker(), `${answer} ${new Date().toISOString()}\n`);
+/**
+ * Writes the marker, and returns why it could not instead of throwing: after `trustCodesignKeys` the keychain has
+ * already changed, and an unwritable app folder or a full disk must not hide that result.
+ */
+export function recordCodesignTrust(answer: "trusted" | "declined"): string | null {
+    try {
+        mkdirSync(genesisAppDir(), { recursive: true });
+        writeFileSync(codesignTrustMarker(), `${answer} ${new Date().toISOString()}\n`);
+        return null;
+    } catch (error) {
+        logger.warn(
+            { error, answer, marker: codesignTrustMarker() },
+            "permissions app: codesign trust marker not written"
+        );
+        return `could not record the answer in ${codesignTrustMarker()}: ${error instanceof Error ? error.message : String(error)}`;
+    }
 }
 
 /**
@@ -1023,6 +1036,8 @@ export interface CodesignTrustResult {
     keys: string[];
     /** security's own stdout: one attribute dump per key it changed. */
     output: string;
+    /** Why the marker could not be written (`recordCodesignTrust`): the keychain change stands, a later build asks again. */
+    markerError?: string;
 }
 
 export async function trustCodesignKeys(timeoutMs = CODESIGN_TRUST_TIMEOUT_MS): Promise<CodesignTrustResult> {
@@ -1057,8 +1072,8 @@ export async function trustCodesignKeys(timeoutMs = CODESIGN_TRUST_TIMEOUT_MS): 
         return { ok: false, reason: `security exited ${code}`, keys, output };
     }
 
-    recordCodesignTrust("trusted");
-    return { ok: true, keys, output };
+    const markerError = recordCodesignTrust("trusted");
+    return markerError === null ? { ok: true, keys, output } : { ok: true, keys, output, markerError };
 }
 
 /**
@@ -1076,15 +1091,17 @@ export async function offerCodesignTrust(step: (message: string) => void): Promi
     });
 
     if (!yes) {
-        recordCodesignTrust("declined");
-        step(`codesign trust declined; ${CODESIGN_TRUST_COMMAND} sets it later`);
+        const markerError = recordCodesignTrust("declined");
+        step(
+            `codesign trust declined; ${CODESIGN_TRUST_COMMAND} sets it later${markerError ? ` (${markerError}, so the next build asks again)` : ""}`
+        );
         return;
     }
 
     const result = await trustCodesignKeys();
     step(
         result.ok
-            ? "codesign trust set: later builds sign without the keychain dialog"
+            ? `codesign trust set: later builds sign without the keychain dialog${result.markerError ? ` (${result.markerError}, so the next build asks again)` : ""}`
             : `codesign trust not set (${result.reason}); the keychain may ask during this build`
     );
 }

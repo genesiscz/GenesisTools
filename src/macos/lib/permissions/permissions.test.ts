@@ -18,6 +18,7 @@ import {
     isGenesisToolsBinary,
     retiredAtOf,
 } from "@genesiscz/utils/genesis-tools/app-binary";
+import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import { skip } from "@genesiscz/utils/test/skip";
@@ -29,6 +30,7 @@ import {
     pickCodesignIdentity,
     preferredFirst,
     readSourceInfo,
+    recordCodesignTrust,
     retiredStampsToDelete,
     signByHashes,
     signStagedBundle,
@@ -293,6 +295,22 @@ describe("the codesign keychain notice", () => {
             ["Alice Example", "privateKey", "(no label)"]
         );
         expect(changedKeyLabels("")).toEqual([]);
+    });
+
+    it("a trust marker it cannot write is a reason, never a throw that would hide the keychain change", () => {
+        const marker = join(genesisAppDir(), "codesign-trust");
+        // A folder where the marker file goes: the write fails as it would on a full disk.
+        mkdirSync(marker, { recursive: true });
+
+        try {
+            expect(recordCodesignTrust("trusted")).toStartWith(`could not record the answer in ${marker}: `);
+        } finally {
+            rmSync(marker, { recursive: true, force: true });
+        }
+
+        expect(recordCodesignTrust("declined")).toBeNull();
+        expect(readFileSync(marker, "utf8")).toStartWith("declined ");
+        rmSync(marker, { force: true });
     });
 
     it("opens codesign-trust in a terminal on a click: a .command launcher that runs this checkout's tools", () => {
