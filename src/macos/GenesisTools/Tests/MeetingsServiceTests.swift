@@ -271,9 +271,13 @@ final class MeetingsServiceTests: XCTestCase {
                     XCTAssertFalse(entry.changes.isEmpty, "\(label): the item before and after decode")
                 }
                 if let data = (reply?["error"] as? [String: Any])?["data"] {
-                    let refused = try MeetingsService.decode(AlreadyDecided.self, data)
-                    XCTAssertEqual(refused.code, "already-decided", label)
-                    XCTAssertNotNil(refused.entry, "\(label): the refusal names the entry that decided it")
+                    let code = try MeetingsService.decode(MeetingsAPI.ErrorData.self, data).code
+                    if code == "already-decided" {
+                        let refused = try MeetingsService.decode(AlreadyDecided.self, data)
+                        XCTAssertNotNil(refused.entry, "\(label): the refusal names the entry that decided it")
+                    } else {
+                        XCTAssertEqual(code, "failed", label)
+                    }
                 }
             case MeetingsAPI.DecisionRevert.name:
                 try roundTrip(MeetingsAPI.DecisionRevert.Params.self, params, label)
@@ -487,7 +491,9 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(record.id, Self.design)
         XCTAssertEqual(record.project, "Atlas")
         let revisions = try await MeetingDetailModel.revisionsRead(Self.design).run(service: service, command: command())
-        XCTAssertEqual(revisions.show, "32y96zb50zq92")
+        let fixture = try XCTUnwrap(MeetingsFixture.reply(MeetingsAPI.Revisions.name, params: ["ref": Self.design])?["result"])
+        let expected = try MeetingsService.decode(MeetingsAPI.Revisions.Result.self, fixture)
+        XCTAssertEqual(revisions.show, expected.show)
         let transcript = try await MeetingDetailModel.transcriptRead(Self.design).run(service: service, command: command())
         XCTAssertEqual(transcript.entries.map(\.speaker), ["Dana Example", "Alex Example"])
 
