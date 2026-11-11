@@ -46,7 +46,7 @@ import {
     writeCodesignTrustLauncher,
 } from "./codesign-trust";
 import { renderSwiftFaceTable, SWIFT_FACE_TABLE_PATH, swiftFaceTableIsCurrent, syncSwiftFaceTable } from "./face-table";
-import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
+import { isPermissionKind, PERMISSION_KINDS, parsePermissionStatusLines, permissionStatusLabel } from "./kinds";
 import {
     type AppProcess,
     describePromptProcesses,
@@ -454,6 +454,30 @@ describe("grantsFor", () => {
     it("says not asked yet when no row exists", () => {
         const grants = grantsFor("com.other", user, user, [calendar]);
         expect(grants[0]).toMatchObject({ granted: false, label: "not asked yet" });
+    });
+
+    it("answers a closed database with the app's own check, and keeps 'not readable' only for a kind it lacks", () => {
+        const closed: TccReadResult = { readable: false, rows: [] };
+        const live = parsePermissionStatusLines(
+            "calendar granted\nfull-disk-access denied\nwebcam granted\nautomation unknown:asks on first use\n"
+        );
+        expect([...live.keys()]).toEqual(["calendar", "full-disk-access", "automation"]);
+
+        const automation = TCC_SERVICES.find((s) => s.id === "kTCCServiceAppleEvents");
+        const unmapped = { ...calendar, kind: undefined };
+        const grants = grantsFor(
+            "com.genesiscz.genesistools",
+            closed,
+            closed,
+            [calendar, fda, ...(automation ? [automation] : []), unmapped],
+            live
+        );
+        expect(grants.map((g) => [g.granted, g.label])).toEqual([
+            [true, "allowed"],
+            [false, "denied"],
+            [undefined, "asks on first use"],
+            [undefined, "unknown (database not readable)"],
+        ]);
     });
 });
 
