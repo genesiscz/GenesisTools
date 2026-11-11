@@ -4,6 +4,7 @@ import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type DecisionActor, type MeetingStore, savedDecisionActorSchema } from "@genesiscz/utils/meetings/record";
+import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { z } from "zod";
 import { listenerAlive } from "./answer-log";
 import {
@@ -89,6 +90,23 @@ export interface MeetingCommentsOptions {
 
 /** One meeting's comments file: what is staged, what was sent, and who listens. */
 export class MeetingComments {
+    private writing = false;
+
+    transaction<T>(change: () => T): T {
+        if (this.writing) {
+            return change();
+        }
+
+        return withPathArbitrationSync(this.path, () => {
+            this.writing = true;
+            try {
+                return change();
+            } finally {
+                this.writing = false;
+            }
+        });
+    }
+
     constructor(
         readonly path: string,
         private readonly options: MeetingCommentsOptions = {}
@@ -148,24 +166,28 @@ export class MeetingComments {
         quote?: string;
         actor: DecisionActor;
     }): MeetingComment {
-        const staged = this.lines().filter((line) => line.kind === "staged").length;
-        const comment: StagedComment = {
-            id: `c${staged + 1}`,
-            at: this.now(),
-            target: input.target,
-            text: input.text,
-            ...(input.quote ? { quote: input.quote } : {}),
-            actor: input.actor,
-        };
-        this.append({ kind: "staged", comment });
-        return { ...comment, state: "staged" };
+        return this.transaction(() => {
+            const staged = this.lines().filter((line) => line.kind === "staged").length;
+            const comment: StagedComment = {
+                id: `c${staged + 1}`,
+                at: this.now(),
+                target: input.target,
+                text: input.text,
+                ...(input.quote ? { quote: input.quote } : {}),
+                actor: input.actor,
+            };
+            this.append({ kind: "staged", comment });
+            return { ...comment, state: "staged" };
+        });
     }
 
     /** Takes a staged comment back; a sent one stays sent (the listening agent has it). */
     unstage(id: string, actor: DecisionActor): MeetingComment {
-        const comment = this.staged([id])[0]!;
-        this.append({ kind: "unstaged", at: this.now(), id, actor });
-        return comment;
+        return this.transaction(() => {
+            const comment = this.staged([id])[0]!;
+            this.append({ kind: "unstaged", at: this.now(), id, actor });
+            return comment;
+        });
     }
 
     /** The staged comments a send takes: `ids`, or every staged one. Refused for an unknown or a sent id. */
@@ -254,7 +276,7 @@ export class MeetingComments {
 
     /** One line at the end; after a torn last line (a writer that died mid-line) on a line of its own. */
     private append(line: CommentLine): void {
-        appendLines(this.path, [SafeJSON.stringify(line, { jsonl: true })], { mode: 0o600 });
+        this.transaction(() => appendLines(this.path, [SafeJSON.stringify(line, { jsonl: true })], { mode: 0o600 }));
     }
 }
 

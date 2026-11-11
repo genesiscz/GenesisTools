@@ -144,6 +144,10 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
             }
         },
         onSubscribe: (connection, params) => {
+            if (!connection.state.hello) {
+                throw refusal("no-hello", "say hello before subscribe");
+            }
+
             const parsed = subscribeParamsSchema.safeParse(params ?? {});
 
             // An invalid meeting filter would widen the subscription to every meeting; it is refused instead.

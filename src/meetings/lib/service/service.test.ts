@@ -1108,6 +1108,16 @@ describe("the Meetings service's connections", () => {
         expect(otherCode.message).toBe(`the meetings service runs the code of another checkout (${CODE})`);
     });
 
+    test("a subscription before hello is refused without registering it", async () => {
+        const { service } = await startService();
+        const raw = await rawConnection(service.entry.socket);
+        const early = await raw.request(SUBSCRIBE, { events: ["meeting.changed"] });
+        expect(early.reply.error).toMatchObject({ data: { code: "no-hello" } });
+        service.emit("meeting.changed", { meeting: REVIEW.id, parts: ["show"] });
+        await raw.request("hello", { role: "window", protocol: MEETINGS_PROTOCOL });
+        expect(raw.lines.filter((line) => line.method === "meeting.changed")).toEqual([]);
+    });
+
     test("the service refuses a meeting filter that does not read, and after unsubscribe a connection hears nothing", async () => {
         const { service } = await startService();
         const raw = await rawConnection(service.entry.socket);

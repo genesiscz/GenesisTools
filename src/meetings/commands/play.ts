@@ -31,6 +31,10 @@ interface PlayOptions {
     clip?: boolean;
     moment?: boolean;
     before?: string;
+    padBefore?: string;
+    padAfter?: string;
+    length?: string;
+    screen?: boolean;
     tone?: string | false;
     player?: string;
     json?: boolean;
@@ -158,6 +162,28 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
     }
 
     const toneSound = tone?.sound;
+    const overrides: { padSec?: number; padAfterSec?: number; lengthSec?: number; screen?: false } = {};
+    for (const [flag, value, key] of [
+        ["--pad-before", opts.padBefore, "padSec"],
+        ["--pad-after", opts.padAfter, "padAfterSec"],
+        ["--length", opts.length, "lengthSec"],
+    ] as const) {
+        if (value === undefined) {
+            continue;
+        }
+
+        const parsed = seconds(value);
+        if (parsed === undefined || (key === "lengthSec" && parsed === 0)) {
+            fail(`${flag} needs ${key === "lengthSec" ? "a positive" : "a non-negative"} number of seconds.`);
+            return;
+        }
+
+        overrides[key] = parsed;
+    }
+
+    if (opts.screen === false) {
+        overrides.screen = false;
+    }
 
     if (!opts.clip && opts.start === false) {
         const planned = await withMeetingsClient((client) =>
@@ -166,6 +192,7 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
                 target,
                 ...(toneSound ? { toneSound } : {}),
                 ...(opts.tone === false ? { tone: false } : {}),
+                ...overrides,
             })
         );
 
@@ -209,6 +236,7 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
             target,
             ...(toneSound ? { toneSound } : {}),
             ...(opts.tone === false ? { tone: false } : {}),
+            ...overrides,
         })
     );
 
@@ -236,6 +264,17 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
 
     if (opts.tone !== undefined && !("target" in what)) {
         fail("--tone sets a Moment's tone; --at alone plays on from there without one (add --moment, --to or --clip).");
+        return;
+    }
+
+    if (
+        !("target" in what) &&
+        (opts.padBefore !== undefined ||
+            opts.padAfter !== undefined ||
+            opts.length !== undefined ||
+            opts.screen === false)
+    ) {
+        fail("--pad-before, --pad-after, --length and --no-screen require a Moment (add --moment, --to or --clip).");
         return;
     }
 
@@ -345,6 +384,10 @@ export function registerPlayCommand(program: Command): void {
             `a Moment's tone for this call: a preset (${TONE_PRESET_NAMES.join(", ")}), a sound file, or JSON ({"hz":440,"sec":0.2}); default playback.listen.tone.sound. It sounds even when playback.listen.tone.enabled is off`
         )
         .option("--no-tone", "suppress the tone for this Moment without changing the saved setting")
+        .option("--pad-before <sec>", "this Moment's leading pad in seconds")
+        .option("--pad-after <sec>", "this Moment's trailing pad in seconds")
+        .option("--length <sec>", "limit this Moment's requested span to this many seconds, before padding")
+        .option("--no-screen", "skip screen frames for this Moment")
         .option(
             "--player <id>",
             `this player for one call: ${MEETING_PLAYERS.join(", ")} for --at alone, ${LISTEN_PLAYERS.join(", ")} for a Moment`

@@ -122,6 +122,17 @@ function refusal(from: MeetingRecord, into: MeetingRecord, store: MeetingStore):
 
 /** A clone of every file under `source` at `destination` (a copy where the volume cannot clone). */
 export function cloneTree(source: string, destination: string): void {
+    const sourceStat = lstatSync(source);
+    if (sourceStat.isFile()) {
+        cloneOrCopy({ source, destination, mode: sourceStat.mode & 0o777, mayCopy: true });
+        return;
+    }
+
+    if (!sourceStat.isDirectory()) {
+        log.warn({ path: source }, "not a file or folder; left out of the merge backup");
+        return;
+    }
+
     mkdirSync(destination, { recursive: true });
 
     for (const name of readdirSync(source)) {

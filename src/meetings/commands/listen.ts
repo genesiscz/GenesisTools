@@ -548,6 +548,11 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
 };
 
 async function listen(ref: string, opts: ListenOptions): Promise<void> {
+    if (!opts.subscribeAnswers && (opts.withComments || opts.fromStart || opts.follow)) {
+        fail("--with-comments, --from-start and --follow require --subscribe-answers.");
+        return;
+    }
+
     const store = new MeetingStore();
     let meeting: MeetingRecord | undefined;
 

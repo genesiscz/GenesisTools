@@ -494,8 +494,8 @@ export class MeetingsPeopleSource implements PeopleSource {
             let stamp: string;
 
             try {
-                const stat = statSync(path);
-                stamp = `${stat.mtimeMs}:${stat.size}`;
+                const stat = statSync(path, { bigint: true });
+                stamp = `${stat.ino}:${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}`;
             } catch (error) {
                 log.debug({ path, error }, "meeting folder without a record; no people");
                 continue;

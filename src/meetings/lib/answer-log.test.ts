@@ -258,6 +258,17 @@ describe("comments for the listening agent (comments.ndjson)", () => {
             alive,
         });
 
+    test("another writer cannot allocate a comment id during a staged transaction", () => {
+        const first = commentsFile();
+        const other = new MeetingComments(first.path);
+        first.transaction(() => {
+            expect(() => other.stage({ target: selection, text: "Contending writer", actor: person })).toThrow();
+            expect(first.stage({ target: selection, text: "First writer", actor: person }).id).toBe("c1");
+        });
+        expect(other.stage({ target: selection, text: "Next writer", actor: person }).id).toBe("c2");
+        expect(new MeetingComments(first.path).list().map((comment) => comment.id)).toEqual(["c1", "c2"]);
+    });
+
     test("staged comments stay until sent or unstaged; a sent one cannot change, and a torn line is passed over", () => {
         const comments = commentsFile();
         const first = comments.stage({ target: selection, text: "This is EMP, not OMP", quote: "OMP", actor: person });

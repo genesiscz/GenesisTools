@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -172,6 +172,22 @@ describe("PeopleDirectory.known", () => {
             state: "off",
             reason: "turned off (global.people.sources.contacts)",
         });
+    });
+
+    test("an equal-size rewrite with the same modification time refreshes the people index", async () => {
+        const { store, book } = scratch([
+            meeting("m1", "2026-11-08T10:00:00Z", { participants: [{ name: "Kim Example" }] }),
+        ]);
+        const recordPath = store.path("m1");
+        const fixedTime = new Date("2026-11-08T10:00:00Z");
+        utimesSync(recordPath, fixedTime, fixedTime);
+        const size = statSync(recordPath).size;
+        const directory = peopleDirectory({ store, config: meetingsConfigSchema.parse({}), book });
+        expect((await directory.known("")).people.map((person) => person.name)).toEqual(["Kim Example"]);
+        writeRecord(store, meeting("m1", "2026-11-08T10:00:00Z", { participants: [{ name: "Lee Example" }] }));
+        utimesSync(recordPath, fixedTime, fixedTime);
+        expect(statSync(recordPath).size).toBe(size);
+        expect((await directory.known("")).people.map((person) => person.name)).toEqual(["Lee Example"]);
     });
 
     test("a changed meeting record is read again: the index follows the meetings folder", async () => {

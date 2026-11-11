@@ -322,6 +322,7 @@ describe("duplicate: a second record of one meeting", () => {
         const framesDir = join(store.folder(original.id), "frames");
         mkdirSync(framesDir, { recursive: true });
         writeFileSync(join(framesDir, "0001.jpg"), "jpg");
+        writeFileSync(join(store.folder(original.id), "ScreenOCR.md"), "# Screen words\n");
         await store.update(original.id, { command: "test", change: "frames" }, (record) => {
             record.recording = { framesDir, frames: 1 };
         });
@@ -337,6 +338,8 @@ describe("duplicate: a second record of one meeting", () => {
         expect(copy?.exports).toBeUndefined();
         expect(copy?.recording?.framesDir).toBe(join(store.folder(result.id), "frames"));
         expect(readFileSync(join(store.folder(result.id), "frames", "0001.jpg"), "utf8")).toBe("jpg");
+        expect(readFileSync(join(store.folder(result.id), "ScreenOCR.md"), "utf8")).toBe("# Screen words\n");
+        expect(readFileSync(join(store.folder(original.id), "ScreenOCR.md"), "utf8")).toBe("# Screen words\n");
         expect(copy?.history[0]?.change).toBe(`duplicated from ${original.id}`);
         expect(store.read(original.id)?.recording?.framesDir).toBe(framesDir);
         expect(store.read(original.id)?.title).toBe("Planning");
