@@ -11,7 +11,7 @@
 import type { ElementTable, RenderElement } from "claude-code";
 import type { HookCount, HookLedger } from "../types";
 import { liveSince } from "./live";
-import { loopModelOf, noteLoopModel } from "./loop-model";
+import { loopModel, noteLoopModel } from "./loop-model";
 import { AREA_BLOCK, INJECTION_DEFINITION, type InjectionEntry, injectionEvents, spoolEvents } from "./metrics";
 import { agentsDir, appendJsonl, type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
 import { barText, dimNote, divider, headerRow, type Kit, listRow, plural, sectionTitle, sidebarFrame } from "./sidebar";
@@ -179,7 +179,7 @@ async function spoolMetrics(
                 session: await host.sessionId(),
                 agent: answer.agent,
                 agentType: typeof input.agent_type === "string" ? input.agent_type : null,
-                model: loopModelOf(answer.agent),
+                model: await loopModel(host, answer.agent),
                 event: answer.event,
                 tool: typeof input.tool_name === "string" ? input.tool_name : null,
                 harness: "claude",

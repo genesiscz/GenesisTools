@@ -4,6 +4,7 @@
 // last response as the API reported it (`noteLoopModel`, from a step's or a turn's usage); the main loop has only this.
 // Unknown stays null: a setting such as the default subagent model is never read as the answer.
 import { metas, spawned } from "./agents-band";
+import type { Host } from "./shared";
 
 /** The last answering model of each loop, by `main` or the agent id. */
 const answered = new Map<string, string>();
@@ -26,6 +27,20 @@ export function loopModelOf(agent: string): string | null {
     }
 
     return answered.get(agent) ?? null;
+}
+
+/**
+ * `loopModelOf`, and for the main loop before its first response after a reload the model the session runs on now
+ * (`$.session.model()`), so its events carry a model from the first one.
+ */
+export async function loopModel(host: Host, agent: string): Promise<string | null> {
+    const known = loopModelOf(agent);
+
+    if (known || agent !== "main") {
+        return known;
+    }
+
+    return (await host.model().catch(() => "")) || null;
 }
 
 /** A test starts a different session. */

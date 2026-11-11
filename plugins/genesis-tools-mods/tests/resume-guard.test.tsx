@@ -2,7 +2,7 @@ import type { AgentInfo, ToolCallInput } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
 import { agentClock, agentClockTime, noteAgentActive } from "../hooks/agent-clock";
 import { forgetAgentDetails, metas } from "../hooks/agents-band";
-import { forgetLoopModels, loopModelOf, noteLoopModel } from "../hooks/loop-model";
+import { forgetLoopModels, loopModel, loopModelOf, noteLoopModel } from "../hooks/loop-model";
 import {
     agentsNamed,
     decideResume,
@@ -80,6 +80,7 @@ function fixture(mods: Record<string, unknown> = { resumeGuard: { enabled: true 
         env: async (name) => (name === "HOME" ? "/home/test" : undefined),
         cwd: async () => "/work/app",
         sessionId: async () => "sess-1",
+        model: async () => "claude-test-model",
         messages: async () => [],
         agents: async () => agents,
         every() {},
@@ -393,6 +394,10 @@ test("resume guard: a compaction clears the agent's remembered size, and the mod
     expect(await guardResume(host, send("scout"))).toBeUndefined();
     expect(guardLog(lines).at(-1)).toMatchObject({ reason: "size-unknown", tokens: null });
 
+    // Before the main loop's first response after a reload, its model is the one the session runs on now.
+    forgetLoopModels();
+    expect(await loopModel(host, "main")).toBe("claude-test-model");
+    expect(await loopModel(host, "nobody")).toBeNull();
     noteLoopModel("main", "fixture-main");
     metas.set("scout", { model: "fixture-meta" });
     expect(loopModelOf("scout")).toBe("fixture-meta");
