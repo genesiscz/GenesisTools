@@ -69,7 +69,7 @@
         ]
       },
       {
-        "matcher": "Bash|Read|Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": "Bash|shell|run_terminal_command|Read|Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",

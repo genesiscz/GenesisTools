@@ -961,6 +961,15 @@ export interface Decision {
     native: string[];
 }
 
+/**
+ * The shell tool under each harness: `Bash` (Claude, and Codex, whose hooks name its exec_command `Bash`), `shell`,
+ * `run_terminal_command` (Grok). The same list as `isTerminalTool` in `src/agents/lib/hooks/payload.ts`, which this
+ * standalone hook cannot import.
+ */
+function isShellTool(tool: string): boolean {
+    return ["bash", "shell", "runterminalcommand"].includes(tool.toLowerCase().replace(/_/g, ""));
+}
+
 /** What a tool call should add, given what this agent already has. Pure, for tests. */
 export function decide(input: {
     payload: HookPayload;
@@ -995,7 +1004,7 @@ export function decide(input: {
         return { full: [], pointer: [], native: areasOf(named, true).filter((area) => !seen.includes(area)) };
     }
 
-    const command = tool === "Bash" && typeof toolInput.command === "string" ? toolInput.command : "";
+    const command = isShellTool(tool) && typeof toolInput.command === "string" ? toolInput.command : "";
     const writes = command ? writeTargets(command) : { paths: [], output: false };
     const writePaths = projectPaths(writes.paths, { root, cwd });
     const found = writes.output
