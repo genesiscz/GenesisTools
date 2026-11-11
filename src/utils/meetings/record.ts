@@ -286,6 +286,11 @@ export const recordingBlockSchema = z
         /** Capture intervals for each display; absent in older recordings. */
         displaySpans: z.array(recordingDisplaySpanSchema).optional(),
         warning: z.string().optional(),
+        /**
+         * What the OCR worker found wrong with this run's frames (a first frame with almost no text). Its own key: the
+         * recorder rewrites `warning` from its notes at the stop.
+         */
+        ocrWarning: z.string().optional(),
         clock: z.object({ source: z.string(), startedAt: isoTime }).optional(),
         /** When the failure notice of the current failure episode was posted; cleared by a piece that recorded. */
         failureNotifiedAt: isoTime.optional(),

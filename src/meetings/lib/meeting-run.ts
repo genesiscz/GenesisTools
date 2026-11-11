@@ -23,7 +23,7 @@ import type { PieceTarget } from "@genesiscz/utils/screen-recorder/targets";
 import type { CaptureResult } from "@genesiscz/utils/screen-recorder/types";
 import { CallTimeline } from "./call-timeline";
 import { appendFrameIndex } from "./frame-index";
-import { meetingOcrSettings } from "./ocr-worker";
+import { LiveOcrSettings, meetingOcrSettings, OCR_SETTINGS_FILE } from "./ocr-worker";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingMovieZeroMs } from "./recording-manifest";
 import { meetingSource, sourceRefOf } from "./sources";
@@ -54,6 +54,8 @@ export class MeetingRun {
     private failureNoticeOpen: boolean;
     /** When the current run of failed captures that the recording outlives began; undefined while captures work. */
     private strugglingSince?: number;
+    /** The OCR settings the worker reads before each frame: written at the start and at each live change. */
+    private readonly ocrSettings: LiveOcrSettings;
     private runFrames = 0;
     private audioFiles = 0;
     private zeroMs?: number;
@@ -75,6 +77,7 @@ export class MeetingRun {
         this.folder = store.folder(meetingId);
         this.framesDir = join(this.folder, "frames");
         this.pieceDir = join(this.folder, ".piece");
+        this.ocrSettings = new LiveOcrSettings(join(this.folder, OCR_SETTINGS_FILE));
         const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
         this.nativeKeys = nativeKeys;
         this.settings = {
@@ -155,6 +158,8 @@ export class MeetingRun {
         });
 
         // The second phase: the meeting's OCR worker follows the frame index until this recording stops.
+        this.writeOcrSettings(recording);
+
         try {
             this.deps.startOcr(this.store, this.meetingId);
         } catch (err) {
@@ -262,6 +267,8 @@ export class MeetingRun {
     }): Promise<void> {
         const { state } = this;
         let done = 0;
+        // A live OCR change (`settings.set`) reaches the worker before the frames it applies to are listed.
+        this.writeOcrSettings(recording);
 
         for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
             let kept: KeptFrame;
@@ -290,6 +297,17 @@ export class MeetingRun {
 
             done += 1;
             onFrame(done);
+        }
+    }
+
+    private writeOcrSettings(recording: FrameRecording<string[]>): void {
+        try {
+            this.ocrSettings.write(recording.settings.ocr);
+        } catch (err) {
+            log.warn(
+                { err, meeting: this.meetingId },
+                "the OCR settings could not be written; the worker keeps its own"
+            );
         }
     }
 

@@ -1,6 +1,7 @@
-import { appendFileSync, closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -10,7 +11,7 @@ import type { OcrResult } from "@genesiscz/utils/macos/types";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
-import type { RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
+import { type RecorderSettings, recorderSettingsSchema } from "@genesiscz/utils/screen-recorder/control";
 import {
     CAPTURE_FILE_MODE,
     FrameReader,
@@ -84,6 +85,73 @@ export function meetingOcrSettings(
         read: capture.ocr.read,
         tilePx: capture.ocr.tilePx,
     };
+}
+
+/** The OCR settings the recording runs with now, beside its frames (`LiveOcrSettings`). */
+export const OCR_SETTINGS_FILE = "ocr-settings.json";
+
+/** The words of the hint a first frame with almost no text gives, in `recording.ocrWarning` and `record status`. */
+export const FIRST_FRAME_HINT = `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`;
+
+/**
+ * The OCR settings of a running recording, in the meeting folder: the recorder writes them at its start and at each
+ * live change (`record set --ocr-min-chars`, `settings.set`), and the worker reads them before each frame, so a change
+ * reaches the next frame it reads without a restart. Without the file (a meeting from before it, a worker run by
+ * hand) the worker keeps the settings it started with.
+ */
+export class LiveOcrSettings {
+    private written?: string;
+    private seen?: { signature: string; settings: RecorderSettings["ocr"] | undefined };
+
+    constructor(readonly path: string) {}
+
+    /** Writes the settings when they differ from the last write. */
+    write(settings: RecorderSettings["ocr"]): void {
+        const text = SafeJSON.stringify(settings, null, 2);
+
+        if (text === this.written) {
+            return;
+        }
+
+        atomicWriteFileSync(this.path, text, { mode: CAPTURE_FILE_MODE });
+        this.written = text;
+        log.debug({ path: this.path }, "the recording's OCR settings written");
+    }
+
+    /** The settings in the file, or `fallback` without a readable file; the file is parsed again only when it changed. */
+    read(fallback: RecorderSettings["ocr"]): RecorderSettings["ocr"] {
+        if (!existsSync(this.path)) {
+            return fallback;
+        }
+
+        const stat = statSync(this.path);
+        const signature = `${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+
+        if (this.seen?.signature !== signature) {
+            this.seen = { signature, settings: this.parse() };
+            log.info({ path: this.path, settings: this.seen.settings }, "OCR settings read from the recording");
+        }
+
+        return this.seen.settings ?? fallback;
+    }
+
+    private parse(): RecorderSettings["ocr"] | undefined {
+        try {
+            const parsed = recorderSettingsSchema.shape.ocr.safeParse(
+                SafeJSON.parse(readFileSync(this.path, "utf8"), { strict: true })
+            );
+
+            if (parsed.success) {
+                return parsed.data;
+            }
+
+            log.warn({ path: this.path, error: parsed.error.message }, "the OCR settings file does not parse");
+        } catch (error) {
+            log.warn({ path: this.path, error }, "the OCR settings file could not be read");
+        }
+
+        return undefined;
+    }
 }
 
 export function ocrPidPath(folder: string): string {
@@ -257,11 +325,17 @@ class OcrWorker {
     private readonly reader: FrameReader;
     private failuresInRow = 0;
     private readonly done = new Set<string>();
+    private readonly liveSettings: LiveOcrSettings;
+    /** When the recording's last run began: its first frame gets the "almost no text" check. */
+    private runStartMs = 0;
+    /** The run's first frame has a row already (this worker's or an earlier one's). */
+    private firstChecked = false;
 
     constructor(private readonly options: OcrWorkerOptions) {
         this.folder = options.store.folder(options.meetingId);
         this.ocrFile = ocrPath(this.folder);
         this.indexFile = frameIndexPath(this.folder);
+        this.liveSettings = new LiveOcrSettings(join(this.folder, OCR_SETTINGS_FILE));
         const engine = options.engine ?? visionOcrEngine;
         this.engine = engine;
         this.reader = new FrameReader({
@@ -276,7 +350,7 @@ class OcrWorker {
      * thrown away, and when the fresh one fails as often, the row says `failed` instead of holding an empty read.
      */
     async readFrame(entry: FrameIndexRow): Promise<OcrRow> {
-        const { settings } = this.options;
+        const settings = this.settings();
         const frame = {
             file: entry.file,
             at: entry.at,
@@ -406,6 +480,9 @@ class OcrWorker {
     /** The rows already written: which frames are done, and each display's last read for the next frame's plan. */
     resume(): void {
         const last = new Map<number, OcrRow | undefined>();
+        const spans = this.options.store.read(this.options.meetingId)?.recording?.spans ?? [];
+        const runStart = spans.at(-1)?.from;
+        this.runStartMs = runStart ? Date.parse(runStart) : 0;
 
         for (const { row, file } of readOcrLines(this.ocrFile)) {
             // A frame with a line in ocr.jsonl is done whatever the rest of its line holds: never a second row for it.
@@ -418,6 +495,10 @@ class OcrWorker {
             }
 
             last.set(row.displayId, row.failed === undefined ? row : undefined);
+
+            if (Date.parse(row.at) >= this.runStartMs) {
+                this.firstChecked = true;
+            }
         }
 
         for (const [displayId, row] of last) {
@@ -444,17 +525,45 @@ class OcrWorker {
             this.options.signal?.throwIfAborted();
             const row = await this.readFrame(entry);
 
-            if (this.done.size === 0 && row.failed === undefined && row.text.trim().length < EMPTY_FRAME_CHARS) {
-                log.warn(
-                    { meeting: this.options.meetingId, file: entry.file, chars: row.text.trim().length },
-                    "the first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop), or the text is too small for capture.resolutionCap"
-                );
+            if (!this.firstChecked && Date.parse(entry.at) >= this.runStartMs) {
+                this.firstChecked = true;
+                await this.checkFirstFrame(row);
             }
 
             appendFileSync(this.ocrFile, `${SafeJSON.stringify(row)}\n`, { mode: CAPTURE_FILE_MODE });
             this.done.add(entry.file);
             this.result.read += 1;
         }
+    }
+
+    /** The settings for the next frame: the recording's live ones when it wrote them, else the ones it started with. */
+    settings(): RecorderSettings["ocr"] {
+        return this.liveSettings.read(this.options.settings);
+    }
+
+    /**
+     * The first frame of a recording run with almost no text says why in the record's `recording.ocrWarning` (the
+     * recorder's own `warning` is its notes, rewritten at its stop); `record status` and `show` print it.
+     */
+    private async checkFirstFrame(row: OcrRow): Promise<void> {
+        const chars = row.text.trim().length;
+
+        if (row.failed !== undefined || !this.settings().enabled || chars >= EMPTY_FRAME_CHARS) {
+            return;
+        }
+
+        log.warn({ meeting: this.options.meetingId, file: row.file, chars }, FIRST_FRAME_HINT);
+        await this.options.store
+            .update(
+                this.options.meetingId,
+                { command: "meetings ocr", change: "first frame: almost no text" },
+                (current) => {
+                    current.recording = { ...current.recording, ocrWarning: FIRST_FRAME_HINT };
+                }
+            )
+            .catch((err: unknown) =>
+                log.warn({ err, meeting: this.options.meetingId }, "the first-frame hint could not be saved")
+            );
     }
 
     recording(): boolean {

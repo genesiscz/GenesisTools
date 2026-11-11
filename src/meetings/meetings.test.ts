@@ -3034,6 +3034,10 @@ describe("the meetings recorder loop", () => {
         expect(rows[0].text).toBeUndefined();
         expect(existsSync(join(run.folder, "ocr.jsonl"))).toBe(false);
         expect(run.ocrStarts).toEqual([run.saved!.id]);
+        // The worker reads the recording's OCR settings from beside the frames; a live change rewrites them.
+        expect(
+            SafeJSON.parse(readFileSync(join(run.folder, "ocr-settings.json"), "utf8"), { strict: true })
+        ).toMatchObject({ enabled: true, minChars: 0 });
         const at = new Date(rows[0].at);
         expect(frames[0]).toBe(`${at.toISOString().replace(/[:.]/g, "-")}-d1.jpg`);
         expect(run.state.frames).toBe(1);
