@@ -448,6 +448,78 @@ describe("computeSessionChanges", () => {
         expect(() => storeBlobs(changes.files, changes.blobs, (blobs) => blobs.map(() => "0000"))).toThrow();
     });
 
+    it.each([
+        [0, 2],
+        [999, 2],
+        [1000, 2],
+        [0, 1003],
+    ])(
+        "touch ordering preserves discovery order after %i earlier touches for %i simultaneous touches",
+        (prefix, count) => {
+            const padding = Array.from({ length: prefix }, (_, index) =>
+                call(`padding-${index}`, "p1", "Write", [1, 1], {
+                    filePath: `${REPO}/src/padding.ts`,
+                    before: "old\n",
+                    after: "new\n",
+                })
+            );
+            const edits = Array.from({ length: count }, (_, index) =>
+                call(`edit-${index}`, "p2", "Edit", [10, 10], {
+                    filePath: `${REPO}/src/ordered.ts`,
+                    before: `${index}\n`,
+                    after: `${index + 1}\n`,
+                })
+            );
+            const result = compute({
+                transcript: transcriptOf(
+                    "fixture-session",
+                    [
+                        ["p1", "earlier touches", 0],
+                        ["p2", "simultaneous edits", 10],
+                    ],
+                    [...padding, ...edits]
+                ),
+            });
+
+            expect(result.turns[1]?.files[0]).toMatchObject({
+                path: `${REPO}/src/ordered.ts`,
+                toolUseIds: edits.map((edit) => edit.id),
+                beforeOid: gitBlobOid(Buffer.from("0\n")),
+                afterOid: gitBlobOid(Buffer.from(`${count}\n`)),
+            });
+        }
+    );
+
+    it("touch ordering keeps timestamps ahead of discovery order across a millisecond boundary", () => {
+        const padding = Array.from({ length: 1000 }, (_, index) =>
+            call(`padding-${index}`, "p1", "Write", [0, 0], {
+                filePath: `${REPO}/src/padding.ts`,
+                before: "old\n",
+                after: "new\n",
+                startedAt: null,
+            })
+        );
+        const later = call("later", "p1", "Edit", [10.001, 10.001], {
+            filePath: `${REPO}/src/ordered.ts`,
+            before: "middle\n",
+            after: "after\n",
+        });
+        const earlier = call("earlier", "p1", "Edit", [10, 10], {
+            filePath: `${REPO}/src/ordered.ts`,
+            before: "before\n",
+            after: "middle\n",
+        });
+        const result = compute({
+            transcript: transcriptOf("fixture-session", [["p1", "interleaved edits", 0]], [later, ...padding, earlier]),
+        });
+
+        expect(result.files.find((file) => file.path === `${REPO}/src/ordered.ts`)).toMatchObject({
+            toolUseIds: ["earlier", "later"],
+            beforeOid: gitBlobOid(Buffer.from("before\n")),
+            afterOid: gitBlobOid(Buffer.from("after\n")),
+        });
+    });
+
     it("selects the last turns that changed a file, and merges them first-before to last-after", () => {
         expect(lastChangedTurns(changes, 1).map((item) => item.turnId)).toEqual(["p3"]);
         expect(lastChangedTurns(changes, 2).map((item) => item.turnId)).toEqual(["p2", "p3"]);
