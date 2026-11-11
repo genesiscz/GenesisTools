@@ -269,6 +269,9 @@ final class MeetingsReviewRowTests: XCTestCase {
         detail.toggleStruck("i3")
         XCTAssertEqual(detail.pendingStruck, ["q2"], "a second click puts the item back")
         try TimelineSnapshot.write(ReachList(pending: pending, detail: detail).padding(18), name: "reach-sheet-unstruck", width: 520, scheme: .light)
+        // The card over the column (no window sheet): the backdrop, the card, its buttons; a narrow column narrows it.
+        try TimelineSnapshot.write(ReachOverlay(detail: detail).frame(height: 560), name: "reach-card", width: 680, scheme: .dark)
+        try TimelineSnapshot.write(ReachOverlay(detail: detail).frame(height: 560), name: "reach-card-narrow", width: 440, scheme: .dark)
         XCTAssertEqual(ReachSheet.lead(pending), "Besides Q1 (→ Dana Example), this decision also changes:")
         XCTAssertEqual(ReachList.sameLine(reach.items.filter { $0.role == .same }, detail: detail),
                        "It also closes 1 question, about the same span: the same question, not asked again.",

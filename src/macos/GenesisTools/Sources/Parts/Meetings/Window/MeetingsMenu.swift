@@ -75,7 +75,7 @@ enum MeetingsMenu {
 
 /// The player's plain keys in the Meetings window (G-KEY-1, G-STACK-2): Space plays or pauses, Left and Right go 5 s,
 /// `[` and `]` step to the previous and next pin, Esc pops the context stack (announced) before the views get it. A text
-/// field, a sheet or a popover keeps every key; a key the player has no use for goes on to the views (Up and Down,
+/// field, a sheet, the "This also affects" card or a popover keeps every key; a key the player has no use for goes on to the views (Up and Down,
 /// Return, the number keys, Esc that closes an editor or clears the selection).
 @MainActor
 enum MeetingsPlaybackKeys {
@@ -115,7 +115,9 @@ enum MeetingsPlaybackKeys {
         guard let window = event.window, window.frameAutosaveName == windowName, window.attachedSheet == nil,
               !(window.firstResponder is NSText),
               let key = key(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags),
-              let model = MeetingsMenuTarget.shared.model else { return false }
+              let model = MeetingsMenuTarget.shared.model,
+              // The "This also affects" card is drawn in the window (no attached sheet) and keeps every key, as a sheet did.
+              model.detail?.pendingReach == nil else { return false }
         return perform(key, model: model)
     }
 

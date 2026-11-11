@@ -63,7 +63,10 @@ struct MeetingDetailView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
-        .sheet(item: $detail.pendingReach) { pending in ReachSheet(pending: pending, detail: detail) }
+        // The "This also affects" card is drawn in the window, not as a sheet: a window-modal sheet runs its slide as a
+        // loop on the main thread, and opening or closing it froze the window for 0.5 to 1 s (stall stacks of
+        // 2026-11-11, NSSheetMoveHelper).
+        .overlay { ReachOverlay(detail: detail) }
         .sheet(item: $detail.history) { history in HistorySheetView(detail: detail, history: history) }
         .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")

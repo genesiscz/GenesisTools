@@ -159,11 +159,12 @@ struct ItemsTab: View {
             .focusable()
             .focused($focused)
             .focusEffectDisabled()
-            .onKeyPress(.upArrow) { step(-1, rows: ids, proxy: proxy) }
-            .onKeyPress(.downArrow) { step(1, rows: ids, proxy: proxy) }
-            .onKeyPress(.return) { returnPressed(shown) }
-            .onKeyPress(.delete) { pickRole("none", in: shown) }
+            .onKeyPress(.upArrow) { cardShows ? .ignored : step(-1, rows: ids, proxy: proxy) }
+            .onKeyPress(.downArrow) { cardShows ? .ignored : step(1, rows: ids, proxy: proxy) }
+            .onKeyPress(.return) { cardShows ? .ignored : returnPressed(shown) }
+            .onKeyPress(.delete) { cardShows ? .ignored : pickRole("none", in: shown) }
             .onKeyPress(.escape) {
+                guard !cardShows else { return .ignored }
                 // G-STACK-2: the editor closes first; the player's stack pops before this view hears Esc
                 // (MeetingsPlaybackKeys); the selection clears last.
                 if detail.editingRow != nil {
@@ -174,7 +175,7 @@ struct ItemsTab: View {
                 detail.selectedRow = nil
                 return .handled
             }
-            .onKeyPress(characters: .decimalDigits) { press in pickNumber(press.characters, in: shown) }
+            .onKeyPress(characters: .decimalDigits) { press in cardShows ? .ignored : pickNumber(press.characters, in: shown) }
             // A pin's click on a meeting that was not open selects its row before the rows land (G-PLAY-6).
             .onAppear { if let id = detail.selectedRow { keepInView(id, proxy: proxy) } }
             .onChange(of: detail.selectedRow) { _, id in
@@ -192,6 +193,9 @@ struct ItemsTab: View {
                            applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
         }
     }
+
+    /// The "This also affects" card shows over the column: its keys are its own (Return saves, Esc cancels).
+    private var cardShows: Bool { detail.pendingReach != nil }
 
     /// The edge the window's notices float at.
     private var noticeEdge: VerticalEdge {

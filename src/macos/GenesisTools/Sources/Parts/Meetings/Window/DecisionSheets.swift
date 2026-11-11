@@ -16,10 +16,11 @@ struct ReachSheet: View {
             Text("This also affects").font(.system(size: 15, weight: .semibold))
             Text(verbatim: Self.lead(pending))
                 .font(.system(size: 12.5)).foregroundStyle(.secondary)
-            ScrollView {
+            // As tall as the list, up to 360 pt: on the card over the column a greedy scroll area stood 360 pt high
+            // under a one-item list.
+            FittedScroll(maxHeight: 360) {
                 ReachList(pending: pending, detail: detail)
             }
-            .frame(maxHeight: 360)
             if !struck.isEmpty {
                 Text(verbatim: "\(Plural.count(struck.count, "struck item")) \(struck.count == 1 ? "stays" : "stay") as \(struck.count == 1 ? "it is" : "they are") and \(struck.count == 1 ? "is" : "are") not part of this decision.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary)
@@ -39,7 +40,7 @@ struct ReachSheet: View {
             }
         }
         .padding(18)
-        .frame(width: 520)
+        .frame(maxWidth: 520)
     }
 
     /// "Besides Q11 (→ Ussov Stanislav), this decision also changes:" — a changed answer says so.
@@ -47,6 +48,53 @@ struct ReachSheet: View {
         let answer = pending.action.answer.map { " (→ \($0))" } ?? ""
         let verb = pending.action.replaces == nil ? "this decision also changes" : "the changed answer also changes"
         return "Besides \(pending.row.label)\(answer), \(verb):"
+    }
+}
+
+/// The "This also affects" card over the meeting column: a dimmed backdrop (a click on it cancels), the card with the
+/// keyboard in it (Return saves, Esc cancels), a short fade (none under Reduce Motion). It replaces a window sheet,
+/// whose slide blocked the main thread for its whole length. It reads `pendingReach` itself, so the column above it
+/// does not re-run when the card comes or goes.
+struct ReachOverlay: View {
+    let detail: MeetingDetailModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            if let pending = detail.pendingReach {
+                Color.black.opacity(0.32)
+                    .contentShape(Rectangle())
+                    .onTapGesture { detail.cancelReach() }
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+                ReachCard(pending: pending, detail: detail)
+                    .padding(20)
+                    .transition(.opacity)
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: detail.pendingReach != nil)
+    }
+}
+
+/// The card itself: the sheet's content on the window's own background, with an edge and a shadow. The keyboard moves
+/// into it when it shows, so the Items list behind it no longer takes Return, Esc or the number keys.
+private struct ReachCard: View {
+    let pending: MeetingDetailModel.PendingReach
+    let detail: MeetingDetailModel
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        ReachSheet(pending: pending, detail: detail)
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.white.opacity(0.1)))
+            .shadow(color: .black.opacity(0.35), radius: 22, y: 8)
+            .focusable()
+            .focused($focused)
+            .focusEffectDisabled()
+            .onAppear { focused = true }
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityLabel("This also affects")
     }
 }
 
