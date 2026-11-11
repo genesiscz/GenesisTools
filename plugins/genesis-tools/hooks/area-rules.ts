@@ -593,22 +593,40 @@ function editedFiles(args: string[], scriptFlag: (arg: string) => boolean): stri
 /**
  * An interpreter that runs code from the command itself (`python3 -c`, `bun -e`, `node --eval`), or from a
  * here-document in the same command (`python3 - <<EOF`, a script written by `cat > x.ts <<EOF` and run after it):
- * the code is in view but its writes are not, so every path the command names counts as written (Martin,
- * 2026-11-11: "bash python scripts"), but only when the code calls something that writes: a probe script that only
- * reads and prints names many paths, and got 10.7 KB of rules on its first try. Running a script file alone stays a
- * read: `bun scripts/test.ts src/x` writes nothing it names.
+ * the code is in view but its writes are not (Martin, 2026-11-11: "bash python scripts"). Only the code counts, only
+ * when it calls something that writes, and only a string literal that is a whole path: a file a script writes is
+ * passed as `"src/a.ts"`. Measured the same day on this hook's own scripts: counting every path of the command gave
+ * a read-only probe 10.7 KB of rules and a script that wrote one rule file the CI and README rules as well, because
+ * the command also ran `bun scripts/ci/lint-rules.ts` and a message named a README. Running a script file alone
+ * stays a read: `bun scripts/test.ts src/x` writes nothing it names.
  */
 const WRITE_CALL = /write|rename|appendFile|copyFile|unlink|\bopen\([^)]*["'][wax]|\.replace_all|shutil\.(copy|move)/i;
 
 function inlineScript(args: string[], command: string, inlineFlags: readonly string[]): WriteTargets | null {
-    const inline = args.some(
-        (arg) => inlineFlags.includes(arg) || inlineFlags.some((flag) => arg.startsWith(`${flag}=`))
-    );
-    if ((!inline && !command.includes("<<")) || !WRITE_CALL.test(command)) {
+    const code = [...inlineCode(args, inlineFlags), ...hereDocuments(command)].join("\n");
+    if (!WRITE_CALL.test(code)) {
         return null;
     }
 
-    return written(pathTokens(command));
+    const literals = [...code.slice(0, MAX_SCAN_CHARS).matchAll(/(["'`])([^"'`\n]{1,400})\1/g)].map((m) => m[2] ?? "");
+    return written(literals.filter((literal) => pathTokens(literal).join() === literal.replace(/\/$/, "")));
+}
+
+/** The code an interpreter gets on its command line: the word after `-c` or `-e`, or the value of `--eval=`. */
+function inlineCode(args: string[], inlineFlags: readonly string[]): string[] {
+    return args.flatMap((arg, i) => {
+        if (inlineFlags.includes(arg)) {
+            return [args[i + 1] ?? ""];
+        }
+
+        const flag = inlineFlags.find((candidate) => arg.startsWith(`${candidate}=`));
+        return flag ? [arg.slice(flag.length + 1)] : [];
+    });
+}
+
+/** The bodies of the command's here-documents. */
+function hereDocuments(command: string): string[] {
+    return [...command.matchAll(/<<-?\s*(['"]?)([\w-]+)\1[^\n]*\n([\s\S]*?)\n\s*\2(?:\n|$)/g)].map((m) => m[3] ?? "");
 }
 
 /**

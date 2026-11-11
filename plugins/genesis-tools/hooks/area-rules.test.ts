@@ -285,6 +285,11 @@ describe("writeTargets", () => {
         [`bun -e 'await Bun.write("src/du/a.ts", "x")'`, ["src/du/a.ts"]],
         ["python3 - <<'PY'\nopen('src/du/a.ts', 'w')\nPY", ["src/du/a.ts"]],
         ["cat > \"$S/x.ts\" <<'EOF'\nwriteFileSync('src/du/a.ts', s)\nEOF\nbun \"$S/x.ts\"", ["src/du/a.ts"]],
+        // Only a whole-path literal in the code: not a path inside a message, not the next command's operands.
+        [
+            'cat > "$S/w.ts" <<\'EOF\'\nwriteFileSync("src/du/a.ts", "see src/x/README.md")\nEOF\nbun "$S/w.ts" && bun scripts/ci/x.ts',
+            ["src/du/a.ts"],
+        ],
     ];
     const reads = [
         "ls src/du",
