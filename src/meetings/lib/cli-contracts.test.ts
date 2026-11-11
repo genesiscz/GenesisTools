@@ -30,6 +30,29 @@ test("service comment refusals keep their code in human and JSON errors", () => 
     });
 });
 
+test("standalone subscription flags fail before resolving or reading a meeting", async () => {
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const resolve = spyOn(MeetingStore.prototype, "resolve");
+    try {
+        for (const flag of ["--with-comments", "--from-start", "--follow"]) {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+            await program.parseAsync(["listen", "missing", flag], { from: "user" });
+            expect(process.exitCode).toBe(1);
+            expect(human).toHaveBeenLastCalledWith(
+                "--with-comments, --from-start and --follow require --subscribe-answers."
+            );
+        }
+        expect(resolve).not.toHaveBeenCalled();
+    } finally {
+        raw.mockRestore();
+        human.mockRestore();
+        resolve.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 const failureRecordSchema = z.object({
     error: z.object({
         message: z.string(),

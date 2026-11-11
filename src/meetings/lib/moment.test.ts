@@ -397,9 +397,16 @@ describe("times named in a text (R17, R38)", () => {
         ]);
     });
 
-    // A known limit (WaveA-Handoff): a time of day reads as a transcript time, so a row offers it as one.
-    test("a wall-clock time in a question reads as a transcript time", () => {
-        expect(momentsInText("Was this decided at the 14:30 standup?").map((one) => one.target)).toEqual([
+    test("explicit wall-clock cues stay plain while recording timestamps remain playable", () => {
+        for (const text of [
+            "Was this decided at the 14:30 standup?",
+            "The 2:30 pm call",
+            "14:30 CET",
+            "14:30 schůzka",
+        ]) {
+            expect(momentsInText(text)).toEqual([]);
+        }
+        expect(momentsInText("At 14:30 in the recording, discuss the 2:30 pm call").map((one) => one.target)).toEqual([
             { kind: "time", atSec: 870 },
         ]);
     });
