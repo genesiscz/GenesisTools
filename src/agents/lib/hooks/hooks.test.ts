@@ -892,6 +892,12 @@ describe("applySetting", () => {
         });
         expect(() => describeSetting(config, "mods.resumeGuard")).toThrow("No single setting");
         expect(() => describeSetting(config, "mods.nothing.here")).toThrow("No single setting");
+        // An unset per-harness key shows the shared value it takes; a set one shows its own.
+        expect(describeSetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.codex.read")).toMatchObject({
+            value: "pointer",
+            defaultValue: "pointer",
+        });
+        expect(describeSetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.claude.read").value).toBe("off");
     });
 
     it("reads the mods plugin's row from claude plugin list --json", () => {

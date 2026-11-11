@@ -243,4 +243,8 @@ export const AREA_RULES_HOOK_SECTION: HookConfigSection<AreaRulesConfig> = {
         ],
     ],
     presets: AREA_RULES_PRESETS,
+    inheritsFrom: (key) => {
+        const target = keyOf(key);
+        return target?.harness ? `areaRules.${target.field}` : undefined;
+    },
 };

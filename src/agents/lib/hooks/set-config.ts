@@ -90,7 +90,10 @@ function valueAt(config: HooksConfig, key: string): unknown {
 /** The setting at a dotted key (`mods.resumeGuard.minTokens`); throws for a key that holds no single value. */
 export function describeSetting(config: HooksConfig, key: string): SettingDescription {
     const owner = HOOK_SECTION_NAMES.find((name) => HOOK_CONFIG_SECTIONS[name].owns(key));
-    const value = valueAt(config, key);
+    const parent = owner ? HOOK_CONFIG_SECTIONS[owner].inheritsFrom?.(key) : undefined;
+    // An unset key that inherits shows the value it takes now, from the key it inherits.
+    const effective = (from: HooksConfig) => valueAt(from, key) ?? (parent ? valueAt(from, parent) : undefined);
+    const value = effective(config);
 
     if (!owner || value === undefined || (typeof value === "object" && value !== null)) {
         throw new Error(`No single setting at ${key}. Settable: ${SETTABLE_KEYS.join(", ")}`);
@@ -99,7 +102,7 @@ export function describeSetting(config: HooksConfig, key: string): SettingDescri
     const presets = HOOK_CONFIG_SECTIONS[owner].presets?.[key] ?? [];
     const named = presetNamed(presets, value)?.name;
 
-    return { key, value, defaultValue: valueAt(DEFAULT_HOOKS_CONFIG, key), ...(named ? { named } : {}), presets };
+    return { key, value, defaultValue: effective(DEFAULT_HOOKS_CONFIG), ...(named ? { named } : {}), presets };
 }
 
 /** Applies one dotted key to a config, validating the key and the value. Pure. */
