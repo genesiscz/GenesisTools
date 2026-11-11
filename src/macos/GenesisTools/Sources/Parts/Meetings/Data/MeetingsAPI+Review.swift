@@ -230,6 +230,7 @@ struct DecisionResult: Decodable, Equatable {
     let entry: JournalEntry?
     let skipped: [DecisionSkip]
     let warnings: [String]?
+    var rows: ReviewRowsPatch? = nil
 }
 
 /// What a planned decision reaches beyond the items it names (`DecisionReach`): look-alikes it settles, the lines a
@@ -311,6 +312,7 @@ extension MeetingsAPI {
         /// `decision.apply` only: `refuse` answers `already-decided` for an item someone decided since the caller saw
         /// it (the window), `skip` (the default) skips it.
         var onDecided: String?
+        var lowPriority: String? = nil
     }
 
     /// `decision.plan`: what `decision.apply` would do now and reach, without saving anything.
@@ -660,6 +662,65 @@ struct ReviewRows: Decodable, Equatable {
     let meeting: String
     var rows: [ReviewRow]
     let hidden: Hidden
+}
+
+/// A decision's changed rows. Before values protect rows that a later decision changed while this reply travelled.
+struct ReviewRowsPatch: Decodable, Equatable {
+    struct Change: Decodable, Equatable {
+        let id: String
+        let before: ReviewRow?
+        let after: ReviewRow?
+    }
+    struct Hidden: Decodable, Equatable { let before: ReviewRows.Hidden; let after: ReviewRows.Hidden }
+    struct Fields: Decodable, Equatable {
+        struct Value: Decodable, Equatable {
+            let title: String
+            let project: String?
+            let labels: [String]
+            let speakerLabels: [String: String]
+        }
+        let before: Value
+        let after: Value
+    }
+    let meeting: String
+    let changes: [Change]
+    let order: [String]
+    let hidden: Hidden
+    let fields: Fields
+
+    func applying(to current: ReviewRows, token: String, latest: [String: String]) -> ReviewRows {
+        guard current.meeting == meeting else { return current }
+        var rows = current.rows
+        var conflicted = false
+        for change in changes {
+            if let last = latest[change.id], last != token, last != change.before?.decision?.token {
+                conflicted = true
+                continue
+            }
+            let index = rows.firstIndex { $0.id == change.id }
+            let present = index.map { rows[$0] }
+            var optimistic = change.before
+            if let status = change.after?.status { optimistic?.status = status }
+            guard present == change.before || present == change.after || present == optimistic else {
+                conflicted = true
+                continue
+            }
+            if let after = change.after {
+                if let index { rows[index] = after } else { rows.append(after) }
+            } else if let index {
+                rows.remove(at: index)
+            }
+        }
+        if !conflicted {
+            let positions = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) })
+            rows = rows.enumerated().sorted {
+                let a = positions[$0.element.id] ?? Int.max, b = positions[$1.element.id] ?? Int.max
+                return a == b ? $0.offset < $1.offset : a < b
+            }.map(\.element)
+        }
+        return ReviewRows(meeting: current.meeting, rows: rows,
+                          hidden: !conflicted && current.hidden == hidden.before ? hidden.after : current.hidden)
+    }
 }
 
 // MARK: - Comments (`meetingCommentSchema`)

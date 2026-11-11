@@ -269,6 +269,9 @@ final class MeetingsServiceTests: XCTestCase {
                     let entry = try XCTUnwrap(decided.entry, label)
                     XCTAssertEqual(entry.actor.kind, "agent", label)
                     XCTAssertFalse(entry.changes.isEmpty, "\(label): the item before and after decode")
+                    let patch = try XCTUnwrap(decided.rows, "\(label): changed rows decode from the additive response")
+                    XCTAssertEqual(patch.meeting, entry.meeting)
+                    XCTAssertEqual(Set(patch.changes.map(\.id)), Set(entry.changes.map(\.id)))
                 }
                 if let data = (reply?["error"] as? [String: Any])?["data"] {
                     let refused = try MeetingsService.decode(AlreadyDecided.self, data)

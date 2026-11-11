@@ -103,6 +103,7 @@ final class MeetingDetailModel {
     @ObservationIgnored var eventBurstTokens: Set<String> = []
     /// The window's decisions whose own path read the record and the rows again (`refreshAfterDecision`).
     @ObservationIgnored var refreshedTokens: Set<String> = []
+    @ObservationIgnored var rowDecisionTokens: [String: String] = [:]
     @ObservationIgnored var autoplayTask: Task<Void, Never>?
     @ObservationIgnored var eventRefresh: Task<Void, Never>?
     /// The Meetings service the writes go through; nil runs the commands (tests, the preview, a service turned off).
@@ -309,6 +310,19 @@ final class MeetingDetailModel {
 
     private static func attempt<Value>(_ source: MeetingsRead<Value>) async -> Result<Value, Error> {
         do { return .success(try await source.run()) } catch { return .failure(error) }
+    }
+
+    func settleDecisionRecord(_ value: MeetingRecordView) {
+        settle(\.record, .loaded(value))
+    }
+
+    /// A response patch supersedes reads started before this decision's committed snapshot.
+    func cancelReadsBeforeDecisionPatch() {
+        recordGeneration += 1
+        rowsGeneration += 1
+        inFlight[\MeetingDetailModel.record]?.cancel()
+        inFlight[\MeetingDetailModel.rows]?.cancel()
+        pairRead?.cancel()
     }
 
     /// One part's answer of a paired read, set as `read` sets it.

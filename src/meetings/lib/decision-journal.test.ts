@@ -3,7 +3,12 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
-import { type MeetingItem, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import {
+    type MeetingItem,
+    type MeetingRecord,
+    MeetingStore,
+    meetingRecordSchema,
+} from "@genesiscz/utils/meetings/record";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { SpeakerHint } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -74,6 +79,38 @@ async function fixture(items: Record<string, unknown>[], labels: Record<string, 
 const person = { kind: "listen" } as const;
 
 describe("decision journal", () => {
+    test("the internal observer receives committed locked snapshots and excludes the next queued write", async () => {
+        const fx = await fixture(lookAlikes());
+        const snapshots: Array<{ before: MeetingRecord; after: MeetingRecord }> = [];
+        const queued: Array<Promise<MeetingRecord>> = [];
+        const journal = new DecisionJournal({
+            store: fx.store,
+            ledger: () => {},
+            now: () => new Date(now),
+            onApplied: (snapshot) => {
+                snapshots.push(snapshot);
+                expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)).toEqual(snapshot.after);
+                queued.push(
+                    fx.store.update(fx.meeting.id, { command: "test", change: "concurrent title" }, (record) => {
+                        record.title = "Next writer";
+                    })
+                );
+            },
+        });
+        const request = { meeting: fx.meeting.id, action: { kind: "confirm", items: ["i1"] } as const, actor: person };
+        await journal.plan({ ...request, action: { kind: "confirm", items: ["i1"] } });
+        expect(snapshots).toHaveLength(0);
+        await journal.apply({ ...request, action: { kind: "confirm", items: ["i1"] } });
+        await Promise.all(queued);
+        expect(snapshots).toHaveLength(1);
+        expect(snapshots[0]?.before.items[0]?.status).toBe("suggested");
+        expect(snapshots[0]?.after.items[0]?.status).toBe("confirmed");
+        expect(snapshots[0]?.after.title).toBe("Harbor sync");
+        expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)?.title).toBe("Next writer");
+        await journal.apply({ ...request, action: { kind: "confirm", items: ["i1"] } });
+        expect(snapshots).toHaveLength(1);
+    });
+
     test('an answer that leaves its look-alikes decides only its own question (the window\'s "Only this question")', async () => {
         const fx = await fixture(lookAlikes());
         const action = { kind: "answer", question: "Q1", answer: "ADO", lookAlikes: "leave" } as const;

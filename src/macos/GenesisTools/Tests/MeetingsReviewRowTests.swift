@@ -124,6 +124,103 @@ final class MeetingsReviewRowTests: XCTestCase {
         return try JSONDecoder().decode(JournalEntry.self, from: Data(json.utf8))
     }
 
+    private func rowPatch(_ changes: [ReviewRowsPatch.Change], order: [String], hiddenBefore: Int = 0,
+                          hiddenAfter: Int = 0) -> ReviewRowsPatch {
+        .init(meeting: "m", changes: changes, order: order,
+              hidden: .init(before: .init(lowPriority: hiddenBefore, minPriority: 0.5),
+                            after: .init(lowPriority: hiddenAfter, minPriority: 0.5)),
+              fields: .init(before: .init(title: "Before", project: nil, labels: [], speakerLabels: [:]),
+                            after: .init(title: "After", project: nil, labels: [], speakerLabels: [:])))
+    }
+
+    func testAChangedRowPatchReconcilesOptimisticStatusAndKeepsNewerDecisions() throws {
+        let initial = try rows()
+        let before = initial.rows[0]
+        var after = before
+        after.status = "confirmed"
+        after.answer = "Dana Example"
+        let patch = rowPatch([.init(id: before.id, before: before, after: after)], order: initial.rows.map(\.id))
+        var optimistic = before
+        optimistic.status = "confirmed"
+        let current = ReviewRows(meeting: "m", rows: [optimistic] + initial.rows.dropFirst(), hidden: initial.hidden)
+        XCTAssertEqual(patch.applying(to: current, token: "ours", latest: [before.id: "ours"]).rows[0], after,
+                       "the event can set the status before the response brings the complete row")
+        XCTAssertEqual(patch.applying(to: current, token: "ours", latest: [before.id: "later"]).rows[0], optimistic,
+                       "a newer event can have exactly the same status, so its token must still protect it")
+        var newer = after
+        newer.answer = "Alex Example"
+        let reloaded = ReviewRows(meeting: "m", rows: [newer] + initial.rows.dropFirst(), hidden: initial.hidden)
+        XCTAssertEqual(patch.applying(to: reloaded, token: "ours", latest: [:]).rows[0], newer,
+                       "a newer full read is protected by its row value too")
+        XCTAssertEqual(patch.applying(to: initial, token: "ours", latest: [:]).rows[1], initial.rows[1],
+                       "unrelated rows are kept")
+    }
+
+    func testAFullRowsReadReconcilesOldEventTokensBeforeTheNextPatch() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let full = try rows()
+        let before = full.rows[2]
+        detail.rowDecisionTokens[before.id] = "old-event"
+        detail.rows = .loaded(full)
+        detail.rowsLanded(full)
+        XCTAssertEqual(detail.rowDecisionTokens[before.id], before.decision?.token)
+        var after = before
+        after.status = "rejected"
+        let patch = rowPatch([.init(id: before.id, before: before, after: after)], order: full.rows.map(\.id))
+        XCTAssertEqual(patch.applying(to: full, token: "ours", latest: detail.rowDecisionTokens).rows[2], after,
+                       "a reconnect or full read must clear markers that predate its snapshot")
+        let newer = try entry(token: "newer-event", action: #"{"kind":"reject","items":["i3"]}"#,
+                              changes: [("i3", "confirmed", "rejected")])
+        detail.markRows(newer)
+        XCTAssertEqual(patch.applying(to: full, token: "ours", latest: detail.rowDecisionTokens).rows[2], before,
+                       "an event after that full read still protects the newer decision")
+    }
+
+    func testARowPatchAddsRemovesOrdersAndUpdatesVisibilityWithoutDroppingConcurrentRows() throws {
+        let initial = try rows()
+        let current = ReviewRows(meeting: "m", rows: Array(initial.rows.prefix(2)), hidden: .init(lowPriority: 1, minPriority: 0.5))
+        let patch = rowPatch([.init(id: "i2", before: initial.rows[1], after: nil),
+                              .init(id: "i3", before: nil, after: initial.rows[2])], order: ["i3", "q1"], hiddenBefore: 1)
+        let patched = patch.applying(to: current, token: "ours", latest: [:])
+        XCTAssertEqual(patched.rows.map(\.id), ["i3", "q1"])
+        XCTAssertEqual(patched.hidden.lowPriority, 0)
+        let concurrent = ReviewRows(meeting: "m", rows: initial.rows, hidden: current.hidden)
+        let remove = rowPatch([.init(id: "i2", before: initial.rows[1], after: nil)], order: ["q1"], hiddenBefore: 1)
+        XCTAssertEqual(remove.applying(to: concurrent, token: "ours", latest: [:]).rows.map(\.id), ["q1", "i3"],
+                       "an added row not present in the response's order survives")
+        let protected = patch.applying(to: current, token: "ours", latest: ["i2": "later"])
+        XCTAssertNotNil(protected.rows.first { $0.id == "i2" })
+        XCTAssertEqual(protected.hidden.lowPriority, 1, "a rejected stale patch cannot replace newer visibility counts")
+    }
+
+    func testTheDecisionPatchUpdatesTheRecordAndAnOldReplyUsesTheReadPath() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let initial = try rows()
+        detail.rows = .loaded(initial)
+        detail.settleDecisionRecord(try JSONDecoder().decode(MeetingRecordView.self, from: Data("""
+        {"id":"m","title":"Before","labels":[],"start":"2026-11-03T09:00:00Z","items":[{"id":"i2","kind":"term","status":"suggested"}],
+         "context":[],"speakers":{"labels":{}},"sources":{}}
+        """.utf8)))
+        let entry = try entry(token: "ours", action: #"{"kind":"confirm","items":["i2"]}"#, changes: [("i2", "suggested", "confirmed")])
+        let legacy = DecisionResult(entry: entry, skipped: [], warnings: nil)
+        XCTAssertFalse(detail.patchDecision(legacy), "a response from an older service retains the full read fallback")
+        var after = initial.rows[1]
+        after.status = "confirmed"
+        let patch = rowPatch([.init(id: "i2", before: initial.rows[1], after: after)], order: initial.rows.map(\.id))
+        var result = legacy
+        result.rows = patch
+        detail.markRows(entry)
+        XCTAssertTrue(detail.patchDecision(result))
+        XCTAssertEqual(detail.rows.value?.rows[1], after)
+        XCTAssertEqual(detail.record.value?.items[0].status, "confirmed")
+        XCTAssertEqual(detail.record.value?.title, "After")
+        var newer = try XCTUnwrap(detail.record.value)
+        newer.title = "Someone else's title"
+        detail.settleDecisionRecord(newer)
+        XCTAssertTrue(detail.patchDecision(result))
+        XCTAssertEqual(detail.record.value?.title, "Someone else's title", "a later field edit survives an older response")
+    }
+
     func testTheKindFilterShowsOneKindAndHoldsOnlyWhileBothKindsWait() throws {
         let rows = try rows().rows
         XCTAssertEqual(ItemsFilter.all.rows(rows).map(\.id), ["q1", "i2", "i3"])

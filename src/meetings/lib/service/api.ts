@@ -39,7 +39,7 @@ import {
     toneSoundSchema,
 } from "../moment-schema";
 import type { MeetingsOverview } from "../overview";
-import { reviewRowSchema, reviewRowsSchema } from "../review-row-schema";
+import { reviewRowSchema, reviewRowsPatchSchema, reviewRowsSchema } from "../review-row-schema";
 
 /**
  * The Meetings service's interface: one descriptor for the window, every `tools meetings` command, the REPL and an MCP
@@ -280,10 +280,12 @@ const decisionApply = defineMethod({
          * an item is skipped with its reason.
          */
         onDecided: z.enum(["skip", "refuse"]).optional(),
+        /** Match the caller's meeting.rows visibility when returning changed rows. */
+        lowPriority: z.enum(["hide", "show"]).optional(),
     }),
-    result: decidedSchema,
-    resultName: "{ entry?, skipped, warnings? }",
-    doc: "Makes one decision through the decision journal, as the connection's hello names the actor (window, listen, an agent and its session, or a command), and tells the subscribers `decision.applied` with the entry. Refused when an item is unknown (`failed`) or, with onDecided: refuse, decided already (`already-decided`).",
+    result: decidedSchema.extend({ rows: reviewRowsPatchSchema.optional() }),
+    resultName: "{ entry?, skipped, warnings?, rows? }",
+    doc: "Makes one decision through the decision journal, as the connection's hello names the actor (window, listen, an agent and its session, or a command), and tells the subscribers `decision.applied` with the entry. Returns changed review rows from the locked before and after snapshots, including indirect choice changes; before values protect later client updates. Older services omit rows and clients reread. Refused when an item is unknown (`failed`) or, with onDecided: refuse, decided already (`already-decided`).",
     effect: "reversible",
 });
 

@@ -113,6 +113,8 @@ export interface RevertRequest {
 
 export interface DecisionJournalOptions {
     store: MeetingStore;
+    /** Internal observer of one committed mutation, with both snapshots taken under the record lock. */
+    onApplied?: (snapshot: { before: MeetingRecord; after: MeetingRecord }) => void;
     /** An answer settles look-alikes that reach this confidence (`global.suggest.listenBelow`). */
     listenBelow?: number;
     /** Where the corrections a decision confirms or withdraws go; the corrections ledger by default. */
@@ -1408,7 +1410,11 @@ export class DecisionJournal {
         let openAfter = 0;
         // Filled in by the handler: the store reads it after the change, for the record's history line.
         const history: MeetingChange = { command: action.kind, change: "" };
+        let before: MeetingRecord | undefined;
         const decide = (record: MeetingRecord): boolean => {
+            if (this.options.onApplied) {
+                before = structuredClone(record);
+            }
             const items = structuredClone(record.items);
             const labels = { ...record.speakers.labels };
             const fieldsBefore = fieldValues(record);
@@ -1480,12 +1486,15 @@ export class DecisionJournal {
             meeting,
             history,
             (record) => decide(record),
-            () => {
+            (record) => {
                 if (result.entry) {
                     this.write(result.entry, {
                         reverted: action.kind === "revert" ? context.entryOf(action.token) : undefined,
                         openAfter,
                     });
+                    if (before) {
+                        this.options.onApplied?.({ before, after: structuredClone(record) });
+                    }
                 }
             }
         );

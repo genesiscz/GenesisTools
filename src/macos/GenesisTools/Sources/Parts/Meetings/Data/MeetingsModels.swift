@@ -119,7 +119,7 @@ struct MeetingContextRef: Decodable, Equatable, Hashable, Identifiable {
 }
 
 struct MeetingRecordView: Decodable, Equatable {
-    struct Speakers: Decodable, Equatable { let labels: [String: String] }
+    struct Speakers: Decodable, Equatable { var labels: [String: String] }
     struct Recording: Decodable, Equatable {
         struct Display: Decodable, Equatable, Hashable { let id: Int; let name: String?; let frames: Int? }
         let frames: Int?
@@ -130,14 +130,14 @@ struct MeetingRecordView: Decodable, Equatable {
     }
 
     let id: String
-    let title: String
-    let project: String?
-    let labels: [String]
+    var title: String
+    var project: String?
+    var labels: [String]
     let start: String
     let end: String?
     var items: [MeetingItem]
     let context: [MeetingContextRef]
-    let speakers: Speakers
+    var speakers: Speakers
     let recording: Recording?
     let sources: [String: JSONValue]
 

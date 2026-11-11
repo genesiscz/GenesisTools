@@ -468,6 +468,110 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(heard[1]?.params).toEqual({ meeting: REVIEW.id, token: applied.entry!.token, entry: reverted.entry });
     });
 
+    test("decision.apply returns every changed row, including settled and excluded look-alike choices", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const at = "2026-11-03T09:47:00.000Z";
+        await store.update(REVIEW.id, { command: "test", change: "word questions" }, (record) => {
+            record.items = meetingRecordSchema.parse({
+                ...record,
+                items: [
+                    ...[50, 70].map((atSec, index) => ({
+                        id: `i${index + 1}`,
+                        kind: "term",
+                        status: "suggested",
+                        heard: "Ada",
+                        proposed: "ADA",
+                        atSec,
+                        rules: [],
+                        suggestedAt: at,
+                    })),
+                    ...[50, 70, 90, 110].map((fromSec, index) => ({
+                        id: `i${index + 3}`,
+                        kind: "question",
+                        status: "suggested",
+                        about: "term",
+                        heard: "Ada",
+                        fromSec,
+                        toSec: fromSec + 4,
+                        question: "Which word?",
+                        choices: ["ADA"],
+                        decides: index < 2 ? [`i${index + 1}`] : [],
+                        priority: index === 3 ? 0.1 : 0.9,
+                        rules: [],
+                        suggestedAt: at,
+                    })),
+                ],
+            }).items;
+        });
+        const before = await client.call("meeting.rows", { meeting: REVIEW.id, lowPriority: "show" });
+        const applied = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            lowPriority: "show",
+            action: { kind: "answer", question: "i3", answer: "ADO", except: ["i5", "i6"] },
+        });
+        const after = await client.call("meeting.rows", { meeting: REVIEW.id, lowPriority: "show" });
+        const patch = applied.rows!;
+        expect(applied.entry?.settled).toEqual(["i4"]);
+        expect(patch.changes.map((change) => change.id).sort()).toEqual(["i1", "i2", "i3", "i4", "i5", "i6"]);
+        for (const change of patch.changes) {
+            expect(change.before).toEqual(before.rows.find((row) => row.id === change.id));
+            expect(change.after).toEqual(after.rows.find((row) => row.id === change.id));
+        }
+        expect(patch.order).toEqual(after.rows.map((row) => row.id));
+        expect(patch.hidden).toEqual({ before: before.hidden, after: after.hidden });
+        expect(patch.changes.find((change) => change.id === "i5")?.after).toMatchObject({
+            status: "suggested",
+            choices: expect.arrayContaining([expect.objectContaining({ value: "ADO", role: "earlier" })]),
+        });
+        const reopened = new MeetingStore(store.storage);
+        expect(reopened.read(REVIEW.id)?.items.find((item) => item.id === "i4")?.status).toBe("confirmed");
+        expect(reopened.read(REVIEW.id)?.items.find((item) => item.id === "i5")?.status).toBe("suggested");
+    });
+
+    test("a decision patch carries hidden rows becoming visible and leaves unchanged rows out", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        await store.update(REVIEW.id, { command: "test", change: "low question" }, (record) => {
+            record.items = meetingRecordSchema.parse({
+                ...record,
+                items: [
+                    ...record.items,
+                    {
+                        id: "i2",
+                        kind: "question",
+                        status: "suggested",
+                        about: "speaker",
+                        fromSec: 12,
+                        toSec: 30,
+                        question: "Who speaks?",
+                        choices: ["Alex Example"],
+                        decides: ["i1"],
+                        priority: 0.1,
+                        rules: [],
+                        suggestedAt: "2026-11-03T09:47:00.000Z",
+                    },
+                ],
+            }).items;
+        });
+        const result = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "answer", question: "i2", answer: "Alex Example" },
+        });
+        expect(result.rows?.hidden).toEqual({
+            before: { lowPriority: 1, minPriority: 0.5 },
+            after: { lowPriority: 0, minPriority: 0.5 },
+        });
+        expect(result.rows?.changes.find((change) => change.id === "i2")).toMatchObject({
+            after: { status: "confirmed" },
+        });
+        expect(result.rows?.changes.find((change) => change.id === "i2")?.before).toBeUndefined();
+        const unchanged = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+        });
+        expect(unchanged.entry).toBeUndefined();
+        expect(unchanged.rows).toBeUndefined();
+    });
+
     test("decision.plan answers the entry and its reach and writes nothing", async () => {
         const { client, store } = await ADAPTERS[kind]();
         const before = store.read(REVIEW.id);
@@ -942,6 +1046,32 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(refused).toMatchObject({ code: -32602 });
         expect(refused.message).toStartWith("subscribe: meeting:");
     });
+});
+
+test("an unreadable config omits the row patch without blocking a decision", async () => {
+    const { store, linkedSource } = scratchStore();
+    const client = new InProcessMeetingsClient({
+        hello,
+        deps: {
+            ...quietDeps,
+            store: () => store,
+            linkedSource,
+            config: async () => {
+                throw new Error("fixture config unreadable");
+            },
+        },
+    });
+    try {
+        const result = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+        });
+        expect(result.entry?.decided).toEqual(["i1"]);
+        expect(result.rows).toBeUndefined();
+        expect(new MeetingStore(store.storage).read(REVIEW.id)?.items[0]?.status).toBe("confirmed");
+    } finally {
+        client.close();
+    }
 });
 
 describe("the Meetings service's connections", () => {

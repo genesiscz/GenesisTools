@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
@@ -8,7 +9,16 @@ import { actorText } from "./decision-journal";
 import { itemWhat } from "./item-text";
 import { momentsInText } from "./moment-schema";
 import { inputNeeded, NONE_OF_THESE, type QuestionItem, questionLabel, questionView } from "./questions";
-import type { ClockTime, ReviewRow, ReviewRows, RowChoice, RowPart, RowSource, TextPiece } from "./review-row-schema";
+import type {
+    ClockTime,
+    ReviewRow,
+    ReviewRows,
+    ReviewRowsPatch,
+    RowChoice,
+    RowPart,
+    RowSource,
+    TextPiece,
+} from "./review-row-schema";
 import { speakerChoiceScores } from "./speaker-scores";
 
 export * from "./review-row-schema";
@@ -685,5 +695,38 @@ export function reviewRows(
             lowPriority: options.lowPriority === "show" ? 0 : record.items.filter(low).length,
             minPriority: options.minPriority,
         },
+    };
+}
+
+/** Compare every rendered row: a decision can change another row's choices without changing that item's status. */
+export function reviewRowsPatch(options: {
+    before: MeetingRecord;
+    after: MeetingRecord;
+    transcript?: Transcript;
+    minPriority: number;
+    lowPriority?: "hide" | "show";
+}): ReviewRowsPatch {
+    const before = reviewRows(options.before, options);
+    const after = reviewRows(options.after, options);
+    const previous = new Map(before.rows.map((row) => [row.id, row]));
+    const next = new Map(after.rows.map((row) => [row.id, row]));
+    const fields = (record: MeetingRecord) => ({
+        title: record.title,
+        ...(record.project ? { project: record.project } : {}),
+        labels: record.labels,
+        speakerLabels: record.speakers.labels,
+    });
+    return {
+        meeting: after.meeting,
+        changes: [...new Set([...previous.keys(), ...next.keys()])].flatMap((id) => {
+            const was = previous.get(id),
+                now = next.get(id);
+            return isDeepStrictEqual(was, now)
+                ? []
+                : [{ id, ...(was ? { before: was } : {}), ...(now ? { after: now } : {}) }];
+        }),
+        order: after.rows.map((row) => row.id),
+        hidden: { before: before.hidden, after: after.hidden },
+        fields: { before: fields(options.before), after: fields(options.after) },
     };
 }

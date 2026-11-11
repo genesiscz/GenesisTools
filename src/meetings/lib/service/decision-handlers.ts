@@ -15,7 +15,7 @@ import {
 } from "../decision-journal";
 import { CORRECTION_REPEATS } from "../dictionary-suggest";
 import { setMeetingFields } from "../meeting-fields";
-import { reviewRow } from "../review-rows";
+import { reviewRow, reviewRowsPatch } from "../review-rows";
 import { type AssignReachStretch, assignmentReach } from "../speaker-assign";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
 import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
@@ -50,13 +50,30 @@ export async function applyDecision(
     context: MeetingsCallContext,
     store: MeetingStore,
     deps: MeetingsHandlerDeps
-): Promise<Decided> {
+): Promise<MeetingsResult<"decision.apply">> {
     const record = recordOf(store, params.meeting);
 
     if (params.onDecided === "refuse") {
         refuseDecided(store, record, params.action);
     }
 
+    const captured: { value?: { before: MeetingRecord; after: MeetingRecord } } = {};
+    const onApplied = (snapshot: { before: MeetingRecord; after: MeetingRecord }): void => {
+        captured.value = snapshot;
+    };
+    const { OpenedMeeting } = await import("../opened-meeting");
+    const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
+    const config = await (deps.config ? deps.config() : opened.config()).catch((error: unknown) => {
+        log.warn({ error, meeting: record.id }, "decision rows unavailable because the meetings config does not read");
+        return undefined;
+    });
+    const transcript = await opened
+        .meeting()
+        .then((meeting) => meeting.transcript)
+        .catch((error: unknown) => {
+            log.debug({ error, meeting: record.id }, "decision rows without transcript words");
+            return undefined;
+        });
     const actor = actorOfCall(context);
     const reason = params.reason ? { reason: params.reason } : {};
     const { action } = params;
@@ -75,17 +92,30 @@ export async function applyDecision(
                           ...(action.unlabel ? { unlabel: action.unlabel } : {}),
                       },
                       quiet: true,
+                      onApplied,
                       actor,
                       ...reason,
                   })
               ).decided
-            : await (await journalOf(store, deps)).apply({ meeting: record.id, action, actor, ...reason });
+            : await (await journalOf(store, deps, onApplied)).apply({ meeting: record.id, action, actor, ...reason });
 
     if (decided.entry) {
         context.emit?.("decision.applied", { meeting: record.id, entry: decided.entry });
     }
 
-    return decided;
+    return {
+        ...decided,
+        ...(captured.value && config
+            ? {
+                  rows: reviewRowsPatch({
+                      ...captured.value,
+                      ...(transcript ? { transcript } : {}),
+                      minPriority: config.global.playback.listen.minPriority,
+                      ...(params.lowPriority ? { lowPriority: params.lowPriority } : {}),
+                  }),
+              }
+            : {}),
+    };
 }
 
 export async function revertDecision(
@@ -150,7 +180,11 @@ export function actorOfCall(context: Pick<MeetingsCallContext, "caller" | "local
 }
 
 /** The journal a call decides through: the store's, with the config's look-alike bar and the inputs a split needs. */
-async function journalOf(store: MeetingStore, deps: MeetingsHandlerDeps): Promise<DecisionJournal> {
+async function journalOf(
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps,
+    onApplied?: (snapshot: { before: MeetingRecord; after: MeetingRecord }) => void
+): Promise<DecisionJournal> {
     // A config that does not read keeps the default bar: a confirm worked without the config before the service.
     const config = await (deps.config ?? (() => new MeetingsConfigStore().read()))().catch((error: unknown) => {
         log.warn({ error }, "the meetings config does not read; decisions use the default look-alike bar");
@@ -163,6 +197,7 @@ async function journalOf(store: MeetingStore, deps: MeetingsHandlerDeps): Promis
         ...(deps.now ? { now: deps.now } : {}),
         split: splitInputsOf(store, deps),
         ownRound: true,
+        ...(onApplied ? { onApplied } : {}),
     });
 }
 

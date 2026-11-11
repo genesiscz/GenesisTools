@@ -906,7 +906,207 @@
             "labels": [],
             "corrections": []
           },
-          "skipped": []
+          "skipped": [],
+          "rows": {
+            "meeting": "2026-11-03-1000-design-review",
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "id": "i1",
+                  "label": "i1",
+                  "kind": "speaker-range",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "what": "Speaker 3 00:12–00:30 → Alex Example",
+                  "parts": [
+                    {
+                      "kind": "who",
+                      "text": "Speaker 3 → Alex Example"
+                    },
+                    {
+                      "kind": "when",
+                      "from": {
+                        "sec": 12,
+                        "text": "00:12"
+                      },
+                      "to": {
+                        "sec": 30,
+                        "text": "00:30"
+                      },
+                      "target": {
+                        "kind": "item",
+                        "id": "i1"
+                      }
+                    }
+                  ],
+                  "choices": [
+                    {
+                      "value": "Alex Example",
+                      "label": "Alex Example",
+                      "role": "suggested",
+                      "action": {
+                        "kind": "confirm"
+                      },
+                      "confidence": 0.82
+                    },
+                    {
+                      "value": "Dana Example",
+                      "label": "Dana Example",
+                      "role": "candidate",
+                      "action": {
+                        "kind": "confirm",
+                        "speaker": "Dana Example"
+                      }
+                    },
+                    {
+                      "value": "none of these",
+                      "label": "None of these",
+                      "role": "none",
+                      "action": {
+                        "kind": "reject"
+                      }
+                    }
+                  ],
+                  "edit": "person",
+                  "sources": [
+                    {
+                      "kind": "line",
+                      "at": {
+                        "sec": 9,
+                        "text": "00:09"
+                      },
+                      "text": "The button moved to the right."
+                    }
+                  ],
+                  "target": {
+                    "kind": "item",
+                    "id": "i1"
+                  }
+                },
+                "after": {
+                  "id": "i1",
+                  "label": "i1",
+                  "kind": "speaker-range",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "what": "Speaker 3 00:12–00:30 → Alex Example",
+                  "parts": [
+                    {
+                      "kind": "who",
+                      "text": "Speaker 3 → Alex Example"
+                    },
+                    {
+                      "kind": "when",
+                      "from": {
+                        "sec": 12,
+                        "text": "00:12"
+                      },
+                      "to": {
+                        "sec": 30,
+                        "text": "00:30"
+                      },
+                      "target": {
+                        "kind": "item",
+                        "id": "i1"
+                      }
+                    }
+                  ],
+                  "choices": [
+                    {
+                      "value": "Alex Example",
+                      "label": "Alex Example",
+                      "role": "suggested",
+                      "action": {
+                        "kind": "confirm"
+                      },
+                      "confidence": 0.82
+                    },
+                    {
+                      "value": "Dana Example",
+                      "label": "Dana Example",
+                      "role": "candidate",
+                      "action": {
+                        "kind": "confirm",
+                        "speaker": "Dana Example"
+                      }
+                    },
+                    {
+                      "value": "none of these",
+                      "label": "None of these",
+                      "role": "none",
+                      "action": {
+                        "kind": "reject"
+                      }
+                    }
+                  ],
+                  "edit": "person",
+                  "sources": [
+                    {
+                      "kind": "line",
+                      "at": {
+                        "sec": 9,
+                        "text": "00:09"
+                      },
+                      "text": "The button moved to the right."
+                    }
+                  ],
+                  "target": {
+                    "kind": "item",
+                    "id": "i1"
+                  },
+                  "decision": {
+                    "token": "22130323-ad77-4a4e-bb97-561ace3e76fa",
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "by": "an agent (Claude Code, session 11111111)",
+                    "action": "confirm",
+                    "reason": "the calendar says so",
+                    "at": "2026-11-03T10:00:00.000Z"
+                  },
+                  "answer": "Alex Example"
+                }
+              }
+            ],
+            "order": [
+              "i1"
+            ],
+            "hidden": {
+              "before": {
+                "lowPriority": 0,
+                "minPriority": 0.5
+              },
+              "after": {
+                "lowPriority": 0,
+                "minPriority": 0.5
+              }
+            },
+            "fields": {
+              "before": {
+                "title": "Design review",
+                "project": "Atlas",
+                "labels": [
+                  "Checkout"
+                ],
+                "speakerLabels": {
+                  "Speaker 2": "Alex Example"
+                }
+              },
+              "after": {
+                "title": "Design review",
+                "project": "Atlas",
+                "labels": [
+                  "Checkout"
+                ],
+                "speakerLabels": {
+                  "Speaker 2": "Alex Example"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -1109,7 +1309,206 @@
             "labels": [],
             "corrections": []
           },
-          "skipped": []
+          "skipped": [],
+          "rows": {
+            "meeting": "2026-11-03-1000-design-review",
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "id": "i1",
+                  "label": "i1",
+                  "kind": "speaker-range",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "what": "Speaker 3 00:12–00:30 → Alex Example",
+                  "parts": [
+                    {
+                      "kind": "who",
+                      "text": "Speaker 3 → Alex Example"
+                    },
+                    {
+                      "kind": "when",
+                      "from": {
+                        "sec": 12,
+                        "text": "00:12"
+                      },
+                      "to": {
+                        "sec": 30,
+                        "text": "00:30"
+                      },
+                      "target": {
+                        "kind": "item",
+                        "id": "i1"
+                      }
+                    }
+                  ],
+                  "choices": [
+                    {
+                      "value": "Alex Example",
+                      "label": "Alex Example",
+                      "role": "suggested",
+                      "action": {
+                        "kind": "confirm"
+                      },
+                      "confidence": 0.82
+                    },
+                    {
+                      "value": "Dana Example",
+                      "label": "Dana Example",
+                      "role": "candidate",
+                      "action": {
+                        "kind": "confirm",
+                        "speaker": "Dana Example"
+                      }
+                    },
+                    {
+                      "value": "none of these",
+                      "label": "None of these",
+                      "role": "none",
+                      "action": {
+                        "kind": "reject"
+                      }
+                    }
+                  ],
+                  "edit": "person",
+                  "sources": [
+                    {
+                      "kind": "line",
+                      "at": {
+                        "sec": 9,
+                        "text": "00:09"
+                      },
+                      "text": "The button moved to the right."
+                    }
+                  ],
+                  "target": {
+                    "kind": "item",
+                    "id": "i1"
+                  }
+                },
+                "after": {
+                  "id": "i1",
+                  "label": "i1",
+                  "kind": "speaker-range",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "what": "Speaker 3 00:12–00:30 → Alex Example",
+                  "parts": [
+                    {
+                      "kind": "who",
+                      "text": "Speaker 3 → Alex Example"
+                    },
+                    {
+                      "kind": "when",
+                      "from": {
+                        "sec": 12,
+                        "text": "00:12"
+                      },
+                      "to": {
+                        "sec": 30,
+                        "text": "00:30"
+                      },
+                      "target": {
+                        "kind": "item",
+                        "id": "i1"
+                      }
+                    }
+                  ],
+                  "choices": [
+                    {
+                      "value": "Alex Example",
+                      "label": "Alex Example",
+                      "role": "suggested",
+                      "action": {
+                        "kind": "confirm"
+                      },
+                      "confidence": 0.82
+                    },
+                    {
+                      "value": "Dana Example",
+                      "label": "Dana Example",
+                      "role": "candidate",
+                      "action": {
+                        "kind": "confirm",
+                        "speaker": "Dana Example"
+                      }
+                    },
+                    {
+                      "value": "none of these",
+                      "label": "None of these",
+                      "role": "none",
+                      "action": {
+                        "kind": "reject"
+                      }
+                    }
+                  ],
+                  "edit": "person",
+                  "sources": [
+                    {
+                      "kind": "line",
+                      "at": {
+                        "sec": 9,
+                        "text": "00:09"
+                      },
+                      "text": "The button moved to the right."
+                    }
+                  ],
+                  "target": {
+                    "kind": "item",
+                    "id": "i1"
+                  },
+                  "decision": {
+                    "token": "28c5006b-6faf-4265-ae28-087f98106163",
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "by": "an agent (Claude Code, session 11111111)",
+                    "action": "confirm",
+                    "at": "2026-11-03T10:00:00.000Z"
+                  },
+                  "answer": "Alex Example"
+                }
+              }
+            ],
+            "order": [
+              "i1"
+            ],
+            "hidden": {
+              "before": {
+                "lowPriority": 0,
+                "minPriority": 0.5
+              },
+              "after": {
+                "lowPriority": 0,
+                "minPriority": 0.5
+              }
+            },
+            "fields": {
+              "before": {
+                "title": "Design review",
+                "project": "Atlas",
+                "labels": [
+                  "Checkout"
+                ],
+                "speakerLabels": {
+                  "Speaker 2": "Alex Example"
+                }
+              },
+              "after": {
+                "title": "Design review",
+                "project": "Atlas",
+                "labels": [
+                  "Checkout"
+                ],
+                "speakerLabels": {
+                  "Speaker 2": "Alex Example"
+                }
+              }
+            }
+          }
         }
       }
     },

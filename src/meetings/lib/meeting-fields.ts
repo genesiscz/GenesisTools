@@ -29,6 +29,7 @@ export async function setMeetingFields(options: {
     /** Who sets them; this process's caller (an agent, else a person at the command line) when absent. */
     actor?: DecisionActor;
     reason?: string;
+    onApplied?: (snapshot: { before: MeetingRecord; after: MeetingRecord }) => void;
 }): Promise<{ record: MeetingRecord; changes: string[]; decided: Decided }> {
     const { store, config, record, change } = options;
     const labels = change.labels ?? [];
@@ -62,7 +63,10 @@ export async function setMeetingFields(options: {
         unlabel.length > 0 ? `labels - ${unlabel.join(", ")}` : "",
     ].filter(Boolean);
     // Through the decision journal, so the history says who set them and an Undo puts the old values back (G42, G64).
-    const decided = await new DecisionJournal({ store }).apply({
+    const decided = await new DecisionJournal({
+        store,
+        ...(options.onApplied ? { onApplied: options.onApplied } : {}),
+    }).apply({
         meeting: record.id,
         action: {
             kind: "set",

@@ -50,6 +50,9 @@ extension MeetingDetailModel {
 
     /// Rows that landed: the player learns once whether this meeting's Moments can play (G-STATE-1).
     func rowsLanded(_ rows: ReviewRows) {
+        rowDecisionTokens = Dictionary(uniqueKeysWithValues: rows.rows.compactMap { row in
+            row.decision.map { (row.id, $0.token) }
+        })
         if let first = rows.rows.first(where: \.isOpen) ?? rows.rows.first {
             window?.player.checkPlayable(first.target, in: id)
         }
@@ -227,7 +230,8 @@ extension MeetingDetailModel {
         Task {
             defer { busyItems.remove(row.id) }
             do {
-                let result = try await Self.applyDecision(meeting: id, action: action, reason: reason, service: service)
+                let result = try await Self.applyDecision(meeting: id, action: action, reason: reason, service: service,
+                                                          lowPriority: MeetingsPreferences.Rows.lowPriority.value(defaults))
                 decided(row, action: action, result: result)
             } catch let failure as MeetingsCLI.Failure where failure.code == "already-decided" {
                 // Someone decided it since the row was read (G47): the draft stays, the row says who, and "Use mine
@@ -263,14 +267,55 @@ extension MeetingDetailModel {
         reasons[row.id] = nil
         decidedMeanwhile[row.id] = nil
         if editingRow == row.id { editingRow = nil }
-        foldAnswered(row, entry: entry)
+        let patched = patchDecision(result)
+        if patched {
+            if MeetingsPreferences.Rows.keepPlace.value(defaults) { heldFolds.insert(row.id) }
+        } else {
+            foldAnswered(row, entry: entry)
+        }
         showDecided(entry, row: row)
         if !result.skipped.isEmpty {
             notices.push(StackedNotice(text: "\(Plural.count(result.skipped.count, "item")) left as \(result.skipped.count == 1 ? "it was" : "they were")",
                                        more: result.skipped.map { "\(Self.sentenceStart(rowName($0.id))): \($0.reason)" }.joined(separator: "\n"), tone: .warning))
         }
-        refreshAfterDecision()
+        if patched {
+            window?.loadOverview(quiet: true)
+            transcriptChanged()
+        } else {
+            refreshAfterDecision()
+        }
         autoplayNext(after: row)
+    }
+
+    /// Apply only this decision's changes to the latest values. Older services and command replies keep the read path.
+    @discardableResult
+    func patchDecision(_ result: DecisionResult) -> Bool {
+        guard let patch = result.rows, let entry = result.entry,
+              let currentRows = rows.value, var currentRecord = record.value,
+              patch.meeting == currentRows.meeting, patch.meeting == currentRecord.id else { return false }
+        cancelReadsBeforeDecisionPatch()
+        rows = .loaded(patch.applying(to: currentRows, token: entry.token, latest: rowDecisionTokens))
+        for change in entry.changes {
+            if let latest = rowDecisionTokens[change.id], latest != entry.token, latest != patch.changes.first(where: { $0.id == change.id })?.before?.decision?.token { continue }
+            let index = currentRecord.items.firstIndex { $0.id == change.id }
+            let present = index.map { currentRecord.items[$0] }
+            var optimistic = change.before
+            if let status = change.after?.status { optimistic?.status = status }
+            guard present == change.before || present == change.after || present == optimistic else { continue }
+            if let after = change.after {
+                if let index { currentRecord.items[index] = after } else { currentRecord.items.append(after) }
+            } else if let index { currentRecord.items.remove(at: index) }
+        }
+        if currentRecord.title == patch.fields.before.title { currentRecord.title = patch.fields.after.title }
+        if currentRecord.project == patch.fields.before.project { currentRecord.project = patch.fields.after.project }
+        if currentRecord.labels == patch.fields.before.labels { currentRecord.labels = patch.fields.after.labels }
+        for label in Set(patch.fields.before.speakerLabels.keys).union(patch.fields.after.speakerLabels.keys) {
+            if currentRecord.speakers.labels[label] == patch.fields.before.speakerLabels[label] {
+                currentRecord.speakers.labels[label] = patch.fields.after.speakerLabels[label]
+            }
+        }
+        settleDecisionRecord(currentRecord)
+        return true
     }
 
     /// The notice of one decision of this window: what it did, with an Undo that takes back exactly it. A second
@@ -299,6 +344,9 @@ extension MeetingDetailModel {
 
     /// Statuses from an entry's changes, at once: the row folds before the re-read brings its words (R16).
     func markRows(_ entry: JournalEntry) {
+        let touched = !entry.labels.isEmpty || ["set", "assign", "rename"].contains(entry.action.kind)
+            ? Set(rows.value?.rows.map(\.id) ?? []).union(entry.touched) : entry.touched
+        for id in touched { rowDecisionTokens[id] = entry.token }
         guard var value = rows.value else { return }
         var changed = false
         for change in entry.changes {
@@ -501,11 +549,12 @@ extension MeetingDetailModel {
     /// `decision.apply` as the window (`onDecided: refuse`). Without a service the command makes the decisions it has
     /// (confirm, reject, reopen, an answer); the rest need the service, which the window starts by itself.
     static func applyDecision(meeting: String, action: DecisionAction, reason: String?,
-                              service: MeetingsService?) async throws -> DecisionResult {
+                              service: MeetingsService?, lowPriority: MeetingsPreferences.Rows.LowPriority = .hide) async throws -> DecisionResult {
         if let service {
             do {
                 return try await service.call(MeetingsAPI.DecisionApply.self,
-                                              .init(meeting: meeting, action: action, reason: reason, onDecided: "refuse"))
+                                              .init(meeting: meeting, action: action, reason: reason, onDecided: "refuse",
+                                                    lowPriority: lowPriority == .show ? "show" : "hide"))
             } catch is MeetingsService.Unavailable {
                 try Task.checkCancellation()
             }
@@ -561,7 +610,7 @@ extension MeetingDetailModel {
         case "reopen":
             return ["reopen", meeting] + (action.items ?? []) + why + ["--json"]
         case "answer":
-            // The command settles the look-alikes; an answer that leaves them needs the service.
+            // The command passes excluded items and the earlier answer's token through to the same journal.
             guard let question = action.question, let answer = action.answer, action.lookAlikes == nil else { return nil }
             var args = ["listen", meeting, "--item", question, "--answer", answer]
             if let except = action.except, !except.isEmpty { args += ["--except"] + except }
