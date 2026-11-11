@@ -1763,22 +1763,31 @@ final class PRsModel: ObservableObject {
     func loadFailedChecks(_ pr: HubPR) {
         guard pr.ci == "failed", let root = pr.repoRoot else { return }
         let key = Self.checksKey(pr.id, head: pr.headSha)
-        guard hoverChecks[key] == nil, !hoverChecksLoading.contains(key), failedChecks(for: pr).isEmpty else { return }
+        // The selected PR's own detail load answers the same question, so a rest on its row starts no second one.
+        guard hoverChecks[key] == nil, !hoverChecksLoading.contains(key), !detailLoading.contains(pr.id),
+              failedChecks(for: pr).isEmpty else { return }
         hoverChecksLoading.insert(key)
         Task {
             let span = HubPerf.begin("prs.hoverChecks", pr.id, awaits: true)
             let (id, project, number) = (pr.id, pr.project, pr.number)
-            let detail = await Task.detached(priority: .utility) { () -> HubPRDetail? in
+            let fresh = await Task.detached(priority: .utility) { () -> (HubPRDetail, Data)? in
                 guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", "\(root)#\(number)"]),
                       let detail = try? JSONDecoder().decode(HubPRDetail.self, from: data) else { return nil }
-                PRListCache.writeDetail(data, id: id, project: project, number: number)
-                return detail
+                return (detail, data)
             }.value
-            span.end(detail == nil ? "failed" : "")
+            span.end(fresh == nil ? "failed" : "")
             hoverChecksLoading.remove(key)
-            guard let detail else { return }
-            hoverChecks[Self.checksKey(id, head: detail.headSha ?? pr.headSha)] =
-                (detail.checks ?? []).filter { $0.status == "failed" }.map(\.name)
+            guard let (detail, data) = fresh else { return }
+            let failed = (detail.checks ?? []).filter { $0.status == "failed" }.map(\.name)
+            let shown = detail.headSha ?? pr.headSha
+            // Checks belong to the head they were read for. Another head answered: the requested key is
+            // settled empty, so later rests on the old row ask nothing, and the answer waits under its own head.
+            hoverChecks[key] = shown == pr.headSha ? failed : []
+            hoverChecks[Self.checksKey(id, head: shown)] = failed
+            // The disk copy is written only while the row still shows that head, so an older answer never
+            // replaces a newer detail that a list refresh and a detail load put there meanwhile.
+            guard (prs.first { $0.id == id } ?? pr).headSha == shown else { return }
+            Task.detached(priority: .utility) { PRListCache.writeDetail(data, id: id, project: project, number: number) }
         }
     }
 
