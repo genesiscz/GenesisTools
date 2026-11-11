@@ -7,6 +7,19 @@ import XCTest
 /// times it shows, and which meetings each sidebar place lists.
 @MainActor
 final class MeetingsWindowTests: XCTestCase {
+    func testRoutedMomentRequestKeepsPlaybackOptions() throws {
+        let json = #"{"meeting":"m1","target":{"kind":"time","atSec":12},"tone":false,"padSec":1,"padAfterSec":3,"lengthSec":5,"screen":false}"#
+        let request = MeetingsRequest.parse(["--meeting", "m1", "--play-request", json])
+        let play = try XCTUnwrap(request.playRequest)
+        XCTAssertEqual(play.meeting, "m1")
+        XCTAssertEqual(play.target, .time(12))
+        XCTAssertEqual(play.tone, false)
+        XCTAssertEqual(play.padSec, 1)
+        XCTAssertEqual(play.padAfterSec, 3)
+        XCTAssertEqual(play.lengthSec, 5)
+        XCTAssertEqual(play.screen, false)
+    }
+
     func testSnapshotReadinessReportsExpiry() async {
         let expired = await waitUntil(0) { false }
         let ready = await waitUntil(0) { true }

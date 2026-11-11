@@ -268,6 +268,19 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(player.stack.map(\.target), [.item("i2")], "a row starts over")
     }
 
+    func testRoutedMomentPushesAndKeepsItsPlaybackOptions() async throws {
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("first moment plays") { player.phase == .playing }
+        let request = MeetingsAPI.MomentParams(meeting: "m", target: .time(600), padSec: 1, padAfterSec: 3,
+                                              tone: false, screen: false, lengthSec: 5)
+        player.play(request, from: .link)
+        try await until("routed moment plays") { player.phase == .playing && self.engine.cuts.count == 2 }
+        XCTAssertEqual(engine.cuts.last, request)
+        XCTAssertEqual(player.stack.map(\.target), [.item("i1"), .time(600)])
+        XCTAssertEqual(playingCount, 1)
+    }
+
     func testATranscriptTimeSeeksInsideTheClipAndReplacesTheTopOutsideIt() async throws {
         let player = makePlayer()
         player.play(.item("i3"), in: "m", from: .row)

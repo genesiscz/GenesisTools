@@ -46,6 +46,8 @@ struct MeetingsRequest {
     var snapshot: String?
     /// `--play <target json>`: the Moment a snapshot starts, silently, before the picture.
     var play: MomentTarget?
+    /// A routed Moment with all per-call playback options preserved.
+    var playRequest: MeetingsAPI.MomentParams?
     /// `--show <from>,<to>`: a snapshot of what a "Show" chip does: the whole meeting plays from `from`, silently, and
     /// the timeline shows the range.
     var show: ClosedRange<Double>?
@@ -92,6 +94,7 @@ struct MeetingsRequest {
             case "--sheet": request.sheet = value()
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
             case "--play": request.play = value().flatMap { try? JSONDecoder().decode(MomentTarget.self, from: Data($0.utf8)) }
+            case "--play-request": request.playRequest = value().flatMap { try? JSONDecoder().decode(MeetingsAPI.MomentParams.self, from: Data($0.utf8)) }
             case "--show": request.show = value().flatMap(MeetingsRequest.range)
             case "--zoom-to": if let range = value().flatMap(MeetingsRequest.range) { request.zoomTo.append(range) }
             case "--width": request.width = value().flatMap(Double.init).map { CGFloat($0) } ?? request.width
@@ -191,6 +194,9 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
             model.select(meeting, tab: request.tab)
         } else if let tab = request.tab {
             model.detail?.show(tab)
+        }
+        if let play = request.playRequest {
+            model.player.play(play, from: .link)
         }
     }
 

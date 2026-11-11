@@ -574,3 +574,5 @@ tools meetings comments withdraw <meeting> <comment-id> --json
 A receiving agent must acknowledge a comment before acting on it. If withdrawal won the race, acknowledgement fails with `withdrawn-comment`; if acknowledgement won, withdrawal fails with `already-read`. The live `--with-comments` stream emits a `comment-withdrawn` record so a receiver can remove work it has not acknowledged yet. Read receipts and withdrawals remain in the meeting's append-only comment log.
 
 In the REPL, the same operations are `meeting.comments()`, `meeting.readComment(id)` and `meeting.withdrawComment(id)`. They use the same service or in-process implementation as the window and CLI. The CLI also provides `comments stage`, `comments unstage` and `comments send` for scripts and for the window's fallback path.
+
+Routed timestamp links prefer the already-open Meetings window and push their Moment onto its playback stack. `play --moment --window` uses the same path, retaining per-call tone, padding, length and screen options. With no open Meetings window it uses the command player. An explicit `--player`, `--clip`, `--json` or `--no-start` keeps the command's existing behavior.

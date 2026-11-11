@@ -197,7 +197,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
                     // A bounded Moment with its tone, never an open-ended play that would sound beside the window (R38).
                     action: {
                         type: "run",
-                        argv: ["tools", "meetings", "play", "{meeting}", "--at", "{at}", "--moment"],
+                        argv: ["tools", "meetings", "play", "{meeting}", "--at", "{at}", "--moment", "--window"],
                         approval: "allow",
                     },
                 },

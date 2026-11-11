@@ -1,6 +1,8 @@
 import type { FaceDeps } from "@app/macos/lib/permissions/part-readiness";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import type { MeetingsParams } from "./service/api";
 
 const { log } = logger.scoped("meetings-window");
 
@@ -17,6 +19,7 @@ export interface WindowRequest {
     meeting?: string;
     tab?: WindowTab;
     focus?: boolean;
+    play?: MeetingsParams<"moment.clip">;
 }
 
 /** The `open` arguments that start (or bring forward) the Meetings window face of GenesisTools.app. */
@@ -36,6 +39,7 @@ export function windowOpenArgs(request: WindowRequest, bundle = genesisAppBundle
         ...place,
         ...(request.meeting ? ["--meeting", request.meeting] : []),
         ...(request.tab ? ["--tab", request.tab] : []),
+        ...(request.play ? ["--play-request", SafeJSON.stringify(request.play)] : []),
         ...(focus ? [] : ["--no-focus"]),
     ];
 }
@@ -65,4 +69,34 @@ export async function openMeetingsWindow(
     const args = windowOpenArgs(request);
     log.debug({ args }, "meetings: open the window");
     openFace(args, machine);
+}
+
+/** Prefer an existing window for a routed Moment; absent windows keep the command player. */
+export async function playInOpenWindow(
+    params: MeetingsParams<"moment.clip">,
+    deps?: { running: () => boolean; open: (request: WindowRequest) => Promise<void> }
+): Promise<boolean> {
+    let running: boolean;
+    if (deps) {
+        running = deps.running();
+    } else {
+        const [{ readFaceRecords }, { readExecutablePath }] = await Promise.all([
+            import("@app/macos/lib/permissions/relaunch"),
+            import("@genesiscz/utils/process/processes"),
+        ]);
+        running = [...readFaceRecords()].some(
+            ([pid, args]) =>
+                args[0] === "--meetings" && readExecutablePath(pid)?.endsWith("/Contents/MacOS/GenesisTools")
+        );
+    }
+    if (!running) {
+        return false;
+    }
+    const request: WindowRequest = { meeting: params.meeting, play: params };
+    if (deps) {
+        await deps.open(request);
+    } else {
+        await openMeetingsWindow({ ...request, build: false });
+    }
+    return true;
 }

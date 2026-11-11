@@ -14,6 +14,8 @@ enum MomentSource: String, CaseIterable {
     case pin
     /// A time named in a question's text (R17, R38: "This answers 12:10–12:30").
     case questionTime
+    /// A routed timestamp link enters the existing player's context stack.
+    case link
     /// A transcript line (R42).
     case transcript
     /// A speaker's chip or one of its hint ranges (R20, R21).
@@ -262,7 +264,7 @@ final class MomentPlayer {
         switch source {
         case .row, .autoplay, .pin: return .replaceAll
         case .questionTime: return clickInQuestion == .push ? .push : .replaceTop
-        case .speakerChip, .selection: return .push
+        case .speakerChip, .selection, .link: return .push
         case .transcript, .more, .outside: return .replaceTop
         }
     }
@@ -290,10 +292,15 @@ final class MomentPlayer {
             togglePause()
             return
         }
-        let layer = MomentLayer(meeting: meeting, target: target, source: source, kind: .moment, label: Self.provisionalLabel(target))
+        play(MeetingsAPI.MomentParams(meeting: meeting, target: target,
+                                     tone: source == .outside ? false : nil, lengthSec: lengthSec), from: source)
+    }
+
+    func play(_ params: MeetingsAPI.MomentParams, from source: MomentSource) {
+        let layer = MomentLayer(meeting: params.meeting, target: params.target, source: source, kind: .moment,
+                                label: Self.provisionalLabel(params.target))
         place(layer, Self.placement(for: source, clickInQuestion: MeetingsPreferences.Playback.clickInQuestion.value(defaults)))
-        cut(layer.id, MeetingsAPI.MomentParams(meeting: meeting, target: target,
-                                               tone: source == .outside ? false : nil, lengthSec: lengthSec))
+        cut(layer.id, params)
     }
 
     /// A transcript time (a line, the timeline): inside the loaded clip it seeks there; outside it, the Moment at that

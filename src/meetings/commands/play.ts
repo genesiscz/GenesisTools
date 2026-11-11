@@ -20,6 +20,7 @@ import { choosePlayer, PLAYERS, pastTheEnd, pickPlayer, playbackPlan } from "../
 import { withMeetingsClient } from "../lib/service/client";
 import { MeetingsServiceError } from "../lib/service/handlers";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { playInOpenWindow } from "../lib/window";
 
 const { log } = logger.scoped("meetings-play");
 
@@ -30,6 +31,7 @@ interface PlayOptions {
     target?: string;
     clip?: boolean;
     moment?: boolean;
+    window?: boolean;
     before?: string;
     padBefore?: string;
     padAfter?: string;
@@ -202,6 +204,22 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
         }
 
         opts.json ? out.result(SafeJSON.stringify(planned.moment, null, 2)) : out.println(momentLine(planned.moment));
+        return;
+    }
+
+    if (
+        opts.window &&
+        !opts.clip &&
+        !opts.json &&
+        opts.player === undefined &&
+        (await playInOpenWindow({
+            meeting: record.id,
+            target,
+            ...(toneSound ? { toneSound } : {}),
+            ...(opts.tone === false ? { tone: false } : {}),
+            ...overrides,
+        }))
+    ) {
         return;
     }
 
@@ -378,6 +396,7 @@ export function registerPlayCommand(program: Command): void {
             "--moment",
             "with --at alone: play the Moment at that time (a bounded clip with the tone), not on from there"
         )
+        .option("--window", "prefer the open Meetings window for a Moment; otherwise use the command player")
         .option("--before <sec>", "start this many seconds earlier (default: playback.beforeSec, 5); --at alone only")
         .option(
             "--tone <sound>",
