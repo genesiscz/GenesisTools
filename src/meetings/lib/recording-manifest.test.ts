@@ -392,6 +392,55 @@ describe("the frame index and the OCR worker (two phases)", () => {
         expect(rows(meeting.dir).map((row) => row.file)).toEqual(["frames/f1-d1.jpg", "frames/f2-d1.jpg"]);
     });
 
+    it("a written row counts as done by its file, with numeric-string bounds or blocks that do not parse; no second row", async () => {
+        const meeting = await meetingWith([
+            { name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" },
+            { name: "f2-d1.jpg", at: "2026-11-11T14:00:02.000Z" },
+            { name: "f3-d1.jpg", at: "2026-11-11T14:00:03.000Z", changePercent: 1 },
+        ]);
+        // As the recorder and DarwinKit wrote them: bounds and confidence as numeric strings.
+        const stringBounds = SafeJSON.stringify({
+            file: "frames/f1-d1.jpg",
+            at: "2026-11-11T14:00:01.000Z",
+            displayId: 1,
+            changePercent: 40,
+            reason: "change",
+            text: "old text",
+            blocks: [
+                {
+                    text: "old text",
+                    confidence: "0.5",
+                    bounds: { height: "0.0097", x: "0.1099", y: "0.2", width: "0.3" },
+                },
+            ],
+        });
+        const oddBlocks = SafeJSON.stringify({
+            file: "frames/f2-d1.jpg",
+            at: "2026-11-11T14:00:02.000Z",
+            displayId: 1,
+            text: "",
+            blocks: [{ text: "x", bounds: "nope" }],
+        });
+        writeFileSync(join(meeting.dir, "ocr.jsonl"), `${stringBounds}\n${oddBlocks}\n`);
+        const engine = fakeEngine(() => false);
+        const result = await runOcrWorker({ store: meeting.store, meetingId: meeting.id, settings, engine });
+        const lines = readFileSync(join(meeting.dir, "ocr.jsonl"), "utf8").trim().split("\n");
+
+        expect(result.read).toBe(1);
+        expect(engine.reads).toEqual([]);
+        expect(lines.slice(0, 2)).toEqual([stringBounds, oddBlocks]);
+        // The string-bounds row is the display's previous read: the frame below the threshold keeps its text.
+        expect(rows(meeting.dir)[2]).toMatchObject({
+            file: "frames/f3-d1.jpg",
+            text: "old text",
+            skipped: "below-threshold",
+        });
+
+        const again = await runOcrWorker({ store: meeting.store, meetingId: meeting.id, settings, engine });
+        expect(again.read).toBe(0);
+        expect(readFileSync(join(meeting.dir, "ocr.jsonl"), "utf8").trim().split("\n")).toHaveLength(3);
+    });
+
     it("--reread-empty-since takes a local time of the meeting's day or a full date", () => {
         const start = "2026-11-11T14:00:00.000Z";
         const local = parseRereadSince("15:56", { start });

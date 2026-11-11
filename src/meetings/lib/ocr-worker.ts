@@ -31,6 +31,7 @@ import {
     indexRowOf,
     ocrBacklog,
     ocrPath,
+    ocrRowFiles,
     readFrameIndex,
 } from "./frame-index";
 import { EMPTY_FRAME_CHARS, readRecorderState } from "./recorder-shared";
@@ -94,6 +95,12 @@ export function ocrWorkerRunning(folder: string): boolean {
     return inspectPidFile(ocrPidPath(folder)).status === "live";
 }
 
+/** A number Vision gave: the recorder and DarwinKit wrote block bounds as numeric strings (`"x":"0.1099"`). */
+const storedNumber = z.union([z.number(), z.string().trim().min(1).pipe(z.coerce.number())]);
+
+/** The part of a stored row that makes its frame done: its file. Nothing else of the row needs to parse. */
+const storedRowFileSchema = z.looseObject({ file: z.string(), at: z.string().default("") });
+
 /** A row of `ocr.jsonl` as written by any version: old rows lack the display, the change and the reason. */
 const storedOcrRowSchema = z.looseObject({
     file: z.string(),
@@ -106,8 +113,8 @@ const storedOcrRowSchema = z.looseObject({
         .array(
             z.object({
                 text: z.string(),
-                confidence: z.number(),
-                bounds: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }),
+                confidence: storedNumber,
+                bounds: z.object({ x: storedNumber, y: storedNumber, width: storedNumber, height: storedNumber }),
             })
         )
         .default([]),
@@ -116,10 +123,14 @@ const storedOcrRowSchema = z.looseObject({
     failed: z.string().optional(),
 });
 
-/** One line of `ocr.jsonl` with its row, or no row for a line that does not parse (it is kept as it is). */
+/**
+ * One line of `ocr.jsonl` with its row, or no row for a line that does not parse (it is kept as it is). `file` is set
+ * whenever the line names a frame, also when the rest of it does not parse: that frame is done.
+ */
 interface OcrLine {
     line: string;
     row?: OcrRow;
+    file?: string;
 }
 
 function parseOcrLine(line: string, path: string): OcrLine {
@@ -135,8 +146,16 @@ function parseOcrLine(line: string, path: string): OcrLine {
     const parsed = storedOcrRowSchema.safeParse(value);
 
     if (!parsed.success) {
-        log.debug({ path, error: parsed.error.message }, "an ocr.jsonl line is no row; kept as it is");
-        return { line };
+        const named = storedRowFileSchema.safeParse(value);
+
+        if (!named.success) {
+            log.debug({ path, error: parsed.error.message }, "an ocr.jsonl line is no row; kept as it is");
+            return { line };
+        }
+
+        // Its frame is done; the line stays as written, and its text does not stand for the display's previous read.
+        log.debug({ path, file: named.data.file, error: parsed.error.message }, "an ocr.jsonl row only partly parses");
+        return { line, file: named.data.file };
     }
 
     const stored = parsed.data;
@@ -153,7 +172,7 @@ function parseOcrLine(line: string, path: string): OcrLine {
         ...(stored.regions ? { regions: stored.regions } : {}),
         ...(stored.failed !== undefined ? { failed: stored.failed } : {}),
     };
-    return { line, row };
+    return { line, row, file: row.file };
 }
 
 function readOcrLines(path: string, maxBytes?: number): OcrLine[] {
@@ -388,12 +407,16 @@ class OcrWorker {
     resume(): void {
         const last = new Map<number, OcrRow | undefined>();
 
-        for (const { row } of readOcrLines(this.ocrFile)) {
+        for (const { row, file } of readOcrLines(this.ocrFile)) {
+            // A frame with a line in ocr.jsonl is done whatever the rest of its line holds: never a second row for it.
+            if (file !== undefined) {
+                this.done.add(file);
+            }
+
             if (!row) {
                 continue;
             }
 
-            this.done.add(row.file);
             last.set(row.displayId, row.failed === undefined ? row : undefined);
         }
 
@@ -401,6 +424,11 @@ class OcrWorker {
             if (row) {
                 this.reader.seed(displayId, readOf(row));
             }
+        }
+
+        // A line cut short keeps the file it names at its start: its frame never gets a second row either.
+        for (const file of ocrRowFiles(this.ocrFile)) {
+            this.done.add(file);
         }
 
         log.info({ meeting: this.options.meetingId, done: this.done.size }, "OCR resumes after the written rows");
