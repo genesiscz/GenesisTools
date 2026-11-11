@@ -230,6 +230,31 @@ final class RmApproveTests: XCTestCase {
         XCTAssertTrue(second.items.first?.icon === before)
     }
 
+    /// Two requests' set-aside copies of one folder are two rows of one window: each is ticked apart, and an update
+    /// reaches only the row it names (2026-11-09).
+    @MainActor func testTwoCopiesOfOnePathAreTwoRowsTickedApart() throws {
+        let items = [
+            RmApproveItem(path: "/w/F13", kind: "dir", bytes: nil, empty: nil, storedAt: "/aside/1/F13", reason: "r", measuring: true),
+            RmApproveItem(path: "/w/F13", kind: "dir", bytes: nil, empty: nil, storedAt: "/aside/2/F13", reason: "r", measuring: true),
+            RmApproveItem(path: "/w/F13", kind: "dir", bytes: nil, empty: nil, storedAt: nil, reason: "r", measuring: true),
+        ]
+        var params = request(items)
+        params = params.applying(RmApproveItemUpdate(path: "/w/F13", storedAt: "/aside/2/F13", bytes: 2_000, measuring: false))
+        params = params.applying(RmApproveItemUpdate(path: "/w/F13", bytes: 7_000, measuring: false))
+        XCTAssertEqual(params.request?.items.map(\.bytes), [nil, 2_000, 7_000])
+
+        let rows = RmWindowContent.build(params, home: "/Users/someone", icons: false, markdownApp: false).items
+        XCTAssertEqual(Set(rows.map(\.id)).count, 3)
+        // VoiceOver and an identifier-driven script tell the three checkboxes apart too.
+        XCTAssertEqual(Set(rows.map(\.tickLabel)).count, 3)
+        XCTAssertEqual(Set(rows.map { $0.tickIdentifier(in: "rm-approve") }).count, 3)
+        let model = ApprovalDialogModel(title: "t", purpose: "p", symbol: "trash.fill", facts: [], details: [], warning: nil, footnote: "f",
+                                        rememberChoices: [], rememberNote: nil, allowTitle: "a", deadline: nil, identifier: "rm-approve",
+                                        items: rows, selectable: true)
+        model.setSelected(rows[0], false)
+        XCTAssertEqual(model.selectedItems.map(\.location), ["/aside/2/F13", "/w/F13"])
+    }
+
     /// A refresh replaces the rows and the total, and the ticks stay as the person left them.
     @MainActor func testARefreshKeepsTheTicks() {
         func rows(_ size: String?) -> [ApprovalItem] {

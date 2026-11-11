@@ -665,6 +665,47 @@ struct GlassToggle: View {
     }
 }
 
+/// The glass switch in the band under the title bar, only while Settings → Hub → Panes → Sidebar asks for it
+/// (`HubChrome.glassButtonKey`, off by default): a look picked once took a prime spot beside Settings (hub UX C2).
+struct GlassToggleSlot: View {
+    @AppStorage(HubChrome.glassButtonKey, store: HubDefaults.store) private var shown = false
+
+    var body: some View {
+        if shown {
+            GlassToggle()
+        }
+    }
+}
+
+/// "Commands ⌘K" in the band under the title bar: the command palette with a word, where a bare ⌘ glyph read as
+/// no button at all (hub UX C2). The key is the one the keymap holds now, and none when the reader unbound it.
+struct HubPaletteButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        let key = HubKeymap.label(HubKeymap.commandPalette)
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text("Commands")
+                    .font(.system(size: 11.5, weight: .medium))
+                if !key.isEmpty {
+                    Text(verbatim: key)
+                        .font(.system(size: 10.5, design: .rounded))
+                        .foregroundColor(ReviewPalette.dim.opacity(0.8))
+                }
+            }
+            .foregroundColor(ReviewPalette.dim)
+            .padding(.horizontal, 6)
+            .frame(height: 22)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.genHoverPlain())
+        .fixedSize()
+        .instantTooltip(HubKeymap.hint("Command palette: run a command, or open a project, PR or session", HubKeymap.commandPalette))
+        .accessibilityLabel(Text("Command palette"))
+    }
+}
+
 extension View {
     /// Liquid Glass on a floating control while glass mode is on (macOS 26+); a no-op otherwise.
     @ViewBuilder

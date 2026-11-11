@@ -184,6 +184,27 @@ describe("the recorder swapped the user's label and another person's for a stret
                 item.rules.includes("R20")
             )
         ).toBe(false);
+
+        // 7:00 to 16:00 fills two swapped windows (5:00 to 10:00 and 10:00 to 15:00) but lasts 9 min.
+        const offset = scene([...normal.slice(0, 42), ...swapped.slice(0, 54), ...normal]);
+        expect(
+            ranges(suggestItems({ ...base, ...offset, energyMicShare: offset.share })).some((item) =>
+                item.rules.includes("R20")
+            )
+        ).toBe(false);
+    });
+
+    test("a greeting of someone who joins inside the stretch is not a second, competing item (R16)", () => {
+        const { meeting, evidence, share } = scene([...normal, ...swapped]);
+        const presence = [{ name: "Dan Example", fromSec: 890, toSec: 1200 }];
+        const speaking = [{ tSec: 905, speaking: ["Dan Example"] }];
+        const found = ranges(
+            suggestItems({ ...base, meeting, evidence: { ...evidence, speaking }, energyMicShare: share, presence })
+        );
+
+        expect(found.filter((item) => item.rules.includes("R20"))).toHaveLength(2);
+        expect(found.filter((item) => item.rules.includes("R16"))).toEqual([]);
+        expect(found.filter((item) => item.fromSec >= 600 && !item.rules.includes("R20"))).toEqual([]);
     });
 });
 

@@ -1,138 +1,144 @@
-# 👁️ Watchman
+# tools watchman
 
-![Facebook Watchman](https://img.shields.io/badge/Watchman-4267B2?style=flat-square&logo=facebook&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
+Watch a folder and print one line for each file that changes, with the time of the change. It uses
+[Watchman](https://facebook.github.io/watchman/) (Facebook's file watching service), so you need Watchman on the Mac.
+Use it to see which files a build, a code generator or an agent touches while it runs.
 
-> **Real-time file change monitoring powered by Facebook's Watchman**
-
-A command-line tool that watches directories for file changes using Facebook's Watchman, with interactive directory selection and automatic retry handling.
-
----
-
-## ✨ Features at a Glance
-
-| Feature | Description |
-|---------|-------------|
-| 👁️ **Facebook Watchman** | Leverages Watchman's efficient file watching engine |
-| 🔍 **Interactive Selection** | Search and select from existing watched directories |
-| 🔄 **Auto Retry** | Automatically retries failed connections (up to 15 attempts) |
-| 📂 **Flexible Input** | Support for relative paths, absolute paths, or CWD |
-| ⏰ **Smart Timestamps** | Shows time-only for today, full date for older changes |
-| 📋 **Sorted Output** | File changes sorted by modification time (latest last) |
-
----
-
-## 🚀 Quick Start
+## Quick start
 
 ```bash
-# Interactive mode - select from watched directories
-tools watchman
-
-# Watch current directory
-tools watchman .
-tools watchman -c
-
-# Watch a specific directory
-tools watchman /path/to/project
-tools watchman ./relative/path
+tools watchman                            # pick a folder Watchman watches, or the current one
+tools watchman -c                         # watch the current folder, no picker
+tools watchman -t -c                      # same, and remove the watch again on Ctrl-C
+cd ~/Projects/app && tools watchman -c    # watch another folder: cd into it first
+tools watchman --help-full                # longer help with examples
 ```
 
----
+The tool runs until you press Ctrl-C.
 
-## 📋 Options Reference
+## Options
 
-| Option | Alias | Description | Default |
-|--------|-------|-------------|---------|
-| `--current` | `-c` | Use current working directory | `false` |
-| `--temporary` | `-t` | Remove watch when tool exits | `false` |
-| `--help-full` | `-?` | Show detailed help message | - |
-| `[directory]` | - | Path to directory to watch (positional) | interactive |
+The tool has no subcommands.
 
----
+| Option | What it does |
+|--------|--------------|
+| `-c, --current` | Watch the current folder and skip the picker |
+| `-t, --temporary` | Remove the watch on Ctrl-C or SIGTERM (never a watch that existed before) |
+| `-?, --help-full` | Print the longer help with examples |
+| `-v, --verbose` | Shared GenesisTools flag; this tool writes no extra debug lines |
+| `--readme` | Print this file and exit |
+| `-h, --help` | Print the short help |
 
-## 💡 Usage Examples
+- Without `-c`, the tool shows a picker. It lists every folder Watchman watches now (`watchman: <path>`) and the
+  current folder. Type to filter: the text matches the path, case does not matter. You cannot type a path that is
+  not in the list.
+- **Known problem:** a folder path as an argument (`tools watchman .`, `tools watchman ~/Projects/app`) does not
+  work. The code reads one, but Commander rejects it before the code runs: `error: too many arguments. Expected 0
+  arguments but got 1: <path>.`, followed by the help. The tool declares no argument, and Commander refuses undeclared ones by default.
+  `--help-full` still shows `[directory]` and these examples. Use `cd <folder> && tools watchman -c` instead. Checked
+  2026-11-09 01:26 against Commander 15.0.0.
+- In zsh, `-?` is a glob, so a bare `tools watchman -?` can fail with `no matches found`. Type `--help-full` or
+  quote it (`'-?'`).
+- `--help` prints `Usage: index [options]`. Read `index` as `tools watchman`.
 
-### Interactive Directory Selection
-```bash
-# Shows a searchable list of:
-# - Currently watched directories in Watchman
-# - Current working directory
-tools watchman
+### Temporary watches (`-t`)
+
+A watch stays in Watchman after the tool exits, and `watchman watch-list` still shows it. With `-t`, Ctrl-C (or
+SIGTERM) sends `watch-del` for the watch root and then exits.
+
+- `-t` never removes a watch that existed before the tool started. The tool checks Watchman's watch list first. When
+  the folder is a watch root, or sits inside one, it prints `Directory already watched by Watchman` and leaves the
+  watch alone.
+- When it cannot read the watch list, it prints `Could not determine pre-existing watches` and also leaves the watch
+  alone, as the safe default.
+- Each folder in the picker that starts with `watchman:` is already watched, so `-t` only matters for the current
+  folder.
+- Closing the terminal window (SIGHUP), `kill -9` or a failed subscribe leaves the watch in Watchman. Remove it with
+  `watchman watch-del <path>`.
+- Watchman can choose a parent folder as the watch root (`watch-project`). `-t` then removes that root, which was not
+  watched before.
+
+## Output
+
+```text
+Directory of interest: /Volumes/Data/Projects/app/src
+Watch established on /Volumes/Data/Projects/app relative_path: src
+Subscription mysubscription established
+14:02:11 File changed: index.ts
+14:02:12 File changed: lib/util.ts
 ```
 
-### Watch Current Directory
-```bash
-# Both commands do the same thing
-tools watchman .
-tools watchman --current
-```
+- Only files are reported, never folders. Names are relative to the folder you picked.
+- Each batch is sorted by modification time, so the newest file is at the bottom.
+- A change from today shows only the time. An older one shows the date and the time. Both follow your system locale.
+- The first batch lists every file in the folder. Watchman evaluates a new subscription once at the start, and the
+  tool does not pass a `since` clock. On a large repository that first batch is long.
+- An edit, a new file and a deleted file all print `File changed`. The tool asks Watchman for the `exists` field
+  but does not print it.
+- A warning from Watchman prints on stderr as `WARN: Warning: <text>`.
 
-### Watch Specific Project
-```bash
-# Absolute path
-tools watchman /Users/me/projects/myapp
+## How it works
 
-# Relative path
-tools watchman ../other-project
-```
+1. **Folder.** `-c` takes the current folder. Otherwise the picker asks Watchman for its watch list.
+2. **Watch.** The tool runs a capability check, which needs `relative_root` (Watchman 3.3 or later). Then it runs
+   `watch-project` for the folder. A failed attempt waits 1 s and tries again with a new connection, up to 15 attempts in all.
+3. **Subscribe.** It subscribes under the name `mysubscription` to all files below the folder (`relative_root`). A
+   failed subscribe also waits 1 s and tries again, up to 15 times (16 attempts in all).
+4. **Print.** Every change Watchman sends prints one line per file, until you press Ctrl-C.
 
-### Temporary Watch (auto-cleanup)
-```bash
-# Watch a directory temporarily — unwatch on Ctrl+C
-tools watchman -t /path/to/project
+The tool talks to the Watchman server through the `fb-watchman` package. The package asks the `watchman` binary on
+your PATH for the socket (`watchman get-sockname`), and that starts the server when it is not running. When
+`WATCHMAN_SOCK` is set, the package uses that socket and skips the binary.
 
-# Combine with current directory shorthand
-tools watchman -t -c
-```
+The tool stores no data of its own. Its log lines go to stderr and also to the GenesisTools day log,
+`~/.genesis-tools/logs/<date>.log`. Watchman keeps its own watch list. Nothing calls the network, and nothing costs
+money.
 
-> **Note:** If the directory was already in Watchman's watch list before the tool started, `--temporary` will **not** unwatch it on exit to avoid disrupting pre-existing watches.
-
----
-
-## 🚦 How It Works
-
-```mermaid
-graph LR
-    A[Start] --> B{Directory provided?}
-    B -->|Yes| C[Resolve Path]
-    B -->|No| D[Interactive Selection]
-    D --> C
-    C --> E[Capability Check]
-    E --> F[Watch Project]
-    F --> G[Subscribe to Changes]
-    G --> H[Log File Changes]
-```
-
-1. **🎯 Directory Selection** - From CLI args, `-c` flag, or interactive picker
-2. **🔍 Capability Check** - Verifies Watchman supports required features
-3. **📡 Watch Project** - Registers the directory with Watchman
-4. **📬 Subscribe** - Sets up subscription for file change events
-5. **📋 Monitor** - Logs changes with timestamps as they occur
-
----
-
-## ⚙️ Prerequisites
-
-**Facebook Watchman must be installed:**
+### Install Watchman
 
 ```bash
 # macOS
 brew install watchman
 
-# Ubuntu/Debian
+# Ubuntu or Debian
 sudo apt-get install watchman
-
-# From source
-# See: https://facebook.github.io/watchman/docs/install
 ```
 
----
+To build it from source, see <https://facebook.github.io/watchman/docs/install>.
 
-## 🐛 Troubleshooting
+## For agents
 
-| Issue | Solution |
-|-------|----------|
-| **"Capability check failed"** | Ensure Watchman is running: `watchman version` |
-| **"Invalid directory path"** | Check that the path exists and is accessible |
-| **Connection retries** | Watchman service may need restart: `watchman shutdown-server` |
-| **No file changes shown** | Verify directory contains files and has write activity |
+- There is no `--json` output, no MCP tool and no plugin skill. Every log line goes to stderr, so pipe with `2>&1`.
+  Only the help text, `--readme` and the picker go to stdout.
+- The picker needs a terminal. Without one it prints `✘ search prompt requires an interactive terminal` and exits 1. A
+  script or an agent must `cd` into the folder and pass `-c`.
+- The tool never exits by itself. Run it in the background and stop it with SIGINT or SIGTERM.
+- Exit codes:
+  - `0`: `--help`, `--help-full` or `--readme`, Ctrl-C at the picker (it prints `Operation cancelled`), or SIGTERM
+    after `-t` removed the watch.
+  - `1`: a usage error (such as a folder argument), the picker started without a terminal (you forgot `-c`), a
+    missing `watchman` binary, 15 failed watch attempts, 15 failed subscribe retries, or a failed `watch-del` in `-t`
+    mode.
+  - `130`: Ctrl-C while the tool watches, also after `-t` removed the watch.
+  - `143`: SIGTERM when `-t` did not install the cleanup (no `-t`, or a watch that existed before).
+
+## Troubleshooting
+
+- **`error: too many arguments. Expected 0 arguments but got 1`.** You passed a folder path. `cd` into the folder
+  and run `tools watchman -c`.
+- **`✘ search prompt requires an interactive terminal`.** The picker started without a terminal. `cd` into the folder
+  and pass `-c`.
+- **`Watchman: Watchman was not found in PATH`** (the full line adds the install link). The `watchman` binary is missing, and the tool stops at once
+  without the 15 retries. Install it (see above) and check with `watchman version`.
+- **`Capability check failed (attempt n/15)`.** The server did not answer, or it is older than 3.3 and has no
+  `relative_root`. Check that Watchman runs with `watchman version`, and update it when the version is lower.
+- **`Error initiating watch` or `Failed to subscribe` repeats.** Restart the server with `watchman shutdown-server`.
+  The next run starts it again.
+- **No file changes appear.** The tool reports files only, never folders. Make sure something writes into the folder
+  you picked, not into a sibling folder of the same watch root.
+- **A watch you no longer want.** `watchman watch-list` shows every watch. `watchman watch-del <path>` removes one.
+  Next time, use `-t`.
+
+## Related
+
+- [tools watch](../watch/README.md): print and follow the files that match a glob, with no Watchman needed.

@@ -6,7 +6,7 @@ describe("resolveModelSpec", () => {
         const res = resolveModelSpec("fable");
         expect(res.kind).toBe("exact");
         if (res.kind === "exact") {
-            expect(res.model.id).toBe("claude-fable-5-1");
+            expect(res.model.id).toBe("claude-fable-5-2");
         }
     });
 

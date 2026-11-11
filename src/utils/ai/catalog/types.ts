@@ -1,4 +1,4 @@
-import type { Capability } from "../providers/plugin-types";
+import type { Capability } from "../providers/capabilities";
 
 /**
  * What the AI layer knows about a model.

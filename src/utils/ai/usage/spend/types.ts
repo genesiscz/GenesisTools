@@ -14,6 +14,8 @@ export interface UsageEvent {
     /** The one-hour share of `cacheCreationTokens` (Anthropic bills it at 2x input, not 1.25x). */
     cacheCreation1hTokens?: number;
     cacheReadTokens: number;
+    /** The tier the call was billed at when it is not the standard one (Claude fast mode: `fast`). */
+    serviceTier?: string;
     /**
      * Cost the loader's source already resolved for this event: a recorded charge, or its own price
      * ladder. `aggregate` prices from the table only when this is absent.

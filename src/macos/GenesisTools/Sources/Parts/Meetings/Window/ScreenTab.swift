@@ -141,12 +141,14 @@ private struct FrameViewer: View {
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
                 .instantTooltip("Box only the lines that changed since this display's earlier frame, or every line the OCR read")
                 if shown == .all, case .loading = lines { ProgressView().controlSize(.small) }
-                if shown == .all, case .failed(let failure, _) = lines {
-                    Text(verbatim: failure.sentence).font(.system(size: 11)).foregroundStyle(.red).lineLimit(1)
-                }
+
                 Spacer()
                 Button("Show in Finder") { PathOpener.reveal(frame.path) }.buttonStyle(.genHoverPlain())
                 Button("Close", action: close).keyboardShortcut(.cancelAction)
+            }
+            if shown == .all, case .failed(let failure, _) = lines {
+                NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { Task { await loadLines() } }])
             }
             GeometryReader { proxy in
                 let scale = min(proxy.size.width / max(frame.width, 1), proxy.size.height / max(frame.height, 1))

@@ -741,6 +741,8 @@ extension EditOp {
         var cell: Double?
         // R8 11: 0 makes the edge sharp again.
         var dimAround: Double?
+        /// New keyframes in place of the part's own (a move of a part that follows its text); [] makes it fixed.
+        var track: [Redact.Key]?
         var op: EditOp { .setRedaction(self) }
     }
 
@@ -911,8 +913,8 @@ extension EditOp {
         var op: EditOp { .transition(self) }
     }
 
-    /// A magnifier lens over SOURCE seconds; `at` holds it still. `id`: the window's id for it, so a change sent
-    /// before the service answers names a lens the service has; nil lets the service make one.
+    /// A magnifier lens over SOURCE seconds; `at` holds it still. `id`: the caller's own id for the new lens (refused
+    /// when a lens has it already); nil lets the service make one, as the Style tab does.
     struct Lens: EditOpPayload {
         static let tag = "lens"
         var id: String?

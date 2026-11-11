@@ -12,8 +12,10 @@ import { classifyPid, type PidIdentity } from "@genesiscz/utils/process-identity
  * and idle-cost's SIGKILL pass reused a descendant list that was ten seconds old.
  *
  * `expected` is the command line read when the pid was listed, or a predicate on it. The pid
- * is signalled only while `classifyPid` says "live" against it, so a number the kernel reissued
- * in between is skipped and reported, never signalled.
+ * is signalled only when `classifyPid` says "live" against it, so a number the kernel reissued
+ * before that check is skipped and reported. The check and `process.kill` are two calls, so
+ * this is best effort: a reuse between them, or a replacement running the same command line,
+ * is not excluded.
  */
 
 export interface SignalOutcome {

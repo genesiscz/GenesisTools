@@ -86,6 +86,7 @@ struct DecisionsView: View {
                     }
                 }
                 .padding(18)
+                .genScrollBars()
             }
         }
         .panelFind(find, revision: [filter] + model.decisions.map { "\($0.id) \($0.status) \($0.draftOption ?? "")" }) {

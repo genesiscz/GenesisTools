@@ -1,6 +1,7 @@
 import type { NativeCall, NativeScan, ToolTiming } from "@genesiscz/utils/ai/transcripts/insights-types";
 import { eachLine } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { parseTranscriptLine } from "@genesiscz/utils/ai/transcripts/parse-line";
+import { claudeServiceTier } from "@genesiscz/utils/ai/usage/spend/parse";
 import { isObject } from "@genesiscz/utils/object";
 
 function count(value: unknown): number {
@@ -63,6 +64,7 @@ export function scanClaudeNative(text: string): NativeScan {
             if (id && !seenMessages.has(id)) {
                 seenMessages.add(id);
                 const usage = isObject(message.usage) ? message.usage : {};
+                const serviceTier = claudeServiceTier(usage);
                 const call: NativeCall = {
                     ordinal,
                     messageId: id,
@@ -73,6 +75,7 @@ export function scanClaudeNative(text: string): NativeScan {
                     cacheRead: count(usage.cache_read_input_tokens),
                     cacheWrite: count(usage.cache_creation_input_tokens),
                     reasoning: 0,
+                    ...(serviceTier ? { serviceTier } : {}),
                 };
                 scan.calls.push(call);
             }

@@ -14,6 +14,7 @@
  *   resume       release tabs a debugger client left held (popup stuck blank, "Debugger paused in another tab")
  *   cookies, console, eval, nav, shot, grid, trace, targets, rm-cookie
  *   snapshot, click, fill, scroll — read a tab and act on it by label (the page agent)
+ *   shots        annotated page shots from a shot book (run, list, check, rehearse); shot --mark for one
  *   open, restart — launch/relaunch a browser WITH the debugging flag
  *   scaffold, cheatsheet, mcp — scripting doors
  */
@@ -35,6 +36,7 @@ import { registerReact } from "./commands/react.ts";
 import { registerRecord, registerWatchTombstone } from "./commands/record.ts";
 import { registerResume } from "./commands/resume.ts";
 import { registerScripting } from "./commands/scripting.ts";
+import { registerShots } from "./commands/shots.ts";
 import { registerStatus } from "./commands/status.ts";
 import { registerStorage } from "./commands/storage.ts";
 
@@ -73,6 +75,7 @@ registerResume(program);
 registerBrowse(program);
 registerInspect(program);
 registerPage(program);
+registerShots(program);
 registerScripting(program);
 registerPerf(program);
 registerOverrides(program);

@@ -15,6 +15,8 @@ import type { TranscriptTurn } from "./types";
 export interface PricedCallInput extends CallTokens {
     model: string | null;
     at: string | null;
+    /** The tier the call was billed at when it is not the standard one, as `NativeCall` carries it. */
+    serviceTier?: string;
 }
 
 /** USD for one call at list price, or null when the model has no known price. */

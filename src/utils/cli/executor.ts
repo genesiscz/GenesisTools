@@ -502,6 +502,11 @@ export interface ExecCallOptions {
     env?: Record<string, string | undefined>;
     /** Timeout in milliseconds. Process is killed and promise rejects on expiry. 0 or unset: no timeout. */
     timeout?: number;
+    /**
+     * `false` returns stdout and stderr exactly as the command wrote them. Default `true` trims both. NUL-delimited
+     * output (`git ls-files -z`) needs `false`: a leading space or newline is part of the first path.
+     */
+    trim?: boolean;
 }
 
 export class Executor {
@@ -557,6 +562,7 @@ export class Executor {
         const cmd = this.prefix ? [this.prefix, ...args] : args;
         const cwd = options?.cwd ?? this.cwd;
         const env = this.buildEnv(options?.env);
+        const finish = (text: string): string => (options?.trim === false ? text : text.trim());
 
         if (this.verbose) {
             out.println(pc.gray(`  $ ${cmd.join(" ")}`));
@@ -589,8 +595,8 @@ export class Executor {
             stopTimer(`exit=${exitCode}`);
             result = {
                 success: exitCode === 0,
-                stdout: bounded.stdout.trim(),
-                stderr: bounded.stderr.trim(),
+                stdout: finish(bounded.stdout),
+                stderr: finish(bounded.stderr),
                 exitCode,
             };
         } else {
@@ -608,8 +614,8 @@ export class Executor {
             stopTimer(`exit=${exitCode}`);
             result = {
                 success: exitCode === 0,
-                stdout: stdout.trim(),
-                stderr: stderr.trim(),
+                stdout: finish(stdout),
+                stderr: finish(stderr),
                 exitCode,
             };
         }

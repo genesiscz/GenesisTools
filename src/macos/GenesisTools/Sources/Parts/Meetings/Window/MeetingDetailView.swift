@@ -308,13 +308,42 @@ private struct AddLabelButton: View {
             text = ""
             open = false
         }
+        .onChange(of: open) { _, isOpen in
+            // A refused label or a popover closed by hand must not close a later one when that label arrives.
+            if !isOpen { pending = nil }
+        }
     }
 
     private func commit() {
-        let label = text.trimmingCharacters(in: .whitespaces)
-        guard !label.isEmpty else { return }
-        pending = label
-        add(label)
+        switch LabelCommit(typed: text, labels: labels) {
+        case .nothing:
+            return
+        case .present:
+            text = ""
+            open = false
+        case .add(let label):
+            pending = label
+            add(label)
+        }
+    }
+}
+
+/// What Return in the "+ Label" field does: nothing for an empty field, close for a label the meeting has already (an
+/// add would change nothing, so the popover would wait forever), else add it.
+enum LabelCommit: Equatable {
+    case nothing
+    case present
+    case add(String)
+
+    init(typed: String, labels: [String]) {
+        let label = typed.trimmingCharacters(in: .whitespaces)
+        if label.isEmpty {
+            self = .nothing
+        } else if labels.contains(label) {
+            self = .present
+        } else {
+            self = .add(label)
+        }
     }
 }
 

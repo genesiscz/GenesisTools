@@ -1,16 +1,21 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { copyFile, mkdtemp, rename, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { fillerListsOf, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
-import { bubbleFromSidecar, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
+import { bubbleFromSidecar, cameraMoviePath, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
 import { cutIssues, type EditIssue } from "@genesiscz/utils/recording-editor/check";
-import { audioTrackCount, ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise";
+import {
+    audioTrackCount,
+    denoisedSourcePath,
+    ensureDenoisedSource,
+    syncDenoisedTranscript,
+} from "@genesiscz/utils/recording-editor/denoise";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness } from "@genesiscz/utils/recording-editor/loudness";
@@ -18,10 +23,13 @@ import { cardsLeadUs } from "@genesiscz/utils/recording-editor/overlays";
 import { type TimeValue, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     applyOp,
+    type EditClock,
+    type EditMarker,
     type EditOp,
     type EditProject,
     EXPORT_FORMATS,
     type ExportFormat,
+    editMarkerSchema,
     editProjectSchema,
     type OpFacts,
     opPlacementWarnings,
@@ -51,14 +59,20 @@ import {
 } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { audioFileDurationUs, voiceoverFile } from "@genesiscz/utils/recording-editor/voiceovers";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
-import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { readRecordingManifest, readRecordingManifestSafe } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { privateHitsOf, scanOf, textHitsOf, waitsOf } from "./fx-analysis";
 import { type ExportAnswer, movieOf, resolveRecording } from "./library";
-import { chapterMetadata, chapterPoints, chaptersOfPart, markersOf, recordedMarkersOf } from "./moments";
+import {
+    chapterMetadata,
+    chaptersOfPart,
+    EMBEDDED_CHAPTER_MIN_SECONDS,
+    exportChapterPoints,
+    recordedMarkersOf,
+} from "./moments";
 import { hostExport } from "./service-client";
 
 const { log } = logger.scoped("recorder-edit");
@@ -147,7 +161,7 @@ function movieFor(path: string): string {
 
 /** Opens a recording's edit (a library id, `last`, a folder, a movie or an edit file), or a new one of the whole movie. */
 /** A recording the editor opens may be a whole meeting: up to 12 h and 64 GiB, not the evidence pipeline's 10 minutes. */
-const EDITOR_VIDEO_LIMITS: VideoProbeLimits = {
+export const EDITOR_VIDEO_LIMITS: VideoProbeLimits = {
     maxBytes: 64 * 1024 ** 3,
     maxDurationUs: 12 * 3600 * 1_000_000,
     maxPixels: 48_000_000,
@@ -286,7 +300,7 @@ export interface ComputedEdit {
     /** False when the ops left the project as it was (a second annotateClicks); nothing is saved then. */
     changed: boolean;
     /** The facts each op was applied with, in order, so the same ops can be applied again without measuring. */
-    facts: MeasuredFacts[];
+    facts: OpFacts[];
     removedIdleUs: Array<[number, number]>;
     loudness?: { measuredLufs: number | null; volume: number };
     warnings: string[];
@@ -307,13 +321,13 @@ export async function computeEdit({
     ops: readonly EditOp[];
     /** The project has no file yet: it changes, and is saved, even when the ops change nothing. */
     fresh: boolean;
-    facts?: readonly MeasuredFacts[];
+    facts?: readonly OpFacts[];
     /** The markers set while it recorded (recordedMarkersOf), so a cut that hides one says so. */
     recordedMarkers?: ReadonlyArray<{ atMs: number; label: string }>;
 }): Promise<ComputedEdit> {
     let next = project;
     const removedIdleUs: Array<[number, number]> = [];
-    const facts: MeasuredFacts[] = [];
+    const facts: OpFacts[] = [];
     let loudness: { measuredLufs: number | null; volume: number } | undefined;
     const clamped = ops.flatMap((op) => opTimeWarnings(op, project.source.durationUs));
     const warnings = [...clamped];
@@ -323,7 +337,10 @@ export async function computeEdit({
             const measured = known?.[index] ?? (await probeFacts(next, op));
             const before = next;
             next = applyOp(next, op, measured);
-            warnings.push(...(measured.warnings ?? []), ...opPlacementWarnings(op, before, next));
+            warnings.push(...opPlacementWarnings(op, before, next));
+            // A text or pattern of a hideText, or a name of a hidePrivate, that no screen text matched hid nothing:
+            // said in the answer, not a log.
+            warnings.push(...(measured.textMisses ?? []).map((miss) => `${op.op}: ${miss}`));
             facts.push(measured);
             removedIdleUs.push(...(measured.idleUs ?? []).map(([from, to]): [number, number] => [from, to]));
 
@@ -614,11 +631,8 @@ export async function transcriptWords(value: string, options: { at?: TimeValue }
     });
 }
 
-/** An op's facts and what measuring them found that the caller must hear (a hideText text the screen never shows). */
-type MeasuredFacts = OpFacts & { warnings?: readonly string[] };
-
 /** What an op needs measured on the movie before it applies: idle stretches, the loudness, or the transcript. */
-async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFacts> {
+async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     if (op.op === "removeIdle") {
         return {
             idleUs: await findIdle({
@@ -626,17 +640,36 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFac
                 durationUs: project.source.durationUs,
                 minUs: op.minSeconds * 1_000_000,
                 keepUs: op.keepSeconds * 1_000_000,
+                audio: project.audio,
+                cursor: project.source.cursor,
             }),
         };
     }
 
     if (op.op === "normalize") {
-        const lufs = await integratedLoudness({ video: project.source.video, mutedTracks: project.audio.mutedTracks });
+        // What the export plays of the recording's own sound: the kept clips at their speed, from the cleaned copy the
+        // export renders from when denoise is on (music, voiceovers and the click keep their own volume).
+        const denoise = project.audio.denoise;
+        const cleaned = denoise ? denoisedSourcePath(project.source.video, denoise) : undefined;
+        const lufs = await integratedLoudness({
+            video: cleaned && existsSync(cleaned) ? cleaned : project.source.video,
+            mutedTracks: project.audio.mutedTracks,
+            clips: project.clips,
+        });
         return { loudnessLufs: lufs ?? null };
     }
 
     if (op.op === "denoise" && op.enabled !== false && existsSync(project.source.video)) {
         return { audioTracks: await audioTrackCount(project.source.video) };
+    }
+
+    // A muted track the movie does not have mutes nothing; a probe that fails refuses nothing.
+    if (op.op === "mute" && op.muted !== false && existsSync(project.source.video)) {
+        const audioTracks = await audioTrackCount(project.source.video).catch((error: unknown) => {
+            log.debug({ error, video: project.source.video }, "no audio track count to check the muted track against");
+            return undefined;
+        });
+        return audioTracks === undefined ? {} : { audioTracks };
     }
 
     if (op.op === "cutWords" || op.op === "cutFillers") {
@@ -662,7 +695,7 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFac
             exclude: op.exclude,
             excludeFixed: op.excludeFixed,
         });
-        return { privateHits: hits, ...(warnings.length > 0 ? { warnings } : {}) };
+        return { privateHits: hits, ...(warnings.length > 0 ? { textMisses: warnings } : {}) };
     }
 
     if (op.op === "hideText") {
@@ -677,7 +710,7 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFac
             // R8 6: from/to read only that part of the screen.
             scan: scanOf(op.from, op.to),
         });
-        return { textHits: hits, ...(warnings.length > 0 ? { warnings } : {}) };
+        return { textHits: hits, ...(warnings.length > 0 ? { textMisses: warnings } : {}) };
     }
 
     if (op.op === "speedUpWaits") {
@@ -706,7 +739,7 @@ const redoStepSchema = z.object({
     undoneRevision: z.number().int().nonnegative(),
     ops: z.array(z.string()).optional(),
 });
-type RedoStep = z.infer<typeof redoStepSchema>;
+export type RedoStep = z.infer<typeof redoStepSchema>;
 
 /** `redo` came later than `steps`; a file without it has nothing to redo. Any new change writes `steps` alone. */
 const undoFileSchema = z.object({
@@ -727,6 +760,22 @@ export function readUndoSteps(editPath: string): UndoStep[] {
 /** Replaces the undo file's steps (the newest `UNDO_STEPS` of them). */
 export function writeUndoSteps(editPath: string, steps: readonly UndoStep[]): void {
     atomicWriteFileSync(undoPath(editPath), SafeJSON.stringify({ steps: steps.slice(-UNDO_STEPS) }));
+}
+
+/** The undo file's steps and its redo list, as the service session keeps them while it holds the edit. */
+export function readUndoJournal(editPath: string): { steps: UndoStep[]; redo: RedoStep[] } {
+    return readJournal(editPath);
+}
+
+/** Replaces the undo file's steps and redo list (the newest `UNDO_STEPS` of each). */
+export function writeUndoJournal(
+    editPath: string,
+    journal: { steps: readonly UndoStep[]; redo: readonly RedoStep[] }
+): void {
+    atomicWriteFileSync(
+        undoPath(editPath),
+        SafeJSON.stringify({ steps: journal.steps.slice(-UNDO_STEPS), redo: journal.redo.slice(-UNDO_STEPS) })
+    );
 }
 
 function readUndo(editPath: string): UndoStep[] {
@@ -928,27 +977,39 @@ function isExportFormat(value: string): value is ExportFormat {
 }
 
 /**
- * The default export name, the same rule as the editor's: the recording's title made safe for a file name ("cursor
- * test 1"), else `<movie>-edited` for a plain movie.
+ * The format an export makes: the asked one, else the out file's extension, else the edit's export.format, else mp4.
+ * A whole export and a part both use it, so `--out clip.mp4` writes an MP4 whatever format the window picked. An
+ * unknown extension comes back as it is, for the caller to refuse (`formatRefusal`).
+ */
+export function askedExportFormat({
+    format,
+    out,
+    project,
+}: {
+    format?: ExportFormat;
+    out?: string;
+    project: { export: { format?: ExportFormat } };
+}): string {
+    return format ?? (out ? extname(out).slice(1).toLowerCase() : (project.export.format ?? "mp4"));
+}
+
+function formatRefusal(asked: string): { ok: false; error: string } {
+    return { ok: false, error: `the format is one of ${EXPORT_FORMATS.join(", ")} (got "${asked}")` };
+}
+
+/**
+ * The default export name, the same rule as the window's EditExporter.defaultName: the title of the recording.json
+ * beside the movie (one the schema refuses too), with / and : made -, spaces and dots trimmed from both ends, cut to
+ * 80 characters as the eye counts them ("cursor test 1"); else `<movie>-edited` for a plain movie.
  */
 export function defaultExportName(video: string): string {
-    const title = (() => {
-        try {
-            return readRecordingManifest(dirname(video))?.title;
-        } catch (error) {
-            log.debug(
-                { error, video },
-                "the manifest beside the movie does not read; the export keeps the movie's name"
-            );
-            return undefined;
-        }
-    })();
-    const safe = (title ?? "")
-        .replace(/[/:]/g, "-")
-        .trim()
-        .replace(/^\.+|\.+$/g, "")
-        .slice(0, 80);
-    return safe || `${basename(video, extname(video))}-edited`;
+    const title = readRecordingManifestSafe(dirname(video))?.raw.title;
+    const safe = (typeof title === "string" ? title : "").replace(/[/:]/g, "-").replace(/^[\s.]+|[\s.]+$/gu, "");
+    const kept = [...new Intl.Segmenter().segment(safe)]
+        .slice(0, 80)
+        .map((part) => part.segment)
+        .join("");
+    return kept || `${basename(video, extname(video))}-edited`;
 }
 
 // R5 3 export overwrite, progress, size
@@ -994,11 +1055,6 @@ export function exportProgressPrinter(print: (line: string) => void): (fraction:
     };
 }
 
-/** `<default name>.<ext>` beside the source movie: the name an overwriting export replaces. */
-function defaultOutput(video: string, extension: string): string {
-    return `${join(dirname(video), defaultExportName(video))}.${extension}`;
-}
-
 /**
  * Renders into `target`. Without `overwrite` an existing target is refused before any work. With it the movie is
  * rendered into a hidden file beside the target and moved over it in one step, so a failed render leaves the old file.
@@ -1006,12 +1062,22 @@ function defaultOutput(video: string, extension: string): string {
 export async function renderInto({
     target,
     overwrite,
+    inputs,
     render,
 }: {
     target: string;
     overwrite?: boolean;
+    /** The files the export reads (exportInputsOf); the target may be none of them, overwrite or not. */
+    inputs: string[];
     render: (out: string) => Promise<ExportAnswer>;
 }): Promise<ExportAnswer & { replaced?: boolean }> {
+    // The renderer's own check sees only the staging name, and the move below would replace the recording itself.
+    const refused = overwritesInput(target, inputs);
+
+    if (refused) {
+        return refused;
+    }
+
     const exists = existsSync(target);
 
     if (exists && !overwrite) {
@@ -1040,10 +1106,41 @@ export async function renderInto({
     return { ...answer, path: target, ...(exists ? { replaced: true } : {}) };
 }
 
-/** `<default name>.<ext>` beside the source movie, or `-2`, `-3`…: an export never overwrites a file. */
-function freeOutput(video: string, extension: string): string {
-    const stem = join(dirname(video), defaultExportName(video));
+/**
+ * The path as the disk names it: symlinks followed (/tmp is /private/tmp) and the case the file has on a
+ * case-insensitive volume. A path that does not exist yet keeps its name under its folder's real path.
+ */
+function canonicalPath(path: string): string {
+    const absolute = resolve(path);
 
+    if (existsSync(absolute)) {
+        return realpathSync.native(absolute);
+    }
+
+    const folder = dirname(absolute);
+    return existsSync(folder) ? join(realpathSync.native(folder), basename(absolute)) : absolute;
+}
+
+/** The refusal for a target that is one of the export's inputs (the window's ExportError.overwritesInput words). */
+function overwritesInput(target: string, inputs: string[]): ExportAnswer | undefined {
+    const canonicalTarget = canonicalPath(target);
+    const input = inputs.find((path) => canonicalPath(path) === canonicalTarget);
+    return input ? { ok: false, error: `the export would overwrite its input ${input}; pick another file` } : undefined;
+}
+
+/** The files an export of the edit reads: the source movie, the camera movie, the music and every voiceover. */
+export function exportInputsOf(project: EditProject): string[] {
+    const video = project.source.video;
+    return [
+        video,
+        ...(project.camera ? [cameraMoviePath(project.camera, video)] : []),
+        ...(project.audio.music ? [resolve(dirname(video), project.audio.music.file)] : []),
+        ...(project.audio.voiceovers ?? []).map((voiceover) => resolve(dirname(video), voiceover.file)),
+    ];
+}
+
+/** `<stem>.<ext>`, or `-2`, `-3`…: an export never overwrites a file. */
+function freeOutput(stem: string, extension: string): string {
     for (let index = 1; ; index++) {
         const candidate = `${stem}${index === 1 ? "" : `-${index}`}.${extension}`;
 
@@ -1053,27 +1150,73 @@ function freeOutput(video: string, extension: string): string {
     }
 }
 
+/** `path` with `~/` as the home folder and a relative path resolved against `base`. */
+function absoluteFrom(path: string, base: string): string {
+    return resolve(base, path.replace(/^~(?=[/\\]|$)/, homedir()));
+}
+
+/**
+ * The file an export writes: one rule for the CLI, the REPL, the service, Copy as GIF and the window
+ * (EditExporter.outputURL). `out` wins (`~/` is the home folder, a relative path is against the caller's `cwd`); else
+ * the file chosen in the editor (`export.output`, stored absolute; an older relative one is against the movie's folder);
+ * else the default name beside the movie, with "-2", "-3" unless `overwrite`. The extension always follows the format,
+ * so `--out x.mov` of an MP4 writes `x.mp4`. A part without `out` is `<whole name>-part-<from>-<to>` (output seconds,
+ * one decimal) in the whole target's folder, so it never takes the whole edit's file.
+ */
+export function exportTargetOf({
+    project,
+    format,
+    out,
+    overwrite,
+    part,
+    cwd = process.cwd(),
+}: {
+    /** Only the movie and the chosen file are read, so a caller without the whole edit can ask too. */
+    project: { source: { video: string }; export: { output: string } };
+    format: ExportFormat;
+    out?: string;
+    overwrite?: boolean;
+    part?: { fromUs: number; toUs: number };
+    cwd?: string;
+}): string {
+    const withFormat = (stem: string) => `${stem}.${format}`;
+    const stemOf = (path: string) => join(dirname(path), basename(path, extname(path)));
+
+    if (out) {
+        return withFormat(stemOf(absoluteFrom(out, cwd)));
+    }
+
+    const video = project.source.video;
+    const chosen = project.export.output ? stemOf(absoluteFrom(project.export.output, dirname(video))) : "";
+    const whole = chosen || join(dirname(video), defaultExportName(video));
+    const stem = part
+        ? `${whole}-part-${(part.fromUs / 1_000_000).toFixed(1)}-${(part.toUs / 1_000_000).toFixed(1)}`
+        : whole;
+    return chosen || overwrite ? withFormat(stem) : freeOutput(stem, format);
+}
+
 /**
  * Renders the edit with the editor's renderer; a GIF or WebM is made from that movie by ffmpeg (10 fps and at most
  * 960 wide for a GIF). The intermediate movie lives in a temporary folder and is removed.
  */
 /**
- * Writes the edit's subtitles (the cached transcript with its fixes, in output time) to `out` as SubRip or WebVTT.
- * `part` keeps the lines of an exported part, moved to start at 0.
+ * Writes the edit's subtitles (the cached transcript with its fixes) to `out` as SubRip or WebVTT, beside the movie
+ * under its export's name by default. The cues are on the clock of the export they go with: a whole export plays the
+ * intro card first, so every cue moves by its length; `clock: "output"` keeps the movie's own times. `part` keeps the
+ * lines of an exported part, moved to start at 0 (a part plays no cards).
  */
 export async function writeSubtitles({
     value,
     format,
     out,
     part,
-    leadUs,
+    clock,
 }: {
     value: string;
     format: SubtitleFormat;
     out?: string;
     part?: { fromUs: number; toUs: number };
-    /** R4 9 intro card: the export's time before the movie; every cue moves by it. */
-    leadUs?: number;
+    clock?: Exclude<EditClock, "source">;
 }): Promise<{ path: string; cues: number; format: SubtitleFormat }> {
     const opened = await openProject(value);
     const cache = transcriptCachePath(opened.project.source.video);
@@ -1085,7 +1228,8 @@ export async function writeSubtitles({
     }
 
     const lines = transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
-    const shift = leadUs ?? 0;
+    // R4 9 intro card: the renderer plays it before the movie.
+    const shift = part || clock === "output" ? 0 : cardsLeadUs(opened.project);
     const cues = subtitleCues(lines, opened.project, part).map((cue) =>
         shift ? { ...cue, fromUs: cue.fromUs + shift, toUs: cue.toUs + shift } : cue
     );
@@ -1093,37 +1237,32 @@ export async function writeSubtitles({
         ? resolve(out)
         : join(dirname(opened.project.source.video), `${defaultExportName(opened.project.source.video)}.${format}`);
     atomicWriteFileSync(path, formatSubtitles(cues, format));
-    log.debug({ path, cues: cues.length, format, part }, "subtitles written");
+    log.debug({ path, cues: cues.length, format, part, shift }, "subtitles written");
     return { path, cues: cues.length, format };
 }
 
 /**
  * Puts the recording's markers into an MP4 as chapters (players list them; QuickTime under View → Chapters): a
  * stream copy through ffmpeg into a file beside it, then moved over it. Answers how many it wrote; 0 leaves the movie.
+ * A whole export's chapters are on its own clock (exportChapterPoints: the intro card's title at 0:00, every marker
+ * after the card); a part plays no cards, so its chapters are the edit's, moved to start at the part.
  */
 export async function embedChapters({
     value,
     movie,
     part,
-    leadUs,
 }: {
     value: string;
     movie: string;
     part?: { fromUs: number; toUs: number };
-    /** R4 9 intro card: the export's time before the movie; the intro becomes its own first chapter. */
-    leadUs?: number;
 }): Promise<number> {
     const opened = await openProject(value);
-    const whole = chapterPoints(markersOf(opened), { minSeconds: 1 });
-    const inPart = part ? chaptersOfPart(whole, { from: part.fromUs / 1_000_000, to: part.toUs / 1_000_000 }) : whole;
-    const lead = (leadUs ?? 0) / 1_000_000;
-    const chapters =
-        lead > 0 && inPart.length > 0
-            ? [
-                  { at: 0, label: opened.project.cards?.intro?.title ?? "Intro" },
-                  ...inPart.map((chapter) => ({ ...chapter, at: chapter.at + lead })),
-              ]
-            : inPart;
+    const chapters = part
+        ? chaptersOfPart(exportChapterPoints(opened, { minSeconds: EMBEDDED_CHAPTER_MIN_SECONDS, clock: "output" }), {
+              from: part.fromUs / 1_000_000,
+              to: part.toUs / 1_000_000,
+          })
+        : exportChapterPoints(opened, { minSeconds: EMBEDDED_CHAPTER_MIN_SECONDS });
 
     if (chapters.length === 0) {
         return 0;
@@ -1173,7 +1312,7 @@ export async function embedChapters({
 /**
  * What an export does after the movie is written, by the edit's settings: the subtitle file beside it and the
  * markers as chapters in an MP4. A missing transcript or a failed chapter step is a warning, never a failed export.
- * `part`: the movie holds only that part of the edit (the window's I and O).
+ * `part`: the movie holds only that part of the edit (the window's I and O), which has no intro or end card.
  */
 export async function finishExport({
     value,
@@ -1198,17 +1337,20 @@ export async function finishExport({
     }
 
     const { project } = await openProject(value);
-    const format = subtitles ?? project.export.subtitles;
+    // The Export tab hides the subtitle file for a GIF, so the edit's default writes none beside one; an ask still does.
+    const isGif = extname(movie).toLowerCase() === ".gif";
+    const format = subtitles ?? (isGif ? undefined : project.export.subtitles);
     const warnings: string[] = [];
-    // R4 9 intro card: the renderer plays it before the movie, so subtitles and chapters move by its length.
-    const leadUs = cardsLeadUs(project);
+    // R4 9 intro card: the renderer plays it before the movie, so writeSubtitles and embedChapters move a whole
+    // export's subtitles and chapters by its length. A part is a clip of the movie without the cards on every route
+    // (exportAs here, the window's exportedProject), so it starts at the part's first frame.
     const extras: { subtitles?: string; chapters?: number } = {};
 
     if (format) {
         const out = join(dirname(movie), `${basename(movie, extname(movie))}.${format}`);
 
         try {
-            extras.subtitles = (await writeSubtitles({ value, format, out, part, leadUs })).path;
+            extras.subtitles = (await writeSubtitles({ value, format, out, part })).path;
         } catch (error) {
             log.debug({ error, value }, "no subtitles beside the export");
             warnings.push(`no subtitles: ${error instanceof Error ? error.message : String(error)}`);
@@ -1217,7 +1359,7 @@ export async function finishExport({
 
     if (extname(movie).toLowerCase() === ".mp4" && project.export.chapters !== false) {
         try {
-            const count = await embedChapters({ value, movie, part, leadUs });
+            const count = await embedChapters({ value, movie, part });
 
             if (count) {
                 extras.chapters = count;
@@ -1232,9 +1374,42 @@ export async function finishExport({
 }
 
 /**
+ * The edit a denoised export renders: the cleaned movie as its source, no denoise left, the camera file absolute (the
+ * copy sits in a scratch folder), and the markers set while it recorded (`recordedMarkersOf`, the reader the MP4
+ * chapters use) folded into its own markers. The renderer reads those from the recording.json beside the source movie,
+ * and `.denoise/` has none, so without them the progress bar lost them. A label is clipped to the edit markers' cap,
+ * and a marker without a label or before the movie's start is left out, so the copy stays a valid edit.
+ */
+export function denoisedRenderProject(options: { opened: OpenedProject; cleanedPath: string }): EditProject {
+    const { project } = options.opened;
+    const { denoise: _denoise, ...audio } = project.audio;
+    const camera = project.camera;
+    const recorded = recordedMarkersOf(options.opened).flatMap((marker, index): EditMarker[] => {
+        const label = marker.label.trim().slice(0, editMarkerSchema.shape.label.maxLength ?? undefined);
+
+        if (!label || marker.atMs < 0) {
+            log.debug({ marker }, "a recorded marker the edit markers cannot hold is left out of the render copy");
+            return [];
+        }
+
+        return [{ id: `recorded-${index}`, atUs: Math.round(marker.atMs * 1000), label }];
+    });
+    const markers = [...recorded, ...(project.markers ?? [])].sort((a, b) => a.atUs - b.atUs);
+
+    return {
+        ...project,
+        source: { ...project.source, video: options.cleanedPath },
+        ...(camera ? { camera: { ...camera, file: resolve(dirname(project.source.video), camera.file) } } : {}),
+        audio,
+        ...(markers.length ? { markers } : {}),
+    };
+}
+
+/**
  * Runs `render` on the edit as it should export: the edit itself, or with `audio.denoise` a copy in a scratch folder
- * whose source is the cleaned movie (`ensureDenoisedSource`, cached beside the source) and which has no denoise left.
- * The transcript cache goes beside the cleaned movie too, so captions and ducking still find it.
+ * (`denoisedRenderProject`) whose source is the cleaned movie (`ensureDenoisedSource`, cached beside the source). The
+ * renderer reads the transcript beside its source movie for captions and ducking, so the source's transcript is copied
+ * beside the cleaned movie on every export (`syncDenoisedTranscript`), and a new transcription reaches the export.
  */
 async function withDenoisedSource<T>(opened: OpenedProject, render: (editPath: string) => Promise<T>): Promise<T> {
     const settings = opened.project.audio.denoise;
@@ -1250,24 +1425,12 @@ async function withDenoisedSource<T>(opened: OpenedProject, render: (editPath: s
         { source, cleaned: cleaned.path, made: cleaned.made, ms: Math.round(performance.now() - started) },
         "the export renders from the cleaned sound"
     );
-    const transcript = transcriptCachePath(source);
-
-    if (existsSync(transcript) && !existsSync(transcriptCachePath(cleaned.path))) {
-        await copyFile(transcript, transcriptCachePath(cleaned.path));
-    }
-
+    syncDenoisedTranscript({ transcript: transcriptCachePath(source), copy: transcriptCachePath(cleaned.path) });
     const scratch = await mkdtemp(join(tmpdir(), "recorder-denoise-"));
 
     try {
         const copy = join(scratch, "denoised.edit.json");
-        const { denoise: _denoise, ...audio } = opened.project.audio;
-        const camera = opened.project.camera;
-        writeProject(copy, {
-            ...opened.project,
-            source: { ...opened.project.source, video: cleaned.path },
-            ...(camera ? { camera: { ...camera, file: resolve(dirname(source), camera.file) } } : {}),
-            audio,
-        });
+        writeProject(copy, denoisedRenderProject({ opened, cleanedPath: cleaned.path }));
         return await render(copy);
     } finally {
         await rm(scratch, { recursive: true, force: true });
@@ -1280,80 +1443,98 @@ export async function exportAs(
         out?: string;
         format?: ExportFormat;
         part?: { fromUs: number; toUs: number };
-        /** A subtitle file beside the export; absent is the edit's export.subtitles. */
+        /** A subtitle file beside the export; absent is the edit's export.subtitles (none beside a GIF). */
         subtitles?: SubtitleFormat;
     } & ExportRun = {}
 ): Promise<ExportAnswer & { subtitles?: string; chapters?: number; warnings?: string[]; replaced?: boolean }> {
     if (options.part) {
         // A part is a trimmed copy of the edit in a scratch folder; the edit on disk stays as it is.
         const whole = await openProject(value);
+        // The copy is told the whole edit's answer, so the out extension beats export.format here too.
+        const asked = askedExportFormat({ format: options.format, out: options.out, project: whole.project });
+
+        if (!isExportFormat(asked)) {
+            return formatRefusal(asked);
+        }
+
         const scratch = await mkdtemp(join(tmpdir(), "recorder-part-"));
 
         try {
             const copy = join(scratch, "part.edit.json");
             // R4 9 intro and end cards: a part is a clip of the movie, without the cards around it.
             const { cards: _cards, ...trimmed } = partOf(whole.project, options.part.fromUs, options.part.toUs);
-            writeProject(copy, { ...trimmed, export: { ...trimmed.export, output: "" } });
-            log.debug({ value, part: options.part, clips: trimmed.clips.length }, "exporting a part of the edit");
-            return await exportAs(copy, {
+            writeProject(copy, trimmed);
+            const out = exportTargetOf({
+                project: whole.project,
+                format: asked,
                 out: options.out,
-                format: options.format ?? whole.project.export.format,
-                subtitles: options.subtitles ?? whole.project.export.subtitles,
+                overwrite: options.overwrite,
+                part: options.part,
+            });
+            log.debug({ value, part: options.part, clips: trimmed.clips.length, out }, "exporting a part of the edit");
+            const answer = await renderExport(copy, {
+                out,
+                format: asked,
                 overwrite: options.overwrite,
                 size: options.size,
                 onProgress: options.onProgress,
             });
+            // Finished on the whole edit, as the window's `recorder finish --from --to` is, so the chapter current at
+            // the part start names 0:00; the trimmed copy has cut the markers before the part.
+            return await finishExport({ value, answer, subtitles: options.subtitles, part: options.part });
         } finally {
             await rm(scratch, { recursive: true, force: true });
         }
     }
 
+    // finishExport applies the edit's export.subtitles default, which a GIF leaves out.
+    return finishExport({ value, answer: await renderExport(value, options), subtitles: options.subtitles });
+}
+
+/** Renders the whole edit into its export target in the asked format; finishExport adds the subtitles and chapters. */
+async function renderExport(
+    value: string,
+    options: { out?: string; format?: ExportFormat } & ExportRun
+): Promise<ExportAnswer & { replaced?: boolean }> {
     const opened = await openProject(value);
-    const asked =
-        options.format ??
-        (options.out ? extname(options.out).slice(1).toLowerCase() : (opened.project.export.format ?? "mp4"));
+    const asked = askedExportFormat({ format: options.format, out: options.out, project: opened.project });
 
     if (!isExportFormat(asked)) {
-        return { ok: false, error: `the format is one of ${EXPORT_FORMATS.join(", ")} (got "${asked}")` };
+        return formatRefusal(asked);
     }
 
-    const subtitles = options.subtitles ?? opened.project.export.subtitles;
-
     const host = { size: options.size, onProgress: options.onProgress };
+    const output = exportTargetOf({
+        project: opened.project,
+        format: asked,
+        out: options.out,
+        overwrite: options.overwrite,
+    });
+    // The denoised render reads a cleaned copy, but the target is still checked against the recording's own files.
+    const inputs = exportInputsOf(opened.project);
+    const refused = overwritesInput(output, inputs);
+
+    if (refused) {
+        return refused;
+    }
 
     if (asked === "mp4") {
-        const chosenMp4 = opened.project.export.output;
-        const chosenTarget = chosenMp4
-            ? join(dirname(chosenMp4), `${basename(chosenMp4, extname(chosenMp4))}.mp4`)
-            : "";
-        // Without out or overwrite the renderer picks a free name ("-2", "-3"); overwrite replaces the usual one.
-        const target = options.out
-            ? resolve(options.out)
-            : options.overwrite
-              ? chosenTarget || defaultOutput(opened.project.source.video, "mp4")
-              : undefined;
-
         if (opened.project.audio.denoise) {
-            return finishExport({
-                value,
-                answer: await renderInto({
-                    target: target ?? (chosenTarget || freeOutput(opened.project.source.video, "mp4")),
-                    overwrite: options.overwrite,
-                    render: (to) => withDenoisedSource(opened, (edit) => hostExport({ path: edit, out: to, ...host })),
-                }),
-                subtitles,
+            return renderInto({
+                target: output,
+                overwrite: options.overwrite,
+                inputs,
+                render: (to) => withDenoisedSource(opened, (edit) => hostExport({ path: edit, out: to, ...host })),
             });
         }
 
         const recording = resolveRecording(value);
-        const answer = target
-            ? await renderInto({
-                  target,
-                  overwrite: options.overwrite,
-                  render: (to) => hostExport({ path: recording, out: to, ...host }),
-              })
-            : await hostExport({ path: recording, ...host });
-        return finishExport({ value, answer, subtitles });
+        return renderInto({
+            target: output,
+            overwrite: options.overwrite,
+            inputs,
+            render: (to) => hostExport({ path: recording, out: to, ...host }),
+        });
     }
 
     const format = asked;
@@ -1361,14 +1542,6 @@ export async function exportAs(
     if (opened.fresh) {
         writeProject(opened.path, opened.project);
     }
-
-    // A file chosen in the editor (export.output) keeps its name with this format's extension.
-    const chosen = opened.project.export.output;
-    const output = options.out
-        ? resolve(options.out)
-        : chosen
-          ? join(dirname(chosen), `${basename(chosen, extname(chosen))}.${format}`)
-          : freeOutput(opened.project.source.video, format);
 
     if (existsSync(output) && !options.overwrite) {
         return {
@@ -1390,12 +1563,14 @@ export async function exportAs(
             return movie;
         }
 
-        const answer = await renderInto({
+        return await renderInto({
             target: output,
             overwrite: options.overwrite,
+            inputs,
             render: async (to) => {
                 await runVideoCommand({
-                    command: exportVideoArgv({ input: rendered, output: to, format }),
+                    // The window's render already holds one mixed audio track.
+                    command: exportVideoArgv({ input: rendered, output: to, format, audioTracks: 1 }),
                     timeoutMs: 30 * 60_000,
                 });
                 const bytes = (await stat(to)).size;
@@ -1403,7 +1578,6 @@ export async function exportAs(
                 return { ok: true, path: to, bytes, seconds: Math.round((performance.now() - started) / 10) / 100 };
             },
         });
-        return finishExport({ value, answer, subtitles });
     } finally {
         await rm(scratch, { recursive: true, force: true });
     }

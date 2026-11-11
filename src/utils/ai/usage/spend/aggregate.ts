@@ -69,6 +69,7 @@ function eventCost(ev: UsageEvent, pricing: PricingTable): number {
     const price = resolvePrice(entry, {
         at: Number.isNaN(at.getTime()) ? undefined : at,
         contextTokens: ev.inputTokens + ev.cacheReadTokens + ev.cacheCreationTokens,
+        serviceTier: ev.serviceTier,
     });
 
     return costOf(

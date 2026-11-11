@@ -234,7 +234,8 @@ export function requestsAlsoNaming(
     for (const path of paths) {
         const ids = pending
             .filter((request) => request.id !== exceptId && request.status === "pending")
-            .filter((request) => request.targets.some((target) => target.path === path))
+            // An aside copy is its own object: an approval of the path never decides it (`settleShared`).
+            .filter((request) => request.targets.some((target) => !target.stored && target.path === path))
             .map((request) => request.id);
 
         if (ids.length > 0) {

@@ -11,13 +11,13 @@ enum CaptureChoice: Equatable {
 
     /// The `tools recorder start` flags that name it.
     var arguments: [String] {
+        // A window or an app keeps its ids or pid as the target (two apps can share a name) and starts with the
+        // picker's line as its title.
         switch self {
-        case let .target(.window(ids, _, title, _)):
-            var args = ["--window", ids.map(String.init).joined(separator: ",")]
-            if let title, !title.isEmpty { args += ["--title", title] }
-            return args
+        case let .target(.window(ids, _, _, _)):
+            return ["--window", ids.map(String.init).joined(separator: ",")] + titleArguments
         case let .target(.app(app, _)):
-            return ["--app", app]
+            return ["--app", app] + titleArguments
         case let .target(.display(index, _)):
             return ["--display", String(index)]
         case let .area(rect):
@@ -25,6 +25,26 @@ enum CaptureChoice: Equatable {
             return ["--region", parts.joined(separator: ",")]
         case .followPointer:
             return []
+        }
+    }
+
+    private var titleArguments: [String] {
+        guard case let .target(target) = self, let title = Self.startTitle(of: target) else { return [] }
+        return ["--title", title]
+    }
+
+    /// The `--title` a window or an app starts with: the line the picker shows (`RecordingTarget.title`) without its
+    /// "Window N" fallback, so the library, the menu and the export name never show a pid or a window id. Nil for a
+    /// display and for a target with no name: the recorder titles those itself.
+    static func startTitle(of target: RecordingTarget) -> String? {
+        switch target {
+        case let .window(_, app, title, _):
+            if let title, !title.isEmpty { return title }
+            return app.flatMap { $0.isEmpty ? nil : $0 }
+        case let .app(_, name):
+            return name.flatMap { $0.isEmpty ? nil : $0 }
+        case .display:
+            return nil
         }
     }
 

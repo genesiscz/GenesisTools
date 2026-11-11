@@ -188,7 +188,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
     return {
         hello: (params, context) => context.hello(params),
         "meetings.list": (params) => {
-            const records = selectMeetings(storeOf().list(), { project: params.project, limit: params.limit });
+            const records = selectMeetings(storeOf(), { project: params.project, limit: params.limit });
             return params.full ? records : records.map(meetingListRow);
         },
         "meeting.show": (params) => recordOf(storeOf(), params.ref),

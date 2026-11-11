@@ -669,6 +669,36 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(fake.count("hello"), 2, "without a subscription nothing connects again")
     }
 
+    /// A new connection whose subscribe goes unanswered would stay connected and hear nothing (the kept subscription
+    /// also keeps it from closing when idle): the window drops it and connects again until a subscribe is answered.
+    func testASilentSubscribeOnANewConnectionIsTriedAgainOnAnother() async throws {
+        try writeServiceEntry()
+        let log = commands!
+        let service = MeetingsService(folder: folder, timing: .init(helloTimeout: 0.3, startThrottle: 30, refusedBackoff: 60,
+                                                                    idleClose: 60, reconnectDelay: 0.05),
+                                      pid: 4242, startService: { log.starts += 1 })
+        var resumed = 0
+        let listening = service.listen { signal in
+            if signal == .resumed { resumed += 1 }
+        }
+        defer { listening.cancel() }
+        _ = try await service.subscribe(meeting: Self.design, events: ["meeting.changed"])
+
+        fake.silent = ["subscribe"]
+        fake.hangUp()
+        for _ in 0..<200 where fake.count("subscribe") < 3 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertGreaterThanOrEqual(fake.count("hello"), 3, "a silent subscribe dropped its connection and a new one opened")
+        XCTAssertEqual(resumed, 0, "no subscribe was answered yet")
+
+        fake.silent = []
+        for _ in 0..<300 where resumed == 0 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(resumed, 1, "the next connection carried the subscription and told the subscriber")
+        let hellos = fake.count("hello")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fake.count("hello"), hellos, "an answered subscribe keeps its connection")
+        service.unsubscribe()
+    }
+
     func testACancelledReadIsCancelledOnTheWireAndRunsNoCommand() async throws {
         try writeServiceEntry()
         fake.silent = ["meeting.transcript"]

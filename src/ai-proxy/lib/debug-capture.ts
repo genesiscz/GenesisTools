@@ -6,8 +6,9 @@ import { logger } from "@genesiscz/utils/logger";
 
 /**
  * Opt-in (AI_PROXY_DEBUG_CAPTURE=1) dump of the last failing upstream exchange.
- * The capture carries the upstream request BODY and response text only — never
- * Authorization headers, tokens, or the proxy API key.
+ * The capture carries the upstream request BODY and response text, unredacted. It
+ * leaves out the headers (the Authorization token, the proxy API key), but a secret
+ * inside the body (a pasted key, a tool result, an echoed error) is written as is.
  */
 export function captureUpstreamFailure(input: {
     provider: string;

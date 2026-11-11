@@ -242,6 +242,24 @@ public func movieSessionEnd(stop: CMTime, lastFrame: CMTime?) -> CMTime {
     return lastFrame
 }
 
+/// The wall-clock time (epoch ms) of a host-clock moment, from both clocks read at one instant (`hostNow`,
+/// `epochNowMs`). A frame carries a host-clock time and a recording session keeps the wall clock, so this is how the
+/// session learns when the movie's first frame was captured.
+public func epochMs(ofHostTime time: CMTime, hostNow: CMTime, epochNowMs: Double) -> Double {
+    epochNowMs - CMTimeGetSeconds(CMTimeSubtract(hostNow, time)) * 1000
+}
+
+/// A movie's length in ms: from its first frame to its end (`movieSessionEnd`), the time its writer session spans.
+public func movieLengthMs(first: CMTime, end: CMTime) -> Int {
+    max(0, Int((CMTimeGetSeconds(CMTimeSubtract(end, first)) * 1000).rounded()))
+}
+
+/// Where a host-clock moment falls in the movie, in ms from its first frame (`movieStart`, that frame's timestamp).
+/// The cursor track counts its rows this way, so a row's `t` is the movie time of the frames that show it.
+public func movieTimeMs(of host: CMTime, movieStart: CMTime) -> Double {
+    CMTimeGetSeconds(CMTimeSubtract(host, movieStart)) * 1000
+}
+
 /// One window surface to paint into the fixed output.
 public struct IsolatedPaint {
     public let image: CIImage

@@ -19,6 +19,8 @@ struct UsageLimitsSection: View {
 
     // MARK: Advice
 
+    /// One summary line: "Use next", then each provider's pick with the room it has left. The advisor's reasoning
+    /// (`tools ai usage limits advise`) is in each pick's tooltip; a click shows that account's lanes.
     @ViewBuilder
     private var advice: some View {
         let picks = (usage.advise?.data.providers ?? []).compactMap { provider -> (String, UsageAdvicePick)? in
@@ -26,22 +28,21 @@ struct UsageLimitsSection: View {
             return (provider.provider, pick)
         }
         if !picks.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(picks, id: \.0) { provider, pick in
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.right.circle").foregroundColor(ReviewPalette.added).font(.system(size: 11))
-                        AIProviderGlyph(meta: AIProviders.meta(for: provider), size: 13)
-                        Text(verbatim: "Next: \(pick.accountName)")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.88))
-                        Text(verbatim: pick.why)
-                            .font(.system(size: 11))
-                            .foregroundColor(ReviewPalette.dim)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                    .instantTooltip("The account the advisor picks for the next session (tools ai usage limits advise): \(pick.why)")
+            HStack(spacing: 12) {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.right.circle").foregroundColor(ReviewPalette.added).font(.system(size: 11))
+                    Text("Use next")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.88))
                 }
+                ForEach(picks, id: \.0) { provider, pick in
+                    let row = usage.table.rows.first { $0.account.provider == pick.provider && $0.account.accountId == pick.accountId }
+                    UsageAdvicePickChip(provider: provider, pick: pick, row: row, now: usage.builtAt) {
+                        if let row { usage.select(account: row.id, additive: false) }
+                    }
+                    .equatable()
+                }
+                Spacer(minLength: 0)
             }
         }
     }
@@ -55,16 +56,20 @@ struct UsageLimitsSection: View {
                        text: "No account has a polled limit yet.",
                        detail: "The usage poller records each account's windows (tools ai usage daemon register).")
         } else {
+            let columns = settings.hideEmptyColumns
+                ? UsageTableBuilder.columnsWithReadings(usage.table.columns, rows: usage.table.rows)
+                : usage.table.columns
             VStack(alignment: .leading, spacing: 2) {
-                UsageTableHeader(columns: usage.table.columns)
+                UsageTableHeader(columns: columns)
                 ForEach(usage.table.rows) { row in
-                    UsageTableRowView(row: row, columns: usage.table.columns,
+                    UsageTableRowView(row: row, columns: columns,
                                       selected: usage.selectedAccounts.contains(row.id), now: usage.builtAt) { additive in
                         usage.select(account: row.id, additive: additive)
                     }
                     .equatable()
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -131,6 +136,75 @@ struct UsageLimitsSection: View {
 }
 
 
+
+/// One provider's pick in the "Use next" line: its mark, the account, and the room left in its tightest window, said
+/// plainly ("90% of the week left"). The tooltip spells out both windows and the advisor's own reasoning.
+struct UsageAdvicePickChip: View, Equatable {
+    let provider: String
+    let pick: UsageAdvicePick
+    let row: UsageTableRow?
+    let now: Date
+    let action: () -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.provider == rhs.provider && lhs.pick == rhs.pick && lhs.row == rhs.row && lhs.now == rhs.now
+    }
+
+    /// The windows the account has a reading for, as (name, cell).
+    private var windows: [(String, UsageTableCell)] {
+        [("the week", row?.cells["weekly"]), ("the 5h window", row?.cells["session"])].compactMap { name, cell in
+            guard let cell, !cell.absent, cell.percent != nil else { return nil }
+            return (name, cell)
+        }
+    }
+
+    /// "90% of the week left": the window with the least room.
+    private var room: String? {
+        guard let tight = windows.max(by: { ($0.1.percent ?? 0) < ($1.1.percent ?? 0) }) else { return nil }
+        return "\(Int(max(0, 100 - (tight.1.percent ?? 0)).rounded()))% of \(tight.0) left"
+    }
+
+    private var tooltip: String {
+        let name = AIProviders.meta(for: provider).displayName
+        var lines = ["\(name): the advisor picks \(pick.accountName) for the next session."]
+        for (window, cell) in windows {
+            let left = "\(Int(max(0, 100 - (cell.percent ?? 0)).rounded()))% of \(window) left"
+            if let reset = cell.resetsAt, reset > now {
+                lines.append(left.prefix(1).uppercased() + left.dropFirst() + ", resets in \(UsageFormat.countdown(to: reset, now: now)).")
+            } else {
+                lines.append(left.prefix(1).uppercased() + left.dropFirst() + ".")
+            }
+        }
+        // The advisor writes its reasoning with a dash between the clauses; a period reads plainer.
+        lines.append("Advisor: " + pick.why.replacingOccurrences(of: " — ", with: ". ").replacingOccurrences(of: " – ", with: ". "))
+        if row != nil { lines.append("Click to show its lanes.") }
+        return lines.joined(separator: "\n")
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            AIProviderGlyph(meta: AIProviders.meta(for: provider), size: 13)
+            Text(verbatim: pick.accountName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.88))
+                .lineLimit(1)
+            if let room {
+                Text(verbatim: room)
+                    .font(.system(size: 11))
+                    .foregroundColor(ReviewPalette.dim)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 22)
+        .contentShape(Rectangle())
+        // lint-rules-ignore: short list (one "Use next" chip per provider, at most a few)
+        .rowButton(cornerRadius: 6, action)
+        .instantTooltip(tooltip)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+}
 
 struct UsageSpikeRow: View, Equatable {
     let spike: UsageSpike
@@ -215,25 +289,47 @@ struct UsageAlertsStrip: View {
                         Image(systemName: alert.level == "critical" ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
                             .foregroundColor(UsageTone.alertLevel(alert.level))
                             .font(.system(size: 11))
-                        Text(verbatim: alert.title)
+                        // The part that differs comes first: two alerts of one kind share their title, so a cut
+                        // title-first line read as the same words twice ("Usage runs out before the res…").
+                        Text(verbatim: Self.lead(alert))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(Color.white.opacity(0.9))
-                        Text(verbatim: alert.message)
-                            .font(.system(size: 11))
-                            .foregroundColor(ReviewPalette.dim)
                             .lineLimit(1)
+                            .truncationMode(.tail)
+                            .layoutPriority(1)
+                            .instantTooltip("\(alert.title)\n\(Self.lead(alert))")
+                        // The shared title shows only when it fits whole: cut to its first letter it read as a stray "U".
+                        ViewThatFits(in: .horizontal) {
+                            Text(verbatim: alert.title)
+                                .font(.system(size: 11))
+                                .foregroundColor(ReviewPalette.dim)
+                                .lineLimit(1)
+                                .fixedSize()
+                            Color.clear.frame(width: 0, height: 0)
+                        }
                         Spacer(minLength: 6)
+                        // The age and the button never give way: the message has priority over the title only.
                         LiveAgo(date: UsageTime.date(alert.firedAt), style: .brief)
                             .font(.system(size: 10.5))
                             .foregroundColor(ReviewPalette.dim)
+                            .fixedSize()
+                            .layoutPriority(2)
                         GhostButton("Acknowledge", symbol: "checkmark", tooltip: "Mark this alert as seen (tools ai usage alerts ack \(alert.id))", height: 22) {
                             usage.acknowledge(alert)
                         }
+                        .fixedSize()
+                        .layoutPriority(2)
                     }
                 }
             }
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 8).fill(UsageTone.alertLevel("warning").opacity(0.08)))
         }
+    }
+
+    /// The alert's own sentence, led by its account when the message does not already start with it.
+    static func lead(_ alert: UsageAlert) -> String {
+        guard let name = alert.accountName, !name.isEmpty, !alert.message.hasPrefix(name) else { return alert.message }
+        return "\(name): \(alert.message)"
     }
 }

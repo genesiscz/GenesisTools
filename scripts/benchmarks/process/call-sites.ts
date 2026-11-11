@@ -691,4 +691,12 @@ export const CALL_SITES: CallSite[] = [
         run: async () =>
             (await import("@genesiscz/utils/worker/ps")).runningTurnPids("no-such-session-marker", /claude/),
     },
+    {
+        id: "genesis-tools-env-recorder",
+        file: "src/genesis-tools/lib/environment.ts",
+        spawn: "ps -Ao pid=,command=",
+        frequency: "one-off",
+        platforms: ["darwin"],
+        run: async () => (await import("@app/genesis-tools/lib/environment")).realSources().recorder(),
+    },
 ];

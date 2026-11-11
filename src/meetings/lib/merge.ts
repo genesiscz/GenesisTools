@@ -1,5 +1,6 @@
 import {
     appendFileSync,
+    chmodSync,
     existsSync,
     lstatSync,
     mkdirSync,
@@ -21,8 +22,10 @@ import {
     type RecordingBlock,
 } from "@genesiscz/utils/meetings/record";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import type { DictionaryLevel } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
 import { type AssignInbox, decisionInbox } from "./assign-inbox";
+import { CallTimeline } from "./call-timeline";
 import { readRecorderState } from "./recorder-shared";
 import { localStamp } from "./shared";
 import { sourceRefOf } from "./sources";
@@ -97,6 +100,10 @@ function refusal(from: MeetingRecord, into: MeetingRecord, store: MeetingStore):
         return `${from.id} has ${from.items.length} items; decide or reject them there first, or merge the other way.`;
     }
 
+    if (from.attendance && !into.attendance && attendanceShift(from, into) === undefined) {
+        return `${from.id} keeps attendance on its own recording clock, and ${into.id}'s source would put it at other seconds; store the attendance on ${into.id} first (${toolCommand("meetings", "attendance", into.id, "--from", from.attendance.from)}), then merge.`;
+    }
+
     const recorder = readRecorderState(store);
 
     if (recorder.running && (recorder.state?.meetingId === from.id || recorder.state?.meetingId === into.id)) {
@@ -120,9 +127,12 @@ function refusal(from: MeetingRecord, into: MeetingRecord, store: MeetingStore):
     return undefined;
 }
 
-/** A clone of every file under `source` at `destination` (a copy where the volume cannot clone). */
+/**
+ * A clone of every file under `source` at `destination` (a copy where the volume cannot clone). Meeting folders hold
+ * screen captures and transcripts, so every folder is owner-only (0700) and every file keeps its owner bits only.
+ */
 function cloneTree(source: string, destination: string): void {
-    mkdirSync(destination, { recursive: true });
+    mkdirSync(destination, { recursive: true, mode: 0o700 });
 
     for (const name of readdirSync(source)) {
         const from = join(source, name);
@@ -132,7 +142,7 @@ function cloneTree(source: string, destination: string): void {
         if (stat.isDirectory()) {
             cloneTree(from, to);
         } else if (stat.isFile()) {
-            cloneOrCopy({ source: from, destination: to, mode: stat.mode & 0o777, mayCopy: true });
+            cloneOrCopy({ source: from, destination: to, mode: stat.mode & 0o700, mayCopy: true });
         } else {
             log.warn({ path: from }, "not a file or folder; left out of the merge backup");
         }
@@ -197,28 +207,101 @@ export function mergedRecording(
     };
 }
 
-/** The rows of both files in time order (`at`), so `screen` and the timeline read one recording. */
-function mergeRows(intoFile: string, fromFile: string): number {
-    if (!existsSync(fromFile)) {
+/**
+ * The meeting's dictionary level after a merge: the entries of both, `into`'s winning for one value, and `into`'s
+ * settings over `from`'s.
+ */
+export function mergedDictionary(
+    into: DictionaryLevel | undefined,
+    from: DictionaryLevel | undefined
+): DictionaryLevel | undefined {
+    if (!into || !from) {
+        return into ?? from;
+    }
+
+    const abbrExpansion = into.abbrExpansion ?? from.abbrExpansion;
+    const fuzzy = into.fuzzy || from.fuzzy ? { ...from.fuzzy, ...into.fuzzy } : undefined;
+    const entries = new Map([...from.entries, ...into.entries].map((entry) => [entry.value, entry]));
+    return {
+        ...(abbrExpansion ? { abbrExpansion } : {}),
+        ...(fuzzy ? { fuzzy } : {}),
+        entries: [...entries.values()],
+    };
+}
+
+/**
+ * How many seconds `from`'s stored attendance moves on the merged record's transcript clock. 0 when `from` is linked:
+ * the merged record keeps that source meeting (`refusal` refuses two different ones), and with it the source's clock.
+ * The difference of the two stored clocks when neither is linked. Undefined when only `into` is linked: that source's
+ * clock is known only by asking the source, so the seconds cannot be placed here.
+ */
+export function attendanceShift(from: MeetingRecord, into: MeetingRecord): number | undefined {
+    if (sourceRefOf(from)) {
         return 0;
     }
 
-    const rows = (path: string) =>
-        existsSync(path)
-            ? readFileSync(path, "utf8")
-                  .split("\n")
-                  .filter((line) => line.trim() !== "")
-            : [];
-    const added = rows(fromFile);
-    const all = [...rows(intoFile), ...added].map((line, index) => ({
-        line,
-        index,
-        at: Date.parse(rowTime.safeParse(SafeJSON.parse(line, { strict: true })).data?.at ?? ""),
-    }));
+    if (sourceRefOf(into)) {
+        return undefined;
+    }
+
+    const merged = CallTimeline.stored({
+        ...into,
+        start: earliest([from.start, into.start]) ?? into.start,
+        recording: mergedRecording(into.recording, from.recording),
+    });
+    return merged.secAt(CallTimeline.stored(from).zeroMs);
+}
+
+/** One line of a row file with the wall time it carries (`at`; NaN when it has none). */
+interface Row {
+    line: string;
+    at: number;
+}
+
+/**
+ * Every row of one row file, parsed. A recorder cut short can leave a half-written last line, so a line that is not
+ * JSON throws with the file and its line number: the merge reads both files before it moves anything, and a refusal
+ * then leaves both records as they were.
+ */
+function readRows(path: string): Row[] {
+    if (!existsSync(path)) {
+        return [];
+    }
+
+    const rows: Row[] = [];
+
+    for (const [index, line] of readFileSync(path, "utf8").split("\n").entries()) {
+        if (line.trim() === "") {
+            continue;
+        }
+
+        let parsed: unknown;
+
+        try {
+            parsed = SafeJSON.parse(line, { strict: true });
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            throw new Error(
+                `${path}:${index + 1} is not a JSON row (${reason}); fix or remove that line and merge again.`
+            );
+        }
+
+        rows.push({ line, at: Date.parse(rowTime.safeParse(parsed).data?.at ?? "") });
+    }
+
+    return rows;
+}
+
+/** The rows of both files in time order (`at`), so `screen` and the timeline read one recording. */
+function mergeRows(intoFile: string, rows: { into: Row[]; from: Row[] }): void {
+    if (rows.from.length === 0) {
+        return;
+    }
+
+    const all = [...rows.into, ...rows.from].map((row, index) => ({ ...row, index }));
     all.sort((a, b) => a.at - b.at || a.index - b.index);
     writeFileSync(`${intoFile}.merge-tmp`, `${all.map((row) => row.line).join("\n")}\n`);
     renameSync(`${intoFile}.merge-tmp`, intoFile);
-    return added.length;
 }
 
 function backupReadme(options: { from: MeetingRecord; into: MeetingRecord; root: string; folder: string }): string {
@@ -270,17 +353,13 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
     const intoFolder = store.folder(into.id);
     const count = (name: string) =>
         existsSync(join(fromFolder, name)) ? readdirSync(join(fromFolder, name)).length : 0;
-    const rowCount = ROW_FILES.reduce((total, name) => {
-        const path = join(fromFolder, name);
-        return (
-            total +
-            (existsSync(path)
-                ? readFileSync(path, "utf8")
-                      .split("\n")
-                      .filter((line) => line.trim()).length
-                : 0)
-        );
-    }, 0);
+    const rows = new Map(
+        ROW_FILES.map((name) => [
+            name,
+            { into: readRows(join(intoFolder, name)), from: readRows(join(fromFolder, name)) },
+        ])
+    );
+    const rowCount = [...rows.values()].reduce((total, file) => total + file.from.length, 0);
     const start = earliest([from.start, into.start]) ?? into.start;
     const end = latest([from.end, into.end]);
     const derived = DERIVED_FILES.filter((name) => existsSync(join(intoFolder, name)));
@@ -315,13 +394,19 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
         throw new Error(`The backup folder ${backup} exists already; wait a minute and run the merge again.`);
     }
 
+    // The backup holds both meeting folders, so it is owner-only like the store (0700), whatever the umask.
+    mkdirSync(backup, { recursive: true, mode: 0o700 });
+    chmodSync(backup, 0o700);
+
     for (const folder of ["before", "moved", "moved-rows", "derived"]) {
-        mkdirSync(join(backup, folder), { recursive: true });
+        mkdirSync(join(backup, folder), { mode: 0o700 });
     }
 
     cloneTree(fromFolder, join(backup, "before", from.id));
     cloneTree(intoFolder, join(backup, "before", into.id));
-    writeFileSync(join(backup, "README.md"), backupReadme({ from, into, root: store.root, folder: backup }));
+    writeFileSync(join(backup, "README.md"), backupReadme({ from, into, root: store.root, folder: backup }), {
+        mode: 0o600,
+    });
     log.debug({ from: from.id, into: into.id, backup }, "merge: both folders cloned");
 
     for (const name of MOVED_FOLDERS) {
@@ -339,7 +424,7 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
     }
 
     for (const name of ROW_FILES) {
-        mergeRows(join(intoFolder, name), join(fromFolder, name));
+        mergeRows(join(intoFolder, name), rows.get(name) ?? { into: [], from: [] });
         const moved = join(fromFolder, name);
 
         if (existsSync(moved)) {
@@ -352,6 +437,7 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
     }
 
     const fromHistory = from.history.map((entry) => ({ ...entry, change: `[${from.id}] ${entry.change}` }));
+    const shift = attendanceShift(from, into);
     const record = await store.update(
         into.id,
         {
@@ -396,6 +482,31 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
             }
 
             current.speakers.labels = { ...from.speakers.labels, ...current.speakers.labels };
+            // The word corrections typed on either record keep working; `into`'s win for one word.
+            const dictionary = mergedDictionary(current.dictionary, from.dictionary);
+
+            if (dictionary) {
+                current.dictionary = dictionary;
+            }
+
+            // Stored attendance and its sections come along when `into` has none, moved onto the merged clock
+            // (`refusal` already refused the case where they cannot be placed). `into`'s own attendance wins.
+            if (from.attendance && !current.attendance && shift !== undefined) {
+                const by = shift;
+                current.attendance = {
+                    ...from.attendance,
+                    people: from.attendance.people.map((stay) => ({
+                        ...stay,
+                        fromSec: stay.fromSec + by,
+                        toSec: stay.toSec + by,
+                    })),
+                };
+                current.sections = from.sections?.map((part) => ({
+                    ...part,
+                    fromSec: part.fromSec + by,
+                    toSec: part.toSec + by,
+                }));
+            }
             current.recording = mergedRecording(current.recording, from.recording);
             current.history = [...current.history, ...fromHistory].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
         }

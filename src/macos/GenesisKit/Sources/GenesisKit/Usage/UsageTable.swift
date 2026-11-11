@@ -92,6 +92,12 @@ public enum UsageTableBuilder {
         return (columns, rows)
     }
 
+    /// The columns at least one account has a reading for. A column of blanks and "no limit" cells says nothing, and
+    /// it pushed the table's useful columns apart (the "Hide empty columns" setting, on by default).
+    public static func columnsWithReadings(_ columns: [UsageTableColumn], rows: [UsageTableRow]) -> [UsageTableColumn] {
+        columns.filter { column in rows.contains { $0.cells[column.id]?.percent != nil } }
+    }
+
     /// The window that decides the account: the one that runs out first before its reset, else the 5h (when the
     /// account has one), else the week. A stale forecast, or one whose reset has passed (since its last sample, or by
     /// the clock), says nothing about the window now, as the lanes and the hub forecast already treat it.
@@ -125,7 +131,8 @@ public enum UsageTableBuilder {
     }
 }
 
-/// The table's header row.
+/// The table's header row. Plain, sentence-case names; each column keeps the row's frame, so the two line up at any
+/// width and the table fills the pane (the Trend column takes what is left).
 public struct UsageTableHeader: View {
     let columns: [UsageTableColumn]
 
@@ -133,18 +140,32 @@ public struct UsageTableHeader: View {
 
     public var body: some View {
         HStack(spacing: 8) {
-            Text("Account").frame(width: UsageTableRowView.accountWidth + 14, alignment: .leading)
+            Text("Account").usageTableColumn(UsageTableRowView.accountColumn, extra: 14)
             ForEach(columns) { column in
-                Text(verbatim: column.title).frame(width: UsageTableRowView.cellWidth, alignment: .leading)
+                Text(verbatim: column.title).usageTableColumn(UsageTableRowView.cellColumn)
             }
-            Text("Rate · safe").frame(width: UsageTableRowView.rateWidth, alignment: .leading)
-            Text("Limit").frame(width: 80, alignment: .leading)
-            Text("Trend").frame(minWidth: 60, alignment: .leading)
+            Text("Burn per hour").usageTableColumn(UsageTableRowView.rateColumn)
+            Text("Runs out").usageTableColumn(UsageTableRowView.limitColumn)
+            Text("Trend").usageTableColumn(UsageTableRowView.trendColumn)
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundStyle(Color.white.opacity(0.45))
+        .lineLimit(1)
         .padding(.horizontal, 8)
         .accessibilityHidden(true)
+    }
+}
+
+/// A column's width: at least `min`, growing to `max` when the pane is wider (nil: no bound).
+struct UsageTableColumnWidth {
+    let min: CGFloat
+    let max: CGFloat?
+}
+
+extension View {
+    /// One frame for a header title and its cells, so the header and every row lay out the same at any width.
+    func usageTableColumn(_ width: UsageTableColumnWidth, extra: CGFloat = 0) -> some View {
+        frame(minWidth: width.min + extra, maxWidth: width.max.map { $0 + extra } ?? .infinity, alignment: .leading)
     }
 }
 
@@ -168,9 +189,11 @@ public struct UsageTableRowView: View, Equatable {
         lhs.row == rhs.row && lhs.columns == rhs.columns && lhs.selected == rhs.selected && lhs.now == rhs.now
     }
 
-    static let accountWidth: CGFloat = 170
-    static let cellWidth: CGFloat = 92
-    static let rateWidth: CGFloat = 104
+    static let accountColumn = UsageTableColumnWidth(min: 156, max: 240)
+    static let cellColumn = UsageTableColumnWidth(min: 92, max: 128)
+    static let rateColumn = UsageTableColumnWidth(min: 128, max: 160)
+    static let limitColumn = UsageTableColumnWidth(min: 84, max: 116)
+    static let trendColumn = UsageTableColumnWidth(min: 100, max: nil)
 
     public var body: some View {
         HStack(spacing: 8) {
@@ -191,31 +214,32 @@ public struct UsageTableRowView: View, Equatable {
                         .instantTooltip("Limit drift: one point of this window buys a different amount than its baseline (tools ai usage limits drift)")
                 }
             }
-            .frame(width: Self.accountWidth, alignment: .leading)
+            .usageTableColumn(Self.accountColumn)
             // The header row is hidden from VoiceOver, so each value names its own column.
             ForEach(columns) { column in
                 cell(row.cells[column.id])
-                    .frame(width: Self.cellWidth, alignment: .leading)
+                    .usageTableColumn(Self.cellColumn)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Self.spokenCell(row.cells[column.id], title: column.title, now: now))
             }
             Text(verbatim: rateText)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(rateTone)
-                .frame(width: Self.rateWidth, alignment: .leading)
-                .instantTooltip("Burn rate now, and the safe pace: the constant rate that lands at exactly 100% at the reset")
-                .accessibilityLabel("Burn rate and safe pace: \(rateText)")
-            Text(verbatim: row.limitText ?? "—")
+                .lineLimit(1)
+                .usageTableColumn(Self.rateColumn)
+                .instantTooltip("How fast this account uses its deciding window now, and the safe pace: the steady rate that reaches exactly 100% at the reset")
+                .accessibilityLabel("Burn per hour: \(rateText.isEmpty ? "not known" : rateText)")
+            Text(verbatim: limitText)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(row.limitBeforeReset ? UsageTone.severity("warning") : Color.white.opacity(0.6))
                 .lineLimit(1)
-                .frame(width: 80, alignment: .leading)
-                .instantTooltip("When the deciding window runs out at this pace, or \"past reset\" when it lasts to its reset")
-                .accessibilityLabel("Limit reached: \(row.limitText ?? "not known")")
+                .usageTableColumn(Self.limitColumn)
+                .instantTooltip("When the deciding window runs out at this pace, or \"lasts to reset\" when it does not run out first")
+                .accessibilityLabel("Runs out: \(limitText.isEmpty ? "not known" : limitText)")
             Sparkline(values: row.sparkline, tint: Color.white.opacity(0.55), lineWidth: 1, range: 0...100,
                       label: "\(row.account.accountName) trend", valueText: { UsageFormat.percent($0) })
-                .frame(minWidth: 60, maxWidth: 120)
                 .frame(height: 16)
+                .usageTableColumn(Self.trendColumn)
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
@@ -236,10 +260,21 @@ public struct UsageTableRowView: View, Equatable {
         return "\(used), resets in \(UsageFormat.countdown(to: reset, now: now))"
     }
 
+    /// "60.3% · safe 14.4%", per hour (the header says so); empty without a forecast, so an account that burns
+    /// nothing reads as a quiet blank instead of a column of dashes.
     private var rateText: String {
-        guard let rate = row.ratePerHour else { return "—" }
-        guard let safe = row.safePerHour else { return UsageFormat.rate(rate) }
-        return "\(UsageFormat.rate(rate)) · \(UsageFormat.rate(safe))"
+        guard let rate = row.ratePerHour, rate.isFinite else { return "" }
+        let now = String(format: "%.1f%%", locale: Self.numbers, rate)
+        guard let safe = row.safePerHour, safe.isFinite else { return now }
+        return now + " · safe " + String(format: "%.1f%%", locale: Self.numbers, safe)
+    }
+
+    private static let numbers = Locale(identifier: "en_US_POSIX")
+
+    /// The run-out time, "at limit", or "lasts to reset"; empty without a forecast.
+    private var limitText: String {
+        guard let text = row.limitText else { return "" }
+        return text == "past reset" ? "lasts to reset" : text
     }
 
     private var rateTone: Color {
@@ -267,7 +302,8 @@ public struct UsageTableRowView: View, Equatable {
                 }
             }
         } else {
-            Text(verbatim: "—").foregroundStyle(Color.white.opacity(0.25))
+            // No reading for this window: a blank, so the windows the account has stand out.
+            Color.clear.frame(height: 1)
         }
     }
 }

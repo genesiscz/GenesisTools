@@ -187,6 +187,95 @@ describe("importing a board's annotations as review comments", () => {
     });
 });
 
+// Round 1 hunt (intro-card-export-clock): the board shows the exported movie, which plays the intro card first, so a
+// reviewer's 0:05 is output 0:02 with a 3 s intro; the import read it as output time and the comment landed 3 s late.
+describe("review comments on an edit with an intro card", () => {
+    /** recording() with a 3 s intro card and a 2 s end card: the export runs 0..55 s, the movie 3..53 s of it. */
+    function cardedRecording(name: string): string {
+        const folder = join(root, name);
+        mkdirSync(folder, { recursive: true });
+        const project = wholeProject({
+            video: join(folder, "movie.mov"),
+            durationUs: 60_000_000,
+            width: 640,
+            height: 360,
+        });
+        const path = join(folder, "movie.edit.json");
+        writeProject(path, {
+            ...project,
+            clips: [
+                { ...project.clips[0], id: "c1", fromUs: 0, toUs: 10_000_000 },
+                { ...project.clips[0], id: "c2", fromUs: 20_000_000, toUs: 60_000_000 },
+            ],
+            cards: { intro: { title: "Demo", seconds: 3 }, end: { text: "Bye", qr: false, seconds: 2 } },
+        });
+        return path;
+    }
+
+    const read: BoardDigestReader = async () => ({
+        cards: [
+            {
+                id: 21,
+                kind: "media",
+                annotations: [
+                    { id: 201, by: "Alice", prompt: "0:05 the button is off", cropUrl: `${CROP}/201/crop.png` },
+                    { id: 202, by: "Alice", prompt: "0:01 the title is wrong", cropUrl: `${CROP}/202/crop.png` },
+                    { id: 203, by: "Bob", prompt: "0:15 the cursor jumps", cropUrl: `${CROP}/203/crop.png` },
+                    { id: 204, by: "Bob", prompt: "0:54 the link has a typo", cropUrl: `${CROP}/204/crop.png` },
+                    { id: 205, by: "Bob", prompt: "no time here", cropUrl: `${CROP}/205/crop.png` },
+                ],
+            },
+        ],
+    });
+
+    it("reads a board's time on the exported file: the intro's length comes off, a time on a card goes onto the movie", async () => {
+        const path = cardedRecording("board-carded");
+        const result = await importBoardComments(path, { board: "team/demo-review", read });
+
+        expect(result.added.map((c) => [c.text, c.from, c.plays, c.exportPlays])).toEqual([
+            ["the button is off", 2, 2, 5],
+            ["[on the intro card; placed at the movie's start] the title is wrong", 0, 0, 3],
+            ["the cursor jumps", 22, 12, 15],
+            ["[on the end card; placed at the movie's end] the link has a typo", 60, 50, 53],
+            ["[no time on the board; placed at 0:00] no time here", 0, 0, 3],
+        ]);
+        expect(readComments(result.path).map((c) => c.atUs)).toEqual([0, 0, 2_000_000, 22_000_000, 60_000_000]);
+
+        const dry = await importBoardComments(cardedRecording("board-carded-dry"), {
+            board: "team/demo-review",
+            dryRun: true,
+            read,
+        });
+        expect(dry.wouldAdd.map((c) => c.atSec)).toEqual([5, 1, 15, 54, 0]);
+    });
+
+    it("takes a typed comment in output time, a time of the exported file with clock export, source time with source", async () => {
+        const path = cardedRecording("typed-carded");
+        const answers = [
+            await commentOn(path, { at: 12, text: "output" }),
+            await commentOn(path, { at: 15, text: "export", clock: "export" }),
+            await commentOn(path, { at: 22, text: "source", source: true }),
+            await commentOn(path, { at: 22, text: "source clock", clock: "source" }),
+        ];
+        const onCard = await commentOn(path, { at: 1, to: 4, text: "the title", clock: "export" });
+
+        expect(answers.map((a) => [a.comment.from, a.comment.plays, a.comment.exportPlays])).toEqual([
+            [22, 12, 15],
+            [22, 12, 15],
+            [22, 12, 15],
+            [22, 12, 15],
+        ]);
+        expect([onCard.comment.text, onCard.comment.from, onCard.comment.to]).toEqual([
+            "[on the intro card; placed at the movie's start] the title",
+            0,
+            1,
+        ]);
+        await expect(commentOn(path, { at: 1, text: "x", source: true, clock: "export" })).rejects.toThrow(
+            "two clocks"
+        );
+    });
+});
+
 // The plan's A7 (2026-11-04): a comment typed from a board names its annotation, so the comment opens it there.
 describe("a comment from a board annotation", () => {
     const board = "https://app.example.test/w/team/boards/demo-review";

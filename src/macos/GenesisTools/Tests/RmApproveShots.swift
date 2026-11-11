@@ -91,6 +91,18 @@ final class RmApproveShots: XCTestCase {
         var click = params(twoItems)
         click.arm = "click"
         try shot(twoItems, StillEvaluator(), to: "\(prefix)-click.png", params: click)
+
+        // Two requests' set-aside copies of one folder, and a folder beside them: three rows of one window.
+        let copies = [1, 2].map { index in
+            RmApproveItem(path: "\(base)/F13", kind: "dir", bytes: Int64(index) * 6_400_000_000, empty: false,
+                          storedAt: "/tmp/cc/shop/aside/\(index)/F13", reason: "Outside this session's scratch, its own files and the trusted folders",
+                          folderStats: RmApproveFolderStats(files: 1_470 * index, newestAt: nil))
+        } + [RmApproveItem(path: "\(base)/F14A", kind: "dir", bytes: 2_800_000, empty: false, storedAt: "/tmp/cc/shop/aside/2/F14A",
+                           reason: "Outside this session's scratch, its own files and the trusted folders",
+                           folderStats: RmApproveFolderStats(files: 446, newestAt: nil))]
+        var twoRequests = params(copies)
+        twoRequests.title = "Delete 3 items from 2 requests?"
+        try shot(copies, StillEvaluator(), to: "\(prefix)-two-copies.png", params: twoRequests)
     }
 
     private func shot(_ items: [RmApproveItem], _ evaluator: StillEvaluator, to path: String, params given: RmApproveParams? = nil) throws {

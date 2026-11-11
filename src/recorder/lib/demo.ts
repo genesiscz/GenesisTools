@@ -30,7 +30,11 @@ export const demoEditSchema = z
         /** One caption per step, its text the step's caption, shown while the step plays. */
         captions: z.boolean().default(true),
         captionPosition: z.enum(["bottom", "top"]).default("bottom"),
-        /** A caption stays at least this long, even for a quick step. */
+        /**
+         * A caption stays on screen at least this long in the finished demo, even for a quick step: the cut of the
+         * wait after a step begins no earlier than the end of its caption. A caption never runs into the next step,
+         * and a cut of the idle time inside a long step can still shorten it.
+         */
         captionMinSeconds: z.number().min(0.5).max(30).default(1.8),
         /** Mark each step in the recording, so markers() and the editor's timeline list them. */
         markers: z.boolean().default(true),
@@ -125,47 +129,50 @@ export function demoEditOps(options: {
         }
     }
 
+    // Each step's caption, worked out before any wait is cut: a cut wait starts after the caption, so its minimum
+    // holds on screen and not only in source time. It stops at the next step's start, so it never covers that step.
+    const captions = steps.map((step, index) => {
+        const text = edit.captions ? step.caption.trim().slice(0, 200) : "";
+        const nextStart = steps[index + 1]?.startMs ?? duration;
+        const endMs = Math.min(
+            duration,
+            Math.max(step.endMs, step.startMs + edit.captionMinSeconds * 1000),
+            Math.max(nextStart, step.endMs)
+        );
+        return text && endMs - step.startMs >= 100 ? { text, endMs } : undefined;
+    });
+    const captionEndBefore = (index: number) =>
+        Math.max(0, ...captions.slice(0, index).map((caption) => caption?.endMs ?? 0));
+
     if (edit.cutWaits) {
         const first = steps[0];
         const last = steps[steps.length - 1];
         const minMs = edit.minWaitSeconds * 1000;
+        const keepMs = edit.keepSeconds * 1000;
         cut(0, first.startMs - edit.leadSeconds * 1000, minMs);
 
         for (let index = 1; index < steps.length; index++) {
             const previousEnd = Math.max(...steps.slice(0, index).map((step) => step.endMs));
-            cut(previousEnd + edit.keepSeconds * 1000, steps[index].startMs - edit.keepSeconds * 1000, minMs);
+            cut(Math.max(previousEnd + keepMs, captionEndBefore(index)), steps[index].startMs - keepMs, minMs);
         }
 
-        cut(last.endMs + edit.tailSeconds * 1000, duration, minMs);
+        cut(Math.max(last.endMs + edit.tailSeconds * 1000, captionEndBefore(steps.length)), duration, minMs);
     }
 
-    if (edit.captions) {
-        for (const [index, step] of steps.entries()) {
-            const text = step.caption.trim().slice(0, 200);
+    for (const [index, step] of steps.entries()) {
+        const caption = captions[index];
 
-            if (!text) {
-                continue;
-            }
-
-            const nextStart = steps[index + 1]?.startMs ?? duration;
-            const end = Math.min(
-                duration,
-                Math.max(step.endMs, step.startMs + edit.captionMinSeconds * 1000),
-                Math.max(nextStart, step.endMs)
-            );
-
-            if (end - step.startMs < 100) {
-                continue;
-            }
-
-            ops.push({
-                op: "text",
-                from: seconds(step.startMs),
-                to: seconds(end),
-                text,
-                y: edit.captionPosition === "bottom" ? 0.88 : 0.1,
-            });
+        if (!caption) {
+            continue;
         }
+
+        ops.push({
+            op: "text",
+            from: seconds(step.startMs),
+            to: seconds(caption.endMs),
+            text: caption.text,
+            y: edit.captionPosition === "bottom" ? 0.88 : 0.1,
+        });
     }
 
     return ops;
@@ -182,6 +189,8 @@ export interface DemoStep {
 /** The recording a demo drives: a mark for each step, its stop, the edit and the export. */
 export interface DemoSession {
     mark(label: string): Promise<{ atMs: number }>;
+    /** The movie time now, without a marker: where a step of a demo without markers starts. */
+    time(): Promise<{ atMs: number }>;
     /** Stops and waits for the finished movie; the recording's folder. */
     stop(): Promise<string>;
 }
@@ -193,7 +202,7 @@ export interface DemoDriver {
     /** Its still and silent stretches of at least `minMs`, in ms (idle.ts `findIdle`). */
     idleMs(folder: string, minMs: number): Promise<Array<[number, number]>>;
     edit(folder: string, ops: EditOp[]): Promise<void>;
-    exportMovie?(folder: string): Promise<{ path: string; outputSeconds?: number }>;
+    exportMovie?(folder: string): Promise<{ path: string; outputSeconds?: number; exportSeconds?: number }>;
     sleep(ms: number): Promise<void>;
     now(): number;
 }
@@ -205,7 +214,8 @@ export interface DemoResult {
     failed: Array<{ caption: string; error: string }>;
     ops: number;
     sourceSeconds: number;
-    exported?: { path: string; outputSeconds?: number };
+    /** outputSeconds: the movie without its cards; exportSeconds: the file with them. */
+    exported?: { path: string; outputSeconds?: number; exportSeconds?: number };
 }
 
 /**
@@ -231,7 +241,6 @@ export async function runDemo(options: {
     const edit = demoEditSchema.parse(options.edit ?? {});
     const { driver } = options;
     const session = await driver.start();
-    const recordingStarted = driver.now();
     const steps: DemoStepTiming[] = [];
     const failed: DemoResult["failed"] = [];
     let folder: string | undefined;
@@ -240,9 +249,12 @@ export async function runDemo(options: {
         await driver.sleep((options.settleSeconds ?? 0.6) * 1000);
 
         for (const step of options.steps) {
+            // A step starts at its movie time (its mark's, or the time now without markers), and its run is timed from
+            // that answer, so a mark that waited for the first frame does not count the wait into the step.
+            const { atMs: startMs } = edit.markers
+                ? await session.mark(step.caption.slice(0, 80))
+                : await session.time();
             const wallStart = driver.now();
-            const atMs = edit.markers ? (await session.mark(step.caption.slice(0, 80))).atMs : undefined;
-            const startMs = atMs ?? wallStart - recordingStarted;
 
             try {
                 await step.run?.();

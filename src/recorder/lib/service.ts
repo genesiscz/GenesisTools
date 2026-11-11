@@ -87,6 +87,12 @@ export interface RecorderServiceOptions {
     /** The headless face and `open`; tests stub them, so no app starts there. */
     headless?: Partial<HeadlessDeps>;
     onStopped?: (reason: string) => void;
+    /**
+     * Builds the native recorder (ax-tool) ahead of a recording when it is stale, without waiting: at the start
+     * (`recorder-service-start`) and at each check (`recorder-service-check`, a native source change). `serve` passes
+     * `prewarmAxTool`; tests leave it out, so no build starts there.
+     */
+    prewarmNative?: (trigger: string) => void;
 }
 
 export interface RecorderService {
@@ -171,6 +177,8 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     let app: { connection: Connection; host: ConnectedAppHost } | undefined;
     const helloWaiters = new Set<() => void>();
     let lastBusy = Date.now();
+    /** Calls answered now: a code change waits for them, so an export never loses its service halfway. */
+    let callsRunning = 0;
     let stopping = false;
     const stopped = Promise.withResolvers<string>();
     // `server` is assigned below; notifications only start once it listens.
@@ -204,8 +212,14 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     const gestureKey = (connection: Connection, gesture: string): string => `${connection.state.id}:${gesture}`;
     let lastConnectionId = 0;
 
+    /**
+     * The session key of a path: the session's own path as a window holds it, even after its folder was moved away (no
+     * recording resolves there any more), or the edit the path names.
+     */
+    const keyOf = (path: string): string => (sessions.get(path) ? path : editPathOf(path));
+
     const sessionOf = (path: string): EditSession => {
-        const session = sessions.get(editPathOf(path));
+        const session = sessions.get(keyOf(path));
 
         if (!session) {
             throw new RpcError(RPC_ERRORS.invalidParams, `no open session of ${path}; call session.open first`);
@@ -214,10 +228,21 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         return session;
     };
 
+    /** An open session that still has its folder: a change to a moved or trashed recording would make it again. */
+    const editableSessionOf = (path: string): EditSession | undefined => {
+        const session = sessions.get(keyOf(path));
+
+        if (session?.moved) {
+            throw new RpcError(RPC_ERRORS.invalidParams, "the recording was moved or trashed; close this window");
+        }
+
+        return session;
+    };
+
     /** The open session of a recording argument, or none; a path that names no recording has none. */
     const openSessionOf = (path: string): EditSession | undefined => {
         try {
-            return sessions.get(editPathOf(path));
+            return sessions.get(keyOf(path));
         } catch (error) {
             log.debug({ error, path }, "a host call's path names no recording with an edit");
             return undefined;
@@ -347,7 +372,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
             if (connection.state.holds.get(path)?.has(holder)) {
                 const held = sessionOf(path);
-                return { path, ...held.current, undoDepth: held.undoDepth };
+                return { path, ...held.current, undoDepth: held.undoDepth, redoDepth: held.redoDepth };
             }
 
             // One hold per holder, so one editor window's close leaves another window's session of the same edit.
@@ -368,10 +393,15 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
             holders.add(holder);
             connection.state.holds.set(session.path, holders);
-            return { path: session.path, ...session.current, undoDepth: session.undoDepth };
+            return {
+                path: session.path,
+                ...session.current,
+                undoDepth: session.undoDepth,
+                redoDepth: session.redoDepth,
+            };
         },
         "session.close": (params, { connection }: HandlerContext) => {
-            const path = editPathOf(params.path);
+            const path = connection.state.holds.has(params.path) ? params.path : editPathOf(params.path);
             const holders = connection.state.holds.get(path);
 
             if (!holders?.delete(params.holder ?? "")) {
@@ -387,7 +417,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             return { closed: true };
         },
         "edit.apply": async (params, { connection }: HandlerContext) => {
-            const session = sessions.get(editPathOf(params.path));
+            const session = editableSessionOf(params.path);
 
             if (session) {
                 const answer = await session.apply(params.ops, {
@@ -418,7 +448,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             };
         },
         "edit.undo": async (params, { connection }: HandlerContext) => {
-            const session = sessions.get(editPathOf(params.path));
+            const session = editableSessionOf(params.path);
 
             if (session) {
                 const answer = await session.undo({ by: byOf(connection) });
@@ -439,7 +469,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             return { revision: undone.project.revision, project: undone.project, undone: undone.undone ?? [] };
         },
         "edit.redo": async (params, { connection }: HandlerContext) => {
-            const session = sessions.get(editPathOf(params.path));
+            const session = editableSessionOf(params.path);
 
             if (!session) {
                 const redone = await redoEdit(params.path);
@@ -462,7 +492,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         "gesture.begin": (params, { connection }: HandlerContext) => {
             const key = gestureKey(connection, params.gesture);
             const answer = sessionOf(params.path).beginGesture(key);
-            connection.state.gestures.set(key, editPathOf(params.path));
+            connection.state.gestures.set(key, keyOf(params.path));
             return answer;
         },
         "gesture.preview": (params, { connection }: HandlerContext) =>
@@ -668,8 +698,16 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             socket,
             state: () => ({ id: ++lastConnectionId, holds: new Map(), gestures: new Map(), recordings: new Set() }),
             // A cancelled request's edit never lands: every edit it makes checks this request's signal before it saves.
-            call: ({ method, params, connection, context }) =>
-                withEditCancel(context.signal, () => answer(method, params, connection, context)),
+            call: async ({ method, params, connection, context }) => {
+                callsRunning += 1;
+
+                try {
+                    return await withEditCancel(context.signal, () => answer(method, params, connection, context));
+                } finally {
+                    callsRunning -= 1;
+                    lastBusy = Date.now();
+                }
+            },
             onOpen: () => {
                 lastBusy = Date.now();
             },
@@ -714,9 +752,28 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     setEditOwner({ sessionOf: (path) => sessions.get(path) });
     setRecorderHostResolver(() => host);
 
+    const prewarm = (trigger: string): void => {
+        try {
+            options.prewarmNative?.(trigger);
+        } catch (error) {
+            log.warn({ error, trigger }, "the native recorder prewarm failed");
+        }
+    };
+    prewarm("recorder-service-start");
     const idleMs = options.idleMs ?? SERVICE_IDLE_MS;
     const check = setInterval(() => {
+        prewarm("recorder-service-check");
         if (options.sourceRoot && newestLoadedModuleMtime(options.sourceRoot) > startedAt) {
+            // A running call (an export, a camera start) or a live recording would lose the service halfway: on
+            // 2026-11-09 four exports failed with "the connection closed while the call ran". Wait for them.
+            if (callsRunning > 0 || recordings.size > 0) {
+                log.info(
+                    { calls: callsRunning, recordings: recordings.size },
+                    "recorder service code changed; exiting once no call runs and no recording is live"
+                );
+                return;
+            }
+
             log.info("recorder service code changed since start; exiting so the next caller starts the new code");
             stop("code-changed");
             return;

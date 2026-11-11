@@ -38,6 +38,17 @@ enum TransitionLook {
         /// a zoom that ran into a crossfade jumped to the whole frame at the join, where the live side turns into the
         /// unzoomed incoming clip (v29 at 13.2 s).
         var otherView: ZoomCurve.View = .whole
+        /// The canvas zoom and the cover crop's focus at the still's own source time. When either differs from the live
+        /// side's, a crossfade blends two finished canvases (`needsOwnCanvas`), so the still does not take the live side's
+        /// canvas zoom or cover crop and jump at the join.
+        var otherCanvasView: ZoomCurve.View = .whole
+        var otherCoverFocus = CGPoint(x: 0.5, y: 0.5)
+
+        /// A crossfade whose sides differ in their canvas zoom or cover crop blends each side's own finished canvas.
+        /// The zoom and blur kinds keep blending the pictures, so they never scale the background.
+        func needsOwnCanvas(liveCanvasView: ZoomCurve.View, liveCoverFocus: CGPoint, cover: Bool) -> Bool {
+            kind == .crossfade && (otherCanvasView != liveCanvasView || (cover && otherCoverFocus != liveCoverFocus))
+        }
     }
 
     /// Every join with a transition: the start of a clip whose source does not continue the clip before it (a split
@@ -72,9 +83,12 @@ enum TransitionLook {
         let incoming = us >= join.atUs
         let other = incoming ? join.outgoingSourceUs : join.incomingSourceUs
         let redactions = (drawn ?? project.redactions ?? []).filter { other >= $0.startUs && other < $0.endUs }
-            .map { ZoomState.placed($0, atSourceUs: other, track: track) }
+            .map { ZoomState.placed($0, atSourceUs: other, track: track, pointer: CursorTrack.Pointer(project)) }
+        let otherView = ZoomCurve.view(atSource: other, project: project, cursor: track)
         return Mark(kind: join.transition.kind, progress: min(1, max(0, progress)), incoming: incoming, otherSourceUs: other,
-                    otherRedactions: redactions, otherView: ZoomCurve.view(atSource: other, zooms: project.zooms, cursor: track))
+                    otherRedactions: redactions, otherView: otherView,
+                    otherCanvasView: ZoomCurve.canvasView(atSource: other, project: project),
+                    otherCoverFocus: ZoomState.coverFocus(atSourceUs: other, project: project, track: track, view: otherView))
     }
 
     static func smooth(_ t: Double) -> Double { t * t * (3 - 2 * t) }
@@ -84,16 +98,20 @@ enum TransitionLook {
     /// source time, each before the blend. Round 3 (2026-11-08): the live side's parts were laid over the BLENDED frame,
     /// so the zoom transition's grown live picture showed the edges of a hidden block around its part, and the still's
     /// own picture under the live side's parts was hidden too. Spotlights are not hiding parts and stay for the caller.
+    /// `decorateLive` draws the live side's own overlays (spotlights, shapes, click rings) on its hidden picture before
+    /// the blend, so they scale, wipe and blur with that picture.
     static func compose(live: CIImage, liveRedactions: [EditProject.Redaction], still: CIImage, mark: Mark,
-                        liveView: ZoomCurve.View = .whole) -> CIImage {
+                        liveView: ZoomCurve.View = .whole, decorateLive: (CIImage) -> CIImage = { $0 }) -> CIImage {
         let extent = live.extent
-        let hidden = { (parts: [EditProject.Redaction], picture: CIImage) -> CIImage in
-            let hiding = parts.filter { $0.style != .spotlight }
-            let covered = Looks.redact(hiding, on: picture).cropped(to: extent)
-            return RedactionTrack.leaveVisible(hiding, original: picture, on: covered).cropped(to: extent)
-        }
-        let framed = reframe(hidden(mark.otherRedactions, still), from: mark.otherView, to: liveView, extent: extent)
-        return blend(live: hidden(liveRedactions, live), still: framed, mark: mark)
+        let framed = reframe(hidden(mark.otherRedactions, on: still, extent: extent), from: mark.otherView, to: liveView, extent: extent)
+        return blend(live: decorateLive(hidden(liveRedactions, on: live, extent: extent)).cropped(to: extent), still: framed, mark: mark)
+    }
+
+    /// `picture` with the hiding parts of `parts` drawn (spotlights are left to the caller).
+    static func hidden(_ parts: [EditProject.Redaction], on picture: CIImage, extent: CGRect) -> CIImage {
+        let hiding = parts.filter { $0.style != .spotlight }
+        let covered = Looks.redact(hiding, on: picture).cropped(to: extent)
+        return RedactionTrack.leaveVisible(hiding, original: picture, on: covered).cropped(to: extent)
     }
 
     /// The still moved so that the live side's zoom crop shows it as its own zoom `from` would: each side of the
@@ -112,6 +130,44 @@ enum TransitionLook {
         return still.clampedToExtent().transformed(by: fill(own).concatenating(fill(live).inverted())).cropped(to: extent)
     }
 
+    /// How one side of a transition is drawn: its scale about the picture's centre and its blur (a Gaussian sigma in
+    /// pixels). `blend` and the live side's overlays (shapes, click rings, the cursor) read it, so the overlays scale and
+    /// blur with their own picture instead of sitting unscaled over the blended frame.
+    struct Side: Equatable {
+        var scale: Double = 1
+        var blur: Double = 0
+    }
+
+    /// The live side (the frame playing) or the other side (the still) of `mark`.
+    static func side(_ mark: Mark, live: Bool, extent: CGRect) -> Side {
+        let p = smooth(mark.progress)
+        switch mark.kind {
+        case .none, .crossfade:
+            return Side()
+        case .zoom:
+            // The outgoing side rushes toward the viewer, the incoming side settles from 1.4×, crossing at the join.
+            let outgoing = live != mark.incoming
+            return Side(scale: outgoing ? 1 + 0.6 * p : 1 + 0.4 * (1 - p))
+        case .blur:
+            // Both sides blur, most at the join.
+            return Side(blur: sin(.pi * mark.progress) * extent.height * 0.018)
+        }
+    }
+
+    /// An overlay layer (transparent around what it draws) given its side's scale and blur.
+    static func applySide(_ side: Side, toLayer layer: CIImage, extent: CGRect) -> CIImage {
+        var image = layer
+        if side.scale > 1.0001 {
+            image = image.transformed(by: CGAffineTransform(translationX: -extent.midX, y: -extent.midY)
+                .concatenating(CGAffineTransform(scaleX: side.scale, y: side.scale))
+                .concatenating(CGAffineTransform(translationX: extent.midX, y: extent.midY)))
+        }
+        if side.blur > 0.5 {
+            image = image.applyingGaussianBlur(sigma: side.blur)
+        }
+        return image.cropped(to: extent)
+    }
+
     static func blend(live: CIImage, still: CIImage, mark: Mark) -> CIImage {
         let extent = live.extent
         let outgoing = mark.incoming ? still : live
@@ -123,9 +179,8 @@ enum TransitionLook {
         case .crossfade:
             return dissolve(outgoing, incoming, p, extent: extent)
         case .zoom:
-            // The outgoing side rushes toward the viewer, the incoming side settles from 1.4×, crossing at the join.
-            let a = scaled(outgoing, by: 1 + 0.6 * p, extent: extent)
-            let b = scaled(incoming, by: 1 + 0.4 * (1 - p), extent: extent)
+            let a = scaled(outgoing, by: side(mark, live: !mark.incoming, extent: extent).scale, extent: extent)
+            let b = scaled(incoming, by: side(mark, live: mark.incoming, extent: extent).scale, extent: extent)
             return dissolve(a, b, p, extent: extent)
         case .blur:
             // A soft edge wipes from left to right while both sides blur, most at the join.
@@ -139,7 +194,7 @@ enum TransitionLook {
             let mask = (gradient.outputImage ?? CIImage(color: .white)).cropped(to: extent)
             let wiped = incoming.applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: outgoing, kCIInputMaskImageKey: mask])
                 .cropped(to: extent)
-            let sigma = sin(.pi * mark.progress) * extent.height * 0.018
+            let sigma = side(mark, live: true, extent: extent).blur
             guard sigma > 0.5 else { return wiped }
             return wiped.clampedToExtent().applyingGaussianBlur(sigma: sigma).cropped(to: extent)
         }
@@ -183,7 +238,8 @@ final class TransitionStills: @unchecked Sendable {
 
     private static func generator(_ asset: AVAsset, maximumSize: CGSize) -> AVAssetImageGenerator {
         let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = false
+        // Upright, as the composition plays the live side (its track takes the movie's turn).
+        generator.appliesPreferredTrackTransform = true
         generator.maximumSize = maximumSize
         // Exactly the frame on screen at the time, the one the clip itself shows there. Any tolerance lets the
         // generator answer with an earlier key frame: 0.25 s gave the incoming still from the CUT part before the clip
@@ -275,14 +331,19 @@ enum LensLook {
         var opacity: Double
     }
 
-    /// The lenses at a source time, each fading in and out over 0.2 s; a following lens sits on the cursor averaged
-    /// over ±100 ms (a movie without a cursor track holds the lens's own point).
+    /// The lenses at a source time, each fading in and out over 0.2 s of the time it plays (TimelineMap.Shown); a
+    /// following lens sits on the pointer the viewer sees (`CursorTrack.pointerPoint`; a movie without a cursor track
+    /// holds the lens's own point). The drawn pointer is not magnified: it keeps its size with its hotspot on the lens's
+    /// centre, the one point the magnification does not move, so it still points at the right magnified content.
     static func marks(atSourceUs us: Int64, project: EditProject, track: CursorTrack?) -> [Mark] {
-        (project.lens?.items ?? []).compactMap { lens in
-            guard us >= lens.startUs, us < lens.endUs else { return nil }
-            let fade = Double(min(200_000, max(1, (lens.endUs - lens.startUs) / 3)))
-            let opacity = max(0, min(1, Double(us - lens.startUs) / fade, Double(lens.endUs - us) / fade))
-            let point = lens.follow ? track?.averagedPoint(atMs: Double(us) / 1000, halfMs: 100) : nil
+        let placed = TimelineMap.placed(project)
+        guard let outUs = TimelineMap.outputTime(ofSource: us, placed: placed) else { return [] }
+        let pointer = CursorTrack.Pointer(project)
+        return (project.lens?.items ?? []).compactMap { lens in
+            guard us >= lens.startUs, us < lens.endUs,
+                  let shown = TimelineMap.shown(fromUs: lens.startUs, toUs: lens.endUs, placed: placed) else { return nil }
+            let opacity = shown.fade(atOutput: outUs, overUs: min(200_000, max(1, shown.playedUs / 3)))
+            let point = lens.follow ? track?.pointerPoint(atMs: Double(us) / 1000, pointer: pointer) : nil
             return Mark(x: point?.x ?? lens.x, y: point?.y ?? lens.y, radius: lens.radius, magnification: lens.magnification,
                         ring: lens.ring, opacity: opacity)
         }
@@ -391,11 +452,24 @@ enum TiltLook {
         return CGPoint(x: Double(pivot.x) + x1 * factor, y: Double(pivot.y) + y2 * factor)
     }
 
-    /// `layer` (whose extent must be `rect`) turned by `pose` about the canvas centre.
-    static func apply(_ layer: CIImage, rect: CGRect, pose: Pose, canvas: CGSize) -> CIImage {
+    /// The turn of a canvas point (Core Image coordinates) about the canvas centre, seen from 2.2 canvas widths away.
+    private static func turning(pose: Pose, canvas: CGSize) -> (CGPoint) -> CGPoint {
         let pivot = CGPoint(x: canvas.width / 2, y: canvas.height / 2)
         let distance = 2.2 * Double(max(canvas.width, canvas.height))
-        let corner = { (x: CGFloat, y: CGFloat) in CIVector(cgPoint: project(CGPoint(x: x, y: y), pose: pose, pivot: pivot, distance: distance)) }
+        return { project($0, pose: pose, pivot: pivot, distance: distance) }
+    }
+
+    /// The turn as one projective map of the canvas (Core Image coordinates). `project` is a plane turned and seen in
+    /// perspective, so the four corners of any layer give this same map: the editor's preview handles follow the
+    /// turned picture with it (Looks.sourceToCanvas). Nil for a turn that folds the canvas onto a line.
+    static func homography(pose: Pose, canvas: CGSize) -> Homography? {
+        Homography(rect: CGRect(origin: .zero, size: canvas), corner: turning(pose: pose, canvas: canvas))
+    }
+
+    /// `layer` (whose extent must be `rect`) turned by `pose` about the canvas centre.
+    static func apply(_ layer: CIImage, rect: CGRect, pose: Pose, canvas: CGSize) -> CIImage {
+        let turn = turning(pose: pose, canvas: canvas)
+        let corner = { (x: CGFloat, y: CGFloat) in CIVector(cgPoint: turn(CGPoint(x: x, y: y))) }
         return layer.applyingFilter("CIPerspectiveTransform", parameters: [
             "inputTopLeft": corner(rect.minX, rect.maxY),
             "inputTopRight": corner(rect.maxX, rect.maxY),

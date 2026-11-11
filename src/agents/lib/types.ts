@@ -1,5 +1,15 @@
 export type AgentMode = "stream" | "once";
 
+/**
+ * Which `agent_joined` / `agent_left` events a login receives. `none`: no presence events (the default for an agent
+ * that is not main). `changes`: joins and real departures, without the re-arm leaves (`signal`, `timeout`) that an
+ * older writer posted for every Monitor expiry (the default for main). `all`: every presence event (the default
+ * for everyone in a `--debug` session).
+ */
+export type PresenceMode = "none" | "changes" | "all";
+
+export const PRESENCE_MODES: readonly PresenceMode[] = ["none", "changes", "all"];
+
 export type LifecycleEventType =
     | "registered"
     | "logged_in"
@@ -42,6 +52,14 @@ export interface LoggedOutEvent extends FeedEventBase {
     agent_id: string;
     reason: "signal" | "clean_exit" | "dead_pid" | "cap";
     mode?: AgentMode;
+    /** The login that ended. */
+    login_id?: string;
+    /**
+     * Set when the login ended in a way the agent restarts (a killed Monitor, a `--once --timeout`, a reaped dead
+     * login). No `agent_left` is written: the agent stays on the bus until this time, and a new login before it is
+     * silent. When no new login started by then, one `agent_left` with `reason: "lapsed"` follows.
+     */
+    rearm_until?: string;
 }
 
 /**
@@ -69,13 +87,18 @@ export interface AgentLeftEvent extends FeedEventBase {
      * `leave`: `tools agents leave`. `signal`/`cap`: its login ended that way. `timeout`: a `--once --timeout`
      * receiver expired with no mail (a restart is a new join). `dead_pid`: its login was reaped. `ended`: a stream
      * login stopped on its own (its watch failed). A `--once` receiver that waited the whole cap leaves with `cap`.
+     * `lapsed`: a login ended by a signal, a timeout or a dead pid, and the agent started no new login before the
+     * `rearm_until` of that `logged_out`. Since 2026-11-10 `signal`, `timeout` and `dead_pid` are not written any
+     * more (those ends are re-arms, and `lapsed` reports the failed ones); they stay for older feeds.
      */
-    reason: "leave" | "signal" | "cap" | "timeout" | "dead_pid" | "ended";
+    reason: "leave" | "signal" | "cap" | "timeout" | "dead_pid" | "ended" | "lapsed";
     /** Names of the agents still on the bus, the leaver excluded. */
     remaining: string[];
     note?: string;
     /** The login that ended; absent for `tools agents leave`, which ends whichever login is current. */
     login_id?: string;
+    /** With `reason: "lapsed"`: when the login that was never replaced ended. */
+    lapsed_since?: string;
 }
 
 export interface StaleLockReapedEvent extends FeedEventBase {

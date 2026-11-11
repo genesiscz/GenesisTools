@@ -27,7 +27,7 @@ export const TEXT_ANIMATIONS = ["fade", "typewriter", "slideUp"] as const;
 
 export const textAnimateSchema = z.object({
     kind: z.enum(TEXT_ANIMATIONS),
-    /** How long the way in takes. */
+    /** How long the way in takes, in the movie as it plays: a sped-up part does not shorten it. */
     ms: z.number().int().min(100).max(5000).default(600),
 });
 export type EditTextAnimate = z.infer<typeof textAnimateSchema>;
@@ -70,7 +70,7 @@ export const CHAPTER_PLACES = ["auto", "topLeft", "topRight", "bottomLeft", "bot
 export type ChapterPlace = (typeof CHAPTER_PLACES)[number];
 
 /**
- * A thin bar along the bottom of the export showing the share played, divided at the markers (the recording's and
+ * A thin bar along the bottom edge of the canvas showing the share played, divided at the markers (the recording's and
  * the edit's), and the name of each chapter for `chapterMs` when it starts. `height` is a share of the canvas's short
  * side.
  */
@@ -116,7 +116,7 @@ export function applyProgress(
 export const introCardSchema = z.object({
     title: z.string().trim().min(1).max(120),
     subtitle: z.string().max(200).optional(),
-    /** A picture file (png, jpg, heic), absolute. */
+    /** A picture file of a type in PICTURE_EXTENSIONS, absolute. */
     logo: z.string().optional(),
     /** Any text ("7 November 2026"). */
     date: z.string().max(60).optional(),
@@ -141,7 +141,34 @@ export const cardsSchema = z.object({
 });
 export type EditCards = z.infer<typeof cardsSchema>;
 
-const PICTURE_EXTENSIONS = ["png", "jpg", "jpeg", "heic", "tiff", "gif", "webp"];
+/**
+ * The logo types the renderer draws: the file extensions of the types CoreImage decodes and the editor's logo picker
+ * offers (CardsSection.logoTypes in EditorOverlayControls.swift; __fixtures__/logo-picture-types.json keeps the two
+ * lists together). This check stays for the REPL and the CLI, which have no decoder.
+ */
+export const PICTURE_EXTENSIONS = [
+    "png",
+    "jpg",
+    "jpeg",
+    "jpe",
+    "heic",
+    "heif",
+    "hif",
+    "tif",
+    "tiff",
+    "gif",
+    "webp",
+    "bmp",
+    "dib",
+];
+
+/**
+ * Whether `path` names a picture the renderer decodes (PICTURE_EXTENSIONS): an intro card's logo or a frame's
+ * background image. By the extension, since the REPL and the CLI have no decoder.
+ */
+export function isPictureFile(path: string): boolean {
+    return PICTURE_EXTENSIONS.includes(path.split(".").pop()?.toLowerCase() ?? "");
+}
 
 /** `introCard` and `endCard` ops: a change merges into the card; `enabled: false` removes that card. */
 export function applyCard(
@@ -170,13 +197,11 @@ export function applyCard(
             const logo = typeof merged.logo === "string" && merged.logo ? files.resolve(merged.logo) : undefined;
 
             if (logo) {
-                const extension = logo.split(".").pop()?.toLowerCase() ?? "";
-
                 if (!files.exists(logo)) {
                     throw new Error(`the logo ${logo} does not exist`);
                 }
 
-                if (!PICTURE_EXTENSIONS.includes(extension)) {
+                if (!isPictureFile(logo)) {
                     throw new Error(`a logo is a picture (${PICTURE_EXTENSIONS.join(", ")}), not ${logo}`);
                 }
             }

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { AnswerRefusedError } from "../decisions/answers";
-import type { DecisionRecord } from "../decisions/store";
-import type { AnswerDecisionInput, InboxAnswerResult } from "../inbox/answer";
-import type { DraftInput } from "../inbox/drafts";
+import { noNativeReceivers, noPaneTargets } from "../decisions/deliver.fixtures";
+import { type DecisionRecord, postDecisions, readDecisions } from "../decisions/store";
+import { type AnswerDecisionInput, answerInboxDecision, type InboxAnswerResult } from "../inbox/answer";
+import { type DraftInput, draftDecision } from "../inbox/drafts";
 import { type ActDeps, act, press, replyLetters, toggledPick } from "./act";
 import {
     ACT_TOKEN_TTL_MS,
@@ -334,6 +336,59 @@ describe("toggle and send tokens of a decision that takes several letters", () =
                 deliveryKey: "telegram:s2",
             },
         ]);
+    });
+
+    it("send carries the note staged with the pick as the answer's text", async () => {
+        const fixture = several();
+        const { send } = await fixture.keyboard();
+        fixture.set({ state: "drafted", draftOption: "c", draft: "  network for the cold start  " });
+
+        await press({ token: send, key: "telegram:n1", deps: fixture.deps, now: NOW });
+
+        expect(fixture.answers).toMatchObject([{ option: "c", text: "network for the cold start" }]);
+    });
+
+    it("send through the real store answers with the staged pick and keeps its note", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-act-send-"));
+        const files = { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl") };
+        const block = async () => null;
+        await postDecisions(files.file, files.events, {
+            sessionId: "s-alpha",
+            decisions: [{ number: 3, prompt: "Which caches?", options: ["memory", "disk", "network"], multiple: true }],
+        });
+        await draftDecision(
+            { session: "s-alpha", number: 3, option: "ca", text: "disk is too slow here" },
+            { ...files, block }
+        );
+        const store = memoryActTokenStore();
+        const [stored] = readDecisions(files.file);
+        const { send } = await issueToggleTokens({ row: stored, count: 3, surface: "telegram", store, now: NOW });
+
+        const sent = await press({
+            token: send,
+            key: "telegram:real",
+            deps: {
+                store,
+                rows: () => readDecisions(files.file),
+                answer: (input) =>
+                    answerInboxDecision(input, {
+                        ...files,
+                        block,
+                        deliver: {
+                            ...noNativeReceivers,
+                            runTool: async () => ({ success: false, stdout: "", stderr: "no cmux pane matched" }),
+                            findTargets: noPaneTargets,
+                        },
+                    }),
+            },
+            now: NOW,
+        });
+
+        expect(sent).toMatchObject({ decision: { option: "ac" }, tokenKind: "send" });
+        const [answered] = readDecisions(files.file);
+        expect(answered).toMatchObject({ state: "answered", option: "ac", answer: "disk is too slow here" });
+        expect(answered.draft).toBeUndefined();
+        expect(answered.draftOption).toBeUndefined();
     });
 
     it("a toggle after the decision closed, or after the agent re-posted it, refuses like an answer", async () => {

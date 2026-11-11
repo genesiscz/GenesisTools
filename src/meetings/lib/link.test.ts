@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -89,6 +98,25 @@ describe("link: one source meeting, one record (MC1)", () => {
         expect(() =>
             assertSourceFree({ store, sourceId: "wisprflow", sourceMeetingId: "other", targetId: second })
         ).not.toThrow();
+    });
+
+    test("a refresh reaches a record that holds the source meeting already, even beside another holder", async () => {
+        const { store, first, second } = await twoRecords();
+        await store.update(second, { command: "test", change: "second link" }, (record) => {
+            record.sources.wisprflow = { meetingId: "7e900336-aaaa" };
+        });
+        const guard = (targetId: string, refresh?: boolean) => () =>
+            assertSourceFree({ store, sourceId: "wisprflow", sourceMeetingId: "7e900336-aaaa", targetId, refresh });
+
+        expect(guard(first, true)).not.toThrow();
+        expect(guard(second, true)).not.toThrow();
+        expect(guard(second)).toThrow(MeetingsConflictError);
+
+        const third = await store.create(
+            { title: "Other", start: "2026-11-05T15:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "created" }
+        );
+        expect(guard(third.id, true)).toThrow(MeetingsConflictError);
     });
 
     test("a holder is matched by the whole id, never by a prefix", async () => {
@@ -299,5 +327,108 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
             mergeMeetings({ store: same.store, fromId: same.from, intoId: same.into, inbox: same.inbox })
         ).rejects.toThrow("frames/14-03-00-000-d1.jpg is in both records");
         expect(readdirSync(join(same.store.folder(same.from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
+    });
+
+    test("a row file with a half-written line is refused before any frame moves, naming the file and line", async () => {
+        const { store, from, into, inbox, backupRoot } = await call();
+        const ocr = join(store.folder(from), "ocr.jsonl");
+        appendFileSync(ocr, '{"file":"frames/cut');
+
+        await expect(mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot })).rejects.toThrow(
+            `${ocr}:2 is not a JSON row`
+        );
+        expect(readdirSync(join(store.folder(from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
+        expect(readdirSync(join(store.folder(into), "frames"))).toEqual(["14-29-25-000-d1.jpg"]);
+        expect(store.read(from)?.id).toBe(from);
+        expect(existsSync(backupRoot)).toBe(false);
+    });
+
+    test("the backup is owner-only whatever the umask, down to every folder and file it clones", async () => {
+        const { store, from, into, inbox, backupRoot } = await call();
+        const frame = join(store.folder(from), "frames", "14-03-00-000-d1.jpg");
+        chmodSync(frame, 0o644);
+        const umask = process.umask(0o022);
+
+        try {
+            const { backup = "" } = await mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot });
+            const mode = (path: string) => statSync(path).mode & 0o777;
+
+            expect(mode(backup)).toBe(0o700);
+            expect(mode(join(backup, "before"))).toBe(0o700);
+            expect(mode(join(backup, "before", from, "frames"))).toBe(0o700);
+            expect(mode(join(backup, "before", from, "frames", "14-03-00-000-d1.jpg"))).toBe(0o600);
+            expect(mode(join(backup, "moved-rows"))).toBe(0o700);
+            expect(mode(join(backup, "README.md"))).toBe(0o600);
+        } finally {
+            process.umask(umask);
+        }
+    });
+
+    test("the dictionary and the stored attendance of the record that goes away come along", async () => {
+        const { store, from, into, inbox, backupRoot } = await call();
+        const attendance = { from: "teams", people: [{ name: "Alice", fromSec: 0, toSec: 60 }] };
+        await store.update(from, { command: "test", change: "words and attendance" }, (next) => {
+            next.dictionary = {
+                entries: [
+                    { type: "term", value: "Kuber", meaning: "from" },
+                    { type: "term", value: "JDZ", spoken: ["jenezetka"] },
+                ],
+            };
+            next.attendance = attendance;
+            next.sections = [{ fromSec: 0, toSec: 60, present: ["Alice"] }];
+        });
+        await store.update(into, { command: "test", change: "words" }, (next) => {
+            next.dictionary = { entries: [{ type: "term", value: "Kuber", meaning: "into" }] };
+        });
+
+        await mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot });
+        const merged = store.read(into);
+
+        expect(merged?.dictionary?.entries).toEqual([
+            { type: "term", value: "Kuber", meaning: "into" },
+            { type: "term", value: "JDZ", spoken: ["jenezetka"] },
+        ]);
+        // Both records hold one source meeting, so the stays keep their seconds on its clock.
+        expect(merged?.attendance).toEqual(attendance);
+        expect(merged?.sections).toEqual([{ fromSec: 0, toSec: 60, present: ["Alice"] }]);
+    });
+
+    test("attendance on a record's own clock moves onto the merged clock, or is refused when it cannot be placed", async () => {
+        const unlinked = await call();
+        await unlinked.store.update(unlinked.from, { command: "test", change: "attendance" }, (next) => {
+            next.sources = {};
+            next.attendance = { from: "teams", people: [{ name: "Alice", fromSec: 1700, toSec: 1760 }] };
+            next.sections = [{ fromSec: 1700, toSec: 1760, present: ["Alice"] }];
+        });
+        await unlinked.store.update(unlinked.into, { command: "test", change: "a recording clock" }, (next) => {
+            next.sources = {};
+            next.recording = { ...next.recording, clock: { source: "test", startedAt: "2026-11-05T13:29:23.000Z" } };
+        });
+
+        const { store, inbox, backupRoot } = unlinked;
+        await mergeMeetings({ store, fromId: unlinked.from, intoId: unlinked.into, inbox, backupRoot });
+        // Second 0 moved from 13:02:36 (the record's start) to 13:29:23 (the recording clock it keeps): 1607 s later.
+        expect(unlinked.store.read(unlinked.into)?.attendance?.people).toEqual([
+            { name: "Alice", fromSec: 93, toSec: 153 },
+        ]);
+        expect(unlinked.store.read(unlinked.into)?.sections).toEqual([{ fromSec: 93, toSec: 153, present: ["Alice"] }]);
+
+        const linkedInto = await call();
+        await linkedInto.store.update(linkedInto.from, { command: "test", change: "attendance" }, (next) => {
+            next.sources = {};
+            next.attendance = { from: "teams", people: [{ name: "Alice", fromSec: 0, toSec: 60 }] };
+        });
+
+        await expect(
+            mergeMeetings({
+                store: linkedInto.store,
+                fromId: linkedInto.from,
+                intoId: linkedInto.into,
+                inbox: linkedInto.inbox,
+                backupRoot: linkedInto.backupRoot,
+            })
+        ).rejects.toThrow("keeps attendance on its own recording clock");
+        expect(linkedInto.store.read(linkedInto.from)?.attendance?.people).toHaveLength(1);
+        expect(existsSync(linkedInto.backupRoot)).toBe(false);
     });
 });

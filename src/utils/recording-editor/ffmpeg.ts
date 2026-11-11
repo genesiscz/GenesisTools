@@ -1,4 +1,5 @@
 /** ffmpeg command lines of the editor, kept pure so a test can read them. */
+import { mixedTracksFilter } from "@genesiscz/utils/recording-editor/loudness";
 
 function seconds(us: number): string {
     return (us / 1_000_000).toFixed(6);
@@ -74,7 +75,8 @@ export function speedArgv(options: { input: string; output: string; factor: numb
         options.input,
         "-map",
         "0:v:0",
-        ...(options.audio ? ["-map", "0:a:0", "-filter:a", atempoChain(options.factor), "-c:a", "aac"] : ["-an"]),
+        // Every audio track, as trimArgv keeps them: a recording of system sound and mic has two.
+        ...(options.audio ? ["-map", "0:a", "-filter:a", atempoChain(options.factor), "-c:a", "aac"] : ["-an"]),
         "-filter:v",
         `setpts=PTS/${options.factor},${EVEN}`,
         // Without it the muxer keeps the source's constant rate and drops the frames a speed-up packs closer.
@@ -116,11 +118,29 @@ function encodeArgs(format: "mp4" | "gif" | "webm", audio: boolean): string[] {
     }
 }
 
-/** A video, or the window of it, in another format. */
+/**
+ * The audio of an export with `audioTracks` tracks, as the Swift export plays it: one track as it is (optional, so an
+ * input with none still converts), several mixed into one with no level change. Without a map ffmpeg keeps only one
+ * track, so a recording of system sound and mic lost the mic in a player that plays the first track only.
+ */
+function exportAudioArgs(audioTracks: number): { graph: string[]; map: string[] } {
+    if (audioTracks > 1) {
+        const tracks = Array.from({ length: audioTracks }, (_, index) => index);
+        return {
+            graph: ["-filter_complex", `${mixedTracksFilter(tracks).replace(/,$/, "")}[a]`],
+            map: ["-map", "[a]"],
+        };
+    }
+
+    return { graph: [], map: audioTracks === 1 ? ["-map", "0:a:0?"] : [] };
+}
+
+/** A video, or the window of it, in another format; `audioTracks` is the input's audio track count. */
 export function exportVideoArgv(options: {
     input: string;
     output: string;
     format: "mp4" | "gif" | "webm";
+    audioTracks: number;
     fromUs?: number;
     toUs?: number;
 }): string[] {
@@ -128,6 +148,8 @@ export function exportVideoArgv(options: {
         ...(options.fromUs !== undefined ? ["-ss", seconds(options.fromUs)] : []),
         ...(options.toUs !== undefined ? ["-to", seconds(options.toUs)] : []),
     ];
+    const audio = options.format === "gif" ? { graph: [], map: [] } : exportAudioArgs(options.audioTracks);
+    const maps = options.format === "gif" ? [] : ["-map", "0:v:0", ...audio.map];
     return [
         "ffmpeg",
         "-nostdin",
@@ -137,9 +159,11 @@ export function exportVideoArgv(options: {
         ...window,
         "-i",
         options.input,
+        ...audio.graph,
+        ...maps,
         "-f",
         options.format,
-        ...encodeArgs(options.format, true),
+        ...encodeArgs(options.format, options.audioTracks > 0),
         options.output,
     ];
 }

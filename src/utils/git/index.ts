@@ -7,4 +7,5 @@ export * from "./porcelain";
 export * from "./repo-config";
 export * from "./types";
 export * from "./worktree";
+export * from "./worktree-backup";
 export * from "./worktree-renames";

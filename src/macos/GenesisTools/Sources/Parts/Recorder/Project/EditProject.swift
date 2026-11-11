@@ -194,6 +194,8 @@ struct EditProject: Codable, Equatable {
         // R5 4 canvas zoom
         /// `.canvas` zooms the whole framed export (its focus is 0...1 of the canvas); nil zooms inside the picture.
         var target: ZoomTarget?
+        /// "auto" when autoZoom made it (a later autoZoom replaces only those); nil is the user's own zoom.
+        var origin: String?
     }
 
     // R5 4 canvas zoom
@@ -237,6 +239,9 @@ struct EditProject: Codable, Equatable {
         var card: Card?
         var file: String
         var durationUs: Int64
+        /// How far into the file it starts playing; nil is its beginning, and `durationUs` plays from there. A part
+        /// export (TimelineMap.part) sets it for a line that started before the part.
+        var skipUs: Int64?
         /// 0 to 2.
         var volume = 1.0
         var label: String?
@@ -277,17 +282,35 @@ struct EditProject: Codable, Equatable {
         var startMs: Int?
         /// false plays the file once; nil loops it to the movie's length.
         var loop: Bool?
+        /// Set by a part export (TimelineMap.part): where the part's first frame plays in the whole export, after its
+        /// intro card, and how long the whole export is. The music goes on from that place in its file and fades only
+        /// at the whole's ends (MusicMix), so the part sounds like the same stretch of the whole.
+        var inWhole: InWhole?
+
+        struct InWhole: Codable, Equatable {
+            var atUs: Int64
+            var lengthUs: Int64
+        }
     }
 
     struct Clicks: Codable, Equatable {
         var highlight = true
         /// #RRGGBB.
         var color = "#FFD60A"
-        /// The disc's largest radius, as a fraction of the picture's height.
+        /// The disc's largest radius, as a fraction of the recorded picture's height; drawn on the picture before the
+        /// zoom and the frame, so it zooms and frames with it.
         var radius = 0.03
         var durationMs = 450
         /// A soft tick at each click in the sound; nil is off.
         var sound: Bool?
+
+        /// The clicks after the Click sound switch turns the tick on or off. A clicks object this switch makes starts
+        /// with the rings off, so asking for the tick never draws rings; rings that are already on stay on.
+        static func settingSound(_ on: Bool, in clicks: Clicks?) -> Clicks {
+            var next = clicks ?? Clicks(highlight: false)
+            next.sound = on ? true : nil
+            return next
+        }
     }
 
     struct Cursor: Codable, Equatable {
@@ -541,9 +564,9 @@ struct EditProject: Codable, Equatable {
         /// How the movie fills a canvas of another shape; nil is `.contain`.
         var fit: CanvasFit?
         var background = Background()
-        /// The margin on every side, as a fraction of the output height.
+        /// The margin on every side, as a fraction of the canvas's short side (Looks.framePlacement).
         var padding = 0.06
-        /// As a fraction of the output height.
+        /// As a fraction of the canvas's short side (Looks.framePlacement).
         var cornerRadius = 0.012
         var shadow = true
         // R5 4 frame layouts
@@ -678,10 +701,6 @@ extension EditProject {
     /// so an op this window sends for an edit not saved yet names the clip the recorder service made for it too.
     static let wholeClipID = "c00000000"
 
-    static func newID(_ prefix: String) -> String {
-        prefix + String(UUID().uuidString.prefix(8)).lowercased()
-    }
-
     var outputDurationUs: Int64 { clips.reduce(0) { $0 + $1.outputDurationUs } }
 
     /// Where a project of this movie lives: `<folder>/edit.json` for a recording folder's movie, `<name>.edit.json`
@@ -788,4 +807,48 @@ extension EditProject {
     enum SpeedBadgePosition: String, Codable, CaseIterable {
         case topRight = "top-right", topLeft = "top-left", bottomRight = "bottom-right", bottomLeft = "bottom-left"
     }
+}
+
+/// The words and ranges the editor's fields take: the limits the edit ops' zod schemas hold
+/// (src/utils/recording-editor/project.ts), so a field never cuts what the op would keep or offers what it refuses.
+enum EditLimits {
+    /// A words field: its limit in UTF-16 units (what zod's max counts), whether the op trims before it counts, and
+    /// the advice said after a refusal.
+    struct Words {
+        let name: String
+        let limit: Int
+        var trims = false
+        var advice: String?
+
+        /// What the editor says when `value` is past the limit, or nil when it fits.
+        func refusal(_ value: String) -> String? {
+            let counted = trims ? value.trimmingCharacters(in: .whitespacesAndNewlines) : value
+            let count = counted.utf16.count
+            guard count > limit else { return nil }
+            return "\(name) holds at most \(limit) characters (this one has \(count))" + (advice.map { "; \($0)" } ?? "") + "."
+        }
+    }
+
+    static let text = Words(name: "A text", limit: 500, trims: true, advice: "split it into two texts")
+    static let introTitle = Words(name: "An intro title", limit: 120, trims: true)
+    static let introSubtitle = Words(name: "An intro subtitle", limit: 200)
+    static let introDate = Words(name: "An intro date", limit: 60)
+    static let endText = Words(name: "An end card text", limit: 200, trims: true)
+    static let endLink = Words(name: "An end card link", limit: 300)
+    static let captionFix = Words(name: "A caption line", limit: 300)
+    static let cardSeconds: ClosedRange<Double> = 0.5...15
+    static let textAnimateMs: ClosedRange<Double> = 100...5000
+    // The sliders' ranges: the ops' own minimum and maximum, so an agent's value sits inside the track.
+    static let duckingDb: ClosedRange<Double> = 0...40
+    static let duckingFadeMs: ClosedRange<Double> = 0...5000
+    static let clicksRadius: ClosedRange<Double> = 0.005...0.2
+    static let keysSize: ClosedRange<Double> = 0.02...0.12
+    static let captionsSize: ClosedRange<Double> = 0.02...0.1
+    /// 0 is "never hide", which the Hide when still switch says; the slider starts at its 250 ms step.
+    static let cursorHideAfterMs: ClosedRange<Double> = 0...30000
+    static let smoothJitterPx: ClosedRange<Double> = 0...20
+    static let smoothIdleFadeSeconds: ClosedRange<Double> = 0...30
+    static let framePadding: ClosedRange<Double> = 0...0.3
+    static let frameCornerRadius: ClosedRange<Double> = 0...0.1
+    static let progressChapterMs: ClosedRange<Double> = 500...10000
 }

@@ -312,6 +312,7 @@ struct AgentProcsView: View {
                         }
                     }
                     .padding(.vertical, 8)
+                    .genScrollBars()
                 }
             }
         }
@@ -660,8 +661,14 @@ struct AgentProcsEntry: View {
             Text("Agent processes")
                 .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
             Spacer(minLength: 4)
+            // The count says what it counts: a bare "1" beside the title read as a count of nothing (hub UX C10).
             if orphans > 0 {
-                CountBadge(orphans, tooltip: "\(orphans) orphaned process trees (an agent, MCP server or tool shell whose parent is gone)", color: ReviewPalette.removed)
+                Text(verbatim: "\(orphans) orphaned")
+                    .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+                    .foregroundColor(ReviewPalette.removed)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .instantTooltip("\(Plural.count(orphans, "orphaned process tree")): an agent, MCP server or tool shell whose parent is gone")
             }
         }
         .padding(.horizontal, 10)

@@ -79,7 +79,7 @@ export interface AnthropicRequestRules {
     thinking: "adaptive" | "budget";
     /** `temperature` / `top_p` are accepted (removed from Opus 4.7 on). */
     sampling: boolean;
-    /** `tool_choice` `any` / `tool` are accepted (removed on Opus and Sonnet 5.5+ and Fable 5.1; Haiku 5.5 keeps it). */
+    /** `tool_choice` `any` / `tool` are accepted (removed on Opus and Sonnet 5.5+ and Fable 5.1+; Haiku 5.5 keeps it). */
     forcedToolChoice: boolean;
     /** A trailing assistant turn (prefill) is accepted (removed from Opus 4.6 / Sonnet 4.6 on). */
     prefill: boolean;

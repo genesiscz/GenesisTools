@@ -3,22 +3,28 @@ import GenesisKitCamera
 import SwiftUI
 
 /// The camera bubble beside a recording. With "Camera bubble" on in the capture picker, a round live preview floats
-/// where the bubble will sit; it can be dragged before and while recording, and the movie leaves it out by its window
-/// id. A recording that asked for the camera (`settings.camera.requested` in its recording.json, from `--camera`)
-/// gets `camera.mov` beside `screen.mp4`, and at its end `camera.json` with where the bubble was, which a new edit
-/// takes as its camera bubble. Settings → Recorder → "Show the camera preview" decides whether a recording started
-/// with `--camera` outside the picker (the CLI, an agent) shows the preview too (`CameraPreviewPolicy`, on by default);
-/// nothing keeps that preview out of its screen movie, so the movie shows it where the editor later draws the bubble.
-/// The recorder service starts and stops
-/// the same camera with `start(folder:)` and `stop(folder:)` (`camera.start`, `camera.stop`); `camera.requested`
-/// stays the way for a recording that starts while no service host is connected.
+/// where the bubble will sit; it can be dragged before and while recording. A recording that asked for the camera
+/// (`settings.camera.requested` in its recording.json, from `--camera`) gets `camera.mov` beside `screen.mp4`, and at
+/// its end `camera.json` with where the bubble was, which a new edit takes as its camera bubble.
+///
+/// The preview shows while it records only when its window id reached the recorder's `--exclude-window-ids` before
+/// the movie started: ScreenCaptureKit ignores the panel's sharing type, so a preview the movie did not leave out is
+/// baked into it, and every frame, zoom or bubble change then shows two faces. The picker and the Start shortcut put
+/// the preview up before the start and pass its id (`previewForStart()`); the recorder service starts the camera with
+/// `start(folder:)` (`camera.start`) before the movie's first segment, and its answer names the preview's window,
+/// which the recording leaves out. Settings → Recorder → "Show the camera preview" (`CameraPreviewPolicy`) decides
+/// whether a start outside the picker (the CLI, an agent) shows it. `stop(folder:)` (`camera.stop`) ends it;
+/// `camera.requested` stays the way for a recording that starts while no service host is connected, and such a
+/// recording shows no preview unless the picker left it out.
 @MainActor
 final class CameraBubble {
     static let shared = CameraBubble()
 
     /// What `start(folder:)` did.
     enum StartAnswer: Equatable {
-        case started
+        /// It records. `windowIDs` is the preview's window while it shows (empty when it does not), which the caller
+        /// leaves out of the screen movie with `--exclude-window-ids` from its first segment.
+        case started(windowIDs: [Int])
         /// Camera access is off; the alert that explains it follows the answer.
         case denied
         /// The camera already records the folder named.
@@ -33,8 +39,16 @@ final class CameraBubble {
         let target: [String: Any]?
         var byService = false
         var seenLive = false
-        /// The capture picker started it (and left its window out of the movie).
+        /// The capture picker or the Start shortcut started it ("Picker recordings" shows the preview for these).
         var fromPicker = false
+        /// The preview's window reached the movie's `--exclude-window-ids`, so the preview may show while it records.
+        var previewLeftOut = false
+    }
+
+    /// A start the picker or the Start shortcut made, and whether its arguments left the preview out.
+    struct PickerStart: Equatable {
+        var started = false
+        var previewLeftOut = false
     }
 
     enum Key {
@@ -59,9 +73,11 @@ final class CameraBubble {
     private var panel: CameraBubblePanel?
     private var writer: CameraMovieWriter?
     private var recording: Session?
+    /// When the face saw the recording start, before the screen's first frame: camera.json's offset until the
+    /// recording replaces it with that frame's time (camera.ts `alignCameraMovie`).
     private var screenStartedAt: Date?
-    /// The picker started a camera recording at this time: the next one that asks for the camera shows the preview.
-    private var awaitingSince: Date?
+    /// The picker started a camera recording at this time: the next one that asks for the camera is that one.
+    private var pickerStart: (at: Date, previewLeftOut: Bool)?
     /// Live recordings already looked at, by id: whether each asked for the camera.
     private var asked: [String: Bool] = [:]
     /// The live entries whose skip is logged already: one line per entry and reason, not one per update.
@@ -90,16 +106,19 @@ final class CameraBubble {
             if !previewPolicy.showsWhilePicking { hidePreview() }
             return
         }
-        if previewPolicy.showsPreview(startedByPicker: current.fromPicker) {
+        // A preview the movie did not leave out stays off whatever the setting says now: it would be in the movie.
+        if previewPolicy.showsPreview(startedByPicker: current.fromPicker, previewLeftOut: current.previewLeftOut) {
             if panel?.isVisible != true { showPreview() }
         } else {
             panel?.orderOut(nil)
         }
     }
 
-    func pickerClosed(started: Bool) {
+    /// The picker closed. `started`: it started a camera recording, whose arguments left the preview's window out
+    /// when `previewLeftOut`.
+    func pickerClosed(started: Bool, previewLeftOut: Bool = false) {
         if started {
-            awaitingSince = Date()
+            pickerStart = (Date(), previewLeftOut)
         } else if recording == nil {
             hidePreview()
         }
@@ -122,7 +141,9 @@ final class CameraBubble {
                 // Looked at: when the service stops the camera, this recording does not start it again.
                 asked[entry.id] = true
             }
-            if entry.isPaused { writer?.pause() } else if entry.isRecording { writer?.resume() }
+            // The camera keeps recording through a pause and every gap between screen segments: the live state reads
+            // "recording" while the next segment still arms, so pausing on it kept up to two seconds per gap. The
+            // recording cuts camera.mov to the screen's own spans after it stops (camera.ts `alignCameraMovie`).
             return
         }
         for entry in recordings where asked[entry.id] == nil {
@@ -159,16 +180,37 @@ final class CameraBubble {
         let generation = previewGeneration
         Task {
             guard await ensureCameraAccess(), generation == previewGeneration else { return }
-            startCamera()
-            let panel = panel ?? CameraBubblePanel(source: source!)
-            self.panel = panel
-            panel.apply(side: CGFloat(Self.bubbleSide), shape: Self.shape)
-            panel.place(center: Self.savedCenter() ?? Self.defaultCenter(side: CGFloat(Self.bubbleSide)))
-            panel.onMoved = { center in
-                UserDefaults.standard.set("\(Int(center.x)),\(Int(center.y))", forKey: Key.center)
-            }
-            panel.orderFrontRegardless()
+            orderPreviewFront()
         }
+    }
+
+    /// Puts the preview on screen (camera access is on) and answers its window, for `--exclude-window-ids`.
+    @discardableResult
+    private func orderPreviewFront() -> [Int] {
+        if let panel, panel.isVisible { return [panel.windowNumber] }
+        startCamera()
+        let panel = panel ?? CameraBubblePanel(source: source!)
+        self.panel = panel
+        panel.apply(side: CGFloat(Self.bubbleSide), shape: Self.shape)
+        panel.place(center: Self.savedCenter() ?? Self.defaultCenter(side: CGFloat(Self.bubbleSide)))
+        panel.onMoved = { center in
+            UserDefaults.standard.set("\(Int(center.x)),\(Int(center.y))", forKey: Key.center)
+        }
+        panel.orderFrontRegardless()
+        return [panel.windowNumber]
+    }
+
+    /// The preview for a start from the picker or the Start shortcut, which opens no picker, so the preview is hidden
+    /// then: brought up and answered as its window once it is on screen, so the start leaves it out of the movie.
+    /// Empty when the setting is "Never" or camera access is off; such a start shows no preview. The start's own
+    /// `camera.start` explains a refusal, so this asks macOS once and shows no alert.
+    func previewForStart() async -> [Int] {
+        guard previewPolicy.showsPreview(startedByPicker: true, previewLeftOut: true) else { return [] }
+        if !windowIDs.isEmpty { return windowIDs }
+        previewGeneration += 1
+        let generation = previewGeneration
+        guard await cameraAccess(), generation == previewGeneration else { return [] }
+        return orderPreviewFront()
     }
 
     private func hidePreview() {
@@ -219,13 +261,16 @@ final class CameraBubble {
 
     // MARK: Recording
 
+    /// The face's own watch found a recording that asked for the camera, with no `camera.start` for it yet. Its movie
+    /// runs already, so the preview shows only when the picker's arguments left it out.
     private func begin(entry: LiveRecording, folder: URL, target: [String: Any]?) {
-        let fromPicker = consumePickerStart()
+        let picker = consumePickerStart()
         recordingGeneration += 1
         let generation = recordingGeneration
-        recording = Session(id: entry.id, folder: folder, target: target, fromPicker: fromPicker)
+        recording = Session(id: entry.id, folder: folder, target: target, fromPicker: picker.started,
+                            previewLeftOut: picker.previewLeftOut)
         screenStartedAt = Date()
-        let shows = previewPolicy.showsPreview(startedByPicker: fromPicker)
+        let shows = previewPolicy.showsPreview(startedByPicker: picker.started, previewLeftOut: picker.previewLeftOut)
         if !shows { panel?.orderOut(nil) }
         Task {
             let allowed = await ensureCameraAccess()
@@ -234,29 +279,44 @@ final class CameraBubble {
                 recording = nil
                 return
             }
-            startWriting(id: entry.id, folder: folder, preview: shows, fromPicker: fromPicker)
+            startWriting(id: entry.id, folder: folder, preview: shows)
         }
     }
 
-    /// `camera.start { folder }` from the recorder service: the camera records `camera.mov` into the folder, as for
-    /// a recording that asked for it. The same folder again answers `started`; another folder `busy`. A refusal
-    /// answers first and shows the alert after it, so the caller is not held by a modal dialog.
+    /// `camera.start { folder }` from the recorder service, before the recording's first segment: the camera records
+    /// `camera.mov` into the folder, as for a recording that asked for it, and the answer names the preview's window,
+    /// which the recording leaves out of every segment. The same folder again answers `started`; another folder
+    /// `busy`. A refusal answers first and shows the alert after it, so the caller is not held by a modal dialog.
     func start(folder: URL) async -> StartAnswer {
-        if let current = recording { return Self.sameFolder(current.folder.path, folder) ? .started : .busy(current.folder.path) }
         guard await cameraAccess() else {
             DispatchQueue.main.async { self.explainCameraDenied() }
             return .denied
         }
-        if let current = recording { return Self.sameFolder(current.folder.path, folder) ? .started : .busy(current.folder.path) }
-        let fromPicker = consumePickerStart()
+        if let answer = startedAlready(folder) { return answer }
+        let picker = consumePickerStart()
         let target = Self.manifestSettings(folder)?["target"] as? [String: Any]
-        recording = Session(id: "service:\(folder.path)", folder: folder, target: target, byService: true,
-                            fromPicker: fromPicker)
-        screenStartedAt = Date()
-        let shows = previewPolicy.showsPreview(startedByPicker: fromPicker)
+        let shows = previewPolicy.showsPreview(startedByPicker: picker.started, previewLeftOut: true)
         if !shows { panel?.orderOut(nil) }
-        startWriting(id: folder.lastPathComponent, folder: folder, preview: shows, fromPicker: fromPicker)
-        return .started
+        let windowIDs = shows ? orderPreviewFront() : []
+        recording = Session(id: "service:\(folder.path)", folder: folder, target: target, byService: true,
+                            fromPicker: picker.started, previewLeftOut: !windowIDs.isEmpty)
+        screenStartedAt = Date()
+        startWriting(id: folder.lastPathComponent, folder: folder, preview: !windowIDs.isEmpty)
+        return .started(windowIDs: windowIDs)
+    }
+
+    /// The answer for a folder the camera records already, or nil when it records none. The face's watch can begin a
+    /// recording just before its `camera.start` arrives; that start still comes before the movie's first segment, so
+    /// the preview it held back may show now, and its window goes into the answer.
+    private func startedAlready(_ folder: URL) -> StartAnswer? {
+        guard let current = recording else { return nil }
+        guard Self.sameFolder(current.folder.path, folder) else { return .busy(current.folder.path) }
+        guard previewPolicy.showsPreview(startedByPicker: current.fromPicker, previewLeftOut: true) else {
+            return .started(windowIDs: windowIDs)
+        }
+        let shown = orderPreviewFront()
+        recording?.previewLeftOut = true
+        return .started(windowIDs: shown)
     }
 
     /// `camera.stop { folder }`: ends the camera of that folder and writes its `camera.json`; false when the camera
@@ -267,21 +327,24 @@ final class CameraBubble {
         return true
     }
 
-    /// The picker started a camera recording less than two minutes ago: the one starting now keeps the preview.
-    private func consumePickerStart() -> Bool {
-        defer { awaitingSince = nil }
-        return awaitingSince.map { Date().timeIntervalSince($0) < 120 } ?? false
+    /// The picker started a camera recording less than two minutes ago: the one starting now is that one.
+    private func consumePickerStart() -> PickerStart {
+        defer { pickerStart = nil }
+        guard let start = pickerStart, Date().timeIntervalSince(start.at) < 120 else { return PickerStart() }
+        return PickerStart(started: true, previewLeftOut: start.previewLeftOut)
     }
 
-    /// `preview`: the preview shows while it records (`CameraPreviewPolicy`). One the picker did not start was not left
-    /// out of the screen movie, which then shows it too; the editor's bubble is drawn over the same place.
-    private func startWriting(id: String, folder: URL, preview: Bool, fromPicker: Bool) {
+    /// `preview`: the preview shows while it records; the caller checked that the movie leaves it out.
+    private func startWriting(id: String, folder: URL, preview: Bool) {
         startCamera()
         let writer = CameraMovieWriter(url: folder.appendingPathComponent("camera.mov"))
         self.writer = writer
         source?.onFrame = { frame in writer.append(frame) }
         if preview, panel?.isVisible != true { showPreview() }
-        HubPerf.log("recorder: camera recording for \(id) (preview \(preview ? "on screen" : "off"), \(fromPicker ? "from the picker" : "started elsewhere"))")
+        let fromPicker = recording?.fromPicker == true
+        let leftOut = recording?.previewLeftOut == true
+        HubPerf.log("recorder: camera recording for \(id) (preview \(preview ? "on screen" : "off"), "
+            + "\(leftOut ? "left out of the movie" : "not left out"), \(fromPicker ? "from the picker" : "started elsewhere"))")
     }
 
     private static func sameFolder(_ path: String?, _ folder: URL) -> Bool {
@@ -295,7 +358,9 @@ final class CameraBubble {
         guard let current = recording else { return }
         recording = nil
         source?.onFrame = nil
-        let placement = panel.flatMap { $0.isVisible ? Self.placement(bubble: $0.frame, target: current.target) : nil }
+        // A hidden preview still carries the picked shape, size and place into the edit.
+        let bubble = panel.flatMap { $0.isVisible ? $0.frame : nil } ?? Self.savedBubble()
+        let placement = Self.placement(bubble: bubble, target: current.target)
         let screenStarted = screenStartedAt
         panel?.orderOut(nil)
         guard let writer else {
@@ -327,10 +392,12 @@ final class CameraBubble {
         return root["settings"] as? [String: Any]
     }
 
-    /// `camera.json` beside the recording (src/utils/recording-editor/camera.ts `cameraSidecarSchema`).
+    /// `camera.json` beside the recording (src/utils/recording-editor/camera.ts `cameraSidecarSchema`). `clock` "wall":
+    /// the movie runs on, pauses included, so the recording may cut it to the screen's spans.
     static func writeSidecar(folder: URL, startedAt: Date, screenStartedAt: Date?, placement: [String: Any]?) {
         var object: [String: Any] = [
             "version": 1, "file": "camera.mov", "startedAt": ISO8601DateFormatter.withFraction.string(from: startedAt),
+            "clock": "wall",
         ]
         if let screenStartedAt { object["screenStartedAt"] = ISO8601DateFormatter.withFraction.string(from: screenStartedAt) }
         if let placement { object["placement"] = placement }
@@ -339,8 +406,9 @@ final class CameraBubble {
     }
 
     /// Where the bubble sat in what was recorded, as camera.ts's fractions: the centre from the top left and the side
-    /// over the short side. Nil when the recorded rectangle is not known (an app's windows).
-    static func placement(bubble: CGRect, target: [String: Any]?) -> [String: Any]? {
+    /// over the short side, plus the shape. Only the shape when the recorded rectangle is not known (an app with no
+    /// window on screen); camera.ts takes each key on its own.
+    static func placement(bubble: CGRect, target: [String: Any]?) -> [String: Any] {
         let screens = NSScreen.screens
         let primaryHeight = screens.first?.frame.height ?? 0
         let recorded: CGRect?
@@ -354,17 +422,18 @@ final class CameraBubble {
         case "window":
             recorded = ((target?["windowIds"] as? [NSNumber])?.first).flatMap { windowFrame(CGWindowID($0.uint32Value), primaryHeight: primaryHeight) }
         case "app":
-            recorded = nil
+            let app = (target?["app"] as? String) ?? (target?["app"] as? NSNumber)?.stringValue
+            let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+            recorded = app.flatMap { appCanvas(windows: windows ?? [], app: $0, primaryHeight: primaryHeight) }
         default:
             recorded = screens.first { $0.frame.contains(CGPoint(x: bubble.midX, y: bubble.midY)) }?.frame
         }
-        guard let recorded else { return nil }
         return placement(bubble: bubble, recorded: recorded, shape: shape)
     }
 
-    /// Pure, for tests: both rects in Cocoa points (bottom-left origin).
-    nonisolated static func placement(bubble: CGRect, recorded: CGRect, shape: EditProject.CameraShape) -> [String: Any]? {
-        guard recorded.width > 0, recorded.height > 0 else { return nil }
+    /// Pure, for tests: both rects in Cocoa points (bottom-left origin). Only the shape without a recorded rect.
+    nonisolated static func placement(bubble: CGRect, recorded: CGRect?, shape: EditProject.CameraShape) -> [String: Any] {
+        guard let recorded, recorded.width > 0, recorded.height > 0 else { return ["shape": shape.rawValue] }
         let clamp = { (value: CGFloat, low: CGFloat, high: CGFloat) in Double(min(high, max(low, value))) }
         return [
             "x": clamp((bubble.midX - recorded.minX) / recorded.width, 0, 1),
@@ -379,6 +448,29 @@ final class CameraBubble {
               let bounds = list.first?[kCGWindowBounds as String] as? [String: CGFloat],
               let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"] else { return nil }
         return CGRect(x: x, y: primaryHeight - y - height, width: width, height: height)
+    }
+
+    /// What an app recording records: the union of the app's on-screen windows (layer 0), matched by pid when `app`
+    /// is a number, else by owner name as `--app` takes it, flipped into Cocoa points as `windowFrame` does.
+    nonisolated static func appCanvas(windows: [[String: Any]], app: String, primaryHeight: CGFloat) -> CGRect? {
+        let pid = Int(app)
+        let frames = windows.compactMap { window -> CGRect? in
+            guard (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0 == 0 else { return nil }
+            let owner = pid.map { (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue == $0 }
+                ?? ((window[kCGWindowOwnerName as String] as? String)?.caseInsensitiveCompare(app) == .orderedSame)
+            guard owner, let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"],
+                  width > 0, height > 0 else { return nil }
+            return CGRect(x: x, y: primaryHeight - y - height, width: width, height: height)
+        }
+        return frames.dropFirst().reduce(frames.first) { $0?.union($1) }
+    }
+
+    /// The preview's frame from Settings when it is not on screen: the saved side at the saved or default centre.
+    private static func savedBubble() -> CGRect {
+        let side = CGFloat(bubbleSide)
+        let center = savedCenter() ?? defaultCenter(side: side)
+        return CGRect(x: center.x - side / 2, y: center.y - side / 2, width: side, height: side)
     }
 
     private static func savedCenter() -> CGPoint? {

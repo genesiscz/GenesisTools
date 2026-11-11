@@ -17,6 +17,7 @@ import {
     foregroundGuardEnvironment,
     getBinaryPath,
     nativeEnvironment,
+    prewarmAxTool,
     REAL_AX_TOOL_IN_TESTS,
     RealMachineInTestError,
     recordSource,
@@ -797,4 +798,19 @@ test("recordSource names the agent session, the terminal sessions and the tmux p
             }
         }
     }
+});
+
+// Regression test: 2026-11-09 the user waited for "preparing" at a recording start while ax-tool compiled; the
+// recorder service now builds it ahead, in the background, when it starts and when the native sources change.
+test("a prewarm builds a stale ax-tool once in the background and leaves a fresh one alone", () => {
+    const starts: string[] = [];
+    const start = (trigger: string) => {
+        starts.push(trigger);
+        return { binary: new Promise<string>(() => {}), release: () => {} };
+    };
+
+    expect(prewarmAxTool({ trigger: "recorder-service-start", needsBuild: () => false, start })).toBe("fresh");
+    expect(prewarmAxTool({ trigger: "recorder-service-start", needsBuild: () => true, start })).toBe("started");
+    expect(prewarmAxTool({ trigger: "recorder-service-check", needsBuild: () => true, start })).toBe("building");
+    expect(starts).toEqual(["recorder-service-start"]);
 });

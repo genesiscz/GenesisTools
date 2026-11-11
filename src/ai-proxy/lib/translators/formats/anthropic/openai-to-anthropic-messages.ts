@@ -331,7 +331,7 @@ function mapTools(tools: unknown): AnthropicTool[] | undefined {
 function mapToolChoice(toolChoice: unknown, forcedAllowed: boolean): AnthropicToolChoice | undefined {
     const choice = mapOpenAiToolChoice(toolChoice);
 
-    // Opus 5.5 and Fable 5.1 answer a forced choice with a 400, and so does any model once
+    // Opus 5.5 and Fable 5.1 and later answer a forced choice with a 400, and so does any model once
     // thinking is on. `auto` keeps the tools callable; the forcing itself cannot be carried over.
     if (!forcedAllowed && (choice?.type === "any" || choice?.type === "tool")) {
         return { type: "auto" };

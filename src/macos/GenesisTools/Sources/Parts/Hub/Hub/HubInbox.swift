@@ -1439,6 +1439,7 @@ struct InboxListView: View {
                     }
                 }
                 .padding(.bottom, 12)
+                .genScrollBars()
             }
             // Sessions quiet for three days fold under one row; a pick of one of them (a link) opens the fold. Keyed on
             // the selected row being a quiet one, not on the selection alone: a reveal can select a session before the
@@ -1609,7 +1610,10 @@ struct InboxMain: View {
                             listRow(row, hubSessions: hubSessions)
                         }
                     }
+                    .frame(maxWidth: HubInboxCards.readingWidth, alignment: .leading)
                     .padding(18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .genScrollBars()
                 }
                 .focusable()
                 .focusEffectDisabled()
@@ -2186,6 +2190,8 @@ struct InboxDecisionCard: View, Equatable {
     /// ⌘F: when the current match is in this card's folded context, the context unfolds by itself.
     @Environment(\.panelFindHighlight) private var highlight
     @GenReduceMotion private var reduceMotion
+    /// Settings, Hub, Panes, Inbox: the context in full instead of two lines and Show more.
+    @AppStorage(HubInboxCards.contextOpenKey, store: HubDefaults.store) private var contextOpen = false
 
     private var writing: Bool { state.writing }
     /// The card's options, footer and note field are real controls (buttons with hover styles and tooltips, a text
@@ -2240,7 +2246,8 @@ struct InboxDecisionCard: View, Equatable {
             }
             // The widget's decision card draws these two sections too (GenesisKit DecisionDetailViews.swift).
             if let context = item.context, !context.isEmpty {
-                DecisionContextSection(markdown: context, forcedOpen: findInContext)
+                DecisionContextSection(markdown: context, startsOpen: contextOpen, forcedOpen: findInContext,
+                                       foldHeight: DecisionContextSection.fiveLines)
                     .findField("context")
             }
             if !item.excerptRefs.isEmpty {
@@ -2772,6 +2779,7 @@ private struct InboxReplySheet: View {
             ScrollView {
                 MarkdownContentView(markdown: markdown, style: .hub)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                .genScrollBars()
             }
         }
         .padding(16)
@@ -2844,6 +2852,7 @@ private struct SessionInfoPopover: View {
             }
             .padding(14)
             .frame(width: 360, alignment: .leading)
+            .genScrollBars()
         }
         .frame(maxHeight: 560)
         .onAppear(perform: loadSpend)
