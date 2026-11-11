@@ -44,3 +44,15 @@ Moved from `.claude/rules/agent-transcripts.md` (2026-11-11), which names them i
     different shape with its own owner, `StatuslineInput` in `src/utils/agents/hooks/statusline-input.ts`.
   - `no-agent-name-in-command-match`: finding a running agent by its command line goes through
     `classifyCommand`, `isAgentProcess` or `runsAgent` in `src/utils/process/classify.ts`.
+
+## Rosters: patterns the architecture build removed (`scripts/ci/rosters/`)
+
+A roster keeps one removed pattern from coming back (a bare `fetch` beside `Api.send`, a `launchctl` call outside the
+launchd module, a lock deleted by hand). Each is a `<name>.definition.ts` (an ast-grep matcher, an optional finer test,
+the owning module as `allowedIn`, the review candidate it guards), listed once in `rosters/index.ts`.
+`bun scripts/ci/rosters/generate.ts` scans the tree and writes `rosters.json`: the files that still hold the pattern and
+how many times. lint-rules turns every definition into a rule with those counts, so a new file with a match fails at
+once, a listed file fails when its count grows, and a count that fell must be lowered (run the generator). The manifest
+only shrinks: the generator never writes growth, `--check` exits 1 on it, and lint-rules refuses a `rosters.json` edited
+up against the base. A new definition is seeded by the generator with what the tree holds that day. A real exception is
+`// lint-rules-ignore: <why>` on the line, never a manifest edit.

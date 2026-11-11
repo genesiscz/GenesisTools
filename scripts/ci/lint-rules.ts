@@ -49,6 +49,7 @@ import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
 import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
+import { parseRosters, ROSTER_DEFINITIONS, readRosters, rosterCounts, rosterGrowth } from "./rosters";
 import { checkSwiftProcessToolRule, checkSwiftRowRules, checkSwiftStructRules } from "./swift-lint-rules";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
@@ -1353,6 +1354,26 @@ const RULES: Rule[] = [
     },
 ];
 
+/**
+ * The rosters (scripts/ci/rosters/*.definition.ts): one rule each, whose per-file counts come from rosters.json, so a
+ * file outside its roster fails at its first match and a listed file fails when its count grows.
+ */
+const ROSTERS = readRosters();
+
+for (const roster of ROSTER_DEFINITIONS) {
+    RULES.push({
+        name: roster.name,
+        severity: "error",
+        kinds: [],
+        matcher: roster.matcher,
+        message: `${roster.message} (Roster ${roster.candidate}: scripts/ci/rosters/; after removing a match, run bun scripts/ci/rosters/generate.ts.)`,
+        test: (_text, node) => roster.test?.(node) ?? true,
+        onlyIn: roster.onlyIn,
+        allowedIn: roster.allowedIn,
+        allowedCounts: rosterCounts(ROSTERS, roster.name),
+    });
+}
+
 const PROMPT_BACKEND_RULE = {
     name: "no-direct-prompt-backend",
     severity: "error" as const,
@@ -2024,7 +2045,7 @@ function spawnCallVerdict(node: SgNode): { violates: boolean; needsChildProcessI
     return { violates: !spawnArgsCarryEnv(args), needsChildProcessImport: isBare };
 }
 
-function langFor(file: string): Lang | null {
+export function langFor(file: string): Lang | null {
     if (file.endsWith(".tsx") || file.endsWith(".jsx")) {
         return Lang.Tsx;
     }
@@ -2052,7 +2073,7 @@ function langFor(file: string): Lang | null {
  */
 const SUPPRESSION = /lint-rules-ignore\b/;
 
-function isSuppressed(lines: string[], lineNumber: number): boolean {
+export function isSuppressed(lines: string[], lineNumber: number): boolean {
     return SUPPRESSION.test(lines[lineNumber - 1] ?? "") || SUPPRESSION.test(lines[lineNumber - 2] ?? "");
 }
 
@@ -2319,6 +2340,7 @@ const RATCHET_INPUTS = [
     "scripts/ci/model-facts-ratchet.ts",
     "scripts/ci/native-home-ratchet.ts",
     "scripts/ci/proxy-provider-ratchet.ts",
+    "scripts/ci/rosters/rosters.json",
     "scripts/ci/tool-command-ratchet.ts",
     "scripts/ci/transcript-format-ratchet.ts",
 ];
@@ -2448,7 +2470,12 @@ function checkRatchetGrowth({ from, cwd, changed }: { from: string; cwd: string;
             throw new Error(`lint-rules: cannot read ${from}:${file}: ${previous.stderr.toString()}`);
         }
 
-        const additions = ratchetAdditions(previous.stdout.toString(), readFileSync(join(cwd, file), "utf8"));
+        const additions = file.endsWith("rosters.json")
+            ? rosterGrowth(
+                  parseRosters(previous.stdout.toString()),
+                  parseRosters(readFileSync(join(cwd, file), "utf8"))
+              )
+            : ratchetAdditions(previous.stdout.toString(), readFileSync(join(cwd, file), "utf8"));
 
         if (additions.length > 0) {
             throw new Error(`lint-rules: ratchet lists may only shrink (${file})\n${additions.join("\n")}`);
@@ -2489,7 +2516,7 @@ export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: stri
     return changed;
 }
 
-async function targetFiles(): Promise<string[]> {
+export async function targetFiles(): Promise<string[]> {
     const config = SafeJSON.parse(await Bun.file("biome.json").text()) as {
         files?: { includes?: string[] };
     };
