@@ -307,8 +307,9 @@ function isInside(child: string, parent: string): boolean {
     return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
+/** `rel` is a path git printed: "/" between segments on every platform, and a backslash is part of a POSIX name. */
 function hasRebuildableSegment(rel: string): boolean {
-    return rel.split(/[/\\]/).some((segment) => segment !== "" && isRebuildableName(segment));
+    return rel.split("/").some((segment) => segment !== "" && isRebuildableName(segment));
 }
 
 interface WorktreeIdentity {
@@ -542,8 +543,9 @@ function walkEntries({
 
 /**
  * Tracked files whose working copy differs from the index while `assume-unchanged` or `skip-worktree` hides them from
- * `git diff`, so neither patch holds the edit. A flagged file that is not on disk (a sparse checkout leaves it out) or
- * that still matches its index blob and mode is no change. The bytes are compared raw: a clean filter is a configured
+ * `git diff`, so neither patch holds the edit. A skip-worktree file that is not on disk is no change (a sparse
+ * checkout leaves it out); a missing assume-unchanged file is a deletion. A flagged file that still matches its index
+ * blob and mode is no change. The bytes are compared raw: a clean filter is a configured
  * command, which a read-only plan never starts, so a filtered or line-ending-converted file reads as changed.
  */
 async function hiddenIndexChanges(path: string): Promise<string[]> {
@@ -560,11 +562,22 @@ async function hiddenIndexChanges(path: string): Promise<string[]> {
         const tab = record.indexOf("\t");
         const [tag = "", mode = "", sha = ""] = record.slice(0, tab).split(" ");
         const rel = record.slice(tab + 1);
-        // `S` is skip-worktree; a lowercase tag is assume-unchanged. A gitlink is a submodule, which is a blocker anyway.
-        const flagged = tag === "S" || tag !== tag.toUpperCase();
-        const stat = flagged && mode !== "160000" ? lstatSync(join(path, rel), { throwIfNoEntry: false }) : undefined;
+        // `S` is skip-worktree, a lowercase tag is assume-unchanged, and `s` is both. A gitlink is a submodule, which is
+        // a blocker anyway.
+        const skipWorktree = tag.toUpperCase() === "S";
+
+        if ((!skipWorktree && tag === tag.toUpperCase()) || mode === "160000") {
+            continue;
+        }
+
+        const stat = lstatSync(join(path, rel), { throwIfNoEntry: false });
 
         if (!stat) {
+            // A sparse checkout leaves a skip-worktree file out on purpose; a missing assume-unchanged file was deleted.
+            if (!skipWorktree) {
+                hidden.push(rel);
+            }
+
             continue;
         }
 
@@ -932,7 +945,7 @@ async function inspectWorktree(options: PlanWorktreeBackupOptions): Promise<Insp
         const shown = state.hidden.slice(0, 5).join(", ");
         const more = state.hidden.length > 5 ? ` and ${state.hidden.length - 5} more` : "";
         blockers.push(
-            `Tracked files differ from the index while assume-unchanged or skip-worktree hides them from git diff (${shown}${more}), so no patch would hold them; clear the flags with git update-index --no-assume-unchanged --no-skip-worktree first. The check reads raw bytes and the executable bit without clean filters, so a filtered file counts as changed.`
+            `Tracked files differ from the index, or are gone, while assume-unchanged or skip-worktree hides them from git diff (${shown}${more}), so no patch would hold them; clear the flags first with git update-index --no-assume-unchanged <paths>, then git update-index --no-skip-worktree <paths> (one call applies only the first of the two). The check reads raw bytes and the executable bit without clean filters, so a filtered file counts as changed.`
         );
     }
 

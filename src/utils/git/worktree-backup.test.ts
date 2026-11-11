@@ -6,6 +6,7 @@ import {
     readFileSync,
     statSync,
     symlinkSync,
+    unlinkSync,
     utimesSync,
     writeFileSync,
 } from "node:fs";
@@ -255,6 +256,9 @@ describe("worktree backup", () => {
         const firstHead = await repo.git(["rev-parse", "--verify", first]);
         await repo.commit({ file: "later.txt", content: "later\n", message: "later lost commit", cwd: detached });
         repo.write({ file: "trail\\", content: "backslash\n", cwd: detached });
+        // An ignored name ending in a backslash: split on it, "notes.log" would read as a rebuildable log and be dropped.
+        repo.write({ file: join(".git", "info", "exclude"), content: "notes.log\\\\\n", cwd: repo.dir });
+        repo.write({ file: "notes.log\\", content: "kept\n", cwd: detached });
         const result = await backupWorktree({ path: detached, backupRoot: join(repo.root, "backups-other"), now });
 
         expect(result.refusal).toBeNull();
@@ -264,6 +268,8 @@ describe("worktree backup", () => {
         expect(result.plan.untracked).toEqual(["trail\\"]);
         expect(result.proof.copies).toBe("ok");
         expect(readFileSync(join(result.folder ?? "", "untracked", "trail\\"), "utf8")).toBe("backslash\n");
+        expect(result.plan.ignored).toEqual(["notes.log\\"]);
+        expect(readFileSync(join(result.folder ?? "", "ignored", "notes.log\\"), "utf8")).toBe("kept\n");
     });
 
     it("refuses a backup root inside the worktree, also through a symlink, before writing", async () => {
@@ -366,6 +372,25 @@ describe("worktree backup", () => {
         } finally {
             spy.mockRestore();
         }
+    });
+
+    it("refuses a deletion that assume-unchanged hides, and passes a skip-worktree file a sparse checkout left out", async () => {
+        // The test above edited the first and the last of the many files: their committed bytes come back first.
+        const last = HASH_OBJECT_BATCH + 9;
+        repo.write({ file: "many/f-0000.txt", content: "0\n", cwd: spare });
+        repo.write({ file: `many/f-${String(last).padStart(4, "0")}.txt`, content: `${last}\n`, cwd: spare });
+        expect((await planWorktreeBackup({ path: spare })).blockers).toEqual([]);
+
+        // Two calls: one update-index with both flags leaves the entry with neither.
+        await repo.git(["update-index", "--no-assume-unchanged", "many/f-0002.txt"], { cwd: spare });
+        await repo.git(["update-index", "--skip-worktree", "many/f-0002.txt"], { cwd: spare });
+        unlinkSync(join(spare, "many", "f-0001.txt"));
+        unlinkSync(join(spare, "many", "f-0002.txt"));
+        const plan = await planWorktreeBackup({ path: spare });
+
+        expect(plan.changed).toEqual([]);
+        expect(plan.blockers).toHaveLength(1);
+        expect(plan.blockers[0]).toContain("hides them from git diff (many/f-0001.txt)");
     });
 
     it("takes the base from the other branches when no candidate gives one, and refuses --remove without a base", async () => {

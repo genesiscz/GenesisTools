@@ -630,15 +630,15 @@ fingerprint again (HEAD, the working-tree and index diffs, the untracked and ign
 mtime and contents) and refuses when anything changed. It runs `git worktree remove --force` once, so a locked
 worktree stays refused. The branch stays in the repository.
 
-It refuses before writing anything when a merge, rebase, cherry-pick, revert or bisect is in progress, when the
-worktree has initialized submodules, when the index has unmerged entries, when the copy exceeds the limit, or when
-another worktree lives inside the folder. It also refuses when `assume-unchanged` or `skip-worktree` hides an edit or
-an executable-bit change of a tracked file from `git diff` (no patch would hold it; the bytes are compared without
+It refuses before writing anything when a merge, rebase, cherry-pick, revert or bisect is in progress, when the worktree
+has initialized submodules, when the index has unmerged entries, when the copy exceeds the limit, or when another
+worktree lives inside the folder. It also refuses when `assume-unchanged` or `skip-worktree` hides an edit, a deletion
+or an executable-bit change of a tracked file from `git diff` (no patch would hold it; the bytes are compared without
 clean filters, which a read-only plan never starts, so a filtered file counts as changed), and when the backup root lies
-inside the worktree (symlinks resolved), because a removal would delete the backup too. With `--remove` it also refuses a locked worktree, one where
-a process has its working directory, and one with no base. Exit 0 when the backup did what was asked; exit 2 when the
-backup is written and proven but `--remove` kept the worktree (it changed, or a process started in it, during the
-backup), so the backup is usable; exit 1 on any other refusal.
+inside the worktree (symlinks resolved), because a removal would delete the backup too. With `--remove` it also refuses
+a locked worktree, one where a process has its working directory, and one with no base. Exit 0 when the backup did what
+was asked; exit 2 when the backup is written and proven but `--remove` kept the worktree (it changed, or a process
+started in it, during the backup), so the backup is usable; exit 1 on any other refusal.
 
 Code that needs the same backup calls `planWorktreeBackup` and `backupWorktree` from `@genesiscz/utils/git`.
 

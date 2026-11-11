@@ -265,7 +265,10 @@ export function cameraAlignArgv({
 /** What `alignCameraMovie` did: nothing, the offset only, or a camera movie cut to the screen's spans. */
 export interface CameraAlignment {
     result: "skipped" | "offset" | "trimmed";
-    /** Why the movie could not be cut; the offset still counts from the screen's first frame. */
+    /**
+     * With `offset`: why the movie could not be cut; the offset still counts from the screen's first frame. With
+     * `trimmed`: the uncut original that could not be removed, which still holds the footage the cut took out.
+     */
     warning?: string;
 }
 
@@ -359,14 +362,20 @@ export async function alignCameraMovie({
         );
     }
 
-    await unlink(original).catch((cleanupError: unknown) => {
-        log.debug({ error: cleanupError, original }, "the uncut camera movie could not be removed");
-    });
+    // The original holds every second the cut took out (pauses, discarded segments): one left behind is said, by name.
+    const leftover = await unlink(original).then(
+        () => undefined,
+        (cleanupError: unknown) => {
+            log.warn({ error: cleanupError, original }, "the uncut camera movie could not be removed");
+            const reason = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+            return `The camera movie is cut, but its uncut original ${original} could not be removed (${reason.slice(0, 200)}); it still holds the footage the cut took out, so delete it before you share the folder.`;
+        }
+    );
     log.info(
         { folder, spans: spans.length, padHeadMs: plan.padHeadMs, ranges: plan.ranges },
         "the camera movie is cut to the screen's spans"
     );
-    return { result: "trimmed" };
+    return leftover ? { result: "trimmed", warning: leftover } : { result: "trimmed" };
 }
 
 /** The camera movie's path for a bubble of the edit whose source movie is `video`. */

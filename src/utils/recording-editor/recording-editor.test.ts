@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
     existsSync,
@@ -10,6 +10,7 @@ import {
     unlinkSync,
     writeFileSync,
 } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -4559,6 +4560,36 @@ describe("the camera on the screen's clock", () => {
         });
         expect(one.warning).toContain("camera.mov still holds footage the screen movie left out");
         expect(one.warning).not.toContain("drifts");
+    });
+
+    test("a cut whose uncut original cannot be removed says so and names the file", async () => {
+        const folder = folderWith({ startedAt: iso(T0 + 250), screenStartedAt: iso(T0), clock: "wall" });
+        const unlink = fsPromises.unlink;
+        // Only the original's removal fails, as on a folder that lost its write permission after the sidecar.
+        const spy = spyOn(fsPromises, "unlink").mockImplementation((path) =>
+            String(path).includes(".camera-original-")
+                ? Promise.reject(new Error("EACCES: permission denied"))
+                : unlink(path)
+        );
+
+        try {
+            const result = await alignCameraMovie({
+                folder,
+                spans: [{ sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 8000 }],
+                runCommand: async (command) => {
+                    writeFileSync(command.at(-1) ?? "", "cut camera movie");
+                },
+            });
+            const left = readdirSync(folder).filter((name) => name.startsWith(".camera-original-"));
+
+            expect(result.result).toBe("trimmed");
+            expect(left).toHaveLength(1);
+            expect(result.warning).toContain(join(folder, left[0] ?? ""));
+            expect(result.warning).toContain("EACCES");
+            expect(readFileSync(join(folder, "camera.mov"), "utf8")).toBe("cut camera movie");
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     test("a cut whose camera.json cannot be written puts the uncut movie back, so no later alignment cuts it twice", async () => {
