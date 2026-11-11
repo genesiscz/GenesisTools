@@ -232,17 +232,26 @@ export class DoorWorkerRunner {
     }
 }
 
-let shared: DoorWorkerRunner | undefined;
+/**
+ * A door worker per lane: the session doors of the selected session (Changes, sub-agents) share one, and the agents
+ * list has its own, so a refresh of the list never waits behind a fold of a large session (the agents tree waited
+ * 4.5 s behind a Changes fold of a 749 MB session, 2026-11-10). Each lane's caches are released with the server's own
+ * (`releaseMemory`).
+ */
+export type DoorLane = "session" | "agents";
 
-/** The server's one door worker. Its caches are released with the server's own (`releaseMemory`). */
-function sharedRunner(): DoorWorkerRunner {
-    if (!shared) {
-        const runner = new DoorWorkerRunner();
-        onReleaseMemory("hub server door worker", () => runner.release());
-        shared = runner;
+const lanes = new Map<DoorLane, DoorWorkerRunner>();
+
+export function laneRunner(lane: DoorLane): DoorWorkerRunner {
+    let runner = lanes.get(lane);
+    if (!runner) {
+        const created = new DoorWorkerRunner();
+        onReleaseMemory(`hub server door worker (${lane})`, () => created.release());
+        lanes.set(lane, created);
+        runner = created;
     }
 
-    return shared;
+    return runner;
 }
 
 /**
@@ -251,7 +260,10 @@ function sharedRunner(): DoorWorkerRunner {
  * first ask of a large session holds the event loop for more than about 100 ms
  * (`bun scripts/benchmarks/hub/big-session.ts` prints `<call>.cold.stallMs` for each).
  */
-export function offEventLoop<P>(door: CallDoor<P>, runner: () => DoorWorkerRunner = sharedRunner): CallDoor<P> {
+export function offEventLoop<P>(
+    door: CallDoor<P>,
+    runner: () => DoorWorkerRunner = () => laneRunner("session")
+): CallDoor<P> {
     return {
         ...door,
         run(parsed, ctx) {

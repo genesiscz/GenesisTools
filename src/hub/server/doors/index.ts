@@ -1,4 +1,4 @@
-import { offEventLoop } from "../door-runner";
+import { laneRunner, offEventLoop } from "../door-runner";
 import { agentsCountsDoor, agentsMailDoor, agentsTreeDoor, subagentsDoor } from "./agents";
 import { agentsToolChangesDoor, agentsTurnChangesDoor } from "./changes";
 import {
@@ -32,7 +32,7 @@ export const HUB_SERVER_DOORS: readonly Door[] = [
     transcriptLiveDoor,
     agentsCountsDoor,
     agentsMailDoor,
-    offEventLoop(agentsTreeDoor),
+    offEventLoop(agentsTreeDoor, () => laneRunner("agents")),
     offEventLoop(subagentsDoor),
     offEventLoop(agentsToolChangesDoor),
     offEventLoop(agentsTurnChangesDoor),

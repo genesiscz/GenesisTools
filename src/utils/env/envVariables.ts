@@ -271,8 +271,8 @@ export const env = {
         getMailEnvelopePath: () => getTrimmed("MAIL_ENVELOPE_PATH"),
         /** Set by GenesisTools.app per `tools` call: the id its app-perf.log line, the day log and profiling lines share. */
         getTraceId: () => getTrimmed("GENESIS_TOOLS_TRACE_ID"),
-        /** The resident hub server (`tools hub serve`) drains and exits above this physical footprint, in MB. */
-        getHubServerMaxMb: () => parseIntEnv("GENESIS_HUB_SERVER_MAX_MB", 512),
+        /** The resident hub server (`tools hub serve`) drains and exits above this physical footprint, in MB; 0 = its default. */
+        getHubServerMaxMb: () => parseIntEnv("GENESIS_HUB_SERVER_MAX_MB", 0),
         /** `GENESIS_HUB_SERVER=0` keeps a CLI command from asking the resident hub server first (the app's switch too). */
         hubServerEnabled: () => getTrimmed("GENESIS_HUB_SERVER") !== "0",
         getQdrantPort: () => parseIntEnv("GENESIS_QDRANT_PORT", 16_335),

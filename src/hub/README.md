@@ -437,9 +437,11 @@ tools hub widget ...                             # the notch and side widget's d
   check`, `repo`, `proposal list`, `pr show`, `nav`, some `widget` calls) over `~/.genesis-tools/hub/server/hub.sock`,
   so the app does not start a `tools` process per call. It also serves a few reads of other tools (`meetings`,
   `ai sessions`, `question inbox`). It is started when nothing listens on the socket (at most once per 5 minutes),
-  exits after 10 minutes with no connection, and drains above 512 MB of memory. Once a minute it checks whether the
+  exits after 10 minutes with no connection, and drains above 1536 MB of memory. Once a minute it checks whether the
   code it loaded changed, and drains itself when it did, so it restarts on new code within a minute. `serve --drain`
-  restarts it at once.
+  restarts it at once. The heavy reads (a session's Changes and sub-agents, the agents list) run on worker threads,
+  one for the selected session and one for the agents list, so a slow read never holds the other answers back.
+  `bun scripts/benchmarks/hub/big-session.ts` measures them on the largest session.
 - **What it calls**: `gh` and `glab` for PRs and MRs (`--mine` means the logged-in user), cmux to type into session
   panes, `tools daemon` for the scheduled tasks (`hub-pr-notify`, `hub-ping-when-done`, `hub-morning-brief`,
   `hub-memo-scan`), the notification channels of `tools notify` for pushes, `tools waze` for the commute, `tools macos
@@ -485,7 +487,7 @@ adds its migrations to `src/hub/lib/data-db.ts` instead of opening another SQLit
   above).
 - In GenesisTools.app, Settings → Hub sets the History limit and how an agent's place is shown.
 - `GENESIS_HUB_SERVER=0` keeps a CLI command from asking the resident server first.
-- `GENESIS_HUB_SERVER_MAX_MB` (default 512): the server drains and exits above this memory footprint.
+- `GENESIS_HUB_SERVER_MAX_MB` (default 1536): the server drains and exits above this memory footprint.
 
 ## For agents
 
