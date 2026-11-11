@@ -19,7 +19,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
+import { claudeCompactedSince } from "@genesiscz/utils/agent-sessions/readers/claude-compaction";
 import { claudeCurrentModel } from "@genesiscz/utils/agent-sessions/readers/claude-model";
+import { codexCompactedSince } from "@genesiscz/utils/agent-sessions/readers/codex-compaction";
 import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex-model";
 import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-model";
 import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
@@ -2062,7 +2064,7 @@ describe("hook state across processes", () => {
         };
         const expected: HookSessionState = {
             version: 2,
-            guard: { contextNotes: { "rule-x": 3 } },
+            guard: { contextNotes: { "rule-x": 3 }, explained: {} },
             decisions: {
                 stopBlocks: 1,
                 nudge: { blocks: 2, lastTurn: 77 },
@@ -2083,7 +2085,13 @@ describe("hook state across processes", () => {
             await bumpContextCounts("sess-old", ["rule-x"]);
 
             const written = SafeJSON.parse(readFileSync(path, "utf8"));
-            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 } } });
+            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 }, explained: {} } });
+            // A version 2 file from before `explained` existed reads as nothing explained, and keeps what it has.
+            expect(migrateHookState({ ...written, guard: { contextNotes: { "rule-x": 4 } } })).toEqual(written);
+            expect(
+                migrateHookState({ ...written, guard: { contextNotes: {}, explained: { main: { r: 5, bad: "x" } } } })
+                    .guard.explained
+            ).toEqual({ main: { r: 5 } });
             expect(migrateHookState(written)).toEqual(written);
         });
     });
@@ -2780,6 +2788,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: true,
             compactBoundaryRows: true,
+            compactedSince: claudeCompactedSince,
             homeBindsAccount: false,
             launchAuthFromAncestor: true,
             journalOmitsProvider: true,
@@ -2799,6 +2808,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: false,
             compactBoundaryRows: false,
+            compactedSince: expect.any(Function),
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,
@@ -2818,6 +2828,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: false,
             compactBoundaryRows: false,
+            compactedSince: codexCompactedSince,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,

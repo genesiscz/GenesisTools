@@ -13,10 +13,10 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { diffFor, keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { guardRules, logCustomRuleProblems } from "../lib/hooks/custom-rules";
 import { capturePre } from "../lib/hooks/diff/capture";
-import { evaluateGuard } from "../lib/hooks/guard";
+import { evaluateGuard, guardLoop } from "../lib/hooks/guard";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
-import { bumpContextCounts, safeSessionId } from "../lib/hooks/state";
+import { recordGuardShown, safeSessionId } from "../lib/hooks/state";
 
 if (env.agents.areHooksDisabled()) {
     process.exit(0);
@@ -101,8 +101,13 @@ if (!verdict || config.shadow) {
 
 const sessionId = safeSessionId(payload.sessionId);
 
-if (sessionId && verdict.shownContextRules.length > 0) {
-    await bumpContextCounts(sessionId, verdict.shownContextRules);
+if (sessionId && (verdict.shownContextRules.length > 0 || verdict.explainedRules.length > 0)) {
+    await recordGuardShown(sessionId, {
+        contextRules: verdict.shownContextRules,
+        loop: guardLoop(payload),
+        explainedRules: verdict.explainedRules,
+        at: Date.now(),
+    });
 }
 
 if (verdict.outcome === "block") {
@@ -121,7 +126,7 @@ if (verdict.outcome === "block") {
 // `systemMessage` is the only field the USER sees; `additionalContext` is model-only.
 process.stdout.write(
     SafeJSON.stringify({
-        ...(verdict.outcome === "warn" ? { systemMessage: verdict.message } : {}),
+        ...(verdict.outcome === "warn" ? { systemMessage: verdict.userMessage } : {}),
         hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: verdict.message },
     })
 );
