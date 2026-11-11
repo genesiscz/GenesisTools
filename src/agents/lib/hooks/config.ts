@@ -395,6 +395,13 @@ export interface ModsConfig {
      * sentence with `continue` and `dismiss` (`button`), or continues by itself after `minutes` (`auto`).
      */
     stall: { enabled: boolean; action: "button" | "auto"; minutes: number };
+    /**
+     * Refuses a SendMessage once when it would resume an agent of the session whose prompt cache is cold: idle for
+     * `idleSeconds` (60 to 3600) or more, with a context of `minTokens` (20,000 to 2,000,000) or more. The same send
+     * again goes through. `teammates` covers teammates too. `config describe mods.resumeGuard.<field>` lists the named
+     * values with their reasons.
+     */
+    resumeGuard: { enabled: boolean; idleSeconds: number; minTokens: number; teammates: boolean };
 }
 
 /** The keys at the top of `hooks.json`, beside the sections. */

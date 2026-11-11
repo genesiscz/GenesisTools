@@ -18,6 +18,7 @@ import type {
     PromptFillArgs,
     ToolCallInput,
     TurnCompleteInput,
+    TurnUsage,
     UiCopyResult,
     UiScrollResult,
 } from "claude-code";
@@ -248,12 +249,22 @@ export interface Feature {
         argumentHint?: string;
         run: (host: Host, args: string) => Promise<CommandRunResult>;
     }[];
+    /**
+     * Before a tool call runs, before every `beforeTool`: a text refuses the call, and the model reads it as the tool's
+     * error. The first feature that answers a text wins; undefined lets the call go on.
+     */
+    guardTool?: (host: Host, e: ToolCallInput) => Promise<string | undefined>;
     /** Before a tool call runs; the function it returns runs when the call has ended, however it ended. */
     beforeTool?: (host: Host, e: ToolCallInput) => (() => void) | undefined;
     /** After a tool call answered. */
     afterTool?: (host: Host, e: ToolCallInput) => Promise<void>;
     /** As a loop sends a model request (`e.agentId` set for a subagent's); the request does not wait for it. */
     beforeStep?: (host: Host, e: { agentId?: string }) => Promise<void>;
+    /**
+     * As a subagent's or teammate's model response is whole, with what that one request cost (its stop chunk's usage;
+     * null when the API sent none). The main loop's responses are not handed on.
+     */
+    afterStep?: (host: Host, e: { agentId: string }, usage: TurnUsage | null) => void;
     /** After a turn completed, the main loop's or a subagent's (`e.agentId`). */
     afterTurn?: (host: Host, e: TurnCompleteInput) => Promise<void>;
     /** After a loop compacted (the main loop when `agentId` is undefined). */

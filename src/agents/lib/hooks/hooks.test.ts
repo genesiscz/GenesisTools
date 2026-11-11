@@ -87,7 +87,7 @@ import {
     parseHookPayload,
 } from "./payload";
 import { rmRequestNotice } from "./rm-requests";
-import { applySetting, SETTABLE_KEYS, setHooksConfig } from "./set-config";
+import { applySetting, describeSetting, SETTABLE_KEYS, setHooksConfig } from "./set-config";
 import {
     bumpContextCounts,
     type HookSessionState,
@@ -828,6 +828,63 @@ describe("applySetting", () => {
         expect(set("mods.hooks.metrics", "false").hooks.metrics).toBe(false);
         expect(() => set("mods.nonsense.enabled", "true")).toThrow("Unknown mods key");
         expect(() => set("mods.links.colour", "red")).toThrow("Unknown mods key");
+    });
+
+    it("mods.resumeGuard: off by default, bounded, and set by a named value or any number in range", () => {
+        const set = (key: string, value: string) => applySetting(DEFAULT_HOOKS_CONFIG, key, value).mods.resumeGuard;
+
+        expect(DEFAULT_HOOKS_CONFIG.mods.resumeGuard).toEqual({
+            enabled: false,
+            idleSeconds: 295,
+            minTokens: 150_000,
+            teammates: true,
+        });
+        expect(set("mods.resumeGuard", "true").enabled).toBe(true);
+        expect(set("mods.resumeGuard.teammates", "false").teammates).toBe(false);
+        expect(set("mods.resumeGuard.minTokens", "only-large").minTokens).toBe(300_000);
+        expect(set("mods.resumeGuard.idleSeconds", "sure-miss").idleSeconds).toBe(330);
+        expect(set("mods.resumeGuard.minTokens", "120000").minTokens).toBe(120_000);
+        expect(() => set("mods.resumeGuard.minTokens", "huge")).toThrow(
+            "recommended (150000), lean-agents (100000), fewer-refusals (200000) or only-large (300000)"
+        );
+        expect(() => set("mods.resumeGuard.idleSeconds", "30")).toThrow("at least 60");
+        expect(() => set("mods.resumeGuard.idleSeconds", "4000")).toThrow("60 to 3600");
+        expect(() => set("mods.resumeGuard.minTokens", "3000000")).toThrow("20000 to 2000000");
+
+        const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-resume-")), "hooks.json");
+        const problems: string[] = [];
+
+        writeFileSync(
+            path,
+            SafeJSON.stringify({ mods: { resumeGuard: { enabled: "yes", idleSeconds: 10, minTokens: 9_000_000 } } })
+        );
+        expect(loadHooksConfig(path).mods.resumeGuard).toEqual(DEFAULT_HOOKS_CONFIG.mods.resumeGuard);
+        HOOK_CONFIG_SECTIONS.mods.merge({ resumeGuard: { idleSeconds: "300" } }, problems);
+        expect(problems).toEqual([
+            'mods.resumeGuard.idleSeconds is "300", not a whole number of at least 60; using 295',
+        ]);
+    });
+
+    it("config describe: a key's value, default and named values; a key with none or no single value", () => {
+        const config = applySetting(DEFAULT_HOOKS_CONFIG, "mods.resumeGuard.minTokens", "fewer-refusals");
+        const described = describeSetting(config, "mods.resumeGuard.minTokens");
+
+        expect(described).toMatchObject({ value: 200_000, defaultValue: 150_000, named: "fewer-refusals" });
+        expect(described.presets.map((preset) => preset.name)).toEqual([
+            "recommended",
+            "lean-agents",
+            "fewer-refusals",
+            "only-large",
+        ]);
+        expect(describeSetting(config, "mods.resumeGuard.idleSeconds").named).toBe("recommended");
+        expect(describeSetting(config, "mods.stall.minutes")).toEqual({
+            key: "mods.stall.minutes",
+            value: 5,
+            defaultValue: 5,
+            presets: [],
+        });
+        expect(() => describeSetting(config, "mods.resumeGuard")).toThrow("No single setting");
+        expect(() => describeSetting(config, "mods.nothing.here")).toThrow("No single setting");
     });
 
     it("reads the mods plugin's row from claude plugin list --json", () => {
