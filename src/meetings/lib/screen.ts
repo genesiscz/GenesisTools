@@ -10,6 +10,8 @@ export const ocrLineSchema = z.object({
     /** The display the frame shows; absent in recordings from before several displays. */
     displayId: z.number().optional(),
     text: z.string(),
+    /** A kept frame the OCR worker has not read yet: it has no text so far (`readScreenRows`). */
+    pending: z.literal(true).optional(),
 });
 export type OcrLine = z.infer<typeof ocrLineSchema>;
 
@@ -197,6 +199,10 @@ export function recordingSummary(record: MeetingRecord, now = Date.now()): strin
 
     if (recording.warning) {
         lines.push(`recording warning: ${recording.warning}`);
+    }
+
+    if (recording.ocrWarning) {
+        lines.push(`OCR warning: ${recording.ocrWarning}`);
     }
 
     return lines;

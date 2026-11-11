@@ -20,6 +20,7 @@ import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type ClipPlan, type CutControl, cutClip, probeAudio } from "./audio";
+import { hasFrameIndex } from "./frame-index";
 import type { LinePoint, MomentErrorCode, MomentTarget } from "./moment-schema";
 import { OpenedMeeting } from "./opened-meeting";
 import { PAST_END_GRACE_SEC } from "./players";
@@ -665,7 +666,8 @@ export async function momentFrames(
 ): Promise<MomentFrame[]> {
     const folder = store.folder(record.id);
 
-    if (!existsSync(join(folder, "ocr.jsonl"))) {
+    // Frames the OCR worker has not read yet still show: a Moment shows the picture, the text only finds the word.
+    if (!hasFrameIndex(folder)) {
         return [];
     }
 
@@ -695,7 +697,8 @@ export async function momentFrames(
         }
 
         const files = new Set(frames.map((frame) => frame.file));
-        const rows = readOcrRows(join(folder, "ocr.jsonl")).filter((row) => files.has(row.file));
+        const ocrPath = join(folder, "ocr.jsonl");
+        const rows = existsSync(ocrPath) ? readOcrRows(ocrPath).filter((row) => files.has(row.file)) : [];
         const hits = frames.map((frame) => {
             const block = rows
                 .find((row) => row.file === frame.file)

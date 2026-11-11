@@ -4,7 +4,8 @@ import { logger } from "@genesiscz/utils/logger";
 import { changedLines, frameBoxes, imageSize, type OcrBox } from "@genesiscz/utils/macos/ocr-boxes";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { CallTimeline } from "./call-timeline";
-import { readOcrRows } from "./screen-boxes";
+import { hasFrameIndex } from "./frame-index";
+import { readScreenRows } from "./screen-boxes";
 
 const { log } = logger.scoped("meetings-screen-timeline");
 
@@ -25,6 +26,8 @@ export interface TimelineFrame {
     changed: OcrBox[];
     /** Every line, only with `all`. */
     lines?: OcrBox[];
+    /** The OCR worker has not read this frame yet: it has no lines so far. */
+    pending?: true;
 }
 
 export interface ScreenTimeline {
@@ -32,6 +35,8 @@ export interface ScreenTimeline {
     folder: string;
     displays: Array<{ id?: number; name?: string; frames: number }>;
     frames: TimelineFrame[];
+    /** Kept frames the OCR worker has not read yet; they are among the frames, as `pending`. */
+    pending: number;
 }
 
 /**
@@ -48,14 +53,13 @@ export async function screenTimeline(options: {
 }): Promise<ScreenTimeline> {
     const { store, record } = options;
     const folder = store.folder(record.id);
-    const ocrPath = join(folder, "ocr.jsonl");
-
-    if (!existsSync(ocrPath)) {
-        throw new Error(`${record.id} has no screen recording (no ocr.jsonl)`);
+    if (!hasFrameIndex(folder)) {
+        throw new Error(`${record.id} has no screen recording (no frames.jsonl or ocr.jsonl)`);
     }
 
     const zeroMs = (await CallTimeline.forRecord(record)).zeroMs;
-    const rows = readOcrRows(ocrPath).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    const screenRows = readScreenRows(folder);
+    const rows = screenRows.rows.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     const sizes = new Map<number | undefined, { width: number; height: number }>();
     const previous = new Map<number | undefined, OcrBox[]>();
     const frames: TimelineFrame[] = [];
@@ -74,9 +78,13 @@ export async function screenTimeline(options: {
             sizes.set(row.displayId, size);
         }
 
-        const boxes = frameBoxes(row.blocks, size).lines;
-        const changed = changedLines(previous.get(row.displayId), boxes);
-        previous.set(row.displayId, boxes);
+        // A frame OCR has not read yet shows no lines and leaves its display's earlier lines as they were.
+        const boxes = row.pending ? [] : frameBoxes(row.blocks, size).lines;
+        const changed = row.pending ? [] : changedLines(previous.get(row.displayId), boxes);
+
+        if (!row.pending) {
+            previous.set(row.displayId, boxes);
+        }
 
         if (options.frame && row.file !== options.frame) {
             continue;
@@ -93,6 +101,7 @@ export async function screenTimeline(options: {
             lineCount: boxes.length,
             changed,
             ...(options.all || options.frame ? { lines: boxes } : {}),
+            ...(row.pending ? { pending: true } : {}),
         });
     }
 
@@ -112,5 +121,6 @@ export async function screenTimeline(options: {
             frames: count,
         })),
         frames,
+        pending: screenRows.pending,
     };
 }

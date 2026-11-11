@@ -26,6 +26,7 @@ import { callRecorder, RecorderClient } from "@genesiscz/utils/screen-recorder/l
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { collectAndReport } from "../lib/collect";
+import { hasFrameIndex, ocrBacklog, ocrPendingNote } from "../lib/frame-index";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
@@ -433,6 +434,10 @@ async function stop(opts: { meeting?: string; startedAt?: string }): Promise<voi
         ui.warn(recording.warning);
     }
 
+    if (recording?.ocrWarning) {
+        ui.warn(recording.ocrWarning);
+    }
+
     // The recorder collected as its last post-processing step; a recorder without that step leaves it to us.
     if (answer.result.notes) {
         for (const line of answer.result.notes) {
@@ -457,8 +462,18 @@ async function status(opts: { json?: boolean }): Promise<void> {
               })
             : undefined;
 
+    const meetingId = current.running ? current.state?.meetingId : undefined;
+    const ocrWarning = meetingId ? store.read(meetingId)?.recording?.ocrWarning : undefined;
+    const ocrPending = meetingId ? ocrBacklog(store.folder(meetingId)).length : 0;
+
     if (opts.json) {
-        out.result(SafeJSON.stringify({ ...current, ...(live ? { live } : {}) }, null, 2));
+        out.result(
+            SafeJSON.stringify(
+                { ...current, ...(live ? { live } : {}), ...(ocrWarning ? { ocrWarning } : {}), ocrPending },
+                null,
+                2
+            )
+        );
         return;
     }
 
@@ -497,10 +512,18 @@ async function status(opts: { json?: boolean }): Promise<void> {
         ui.warn("The recorder does not answer on its socket; it may be from an older version.");
     }
 
+    if (ocrPending > 0) {
+        ui.dim(ocrPendingNote(ocrPending));
+    }
+
     const warning = live?.warning ?? state.warning;
 
     if (warning) {
         ui.warn(warning);
+    }
+
+    if (ocrWarning) {
+        ui.warn(ocrWarning);
     }
 }
 
@@ -552,11 +575,17 @@ async function timeline(store: MeetingStore, record: MeetingRecord, opts: Screen
         }
 
         for (const frame of view.frames) {
-            out.println(`${formatClock(frame.meetingSec)}  d${frame.displayId ?? "?"}  ${frame.file}`);
+            out.println(
+                `${formatClock(frame.meetingSec)}  d${frame.displayId ?? "?"}  ${frame.file}${frame.pending ? "  (OCR pending)" : ""}`
+            );
 
             for (const line of frame.changed) {
                 out.println(`    ${line.text}`);
             }
+        }
+
+        if (view.pending > 0) {
+            ui.warn(`${ocrPendingNote(view.pending)}. Read them now: ${TOOL} ocr ${record.id}`);
         }
     } catch (err) {
         fail(errorText(err));
@@ -630,7 +659,7 @@ async function screen(ref: string, opts: ScreenOptions): Promise<void> {
         return;
     }
 
-    if (!existsSync(join(store.folder(record.id), "ocr.jsonl"))) {
+    if (!hasFrameIndex(store.folder(record.id))) {
         fail(`${record.id} has no screen recording. Record one: ${TOOL} record start --meeting ${record.id}`);
         return;
     }
@@ -648,6 +677,12 @@ async function screen(ref: string, opts: ScreenOptions): Promise<void> {
     });
     const { spans, recorded, displays, frames } = result;
     const clockOf = (ms: number): string => formatClock(Math.max(0, (ms - result.zeroMs) / 1000));
+    const textOf = (line: { text: string; pending?: true }): string =>
+        line.pending ? "(OCR pending)" : line.text.trim() || "(no text)";
+
+    if (result.pending > 0 && !opts.json) {
+        ui.warn(`${ocrPendingNote(result.pending)}. Read them now: ${TOOL} ocr ${record.id}`);
+    }
 
     if (result.boxes) {
         printScreenBoxes(result.boxes, opts, clockOf);
@@ -691,7 +726,7 @@ async function screen(ref: string, opts: ScreenOptions): Promise<void> {
                 ? ` (still on the screen at ${formatClock(atSec)}: nothing changed since)`
                 : "";
             out.println(`── ${clockOf(Date.parse(line.at))}${since}  ${join(store.folder(record.id), line.file)}`);
-            out.println(line.text.trim() || "(no text)");
+            out.println(textOf(line));
         }
     }
 }

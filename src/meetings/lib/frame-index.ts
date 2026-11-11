@@ -221,6 +221,17 @@ export function ocrRowFiles(path: string): Set<string> {
     return files;
 }
 
+/** The lines of `frames.jsonl` alone, in written order; none for a meeting from before the index. */
+export function readIndexRows(folder: string): FrameIndexRow[] {
+    const index = frameIndexPath(folder);
+    return existsSync(index) ? readIndexFile(index) : [];
+}
+
+/** What a screen reader says about kept frames the OCR worker has not read yet: "OCR pending (3 frames waiting)". */
+export function ocrPendingNote(pending: number): string {
+    return `OCR pending (${pending} ${pending === 1 ? "frame" : "frames"} waiting)`;
+}
+
 /** The frames of the index that have no OCR row yet, in index order. */
 export function ocrBacklog(folder: string): FrameIndexRow[] {
     const index = frameIndexPath(folder);

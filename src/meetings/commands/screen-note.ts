@@ -6,6 +6,7 @@ import { out } from "@genesiscz/utils/logger";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { Command } from "commander";
 import { CallTimeline } from "../lib/call-timeline";
+import { hasFrameIndex, ocrBacklog, ocrPendingNote } from "../lib/frame-index";
 import { writeScreenNote } from "../lib/screen-note";
 import { errorText, fail, TOOL } from "../lib/shared";
 
@@ -20,8 +21,16 @@ async function screenNote(ref: string, opts: { out?: string; json?: boolean }): 
 
     const folder = store.folder(record.id);
 
-    if (!existsSync(join(folder, "ocr.jsonl"))) {
+    if (!hasFrameIndex(folder)) {
         fail(`${record.id} has no screen recording. Record one: ${TOOL} record start --meeting ${record.id}`);
+        return;
+    }
+
+    if (!existsSync(join(folder, "ocr.jsonl"))) {
+        const pending = ocrBacklog(folder).length;
+        ui.warn(
+            `${ocrPendingNote(pending)}: no frame of ${record.id} has its text yet. Read them now: ${TOOL} ocr ${record.id}`
+        );
         return;
     }
 
@@ -41,6 +50,12 @@ async function screenNote(ref: string, opts: { out?: string; json?: boolean }): 
 
         if (result.copied > 0) {
             ui.warn(`${result.copied} pictures are copies: this volume cannot clone them, so they use disk space.`);
+        }
+
+        if (result.pending > 0) {
+            ui.warn(
+                `${ocrPendingNote(result.pending)}: the note shows them after a later run. Read them now: ${TOOL} ocr ${record.id}`
+            );
         }
 
         if (result.missing.length > 0) {

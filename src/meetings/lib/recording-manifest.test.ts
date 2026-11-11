@@ -11,9 +11,19 @@ import type { OcrRow } from "@genesiscz/utils/screen-recorder/frame-output";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { parseRereadSince } from "../commands/ocr";
-import { appendFrameIndex, ocrBacklog, readFrameIndex } from "./frame-index";
-import { ensureOcrWorkers, OCR_FAILURES_BEFORE_RESTART, OCR_PID_FILE, runOcrWorker } from "./ocr-worker";
+import { appendFrameIndex, ocrBacklog, ocrPendingNote, readFrameIndex } from "./frame-index";
+import {
+    ensureOcrWorkers,
+    FIRST_FRAME_HINT,
+    LiveOcrSettings,
+    OCR_FAILURES_BEFORE_RESTART,
+    OCR_PID_FILE,
+    OCR_SETTINGS_FILE,
+    runOcrWorker,
+} from "./ocr-worker";
 import { meetingMovieZeroMs, writeMeetingRecordingManifest } from "./recording-manifest";
+import { recordingSummary } from "./screen";
+import { meetingScreen, readScreenRows } from "./screen-boxes";
 
 const folder = mkdtempSync(join(tmpdir(), "gt-test-meeting-manifest-"));
 afterAll(() => rmSync(folder, { recursive: true, force: true }));
@@ -439,6 +449,66 @@ describe("the frame index and the OCR worker (two phases)", () => {
         const again = await runOcrWorker({ store: meeting.store, meetingId: meeting.id, settings, engine });
         expect(again.read).toBe(0);
         expect(readFileSync(join(meeting.dir, "ocr.jsonl"), "utf8").trim().split("\n")).toHaveLength(3);
+    });
+
+    it("reads the recording's live OCR settings before each frame, without a restart", async () => {
+        const meeting = await meetingWith([
+            { name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" },
+            { name: "f2-d1.jpg", at: "2026-11-11T14:00:02.000Z" },
+        ]);
+        const live = new LiveOcrSettings(join(meeting.dir, OCR_SETTINGS_FILE));
+        live.write(settings);
+        const engine = fakeEngine(() => false);
+        const recognize = engine.recognize;
+        engine.recognize = async (image: string) => {
+            const read = await recognize(image);
+            // `record set --ocr-min-chars 100` while the first frame is read: the second frame keeps no text.
+            live.write({ ...settings, minChars: 100 });
+            return read;
+        };
+        await runOcrWorker({ store: meeting.store, meetingId: meeting.id, settings, engine });
+
+        expect(rows(meeting.dir).map((row) => row.text)).toEqual(["text of f1-d1.jpg", ""]);
+    });
+
+    it("a first frame with almost no text says why in recording.ocrWarning, which show lists", async () => {
+        const meeting = await meetingWith([{ name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" }]);
+        const engine = fakeEngine(() => false);
+        engine.recognize = async () => ({ text: "desktop", blocks: [] });
+        await runOcrWorker({ store: meeting.store, meetingId: meeting.id, settings, engine });
+        const saved = meeting.store.read(meeting.id);
+
+        expect(saved?.recording?.ocrWarning).toBe(FIRST_FRAME_HINT);
+        expect(recordingSummary(saved!)).toContain(`OCR warning: ${FIRST_FRAME_HINT}`);
+    });
+
+    it("screen readers list a frame without OCR yet as pending, and count it", async () => {
+        const meeting = await meetingWith([
+            { name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" },
+            { name: "f2-d1.jpg", at: "2026-11-11T14:00:02.000Z" },
+        ]);
+        const before = readScreenRows(meeting.dir);
+
+        expect(before.pending).toBe(2);
+        expect(ocrPendingNote(before.pending)).toBe("OCR pending (2 frames waiting)");
+        expect(ocrPendingNote(1)).toBe("OCR pending (1 frame waiting)");
+
+        writeFileSync(
+            join(meeting.dir, "ocr.jsonl"),
+            `${SafeJSON.stringify({ file: "frames/f1-d1.jpg", at: "2026-11-11T14:00:01.000Z", displayId: 1, text: "Roadmap", blocks: [] })}\n`
+        );
+        const after = readScreenRows(meeting.dir);
+
+        expect(after.pending).toBe(1);
+        expect(after.rows.map((row) => [row.file, row.text, row.pending])).toEqual([
+            ["frames/f1-d1.jpg", "Roadmap", undefined],
+            ["frames/f2-d1.jpg", "", true],
+        ]);
+
+        const record = meeting.store.read(meeting.id)!;
+        const screen = await meetingScreen({ store: meeting.store, record, match: "roadmap" });
+        expect(screen.pending).toBe(1);
+        expect(screen.frames.map((frame) => frame.file)).toEqual(["frames/f1-d1.jpg"]);
     });
 
     it("--reread-empty-since takes a local time of the meeting's day or a full date", () => {
