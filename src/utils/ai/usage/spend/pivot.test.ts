@@ -238,6 +238,7 @@ describe("scanSpendWaste", () => {
         });
 
         expect(waste.top.map((item) => item.kind)).toEqual(["cache-rebuild-idle"]);
-        expect(WASTE_CACHE_VERSION).toBeGreaterThan(2);
+        // 4 is the first version whose Claude fast-mode calls are priced at their fast-tier rates.
+        expect(WASTE_CACHE_VERSION).toBeGreaterThan(3);
     });
 });

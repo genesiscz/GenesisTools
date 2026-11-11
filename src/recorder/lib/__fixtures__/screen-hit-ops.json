@@ -135,6 +135,65 @@
           }
         ]
       }
+    },
+    {
+      "sec": 14.5,
+      "untilSec": 15,
+      "displayId": 1,
+      "file": "frames/0001.jpg",
+      "lines": [
+        "API token: sk-123"
+      ],
+      "shown": true,
+      "boxes": [
+        {
+          "text": "API token: sk-123",
+          "x": 0.1,
+          "y": 0.35,
+          "width": 0.4,
+          "height": 0.05
+        }
+      ],
+      "ops": {
+        "hide": [
+          {
+            "op": "redact",
+            "from": 14.5,
+            "to": 15,
+            "rect": {
+              "x": 0.096,
+              "y": 0.346,
+              "width": 0.40800000000000003,
+              "height": 0.058
+            },
+            "style": "blur",
+            "label": "API token: sk-123"
+          }
+        ],
+        "mark": [
+          {
+            "op": "shape",
+            "from": 14.5,
+            "to": 15,
+            "kind": "box",
+            "start": {
+              "x": 0.092,
+              "y": 0.34199999999999997
+            },
+            "end": {
+              "x": 0.508,
+              "y": 0.408
+            }
+          }
+        ],
+        "cut": [
+          {
+            "op": "cut",
+            "from": 14.5,
+            "to": 15
+          }
+        ]
+      }
     }
   ]
 }

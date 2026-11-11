@@ -16,20 +16,22 @@ the order to use them in.
 | The same demo again with other values | a preset: `presets.save(name, …)`, then `presets.run(name, values)` or `tools node-repl preset run` (node-repl skill) |
 | A recording the person makes by hand | the capture picker: ⌘7 (or the menu bar item → Capture Picker…) |
 | Edit an existing recording | `movies.open(id)` in the REPL, or `tools recorder apply <recording> '<ops>'` |
+| Edit a movie that was not recorded here (a render, an export, a movie from another app) | `movies.import(path, { title, markers })` in the REPL, or `tools recorder import <movie> --title T --marker 0:12=Label`: a library recording (an APFS clone where the disk can make one, the file untouched) that every call above then takes; a movie the editor does not play (vp9, HEVC tagged hev1, HDR) is refused with a way to convert it. Never write a library folder by hand |
 
 🛑 Before you edit a recording into a cut for someone (effects, privacy, voiceover, music), read
 `references/editing-playbook.md` in full: work on a copy, survey first, place effects on screen events, hide text and
 not boxes of the screen, check every effect boundary (on `sheet({ source: true, effects: true })`, which draws source
 seconds through the edit and marks cut ones), read `check()`'s `summary` lines, and score the cut before you hand it
-over. Run an edit script with `tools node-repl run --toolset movies --file edit.js`: its `console.log` lines print as
-they happen. Write that output to a file (`> edit.log 2>&1`) or run it as a background task; never pipe it into
-`head` or `tail`, which hold it until the end. Its section 2 is the
+over. Run an edit script with `tools node-repl run --toolset movies --timeout 600000 --file edit.js > edit.log 2>&1`
+(or as a background task) and read `edit.log`; never pipe it into `head` or `tail`, which hold the output until the
+end or stop the run early. Its section 2 is the
 table of the calls that exist today, one example each; section 3 is the recipe for a privacy-safe cut.
 
 ## Editing at a glance
 
-- Run an edit as a script: `tools node-repl run --toolset movies --file edit.js` (10 minutes by default with
-  `movies`; `--timeout <ms>` for more). `help("movies")` lists the methods, `describe("movies.Movie.<name>")` prints
+- Run an edit as a script: `tools node-repl run --toolset movies --timeout 600000 --file edit.js`. Always pass
+  `--timeout` (milliseconds; 600000 is 10 minutes, `1800000` is 30): a run without it gets the REPL's short default and
+  is killed in the middle of the edit. `help("movies")` lists the methods, `describe("movies.Movie.<name>")` prints
   one in full.
 - One time base: ops take SOURCE seconds. Survey with `m.sheet({ source: true, every: 0.5, from, to })`,
   `m.still({ at, source: true, full: true })`, `m.events()` and `m.findText()`, never with ffmpeg frame numbers.
@@ -58,8 +60,9 @@ before and while recording and stays out of the movie. The edit's `camera` place
 mirror); each part where it is hidden is a `cameraHide` item on the effect lanes. Change it with
 `m.camera({ corner: "topLeft", size: 0.2 })`, `m.cameraHide(from, to)` or the ops `camera`, `cameraHide` (with
 `lane`), `cameraShow`, `retime` and `moveToLane`. In the editor's Style tab the user drags the bubble on the preview
-and sizes it by its grip; that writes the same `camera` op, so an agent reads the result with `m.info()` as usual. From a script, `record: { camera: true }` asks for the camera without a
-preview on screen.
+and sizes it by its grip; that writes the same `camera` op, so an agent reads the result with `m.info()` as usual. From a script, `record: { camera: true }` (or `tools recorder start --camera`) asks for the camera too: the
+preview shows while it records unless Settings → Recorder → "Show the camera preview" says otherwise, and the movie
+always leaves it out, so the export shows only the bubble the edit draws.
 
 ## Rules
 

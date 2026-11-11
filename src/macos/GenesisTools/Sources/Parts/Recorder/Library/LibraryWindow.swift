@@ -22,6 +22,9 @@ final class LibraryModel {
     /// What was said or marked that matches the filter, the first hit per recording, from `tools recorder search`
     /// (cached transcripts with their fixes, and marker labels).
     private(set) var spoken: [URL: SpokenHit] = [:]
+    /// The recordings whose title the same search matched (its `title` rows: case and accents folded), so the filter
+    /// shows what `tools recorder search` finds; they get no "said at" line.
+    private(set) var titleHits: Set<URL> = []
     /// The spoken search is running (the empty state waits for it); `searchFailed` is its last error.
     private(set) var searching = false
     private(set) var searchFailed: String?
@@ -42,16 +45,33 @@ final class LibraryModel {
     }
     /// The card the keyboard is on (arrows move it, Return opens it, ⌘⌫ moves it to the Trash).
     var selected: URL?
-    @ObservationIgnored private var watch: DispatchSourceFileSystemObject?
+    @ObservationIgnored private var watch: DirectoryWatcher?
     @ObservationIgnored private var reading = false
+    /// A change came while the list was read: read it once more when that read lands, so no change is dropped.
+    @ObservationIgnored private var again = false
+    /// The folders the list reads (the library and the meetings); a test passes its own.
+    @ObservationIgnored var folders: [URL] = RecorderMenu.recordingFolders
+    /// The live entries, whose start and end turn a card's Recording badge on and off.
+    @ObservationIgnored var liveFolder: URL = RecorderMenu.libraryFolder.deletingLastPathComponent().appendingPathComponent("live", isDirectory: true)
 
     static let thumbnailSize = NSSize(width: 248, height: 155)
 
     var visible: [RecorderMenu.Recent] {
-        let query = filter.trimmingCharacters(in: .whitespaces).lowercased()
+        let query = filter.trimmingCharacters(in: .whitespaces)
         return query.isEmpty ? items : items.filter {
-            $0.title.lowercased().contains(query) || $0.folder.lastPathComponent.contains(query) || spoken[$0.folder] != nil
+            Self.matches(title: $0.title, folderName: $0.folder.lastPathComponent, query: query,
+                         spokenHit: spoken[$0.folder] != nil, titleHit: titleHits.contains($0.folder))
         }
+    }
+
+    /// Whether a card shows for `query`: its title with case and accents folded (as the search folds them, so
+    /// "prihlaseni" finds "Ukázka přihlášení" before the search answers and for a query too short to search), the
+    /// search's own title or spoken hit, or its folder name.
+    nonisolated static func matches(title: String, folderName: String, query: String, spokenHit: Bool, titleHit: Bool) -> Bool {
+        if spokenHit || titleHit { return true }
+        let folded: (String) -> String = { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) }
+        let wanted = folded(query)
+        return folded(title).contains(wanted) || folded(folderName).contains(wanted)
     }
 
     /// From three letters on, 300 ms after the last key: one service search, with the CLI as fallback.
@@ -60,6 +80,7 @@ final class LibraryModel {
         let query = filter.trimmingCharacters(in: .whitespaces)
         guard query.count >= 3 else {
             if !spoken.isEmpty { spoken = [:] }
+            if !titleHits.isEmpty { titleHits = [] }
             searching = false
             searchFailed = nil
             return
@@ -82,10 +103,15 @@ final class LibraryModel {
                 }
                 self.searchFailed = nil
                 var hits: [URL: SpokenHit] = [:]
+                var titles: Set<URL> = []
                 for row in rows {
-                    guard let kind = row["kind"] as? String, kind != "title", let folder = row["folder"] as? String,
-                          let text = row["text"] as? String else { continue }
+                    guard let kind = row["kind"] as? String, let folder = row["folder"] as? String else { continue }
                     let url = URL(fileURLWithPath: folder)
+                    if kind == "title" {
+                        titles.insert(url)
+                        continue
+                    }
+                    guard let text = row["text"] as? String else { continue }
                     let at = (row["at"] as? NSNumber)?.doubleValue ?? 0
                     if hits[url] == nil {
                         hits[url] = SpokenHit(at: at, text: text, marker: kind == "marker")
@@ -95,6 +121,7 @@ final class LibraryModel {
                 }
                 HubPerf.log("recorder.library.search \"\(query)\": \(hits.count) recordings by what was said or marked")
                 self.spoken = hits
+                self.titleHits = titles
             }
         }
         spokenSearch = work
@@ -102,9 +129,12 @@ final class LibraryModel {
     }
 
     func load() {
-        guard !reading else { return }
+        guard !reading else {
+            again = true
+            return
+        }
         reading = true
-        let folders = RecorderMenu.recordingFolders
+        let folders = folders
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("recorder.library.read", folders.map(\.path).joined(separator: ", "))
             let list = RecorderMenu.readRecents(folders)
@@ -117,6 +147,10 @@ final class LibraryModel {
                     self.thumbnails = self.thumbnails.filter { available.contains($0.key) }
                     self.scrubFrames = self.scrubFrames.filter { available.contains($0.key) }
                     self.items = list
+                    if self.again {
+                        self.again = false
+                        self.load()
+                    }
                 }
             }
         }
@@ -143,22 +177,38 @@ final class LibraryModel {
         }
     }
 
-    /// Reads the list again when a recording folder appears or goes.
+    /// Reads the list again when anything it shows changes, as the menu bar's Recent list does: a recording folder that
+    /// appears or goes, its recording.json (a stop, a rename), its movies, edit and comments, and the live entries.
     func startWatching() {
         guard watch == nil else { return }
-        try? FileManager.default.createDirectory(at: RecorderMenu.libraryFolder, withIntermediateDirectories: true)
-        let descriptor = open(RecorderMenu.libraryFolder.path, O_EVTONLY)
-        guard descriptor >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .delete, .rename], queue: .main)
-        source.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.load() } }
-        source.setCancelHandler { close(descriptor) }
-        source.resume()
-        watch = source
+        let roots = folders.map(\.standardizedFileURL.path)
+        let live = liveFolder.standardizedFileURL.path
+        watch = DirectoryWatcher(paths: roots + [live], latency: 0.25) { path in
+            Self.reloads(path: path, roots: roots, live: live)
+        } onChange: { [weak self] _ in
+            MainActor.assumeIsolated { self?.load() }
+        }
     }
 
     func stopWatching() {
-        watch?.cancel()
+        watch?.stop()
         watch = nil
+    }
+
+    /// The files of a recording folder the list reads; the rest (frames, OCR, a meeting's notes) leave it as it was.
+    nonisolated static let listedFiles: Set<String> = Set(["recording.json", "edit.json", "comments.jsonl", "camera.mov"] + RecordingMovie.names)
+
+    /// Whether a changed `path` changes the list: a folder in a root, one of the `listedFiles` directly in such a
+    /// folder, or a live entry.
+    nonisolated static func reloads(path: String, roots: [String], live: String) -> Bool {
+        let path = URL(fileURLWithPath: path).standardizedFileURL.path
+        if path == live || path.hasPrefix(live + "/") { return true }
+        for root in roots where path.hasPrefix(root + "/") {
+            let parts = path.dropFirst(root.count).split(separator: "/")
+            if parts.count == 1 { return !parts[0].hasPrefix(".") }
+            return parts.count == 2 && listedFiles.contains(String(parts[1]))
+        }
+        return false
     }
 
     /// Reads `scrubFrameCount` frames spread over the movie, once, on a background queue.

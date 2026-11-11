@@ -39,12 +39,34 @@ export interface LabelChipStyle {
     fontSize?: number;
 }
 
-export type LabelPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "top" | "bottom";
+/**
+ * Where a shape's label sits: outside above (`top-*`, `top`) or below (`bottom-*`, `bottom`), beside it (`left`,
+ * `right`, vertically centered, with a leader line by default) or in its top-left corner (`inside`). When the spot
+ * leaves the image or covers an earlier label, the renderer tries the other positions (mark-layout.ts).
+ */
+export const LABEL_POSITIONS = [
+    "top-left",
+    "top-right",
+    "bottom-left",
+    "bottom-right",
+    "top",
+    "bottom",
+    "left",
+    "right",
+    "inside",
+] as const;
+
+export type LabelPosition = (typeof LABEL_POSITIONS)[number];
 
 export interface ShapeLabel {
+    /** A "\n" starts a new line in the chip. */
     text: string;
     position?: LabelPosition;
     style?: LabelChipStyle;
+    /** Moves the label from the spot its position gives, in image pixels (a hand nudge). */
+    offset?: AnnotationPoint;
+    /** A line from a `left` or `right` label to its shape. Default true for those two, ignored for the others. */
+    leader?: boolean;
 }
 
 export interface GridStyle {
@@ -56,10 +78,10 @@ export interface GridStyle {
 }
 
 export type Annotation =
-    | { kind: "highlight"; rect: RectInput; style?: ShapeStyle; label?: ShapeLabel }
-    | { kind: "box"; rect: RectInput; style?: ShapeStyle; label?: ShapeLabel }
-    | { kind: "ellipse"; rect: RectInput; style?: ShapeStyle; label?: ShapeLabel }
-    | { kind: "arrow"; from: AnnotationPoint; to: AnnotationPoint; style?: ShapeStyle }
+    | { kind: "highlight"; rect: RectInput; style?: ShapeStyle; label?: ShapeLabel; preset?: PresetName }
+    | { kind: "box"; rect: RectInput; style?: ShapeStyle; label?: ShapeLabel; preset?: PresetName }
+    | { kind: "ellipse"; rect: RectInput; style?: ShapeStyle; label?: ShapeLabel; preset?: PresetName }
+    | { kind: "arrow"; from: AnnotationPoint; to: AnnotationPoint; style?: ShapeStyle; preset?: PresetName }
     | { kind: "label"; at: AnnotationPoint; text: string; style?: LabelChipStyle }
     | { kind: "blur"; rect: RectInput; strength?: number }
     | { kind: "crop"; rect: RectInput }
@@ -88,13 +110,14 @@ export interface AnnotationPlanFile {
 }
 
 export interface AnnotationPreset {
-    shape: Required<Pick<ShapeStyle, "stroke" | "strokeWidth" | "radius" | "fill">>;
+    shape: Required<Pick<ShapeStyle, "stroke" | "strokeWidth" | "radius" | "fill">> & { dash?: readonly number[] };
     labelChip: Required<LabelChipStyle>;
     blurStrength: number;
 }
 
 /**
- * Hardcoded preset style bags (decision 5 — YAGNI, add a 4th as one object).
+ * Hardcoded preset style bags (decision 5: one object per preset). A plan picks one for all its shapes, and a shape
+ * may pick its own with `preset`, so red and amber marks mix in one plan.
  * review-red is Martin's hand-annotation register: thick red rounded outline
  * with a translucent wash (vitrinka annotation 27 is the visual reference).
  */
@@ -113,6 +136,42 @@ export const ANNOTATION_PRESETS = {
         shape: { stroke: "#111111", strokeWidth: 2, radius: 4, fill: "#111111" },
         labelChip: { bg: "#111111", fg: "#ffffff", fontSize: 24 },
         blurStrength: 24,
+    },
+    /**
+     * The look of the annotated web shots (a 3 px dashed outline, no wash, a small chip): page-sized, not 4K. The
+     * chip is a darker red than the outline: white on #ff4d4f is 3.3:1, under the 4.5:1 that 14 px text needs.
+     */
+    "review-dashed": {
+        shape: { stroke: "#ff4d4f", strokeWidth: 3, radius: 8, fill: "", dash: [9, 6] },
+        labelChip: { bg: "#d32f2f", fg: "#ffffff", fontSize: 14 },
+        blurStrength: 12,
+    },
+    /** The amber twin of review-dashed, with callout-amber's dark text: white on amber is 1.9:1. */
+    "callout-amber-dashed": {
+        shape: { stroke: "#ffb020", strokeWidth: 3, radius: 8, fill: "", dash: [9, 6] },
+        labelChip: { bg: "#ffb020", fg: "#111111", fontSize: 14 },
+        blurStrength: 12,
+    },
+    "info-blue": {
+        shape: { stroke: "#2f80ed", strokeWidth: 4, radius: 12, fill: "rgba(47,128,237,0.08)" },
+        labelChip: { bg: "#2f80ed", fg: "#ffffff", fontSize: 24 },
+        blurStrength: 12,
+    },
+    "ok-green": {
+        shape: { stroke: "#1f9d55", strokeWidth: 4, radius: 12, fill: "rgba(31,157,85,0.08)" },
+        labelChip: { bg: "#1f9d55", fg: "#ffffff", fontSize: 24 },
+        blurStrength: 12,
+    },
+    "question-purple": {
+        shape: { stroke: "#8b5cf6", strokeWidth: 4, radius: 12, fill: "rgba(139,92,246,0.08)" },
+        labelChip: { bg: "#8b5cf6", fg: "#ffffff", fontSize: 24 },
+        blurStrength: 12,
+    },
+    /** Context, not a finding: a thin gray outline that recedes beside a red or amber mark. */
+    "muted-gray": {
+        shape: { stroke: "#8a8f98", strokeWidth: 2, radius: 8, fill: "", dash: [6, 4] },
+        labelChip: { bg: "#5f6368", fg: "#ffffff", fontSize: 20 },
+        blurStrength: 12,
     },
 } as const satisfies Record<string, AnnotationPreset>;
 

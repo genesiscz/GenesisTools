@@ -657,7 +657,7 @@ struct MeetingsDictionaryPage: View {
     @State private var caseSensitive = false
     @State private var editing: DictionaryEntry?
     /// The value of an Add or Save in flight: the form clears once the dictionary holds it, so a refusal keeps it.
-    @State private var pendingValue: String?
+    @State private var pending = DictionaryFormPending()
 
     var body: some View {
         MeetingsSettingsFrame(model: model, reads: .dictionary) { settings in
@@ -727,7 +727,7 @@ struct MeetingsDictionaryPage: View {
                                        substitution: substitution.trimmingCharacters(in: .whitespaces),
                                        spoken: MeetingsDictionaryRules.spokenForms(spoken), meaning: meaning,
                                        caseSensitive: caseSensitive, replacing: editing?.value)
-                        pendingValue = trimmed
+                        pending.submitted(trimmed)
                     }
                     .buttonStyle(.borderedProminent).nativeSettingsPointer()
                     .disabled(!canSave)
@@ -763,10 +763,9 @@ struct MeetingsDictionaryPage: View {
             }
         }
         .onChange(of: model.dictionary.value?.entries ?? []) { _, entries in
-            guard let pendingValue, entries.contains(where: { $0.value == pendingValue }) else { return }
-            self.pendingValue = nil
-            clear()
+            if pending.landed(in: entries.map(\.value)) { clear() }
         }
+        .onChange(of: value) { _, typed in pending.typed(typed.trimmingCharacters(in: .whitespaces)) }
     }
 
     private var entriesSubtitle: String {
@@ -784,6 +783,7 @@ struct MeetingsDictionaryPage: View {
     }
 
     private func edit(_ entry: DictionaryEntry) {
+        pending.reset()
         editing = entry
         type = entry.type
         value = entry.value
@@ -794,6 +794,7 @@ struct MeetingsDictionaryPage: View {
     }
 
     private func clear() {
+        pending.reset()
         editing = nil
         value = ""
         substitution = ""
@@ -846,5 +847,28 @@ struct UnpairPreview: Equatable {
     var words: String {
         let left = leaving == 0 ? "nobody leaves a project" : "\(Plural.count(leaving, "person", "people")) \(leaving == 1 ? "leaves" : "leave") a project"
         return "\(Plural.count(pairings, "pairing")) in \(Plural.count(projects, "project")); \(left)"
+    }
+}
+
+/// The value of the dictionary entry an Add or Save sent, until it shows up in the entries (then the form clears). A
+/// refused write or a Save that changes nothing never lands, so Cancel, a new edit or typing another value drops it: a
+/// later reload that holds the old value must not wipe what the user types now.
+struct DictionaryFormPending: Equatable {
+    private(set) var value: String?
+
+    mutating func submitted(_ value: String) { self.value = value }
+
+    mutating func reset() { value = nil }
+
+    /// The field changed to something other than what was sent.
+    mutating func typed(_ now: String) {
+        if now != value { value = nil }
+    }
+
+    /// True once (and then forgets it) when the sent value is among `entries`.
+    mutating func landed(in entries: [String]) -> Bool {
+        guard let value, entries.contains(value) else { return false }
+        self.value = nil
+        return true
     }
 }

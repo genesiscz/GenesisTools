@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Observation
 import SwiftUI
 import XCTest
 @testable import GenesisToolsMeetings
@@ -398,6 +399,66 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(asked.detail?.tab, .transcript, "a tab a request named stays")
     }
 
+    func testOneHomeGivesOneNotificationNameHoweverItIsSpelled() throws {
+        let base = NativePreview.namespace + ".meetings"
+        XCTAssertEqual(meetingsNotificationPrefix(home: "/Users/alice/", realHome: "/Users/alice"), base, "a trailing slash is the real home")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meetings-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let link = FileManager.default.temporaryDirectory.appendingPathComponent("meetings-link-\(UUID().uuidString)")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: folder)
+        defer {
+            try? FileManager.default.removeItem(at: link)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        XCTAssertEqual(meetingsNotificationPrefix(home: link.path, realHome: "/Users/alice"),
+                       meetingsNotificationPrefix(home: folder.path + "/", realHome: "/Users/alice"), "a symlink names its folder")
+        XCTAssertEqual(meetingsNotificationPrefix(home: link.path, realHome: folder.path), base)
+        XCTAssertNotEqual(meetingsNotificationPrefix(home: "/tmp/one", realHome: "/Users/alice"),
+                          meetingsNotificationPrefix(home: "/tmp/two", realHome: "/Users/alice"), "distinct homes stay apart")
+    }
+
+    func testDictionaryFormForgetsAValueThatNeverLanded() {
+        var pending = DictionaryFormPending()
+        pending.submitted("Kubernetes")
+        XCTAssertTrue(pending.landed(in: ["Kubernetes"]), "the entry arrived: the form clears once")
+        XCTAssertFalse(pending.landed(in: ["Kubernetes"]))
+        pending.submitted("Kubernetes")
+        pending.typed("Kafka")
+        XCTAssertFalse(pending.landed(in: ["Kubernetes"]), "a refused write: typing another value drops it")
+        pending.submitted("Kafka")
+        pending.typed("Kafka")
+        XCTAssertTrue(pending.landed(in: ["Kafka"]), "the same text in the field keeps it")
+        pending.submitted("Kafka")
+        pending.reset()
+        XCTAssertFalse(pending.landed(in: ["Kafka"]), "Cancel or a new edit drops it")
+    }
+
+    func testAPreviewSendsNoDraftOfAProjectRenamedOrRemovedSince() {
+        let saved = MatchRulesDraft(folders: [], calendars: [], titleWords: [])
+        let edited = MatchRulesDraft(folders: ["Work"], calendars: [], titleWords: [])
+        let drafts = ["wrok": edited, "work": edited, "side": saved]
+        let sent = MeetingsSettingsModel.previewDrafts(drafts, exists: { $0 != "wrok" }, saved: { _ in saved })
+        XCTAssertEqual(sent, ["work": edited], "a renamed project's draft stays in the model, not in the preview; an unchanged one is not sent")
+    }
+
+    func testALabelTheMeetingHasClosesThePopoverInsteadOfWaiting() {
+        XCTAssertEqual(LabelCommit(typed: "  ", labels: []), .nothing)
+        XCTAssertEqual(LabelCommit(typed: " demo ", labels: ["demo"]), .present)
+        XCTAssertEqual(LabelCommit(typed: "review", labels: ["demo"]), .add("review"))
+    }
+
+    func testSpeakersFollowTheChosenOrderMostSpokenFirstByDefault() throws {
+        let stats = try JSONDecoder().decode(SpeakerStats.self, from: Data(#"""
+        {"speakers":[{"label":"A","turns":7,"lines":7,"spokenSec":20},{"label":"B","turns":427,"lines":430,"spokenSec":900}]}
+        """#.utf8))
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "meetings-speaker-order-\(UUID().uuidString)"))
+        XCTAssertEqual(MeetingsPreferences.speakerOrder(defaults), .spoken)
+        XCTAssertEqual(MeetingsPreferences.SpeakerOrder.spoken.ordered(stats.speakers).map(\.label), ["B", "A"])
+        XCTAssertEqual(MeetingsPreferences.SpeakerOrder.transcript.ordered(stats.speakers).map(\.label), ["A", "B"])
+        defaults.set("transcript", forKey: MeetingsPreferences.speakerOrderKey)
+        XCTAssertEqual(MeetingsPreferences.speakerOrder(defaults), .transcript)
+    }
+
     func testASandboxWindowNeverFollowsTheRealWindowsRequests() {
         let real = meetingsNotificationPrefix(home: "/Users/alice", realHome: "/Users/alice")
         let sandbox = meetingsNotificationPrefix(home: "/tmp/sandbox", realHome: "/Users/alice")
@@ -410,8 +471,11 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(MeetingsSettingsModel.renameArgs("wrok", to: "work"), ["projects", "rename", "wrok", "work"], "MU11")
         XCTAssertEqual(MeetingsSettingsModel.removeArgs("wrok", unassign: false), ["projects", "remove", "wrok", "--json"])
         XCTAssertEqual(MeetingsSettingsModel.removeArgs("wrok", unassign: true), ["projects", "remove", "wrok", "--json", "--unassign"])
-        let refused = MeetingsCLI.Failure(sentence: "2 meetings have the project wrok: a, b. Rename it instead, or remove it with --unassign to leave them without a project.", detail: "")
+        let refused = MeetingsCLI.Failure(sentence: "2 meetings have the project wrok: a, b.", detail: "",
+                                          code: MeetingsCLI.code(fromStderr: "✗ [project-in-use] 2 meetings have the project wrok: a, b."))
         XCTAssertTrue(MeetingsSettingsModel.offersUnassign(refused), "the note then offers the removal that unassigns")
+        XCTAssertFalse(MeetingsSettingsModel.offersUnassign(MeetingsCLI.Failure(sentence: "remove it with --unassign", detail: "")),
+                       "the words alone decide nothing: a reworded refusal keeps the action through its code")
         XCTAssertFalse(MeetingsSettingsModel.offersUnassign(MeetingsCLI.Failure(sentence: "No project wrok. The known ones: work", detail: "")))
         let removal = try JSONDecoder().decode(ProjectRemoval.self, from: Data(#"{"name":"wrok","unassigned":["a","b"],"backup":"/tmp/b.json"}"#.utf8))
         XCTAssertEqual(MeetingsSettingsModel.removalNote(removal), "Removed the project wrok; 2 meetings now have no project")
@@ -598,6 +662,60 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(HintChip.chips(for: lines[0].ranges).chips.map(\.action), [.show, .show, .show], "a long silence zooms the timeline")
         XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Bob").map(\.text),
                        ["Silent from 00:10 to 00:20 while in the call, so the voice is under other labels"])
+    }
+
+    /// "Notices float at" changed on the Settings page: the open pane read the place from the defaults on each draw, and
+    /// nothing redrew it, so it kept the old edge. The place is an observed value that the window's return reads again.
+    func testANoticePlaceChangedInSettingsMovesTheOpenPanesStack() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        XCTAssertEqual(model.noticePlace, .bottom)
+
+        var redraws = 0
+        // lint-rules-ignore: one shot on purpose, the test counts the first change only
+        withObservationTracking { _ = model.noticePlace } onChange: { redraws += 1 }
+        defaults.set(MeetingsPreferences.NoticePlace.top.rawValue, forKey: MeetingsPreferences.noticePlaceKey)
+        model.windowSettingsChanged()
+        XCTAssertEqual(model.noticePlace, .top)
+        XCTAssertEqual(redraws, 1, "a view that reads the place draws again")
+
+        // lint-rules-ignore: one shot on purpose, the test checks that no change arrives
+        withObservationTracking { _ = model.noticePlace } onChange: { redraws += 1 }
+        model.windowSettingsChanged()
+        XCTAssertEqual(redraws, 1, "an unchanged place draws nothing again")
+    }
+
+    /// A failed phrase test put an error notice up with no timeout, and a later test that worked (or an emptied phrase)
+    /// left it on screen. The failure notice now goes with the test it belongs to.
+    func testAPhraseTestFailureNoticeGoesWhenALaterTestWorksOrThePhraseIsEmptied() async throws {
+        let notices = NoticeStackModel(clock: ManualNoticeClock(), announces: false)
+        let model = MeetingsSettingsModel(writes: false, notices: notices)
+        var fails = true
+        model.phraseTester = { phrase, _ in
+            if fails { throw MeetingsCLI.Failure(sentence: "The dictionary test failed.", detail: phrase) }
+            return try JSONDecoder().decode(PhraseTest.self, from: Data("""
+            {"phrase":"\(phrase)","text":"\(phrase)","fired":[],"suggestions":[]}
+            """.utf8))
+        }
+
+        model.testPhrase("ship it")
+        for _ in 0..<100 where notices.notices.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(notices.notices.map(\.text), ["The dictionary test failed."])
+
+        fails = false
+        model.testPhrase("ship it now")
+        for _ in 0..<100 where model.phraseResult == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(model.phraseResult?.phrase, "ship it now")
+        XCTAssertTrue(notices.notices.isEmpty, "a test that worked takes the failure away")
+
+        fails = true
+        model.testPhrase("again")
+        for _ in 0..<100 where notices.notices.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(notices.notices.count, 1)
+        model.testPhrase("  ")
+        XCTAssertTrue(notices.notices.isEmpty, "an emptied phrase takes the failure away at once")
+        XCTAssertNil(model.phraseResult)
     }
 
     func testATitledNoteShowsItsText() throws {

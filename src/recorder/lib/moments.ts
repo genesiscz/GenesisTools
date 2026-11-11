@@ -2,8 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { cardsLeadUs } from "@genesiscz/utils/recording-editor/overlays";
 import {
     CLICK_GROUP_GAP_MS,
+    type EditClock,
     type EditProject,
     groupClicks,
     outputTimeOf,
@@ -13,7 +15,7 @@ import {
     transcriptCachePath,
     transcriptLines,
 } from "@genesiscz/utils/recording-editor/project";
-import { RECORDING_MANIFEST, readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { RECORDING_MANIFEST, readRecordingManifestSafe } from "@genesiscz/utils/screen-recorder/library";
 import { z } from "zod";
 import { listLibrary } from "./library";
 
@@ -36,7 +38,7 @@ export function recordedMarkersOf(opened: {
     project: EditProject;
 }): Array<{ atMs: number; label: string }> {
     const folder = recordingFolderOf(opened);
-    const manifest = folder ? readRecordingManifest(folder) : undefined;
+    const manifest = folder ? readRecordingManifestSafe(folder)?.manifest : undefined;
     const parsed = z
         .array(z.object({ atMs: z.number(), label: z.string() }))
         .safeParse(manifest?.settings.markers ?? []);
@@ -101,7 +103,7 @@ export function clickGroupsOf(project: EditProject, options: { gapSeconds?: numb
 
     const round = (us: number) => Math.round(us / 1000) / 1000;
     const gapMs = options.gapSeconds === undefined ? CLICK_GROUP_GAP_MS : options.gapSeconds * 1000;
-    return groupClicks(readCursorTrack(track), gapMs).map((group) => {
+    return groupClicks(readCursorTrack(track), { gapMs }).map((group) => {
         const played = group.flatMap((click) => {
             const plays = outputTimeOf(project, Math.round(click.ms * 1000));
             return plays === undefined ? [] : [round(plays)];
@@ -124,8 +126,40 @@ export function chaptersOf(
     markers: ReadonlyArray<{ plays: number | null; label: string }>,
     options: { intro?: string; minSeconds?: number } = {}
 ): string[] {
-    return chapterPoints(markers, options).map((chapter) => `${clock(chapter.at)} ${chapter.label}`);
+    return chapterLines(chapterPoints(markers, options));
 }
+
+/** Chapters as "0:00 Intro" lines, the form YouTube and Vimeo read in a video's description. */
+export function chapterLines(chapters: ReadonlyArray<{ at: number; label: string }>): string[] {
+    return chapters.map((chapter) => `${clock(chapter.at)} ${chapter.label}`);
+}
+
+/**
+ * The chapters of the movie a viewer gets, by the rules of chapterPoints: on the exported file's clock by default, so
+ * every kept marker sits the intro card's length later and the 0:00 chapter is named after the card's title (`intro`
+ * names it otherwise). The MP4's embedded chapters, chapters() and `markers --chapters` all come from here, so the
+ * lines pasted into a description match the file. `clock: "output"` gives the movie's own times, without the card.
+ */
+export function exportChapterPoints(
+    opened: { path: string; project: EditProject },
+    options: { intro?: string; minSeconds?: number; clock?: Exclude<EditClock, "source"> } = {}
+): Array<{ at: number; label: string }> {
+    const leadUs = options.clock === "output" ? 0 : cardsLeadUs(opened.project);
+    const markers = markersOf(opened).map((marker) =>
+        marker.plays === null || leadUs === 0
+            ? marker
+            : { ...marker, plays: Math.round(marker.plays * 1000 + leadUs / 1000) / 1000 }
+    );
+    const intro = options.intro ?? (leadUs > 0 ? opened.project.cards?.intro?.title : undefined);
+    return chapterPoints(markers, { minSeconds: options.minSeconds, ...(intro === undefined ? {} : { intro }) });
+}
+
+/**
+ * The least gap between two chapters embedded in an exported MP4 (chapterPoints' minSeconds). The burned-in progress
+ * bar folds its dividers by the same gap (Overlays.swift ProgressMark.minChapterGapUs), so the two name the same
+ * chapters: change both together. Shorter chapters are noise in a player's chapter menu.
+ */
+export const EMBEDDED_CHAPTER_MIN_SECONDS = 1;
 
 /** The chapters as output seconds and labels, by the rules of chaptersOf. */
 export function chapterPoints(
@@ -175,7 +209,9 @@ export function chaptersOfPart(
     const inside = chapters
         .filter((chapter) => chapter.at > part.from && chapter.at < part.to)
         .map((chapter) => ({ at: chapter.at - part.from, label: chapter.label }));
-    return [...(current ? [{ at: 0, label: current.label }] : []), ...inside];
+    // A chapter under 1 s after the part start names the 0:00 chapter, as chapterPoints does at the movie start.
+    const lead = inside.filter((chapter) => chapter.at < 1).at(-1) ?? current;
+    return [...(lead ? [{ at: 0, label: lead.label }] : []), ...inside.filter((chapter) => chapter.at >= 1)];
 }
 
 /** The ffmpeg metadata file that puts chapters into a movie, each running to the next one or the end. */
@@ -236,7 +272,7 @@ export function searchLibrary(text: string) {
 
         const markers = z
             .array(z.object({ atMs: z.number(), label: z.string() }))
-            .safeParse(readRecordingManifest(row.folder)?.settings.markers ?? []);
+            .safeParse(readRecordingManifestSafe(row.folder)?.manifest?.settings.markers ?? []);
 
         for (const marker of markers.success ? markers.data : []) {
             if (folded(marker.label).includes(query)) {

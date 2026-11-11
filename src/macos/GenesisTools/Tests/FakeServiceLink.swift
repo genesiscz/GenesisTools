@@ -23,7 +23,7 @@ final class FakeServiceLink: RecorderServiceLink {
     private var undo: [EditProject] = []
     private var redo: [EditProject] = []
     private var marks: [String: EditProject] = [:]
-    private var drafts: [String: EditProject] = [:]
+    private var previewOps: [String: [[String: Any]]] = [:]
     /// While true the answers wait for `deliver()`, as a real service's answers come a moment later (in order).
     var holdAnswers = false
     private var held: [() -> Void] = []
@@ -123,16 +123,18 @@ final class FakeServiceLink: RecorderServiceLink {
             marks[gesture] = project
             return ["project": try json(project), "revision": revision]
         case "gesture.preview":
-            let draft = try apply(params["ops"] as? [[String: Any]] ?? [], to: marks[gesture] ?? project)
-            drafts[gesture] = draft
-            return ["project": try json(draft)]
+            // As edit-session.ts: a preview's ops run on the edit as it is now, so an agent's change made during the
+            // drag shows in the answer, and the commit runs the last preview's ops on the edit as it is then.
+            let ops = params["ops"] as? [[String: Any]] ?? []
+            previewOps[gesture] = ops
+            return ["project": try json(try apply(ops, to: project))]
         case "gesture.commit":
-            let draft = drafts.removeValue(forKey: gesture) ?? project
+            let ops = previewOps.removeValue(forKey: gesture)
             marks[gesture] = nil
-            return try change(to: draft)
+            return try change(to: try ops.map { try apply($0, to: project) } ?? project)
         case "gesture.cancel":
             marks[gesture] = nil
-            drafts[gesture] = nil
+            previewOps[gesture] = nil
             return ["project": try json(project), "revision": revision]
         case "movies.search": return movieAnswer(method, params)
         case let name where name.hasPrefix("movie."):
@@ -153,8 +155,9 @@ final class FakeServiceLink: RecorderServiceLink {
             project = next
             revision += 1
             project.revision = revision
+            return try edited([:])
         }
-        return try edited([:])
+        return try edited(["changed": false])
     }
 
     private func edited(_ extra: [String: Any]) throws -> Any? {
@@ -213,6 +216,37 @@ enum FakeRules {
             if let corner = (op["corner"] as? String).flatMap(EditProject.CameraCorner.init(rawValue:)) { camera.corner = corner }
             if let size = op["size"] as? Double { camera.size = size }
             next.camera = camera
+        // Round 4 fx-render: the edit-wide transition, the tilt and the lenses.
+        case "transition":
+            var settings = next.transitions ?? EditProject.Transitions()
+            if let kind = (op["kind"] as? String).flatMap(EditProject.TransitionKind.init(rawValue:)) { settings.default.kind = kind }
+            if let ms = op["ms"] as? Int { settings.default.ms = ms }
+            next.transitions = settings
+        case "tilt":
+            if op["enabled"] as? Bool == false {
+                next.tilt = nil
+                break
+            }
+            var tilt = next.tilt ?? EditProject.Tilt()
+            if let strength = op["strength"] as? Double { tilt.strength = strength }
+            if let drift = op["drift"] as? Bool { tilt.drift = drift }
+            if let tiltIn = op["tiltIn"] as? Bool { tilt.tiltIn = tiltIn }
+            if let tiltOut = op["tiltOut"] as? Bool { tilt.tiltOut = tiltOut }
+            next.tilt = tilt
+        case "lens":
+            var settings = next.lens ?? EditProject.Lens()
+            settings.items.append(EditProject.LensItem(id: "l\(settings.items.count + 1)", startUs: us(op["from"]), endUs: us(op["to"]),
+                                                       follow: op["follow"] as? Bool ?? true))
+            next.lens = settings
+        case "setLens":
+            guard var settings = next.lens, let index = settings.items.firstIndex(where: { $0.id == id }) else { throw FakeServiceLink.Refusal() }
+            if let magnification = op["magnification"] as? Double { settings.items[index].magnification = magnification }
+            if let radius = op["radius"] as? Double { settings.items[index].radius = radius }
+            if let follow = op["follow"] as? Bool { settings.items[index].follow = follow }
+            next.lens = settings
+        case "unlens":
+            next.lens?.items.removeAll { $0.id == id }
+            if next.lens?.items.isEmpty == true { next.lens = nil }
         default:
             throw FakeServiceLink.Refusal()
         }

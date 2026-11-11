@@ -589,8 +589,9 @@ func captureIsolatedWindows(_ options: RecordOptions) {
         "frames": recorder.kept.map { ["index": $0.index - 1, "file": $0.file, "path": directory.appendingPathComponent($0.file).path,
                                        "timestampMs": $0.timestampMs, "changePercent": $0.changePercent, "reason": $0.reason,
                                        "motionBoxes": $0.motionBoxesJSON] as [String: Any] },
-        "stats": ["durationMs": Int(duration * 1000), "capturedFrames": recorder.captured, "keptFrames": recorder.kept.count,
-                  "firstFrameAfterStartMs": compositor.firstFrameAfterStartMs ?? -1] as [String: Any],
+        "stats": withMovieLength(["durationMs": Int(duration * 1000), "capturedFrames": recorder.captured,
+                                  "keptFrames": recorder.kept.count,
+                                  "firstFrameAfterStartMs": compositor.firstFrameAfterStartMs ?? -1], recorder.movieMs),
         "warnings": recorder.warnings + compositor.queue.sync { compositor.layers.warnings + compositor.placementWarnings },
     ]
     let contact = directory.appendingPathComponent("contact.png")

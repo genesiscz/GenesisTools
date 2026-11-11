@@ -37,7 +37,7 @@ final class CapturePickerTests: XCTestCase {
     func testEachChoiceNamesItsTargetTheWayTheStartCommandTakesIt() {
         XCTAssertEqual(CaptureChoice.target(.window(ids: [41, 42], app: "Editor", title: "notes", pid: 9)).arguments,
                        ["--window", "41,42", "--title", "notes"])
-        XCTAssertEqual(CaptureChoice.target(.app(app: "4242", name: "Finder")).arguments, ["--app", "4242"])
+        XCTAssertEqual(CaptureChoice.target(.app(app: "4242", name: "Finder")).arguments, ["--app", "4242", "--title", "Finder"])
         XCTAssertEqual(CaptureChoice.target(.display(index: 1, name: "Side")).arguments, ["--display", "1"])
         XCTAssertEqual(CaptureChoice.area(CGRect(x: 10.4, y: 20, width: 300.6, height: 200)).arguments,
                        ["--region", "10,20,301,200"])

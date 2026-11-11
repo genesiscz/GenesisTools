@@ -21,6 +21,8 @@ public final class FocusStatusItem {
     private let onToggleHUD: () -> Void
     /// Read at show time so the popover can say "Hide HUD" when the HUD is already up.
     public var isHUDVisible: () -> Bool = { false }
+    /// False while Settings → Focus → Timer window is Off: the menu and the popover offer no "Show timer window".
+    public var canShowHUD: () -> Bool = { true }
 
     public init(engine: PomodoroEngine, recorder: ActivityRecorder, store: ActivityStore,
          onOpenStudio: @escaping () -> Void, onToggleHUD: @escaping () -> Void) {
@@ -121,7 +123,7 @@ public final class FocusStatusItem {
     private func makeController() -> NSHostingController<FocusStatusPopover> {
         NSHostingController(
             rootView: FocusStatusPopover(engine: engine, recorder: recorder, store: store,
-                                         isHUDVisible: isHUDVisible,
+                                         isHUDVisible: isHUDVisible, canShowHUD: canShowHUD,
                                          onOpenStudio: onOpenStudio, onToggleHUD: onToggleHUD))
     }
 
@@ -136,8 +138,10 @@ public final class FocusStatusItem {
             menu.addItem(withTitle: "Stop", action: #selector(stop), keyEquivalent: "").target = self
         }
         menu.addItem(.separator())
-        menu.addItem(withTitle: isHUDVisible() ? "Hide HUD" : "Show HUD",
-                     action: #selector(toggleHUD), keyEquivalent: "").target = self
+        if isHUDVisible() || canShowHUD() {
+            menu.addItem(withTitle: isHUDVisible() ? "Hide HUD" : "Show HUD",
+                         action: #selector(toggleHUD), keyEquivalent: "").target = self
+        }
         menu.addItem(withTitle: "Open Focus Studio", action: #selector(openStudio), keyEquivalent: "").target = self
         item?.menu = menu
         sender.performClick(nil)
@@ -161,6 +165,7 @@ public struct FocusStatusPopover: View {
     @ObservedObject public var recorder: ActivityRecorder
     public let store: ActivityStore
     public var isHUDVisible: () -> Bool = { false }
+    public var canShowHUD: () -> Bool = { true }
     public var onOpenStudio: () -> Void
     public var onToggleHUD: () -> Void
 
@@ -241,9 +246,11 @@ public struct FocusStatusPopover: View {
                 .accessibilityIdentifier("focus-popover-primary")
 
                 HStack(spacing: GenSpacing.sm) {
-                    secondary(isHUDVisible() ? "Hide timer window" : "Show timer window",
-                              symbol: isHUDVisible() ? "eye.slash" : "macwindow.on.rectangle",
-                              id: "focus-popover-hud") { onToggleHUD() }
+                    if isHUDVisible() || canShowHUD() {
+                        secondary(isHUDVisible() ? "Hide timer window" : "Show timer window",
+                                  symbol: isHUDVisible() ? "eye.slash" : "macwindow.on.rectangle",
+                                  id: "focus-popover-hud") { onToggleHUD() }
+                    }
                     secondary("Studio", symbol: "chart.bar", id: "focus-popover-studio") { onOpenStudio() }
                         .instantTooltip("Open Focus Studio")
                 }

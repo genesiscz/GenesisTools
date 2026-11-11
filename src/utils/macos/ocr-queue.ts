@@ -1,6 +1,6 @@
 import { loadavg } from "node:os";
 import { logger } from "@genesiscz/utils/logger";
-import { LockTimeoutError, withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { LockTimeoutError, withQueuedFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { OcrOptions } from "./ocr";
 import { type FrameBoxes, recognizeTextBoxes } from "./ocr-boxes";
@@ -22,7 +22,8 @@ function timedOut(error: unknown): boolean {
 /**
  * Vision OCR of one frame, one read at a time on this Mac: every process that scans a movie (three editors at once, a
  * meeting's frames) waits its turn on one lock file instead of sending its reads in parallel, where each one ran past
- * darwinkit's 60 s deadline. A read that still times out is tried once more with 180 s; when that fails too, the error
+ * darwinkit's 60 s deadline. Turns go in arrival order (withQueuedFileLock), so a long scan that takes the lock again
+ * after every frame cannot keep another scan's read waiting until its 30 minutes run out. A read that still times out is tried once more with 180 s; when that fails too, the error
  * says why (the Mac's load, the queue) and that nothing was saved. `what` names the frame in that message.
  */
 export async function recognizeTextBoxesQueued(
@@ -38,7 +39,8 @@ export async function recognizeTextBoxesQueued(
 ): Promise<FrameBoxes & { text: string }> {
     const { what = path, lockPath, queueWaitMs = OCR_QUEUE_WAIT_MS, reader = recognizeTextBoxes, ...ocr } = options;
     const lock = lockPath ?? toolDataDir("ocr", "vision-queue.lock");
-    const attempt = (timeoutMs: number) => withFileLock(lock, () => reader(path, { ...ocr, timeoutMs }), queueWaitMs);
+    const attempt = (timeoutMs: number) =>
+        withQueuedFileLock(lock, () => reader(path, { ...ocr, timeoutMs }), queueWaitMs);
 
     try {
         try {

@@ -10,13 +10,18 @@ import { sourceTimeSchema, timeToUs } from "./plan";
 
 /** #RRGGBB, as project.ts's hexColor (not imported: project.ts imports this file). */
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
+/** The id a lens op may give a new lens (a window's own id); the service makes one when it is absent. */
+const NEW_LENS_ID = /^[A-Za-z0-9_-]{1,40}$/;
 
 export const TRANSITION_KINDS = ["none", "crossfade", "zoom", "blur"] as const;
 export type TransitionKind = (typeof TRANSITION_KINDS)[number];
 
 const transitionSchema = z.object({
     kind: z.enum(TRANSITION_KINDS).default("none"),
-    /** The whole length, centred on the join: half before it, half after. */
+    /**
+     * The whole length asked for, centred on the join: half before it, half after. Each half plays inside at most half
+     * of its neighbouring clip, so a short clip next to the join shortens it (`transitionJoins`' `halfUs`).
+     */
     ms: z.number().int().min(50).max(2000).default(300),
 });
 
@@ -27,7 +32,7 @@ export const transitionsSchema = z.object({
 });
 export type EditTransitions = z.infer<typeof transitionsSchema>;
 
-/** One loupe over a SOURCE range: it follows the cursor, or stays at `x`/`y` (0...1 of the source picture). */
+/** One loupe over a SOURCE range: it follows the pointer the viewer sees (the smooth or drawn cursor, else the recorded one), or stays at `x`/`y` (0...1 of the source picture). The drawn pointer keeps its size inside it. */
 export const lensItemSchema = z.object({
     id: z.string(),
     startUs: z.number().int().nonnegative(),
@@ -77,10 +82,7 @@ export const fxOpSchemas = [
         .object({
             op: z.literal("lens"),
             /** The new lens's id, so a window that made one keeps its id; absent: the service makes one. */
-            id: z
-                .string()
-                .regex(/^[A-Za-z0-9_-]{1,40}$/)
-                .optional(),
+            id: z.string().regex(NEW_LENS_ID).optional(),
             from: sourceTimeSchema,
             to: sourceTimeSchema,
             radius: z.number().min(0.04).max(0.4).optional(),
@@ -143,20 +145,24 @@ export interface TransitionJoin {
     /** Output microseconds of the join. */
     atUs: number;
     kind: TransitionKind;
+    /** The length asked for; `halfUs` is what plays. */
     ms: number;
+    /** Half the transition that plays: ms / 2, held inside half of each neighbouring clip; 0 for kind none. */
+    halfUs: number;
     /** True when the join has its own transition, not the default. */
     own: boolean;
 }
 
 /**
  * Every join of the edit: the start of a clip whose source does not continue the clip before it (a split alone joins
- * nothing). The Swift side has the same rule (RenderFx.swift, `Transitions.joins`).
+ * nothing). The Swift side has the same rule and the same `halfUs` (RenderFx.swift, `TransitionLook.joins`), and it
+ * leaves out the joins whose halfUs is 0.
  */
 export function transitionJoins(project: FxProject): TransitionJoin[] {
     const joins: TransitionJoin[] = [];
     const base = transitionsSchema.parse(project.transitions ?? {});
     let at = 0;
-    let previous: FxProject["clips"][number] | undefined;
+    let previous: { toUs: number; outUs: number } | undefined;
 
     for (const clip of project.clips) {
         const length = Math.max(0, clip.toUs - clip.fromUs);
@@ -165,36 +171,66 @@ export function transitionJoins(project: FxProject): TransitionJoin[] {
             continue;
         }
 
+        const outUs = Math.round(length / clip.speed);
+
         if (previous && previous.toUs !== clip.fromUs) {
             const own = base.joins?.[clip.id];
             const chosen = own ?? base.default;
-            joins.push({ clip: clip.id, atUs: at, kind: chosen.kind, ms: chosen.ms, own: own !== undefined });
+            const halfUs =
+                chosen.kind === "none"
+                    ? 0
+                    : Math.min(chosen.ms * 500, Math.floor(previous.outUs / 2), Math.floor(outUs / 2));
+            joins.push({ clip: clip.id, atUs: at, kind: chosen.kind, ms: chosen.ms, halfUs, own: own !== undefined });
         }
 
-        at += Math.round(length / clip.speed);
-        previous = clip;
+        at += outUs;
+        previous = { toUs: clip.toUs, outUs };
     }
 
     return joins;
+}
+
+/** True when a lens shows at some moment of the SOURCE range `fromUs`..`toUs` (a point when they are equal). */
+export function lensShowsAt(project: FxProject, fromUs: number, toUs = fromUs): boolean {
+    return (project.lens?.items ?? []).some((item) => item.startUs <= toUs && item.endUs > fromUs);
+}
+
+/**
+ * The join whose transition plays at some moment of the OUTPUT range `fromUs`..`toUs` (a point when they are equal):
+ * a transition plays `halfUs` on each side of its join; kind none plays nothing.
+ */
+export function transitionPlayingAt(project: FxProject, fromUs: number, toUs = fromUs): TransitionJoin | undefined {
+    return transitionJoins(project).find(
+        (join) => join.halfUs > 0 && join.atUs - join.halfUs <= toUs && join.atUs + join.halfUs > fromUs
+    );
 }
 
 function seconds(us: number): number {
     return Math.round(us / 1000) / 1000;
 }
 
-/** info()'s view of the three effects: seconds, every join with its transition, null where an effect is off. */
+/**
+ * info()'s view of the three effects: seconds, every join with its transition, null where an effect is off. A join's
+ * `ms` is the length asked for (the transition op sets it), `playsMs` the length the export plays, and `shortened`
+ * marks a join where a short neighbouring clip cuts the transition.
+ */
 export function describeFx(project: FxProject) {
     const transitions = transitionsSchema.parse(project.transitions ?? {});
     return {
         transitions: {
             default: transitions.default,
-            joins: transitionJoins(project).map((join) => ({
-                clip: join.clip,
-                at: seconds(join.atUs),
-                kind: join.kind,
-                ms: join.ms,
-                ...(join.own ? { own: true } : {}),
-            })),
+            joins: transitionJoins(project).map((join) => {
+                const playsMs = Math.round(join.halfUs / 500);
+                return {
+                    clip: join.clip,
+                    at: seconds(join.atUs),
+                    kind: join.kind,
+                    ms: join.ms,
+                    playsMs,
+                    ...(join.kind !== "none" && playsMs < join.ms ? { shortened: true } : {}),
+                    ...(join.own ? { own: true } : {}),
+                };
+            }),
         },
         lenses: (project.lens?.items ?? []).map((lens) => ({
             id: lens.id,
@@ -274,6 +310,12 @@ export function applyFxOp<P extends FxProject>(project: P, op: FxOp): P {
         }
         case "lens": {
             const items = project.lens?.items ?? [];
+
+            // A Movie made by movies.demo() applies ops it never parsed, so the id's form is checked here too; a lens
+            // loaded from an older edit keeps whatever id it has.
+            if (op.id !== undefined && !NEW_LENS_ID.test(op.id)) {
+                throw new RangeError(`a lens id is 1 to 40 letters, digits, _ or -, not "${op.id}"`);
+            }
 
             if (op.id !== undefined && items.some((lens) => lens.id === op.id)) {
                 throw new Error(`a lens ${op.id} exists already; lenses: ${items.map((lens) => lens.id).join(", ")}`);

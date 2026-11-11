@@ -1,6 +1,8 @@
+import SwiftUI
 import XCTest
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
+import GenesisKit
 
 /// The operations features decode what their `tools` doors print and keep their small pure rules:
 /// the agent process pane (`tools hub procs --json`, src/hub/lib/procs/), the prompt library
@@ -143,6 +145,102 @@ final class HubOpsFeaturesTests: XCTestCase {
             "1 outdated thread still unresolved (not blocking)",
         ]))
         XCTAssertEqual(PRReadinessBadge.look(readiness).2, "3 open")
+        XCTAssertFalse(PRReadinessBadge.saysCI(readiness), "the word names the threads, not CI")
+    }
+
+    /// One CI state on most of a project's rows is its usual state, and a row in it leaves the CI icon out (hub UX C9).
+    func testTheUsualCIIsTheStateOfMoreThanHalfTheRows() throws {
+        func pr(_ number: Int, ci: String?) throws -> HubPR {
+            let ciJSON = ci.map { "\"\($0)\"" } ?? "null"
+            let json = """
+            {"repo":"app","number":\(number),"title":"t","state":"open","draft":false,"headBranch":"b","baseBranch":"main",
+             "url":"https://example.com/o/app/pull/\(number)","labels":[],"reviewers":[],"ci":\(ciJSON)}
+            """
+            return try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        }
+        let failing = try [pr(1, ci: "failed"), pr(2, ci: "failed"), pr(3, ci: "failed"), pr(4, ci: "success")]
+        XCTAssertEqual(PRRow.usualCI(failing), "failed")
+        XCTAssertNil(PRRow.usualCI(Array(failing.prefix(2))), "two rows set no norm")
+        let split = try [pr(1, ci: "failed"), pr(2, ci: "success"), pr(3, ci: "failed"), pr(4, ci: "success")]
+        XCTAssertNil(PRRow.usualCI(split), "no state holds more than half")
+    }
+
+    /// The PR description opens on its first paragraph; the reader's choice is kept per PR, newest last.
+    func testThePRDescriptionFoldsAt60PercentOfTheColumnAndTheChoiceIsKeptPerPR() {
+        XCTAssertEqual(PRDescriptionView.foldHeight(column: 1180), 708, "60% of the visible column")
+        XCTAssertEqual(PRDescriptionView.foldHeight(column: 0), PRDescriptionView.minimumFold, "before the column has a height")
+        XCTAssertEqual(PRDescriptionView.foldHeight(column: 200), PRDescriptionView.minimumFold, "a very short window")
+        var stored = PRDescriptionChoices.set("", pr: "https://example.org/pr/1", whole: true)
+        stored = PRDescriptionChoices.set(stored, pr: "https://example.org/pr/2", whole: false)
+        XCTAssertEqual(PRDescriptionChoices.whole(stored, pr: "https://example.org/pr/1"), true)
+        XCTAssertEqual(PRDescriptionChoices.whole(stored, pr: "https://example.org/pr/2"), false)
+        XCTAssertNil(PRDescriptionChoices.whole(stored, pr: "https://example.org/pr/3"), "no choice: the setting decides")
+        stored = PRDescriptionChoices.set(stored, pr: "https://example.org/pr/1", whole: false)
+        XCTAssertEqual(PRDescriptionChoices.whole(stored, pr: "https://example.org/pr/1"), false)
+        XCTAssertEqual(stored.split(separator: "\n").count, 2, "one line per PR")
+    }
+
+    /// A hub `ScrollView` whose content carries `.genScrollBars()` draws GenesisKit's thin overlay scroller, which takes
+    /// no layout width; the System setting gives the scroll view back its own scroller (annotation 2391, 2026-11-10).
+    @MainActor
+    func testAScrollViewWithGenScrollBarsGetsTheOverlayScroller() throws {
+        _ = NSApplication.shared
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "gen-scrollbars-test"))
+        defaults.removePersistentDomain(forName: "gen-scrollbars-test")
+        func host(_ style: GenScrollBarStyle) throws -> NSScrollView {
+            defaults.set(style.rawValue, forKey: GenScrollBarStyle.key)
+            let view = ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(0..<200, id: \.self) { Text(verbatim: "row \($0)").frame(height: 20) }
+                }
+                .genScrollBars()
+            }
+            .frame(width: 300, height: 200)
+            .defaultAppStorage(defaults)
+            let hosting = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 300, height: 200),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.alphaValue = 0
+            window.contentView = hosting
+            window.order(.below, relativeTo: 0)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            hosting.layoutSubtreeIfNeeded()
+            func find(_ view: NSView) -> NSScrollView? {
+                if let scroll = view as? NSScrollView { return scroll }
+                for child in view.subviews { if let found = find(child) { return found } }
+                return nil
+            }
+            let scroll = try XCTUnwrap(find(hosting), "an NSScrollView behind the SwiftUI ScrollView")
+            window.close()
+            return scroll
+        }
+        let genesis = try host(.genesis)
+        XCTAssertTrue(genesis.verticalScroller is GenScroller, "\(String(describing: genesis.verticalScroller))")
+        XCTAssertEqual(genesis.scrollerStyle, .overlay)
+        let system = try host(.system)
+        XCTAssertFalse(system.verticalScroller is GenScroller)
+    }
+
+    /// System gives a scroll view the system's style even when it never had GenesisKit's bars: a new file tree under
+    /// System starts as overlay, and with "Always" set in System Settings it must show the legacy bar (eve on #764).
+    @MainActor
+    func testSystemScrollBarsSetThePreferredStyleOnAViewNeverAdopted() {
+        let fresh = NSScrollView()
+        fresh.hasVerticalScroller = true
+        fresh.scrollerStyle = .overlay
+        GenScrollBars.apply(.system, to: fresh, preferred: .legacy)
+        XCTAssertEqual(fresh.scrollerStyle, .legacy)
+        XCTAssertFalse(fresh.verticalScroller is GenScroller)
+
+        let adopted = NSScrollView()
+        adopted.hasVerticalScroller = true
+        GenScrollBars.apply(.genesis, to: adopted, preferred: .legacy)
+        XCTAssertEqual(adopted.scrollerStyle, .overlay)
+        XCTAssertTrue(adopted.verticalScroller is GenScroller)
+        GenScrollBars.apply(.system, to: adopted, preferred: .legacy)
+        XCTAssertEqual(adopted.scrollerStyle, .legacy)
+        XCTAssertFalse(adopted.verticalScroller is GenScroller)
     }
 
     /// The PR row's meta line: the author is whole, then truncated to at least 48 pt, then hidden with its dot.

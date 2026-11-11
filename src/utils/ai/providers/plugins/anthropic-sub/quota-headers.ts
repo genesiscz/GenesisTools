@@ -8,6 +8,7 @@ import {
 } from "@genesiscz/utils/claude/subscription-billing";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import type { ApiLimit, UsageBucket, UsageResponse } from "./api";
 import { type ProbeBudget, persistedProbeBudget } from "./probe-budget";
 
@@ -30,8 +31,19 @@ import { type ProbeBudget, persistedProbeBudget } from "./probe-budget";
  * limits); a header reading is a fallback laid over the last endpoint reading.
  */
 
-/** How often a header reading asks the Fable model; the cheap probe in between keeps the last Fable window. */
+/**
+ * How often a header reading asks the Fable model while the account is idle; the cheap probe in between keeps
+ * the last Fable window.
+ */
 export const FABLE_READING_INTERVAL_MS = 30 * 60_000;
+/**
+ * While an account is in use (its last reading moved the 5-hour or the weekly window), every header reading
+ * asks the Fable model instead of the cheap one, so the Fable window is as fresh as the other two. Martin's
+ * condition (2026-11-10): only while the Fable probe is known to cost fewer tokens than this. The cost is read
+ * from the probe's own answer (`quota.fableProbeTokens`), never assumed. Measured 2026-11-10 on
+ * claude-fable-5-2: 34 input tokens and 0 output tokens; the cheap probe costs 22.
+ */
+export const FABLE_PROBE_TOKEN_LIMIT = 100;
 
 export const QUOTA_PROBE_URL = "https://api.anthropic.com/v1/messages";
 /** The only model whose answer carries the Fable window. */
@@ -43,14 +55,17 @@ export const QUOTA_PROBE_MODEL = resolveAnthropicSubModel("fable");
 export const QUOTA_PROBE_FALLBACK_MODEL = MODEL_ROLES.anthropic.probe;
 /**
  * Probes allowed per account and model in 7 days. Martin's rule (2026-09-28): the probes may cost at most
- * 1 % of a weekly limit. A probe is about 34 input tokens, so the Haiku cap is about 204k Haiku input tokens
- * ($0.20 at list price) and the Fable cap about 14k Fable input tokens ($0.14). The poll asks for a Haiku
- * probe every 2 minutes (5,040 a week) and a Fable probe every 30 minutes (336 a week); the caps sit a
- * little above that.
+ * 1 % of a weekly limit. A probe is about 34 input tokens. The poll reads the headers every 2 minutes (5,040
+ * readings a week), and each reading is ONE probe: the cheap model, or the Fable model when the Fable window
+ * is due (`fableReadingDue`). Until 2026-11-10 Fable was asked only every 30 minutes (336 a week, cap 400).
+ * Since then an account in use asks Fable on every reading, so both caps sit a little above the number of
+ * readings in a week: at most about 204k input tokens of either model ($0.20 of Haiku, $1.63 of Fable 5.2 at
+ * list price) for an account that is in use around the clock. A lower Fable cap would stop the whole reading
+ * of a busy account, because a spent budget skips the reading.
  */
 export const WEEKLY_PROBE_CAPS: Readonly<Record<string, number>> = {
     [QUOTA_PROBE_FALLBACK_MODEL]: 6_000,
-    [QUOTA_PROBE_MODEL]: 400,
+    [QUOTA_PROBE_MODEL]: 6_000,
 };
 const QUOTA_PROBE_TIMEOUT_MS = 20_000;
 const HEADER = "anthropic-ratelimit-unified";
@@ -73,6 +88,13 @@ export interface QuotaHeaderStatus {
     endpointAsOf?: string;
     /** When the Fable window was last read (ISO); a cheap probe keeps the window of that reading. */
     fableReadAt?: string;
+    /**
+     * What the last Fable probe was billed, in tokens (input, cache and output), read from its answer. Absent
+     * until one answer carried a usage block; a later reading keeps the last measurement.
+     */
+    fableProbeTokens?: number;
+    /** The 5-hour or the weekly window differs from the reading before this one: the account is in use. */
+    moved?: boolean;
 }
 
 function bucket(headers: Headers, window: "5h" | "7d" | "7d_oi"): UsageBucket | null {
@@ -132,11 +154,22 @@ export function endpointAsOf(usage: UsageResponse | undefined): string | undefin
     return quota?.source === "headers" ? quota.endpointAsOf : undefined;
 }
 
-/** The next header reading should ask the Fable model: no Fable reading yet, or the last one is 30 minutes old. */
+/**
+ * The next header reading should ask the Fable model: no Fable reading yet, the last one is 30 minutes old, or
+ * the account is in use and the Fable probe is proven cheap (`FABLE_PROBE_TOKEN_LIMIT`). An unmeasured probe
+ * is not a cheap one, so without a measurement the 30-minute rule alone decides.
+ */
 export function fableReadingDue(previous: UsageResponse | undefined, now: number): boolean {
     const quota = previous?.quota as Partial<QuotaHeaderStatus> | undefined;
     const readAt = quota?.source === "headers" && quota.fableReadAt ? Date.parse(quota.fableReadAt) : Number.NaN;
-    return !Number.isFinite(readAt) || now - readAt >= FABLE_READING_INTERVAL_MS;
+
+    if (!Number.isFinite(readAt) || now - readAt >= FABLE_READING_INTERVAL_MS) {
+        return true;
+    }
+
+    const tokens = quota?.fableProbeTokens;
+
+    return quota?.moved === true && typeof tokens === "number" && tokens < FABLE_PROBE_TOKEN_LIMIT;
 }
 
 /** A recorded poll failure came from a header reading (an org refusal, a revoked long-lived token). */
@@ -213,10 +246,19 @@ export function mergeHeaderReading(
     const keptFable =
         !freshFable && previousQuota?.source === "headers" ? previous?.seven_day_overage_included : undefined;
     const fableReadAt = freshFable ? new Date(now).toISOString() : keptFable ? previousQuota?.fableReadAt : undefined;
+    const fableProbeTokens =
+        (fresh.quota as QuotaHeaderStatus).fableProbeTokens ??
+        (previousQuota?.source === "headers" ? previousQuota.fableProbeTokens : undefined);
+    const moved =
+        previous !== undefined &&
+        (fresh.five_hour?.utilization !== previous.five_hour?.utilization ||
+            fresh.seven_day.utilization !== previous.seven_day?.utilization);
     const quota: QuotaHeaderStatus = {
         ...(fresh.quota as QuotaHeaderStatus),
         ...(keptFable ? { fableStatus: previousQuota?.fableStatus ?? null } : {}),
         ...(fableReadAt ? { fableReadAt } : {}),
+        ...(fableProbeTokens === undefined ? {} : { fableProbeTokens }),
+        ...(moved ? { moved: true } : {}),
     };
     const endpointAsOf =
         previousQuota?.source === "headers"
@@ -288,6 +330,34 @@ function sendQuotaProbe(
 }
 
 /**
+ * What a probe was billed, from the usage block of its answer: input, cache and output tokens together.
+ * Undefined when the answer has no usage block (a 429, a body that is not JSON), so a caller never takes an
+ * unmeasured probe for a cheap one.
+ */
+async function probeTokens(res: Response, tag: string): Promise<number | undefined> {
+    try {
+        const body: unknown = SafeJSON.parse(await res.text(), { strict: true });
+        const usage = isObject(body) && isObject(body.usage) ? body.usage : null;
+
+        if (!usage || typeof usage.input_tokens !== "number") {
+            return undefined;
+        }
+
+        const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+
+        return (
+            count(usage.input_tokens) +
+            count(usage.cache_creation_input_tokens) +
+            count(usage.cache_read_input_tokens) +
+            count(usage.output_tokens)
+        );
+    } catch (err) {
+        logger.debug({ err }, `${tag} quota headers: the probe answer has no readable usage block`);
+        return undefined;
+    }
+}
+
+/**
  * One `max_tokens: 0` request, read for its headers: to the Fable model when the Fable window is wanted,
  * else to the cheap model. A second one to the cheap model only when the Fable model is refused without
  * headers. A 429 that carries the windows is a reading (the account is at a limit), not a failure.
@@ -314,6 +384,7 @@ export async function fetchUsageFromHeaders(
     };
     const model = opts.withFable === false ? QUOTA_PROBE_FALLBACK_MODEL : QUOTA_PROBE_MODEL;
     await budget.spend(model);
+    let asked = model;
     let res = await sendQuotaProbe(token, model, probe);
 
     if (model === QUOTA_PROBE_MODEL && [400, 404, 429].includes(res.status) && !usageFromQuotaHeaders(res.headers)) {
@@ -322,23 +393,31 @@ export async function fetchUsageFromHeaders(
             `${tag} quota headers: ${QUOTA_PROBE_MODEL} answered ${res.status} (${refusal.slice(0, 160)}); asking ${QUOTA_PROBE_FALLBACK_MODEL}`
         );
         await budget.spend(QUOTA_PROBE_FALLBACK_MODEL);
+        asked = QUOTA_PROBE_FALLBACK_MODEL;
         res = await sendQuotaProbe(token, QUOTA_PROBE_FALLBACK_MODEL, probe);
     }
 
     const usage = usageFromQuotaHeaders(res.headers);
 
     if (usage && (res.ok || res.status === 429)) {
+        // Only the Fable probe is measured: its cost is what `fableReadingDue` must be sure of.
+        const fableProbeTokens = asked === QUOTA_PROBE_MODEL ? await probeTokens(res, tag) : undefined;
         logger.debug(
             {
                 status: res.status,
+                model: asked,
                 fiveHour: usage.five_hour?.utilization ?? null,
                 sevenDay: usage.seven_day.utilization,
                 fable: usage.seven_day_overage_included?.utilization ?? null,
+                ...(fableProbeTokens === undefined ? {} : { fableProbeTokens }),
             },
             `${tag} usage read from the rate-limit headers`
         );
         await res.body?.cancel().catch(() => undefined);
-        return usage;
+
+        return fableProbeTokens === undefined
+            ? usage
+            : { ...usage, quota: { ...(usage.quota as QuotaHeaderStatus), fableProbeTokens } };
     }
 
     const body = await res.text().catch(() => "");

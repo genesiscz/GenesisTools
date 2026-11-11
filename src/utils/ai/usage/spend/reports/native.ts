@@ -12,6 +12,7 @@ import { grokDriver } from "../drivers/grok";
 import { num } from "../drivers/parse-helpers";
 import type { AgentId, DriverRoot, DriverUsageEvent, MonitorDriver, SpendLayout } from "../drivers/types";
 import { findRecentTranscripts } from "../monitor";
+import { claudeServiceTier } from "../parse";
 import { prof } from "../prof";
 import { asRecord, asString, parseJsonValue } from "./jsonl";
 import type { SourceId, SpendEvent } from "./types";
@@ -116,6 +117,7 @@ function parseClaudeLine(line: string, file: string): SpendEvent[] {
             cacheReadTokens: cacheRead,
             recordedCostUsd: recorded,
             isSidechain,
+            serviceTier: claudeServiceTier(usage),
         });
     }
 

@@ -138,11 +138,11 @@ final class RecorderRedactionEdgeTests: XCTestCase {
         XCTAssertTrue(frames.contains { $0.values[2] < 40 }, "the 10 ms box drew")
     }
 
-    /// The preview's renderer is made once per movie. When the edit had no hidden part then, it never read the movie's
-    /// frame times, so a part added later (hideText) ended at its own end in the preview while the export held it until
-    /// the next frame: the text showed for 150 ms in the preview only.
-    func testAPartAddedAfterThePreviewWasBuiltCoversTheFrameThatStaysOnScreen() async throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("redaction-preview-\(UUID().uuidString)")
+    /// The preview of an edit that hid nothing yet: a part added after it was built reaches it by `ZoomState.update`
+    /// alone (no rebuild), and must still end at the next source frame. Before, the frame times were read only for an
+    /// edit that already hid something, so this part ended at 4.0 s and the frame at 3.95 s showed until 4.10 s.
+    func testAPartAddedAfterThePreviewWasBuiltStillCoversTheFrameThatStays() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("redaction-late-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let movie = folder.appendingPathComponent("screen.mp4")
@@ -150,12 +150,10 @@ final class RecorderRedactionEdgeTests: XCTestCase {
         let plain = project(movie: movie)
         let zoom = ZoomState(project: plain, cursor: nil)
         _ = try await EditRenderer.render(project: plain, asset: AVURLAsset(url: movie), zoom: zoom, maxHeight: 180)
-        var hidden = plain
-        // Ends after the frame at 3.95 s, which stays on screen until the next frame at 4.10 s.
-        hidden.redactions = [box("before", Self.before, from: 2_000_000, to: 3_960_000)]
-        zoom.update(hidden)
-        XCTAssertEqual(zoom.look(atOutput: 4_050_000).redactions.map(\.id), ["before"], "the held frame stays covered in the preview")
-        XCTAssertTrue(zoom.look(atOutput: 4_200_000).redactions.isEmpty, "the next frame shows the moved text, uncovered")
+        var edit = plain
+        edit.redactions = [box("before", Self.before, from: 2_000_000, to: 4_000_000)]
+        zoom.update(edit)
+        XCTAssertEqual(zoom.redactions(for: edit).first?.endUs, 4_100_000, "the frame at 3.95 s stays on screen until 4.10 s")
     }
 
     /// The joins without a movie: snapMs moves an end to the cut and closes a short gap; 0 leaves both.
@@ -174,11 +172,13 @@ final class RecorderRedactionEdgeTests: XCTestCase {
     func testASpotlightFadesOverItsFadeMsAndZeroIsHard() {
         var spot = box("s", Self.before, from: 1_000_000, to: 3_000_000)
         spot.style = .spotlight
-        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_100_000), 0.5, accuracy: 0.001, "200 ms by default")
+        let movie = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
+        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_100_000, project: movie), 0.5, accuracy: 0.001, "200 ms by default")
         spot.fadeMs = 0
-        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_000_000), 1, "hard from its first frame")
+        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_000_000, project: movie), 1, "hard from its first frame")
         spot.fadeMs = 1000
-        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_333_333), 0.5, accuracy: 0.01, "capped at a third of its length")
+        XCTAssertEqual(ZoomState.spotlightFade(spot, atSourceUs: 1_333_333, project: movie), 0.5, accuracy: 0.01,
+                       "capped at a third of its length")
     }
 
     func testAPixelateCellIsItsOwnSizeOrTheDefault() {

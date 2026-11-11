@@ -241,6 +241,35 @@ final class RecorderFxExportTests: XCTestCase {
         XCTAssertEqual(stills.maximumSize, CGSize(width: 160, height: 90))
     }
 
+    /// A crossfade into a clip that starts inside a canvas zoom blends the two sides' own canvases: the export still
+    /// hides every secret, and the outgoing still (its block redacted black, no canvas zoom) dissolves after the join.
+    func testACrossfadeIntoACanvasZoomBlendsEachSidesOwnCanvas() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("fx-canvas-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie)
+        var project = EditProject.whole(video: movie.path, durationUs: 10_000_000, width: Self.size.width, height: Self.size.height,
+                                        cursor: nil, recording: nil)
+        project.clips = [.init(id: "a", fromUs: 0, toUs: 5_000_000, speed: 2), .init(id: "b", fromUs: 6_200_000, toUs: 10_000_000)]
+        let hidden = normalized(Self.hiddenSecret)
+        project.redactions = [EditProject.Redaction(id: "r", startUs: 3_000_000, endUs: 5_000_000, x: hidden.x, y: hidden.y,
+                                                    width: hidden.width, height: hidden.height, style: .black)]
+        var zoom = EditProject.Zoom(id: "z", startUs: 5_500_000, endUs: 9_000_000, scale: 2, focusX: 0.25, focusY: 0.75)
+        zoom.target = .canvas
+        project.zooms = [zoom]
+        project.transitions = EditProject.Transitions(default: .init(kind: .crossfade, ms: 500))
+        let out = folder.appendingPathComponent("canvas.mp4")
+        _ = try await EditExporter.export(project: project, to: out) { _ in }
+        let frames = try await brightness(out, blocks: [Self.cutSecret, Self.hiddenSecret])
+        XCTAssertGreaterThan(frames.count, 150, "the export has its frames")
+        let leaks = frames.filter { $0.values.contains { $0 > 115 } }
+        XCTAssertTrue(leaks.isEmpty, "a secret shows at \(leaks.map { String(format: "%.3f s %@", $0.seconds, $0.values.description) })")
+        // The canvas zoom (focus on the lower left) would carry the black block out of its place; its own canvas keeps it.
+        XCTAssertTrue(frames.contains { $0.seconds > 2.5 && $0.seconds < 2.75 && $0.values[1] > 20 && $0.values[1] < 95 },
+                      "the outgoing still dissolves in its own place after the join")
+    }
+
     func testNoTransitionShowsACutOrRedactedSecretInTheExport() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("fx-secret-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

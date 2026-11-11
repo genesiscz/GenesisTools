@@ -15,6 +15,7 @@ import {
     RUN_TIMEOUT_MS,
     runTimeoutFor,
     runTimeoutHint,
+    streamPrinter,
     withoutStreamed,
 } from "./lib/engine";
 import { coerceParam, listPresets, readPreset, removePreset, resolveParams, savePreset } from "./lib/presets";
@@ -22,7 +23,7 @@ import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp, toolsetOverlap } fr
 
 handleReadmeFlag(import.meta.url);
 
-const MAX_OUTPUT_HELP = `the most characters a turn returns; longer output is cut with a note naming the file that holds all of it (0: no limit)`;
+const MAX_OUTPUT_HELP = `the most characters a turn returns (its text, and a failure's error and stack each); longer output is cut with a note naming the file that holds all of it (0: no limit)`;
 
 /** A turn's text on stdout, ended with a newline so the shell prompt starts on its own line (NR21). */
 function printTurnText(text: string): void {
@@ -214,38 +215,20 @@ program
                 return;
             }
 
-            // R6 11: console lines print as the turn writes them (a long edit showed nothing for minutes), up to
-            // --max-output; the answer then prints only what was not printed yet (the result, a note). Streaming stops
-            // for good at the first line past the limit: a later short line would break the run of printed lines in
-            // the text, and the whole text would print again (REPL-F5).
-            const streamed: string[] = [];
-            let streamedChars = 0;
-            let answered = false;
-            let cut = false;
+            // R6 11: the turn's lines print as the turn writes them (a long edit showed nothing for minutes), up to
+            // --max-output; the answer then prints only what was not printed yet (the result, a note).
+            const printer = streamPrinter({ max: maxOutputChars, print: (line) => out.print(`${line}\n`) });
             const engine = new ReplEngine({
                 toolsets,
                 maxOutputChars,
                 timeoutHint: runTimeoutHint,
-                onOutput: (line) => {
-                    if (answered || cut) {
-                        return;
-                    }
-
-                    if (maxOutputChars > 0 && streamedChars + line.length > maxOutputChars) {
-                        cut = true;
-                        return;
-                    }
-
-                    streamed.push(line);
-                    streamedChars += line.length + 1;
-                    out.print(`${line}\n`);
-                },
+                onOutput: printer.onOutput,
             });
 
             try {
                 const result = await engine.run(source, timeout);
-                answered = true;
-                printTurnText(withoutStreamed(result.text, streamed));
+                printer.stop();
+                printTurnText(withoutStreamed(result.text, printer.printed));
 
                 for (const image of result.images) {
                     out.log.info(`image written to ${image.path}`);

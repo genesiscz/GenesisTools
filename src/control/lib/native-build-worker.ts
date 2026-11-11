@@ -5,11 +5,11 @@ import { buildNativeOnce, swiftReleaseBuild } from "./native-build";
  * `ensureBinary` is synchronous, and so are the `runAx` calls behind it, while the cross-process
  * build lock is async. It runs this file as a child and blocks on it, so the waiting happens here.
  *
- * argv: `<binary> <sourceDir> <lockPath>`. stdout: one JSON object, `{ ok: true, built }` or
+ * argv: `<binary> <sourceDir> <lockPath> [trigger]`. stdout: one JSON object, `{ ok: true, built, report? }` or
  * `{ ok: false, error }`. Progress goes to stderr through the logger.
  */
 async function main(): Promise<void> {
-    const [binary, sourceDir, lockPath] = process.argv.slice(2);
+    const [binary, sourceDir, lockPath, trigger] = process.argv.slice(2);
 
     if (!binary || !sourceDir || !lockPath) {
         out.result({ ok: false, error: "usage: <binary> <sourceDir> <lockPath>" });
@@ -18,13 +18,14 @@ async function main(): Promise<void> {
     }
 
     try {
-        const { built } = await buildNativeOnce({
+        const { built, report } = await buildNativeOnce({
             binary,
             sourceDir,
             lockPath,
             build: () => swiftReleaseBuild(sourceDir),
+            trigger: trigger || "first-use",
         });
-        out.result({ ok: true, built });
+        out.result({ ok: true, built, ...(report ? { report } : {}) });
     } catch (error) {
         logger.debug({ error, sourceDir }, "native build worker failed");
         out.result({ ok: false, error: error instanceof Error ? error.message : String(error) });

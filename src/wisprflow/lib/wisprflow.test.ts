@@ -1,5 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import {
+    appendFileSync,
     existsSync,
     mkdirSync,
     mkdtempSync,
@@ -705,5 +707,108 @@ describe("lastLiveMarker", () => {
         );
         expect(local.lastLiveMarker("m1", dir)).toEqual({ marker: "paused", epochMs: 9000 });
         expect(local.lastLiveMarker("missing", dir)).toBeNull();
+    });
+
+    test("a live transcript that stats but cannot be read is no marker, not a throw, and is read again next time", () => {
+        const dir = mkdtempSync(join(tmpdir(), "wispr-markers-"));
+        // A folder where the file belongs: statSync succeeds, readFileSync fails (EISDIR), like a file gone mid-read.
+        const path = join(dir, "meetings", "m2", "live.ndjson");
+        mkdirSync(path, { recursive: true });
+
+        expect(local.lastLiveMarker("m2", dir)).toBeNull();
+
+        rmSync(path, { recursive: true });
+        writeFileSync(path, SafeJSON.stringify({ id: "r", marker: "resumed", epochMs: 7000 }));
+        expect(local.lastLiveMarker("m2", dir)).toEqual({ marker: "resumed", epochMs: 7000 });
+    });
+
+    /** A meeting folder with a live transcript: `before` text lines of about 120 bytes, a resumed marker, `after` more. */
+    function longTranscript(meetingId: string, options: { before: number; after: number }) {
+        const dir = mkdtempSync(join(tmpdir(), "wispr-markers-"));
+        const meetingDir = join(dir, "meetings", meetingId);
+        mkdirSync(meetingDir, { recursive: true });
+        const path = join(meetingDir, "live.ndjson");
+        const text = (n: number) =>
+            `${SafeJSON.stringify({ id: `t${n}`, text: "A sentence someone said in the call.", startEpochMs: n, endEpochMs: n + 1 })}\n`;
+        const lines = (from: number, count: number) =>
+            Array.from({ length: count }, (_, index) => text(from + index)).join("");
+        writeFileSync(
+            path,
+            `${lines(0, options.before)}${SafeJSON.stringify({ id: "r", marker: "resumed", epochMs: 5000 })}\n${lines(options.before, options.after)}`
+        );
+        return { dir, path, text };
+    }
+
+    /** The bytes `read` took from files while it ran, through `readSync` or a whole `readFileSync`. */
+    function bytesRead<T>(read: () => T): { value: T; bytes: number } {
+        const ranges = spyOn(fs, "readSync");
+        const wholes = spyOn(fs, "readFileSync");
+
+        try {
+            const value = read();
+            const ranged = ranges.mock.results.reduce(
+                (sum, result) =>
+                    sum + (result.type === "return" && typeof result.value === "number" ? result.value : 0),
+                0
+            );
+            const whole = wholes.mock.results.reduce((sum, result) => {
+                const body: unknown = result.type === "return" ? result.value : null;
+                return (
+                    sum + (typeof body === "string" ? Buffer.byteLength(body) : Buffer.isBuffer(body) ? body.length : 0)
+                );
+            }, 0);
+            return { value, bytes: ranged + whole };
+        } finally {
+            ranges.mockRestore();
+            wholes.mockRestore();
+        }
+    }
+
+    test("a poll after an append reads only the new lines, not the whole transcript again", () => {
+        const { dir, path, text } = longTranscript("m3", { before: 5000, after: 10 });
+        const size = fs.statSync(path).size;
+        const first = bytesRead(() => local.lastLiveMarker("m3", dir));
+
+        expect(first.value).toEqual({ marker: "resumed", epochMs: 5000 });
+        // The marker sits near the end: the first read stops in the last chunk, it does not read the whole call.
+        expect(first.bytes).toBeLessThan(size / 2);
+
+        appendFileSync(path, text(9001));
+        const appended = bytesRead(() => local.lastLiveMarker("m3", dir));
+        expect(appended.value).toEqual({ marker: "resumed", epochMs: 5000 });
+        expect(appended.bytes).toBeLessThan(1024);
+
+        appendFileSync(path, `${SafeJSON.stringify({ id: "p", marker: "paused", epochMs: 9000 })}\n`);
+        const paused = bytesRead(() => local.lastLiveMarker("m3", dir));
+        expect(paused.value).toEqual({ marker: "paused", epochMs: 9000 });
+        expect(paused.bytes).toBeLessThan(1024);
+
+        // A marker line still being written counts once it is whole JSON, and is read again when it gets its newline.
+        appendFileSync(path, SafeJSON.stringify({ id: "r2", marker: "resumed", epochMs: 9500 }));
+        expect(local.lastLiveMarker("m3", dir)).toEqual({ marker: "resumed", epochMs: 9500 });
+        appendFileSync(path, `\n${text(9002)}`);
+        expect(local.lastLiveMarker("m3", dir)).toEqual({ marker: "resumed", epochMs: 9500 });
+    });
+
+    test("a truncated, replaced or rewritten transcript is read again from its end", () => {
+        const { dir, path, text } = longTranscript("m4", { before: 50, after: 5 });
+        expect(local.lastLiveMarker("m4", dir)).toEqual({ marker: "resumed", epochMs: 5000 });
+
+        // Truncated: shorter than where the last read ended.
+        writeFileSync(path, `${SafeJSON.stringify({ id: "p", marker: "paused", epochMs: 6000 })}\n`);
+        expect(local.lastLiveMarker("m4", dir)).toEqual({ marker: "paused", epochMs: 6000 });
+
+        // Rewritten in place and longer: the bytes before the last line end differ, so nothing read before is kept.
+        writeFileSync(
+            path,
+            `${text(1)}${SafeJSON.stringify({ id: "q", marker: "resumed", epochMs: 6500 })}\n${text(2)}${text(3)}`
+        );
+        expect(local.lastLiveMarker("m4", dir)).toEqual({ marker: "resumed", epochMs: 6500 });
+
+        // Replaced by a new file (a new inode) without a marker.
+        const next = `${path}.next`;
+        writeFileSync(next, `${text(4)}${text(5)}${text(6)}${text(7)}`);
+        fs.renameSync(next, path);
+        expect(local.lastLiveMarker("m4", dir)).toBeNull();
     });
 });

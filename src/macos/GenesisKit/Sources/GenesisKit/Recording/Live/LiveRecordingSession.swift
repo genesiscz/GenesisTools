@@ -1,9 +1,14 @@
 import Foundation
 
-/// What a recorder's socket said, laid over its live file: the newest state, frames, warning, connected displays and
-/// display mode. Pure, so the message shapes are tested without a socket.
+/// What a recorder's socket said, laid over its live file: the newest state, frames, warning, connected displays,
+/// display mode and a movie's recorded time. Pure, so the message shapes are tested without a socket.
 public struct LiveRecordingOverlay: Equatable, Sendable {
     public var state: String?
+    /// A movie's recorded time as the last `status` or `state` message said it, and when that message came in.
+    public var elapsedMs: Double?
+    public var elapsedAt: Date?
+    /// False while the recorded time stands still although the state says recording (a segment arms).
+    public var elapsedRunning = true
     public var frames: Int?
     public var lastFrameAt: Date?
     public var warning: String?
@@ -14,14 +19,19 @@ public struct LiveRecordingOverlay: Equatable, Sendable {
 
     public init() {}
 
-    /// The result of `status`, or the params of a `state` notification.
-    public mutating func applyStatus(_ value: Any?) {
+    /// The result of `status`, or the params of a `state` notification, received at `now`.
+    public mutating func applyStatus(_ value: Any?, now: Date = Date()) {
         guard let object = value as? [String: Any] else {
             if let text = value as? String { state = text }
             return
         }
 
         if let text = object["state"] as? String { state = text }
+        if let number = object["elapsedMs"] as? NSNumber {
+            elapsedMs = number.doubleValue
+            elapsedAt = now
+            elapsedRunning = object["elapsedRunning"] as? Bool ?? true
+        }
         if let number = object["frames"] as? NSNumber { frames = number.intValue }
         if let at = LiveRecordingStore.date(object["lastFrameAt"]) { lastFrameAt = at }
         if let text = object["mode"] as? String { mode = text }
@@ -60,6 +70,11 @@ public struct LiveRecordingOverlay: Equatable, Sendable {
     public func merged(into entry: LiveRecording) -> LiveRecording {
         var recording = entry
         if let state { recording.state = state }
+        if let elapsedMs, let elapsedAt {
+            recording.recordedMs = elapsedMs
+            recording.recordedAt = elapsedAt
+            recording.recordedRunning = elapsedRunning
+        }
         if let frames { recording.frames = max(frames, entry.frames) }
         if let lastFrameAt { recording.lastFrameAt = lastFrameAt }
         if warningReceived { recording.warning = warning }

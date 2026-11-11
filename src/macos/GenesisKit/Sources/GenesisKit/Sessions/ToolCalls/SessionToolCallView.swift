@@ -50,7 +50,7 @@ public enum TranscriptVerbosity: String, CaseIterable, Identifiable, Sendable {
         case .minimal: return "Chat only; tool work folded into one line per run"
         case .inputs: return "One line per tool call; click one to open it"
         case .outputs: return "Every tool call open, output trimmed"
-        case .verbose: return "Everything open, output not trimmed"
+        case .verbose: return "Everything open; long output folds at the length set in Settings"
         }
     }
 
@@ -70,15 +70,20 @@ public enum TranscriptVerbosity: String, CaseIterable, Identifiable, Sendable {
     public var bodyLimit: Int? { self == .verbose ? nil : 10 }
 }
 
-/// Which code blocks of a tool call wrap their long lines instead of scrolling sideways (Martin,
-/// 2026-09-30: long commands were clipped). Persisted by the transcript's toolbar.
+/// How a tool call's code blocks lay out: which wrap their long lines instead of scrolling sideways (Martin,
+/// 2026-09-30: long commands were clipped), and how many output lines show before "… +N lines". Persisted by the
+/// transcript's view menu and Settings (`TranscriptOutputFold`).
 public struct TranscriptWrap: Equatable, Sendable {
     public var inputs = false
     public var outputs = false
+    /// Output lines shown before "… +N lines" at every level that shows output, Verbose included; nil folds only at
+    /// the level's own limit. A failed call and an edit's diff keep their level's limit (hub UX C18).
+    public var outputFold: Int?
 
-    public init(inputs: Bool = false, outputs: Bool = false) {
+    public init(inputs: Bool = false, outputs: Bool = false, outputFold: Int? = nil) {
         self.inputs = inputs
         self.outputs = outputs
+        self.outputFold = outputFold
     }
 
     public var any: Bool { inputs || outputs }
@@ -229,6 +234,10 @@ public struct ToolPresentation: Equatable {
     /// so it opens even at a trimming level, and a long one is cut until the reader asks.
     public var bodyCap: Int?
 
+    /// The result is laid out in columns (`--help`, `ls -l`, a table): wrapped, its right column broke into
+    /// fragments, so it scrolls sideways even while outputs wrap (hub UX C18).
+    public var columnar = false
+
     /// Lines of a Write's content before "… +N lines".
     public static let writeCap = 20
     /// Lines of an Edit's diff before "… +N lines".
@@ -258,6 +267,7 @@ public struct ToolPresentation: Equatable {
             filePath: path,
             line: loaded?.editStart
         )
+        presentation.columnar = resultBlock.map { isColumnar($0.lines.map(\.text)) } ?? false
         let count = resultBlock?.lines.count ?? lineCount(resultText)
         let rawInput = detail?.command ?? line.input
         // A call whose header shows one field of its input (an Agent's description, a Grep's
@@ -386,6 +396,39 @@ public struct ToolPresentation: Equatable {
         return first.utf8.count > 400 ? String(decoding: first.utf8.prefix(400), as: UTF8.self) + "…" : first
     }
 
+    /// Text in columns: at least three lines, and a third of the non-blank ones, hold a gap of two or more spaces (or a
+    /// tab, or a box-drawing bar) between two words, as `--help` flag lists, `ls -l`, `git branch -vv` and tables do.
+    /// Indentation alone is no column: the gap must follow text on its line.
+    public static func isColumnar(_ lines: [String]) -> Bool {
+        var filled = 0
+        var columned = 0
+        for line in lines.prefix(400) {
+            let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+            guard !trimmed.isEmpty else { continue }
+            filled += 1
+            if trimmed.contains("\t") || trimmed.contains("│") || trimmed.contains("  ") && hasInnerGap(trimmed) {
+                columned += 1
+            }
+        }
+        return columned >= 3 && columned * 3 >= filled
+    }
+
+    /// A run of two or more spaces with text on both sides.
+    private static func hasInnerGap(_ text: Substring) -> Bool {
+        var spaces = 0
+        var seenText = false
+        for character in text {
+            if character == " " {
+                spaces += 1
+            } else {
+                if seenText, spaces >= 2 { return true }
+                seenText = true
+                spaces = 0
+            }
+        }
+        return false
+    }
+
     /// Lines of a result as `CodeBlockBuilder.numbered` would make them, without building them.
     private static func lineCount(_ text: String) -> Int {
         guard !text.isEmpty else { return 0 }
@@ -464,8 +507,14 @@ public struct ToolCallRowView: View, Equatable {
         let cached = open && finished ? services.loaded(toolId: toolId) : nil
         let current = loadedFrom == ObjectIdentifier(services) ? (loaded ?? cached) : (cached ?? loaded)
         let presentation = ToolPresentation.make(line: line, loaded: current, context: context, cwd: services.cwd, body: open)
-        // Edit and Write caps apply only at a trimming verbosity: Verbose shows every line of everything.
+        // Edit and Write caps apply only at a trimming verbosity: Verbose shows every line of an input and a diff.
         let cap = verbosity.bodyLimit == nil ? nil : (presentation.bodyCap ?? verbosity.bodyLimit)
+        // A plain output folds at the reader's fold (`TranscriptWrap.outputFold`) at every level, Verbose included: long
+        // `--help` output filled the reading column (hub UX C18). A failure and an edit's diff keep the level's cap.
+        let outputCap: Int? = {
+            guard let fold = wrap.outputFold, !presentation.inputFirst, !presentation.failed else { return cap }
+            return cap.map { min($0, fold) } ?? fold
+        }()
         VStack(alignment: .leading, spacing: 2) {
             Button { onToggle(rowId) } label: { header(presentation) }
                 .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 7))
@@ -476,8 +525,10 @@ public struct ToolCallRowView: View, Equatable {
                 ToolResultBody(
                     rowId: rowId,
                     presentation: presentation,
-                    limit: showAll ? nil : cap,
-                    expandedByReader: showAll && cap != nil,
+                    inputLimit: showAll ? nil : cap,
+                    limit: showAll ? nil : outputCap,
+                    foldsAt: outputCap,
+                    expandedByReader: showAll && outputCap != nil,
                     wrap: wrap,
                     canAddContext: current?.fileLines != nil && (current?.detail.edits.count ?? 0) == 1,
                     onShowAll: { onToggle(rowId + "#all") },
@@ -603,7 +654,12 @@ public struct ToolCallRowView: View, Equatable {
 private struct ToolResultBody: View {
     let rowId: String
     let presentation: ToolPresentation
+    /// Lines of the input block before "… +N input lines"; nil shows all.
+    let inputLimit: Int?
+    /// Lines of the output block before "… +N lines"; nil shows all.
     let limit: Int?
+    /// Where the output folds when the reader has not asked for every line: "Show fewer lines" folds it back there.
+    let foldsAt: Int?
     /// The reader pressed "… +N lines" at a verbosity that trims the body. The "show fewer" link only
     /// makes sense then.
     let expandedByReader: Bool
@@ -619,12 +675,12 @@ private struct ToolResultBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let input = presentation.input {
-                CodeBlockText(block: input, limit: limit, cacheKey: rowId + "#in", wrap: wrap.inputs)
+                CodeBlockText(block: input, limit: inputLimit, cacheKey: rowId + "#in", wrap: wrap.inputs)
                     .padding(.leading, 16)
                     .padding(.bottom, 2)
-                if let limit, input.lines.count > limit {
+                if let inputLimit, input.lines.count > inputLimit {
                     Button(action: onShowAll) {
-                        Text(verbatim: "… +\(input.lines.count - limit) input lines")
+                        Text(verbatim: "… +\(input.lines.count - inputLimit) input lines")
                             .font(SessionPalette.mono(11.5))
                             .foregroundStyle(SessionPalette.blue)
                     }
@@ -637,7 +693,8 @@ private struct ToolResultBody: View {
                 status
             }
             if let block = presentation.block, !block.lines.isEmpty {
-                CodeBlockText(block: block, limit: limit, cacheKey: rowId, wrap: wrap.outputs)
+                // Columns never wrap: they scroll sideways, so a flag list keeps its two columns.
+                CodeBlockText(block: block, limit: limit, cacheKey: rowId, wrap: wrap.outputs && !(presentation.columnar && !presentation.inputFirst))
                     .padding(.leading, 16)
                     .background(ClickUpCatcher(action: onCollapse))
                 if let limit, block.lines.count > limit {
@@ -650,7 +707,7 @@ private struct ToolResultBody: View {
                     .padding(.leading, 16)
                     .instantTooltip("Show every line")
                     .accessibilityIdentifier("transcript-tool-show-all")
-                } else if limit == nil, block.lines.count > (presentation.bodyCap ?? TranscriptVerbosity.outputs.bodyLimit ?? 0), expandedByReader {
+                } else if limit == nil, let foldsAt, block.lines.count > foldsAt, expandedByReader {
                     Button(action: onShowAll) {
                         Text("Show fewer lines")
                             .font(.system(size: 11, weight: .semibold))

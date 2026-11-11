@@ -8,7 +8,10 @@ import Foundation
 /// The service names its socket in `<recordings>/service.json` (`{ version, protocol, pid, socket, startedAt,
 /// codeStamp }`). When no live service answers there, the host starts one and waits for its socket with a bounded,
 /// slow retry. A dropped connection is tried again after a few seconds, longer after each failure in a row; a start
-/// that keeps failing (an older `tools` without `serve`) is not repeated for the rest of the face's life.
+/// that keeps failing (an older `tools` without `serve`, or a source file caught half edited) is then tried only once
+/// per `failedStartRetry`, never given up: on 2026-11-09 three starts failed on a half-edited file within two minutes,
+/// the host stopped starting for good, and a camera recording 4 minutes later found no service and failed.
+/// `attachNow()` (a forwarded launch, which the service sends when a caller waits for the host) tries again at once.
 @MainActor
 final class RecorderServiceHost {
     /// The host the recorder face runs, for the code that tells the service about a change (`window.changed`).
@@ -36,6 +39,8 @@ final class RecorderServiceHost {
         /// The least time between two starts of the service, and how many failed starts end the starting.
         var startThrottle: TimeInterval = 30
         var maxFailedStarts = 3
+        /// After `maxFailedStarts` failed starts in a row, the least time between two more.
+        var failedStartRetry: TimeInterval = 60
         var helloTimeout: TimeInterval = 5
     }
 
@@ -98,6 +103,22 @@ final class RecorderServiceHost {
 
     func start() {
         guard state == .idle || state == .stopped else { return }
+        attempt()
+    }
+
+    /// Someone needs the host now (the service launched the face for a camera or window call): a host that is not
+    /// connected looks for the service at once and may start one, whatever failed before.
+    func attachNow() {
+        switch state {
+        case .connected, .connecting, .waitingForService:
+            return
+        case .idle, .retrying, .stopped:
+            break
+        }
+        HubPerf.log("recorder.host: asked to attach now (was \(state))")
+        failures = 0
+        failedStarts = 0
+        lastStart = nil
         attempt()
     }
 
@@ -186,11 +207,8 @@ final class RecorderServiceHost {
             handshake(connected)
             return
         }
-        guard failedStarts < timing.maxFailedStarts else {
-            retryLater()
-            return
-        }
-        if let lastStart, Date().timeIntervalSince(lastStart) < timing.startThrottle {
+        let throttle = failedStarts < timing.maxFailedStarts ? timing.startThrottle : timing.failedStartRetry
+        if let lastStart, Date().timeIntervalSince(lastStart) < throttle {
             retryLater()
             return
         }

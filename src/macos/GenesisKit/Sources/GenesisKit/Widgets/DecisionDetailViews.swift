@@ -5,26 +5,33 @@ import SwiftUI
 // the widget"). The data is `DecisionRef` and `DecisionDelivery` (DecisionDetails.swift).
 
 /// A decision's Context section: the findings that lead to it, in markdown, folded at `foldHeight` with a fade at
-/// the cut and Show all / Show less while it is taller than that.
+/// the cut and Show more / Show less while it is taller than that. A decision quoted inside it (another decision's
+/// "❓ DECISION N: title" with its a) b) c) lines) is drawn as a blockquote of plain lines (`quotingDecisions`): drawn
+/// as a list under the card's own options, it read as a second set of answers (hub UX council, 2026-11-09).
 public struct DecisionContextSection: View {
-    /// The hub card's fold: about eight lines of 12 pt text.
+    /// The widget's fold: about eight lines of 12 pt text.
     public static let foldHeight: CGFloat = 150
+    /// The hub card's fold: five lines of the context's prose. Two lines (hub UX council, 2026-11-09) left the reasoning
+    /// shorter than the code under it, "upside down" (Martin, 2026-11-10, annotation 2394).
+    public static let fiveLines: CGFloat = 96
 
     let markdown: String
     /// Open in full from the start (the widget's Decision context setting); Show less still folds it.
     let startsOpen: Bool
     /// Whole whatever the reader chose: the hub's panel find has its current match inside it.
     let forcedOpen: Bool
-    /// The reader's Show all / Show less; nil follows `startsOpen`.
+    let fold: CGFloat
+    /// The reader's Show more / Show less; nil follows `startsOpen`.
     @State private var showAll: Bool?
-    /// Taller than the fold: only then does it fade at the cut and offer Show all.
+    /// Taller than the fold: only then does it fade at the cut and offer Show more.
     @State private var overflows = false
     @GenReduceMotion private var reduceMotion
 
-    public init(markdown: String, startsOpen: Bool = false, forcedOpen: Bool = false) {
-        self.markdown = markdown
+    public init(markdown: String, startsOpen: Bool = false, forcedOpen: Bool = false, foldHeight: CGFloat = Self.foldHeight) {
+        self.markdown = Self.quotingDecisions(markdown)
         self.startsOpen = startsOpen
         self.forcedOpen = forcedOpen
+        fold = foldHeight
     }
 
     private var revealed: Bool { (showAll ?? startsOpen) || forcedOpen }
@@ -39,7 +46,7 @@ public struct DecisionContextSection: View {
                         let revealing = !revealed
                         GenMotion.perform(expanding: revealing, reduceMotion: reduceMotion) { showAll = revealing }
                     } label: {
-                        Text(revealed ? "Show less" : "Show all")
+                        Text(revealed ? "Show less" : "Show more")
                     }
                         .font(.system(size: 10.5))
                         .foregroundColor(KitPalette.renamed)
@@ -48,16 +55,17 @@ public struct DecisionContextSection: View {
             }
             // Folded, a long context fades out at the cut instead of ending mid-line (H16).
             let faded = overflows && !revealed
+            let fold = fold
             MarkdownContentView(markdown: markdown, style: .decisionContext)
                 .fixedSize(horizontal: false, vertical: true)
-                .onGeometryChange(for: Bool.self, of: { $0.size.height > Self.foldHeight + 1 }) { overflows = $0 }
-                .frame(maxHeight: revealed ? nil : Self.foldHeight, alignment: .top)
+                .onGeometryChange(for: Bool.self, of: { $0.size.height > fold + 1 }) { overflows = $0 }
+                .frame(maxHeight: revealed ? nil : fold, alignment: .top)
                 .clipped()
                 .mask {
                     VStack(spacing: 0) {
                         Rectangle()
                         LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                            .frame(height: faded ? 36 : 0)
+                            .frame(height: faded ? min(36, fold / 2) : 0)
                     }
                 }
                 // A file link in it opens by the widget's Clicking a file link setting; right-click lists the ways.
@@ -66,6 +74,76 @@ public struct DecisionContextSection: View {
         // A plain block with a rule on its left, not a filled box inside the card (P8: a card in a card).
         .leadingRule(Color.white.opacity(0.12))
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension DecisionContextSection {
+    /// A line that opens a quoted decision: "❓ **DECISION 11**: title", also as a heading or a list item, with the
+    /// number as a link or not. The colon after it is required: a sentence that only mentions a decision is no quote.
+    private static let quoteStart = try! NSRegularExpression(
+        pattern: #"^\s{0,3}(?:#{1,6}\s+)?(?:[-*+]\s+)?(?:❓\s*)?\**\[?\s*(?:❓\s*)?\**DECISION\s+\d+\**\]?(?:\([^)]*\))?\**\s*:"#)
+    /// An option line of a quoted decision: "- **a)** words", "b) words", "**(c)** words".
+    private static let optionLine = try! NSRegularExpression(
+        pattern: #"^\s*(?:[-*+]\s+)?\**\(?([a-z])\)\**\s*(.*)$"#)
+    private static let headingMarks = try! NSRegularExpression(pattern: #"^\s{0,3}(?:#{1,6}\s+)?(?:[-*+]\s+)?(?:❓\s*)?"#)
+
+    /// Another decision quoted in a context becomes a blockquote: its title line says "Quoted", its description stays,
+    /// and each option is a plain "a) words" line right under the one before, never a list item that looks like the
+    /// card's own option rows. The quote ends at the first prose line after its options, a heading, or the next quoted
+    /// decision.
+    public static func quotingDecisions(_ markdown: String) -> String {
+        guard markdown.contains("DECISION") else { return markdown }
+        func matches(_ regex: NSRegularExpression, _ line: String) -> NSTextCheckingResult? {
+            regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line))
+        }
+        var out: [String] = []
+        var quoting = false
+        var seenOption = false
+        var blanks = 0
+        for line in markdown.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if matches(quoteStart, line) != nil {
+                if quoting { out.append(contentsOf: Array(repeating: "", count: max(blanks, 1))) }
+                let range = NSRange(line.startIndex..., in: line)
+                let title = headingMarks.stringByReplacingMatches(in: line, range: range, withTemplate: "")
+                out.append("> Quoted: \(title)")
+                quoting = true
+                seenOption = false
+                blanks = 0
+                continue
+            }
+            guard quoting else {
+                out.append(line)
+                continue
+            }
+            if trimmed.isEmpty {
+                blanks += 1
+                continue
+            }
+            let heading = trimmed.hasPrefix("#")
+            if let option = matches(optionLine, line), !heading,
+               let letter = Range(option.range(at: 1), in: line), let words = Range(option.range(at: 2), in: line) {
+                // One empty quote line between the description and the first option; the options follow each other
+                // on consecutive lines (the quote keeps its line breaks), not as paragraphs with gaps between.
+                if !seenOption { out.append(">") }
+                out.append("> \(line[letter])) \(line[words])")
+                seenOption = true
+                blanks = 0
+                continue
+            }
+            if heading || seenOption {
+                out.append(contentsOf: Array(repeating: "", count: max(blanks, 1)))
+                out.append(line)
+                quoting = false
+                blanks = 0
+                continue
+            }
+            if blanks > 0 { out.append(">") }
+            out.append("> \(line)")
+            blanks = 0
+        }
+        if !quoting { out.append(contentsOf: Array(repeating: "", count: blanks)) }
+        return out.joined(separator: "\n")
     }
 }
 
@@ -97,6 +175,9 @@ public struct DecisionCodeSection: View {
 struct DecisionExcerpt: View {
     let ref: DecisionRef
     let root: String?
+    /// The reader opened every line of the excerpt; folded, it shows the five lines around the cited one.
+    @State private var allLines = false
+    @GenReduceMotion private var reduceMotion
     /// The panel find's key of the path (`ref:<index>`), as the hub's ⌘F lists it.
     let field: String
     /// The card around it is live; the excerpt is a row of the card's list, so it takes the card's liveness.
@@ -142,18 +223,45 @@ struct DecisionExcerpt: View {
                 }
             }
             if let excerpt = ref.excerpt, !excerpt.isEmpty {
+                let start = ref.startLine ?? ref.line ?? 1
+                let window = Self.window(excerpt, start: start, focus: ref.line, open: allLines)
                 CodeBlockText(
-                    block: CodeBlockBuilder.numbered(excerpt, start: ref.startLine ?? ref.line ?? 1,
+                    block: CodeBlockBuilder.numbered(window.text, start: window.start,
                                                      language: SyntaxLanguage.forPath(ref.path), focus: ref.line),
                     limit: nil,
-                    cacheKey: "inbox-\(ref.path):\(ref.line ?? 0)"
+                    cacheKey: "inbox-\(ref.path):\(ref.line ?? 0):\(window.start)-\(window.count)"
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // The code reads as a block by its rule and its monospaced lines, not by a filled box (P8).
                 .leadingRule(Color.white.opacity(0.12))
+                if window.total > Self.foldedLines {
+                    LiveButton(tooltip: nil, pressable: true) {
+                        let opening = !allLines
+                        GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { allLines = opening }
+                    } label: {
+                        Text(allLines ? "Show \(Self.foldedLines) lines" : "Show all \(window.total) lines")
+                    }
+                    .font(.system(size: 10.5))
+                    .foregroundColor(KitPalette.renamed)
+                    .accessibilityValue(allLines ? "Expanded" : "Collapsed")
+                }
             }
         }
         .liveRow(selected: cardLive)
+    }
+
+    /// An excerpt shows this many lines until the reader opens it (Martin, 2026-11-10: "the code 5 lines but expandable").
+    static let foldedLines = 5
+
+    /// The lines an excerpt shows: all of them when `open`, else `foldedLines` around the cited line (the first ones
+    /// without one), with the file line number of the first.
+    static func window(_ excerpt: String, start: Int, focus: Int?, open: Bool) -> (text: String, start: Int, count: Int, total: Int) {
+        let lines = excerpt.components(separatedBy: "\n")
+        guard !open, lines.count > foldedLines else { return (excerpt, start, lines.count, lines.count) }
+        let cited = focus.map { $0 - start } ?? 0
+        let first = min(max(0, cited - foldedLines / 2), lines.count - foldedLines)
+        let shown = lines[first..<(first + foldedLines)].joined(separator: "\n")
+        return (shown, start + first, foldedLines, lines.count)
     }
 
     private func open() {

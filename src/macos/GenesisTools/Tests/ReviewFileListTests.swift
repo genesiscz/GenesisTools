@@ -108,7 +108,8 @@ final class ReviewFileListTests: XCTestCase {
     func testTheCachedRowsFollowEveryInputTheyAreBuiltFrom() {
         let model = twoRootModel()
         func fresh() -> [ChangedFilesTreeRow] {
-            ChangedFilesTree.rows(model.filteredFiles, tree: model.fileListIsTree, collapsed: model.collapsed, roots: model.fileListTreeRoots)
+            ChangedFilesTree.rows(model.filteredFiles, tree: model.fileListIsTree, collapsed: model.collapsed, roots: model.fileListTreeRoots,
+                                  foldAbove: model.foldAbove, opened: model.opened)
         }
         var last = model.fileListRows
         XCTAssertEqual(last, fresh())
@@ -169,6 +170,27 @@ final class ReviewFileListTests: XCTestCase {
         }
     }
 
+    /// A folder with more files than the setting starts folded unless it holds half of the change or more; one the
+    /// reader opens stays open, and a fold by hand still wins (hub UX C26).
+    func testABigFolderStartsFoldedUntilTheReaderOpensIt() {
+        let files = (0..<30).map { file(String(format: "src/assets/img%02d.png", $0)) }
+            + (0..<40).map { file(String(format: "src/lib/file%02d.ts", $0)) }
+        func open(_ rows: [ChangedFilesTreeRow]) -> [String: Bool] {
+            Dictionary(uniqueKeysWithValues: rows.filter(\.isFolder).map { ($0.id, $0.expanded) })
+        }
+        let folded = open(ChangedFilesTree.rows(files, tree: true, collapsed: [], foldAbove: 20))
+        XCTAssertEqual(folded["dir:src"], true, "src holds every file, so it stays open")
+        XCTAssertEqual(folded["dir:src/assets"], false, "30 of 70 files: above 20 and under half")
+        XCTAssertEqual(folded["dir:src/lib"], true, "40 of 70 files: the folder most of the change is in")
+
+        let opened = open(ChangedFilesTree.rows(files, tree: true, collapsed: [], foldAbove: 20, opened: ["dir:src/assets"]))
+        XCTAssertEqual(opened["dir:src/assets"], true, "opened by the reader")
+        let off = open(ChangedFilesTree.rows(files, tree: true, collapsed: [], foldAbove: 0))
+        XCTAssertEqual(off["dir:src/assets"], true, "0 never folds")
+        let byHand = open(ChangedFilesTree.rows(files, tree: true, collapsed: ["dir:src/lib"], foldAbove: 20))
+        XCTAssertEqual(byHand["dir:src/lib"], false, "a fold by hand")
+    }
+
     /// The list draws in GenesisKit's table (`GenTreeTable`): one table row per list row, a fold takes the folder's
     /// rows out, and a scroll target (the diff's file on top, a reveal) brings its row on screen.
     func testTheTableShowsTheRowsFoldsAndScrollsToTheTarget() throws {
@@ -176,6 +198,8 @@ final class ReviewFileListTests: XCTestCase {
         var tools = ReviewRoot(folder: base.appendingPathComponent("tools").path, repo: base.appendingPathComponent("tools"))
         tools.files = (0..<300).map { file(String(format: "src/part%d/file%03d.ts", $0 / 100, $0)) }
         model.setRoots([tools])
+        // Every folder open, whatever the reader's Files setting: this test counts the table's rows.
+        model.foldAbove = 0
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 620), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.alphaValue = 0

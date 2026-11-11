@@ -67,7 +67,7 @@ struct ProgressBarSection: View {
         let bar = model.project.progress
         VStack(alignment: .leading, spacing: 8) {
             SwitchRow("Progress bar", isOn: Binding(get: { bar?.show == true }, set: { on in set { $0.show = on } }))
-                .instantTooltip("A thin bar along the bottom of the movie showing how much has played, divided at the markers")
+                .instantTooltip("A thin bar along the bottom edge of the canvas showing how much has played, divided at the markers")
                 .accessibilityIdentifier("recorder.style.progress")
             if let bar, bar.show {
                 HStack(spacing: 8) {
@@ -102,11 +102,11 @@ struct ProgressBarSection: View {
                         Text("Bottom right").tag(EditProject.ChapterPlace.bottomRight)
                     }
                     .font(.system(size: 12.5))
-                    .instantTooltip("Free area puts the name beside the movie (the frame's padding or a phone preset's free side), never over it")
+                    .instantTooltip("Free area puts the name beside the movie (the frame's padding or a phone preset's free side), never over it; without a frame it sits at the bottom left above the bar")
                     .accessibilityIdentifier("recorder.style.progressChapterPlace")
                     SectionLabel(text: "Name shows for", value: String(format: "%.1f s", Double(bar.chapterMs) / 1000))
                     Slider(value: Binding(get: { Double(bar.chapterMs) }, set: { value in set { $0.chapterMs = Int((value / 250).rounded() * 250) } }),
-                           in: 500...6000)
+                           in: EditLimits.progressChapterMs)
                         .accessibilityLabel("How long a chapter's name shows")
                 }
                 if model.markers.isEmpty {
@@ -124,6 +124,17 @@ struct ProgressBarSection: View {
 /// length, and a still of each as the export draws it (the preview plays the movie alone).
 struct CardsSection: View {
     @Bindable var model: EditorModel
+
+    /// The logo types the picker offers: the ones CoreImage decodes, whose file extensions are the ones the edit
+    /// accepts (PICTURE_EXTENSIONS in src/utils/recording-editor/overlays.ts). `.image` also offered SVG, PSD and
+    /// JPEG 2000 files, which the edit refused or the export could not draw.
+    static let logoTypes: [UTType] = [.png, .jpeg, .heic, .heif, .tiff, .gif, .webP, .bmp]
+
+    /// Why the export cannot draw the file at `url` as a logo, or nil when CoreImage decodes it (the frame
+    /// background's picker has the same rule).
+    static func logoRefusal(_ url: URL) -> String? {
+        CIImage(contentsOf: url) == nil ? "\(url.lastPathComponent) is not a picture this Mac can read." : nil
+    }
 
     private func setIntro(_ change: @escaping (inout EditProject.IntroCard?) -> Void) {
         model.setLooks { project in
@@ -152,15 +163,19 @@ struct CardsSection: View {
             .instantTooltip("A title card the export plays before the movie, on the frame's background")
             .accessibilityIdentifier("recorder.style.introCard")
             if let intro {
-                field("Title", intro.title) { value in if !value.trimmingCharacters(in: .whitespaces).isEmpty { setIntro { $0?.title = value } } }
-                field("Subtitle", intro.subtitle ?? "") { value in setIntro { $0?.subtitle = value.isEmpty ? nil : value } }
-                field("Date", intro.date ?? "") { value in setIntro { $0?.date = value.isEmpty ? nil : value } }
+                field("Title", intro.title, EditLimits.introTitle) { value in if !value.trimmingCharacters(in: .whitespaces).isEmpty { setIntro { $0?.title = value } } }
+                field("Subtitle", intro.subtitle ?? "", EditLimits.introSubtitle) { value in setIntro { $0?.subtitle = value.isEmpty ? nil : value } }
+                field("Date", intro.date ?? "", EditLimits.introDate) { value in setIntro { $0?.date = value.isEmpty ? nil : value } }
                 HStack(spacing: 8) {
                     WideButton(title: intro.logo == nil ? "Add a Logo…" : "Other Logo…", systemImage: "photo") {
                         let panel = NSOpenPanel()
-                        panel.allowedContentTypes = [.image]
+                        panel.allowedContentTypes = Self.logoTypes
                         panel.message = "A logo for the intro card"
                         guard panel.runModal() == .OK, let url = panel.url else { return }
+                        if let refusal = Self.logoRefusal(url) {
+                            model.show(refusal, error: true)
+                            return
+                        }
                         setIntro { $0?.logo = url.path }
                     }
                     if intro.logo != nil {
@@ -176,8 +191,8 @@ struct CardsSection: View {
             .instantTooltip("A card the export plays after the movie: a line, a link and its QR code")
             .accessibilityIdentifier("recorder.style.endCard")
             if let end {
-                field("Text", end.text) { value in if !value.trimmingCharacters(in: .whitespaces).isEmpty { setEnd { $0?.text = value } } }
-                field("Link", end.link ?? "") { value in setEnd { card in
+                field("Text", end.text, EditLimits.endText) { value in if !value.trimmingCharacters(in: .whitespaces).isEmpty { setEnd { $0?.text = value } } }
+                field("Link", end.link ?? "", EditLimits.endLink) { value in setEnd { card in
                     card?.link = value.isEmpty ? nil : value
                     if value.isEmpty { card?.qr = false }
                 } }
@@ -195,8 +210,8 @@ struct CardsSection: View {
         }
     }
 
-    private func field(_ title: String, _ value: String, set: @escaping (String) -> Void) -> some View {
-        TextField(title, text: Binding(get: { value }, set: { set(String($0.prefix(200))) }))
+    private func field(_ title: String, _ value: String, _ words: EditLimits.Words, set: @escaping (String) -> Void) -> some View {
+        DraftTextField(title: title, stored: value, words: words, refuse: { model.show($0, error: true) }, set: set)
             .textFieldStyle(.roundedBorder)
             .accessibilityLabel(title)
     }
@@ -204,7 +219,7 @@ struct CardsSection: View {
     private func seconds(_ title: String, _ value: Double, set: @escaping (Double) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(text: title, value: String(format: "%.1f s", value))
-            Slider(value: Binding(get: { value }, set: { set(($0 * 2).rounded() / 2) }), in: 1...10)
+            Slider(value: Binding(get: { value }, set: { set(($0 * 2).rounded() / 2) }), in: EditLimits.cardSeconds)
                 .accessibilityLabel(title)
         }
     }
@@ -217,20 +232,23 @@ private struct CardStill: View {
     @State private var image: CGImage?
 
     var body: some View {
+        // The export's canvas shape (9:16, 1:1, a portrait source), so the still is the card the export plays.
+        let size = Looks.cardStillSize(project)
         Group {
             if let image {
                 Image(decorative: image, scale: 2).resizable().aspectRatio(contentMode: .fit)
             } else {
-                Rectangle().fill(Color.white.opacity(0.05)).aspectRatio(16 / 9, contentMode: .fit)
+                Rectangle().fill(Color.white.opacity(0.05)).aspectRatio(size.width / size.height, contentMode: .fit)
             }
         }
+        // A tall still would make the sidebar long.
+        .frame(maxHeight: 240)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .accessibilityLabel("A still of the card")
-        .task(id: "\(kind)|\(String(describing: project.frame?.background))") {
+        .task(id: "\(kind)|\(String(describing: project.frame?.background))|\(size.width)x\(size.height)") {
             let project = project
             let kind = kind
             image = await Task.detached(priority: .utility) {
-                let size = CGSize(width: 640, height: 360)
                 let frame = CardSpans.Frame(kind: kind, sinceUs: Looks.cardFadeUs, lengthUs: Looks.cardFadeUs * 3)
                 let drawn = Looks.drawCard(frame, project: project, plates: TextPlates(), size: size)
                 return CIContext().createCGImage(drawn, from: CGRect(origin: .zero, size: size))
@@ -260,10 +278,20 @@ struct TextAnimateControls: View {
                 SectionLabel(text: "Takes", value: String(format: "%.1f s", Double(animate.ms) / 1000))
                 Slider(value: Binding(get: { Double(animate.ms) }, set: { value in
                     model.updateText(id) { $0.animate?.ms = Int((value / 100).rounded() * 100) }
-                }), in: 100...3000)
+                }), in: EditLimits.textAnimateMs)
                 .accessibilityLabel("How long the text takes to come in")
                 .accessibilityIdentifier("recorder.text.animateMs")
             }
         }
+    }
+}
+
+extension EditLimits.Words {
+    /// A field's binding: a value that fits is sent whole, and one past the limit is refused aloud and never sent, so
+    /// the field keeps what it had (a longer value set through the API is never cut by an unrelated keystroke).
+    func binding(_ value: String, set: @escaping (String) -> Void, refuse: @escaping (String) -> Void) -> Binding<String> {
+        Binding(get: { value }, set: { typed in
+            if let refusal = refusal(typed) { refuse(refusal) } else { set(typed) }
+        })
     }
 }

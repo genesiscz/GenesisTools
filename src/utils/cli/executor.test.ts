@@ -362,6 +362,15 @@ describe("Executor bounded calls", () => {
 
         expect(result).toMatchObject({ success: true, stdout: "ran" });
     });
+
+    test("trim false keeps the leading space of NUL-delimited output, and the default still trims", async () => {
+        const script = "process.stdout.write(' lead.txt\\0next.txt\\0\\n')";
+        const raw = await new Executor().exec([process.execPath, "-e", script], { trim: false });
+        const trimmed = await new Executor().exec([process.execPath, "-e", script]);
+
+        expect(raw.stdout).toBe(" lead.txt\0next.txt\0\n");
+        expect(trimmed.stdout).toBe("lead.txt\0next.txt\0");
+    });
 });
 
 describe("PLAIN_OUTPUT_ENV", () => {

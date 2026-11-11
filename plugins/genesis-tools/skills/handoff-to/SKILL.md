@@ -24,7 +24,7 @@ Higher = better. **Cost** = what is actually paid (not list price). **Intelligen
 
 | model | cost | intelligence | taste |
 |---|---|---|---|
-| fable-5-1 | 2 | 10 | 9 |
+| fable-5-2 | 3 | 10 | 9 |
 | gpt-6-astra | 2 | 9 | 7 |
 | opus-5-5 | 5 | 9 | 9 |
 | gpt-6.1-sol | 9 | 8 | 7 |
@@ -38,9 +38,10 @@ Higher = better. **Cost** = what is actually paid (not list price). **Intelligen
 <!-- updated 2026-09-30: gpt-6.1-sol replaces gpt-6-sol and sonnet-5-5 replaces sonnet-5, both from launch data -->
 <!-- updated 2026-10-13 17:32: haiku-5-5 added from launch data; sonnet-5-5 cache reads halved -->
 <!-- updated 2026-10-27 03:48: gpt-6.1-terra added from launch data (released 2026-10-26) -->
+<!-- updated 2026-11-10 03:51: fable-5-2 replaces fable-5-1 (released 2026-11-09, $8/$40, about 30% faster output) -->
 
-List prices per MTok (input/output), from the vendor pages on 2026-10-13: fable-5-1 and gpt-6-astra
-$10/$50, opus-5-5 $4/$20, gpt-6.1-sol $2/$10, sonnet-5-5 $2/$10, gpt-6-luna $0.10/$0.50,
+List prices per MTok (input/output), from the vendor pages on 2026-10-13: gpt-6-astra
+$10/$50, fable-5-2 $8/$40 (2026-11-10; fast mode $16/$80), opus-5-5 $4/$20, gpt-6.1-sol $2/$10, sonnet-5-5 $2/$10, gpt-6-luna $0.10/$0.50,
 haiku-5-5 $0.10/$0.50 (5x for a prompt over 100K tokens), grok-4.7 $2/$6. Sonnet 5.5 cache reads cost
 $0.10 since 2026-10-07, half the earlier $0.20.
 gpt-6.1-terra (2026-10-26) costs $1/$5 with cached input at $0.05: half of gpt-6.1-sol, with the same 272K
@@ -63,8 +64,9 @@ Launch benchmarks behind the scores (vendor-reported, different harnesses, so re
 - FrontierCode v1.1 Main: opus-5-5 54.4%, gpt-6-astra 53.3%, fable-5-1 50.3 to 50.9%.
 - Humanity's Last Exam with tools: fable-5-1 65.0%, gpt-6-astra 57.2%. Artificial Analysis Coding Agent Index: fable-5-1 70, gpt-6-astra 67.
 
-fable-5-1 keeps intelligence 10 for the hardest ambiguous reasoning; opus-5-5 matches or beats it on agentic
-coding at 40% of the price, so it is the default Claude worker for work that ships. The grok-4.7 scores are
+fable-5-2 keeps intelligence 10 for the hardest ambiguous reasoning (the benchmark lines above are fable-5-1's
+launch numbers; 5.2 is its successor at 80% of the price). opus-5-5 matches or beats fable-5-1 on agentic
+coding at half of fable-5-2's price, so it stays the default Claude worker for work that ships. The grok-4.7 scores are
 provisional (added 2026-09-23 from launch data only); re-rank after real use.
 
 How to apply:
@@ -73,7 +75,7 @@ How to apply:
 - Cost is a tie-breaker only. When axes conflict for anything that ships: intelligence > taste > cost.
 - Codex mechanical work and bounded exploration use Luna, and implementation requiring judgment uses GPT-6.1 Sol (`gpt-6.1-sol`, the `sol` alias). Do not pick `gpt-6-sol`: 6.1 Sol is stronger at the same list price and cheaper on cached input. Use Astra for the difficult cases described below.
 - Anything user-facing (UI, copy, API design) needs taste ≥ 7.
-- Claude plan/implementation reviews: opus-5-5 by default, fable-5-1 when the problem needs the deepest reasoning. Codex code-review workers use gpt-6.1-sol unless the user requests another model. For a cheaper Claude worker, use sonnet-5-5.
+- Claude plan/implementation reviews: opus-5-5 by default, fable-5-2 when the problem needs the deepest reasoning. Codex code-review workers use gpt-6.1-sol unless the user requests another model. For a cheaper Claude worker, use sonnet-5-5.
 - Never Haiku 4.5 for work that ships (thin wrapper/relay agents are fine). Haiku 5.5 beats gpt-6-luna on Anthropic's launch benchmarks (Terminal-Bench 4.0 39.2% against 16.4%, OSWorld 2.1 72.4% against 48.9%), so it fits the same mechanical and exploration work Luna does; not design or user-facing work.
 - GPT-6 Astra, Sol and Luna use native Codex collaboration when exposed by the host, or the Codex CLI otherwise. Codex native run aliases include Astra, Sol, Terra (`gpt-6.1-terra`) and Luna; see its reference for named-account launch. Grok supports subscription and explicit API-key worker auth as described in its reference. Claude models use Claude Code's `Agent`/`Workflow`, or the separate process in `references/claude.md`. A native Codex GPT subagent can drive that process, but remains the driver rather than the Claude execution model.
 - **Spreading load across Claude accounts is a billing decision, not a quality one.** `references/claude.md` changes who pays; it does not change how good the model is. Pick the model first from this table, then decide which account runs it.

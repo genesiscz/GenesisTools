@@ -167,4 +167,23 @@ final class ToolInputDiffTests: XCTestCase {
             XCTAssertNil(closed.block, result)
         }
     }
+
+    /// `--help` flag lists and tables scroll sideways instead of wrapping; prose and indented code do not count as
+    /// columns (hub UX C18).
+    func testColumnarOutputIsFoundAndProseIsNot() {
+        let help = [
+            "Usage: tool set [options]",
+            "",
+            "Options:",
+            "  --restore <id>    Restore a set from the trash",
+            "  --publish         Publish the set",
+            "  --title <text>    Give the set a title",
+            "  -h, --help        Show help",
+        ]
+        XCTAssertTrue(ToolPresentation.isColumnar(help))
+        let prose = ["The build passed.", "    indented code line", "  - a list item with words", "Done in 3 s."]
+        XCTAssertFalse(ToolPresentation.isColumnar(prose))
+        let call = line("Bash", input: "tool set --help", result: help.joined(separator: "\n"))
+        XCTAssertTrue(ToolPresentation.make(line: call, loaded: nil, context: 0, cwd: nil).columnar)
+    }
 }

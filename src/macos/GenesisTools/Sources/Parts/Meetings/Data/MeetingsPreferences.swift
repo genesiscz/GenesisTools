@@ -14,6 +14,26 @@ enum MeetingsPreferences {
         case always, noChoices
         func shows(choices: [String]) -> Bool { self == .always || choices.isEmpty }
     }
+    /// Where a transcript time plays: in this window (ffplay with no window of its own, which the window's player bar
+    /// pauses and stops), or in the player the meetings config names (VLC first, with its own window and controls).
+    /// The Speakers tab's order: the most spoken first (in the CLI's order a label with 7 turns stood above one with
+    /// 427), or the order the transcript first names them, as `tools meetings speakers stats` lists them.
+    enum SpeakerOrder: String, CaseIterable {
+        case spoken, transcript
+
+        func ordered(_ speakers: [SpeakerStat]) -> [SpeakerStat] {
+            switch self {
+            case .spoken: speakers.sorted { $0.spokenSec > $1.spokenSec }
+            case .transcript: speakers
+            }
+        }
+    }
+    enum Player: String, CaseIterable {
+        case window, app
+        /// The `--player` the window passes to `tools meetings play`; nil leaves the config's choice.
+        var cliPlayer: String? { self == .window ? "ffplay" : nil }
+    }
+
     static let openOnKey = "meetings.window.openOn"
     static let daysKey = "meetings.window.days"
     static let timelineKey = "meetings.timeline.lines"
@@ -24,6 +44,7 @@ enum MeetingsPreferences {
     static let legacyTypedAnswerKey = "meetings.questions.typedAnswer"
     /// Retired in Wave B: every Moment plays in the window's player (`MomentPlayer`). Readers ignore it.
     static let playerKey = "meetings.playback.player"
+    static let speakerOrderKey = "meetings.speakers.order"
     /// How long a notice with a button (Undo, Show, Replace) stays, in seconds: every notice with an action, one key.
     static let noticeSecondsKey = "meetings.notices.seconds"
     /// How long a notice without a button stays, in seconds.
@@ -72,6 +93,14 @@ enum MeetingsPreferences {
 
     static func typedAnswer(_ defaults: UserDefaults = .standard) -> TypedAnswer {
         defaults.string(forKey: typedAnswerKey).flatMap(TypedAnswer.init(rawValue:)) ?? .always
+    }
+
+    static func player(_ defaults: UserDefaults = .standard) -> Player {
+        defaults.string(forKey: playerKey).flatMap(Player.init(rawValue:)) ?? .window
+    }
+
+    static func speakerOrder(_ defaults: UserDefaults = .standard) -> SpeakerOrder {
+        defaults.string(forKey: speakerOrderKey).flatMap(SpeakerOrder.init(rawValue:)) ?? .spoken
     }
 
     static func noticeSeconds(_ defaults: UserDefaults = .standard) -> Int {
@@ -271,6 +300,9 @@ extension MeetingsPreferences {
 
     /// The Speakers tab (F9).
     enum Speakers {
+        static let order = MeetingsWindowSetting(
+            key: MeetingsPreferences.speakerOrderKey, defaultValue: SpeakerOrder.spoken, choices: SpeakerOrder.allCases,
+            title: "Speakers in order of", detail: "The longest spoken first, or the order the transcript first names them.")
         static let showQuestions = MeetingsWindowSetting(
             key: "meetings.speakers.showQuestions", defaultValue: true, choices: [true, false],
             title: "Open questions on the lanes", detail: "A “?” banner marks each open question on the talk-time lanes.")

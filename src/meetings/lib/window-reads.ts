@@ -122,12 +122,15 @@ export async function revisionsRead(options: {
     }
 
     // The timeline reads ocr.jsonl and checks each frame file; a frame added or removed changes its folder's identity.
-    // Cut Moment clips are no screen data: a play must not make the window read the Screen tab again.
+    // Cut Moment clips are no screen data: a play must not make the window read the Screen tab again. The meeting
+    // folder counts by its entries' names, not its own identity, whose mtime changes when the first play makes
+    // moments/.
+    const entries = readdirSync(folder, { withFileTypes: true }).filter((entry) => entry.name !== MOMENTS_FOLDER);
     const screen = [
         fileIdentity(join(folder, "ocr.jsonl")),
-        fileIdentity(folder),
-        ...readdirSync(folder, { withFileTypes: true })
-            .filter((entry) => entry.isDirectory() && entry.name !== MOMENTS_FOLDER)
+        entries.map((entry) => entry.name).sort(),
+        ...entries
+            .filter((entry) => entry.isDirectory())
             .map((entry) => [entry.name, fileIdentity(join(folder, entry.name))]),
     ];
     return revisionTokens({ meeting: record.id, recordFile, config, source, screen });

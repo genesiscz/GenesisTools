@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 
@@ -22,7 +23,8 @@ export const denoiseSchema = z.object({
     method: z.enum(DENOISE_METHODS).default("afftdn"),
     /** How much the noise is turned down, in dB (afftdn `nr`). 12 takes fan and room hum away; 25+ starts to blur words. */
     reductionDb: z.number().min(1).max(40).default(12),
-    /** The audio tracks to clean (0 is the first); absent is every track. A screen recording's mic is its last track. */
+    /** The audio tracks to clean (0 is the first); absent is every track. The tracks follow recording.json's
+     * audio.sources: the system sound first, then the mic. */
     tracks: z.array(z.number().int().nonnegative()).optional(),
     /** A strength per track ("1": 20) where it differs from `reductionDb`; absent tracks use `reductionDb`. */
     trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),
@@ -132,4 +134,25 @@ export async function ensureDenoisedSource(options: {
     await runVideoCommand({ command, timeoutMs: 60 * 60_000, ...(options.signal ? { signal: options.signal } : {}) });
     renameSync(partial, output);
     return { path: output, made: true, audioTracks };
+}
+
+/**
+ * Makes the transcript beside the cleaned copy (`copy`, where the renderer's captions and ducking read it) the same as
+ * the source's (`transcript`), on every export: the cleaned movie is reused while its words change, so a copy made
+ * once goes stale after a new transcription. No source transcript removes the copy. Each write gets its own temporary
+ * name, because two exports can share `.denoise/`. Both are transcript cache paths (`transcriptCachePath`), passed in
+ * because project.ts imports this module.
+ */
+export function syncDenoisedTranscript(options: { transcript: string; copy: string }): void {
+    if (!existsSync(options.transcript)) {
+        if (existsSync(options.copy)) {
+            log.debug({ copy: options.copy }, "the source has no transcript, so the cleaned copy's goes too");
+        }
+
+        rmSync(options.copy, { force: true });
+        return;
+    }
+
+    atomicWriteFileSync(options.copy, readFileSync(options.transcript));
+    log.debug({ transcript: options.transcript, copy: options.copy }, "the cleaned copy has the current transcript");
 }

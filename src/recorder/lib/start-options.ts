@@ -12,7 +12,7 @@ import { runAxAsync } from "@app/control/lib/runner";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
-import { FRAME_FLUSHES } from "@genesiscz/utils/screen-recorder/start";
+import { FRAME_FLUSHES, FRAMES_START_LIMITS } from "@genesiscz/utils/screen-recorder/start";
 import { Command, Option } from "commander";
 import { z } from "zod";
 import type { VideoRecordingOptions } from "./video-recording";
@@ -93,13 +93,14 @@ export const DEFAULT_MOVIE_FPS = 60;
 
 /** Declares the flags of `tools recorder start` on `command`. */
 export function withStartOptions(command: Command): Command {
-    const { countdown, idleFps, threshold } = START_LIMITS;
+    const { countdown, fps, idleFps, maxSeconds, threshold } = START_LIMITS;
+    const frames = FRAMES_START_LIMITS;
     return command
         .option("--audio <sources>", "audio tracks: system, mic, or system,mic")
         .option("--mic-device <uid>", "the microphone (an id from `ax-tool audio-devices`; needs --audio mic)")
         .option(
             "--fps <n>",
-            `frames per second while something moves, 1–120 (default ${DEFAULT_MOVIE_FPS} for a movie)`
+            `frames per second while something moves, ${fps.min}–${fps.max} for a movie (default ${DEFAULT_MOVIE_FPS}), ${frames.fps.min}–${frames.fps.max} with --frames`
         )
         .option(
             "--idle-fps <n>",
@@ -126,7 +127,10 @@ export function withStartOptions(command: Command): Command {
             `count down on screen before it records, ${countdown.min}–${countdown.max} s (bare: ${DEFAULT_COUNTDOWN_SECONDS} s), as the capture picker does`
         )
         .option("--title <text>", "the recording's title in the library and the menu")
-        .option("--max-seconds <n>", `stop after this long, 1–${VIDEO_RECORDING_MAX_SECONDS}`)
+        .option(
+            "--max-seconds <n>",
+            `stop after this long, ${maxSeconds.min}–${maxSeconds.max} for a movie, ${frames.maxDurationSec.min}–${frames.maxDurationSec.max} with --frames (default ${frames.defaultMaxDurationSec})`
+        )
         .option("--no-indicator", "no red border around what is recorded (never in the movie either way)")
         .option(
             "--no-shortcuts",
@@ -209,7 +213,8 @@ function parseAudio(raw: string | undefined): StartAudioSource[] | undefined {
         throw new Error(`--audio takes system, mic or system,mic (got "${raw}")`);
     }
 
-    return known;
+    // The tracks follow recording.json's audio.sources, which the docs promise as the system sound first, then the mic.
+    return START_AUDIO_SOURCES.filter((source) => known.includes(source));
 }
 
 /** `--countdown [seconds]`: undefined when not given, the picker's 3 s when bare. */
@@ -309,9 +314,13 @@ function describeScreens(screens: ScreenInfo[]): string {
         .join("; ");
 }
 
+/** About a point of slack: the capture picker rounds an area's edges to whole points. */
+const AREA_SLACK_PT = 1;
+
 /**
- * Refuses a display that is not connected and an area that meets no display, naming the displays there are. A window
- * or an app is checked by `refuseMissingWindowOrApp`.
+ * Refuses a display that is not connected, an area that meets no display and an area that is not inside one display
+ * (ax-tool records one display, so it would fail after the folder is made or record past the edge), naming the
+ * displays there are. A window or an app is checked by `refuseMissingWindowOrApp`.
  */
 export function refuseTargetOffScreen(target: RecordingTarget, screens: ScreenInfo[]): void {
     if (target.kind === "display" && !screens.some((screen) => screen.index === target.screenIndex)) {
@@ -322,19 +331,36 @@ export function refuseTargetOffScreen(target: RecordingTarget, screens: ScreenIn
         return;
     }
 
-    const meets = screens.some(
-        (screen) =>
-            target.x < screen.originCG.x + screen.points.width &&
-            target.x + target.width > screen.originCG.x &&
-            target.y < screen.originCG.y + screen.points.height &&
-            target.y + target.height > screen.originCG.y
-    );
+    const area = `${target.x},${target.y},${target.width},${target.height}`;
+    const cut = screens
+        .map((screen) => {
+            const x = Math.max(target.x, screen.originCG.x);
+            const y = Math.max(target.y, screen.originCG.y);
+            const right = Math.min(target.x + target.width, screen.originCG.x + screen.points.width);
+            const bottom = Math.min(target.y + target.height, screen.originCG.y + screen.points.height);
+            return { screen, x, y, width: right - x, height: bottom - y };
+        })
+        .filter((part) => part.width > 0 && part.height > 0);
 
-    if (!meets) {
+    if (cut.length === 0) {
         throw new Error(
-            `--region ${target.x},${target.y},${target.width},${target.height} meets no display (global points, top-left origin). The displays: ${describeScreens(screens)}`
+            `--region ${area} meets no display (global points, top-left origin). The displays: ${describeScreens(screens)}`
         );
     }
+
+    const inside = cut.some(
+        (part) => part.width >= target.width - AREA_SLACK_PT && part.height >= target.height - AREA_SLACK_PT
+    );
+
+    if (inside) {
+        return;
+    }
+
+    const largest = cut.reduce((best, part) => (part.width * part.height > best.width * best.height ? part : best));
+    const round = (value: number) => Math.round(value);
+    throw new Error(
+        `--region ${area} is not inside one display: a recording records one display. Most of it is on ${largest.screen.index} "${largest.screen.name}"; record that part with --region ${round(largest.x)},${round(largest.y)},${round(largest.width)},${round(largest.height)}. The displays: ${describeScreens(screens)}`
+    );
 }
 
 /**

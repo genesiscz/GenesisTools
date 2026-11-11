@@ -19,11 +19,71 @@ enum RecorderFailureStyle: String, CaseIterable, Identifiable {
     }
 }
 
+/// The failure window's own choices (Settings → Recorder → Menu bar, under "Recorder failures"). They apply while
+/// failures show as a notice.
+enum RecorderFailureDetails: String, CaseIterable, Identifiable {
+    /// The log is open when the window appears: the error, its warnings and every step.
+    case open
+    /// Only the error and its actions; "Show details" opens the log.
+    case folded
+
+    static let key = "recorder.failures.details"
+
+    var id: String { rawValue }
+
+    static func load(_ defaults: UserDefaults = .standard) -> RecorderFailureDetails {
+        defaults.string(forKey: key).flatMap(Self.init(rawValue:)) ?? .open
+    }
+}
+
+/// Whether the failure window closes by itself after a while without the pointer on it.
+enum RecorderFailureAutoClose: String, CaseIterable, Identifiable {
+    /// It stays until it is closed: an error is read before it goes.
+    case never
+    case oneMinute = "1m"
+    case fiveMinutes = "5m"
+
+    static let key = "recorder.failures.autoClose"
+
+    var id: String { rawValue }
+
+    var seconds: TimeInterval? {
+        switch self {
+        case .never: nil
+        case .oneMinute: 60
+        case .fiveMinutes: 300
+        }
+    }
+
+    static func load(_ defaults: UserDefaults = .standard) -> RecorderFailureAutoClose {
+        defaults.string(forKey: key).flatMap(Self.init(rawValue:)) ?? .never
+    }
+}
+
+extension RecorderFailureStyle {
+    static let placementKey = "recorder.failures.placement"
+
+    /// Where the failure window appears: under the recorder's menu bar item unless another place is chosen.
+    static func placement(_ defaults: UserDefaults = .standard) -> FailureNoticePlacement {
+        defaults.string(forKey: placementKey).flatMap(FailureNoticePlacement.init(rawValue:)) ?? .belowAnchor
+    }
+
+    /// The notice's options as the settings store them.
+    static func noticeOptions(_ defaults: UserDefaults = .standard) -> FailureNoticeOptions {
+        FailureNoticeOptions(detailsOpen: RecorderFailureDetails.load(defaults) == .open, placement: placement(defaults),
+                             autoClose: RecorderFailureAutoClose.load(defaults).seconds)
+    }
+}
+
 /// When the camera bubble's live preview shows on screen. Settings → Recorder → Camera.
+/// The preview shows while it records only when the movie leaves it out: its window id reached the recorder's
+/// `--exclude-window-ids` before the first frame (ScreenCaptureKit ignores the panel's sharing type, so a preview the
+/// movie did not leave out is baked into it). The picker, the Start shortcut and the recorder service's `camera.start`
+/// leave it out; a recording the face found by its own watch, with no service, does not.
 enum CameraPreviewPolicy: String, CaseIterable, Identifiable {
     /// Every recording that records the camera, also one the CLI, an agent or the recorder service started.
     case everyCameraRecording = "every"
-    /// Only a recording the capture picker started (the behaviour before this setting).
+    /// Only a recording the capture picker or the Start shortcut started (the behaviour before this setting).
     case pickerRecordings = "picker"
     /// Never: the camera records without a preview, and the editor places the bubble.
     case never
@@ -39,9 +99,11 @@ enum CameraPreviewPolicy: String, CaseIterable, Identifiable {
     /// The picker shows the preview while it is open, so the bubble can be placed before the start.
     var showsWhilePicking: Bool { self != .never }
 
-    /// Whether a recording that records the camera shows the preview while it runs.
-    func showsPreview(startedByPicker: Bool) -> Bool {
-        switch self {
+    /// Whether a recording that records the camera shows the preview while it runs. `previewLeftOut`: the preview's
+    /// window is in the movie's `--exclude-window-ids`; without it the preview never shows, or the movie would hold it.
+    func showsPreview(startedByPicker: Bool, previewLeftOut: Bool) -> Bool {
+        guard previewLeftOut else { return false }
+        return switch self {
         case .everyCameraRecording: true
         case .pickerRecordings: startedByPicker
         case .never: false

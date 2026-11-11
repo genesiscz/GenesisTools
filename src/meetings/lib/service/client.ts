@@ -75,6 +75,12 @@ export function meetingsServiceDir(): string {
     return toolDataDir("meetings-service");
 }
 
+/**
+ * An event name no service emits (the `$/` prefix is JSON-RPC's own, and no Meetings event uses it): a subscription
+ * to it alone hears nothing, which is how a connection with no listener left stops the service sending it events.
+ */
+export const NO_EVENT = "$/none";
+
 /** A meeting the event names, for the subscription's filter. */
 function meetingOf(params: unknown): string | undefined {
     const meeting = typeof params === "object" && params !== null ? Reflect.get(params, "meeting") : undefined;

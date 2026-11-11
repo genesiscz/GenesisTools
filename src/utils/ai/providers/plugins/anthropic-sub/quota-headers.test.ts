@@ -450,6 +450,59 @@ describe("the Fable reading cadence", () => {
         expect(fableReadingDue(withFable(30 * 60_000), NOW)).toBe(true);
     });
 
+    it("an account in use asks Fable on every reading, but only with a measured probe under 100 tokens", () => {
+        const fableAnswer = (tokens: number | undefined) => {
+            const usage = usageFromQuotaHeaders(quotaHeaders("0.1", "0.2", "0.3")) as Usage;
+            return tokens === undefined
+                ? usage
+                : { ...usage, quota: { ...(usage.quota as Record<string, unknown>), fableProbeTokens: tokens } };
+        };
+        // A Fable reading 10 minutes ago, then a cheap reading 2 minutes ago whose 5-hour window is `five`.
+        const afterCheap = (five: string, tokens: number | undefined) =>
+            mergeHeaderReading(
+                usageFromQuotaHeaders(quotaHeaders(five, "0.2")) as Usage,
+                mergeHeaderReading(fableAnswer(tokens), undefined, undefined, NOW - 10 * 60_000),
+                NOW - 10 * 60_000,
+                NOW - 2 * 60_000
+            );
+
+        expect(afterCheap("0.4", 34).quota).toMatchObject({ moved: true, fableProbeTokens: 34 });
+        expect(fableReadingDue(afterCheap("0.4", 34), NOW)).toBe(true);
+        // Idle: the windows did not move, so the 30-minute rule alone decides.
+        expect(fableReadingDue(afterCheap("0.1", 34), NOW)).toBe(false);
+        // Not sure of the cost: never measured, or measured at the limit or above it.
+        expect(fableReadingDue(afterCheap("0.4", undefined), NOW)).toBe(false);
+        expect(fableReadingDue(afterCheap("0.4", 100), NOW)).toBe(false);
+        expect(fableReadingDue(afterCheap("0.4", 99), NOW)).toBe(true);
+    });
+
+    it("the Fable probe's cost is read from its answer, and the cheap probe's is not recorded", async () => {
+        const answer = (body: string, headers: Headers) => async () => new Response(body, { status: 200, headers });
+        const budget = { spend: async () => undefined };
+        const billed = '{"usage":{"input_tokens":34,"cache_read_input_tokens":2,"output_tokens":0}}';
+
+        const fable = await fetchUsageFromHeaders(LONG_LIVED, {
+            account: "work",
+            budget,
+            fetchImpl: answer(billed, quotaHeaders("0.1", "0.2", "0.3")) as unknown as typeof fetch,
+        });
+        const unmeasured = await fetchUsageFromHeaders(LONG_LIVED, {
+            account: "work",
+            budget,
+            fetchImpl: answer("{}", quotaHeaders("0.1", "0.2", "0.3")) as unknown as typeof fetch,
+        });
+        const cheap = await fetchUsageFromHeaders(LONG_LIVED, {
+            account: "work",
+            budget,
+            withFable: false,
+            fetchImpl: answer(billed, quotaHeaders("0.1", "0.2")) as unknown as typeof fetch,
+        });
+
+        expect((fable.quota as { fableProbeTokens?: number }).fableProbeTokens).toBe(36);
+        expect((unmeasured.quota as { fableProbeTokens?: number }).fableProbeTokens).toBeUndefined();
+        expect((cheap.quota as { fableProbeTokens?: number }).fableProbeTokens).toBeUndefined();
+    });
+
     it("a cheap reading keeps the last Fable window with the time it was read", () => {
         const fable = withFable(10 * 60_000);
         const cheap = mergeHeaderReading(

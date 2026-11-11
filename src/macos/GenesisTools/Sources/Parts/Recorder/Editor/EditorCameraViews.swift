@@ -29,7 +29,7 @@ struct CameraBubbleSection: View {
                        in: EditProject.CameraChange.sizeRange)
                     .accessibilityLabel("Camera bubble size")
                     .accessibilityIdentifier("recorder.style.cameraSize")
-                    .instantTooltip("The side as a share of the movie's short side")
+                    .instantTooltip("The side as a share of the canvas's short side")
                 SectionLabel(text: "Shape")
                 GenSegmentedTabs("Shape", items: EditProject.CameraShape.allCases.map { .init($0, $0.rawValue.capitalized) },
                                  selection: Binding(get: { camera.shape }, set: { model.changeCamera(.init(shape: $0)) }),
