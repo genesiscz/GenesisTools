@@ -50,3 +50,12 @@ public func pollListing<T>(
         }
     }
 }
+
+/// The windows a caller asked the movie to leave out that the listing does not hold while they still exist, sorted.
+///
+/// A display filter can leave out only the windows the listing holds, so such a window would be filmed, also once it
+/// becomes shareable after the start: the recording must refuse instead. A window that no longer exists cannot be
+/// filmed, so it is no reason to refuse. The recording border's panels are best effort and are not passed here.
+public func unresolvedExclusions(requested: Set<UInt32>, listed: Set<UInt32>, exists: (UInt32) -> Bool) -> [UInt32] {
+    requested.subtracting(listed).filter(exists).sorted()
+}

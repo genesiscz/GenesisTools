@@ -820,6 +820,10 @@ tools control capture session \
 made of segments: one recorder run stops after 180 s, so a longer recording chains runs, and stop joins them into one
 movie.
 
+A window named in `--exclude-window-ids` that still exists but that screen capture does not list within a second fails
+the start with code `failed`, and nothing is recorded: the recorder cannot leave out a window it cannot see, and the
+movie would show it.
+
 With `--stop-on-stdin` it reads one JSON command per stdin line, and the end of stdin stops and keeps the recording:
 
 - `{"cmd":"pause"}`, `{"cmd":"resume"}`, `{"cmd":"restart"}`, `{"cmd":"stop"}` and `{"cmd":"discard"}`.

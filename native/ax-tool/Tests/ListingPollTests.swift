@@ -63,4 +63,12 @@ final class ListingPollTests: XCTestCase {
         XCTAssertEqual(unlisted.value, 1)
         XCTAssertEqual(unlisted.end, .deadline)
     }
+
+    func testARequestedExclusionThatStillExistsButIsNotListedIsUnresolved() {
+        let open: Set<UInt32> = [7, 9]
+        let unresolved = unresolvedExclusions(requested: [7, 8, 9, 11], listed: [8, 3], exists: { open.contains($0) })
+        // 8 is listed, so the filter leaves it out; 11 is gone, so it cannot be filmed.
+        XCTAssertEqual(unresolved, [7, 9])
+        XCTAssertEqual(unresolvedExclusions(requested: [], listed: [], exists: { _ in true }), [])
+    }
 }
