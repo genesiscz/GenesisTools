@@ -4476,7 +4476,7 @@ describe("the camera on the screen's clock", () => {
         });
     });
 
-    test("one span needs no cut: the offset counts from the screen's first frame, not from when the face saw it", async () => {
+    test("one span is cut too, so the camera's footage of a pause before the stop leaves camera.mov", async () => {
         const folder = folderWith({
             startedAt: iso(T0 + 250),
             screenStartedAt: iso(T0),
@@ -4488,13 +4488,17 @@ describe("the camera on the screen's clock", () => {
             spans: [{ sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 8000 }],
             runCommand: async (command) => {
                 commands.push(command);
+                writeFileSync(command.at(-1) ?? "", "cut camera movie");
             },
         });
-        expect(result).toEqual({ result: "offset" });
-        expect(commands).toEqual([]);
+        expect(result).toEqual({ result: "trimmed" });
+        expect(commands).toHaveLength(1);
+        // Only the span's 8 s from 1.15 s of camera time stay: the paused tail after it is cut away.
+        expect(commands[0]?.join(" ")).toContain("select='gte(t,1.150000)*lt(t,9.150000)'");
+        expect(readFileSync(join(folder, "camera.mov"), "utf8")).toBe("cut camera movie");
         const sidecar = readCameraSidecar(join(folder, "screen.mp4"));
-        expect(sidecar?.screenStartedAt).toBe(iso(T0 + 1400));
-        expect(sidecar && bubbleFromSidecar(sidecar).offsetMs).toBe(-1150);
+        expect(sidecar).toMatchObject({ screenStartedAt: iso(T0 + 1400), clock: "screen" });
+        expect(sidecar && bubbleFromSidecar(sidecar).offsetMs).toBe(0);
     });
 
     test("a face that left out the paused time it saw is not cut: only its offset moves to the first frame", async () => {

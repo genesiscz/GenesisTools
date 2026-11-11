@@ -279,9 +279,11 @@ async function writeSidecarFile(path: string, sidecar: CameraSidecar): Promise<v
 /**
  * Lines a recording's camera movie up with its screen movie, once both are finished. The screen movie leaves out every
  * gap between its segments (`spans`, from the recording session); a camera movie on the wall clock (`clock: "wall"`)
- * kept them, so with two spans or more it is cut to the spans and its `camera.json` then counts from the screen's first
- * frame (offset 0, `clock: "screen"`). One span, a face that left out its own pauses, or a cut that fails keeps the
- * movie and only moves `screenStartedAt` to the screen's first frame, which removes the constant error.
+ * kept them, so it is cut to the spans and its `camera.json` then counts from the screen's first frame (offset 0,
+ * `clock: "screen"`). One span is cut too: the camera kept filming through a pause before the stop, and through a
+ * segment a restart discarded, and that footage must not stay in the folder's camera movie. A face that left out its
+ * own pauses, or a cut that fails, keeps the movie and only moves `screenStartedAt` to the screen's first frame, which
+ * removes the constant error.
  */
 export async function alignCameraMovie({
     folder,
@@ -316,7 +318,7 @@ export async function alignCameraMovie({
         return warning ? { result: "offset", warning } : { result: "offset" };
     };
 
-    if (sidecar.clock !== "wall" || spans.length === 1) {
+    if (sidecar.clock !== "wall") {
         return offsetOnly();
     }
 
