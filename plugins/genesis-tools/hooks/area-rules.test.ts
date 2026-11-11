@@ -415,6 +415,19 @@ describe("levels", () => {
             expect(decision).toEqual({ full: [], pointer: [], native: [] });
         }
     });
+
+    it("a write through every harness's shell tool name gets the text", () => {
+        for (const tool_name of ["Bash", "shell", "run_terminal_command"]) {
+            const decision = decide({
+                payload: { ...bash("touch src/utils/ai/x.md"), tool_name },
+                root,
+                rules,
+                seen: [],
+                levels: LEVELS,
+            });
+            expect({ tool_name, full: decision.full }).toEqual({ tool_name, full: [".claude/rules/ai.md"] });
+        }
+    });
 });
 
 describe("the injection text", () => {
