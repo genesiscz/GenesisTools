@@ -62,7 +62,7 @@ final class MarkdownCalloutRenderTests: XCTestCase {
 <pre data-line="12" data-line-end="15"><code class="hljs language-text">code &lt;value&gt;
 </code></pre>
 """#
-        XCTAssertEqual(html, expected)
+        XCTAssertEqual(Data(html.utf8), Data(expected.utf8))
     }
 
     /// Observed 2026-09-15 14:15: a note rendered "@@GNCALLOUT0@@" and
