@@ -31,8 +31,8 @@ struct ReviewRowView: View, Equatable {
     var foldedFit = 0
     /// How suggested, confirmed and rejected differ (`meetings.rows.stateLook`), read once here for the row's chips.
     @AppStorage(MeetingsPreferences.Rows.stateLook.key) private var stateLook = MeetingsPreferences.Rows.stateLook.defaultValue
-    /// This window just decided the row and it still keeps its place (G33): it stays readable, with how it was decided
-    /// where its choices were, until the reader scrolls. A folded line over the row's old height read as a blank gap.
+    /// This window just decided the row and it still keeps its place (G33): its choices stay in the same slot until
+    /// the reader scrolls, so another choice can change the answer without opening a separate editor.
     var held = false
     @Environment(\.kitLook) private var look
 
@@ -46,7 +46,7 @@ struct ReviewRowView: View, Equatable {
         lhs.row == rhs.row && lhs.selected == rhs.selected && lhs.editing == rhs.editing && lhs.busy == rhs.busy
             && lhs.meanwhile == rhs.meanwhile && lhs.choiceKeys == rhs.choiceKeys && lhs.held == rhs.held
             && lhs.play == rhs.play && lhs.draft == rhs.draft && lhs.changingAnswer == rhs.changingAnswer
-            && lhs.foldedFit == rhs.foldedFit
+            && lhs.foldedFit == rhs.foldedFit && lhs.player === rhs.player
     }
 
     /// Every Moment the row offers to play: its own, the times in its text, and the transcript lines it comes from.
@@ -106,7 +106,7 @@ struct ReviewRowView: View, Equatable {
             }
             if editing {
                 RowEditor(row: row, detail: detail)
-            } else if row.isOpen {
+            } else if row.isOpen || held {
                 choices
             } else if changing {
                 VStack(alignment: .leading, spacing: 6) {

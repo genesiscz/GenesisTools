@@ -81,7 +81,12 @@ extension MeetingDetailModel {
 
     /// A choice of a row (G1, G2): its decision on the row's item.
     func choose(_ choice: RowChoice, on row: ReviewRow) {
-        decide(row, choice.action.decision(on: row))
+        let action = choice.action.decision(on: row)
+        if !row.isOpen && !row.isQuestion {
+            useMine(action, on: row)
+        } else {
+            decide(row, action)
+        }
     }
 
     /// What the row's editor holds now, as the decision its edit kind makes (R10, R11, G8): a spelling or a person is a

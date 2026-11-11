@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsMeetings
 
@@ -158,6 +159,36 @@ final class MeetingsReviewRowTests: XCTestCase {
                        "R35: who decided it and why")
         XCTAssertEqual(ReviewRowView.actorGlyph(rows[2]), "sparkles", "a narrow folded row still marks a decision an agent made")
         XCTAssertNil(ReviewRowView.actorGlyph(rows[1]), "a row nobody decided, or the reader decided, has no mark")
+    }
+
+    func testAHeldDecidedRowKeepsItsChoicesAndHeight() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let open = try JSONDecoder().decode(ReviewRow.self, from: Data("""
+        {"id":"q1","label":"Q1","kind":"question","status":"suggested","what":"Who speaks?","edit":"answer","sources":[],"parts":[],
+         "choices":[{"value":"Dana Example","label":"Dana Example","role":"suggested","action":{"kind":"answer","answer":"Dana Example"}},
+                    {"value":"Alex Example","label":"Alex Example","role":"candidate","action":{"kind":"answer","answer":"Alex Example"}}],
+         "target":{"kind":"item","id":"q1"}}
+        """.utf8))
+        var answered = open
+        answered.status = "confirmed"
+        answered.answer = "Dana Example"
+        for width in [320.0, 680.0] {
+            let before = ImageRenderer(content: ReviewRowView(row: open, detail: detail, player: nil, selected: true).frame(width: width).background(Color.white).environment(\.colorScheme, .light))
+            let after = ImageRenderer(content: ReviewRowView(row: answered, detail: detail, player: nil, selected: true, held: true).frame(width: width).background(Color.white).environment(\.colorScheme, .light))
+            before.scale = 2
+            after.scale = 2
+            let original = try XCTUnwrap(before.cgImage)
+            let held = try XCTUnwrap(after.cgImage)
+            XCTAssertEqual(held.height, original.height, "answering keeps the choices' layout at width \(width)")
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: held).perform([request])
+            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            XCTAssertTrue(text.contains("Dana Example"), text)
+            XCTAssertTrue(text.contains("Alex Example"), "the other answer stays available: \(text)")
+            XCTAssertFalse(text.contains("Revert and edit"), "the choices occupy their original slot: \(text)")
+        }
     }
 
     func testTheNextOpenRowWrapsAndTheQueueEndsWhenNoneIsLeft() throws {
