@@ -19,7 +19,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
+import { claudeCompactedSince } from "@genesiscz/utils/agent-sessions/readers/claude-compaction";
 import { claudeCurrentModel } from "@genesiscz/utils/agent-sessions/readers/claude-model";
+import { codexCompactedSince } from "@genesiscz/utils/agent-sessions/readers/codex-compaction";
 import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex-model";
 import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-model";
 import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
@@ -2062,7 +2064,7 @@ describe("hook state across processes", () => {
         };
         const expected: HookSessionState = {
             version: 2,
-            guard: { contextNotes: { "rule-x": 3 } },
+            guard: { contextNotes: { "rule-x": 3 }, explained: {} },
             decisions: {
                 stopBlocks: 1,
                 nudge: { blocks: 2, lastTurn: 77 },
@@ -2083,7 +2085,7 @@ describe("hook state across processes", () => {
             await bumpContextCounts("sess-old", ["rule-x"]);
 
             const written = SafeJSON.parse(readFileSync(path, "utf8"));
-            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 } } });
+            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 }, explained: {} } });
             expect(migrateHookState(written)).toEqual(written);
         });
     });
@@ -2122,6 +2124,12 @@ describe("capture paths refuse an unsafe identifier", () => {
 
     const ok = ["toolu_01SXXfskEYtYHLfrtKWRopWL", "a503b06c-e677-45a8-b46e-ce1757edaa9f", "bench", "t1"];
 
+    // A version 2 file from before `explained` existed reads as nothing explained, and keeps what it has.
+    expect(migrateHookState({ ...written, guard: { contextNotes: { "rule-x": 4 } } })).toEqual(written);
+    expect(
+        migrateHookState({ ...written, guard: { contextNotes: {}, explained: { main: { r: 5, bad: "x" } } } }).guard
+            .explained
+    ).toEqual({ main: { r: 5 } });
     it.each(ok)("accepts the real shape %j", (value) => {
         expect(safeSegment(value)).toBe(value);
         expect(callDir("claude", "sess", value).endsWith(`/diff/${value}`)).toBe(true);
@@ -2817,6 +2825,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             runsClaudeSettingsHooks: false,
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: false,
+            compactedSince: claudeCompactedSince,
             compactBoundaryRows: false,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
@@ -2836,6 +2845,7 @@ describe("rm request notice", () => {
         kind: "delete",
         createdAt: new Date(now.getTime() - minutesAgo * 60_000).toISOString(),
         caller: { agent: "claude-code", sessionId: session, isInAgent: true },
+        compactedSince: expect.any(Function),
         cwd: "/work/shop",
         reason: null,
         targets: [{ path: "/work/shop/.smoke.tmp.ts", kind: "file", rule: "default", reason: "no rule allows it" }],
@@ -2855,15 +2865,15 @@ describe("rm request notice", () => {
                 tool_response: { stdout, stderr: "" },
             })
         );
+    compactedSince: codexCompactedSince,
+        it("repeats a request the call opened when its output was cut", async () => {
+            const payload = payloadOf("tools rm ./.smoke.tmp.ts > /dev/null 2>&1");
+            const notice = payload ? await rmRequestNotice(payload, deps) : null;
 
-    it("repeats a request the call opened when its output was cut", async () => {
-        const payload = payloadOf("tools rm ./.smoke.tmp.ts > /dev/null 2>&1");
-        const notice = payload ? await rmRequestNotice(payload, deps) : null;
-
-        expect(notice).toContain("rm request k7m2qd: 1 path waits for the user. Do not run approve yourself.");
-        expect(notice).not.toContain("old111");
-        expect(notice).not.toContain("othr22");
-    });
+            expect(notice).toContain("rm request k7m2qd: 1 path waits for the user. Do not run approve yourself.");
+            expect(notice).not.toContain("old111");
+            expect(notice).not.toContain("othr22");
+        });
 
     it("stays quiet when the output already named the request, and for any other command", async () => {
         const shown = payloadOf("tools rm ./.smoke.tmp.ts", "rm request k7m2qd: 1 path waits for the user.");

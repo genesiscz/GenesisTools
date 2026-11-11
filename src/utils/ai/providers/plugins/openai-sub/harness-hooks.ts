@@ -1,3 +1,4 @@
+import { codexCompactedSince } from "@genesiscz/utils/agent-sessions/readers/codex-compaction";
 import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex-model";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 
@@ -19,6 +20,7 @@ export const codexHooks: HookFacts = {
         "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: it needs a Monitor tool Codex does not have. For subagent communication use Codex's native collaboration tools (send_message for active peers, followup_task for idle ones).",
     promisesFileTracking: false,
     compactBoundaryRows: false,
+    compactedSince: codexCompactedSince,
     homeBindsAccount: true,
     launchAuthFromAncestor: false,
     journalOmitsProvider: false,

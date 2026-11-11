@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { scanShell } from "../scan";
 import { biomeRules, biomeUnsafeDeletesComments } from "./biome";
-import { detectShellViolations, renderViolation, renderViolations, ruleById, SHELL_RULES } from "./index";
+import {
+    detectShellViolations,
+    firstSentence,
+    renderViolation,
+    renderViolations,
+    ruleById,
+    SHELL_RULES,
+} from "./index";
 import { swiftpmRules, swiftpmStalePlan } from "./swiftpm";
 
 /** The repository root: a rule that reads the project resolves its `wrong` example against it. */
@@ -310,6 +317,57 @@ describe("rendering", () => {
 
         expect(text).toContain(`matched (offset 0): ${command}`);
         expect(text).toContain(`your command, corrected:\n${"x".repeat(1000)} | wc -l`);
+    });
+
+    it("prints only the changed statement of a long command, and a short command whole", () => {
+        const long = `echo ${"a".repeat(300)}; ls x 2>/dev/null | wc -l; echo done`;
+        const [v] = detectShellViolations(long);
+        const text = renderViolation(v, { command: long });
+
+        expect(text).toContain("corrected part (the rest stays as you wrote it):\n… ls x | wc -l …");
+        expect(text).not.toContain("a".repeat(300));
+
+        const short = "ls ~/Downloads/*.har 2>/dev/null | wc -l";
+        expect(renderViolation(detectShellViolations(short)[0], { command: short })).toContain(
+            "your command, corrected:\nls ~/Downloads/*.har | wc -l"
+        );
+    });
+
+    it("never cuts the change itself when the changed statement is long", () => {
+        const command = `${"x".repeat(1000)} 2>/dev/null | wc -l`;
+        const text = renderViolation(detectShellViolations(command)[0], { command });
+
+        const part = text.split("corrected part (the rest stays as you wrote it):\n")[1] ?? "";
+
+        expect(part).toMatch(/^… x+ \| wc -l$/);
+        expect(part.length).toBeLessThan(200);
+    });
+
+    it("gives a rule the loop already read the compact form, and a block keeps its reason", () => {
+        const command = "ls ~/Downloads/*.har 2>/dev/null | wc -l";
+        const [v] = detectShellViolations(command);
+        const explained = new Set([v.ruleId]);
+        const warn = renderViolation(v, { command, explained });
+        const block = renderViolation(v, { command, explained, denied: true });
+
+        expect(warn).toContain("(rule stderr-discarded-then-counted) (explained earlier in this session)");
+        expect(warn).toContain("matched (offset 0): ls ~/Downloads/*.har 2>/dev/null | wc -l");
+        expect(warn).toContain("your command, corrected:\nls ~/Downloads/*.har | wc -l");
+        expect(warn).not.toContain("why:");
+        expect(warn).not.toContain("wrong:");
+        expect(block).toContain(
+            "why: stderr is discarded, so a permission error, a wrong path or an unknown flag prints nothing on stdout."
+        );
+        expect(block).not.toContain("Piping stdout");
+        expect(block).not.toContain("wrong:");
+    });
+
+    it("keeps `right` in a compact block that has no corrected command", () => {
+        const [v] = detectShellViolations("docker volume prune -f");
+        const text = renderViolation(v, { explained: new Set([v.ruleId]), denied: true });
+
+        expect(text).toContain(`right: ${v.right}`);
+        expect(text).toContain(`why: ${firstSentence(v.why)}`);
     });
 });
 
