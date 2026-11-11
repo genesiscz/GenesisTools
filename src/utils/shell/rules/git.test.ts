@@ -1111,6 +1111,26 @@ describe("git-checkout-overwrites-file: a file check that cannot answer keeps th
     );
 });
 
+describe("git-commit-piped", () => {
+    const PIPED = "git-commit-piped";
+
+    it("a commit piped into tail, head or grep warns: the pipeline hides the commit's status", () => {
+        const v = only('git commit -m "fix: x" 2>&1 | tail -1; git rev-parse --short HEAD', PIPED);
+
+        expect(v?.severity).toBe("warn");
+        expect(v?.matched).toContain("git commit");
+        expect(only('git commit -m "x" | head -3', PIPED)).toBeDefined();
+        expect(only('cd repo && git add a.ts && git commit -m "x" 2>&1 | rg -v "^$"', PIPED)).toBeDefined();
+    });
+
+    it("a commit at the end of its pipeline, redirected, or under pipefail passes", () => {
+        expect(ids('git commit -m "x"')).not.toContain(PIPED);
+        expect(ids('git commit -m "x" > /tmp/out.txt 2>&1; echo "exit $?"')).not.toContain(PIPED);
+        expect(ids('set -o pipefail; git commit -m "x" | tail -1')).not.toContain(PIPED);
+        expect(ids("git log -1 | tail -1")).not.toContain(PIPED);
+    });
+});
+
 describe("git-push-force-without-lease", () => {
     it("--force and -f fire, with the lease substituted in the suggestion", () => {
         const v = only("git push --force origin feat/x", FORCE);
