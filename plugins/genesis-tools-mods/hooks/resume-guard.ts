@@ -4,6 +4,10 @@
 // ways on; the same send again goes through, until the agent has run again. Over 75 days on one Mac, 687 of 764 such
 // resumes missed the cache (README.md, "The resume guard").
 //
+// An agent that finished is no longer in the engine's list, and a message to it is the common resume: it is found by
+// its transcript in this session's folder (seen live on 2026-11-11: the first send to a finished agent was skipped
+// as "not-an-agent").
+//
 // The idle time comes from the session's agent clock (`agent-clock.ts`), or from the mtime of the agent's transcript
 // when the clock has not seen it (a reload of the mods). The context is the agent's last model call, input plus cache
 // read plus cache write plus output, as its `turn.step` stop chunk reported it, or the last usage in its transcript's end. When either
@@ -100,6 +104,9 @@ export function lastContextOf(tail: string): number | undefined {
 
     return undefined;
 }
+
+/** The agent a message goes to: one the engine lists, or a finished one known by its transcript. */
+export type ResumeTarget = Pick<AgentInfo, "id" | "status" | "type"> & { name?: string; teammateId?: string };
 
 export type ResumeOutcome = "refused" | "resent" | "passed-warm" | "passed-small";
 
@@ -229,6 +236,28 @@ async function transcriptOf(host: Host, agentId: string): Promise<string | undef
     return paths.find((_, index) => held[index]);
 }
 
+/** An agent id as Claude Code makes them; a session name or a sentence is none. */
+const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{5,79}$/;
+
+/** A finished agent of this session the engine no longer lists, by the transcript its id names; else undefined. */
+async function finishedAgent(host: Host, id: string): Promise<ResumeTarget | undefined> {
+    if (!AGENT_ID.test(id)) {
+        return undefined;
+    }
+
+    const path = await transcriptOf(host, id);
+
+    if (!path) {
+        return undefined;
+    }
+
+    const meta = jsonOf(await host.read(path.replace(/\.jsonl$/, ".meta.json")).catch(() => undefined));
+    const type = isRecord(meta) && typeof meta.agentType === "string" ? meta.agentType : "unknown";
+    const team = isRecord(meta) && typeof meta.teamName === "string" ? meta.teamName : undefined;
+
+    return { id, status: "completed", type, ...(team ? { teammateId: `${id}@${team}` } : {}) };
+}
+
 /** What the agent's transcript says of its last activity and its last call's context, for the facts not known. */
 async function readTranscript(
     host: Host,
@@ -255,7 +284,7 @@ async function readTranscript(
 /** One `agent-context / agent.resume` event in the `tools metrics` spool; a failure never reaches the call. */
 async function report(
     host: Host,
-    facts: { agent: AgentInfo; outcome: ResumeOutcome; tokens: number; idleMs: number; at: number }
+    facts: { agent: ResumeTarget; outcome: ResumeOutcome; tokens: number; idleMs: number; at: number }
 ): Promise<void> {
     const home = (await host.env("GENESIS_TOOLS_HOME")) ?? (await host.env("HOME"));
 
@@ -313,7 +342,8 @@ export async function guardResume(host: Host, e: ToolCallInput): Promise<string 
     }
 
     const matches = to ? agentsNamed(await host.agents().catch(() => []), to) : [];
-    const agent = matches.length === 1 ? matches[0] : undefined;
+    const agent: ResumeTarget | undefined =
+        matches.length === 1 ? matches[0] : matches.length === 0 && to ? await finishedAgent(host, to) : undefined;
 
     if (!agent) {
         await log({ decision: "skipped", reason: matches.length > 1 ? "ambiguous" : "not-an-agent" });
