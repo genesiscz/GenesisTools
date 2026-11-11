@@ -3,11 +3,13 @@ import { join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
+import { journalEntrySchema } from "./decision-actions";
 import { meetingListRow, selectMeetings } from "./list-rows";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
 import { enumHint, errorText, formatFlag } from "./shared";
@@ -689,5 +691,62 @@ describe("rows --json: the review rows (F3)", () => {
             reason: "the calendar says so",
             at,
         });
+    });
+});
+
+describe("listen answers without a service", () => {
+    test("--except stays open and --replaces changes an answered question atomically", async () => {
+        const store = new MeetingStore();
+        const at = "2026-11-02T14:00:00.000Z";
+        const meeting = await store.create(
+            {
+                title: "Planning",
+                start: at,
+                createdBy: "new",
+                items: ["i1", "i2"].map((id) => ({
+                    id,
+                    kind: "question",
+                    status: "suggested",
+                    about: "term",
+                    heard: "Ada",
+                    fromSec: 10,
+                    toSec: 20,
+                    question: "Which word?",
+                    choices: ["Atlas", "Aster"],
+                    decides: [],
+                    rules: [],
+                    suggestedAt: at,
+                })),
+            },
+            { command: "test", change: "fixture" }
+        );
+        const printed: string[] = [];
+        const result = spyOn(out, "result").mockImplementation((value) => {
+            printed.push(String(value));
+        });
+        const run = async (...flags: string[]) => {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+            await program.parseAsync(["listen", meeting.id, "--item", "i1", ...flags, "--json"], { from: "user" });
+        };
+        try {
+            await run("--answer", "Atlas", "--except", "i2");
+            const first = journalEntrySchema.parse(SafeJSON.parse(printed[0]!, { strict: true }));
+            expect(first.token).toBeString();
+            expect(new MeetingStore().read(meeting.id)?.items.map((item) => item.status)).toEqual([
+                "confirmed",
+                "suggested",
+            ]);
+            await run("--answer", "Aster", "--except", "i2", "--replaces", first.token);
+            const saved = new MeetingStore().read(meeting.id)!;
+            expect(saved.items[0]).toMatchObject({ answer: "Aster", status: "confirmed" });
+            expect(saved.items[1]?.status).toBe("suggested");
+            expect(SafeJSON.parse(printed[1]!, { strict: true })).toMatchObject({
+                action: { kind: "answer", except: ["i2"], replaces: first.token },
+            });
+        } finally {
+            result.mockRestore();
+            process.exitCode = 0;
+        }
     });
 });

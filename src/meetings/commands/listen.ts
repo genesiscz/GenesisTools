@@ -321,6 +321,8 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
 interface ListenOptions {
     item?: string;
     answer?: string;
+    except?: string[];
+    replaces?: string;
     comment?: string;
     reason?: string;
     subscribeAnswers?: boolean;
@@ -566,6 +568,46 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
 
+    if (opts.answer !== undefined && !opts.clipOut) {
+        if (!opts.item) {
+            fail("--answer needs --item <Q12>: it answers one question.");
+            return;
+        }
+
+        const client = await openMeetingsClient({ role: "cli" });
+        try {
+            const result = await client.call("decision.apply", {
+                meeting: meeting.id,
+                action: {
+                    kind: "answer",
+                    question: opts.item,
+                    answer: opts.answer,
+                    ...(opts.comment ? { comment: opts.comment } : {}),
+                    ...(opts.except ? { except: opts.except } : {}),
+                    ...(opts.replaces ? { replaces: opts.replaces } : {}),
+                },
+                ...(opts.reason ? { reason: opts.reason } : {}),
+            });
+            if (!result.entry) {
+                fail(result.skipped[0]?.reason ?? "Nothing was answered.");
+            } else if (opts.json) {
+                out.result(SafeJSON.stringify(result.entry, null, 2));
+            } else {
+                ui.ok(`${opts.item} answered: ${opts.answer}`);
+            }
+        } catch (error) {
+            fail(errorText(error));
+        } finally {
+            client.close();
+        }
+        return;
+    }
+
+    if (opts.except || opts.replaces) {
+        fail("--except and --replaces need --answer and --item.");
+        return;
+    }
+
     const itemId = opts.item ? questionIdOf(meeting, opts.item) : undefined;
     const first = openQuestions(meeting).find((item) => !itemId || item.id === itemId);
 
@@ -678,6 +720,8 @@ export function registerListenCommand(program: Command): void {
         .option("--item <Q12|id>", "only this question: its number as listen shows it (Q12), or its item id")
         .option("--answer <text>", `answer --item without listening ("${NONE_OF_THESE}" rejects what it decides)`)
         .option("--comment <text>", "with --answer: a note kept on the question")
+        .option("--except <items...>", "with --answer: leave these item ids or question numbers out")
+        .option("--replaces <token>", "with --answer: replace this earlier answer in one decision")
         .option("--reason <text>", "why: kept in the decision journal with each answer")
         .option(
             "--subscribe-answers",

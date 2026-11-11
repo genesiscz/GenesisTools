@@ -325,7 +325,7 @@ extension MeetingDetailModel {
     /// An answered question keeps its answer and shows its choices instead: the next one replaces it in one entry and
     /// asks again about what it carried (`changing`), and "Keep" leaves it as it was (genesiscz.md 6).
     func revertAndEdit(_ row: ReviewRow) {
-        if row.isQuestion, row.decision?.token != nil, service != nil {
+        if row.isQuestion, row.decision?.token != nil {
             changingRows.insert(row.id)
             selectedRow = row.id
             return
@@ -557,9 +557,11 @@ extension MeetingDetailModel {
             return ["reopen", meeting] + (action.items ?? []) + why + ["--json"]
         case "answer":
             // The command settles the look-alikes; an answer that leaves them needs the service.
-            guard let question = action.question, let answer = action.answer, action.lookAlikes == nil,
-                  action.except == nil, action.replaces == nil else { return nil }
-            return ["listen", meeting, "--item", question, "--answer", answer] + why + ["--json"]
+            guard let question = action.question, let answer = action.answer, action.lookAlikes == nil else { return nil }
+            var args = ["listen", meeting, "--item", question, "--answer", answer]
+            if let except = action.except, !except.isEmpty { args += ["--except"] + except }
+            if let replaces = action.replaces { args += ["--replaces", replaces] }
+            return args + why + ["--json"]
         default:
             return nil
         }
@@ -568,7 +570,11 @@ extension MeetingDetailModel {
     /// A command's `--json` answer as a decision result; a command that printed another shape decided what it says.
     private static func decodedDecision(_ args: [String]) async throws -> DecisionResult {
         let data = try await MeetingsCLI.run(args, timeoutSeconds: 120)
-        return (try? JSONDecoder().decode(DecisionResult.self, from: data)) ?? DecisionResult(entry: nil, skipped: [], warnings: nil)
+        if let result = try? JSONDecoder().decode(DecisionResult.self, from: data) { return result }
+        if let entry = try? JSONDecoder().decode(JournalEntry.self, from: data) {
+            return DecisionResult(entry: entry, skipped: entry.skipped, warnings: nil)
+        }
+        return DecisionResult(entry: nil, skipped: [], warnings: nil)
     }
 }
 

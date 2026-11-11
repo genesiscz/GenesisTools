@@ -224,6 +224,15 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertTrue(wire.contains(#""lookAlikes":"leave""#), wire)
     }
 
+    func testAReplacementAnswerKeepsItsStruckItemsWithoutTheService() {
+        var action = DecisionAction.answer("q1", "Alex Example")
+        action.except = ["q2", "i3"]
+        action.replaces = "earlier-token"
+        XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: action, reason: "heard it"),
+                       ["listen", "m", "--item", "q1", "--answer", "Alex Example", "--except", "q2", "i3",
+                        "--replaces", "earlier-token", "--reason", "heard it", "--json"])
+    }
+
     // MARK: A decision and what it carries (genesiscz.md 6, 9, 12a)
 
     /// A plan's reach as `decision.plan` sends it: a target outside the asked span with its own row, a look-alike, the
@@ -288,7 +297,8 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertNil(MeetingDetailModel.striking(answer, []).except)
         let struck = MeetingDetailModel.striking(answer, ["q2", "i3"])
         XCTAssertEqual(struck.except, ["i3", "q2"])
-        XCTAssertNil(MeetingDetailModel.commandArgs(meeting: "m", action: struck, reason: nil), "the command cannot strike: it waits for the service")
+        XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: struck, reason: nil),
+                       ["listen", "m", "--item", "q1", "--answer", "Dana Example", "--except", "i3", "q2", "--json"])
 
         XCTAssertNil(MeetingDetailModel.changing(answer, on: rows[0]).replaces, "an open question is answered, not changed")
         let decided = try JSONDecoder().decode(ReviewRow.self, from: Data("""
