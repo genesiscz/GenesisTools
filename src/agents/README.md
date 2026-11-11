@@ -485,6 +485,16 @@ The outcomes are `allow`, `context` (a note to the model), `warn` and `block`. A
 A **deny** prints the rule's wrong and right forms, and the corrected command when the guard can derive it safely. A
 **warn** or a note means the command already ran, and one stated part of its output cannot be trusted.
 
+What the model reads is kept short (2026-11-11; 28% fewer characters on a replay of the last 1,000 warns and blocks).
+A corrected command up to `guard.corrected.wholeMaxChars` (200) characters prints whole; a longer one prints only
+the statement that changed, cut to its lines or a window around the change when it is longer than
+`guard.corrected.partMaxChars` (400). The change itself is never cut, and `…` marks the text left as written. The
+first time a rule fires in a loop (the main agent, or one subagent), the message explains it in full; a later firing
+in the same loop gets a compact form: the title, the matched part, the corrected part and "(explained earlier in this
+session)", and a block keeps the first sentence of its reason. After the loop compacts, the full form comes back once.
+Claude and Codex place a compaction by the rows of their transcripts; Grok keeps only a count, so a Grok session that
+has compacted at least once always gets the full form. The `systemMessage` the user sees is unchanged.
+
 ### Custom rules
 
 Personal rules live in your own folder and run in the same guard. Point the config at files or folders (`~` expands;
@@ -1127,6 +1137,7 @@ the config in effect. `doctor` reports a value that does not parse, and the defa
 | `rules.<rule-id>` | rule severity | `allow`, `context`, `warn` or `block` for every harness. |
 | `harnesses.<harness>.<rule-id>` | | The same for one harness. |
 | `guard.longCommand.lines` / `.chars` | `30` / `2500` | Long-command downgrade. |
+| `guard.corrected.wholeMaxChars` / `.partMaxChars` | `200` / `400` | How much of a corrected command a message prints. |
 | `guard.contextCapPerSession` | `3` | Context notes per rule per session. |
 | `guard.customRules` | empty | Comma list of rule files or folders. |
 | `diff.enabled` | `true` | The Bash diff (Grok: off). |

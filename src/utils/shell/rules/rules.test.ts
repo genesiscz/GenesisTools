@@ -331,6 +331,11 @@ describe("rendering", () => {
         expect(renderViolation(detectShellViolations(short)[0], { command: short })).toContain(
             "your command, corrected:\nls ~/Downloads/*.har | wc -l"
         );
+
+        // `guard.corrected.wholeMaxChars` raised above the command's length prints it whole again.
+        const whole = renderViolation(v, { command: long, corrected: { wholeMaxChars: 1000, partMaxChars: 400 } });
+        expect(whole).toContain("your command, corrected:\n");
+        expect(whole).toContain("a".repeat(300));
     });
 
     it("never cuts the change itself when the changed statement is long", () => {

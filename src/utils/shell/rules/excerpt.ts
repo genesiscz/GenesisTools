@@ -18,6 +18,17 @@ export const PART_MAX_CHARS = 400;
 /** How much unchanged text the window keeps on each side of the change. */
 const WINDOW_CONTEXT_CHARS = 80;
 
+/** The two limits above, as the guard config sets them (`guard.corrected`). */
+export interface CorrectedLimits {
+    wholeMaxChars: number;
+    partMaxChars: number;
+}
+
+export const CORRECTED_LIMITS: CorrectedLimits = {
+    wholeMaxChars: WHOLE_COMMAND_MAX_CHARS,
+    partMaxChars: PART_MAX_CHARS,
+};
+
 export interface CorrectedPart {
     text: string;
     /** True when `text` is the whole corrected command. */
@@ -124,10 +135,12 @@ export function correctedPart(input: {
     suggestion: string;
     /** The matched text's place in the command. The part then reaches it too, so it shows where the fix goes. */
     matched?: { index: number; length: number };
+    limits?: CorrectedLimits;
 }): CorrectedPart {
     const { command, suggestion, matched } = input;
+    const limits = input.limits ?? CORRECTED_LIMITS;
 
-    if (suggestion.length <= WHOLE_COMMAND_MAX_CHARS || command === undefined) {
+    if (suggestion.length <= limits.wholeMaxChars || command === undefined) {
         return { text: suggestion, whole: true };
     }
 
@@ -158,7 +171,7 @@ export function correctedPart(input: {
         windowSpan(suggestion, from, to),
     ];
     const span =
-        spans.find((candidate) => candidate.end - candidate.start <= PART_MAX_CHARS) ?? spans[spans.length - 1];
+        spans.find((candidate) => candidate.end - candidate.start <= limits.partMaxChars) ?? spans[spans.length - 1];
 
     if (span.start === 0 && span.end >= suggestion.length) {
         return { text: suggestion, whole: true };

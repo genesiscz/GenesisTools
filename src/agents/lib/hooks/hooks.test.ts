@@ -23,6 +23,7 @@ import { claudeCompactedSince } from "@genesiscz/utils/agent-sessions/readers/cl
 import { claudeCurrentModel } from "@genesiscz/utils/agent-sessions/readers/claude-model";
 import { codexCompactedSince } from "@genesiscz/utils/agent-sessions/readers/codex-compaction";
 import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex-model";
+import { grokCompactedSince } from "@genesiscz/utils/agent-sessions/readers/grok-compaction";
 import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-model";
 import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
 import { env } from "@genesiscz/utils/env";
@@ -656,6 +657,7 @@ describe("the hook sections", () => {
             "rules switched off",
             "rules allowed per harness",
             "longCommand",
+            "corrected command",
             "contextCapPerSession",
             "diff.enabled",
             "diff.maxFiles",
@@ -2860,7 +2862,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: false,
             compactBoundaryRows: false,
-            compactedSince: expect.any(Function),
+            compactedSince: grokCompactedSince,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,

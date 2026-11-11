@@ -121,7 +121,7 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
         const explained = new Set(
             shown.map((violation) => violation.ruleId).filter((ruleId) => explainedEarlier(ruleId))
         );
-        const renderOptions: RenderOptions = { command, explained, denied };
+        const renderOptions: RenderOptions = { command, explained, denied, corrected: config.guard.corrected };
         return {
             message: renderViolations(shown, heading, renderOptions),
             userMessage: renderViolations(shown, heading),
