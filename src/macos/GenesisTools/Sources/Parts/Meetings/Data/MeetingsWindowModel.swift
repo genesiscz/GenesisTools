@@ -431,6 +431,45 @@ final class MeetingsWindowModel {
         }
     }
 
+    /// A second window closes: its own listener stops, and the shared service keeps the subscription the other windows
+    /// listen on (`stopLiveUpdates` unsubscribes the service itself).
+    func detachLiveUpdates() {
+        listening?.cancel()
+        listening = nil
+    }
+
+    // MARK: - Duplicate and rename
+
+    /// The meeting whose title the header edits now: a double click on the title, or Rename… in a menu.
+    var renamingMeetingID: String?
+    /// The meetings a duplicate runs for, so a second press waits for the first.
+    private(set) var duplicating: Set<String> = []
+
+    /// `meetings duplicate --json`'s answer.
+    struct DuplicateResult: Decodable, Equatable {
+        let from: String
+        let id: String
+        let title: String
+    }
+
+    /// Copies a meeting into a new record (`meetings duplicate`) and opens the copy, with its title ready to edit.
+    func duplicate(_ id: String) {
+        guard !duplicating.contains(id) else { return }
+        duplicating.insert(id)
+        Task {
+            defer { duplicating.remove(id) }
+            do {
+                let copy = try await MeetingsCLI.json(DuplicateResult.self, ["duplicate", id, "--json"], timeoutSeconds: 120)
+                loadOverview(quiet: true)
+                select(copy.id)
+                renamingMeetingID = copy.id
+                notices.push(StackedNotice(text: "Duplicated as \(copy.title)"))
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.duplicate(id) })
+            }
+        }
+    }
+
     /// Stops the events (the window closes).
     func stopLiveUpdates() {
         listening?.cancel()

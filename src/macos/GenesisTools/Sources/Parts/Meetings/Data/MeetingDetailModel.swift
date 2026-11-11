@@ -433,6 +433,16 @@ final class MeetingDetailModel {
         return seen != now
     }
 
+    /// Renames the meeting through the journal (`set` with a title), with an Undo. An empty or unchanged title changes
+    /// nothing.
+    func rename(to typed: String) {
+        let title = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = record.value?.title ?? window?.meeting(id)?.title
+        guard !title.isEmpty, title != current else { return }
+        journalChange("title", .set(title: title), done: "Renamed to \(title)", orRun: ["set", id, "--title", title],
+                      reloadTranscript: false)
+    }
+
     func toggleLabel(_ label: String, on: Bool) {
         journalChange("label.\(label)", on ? .set(labels: [label]) : .set(unlabel: [label]),
                       done: on ? "Label \(label) added" : "Label \(label) removed",

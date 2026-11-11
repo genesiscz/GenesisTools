@@ -381,11 +381,27 @@ private struct MeetingsByDayList: View {
                     ForEach(group.meetings) { meeting in
                         MeetingRow(meeting: meeting).equatable()
                             .tag(meeting.id)
+                            .contextMenu { MeetingRowMenu(id: meeting.id, model: model) }
                     }
                 }
             }
         }
         .listStyle(.inset)
+    }
+}
+
+/// A meeting's own actions, in a list row's context menu and the header's "More" menu.
+struct MeetingRowMenu: View {
+    let id: String
+    let model: MeetingsWindowModel
+
+    var body: some View {
+        Button("Open in New Window") { MeetingsWindow.openExtra(meeting: id) }
+        Button("Duplicate") { model.duplicate(id) }.disabled(model.duplicating.contains(id))
+        Button("Rename…") {
+            model.select(id)
+            model.renamingMeetingID = id
+        }
     }
 }
 

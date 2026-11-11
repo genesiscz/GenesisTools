@@ -12,6 +12,7 @@ import { localTime } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
+import { duplicateMeeting } from "../lib/duplicate";
 import { linkSource } from "../lib/link";
 import { setMeetingFields } from "../lib/meeting-fields";
 import { mergeMeetings } from "../lib/merge";
@@ -312,6 +313,21 @@ async function merge(fromRef: string, opts: { into: string; dryRun?: boolean; js
     }
 }
 
+async function duplicate(ref: string, opts: { title?: string; json?: boolean }): Promise<void> {
+    try {
+        const result = await duplicateMeeting({ store: new MeetingStore(), ref, title: opts.title });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        ui.ok(`Duplicated ${result.from} as ${result.id} ("${result.title}")`);
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 async function contextAdd(
     ref: string,
     target: string | undefined,
@@ -485,6 +501,14 @@ export function registerMeetingCommands(program: Command): void {
         .option("--dry-run", "say what would move, change nothing")
         .option("--json", "print the result as JSON")
         .action(merge);
+
+    program
+        .command("duplicate")
+        .argument("<meeting>", MEETING_REF)
+        .description("Copy a meeting into a new record: its fields, items, context, frames and sound")
+        .option("--title <text>", 'the copy\'s title (default: the title with " (copy)")')
+        .option("--json", "print the copy's id and title as JSON")
+        .action(duplicate);
 
     const context = program.command("context").description("Reference material for a meeting: notes, files, links");
 

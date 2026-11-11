@@ -121,7 +121,7 @@ function refusal(from: MeetingRecord, into: MeetingRecord, store: MeetingStore):
 }
 
 /** A clone of every file under `source` at `destination` (a copy where the volume cannot clone). */
-function cloneTree(source: string, destination: string): void {
+export function cloneTree(source: string, destination: string): void {
     mkdirSync(destination, { recursive: true });
 
     for (const name of readdirSync(source)) {

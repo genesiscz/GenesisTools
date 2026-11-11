@@ -91,9 +91,23 @@ struct MeetingDetailView: View {
         let record = detail.record.value
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(verbatim: record?.displayTitle ?? overview?.displayTitle ?? "")
-                    .font(.system(size: 17, weight: .semibold)).lineLimit(2).textSelection(.enabled)
+                MeetingHeaderTitle(title: record?.displayTitle ?? overview?.displayTitle ?? "",
+                                   editable: record?.title ?? overview?.title ?? "",
+                                   editing: Binding(get: { window.renamingMeetingID == detail.id },
+                                                    set: { window.renamingMeetingID = $0 ? detail.id : nil }),
+                                   rename: { detail.rename(to: $0) })
                 Spacer(minLength: 8)
+                MenuButton(style: .genHoverPlain(), items: {
+                    [.action("Open in New Window") { MeetingsWindow.openExtra(meeting: detail.id) },
+                     .action("Duplicate", enabled: !window.duplicating.contains(detail.id)) { window.duplicate(detail.id) },
+                     .action("Rename…") { window.renamingMeetingID = detail.id }]
+                }) {
+                    Image(systemName: "ellipsis.circle").font(.system(size: 14)).foregroundStyle(.secondary)
+                        .frame(width: 24, height: 22).contentShape(Rectangle())
+                }
+                .instantTooltip("More: open in a new window, duplicate, rename")
+                .accessibilityLabel("More meeting actions")
+                .accessibilityIdentifier("meetings.detail.more")
                 if overview?.hasRecording == true, AppParts.isLinked("recorder") {
                     headerAction("Open in the recorder editor", symbol: "film",
                                  tooltip: "Open the screen recording as an editor project, with the transcript as captions",
@@ -152,6 +166,7 @@ struct MeetingDetailView: View {
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
         .frameProbe("meetings.detail.header")
     }
+
 
     /// A labelled action, or its icon with the same words as tooltip and label when the column is narrow.
     @ViewBuilder
@@ -379,5 +394,54 @@ struct LoadablePane<Value: Equatable, Content: View>: View {
                 Spacer()
             }
         }
+    }
+}
+
+/// The meeting's title in the header. A double click edits it in place (Rename… in a menu too): Return or a click
+/// elsewhere saves it, Escape keeps the old one.
+private struct MeetingHeaderTitle: View {
+    /// What the header shows ("Untitled meeting" for an empty title), and the title the field starts from.
+    let title: String
+    let editable: String
+    @Binding var editing: Bool
+    let rename: (String) -> Void
+    @State private var draft = ""
+    @State private var cancelled = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        if editing {
+            TextField("Meeting title", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 17, weight: .semibold))
+                .focused($focused)
+                .onSubmit { finish(save: true) }
+                .onExitCommand { finish(save: false) }
+                .onAppear {
+                    draft = editable
+                    cancelled = false
+                    focused = true
+                }
+                .onChange(of: focused) { _, now in
+                    if !now { finish(save: !cancelled) }
+                }
+                .accessibilityIdentifier("meetings.detail.title.field")
+        } else {
+            Text(verbatim: title)
+                .font(.system(size: 17, weight: .semibold)).lineLimit(2)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { editing = true }
+                .instantTooltip("Double-click to rename")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction(named: "Rename") { editing = true }
+                .accessibilityIdentifier("meetings.detail.title")
+        }
+    }
+
+    private func finish(save: Bool) {
+        guard editing else { return }
+        cancelled = !save
+        if save { rename(draft) }
+        editing = false
     }
 }

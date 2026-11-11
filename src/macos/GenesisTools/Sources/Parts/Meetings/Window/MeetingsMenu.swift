@@ -21,6 +21,13 @@ enum MeetingsMenu {
         bar.addItem(withTitle: appName, action: nil, keyEquivalent: "").submenu = app
 
         let file = NSMenu(title: "File")
+        let newWindow = file.addItem(withTitle: "Open Meeting in New Window", action: #selector(MeetingsMenuTarget.openInNewWindow(_:)), keyEquivalent: "N")
+        newWindow.target = target
+        let duplicate = file.addItem(withTitle: "Duplicate Meeting", action: #selector(MeetingsMenuTarget.duplicateMeeting(_:)), keyEquivalent: "d")
+        duplicate.target = target
+        let rename = file.addItem(withTitle: "Rename Meeting…", action: #selector(MeetingsMenuTarget.renameMeeting(_:)), keyEquivalent: "")
+        rename.target = target
+        file.addItem(.separator())
         file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         bar.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = file
 
@@ -178,9 +185,26 @@ final class MeetingsMenuTarget: NSObject, NSMenuItemValidation {
     @objc func showContacts(_ sender: Any?) { model?.go(.contacts) }
     @objc func toggleSidePanel(_ sender: Any?) { model?.sidePanelOpen.toggle() }
 
+    /// The selected meeting in a window of its own (⇧⌘N), a copy of it (⌘D), and its title in edit (`renamingMeetingID`).
+    @objc func openInNewWindow(_ sender: Any?) {
+        guard let id = model?.selectedMeetingID else { return }
+        MeetingsWindow.openExtra(meeting: id)
+    }
+    @objc func duplicateMeeting(_ sender: Any?) {
+        guard let id = model?.selectedMeetingID else { return }
+        model?.duplicate(id)
+    }
+    @objc func renameMeeting(_ sender: Any?) { model?.renamingMeetingID = model?.selectedMeetingID }
+
+    static let meetingActions: Set<Selector> = [#selector(openInNewWindow(_:)), #selector(duplicateMeeting(_:)), #selector(renameMeeting(_:))]
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggleSidePanel(_:)) {
             menuItem.title = model?.sidePanelOpen == true ? "Hide Settings Panel" : "Show Settings Panel"
+        }
+        if let action = menuItem.action, Self.meetingActions.contains(action) {
+            guard let id = model?.selectedMeetingID else { return false }
+            return action != #selector(duplicateMeeting(_:)) || model?.duplicating.contains(id) != true
         }
         return true
     }

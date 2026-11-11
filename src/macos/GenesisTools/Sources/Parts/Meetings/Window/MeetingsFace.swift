@@ -141,15 +141,37 @@ package func runMeetings(_ args: [String]) -> Never {
 
 @MainActor
 final class MeetingsWindow: NSObject, NSWindowDelegate {
-    static let shared = MeetingsWindow()
+    static let shared = MeetingsWindow(primary: true)
+    /// The windows "Open in New Window" made: each has its own model, so two meetings show side by side.
+    private static var extras: [MeetingsWindow] = []
+    /// The first window keeps the saved frame and answers forwarded requests; an extra one cascades from the key window.
+    let primary: Bool
     private var window: NSWindow?
     let model = MeetingsWindowModel()
+
+    init(primary: Bool) {
+        self.primary = primary
+    }
+
+    /// Opens `meeting` in a new window of its own, offset from the key window, so the reader can put the two side by side.
+    static func openExtra(meeting: String) {
+        let face = MeetingsWindow(primary: false)
+        extras.append(face)
+        var request = MeetingsRequest()
+        request.meeting = meeting
+        let source = NSApp.keyWindow
+        face.show(request)
+        if let source, let window = face.window {
+            window.setFrame(source.frame, display: false)
+            window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: source.frame.minX, y: source.frame.maxY)))
+        }
+    }
 
     func show(_ request: MeetingsRequest) {
         let window = window ?? Self.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
         if self.window == nil {
             window.delegate = self
-            window.setFrameAutosaveName("GenesisToolsMeetings")
+            if primary { window.setFrameAutosaveName("GenesisToolsMeetings") }
             self.window = window
             model.load()
         }
@@ -211,6 +233,8 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        // The menu bar and the playback keys act on the window in front.
+        MeetingsMenuTarget.shared.model = model
         // A meeting changed elsewhere (a confirm in a terminal, a new recording) shows when the window comes back.
         if case .loaded = model.overview { model.refreshAfterReturn() }
     }
@@ -229,9 +253,18 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
         return noticeUndoManager
     }
 
-    /// The window is the face: closing it ends the process, as the hub's window does.
+    /// The last window closed ends the process, as the hub's window does. An extra window stops its sound and its
+    /// listener; the first window stays made, so a forwarded request opens it again.
     func windowWillClose(_ notification: Notification) {
-        NSApp.terminate(nil)
+        if !primary {
+            model.player.stop()
+            model.detail?.cancelReads()
+            model.detachLiveUpdates()
+            Self.extras.removeAll { $0 === self }
+            if MeetingsMenuTarget.shared.model === model { MeetingsMenuTarget.shared.model = Self.shared.model }
+        }
+        let others = ([Self.shared] + Self.extras).filter { $0 !== self && $0.window?.isVisible == true }
+        if others.isEmpty { NSApp.terminate(nil) }
     }
 }
 

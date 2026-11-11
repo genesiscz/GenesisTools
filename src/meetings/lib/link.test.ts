@@ -8,6 +8,7 @@ import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/rec
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { AssignInbox } from "./assign-inbox";
+import { copyTitle, duplicateMeeting } from "./duplicate";
 import { applySource, assertSourceFree, playLinksFor, sourceHolders } from "./link";
 import { mergeMeetings } from "./merge";
 
@@ -299,5 +300,57 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
             mergeMeetings({ store: same.store, fromId: same.from, intoId: same.into, inbox: same.inbox })
         ).rejects.toThrow("frames/14-03-00-000-d1.jpg is in both records");
         expect(readdirSync(join(same.store.folder(same.from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
+    });
+});
+
+describe("duplicate: a second record of one meeting", () => {
+    test("the copy keeps the fields, items and files, its paths point into its own folder, and the original stays", async () => {
+        stores += 1;
+        const store = new MeetingStore(new Storage(`meetings-duplicate-${process.pid}-${stores}`));
+        const original = await store.create(
+            {
+                title: "Planning",
+                start: "2026-11-05T13:02:36.000Z",
+                createdBy: "record",
+                project: "work",
+                labels: ["Checkout"],
+                sources: { wisprflow: { meetingId: "call-1" } },
+                exports: [{ path: "/notes/Planning.md", sha256: "abc", at: "2026-11-05T14:00:00.000Z" }],
+            },
+            { command: "test", change: "created" }
+        );
+        const framesDir = join(store.folder(original.id), "frames");
+        mkdirSync(framesDir, { recursive: true });
+        writeFileSync(join(framesDir, "0001.jpg"), "jpg");
+        await store.update(original.id, { command: "test", change: "frames" }, (record) => {
+            record.recording = { framesDir, frames: 1 };
+        });
+
+        const result = await duplicateMeeting({ store, ref: original.id });
+        const copy = store.read(result.id);
+
+        expect(result.title).toBe("Planning (copy)");
+        expect(result.id).not.toBe(original.id);
+        expect(copy?.project).toBe("work");
+        expect(copy?.labels).toEqual(["Checkout"]);
+        expect(copy?.sources).toEqual({ wisprflow: { meetingId: "call-1" } });
+        expect(copy?.exports).toBeUndefined();
+        expect(copy?.recording?.framesDir).toBe(join(store.folder(result.id), "frames"));
+        expect(readFileSync(join(store.folder(result.id), "frames", "0001.jpg"), "utf8")).toBe("jpg");
+        expect(copy?.history[0]?.change).toBe(`duplicated from ${original.id}`);
+        expect(store.read(original.id)?.recording?.framesDir).toBe(framesDir);
+        expect(store.read(original.id)?.title).toBe("Planning");
+    });
+
+    test("a given title wins, and an untitled meeting's copy has a name", async () => {
+        stores += 1;
+        const store = new MeetingStore(new Storage(`meetings-duplicate-${process.pid}-${stores}`));
+        const original = await store.create(
+            { title: "Planning", start: "2026-11-05T13:02:36.000Z", createdBy: "new" },
+            { command: "test", change: "created" }
+        );
+
+        expect((await duplicateMeeting({ store, ref: original.id, title: "Planning B" })).title).toBe("Planning B");
+        expect(copyTitle("  ")).toBe("Untitled meeting (copy)");
     });
 });
