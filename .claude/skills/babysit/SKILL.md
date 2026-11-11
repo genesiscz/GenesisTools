@@ -5,6 +5,8 @@ description: Run a PR review loop where external worker models fix the review fi
 
 # babysit: other models fix the review findings, this session judges
 
+Do not automatically open babysit notes in Genesis. Open them only when the user explicitly asks. Include this restriction in worker briefs.
+
 This session is the **master**. Workers (Grok or Codex Sol) do the fixing on their own PRs; the master briefs them,
 watches them, judges each fix as if a stranger wrote it, corrects what is wrong, integrates, pushes and reports. The
 process was proven on 2026-10-14 (Phase 1 and 2: Grok 4.7 Fast on #512, Sol 6.1 on #511); the numbers and the
