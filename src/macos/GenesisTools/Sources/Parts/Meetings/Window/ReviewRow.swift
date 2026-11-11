@@ -13,6 +13,7 @@ import SwiftUI
 struct ReviewRowView: View, Equatable {
     let row: ReviewRow
     let detail: MeetingDetailModel
+    // lint-rules-ignore: follows `play`, the player's state for this row's Moments, which `==` compares; the player itself only runs the actions
     let player: MomentPlayer?
     /// The player's state for this row's Moments (`MomentPlay.of`, computed by the list).
     var play: MomentPlay = .none
