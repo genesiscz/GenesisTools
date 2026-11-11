@@ -1647,8 +1647,8 @@ final class ReviewModel: ObservableObject {
         reveal(path: draft.path)
         // A draft whose file has no change in this scope never gets a card; a pending mark for it would
         // wait for ever and block the first-draft jump.
-        guard draftCards.contains(where: { $0.id == "draft:\(id)" }) else { return }
-        pendingThreadCard = "draft:\(id)"
+        guard draftCards.contains(where: { $0.id == ReviewCardID.proposalDraft(id).rawValue }) else { return }
+        pendingThreadCard = ReviewCardID.proposalDraft(id).rawValue
         focusPendingThread()
     }
 
@@ -1665,7 +1665,7 @@ final class ReviewModel: ObservableObject {
         let next = start.flatMap { start in
             (1...cards.count).lazy.map { cards[(start + $0) % cards.count] }.first { $0.state == "proposed" }
         } ?? open[0]
-        revealDraft(String(next.id.dropFirst("draft:".count)))
+        if let id = ReviewCardID(next.id).draftID { revealDraft(id) }
     }
 
     /// Undecided drafts per repository path, for the file list's badges.
@@ -1691,7 +1691,7 @@ final class ReviewModel: ObservableObject {
               let first = draftCards.first(where: { $0.state == "proposed" }) else { return }
         revealedProposal = proposal.url.path
         HubPerf.log("review.proposal opens at its first open draft \(first.id)")
-        revealDraft(String(first.id.dropFirst("draft:".count)))
+        if let id = ReviewCardID(first.id).draftID { revealDraft(id) }
     }
 
     /// The pending card, once the page has drawn the diff and holds that card; nil until then.
@@ -1983,7 +1983,10 @@ final class ReviewModel: ObservableObject {
             proposalBase, with: live, files: prFiles, shownHead: shownHead, prHead: prHead,
             proposalOnShownHead: proposalOnShownHead, forge: pr?.payload?.pr.forge
         )
-        let shown = Set(proposalComments.filter { $0.id.hasPrefix("thread:") }.map { String($0.id.dropFirst(7)) })
+        let shown = Set(proposalComments.compactMap { comment -> String? in
+            guard case .threadReply(let id) = ReviewCardID(comment.id) else { return nil }
+            return id
+        })
         let liveComments = showsLiveThreadsInline
             ? PRThreadRendering.rendered(live, files: prFiles, skip: shown, shownHead: shownHead, prHead: prHead, forge: pr?.payload?.pr.forge)
             : []
@@ -2190,12 +2193,15 @@ final class ReviewModel: ObservableObject {
             HubPerf.log("review.renderer failed: \(message)")
             FileHandle.standardError.write(Data("review renderer: \(message)\n".utf8))
         case .commentSubmitted(let input):
-            if let id = input.editingID, id.hasPrefix("draft:") {
-                updateDraft(id, status: "edited", body: input.body)
-            } else if let id = input.editingID, id.hasPrefix("thread:") {
-                updateThread(id, editedReply: input.body)
-            } else if let id = input.editingID {
-                editComment(id, body: input.body)
+            if let id = input.editingID {
+                switch ReviewCardID(id) {
+                case .proposalDraft:
+                    updateDraft(id, status: "edited", body: input.body)
+                case .threadReply:
+                    updateThread(id, editedReply: input.body)
+                case .localComment, .liveThread:
+                    editComment(id, body: input.body)
+                }
             } else {
                 addComment(input)
             }
@@ -2568,9 +2574,9 @@ final class ReviewModel: ObservableObject {
     }
 
     private func updateThread(_ id: String, editedReply: String? = nil, replyStatus: String? = nil, providerId: String? = nil) {
-        guard let proposal, id.hasPrefix("thread:") else { return }
+        guard let proposal, case .threadReply(let threadID) = ReviewCardID(id) else { return }
         do {
-            try proposal.update(threadID: String(id.dropFirst(7)), editedReply: editedReply, replyStatus: replyStatus, providerId: providerId)
+            try proposal.update(threadID: threadID, editedReply: editedReply, replyStatus: replyStatus, providerId: providerId)
             objectWillChange.send()
         } catch {
             notice = "Could not save the proposal: \(error.localizedDescription)"
@@ -2598,8 +2604,8 @@ final class ReviewModel: ObservableObject {
         var pendingDraft: String?
         /// Another root's folder name: the comment is not in the PR's repository, so it cannot go there.
         var otherRoot: String?
-        /// The card's kind and state as the page reads them (`SuggestionSendGate`).
-        var kind = "local"
+        /// The typed card identity and the state the page reads (`SuggestionSendGate`).
+        let card: ReviewCardID
         var state: String?
     }
 
@@ -2617,21 +2623,21 @@ final class ReviewModel: ObservableObject {
                               unresolvedThread: comment.thread != nil && thread == nil,
                               pendingDraft: comment.state == .draft ? comment.remoteDraftID : nil,
                               otherRoot: owner.root.repo?.path == repo.path ? nil : owner.root.prefix,
-                              kind: "local", state: comment.state.rawValue)
+                              card: .localComment(id), state: comment.state.rawValue)
         }
         guard let proposal else { return nil }
         let primary = primaryRoot
-        if id.hasPrefix("draft:"), let draft = proposal.drafts.first(where: { $0.id == String(id.dropFirst(6)) }),
+        if case .proposalDraft(let draftID) = ReviewCardID(id), let draft = proposal.drafts.first(where: { $0.id == draftID }),
            let file = primary.files.first(where: { $0.path == draft.path }) {
             return Suggestion(text: draft.editedBody ?? draft.body, path: draft.path, fileID: primary.global(file.id), side: draft.side,
                               startLine: min(draft.startLine, draft.line), line: draft.line,
-                              thread: proposal.replyToThread(draftID: draft.id), kind: "draft", state: draft.status)
+                              thread: proposal.replyToThread(draftID: draft.id), card: .proposalDraft(draftID), state: draft.status)
         }
-        if id.hasPrefix("thread:"), let thread = proposal.threads.first(where: { $0.id == String(id.dropFirst(7)) }),
+        if case .threadReply(let threadID) = ReviewCardID(id), let thread = proposal.threads.first(where: { $0.id == threadID }),
            let live = pr?.payload?.threads.first(where: { $0.id == thread.id && !$0.outdated }),
            let text = thread.reply, let anchor = primaryAnchor(of: live) {
             return Suggestion(text: text, path: live.path, fileID: anchor.fileID, side: live.side,
-                              startLine: anchor.start, line: live.line, thread: live.id, kind: "thread", state: thread.replyStatus)
+                              startLine: anchor.start, line: live.line, thread: live.id, card: .threadReply(threadID), state: thread.replyStatus)
         }
         return nil
     }
@@ -2652,7 +2658,7 @@ final class ReviewModel: ObservableObject {
             notice = "Nothing to send: the suggestion is empty or its file is not in this diff."
             return
         }
-        if let refusal = SuggestionSendGate.refusal(kind: item.kind, state: item.state, toPR: target != .agent,
+        if let refusal = SuggestionSendGate.refusal(card: item.card, state: item.state, toPR: target != .agent,
                                                     inFlight: sendingSuggestions.contains(id), busy: pr?.busy) {
             HubPerf.log("review.send \(id) refused: \(refusal)")
             notice = refusal
@@ -2663,11 +2669,12 @@ final class ReviewModel: ObservableObject {
         let selectedPR = pr?.payload?.pr.identity
         let selectedHead = reviewedHead
         let markSent: (String, String?) -> Void = { [weak self] status, providerId in
-            if id.hasPrefix("draft:") {
+            switch ReviewCardID(id) {
+            case .proposalDraft:
                 self?.updateDraft(id, status: status, providerId: providerId)
-            } else if id.hasPrefix("thread:") {
+            case .threadReply:
                 self?.updateThread(id, replyStatus: status, providerId: providerId)
-            } else {
+            case .localComment, .liveThread:
                 let ownership = providerId.flatMap { draftID in
                     selectedPR.map { PRDraftOwnership(pr: $0, headSha: selectedHead, draftID: draftID) }
                 }
@@ -2703,7 +2710,7 @@ final class ReviewModel: ObservableObject {
                 return
             }
             if owner == nil, let proposal,
-               proposal.identity != selectedPR || (id.hasPrefix("draft:") && !proposal.permitsDraftSend(displayedHead: reviewedHead, pr: selectedPR)) {
+               proposal.identity != selectedPR || (ReviewCardID(id).draftID != nil && !proposal.permitsDraftSend(displayedHead: reviewedHead, pr: selectedPR)) {
                 notice = "This proposal was reviewed at another PR or revision. Refresh the proposal before sending its line comments."
                 return
             }
@@ -2865,9 +2872,9 @@ final class ReviewModel: ObservableObject {
     }
 
     private func updateDraft(_ id: String, status: String, body: String? = nil, providerId: String? = nil) {
-        guard let proposal, id.hasPrefix("draft:") else { return }
+        guard let proposal, case .proposalDraft(let draftID) = ReviewCardID(id) else { return }
         do {
-            try proposal.update(draftID: String(id.dropFirst(6)), status: status, editedBody: body, providerId: providerId)
+            try proposal.update(draftID: draftID, status: status, editedBody: body, providerId: providerId)
             objectWillChange.send()
         } catch {
             notice = "Could not save the proposal: \(error.localizedDescription)"
@@ -3504,7 +3511,7 @@ private struct ScopeLink: View {
             // A branch with a PR/MR already has CompareLink in the standalone header.
             if !model.embedded, facts?.pr != nil { return nil }
             guard let base = model.base, base != "HEAD", !model.branch.isEmpty else { return nil }
-            let target = base.hasPrefix("origin/") ? String(base.dropFirst(7)) : base
+            let target = base.hasPrefix("origin/") ? String(base.dropFirst("origin/".count)) : base
             return forge.compare(base: target, head: model.branch).map { ("compare", $0, "Compare \(target)...\(model.branch)") }
         default:
             return nil

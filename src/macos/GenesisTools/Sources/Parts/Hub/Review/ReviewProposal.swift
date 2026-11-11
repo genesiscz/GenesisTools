@@ -243,7 +243,7 @@ final class ProposalDocument {
                              reasoning: thread.reasoning, fix: thread.fix)
             }
             return RenderedComment(
-                id: "thread:\(thread.id)",
+                id: ReviewCardID.threadReply(thread.id).rawValue,
                 fileId: file.id,
                 side: current?.side ?? .additions,
                 startLine: min(current?.startLine ?? line, line),
@@ -277,7 +277,7 @@ final class ProposalDocument {
         drafts.compactMap { draft in
             guard let file = files.first(where: { $0.path == draft.path }) else { return nil }
             return RenderedComment(
-                id: "draft:\(draft.id)",
+                id: ReviewCardID.proposalDraft(draft.id).rawValue,
                 fileId: file.id,
                 side: draft.side,
                 startLine: min(draft.startLine, draft.line),
