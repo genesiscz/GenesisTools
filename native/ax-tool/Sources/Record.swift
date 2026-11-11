@@ -1065,17 +1065,10 @@ func cmdCaptureScreen() {
         }
         // Fail closed: a window the caller asked to leave out that is not listed cannot be left out, and it would be
         // filmed. The border's panels stay best effort (`shareableContent` warns about them).
-        let unresolved = unresolvedExclusions(
-            requested: options.selection.excludedWindowIDs,
-            listed: Set(content.windows.map(\.windowID)),
-            exists: windowExists
-        )
-        if !unresolved.isEmpty {
-            let ids = unresolved.map(String.init).joined(separator: ",")
-            errorExit(
-                "windows \(ids) must be left out of the movie but screen capture does not list them yet, so nothing was recorded; try again",
-                code: "failed"
-            )
+        do {
+            try requireExclusionsListed(options.selection.excludedWindowIDs, in: content)
+        } catch {
+            errorExit("\(error.localizedDescription), so nothing was recorded; try again", code: "failed")
         }
         let excluded = indicator.windowIDs.union(options.selection.excludedWindowIDs)
         filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
@@ -1611,6 +1604,7 @@ private final class ScreenStreamHost {
         let previousDisplay = display
         let previousSize = outputSize(for: display)
         let excluded = excludedWindowIDs
+        let requested = options.selection.excludedWindowIDs
         let stream = self.stream
         let recorder = self.recorder
         Task {
@@ -1619,6 +1613,8 @@ private final class ScreenStreamHost {
                 guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else {
                     throw NSError(domain: "ax-tool", code: 2, userInfo: [NSLocalizedDescriptionKey: "display \(target) is not shareable"])
                 }
+                // The recording stays on its display, whose filter still leaves the window out.
+                try requireExclusionsListed(requested, in: content)
                 let filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
                 if let size {
                     try await stream.updateConfiguration(recorder.setOutputSize(width: Int(size.width), height: Int(size.height), for: target))
@@ -1657,6 +1653,8 @@ private final class ScreenStreamHost {
                 try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             }
             guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else { return }
+            // The old stream is gone with its display: a new one that cannot leave the window out ends the recording.
+            try requireExclusionsListed(options.selection.excludedWindowIDs, in: content)
             indicator.update([geometry.bounds])
             let excluded = excludedWindowIDs
             let filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
@@ -1719,9 +1717,25 @@ func shareableContent(listing windowIDs: Set<CGWindowID>, timeout: TimeInterval 
     return polled.value
 }
 
-/// Whether the window server still has the window, on screen or not.
+/// Throws when a window the caller asked the movie to leave out still exists but `content` does not list it: a display
+/// filter built from `content` could not leave it out, so the movie would show it. Every display filter of a recording
+/// (the start, a display switch, a restart) checks this; the recording border's panels stay best effort.
+func requireExclusionsListed(_ requested: Set<CGWindowID>, in content: SCShareableContent) throws {
+    let unresolved = unresolvedExclusions(requested: requested, listed: Set(content.windows.map(\.windowID)), exists: windowExists)
+    guard unresolved.isEmpty else {
+        let ids = unresolved.map(String.init).joined(separator: ",")
+        throw NSError(
+            domain: "ax-tool", code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "windows \(ids) must be left out of the movie but screen capture does not list them yet"]
+        )
+    }
+}
+
+/// Whether the window server still has the window, on screen or not. `.optionAll` lists off-screen windows too; Apple
+/// documents `.optionIncludingWindow` as meaningful only beside an above or below option. A list the window server
+/// does not give counts as "exists", so an exclusion check fails closed.
 func windowExists(_ id: CGWindowID) -> Bool {
-    let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[CFString: Any]] ?? []
+    guard let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[CFString: Any]] else { return true }
     return info.contains { ($0[kCGWindowNumber] as? CGWindowID) == id }
 }
 

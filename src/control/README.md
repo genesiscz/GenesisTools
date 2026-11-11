@@ -822,7 +822,9 @@ movie.
 
 A window named in `--exclude-window-ids` that still exists but that screen capture does not list within a second fails
 the start with code `failed`, and nothing is recorded: the recorder cannot leave out a window it cannot see, and the
-movie would show it.
+movie would show it. A switch to another display (a `switch` command or `--follow-focus`) checks it again and keeps the
+recording on its display when the check fails; a restart after the recorded display went away ends the recording
+instead.
 
 With `--stop-on-stdin` it reads one JSON command per stdin line, and the end of stdin stops and keeps the recording:
 

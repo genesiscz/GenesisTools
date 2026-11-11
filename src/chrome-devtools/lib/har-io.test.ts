@@ -142,6 +142,9 @@ describe("sanitizeHar", () => {
         expect(entry.request.url).toContain("state=keepme");
         expect(entry.request.queryString?.find((q) => q.name === "code")?.value).toBe("[REDACTED]");
         expect(entry.request.queryString?.find((q) => q.name === "state")?.value).toBe("keepme");
+        // The page is titled with the same URL, so the code must leave the title too, and nowhere may it remain.
+        expect(clean.log.pages[0]?.title).toContain("code=[REDACTED]");
+        expect(SafeJSON.stringify(clean)).not.toContain("oauth-secret");
         // the original is untouched
         expect(raw.log.entries[0].request.headers.find((h) => h.name === "Cookie")?.value).toBe("sid=hunter2");
         expect(raw.log.entries[0].request.url).toContain("code=oauth-secret");

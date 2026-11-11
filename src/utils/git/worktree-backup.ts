@@ -35,6 +35,7 @@ import {
 } from "node:fs";
 import { devNull, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { chunk } from "@genesiscz/utils/array";
 import type { ExecResult } from "@genesiscz/utils/cli";
 import { gitWorktreeBackupCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -589,13 +590,14 @@ async function hiddenIndexChanges(path: string): Promise<string[]> {
         files.push({ rel, sha });
     }
 
-    if (files.length > 0) {
-        // Without -w nothing is written, and --no-filters hashes the bytes as they are, so no clean filter starts.
+    // Without -w nothing is written, and --no-filters hashes the bytes as they are, so no clean filter starts. Batches
+    // keep each argv far below the OS limit; git prints one id per path, in order, so each batch lines up on its own.
+    for (const batch of chunk(files, HASH_OBJECT_BATCH)) {
         const ids = (
-            await mustRead(path, ["hash-object", "--no-filters", "--", ...files.map((file) => file.rel)])
+            await mustRead(path, ["hash-object", "--no-filters", "--", ...batch.map((file) => file.rel)])
         ).split("\n");
 
-        for (const [i, file] of files.entries()) {
+        for (const [i, file] of batch.entries()) {
             if (ids[i] !== file.sha) {
                 hidden.push(file.rel);
             }
@@ -604,6 +606,9 @@ async function hiddenIndexChanges(path: string): Promise<string[]> {
 
     return hidden.sort();
 }
+
+/** Paths per `git hash-object` call: at 1024 bytes each (PATH_MAX) a batch stays near 256 KiB, a quarter of ARG_MAX. */
+export const HASH_OBJECT_BATCH = 256;
 
 /** A blob id as git computes it, sha1 or sha256 by the length of the ids the repository uses. */
 function gitBlobId(content: Buffer, idLength: number): string {

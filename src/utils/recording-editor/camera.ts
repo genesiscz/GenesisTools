@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { rename, unlink, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
@@ -283,7 +283,7 @@ async function writeSidecarFile(path: string, sidecar: CameraSidecar): Promise<v
  * `clock: "screen"`). One span is cut too: the camera kept filming through a pause before the stop, and through a
  * segment a restart discarded, and that footage must not stay in the folder's camera movie. A face that left out its
  * own pauses, or a cut that fails, keeps the movie and only moves `screenStartedAt` to the screen's first frame, which
- * removes the constant error.
+ * removes the constant error. A cut whose `camera.json` cannot be written counts as failed: the uncut movie comes back.
  */
 export async function alignCameraMovie({
     folder,
@@ -331,21 +331,37 @@ export async function alignCameraMovie({
         runCommand ??
         ((command: string[]) => runVideoCommand({ command, timeoutMs: Math.max(120_000, Math.round(lastMs)) }));
 
+    // The original stays until camera.json describes the cut: a cut movie beside a sidecar that still says "wall" would
+    // be cut again by the next alignment, and more footage would be lost.
+    const original = join(dirname(input), `.camera-original-${randomUUID()}.mov`);
+
     try {
         await run(cameraAlignArgv({ input, output, plan }));
+        await rename(input, original);
         await rename(output, input);
+        await writeSidecarFile(path, { ...sidecar, startedAt: screenStartedAt, screenStartedAt, clock: "screen" });
     } catch (error) {
+        if (existsSync(original)) {
+            await rename(original, input);
+        }
+
         await unlink(output).catch((cleanupError: unknown) => {
             log.debug({ error: cleanupError, output }, "no cut camera movie to clean up");
         });
         log.warn({ error, folder, spans: spans.length }, "the camera movie could not be cut to the screen's spans");
         const reason = error instanceof Error ? error.message : String(error);
+        const kept =
+            spans.length > 1
+                ? `lined up with the screen's ${spans.length} pieces, so the bubble drifts after each pause and ${basename(input)} still holds the footage filmed during the pauses`
+                : `cut to the screen's recording, so ${basename(input)} still holds footage the screen movie left out (a pause before the stop, a discarded segment)`;
         return offsetOnly(
-            `The camera movie could not be lined up with the screen's ${spans.length} pieces, so the bubble drifts after each pause: ${reason.slice(0, 300)}`
+            `The camera movie could not be ${kept}; check it before you share it: ${reason.slice(0, 300)}`
         );
     }
 
-    await writeSidecarFile(path, { ...sidecar, startedAt: screenStartedAt, screenStartedAt, clock: "screen" });
+    await unlink(original).catch((cleanupError: unknown) => {
+        log.debug({ error: cleanupError, original }, "the uncut camera movie could not be removed");
+    });
     log.info(
         { folder, spans: spans.length, padHeadMs: plan.padHeadMs, ranges: plan.ranges },
         "the camera movie is cut to the screen's spans"

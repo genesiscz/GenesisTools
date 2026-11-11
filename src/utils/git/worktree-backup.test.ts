@@ -12,7 +12,7 @@ import {
 import { join } from "node:path";
 import { type ExecCallOptions, Executor } from "@genesiscz/utils/cli/executor";
 import { TestRepo } from "./test-repo";
-import { backupWorktree, planWorktreeBackup } from "./worktree-backup";
+import { backupWorktree, HASH_OBJECT_BATCH, planWorktreeBackup } from "./worktree-backup";
 
 /**
  * One repository for the whole file: a branch worktree with every kind of dirt, a detached worktree with a commit no
@@ -322,6 +322,49 @@ describe("worktree backup", () => {
         } finally {
             await repo.git(["config", "--unset", "core.attributesFile"]);
             await repo.git(["config", "--remove-section", "filter.marker"]);
+        }
+    });
+
+    it("hashes many flagged files in batches that stay lined up with their paths", async () => {
+        repo.write({ file: "README.md", content: "seed\n", cwd: spare });
+        const files = Object.fromEntries(
+            Array.from({ length: HASH_OBJECT_BATCH + 10 }, (_, i) => [
+                `many/f-${String(i).padStart(4, "0")}.txt`,
+                `${i}\n`,
+            ])
+        );
+        await repo.commitMany({ files, message: "many files", cwd: spare });
+        const names = Object.keys(files);
+        const first = names[0] ?? "";
+        const last = names.at(-1) ?? "";
+        await repo.git(["update-index", "--assume-unchanged", "--", ...names], { cwd: spare });
+        // One edit in the first batch and one in the second: a batch read out of line would name other files.
+        repo.write({ file: first, content: "edited\n", cwd: spare });
+        repo.write({ file: last, content: "edited\n", cwd: spare });
+
+        const exec = Executor.prototype.exec;
+        const hashed: number[] = [];
+        const spy = spyOn(Executor.prototype, "exec").mockImplementation(function (
+            this: Executor,
+            args: string[],
+            options?: ExecCallOptions
+        ) {
+            if (args.includes("hash-object")) {
+                hashed.push(args.length - args.indexOf("--") - 1);
+            }
+
+            return exec.call(this, args, options);
+        });
+
+        try {
+            const plan = await planWorktreeBackup({ path: spare });
+
+            // README.md and .gitignore are flagged too, so 2 files more than the many.
+            expect(hashed).toEqual([HASH_OBJECT_BATCH, names.length + 2 - HASH_OBJECT_BATCH]);
+            expect(plan.blockers).toHaveLength(1);
+            expect(plan.blockers[0]).toContain(`hides them from git diff (${first}, ${last})`);
+        } finally {
+            spy.mockRestore();
         }
     });
 

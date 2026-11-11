@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -4533,10 +4542,41 @@ describe("the camera on the screen's clock", () => {
         });
         expect(result.result).toBe("offset");
         expect(result.warning).toContain("ffmpeg exited 1");
+        expect(result.warning).toContain("camera.mov still holds the footage filmed during the pauses");
         expect(readFileSync(join(folder, "camera.mov"), "utf8")).toBe("raw camera movie");
         const sidecar = readCameraSidecar(join(folder, "screen.mp4"));
         expect(sidecar?.screenStartedAt).toBe(iso(T0 + 1400));
         expect(sidecar?.clock).toBe("wall");
+
+        // One span: no pause inside it to drift over, but the movie still holds what the screen movie left out.
+        const single = folderWith({ startedAt: iso(T0 + 250), screenStartedAt: iso(T0), clock: "wall" });
+        const one = await alignCameraMovie({
+            folder: single,
+            spans: [{ sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 2000 }],
+            runCommand: async () => {
+                throw new Error("ffmpeg exited 1");
+            },
+        });
+        expect(one.warning).toContain("camera.mov still holds footage the screen movie left out");
+        expect(one.warning).not.toContain("drifts");
+    });
+
+    test("a cut whose camera.json cannot be written puts the uncut movie back, so no later alignment cuts it twice", async () => {
+        const folder = folderWith({ startedAt: iso(T0 + 250), screenStartedAt: iso(T0), clock: "wall" });
+        // A folder where the sidecar's partial file goes: every sidecar write fails, as on a full disk.
+        mkdirSync(join(folder, `${CAMERA_SIDECAR}.partial`));
+        const run = alignCameraMovie({
+            folder,
+            spans: [{ sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 8000 }],
+            runCommand: async (command) => {
+                writeFileSync(command.at(-1) ?? "", "cut camera movie");
+            },
+        });
+
+        await expect(run).rejects.toThrow();
+        expect(readFileSync(join(folder, "camera.mov"), "utf8")).toBe("raw camera movie");
+        expect(readCameraSidecar(join(folder, "screen.mp4"))?.clock).toBe("wall");
+        expect(readdirSync(folder).filter((name) => name.startsWith(".camera-"))).toEqual([]);
     });
 
     test.skipIf(skip.integration)(

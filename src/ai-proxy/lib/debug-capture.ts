@@ -5,6 +5,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
 
 /**
  * Opt-in (AI_PROXY_DEBUG_CAPTURE=1) dump of the last failing upstream exchange.
@@ -33,6 +34,9 @@ export function captureUpstreamFailure(input: {
     };
 
     try {
+        // The write's own guard comes too late: a storage cached before the test sandbox names the real store, and the
+        // folder would already exist and be tightened there.
+        assertTestSafePath(dir, "create the debug capture folder");
         mkdirSync(dir, { recursive: true, mode: 0o700 });
         // A folder an older proxy created 0755 is tightened too.
         chmodSync(dir, 0o700);

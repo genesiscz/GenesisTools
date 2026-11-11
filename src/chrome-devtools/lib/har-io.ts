@@ -263,6 +263,13 @@ function redactUrl(url: string): string {
 export function sanitizeHar(har: HarFile): HarFile {
     const clone = structuredClone(har);
 
+    // The builder titles a page with its navigation URL, so an OAuth ?code= sits in the title too.
+    for (const page of clone.log.pages) {
+        if (/^https?:/i.test(page.title)) {
+            page.title = redactUrl(page.title);
+        }
+    }
+
     for (const entry of clone.log.entries) {
         entry.request.url = redactUrl(entry.request.url);
         for (const q of entry.request.queryString ?? []) {

@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import {
     GENESIS_TOOLS_LAUNCHER_SUFFIX,
     isGenesisToolsBinary,
@@ -23,6 +24,7 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
+    codesignTrustAnswered,
     deleteRetiredStamps,
     describeSource,
     listRetiredStamps,
@@ -298,19 +300,33 @@ describe("the codesign keychain notice", () => {
     });
 
     it("a trust marker it cannot write is a reason, never a throw that would hide the keychain change", () => {
-        const marker = join(genesisAppDir(), "codesign-trust");
-        // A folder where the marker file goes: the write fails as it would on a full disk.
-        mkdirSync(marker, { recursive: true });
+        // A home of its own: a GENESIS_TOOLS_HOME someone set (the sandbox keeps it) never loses its marker to this test.
+        const previousHome = env.get("GENESIS_TOOLS_HOME");
+        const home = mkdtempSync(join(tmpdir(), "gt-codesign-marker-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
 
         try {
+            const marker = join(genesisAppDir(), "codesign-trust");
+            expect(marker.startsWith(home)).toBe(true);
+            // A folder where the marker file goes: the write fails as it would on a full disk.
+            mkdirSync(marker, { recursive: true });
             expect(recordCodesignTrust("trusted")).toStartWith(`could not record the answer in ${marker}: `);
-        } finally {
+            // The reason says the next build asks again, so the folder must not count as an answer.
+            expect(codesignTrustAnswered()).toBe(false);
             rmSync(marker, { recursive: true, force: true });
-        }
 
-        expect(recordCodesignTrust("declined")).toBeNull();
-        expect(readFileSync(marker, "utf8")).toStartWith("declined ");
-        rmSync(marker, { force: true });
+            expect(recordCodesignTrust("declined")).toBeNull();
+            expect(readFileSync(marker, "utf8")).toStartWith("declined ");
+            expect(codesignTrustAnswered()).toBe(true);
+        } finally {
+            if (previousHome === undefined) {
+                env.testing.unset("GENESIS_TOOLS_HOME");
+            } else {
+                env.testing.set("GENESIS_TOOLS_HOME", previousHome);
+            }
+
+            rmSync(home, { recursive: true, force: true });
+        }
     });
 
     it("opens codesign-trust in a terminal on a click: a .command launcher that runs this checkout's tools", () => {

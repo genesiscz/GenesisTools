@@ -280,11 +280,17 @@ An empty `har` means the recorder started after the action, not that nothing hap
   The `attach` guidance says "bodies are OFF" when that is the case: a field session once spent an hour
   fingerprinting OAuth grants by Content-Length because nothing said so.
 - 🛑 A HAR of a login flow contains the plaintext password and live session tokens. `--sanitize` redacts `Cookie`,
-  `Set-Cookie` and `Authorization` headers, cookie values, and password, token and code POST parameters. It does not
+  `Set-Cookie` and `Authorization` headers, cookie values, password, token and code POST parameters, and those
+  query parameters in the request URLs and in the page titles (a page is titled with the URL it opened). It does not
   touch response bodies, and `har --now` keeps them by default, so a token that a response returned stays in a
   sanitized HAR. `--sanitize` alone is not enough before a HAR leaves the machine: `tools har-analyzer load` it, then
-  `tools har-analyzer export --sanitize --strip-bodies -o clean.har`, and read the URLs and headers that remain.
-  Record with `--no-bodies` when you do not need the bodies. Do not paste secrets into shell commands: they land in shell history and agent transcripts.
+  `tools har-analyzer export --sanitize --strip-bodies -o clean.har` (it redacts the page titles too), and then read
+  the whole file before you share it: the URLs, the headers, the `log.pages` titles and any request body text.
+  Neither step is a guarantee. Note that the analyzer's redactor keeps a bare `code` parameter, so the OAuth code
+  leaves the file only through `--sanitize` at record time.
+  Record with `--no-bodies` when you do not need the bodies: it applies to a live `har --now` or `--reload` capture,
+  not to a buffer export, and it leaves out response bodies only. Request bodies (POST data, a typed password
+  included) stay in the HAR, so `--sanitize` is still needed. Do not paste secrets into shell commands: they land in shell history and agent transcripts.
 - Read a HAR with `tools har-analyzer load <file>`, never with `cat` or `jq`.
 
 #### The third network log: `net-panel`

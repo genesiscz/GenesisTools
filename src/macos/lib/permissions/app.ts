@@ -998,9 +998,18 @@ function codesignTrustMarker(): string {
     return join(genesisAppDir(), "codesign-trust");
 }
 
-/** True once the trust was set or declined on this Mac (`trustCodesignKeys`, the first build's question). */
+/**
+ * True once the trust was set or declined on this Mac (`trustCodesignKeys`, the first build's question). Only a marker
+ * that holds a recorded answer counts: a folder in its place, or a file a failed write left empty, is no answer, so the
+ * next build asks again, as `recordCodesignTrust`'s reason promises.
+ */
 export function codesignTrustAnswered(): boolean {
-    return existsSync(codesignTrustMarker());
+    try {
+        return /^(trusted|declined) /.test(readFileSync(codesignTrustMarker(), "utf8"));
+    } catch (error) {
+        logger.debug({ error, marker: codesignTrustMarker() }, "permissions app: no readable codesign trust answer");
+        return false;
+    }
 }
 
 /**
