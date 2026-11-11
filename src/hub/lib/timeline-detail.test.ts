@@ -285,6 +285,7 @@ const SUBAGENTS: SessionSubagent[] = [
         state: "done",
         bytes: 10,
         filePath: "/tmp/agent-1.jsonl",
+        files: ["/tmp/agent-1.jsonl"],
     },
     {
         ...SUBAGENT_META,
@@ -299,6 +300,7 @@ const SUBAGENTS: SessionSubagent[] = [
         state: "done",
         bytes: 10,
         filePath: "/tmp/agent-old.jsonl",
+        files: ["/tmp/agent-old.jsonl"],
     },
 ];
 
