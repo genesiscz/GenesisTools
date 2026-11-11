@@ -72,6 +72,8 @@ export interface HookConfigSection<T, Facts = unknown, Context = unknown> {
     doctor(value: T, facts: Facts): readonly HookDoctorRow[];
     /** The named values of its keys, by the full key (`mods.resumeGuard.minTokens`); a key without any is absent. */
     readonly presets?: Readonly<Record<string, readonly ConfigPreset[]>>;
+    /** The key whose value a key takes while it is unset (a per-harness override takes the shared value). */
+    inheritsFrom?(key: string): string | undefined;
 }
 
 export function hooksConfigPath(): string {
