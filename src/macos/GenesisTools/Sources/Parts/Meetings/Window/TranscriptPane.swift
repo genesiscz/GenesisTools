@@ -181,13 +181,46 @@ struct TranscriptBlocksPane: View {
     }
 }
 
-/// The blocks and the only reader of the player's position in the transcript: each tick computes the heard line, so
-/// only the heard block redraws (G-TR-2); a new heard block scrolls into view while the pane follows, instantly under
-/// Reduce Motion.
+/// The only reader of the player's position in the transcript. Each tick derives two values that change every few
+/// seconds (the heard line, and the end of the last block passed) and hands the list those, never the position: the
+/// list is `Equatable` on what it shows, so a tick that changes neither renders nothing below this view. Handing it
+/// the position re-ran the lazy stack ten times a second, and each re-run laid out the whole meeting column: a main
+/// thread at 97 % of a core for the length of every clip (2026-11-11).
 private struct FollowingBlocks: View {
     let blocks: [TranscriptBlock]
     let player: MomentPlayer?
     let meeting: String
+    let follows: Bool
+    let jump: Int
+    let selection: Set<String>
+    let popoverLine: String?
+    let dimsPast: Bool
+    let showsAvatar: Bool
+    let play: (Double) -> Void
+    let select: (TranscriptBlockLine, TranscriptLineClick) -> Void
+    let scrolledAway: () -> Void
+    let popover: () -> AnyView
+    let closePopover: () -> Void
+
+    var body: some View {
+        let position = player?.top?.meeting == meeting ? player?.position : nil
+        FollowingList(blocks: blocks, heard: TranscriptBlock.heard(in: blocks, at: position),
+                      passedEnd: dimsPast ? TranscriptBlock.passedEnd(in: blocks, at: position) : nil,
+                      follows: follows, jump: jump, selection: selection, popoverLine: popoverLine, dimsPast: dimsPast,
+                      showsAvatar: showsAvatar, play: play, select: select, scrolledAway: scrolledAway, popover: popover,
+                      closePopover: closePopover)
+            .equatable()
+    }
+}
+
+/// The blocks, given the heard line and the end of the last block passed: only the heard block redraws when the
+/// heard line moves (G-TR-2); a new heard block scrolls into view while the pane follows, instantly under Reduce
+/// Motion. `==` compares what it shows and leaves the callbacks out.
+private struct FollowingList: View, Equatable {
+    let blocks: [TranscriptBlock]
+    let heard: TranscriptHeard?
+    /// `TranscriptBlock.passedEnd(in:at:)`, nil when past blocks are not dimmed.
+    let passedEnd: Double?
     let follows: Bool
     /// Bumped by "Jump to now": scroll to the heard block once more.
     let jump: Int
@@ -203,13 +236,17 @@ private struct FollowingBlocks: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    static func == (lhs: FollowingList, rhs: FollowingList) -> Bool {
+        lhs.heard == rhs.heard && lhs.passedEnd == rhs.passedEnd && lhs.follows == rhs.follows && lhs.jump == rhs.jump
+            && lhs.selection == rhs.selection && lhs.popoverLine == rhs.popoverLine && lhs.dimsPast == rhs.dimsPast
+            && lhs.showsAvatar == rhs.showsAvatar && lhs.blocks == rhs.blocks
+    }
+
     var body: some View {
-        let position = player?.top?.meeting == meeting ? player?.position : nil
-        let heard = TranscriptBlock.heard(in: blocks, at: position)
         ScrollViewReader { proxy in
             ScrollView {
                 TranscriptBlocksList(blocks: blocks, heard: heard, selection: selection, dimsPast: dimsPast,
-                                     showsAvatar: showsAvatar, pastBefore: dimsPast ? position : nil,
+                                     showsAvatar: showsAvatar, pastBefore: passedEnd,
                                      popoverLine: popoverLine, popover: popover, closePopover: closePopover,
                                      play: play, select: select)
                     .padding(.vertical, 4)

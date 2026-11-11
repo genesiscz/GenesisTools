@@ -89,6 +89,26 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertTrue(other == otherLater, "a block that is not heard compares equal across ticks")
     }
 
+    /// The list takes the end of the last block passed, not the position: the same blocks are past at it as at the
+    /// position, and it holds still between block ends, so a 10 Hz tick inside a block hands the list nothing new.
+    func testThePassedEndDimsWhatThePositionDimsAndHoldsBetweenBlockEnds() {
+        let blocks = TranscriptBlock.build(from: Self.entries, durationSec: 3300)
+        let ends = blocks.compactMap(\.endSec)
+        XCTAssertGreaterThan(ends.count, 1)
+        for position in stride(from: 3250.0, through: 3310.0, by: 0.1) {
+            let passed = TranscriptBlock.passedEnd(in: blocks, at: position)
+            for block in blocks {
+                guard let end = block.endSec else { continue }
+                XCTAssertEqual(end <= position, passed.map { end <= $0 } ?? false, "block \(block.id) at \(position)")
+            }
+        }
+        let inside = ends[0] + 0.05
+        XCTAssertEqual(TranscriptBlock.passedEnd(in: blocks, at: inside), TranscriptBlock.passedEnd(in: blocks, at: inside + 0.4),
+                       "no block ends between the two ticks: the same value")
+        XCTAssertNil(TranscriptBlock.passedEnd(in: blocks, at: nil))
+        XCTAssertNil(TranscriptBlock.passedEnd(in: blocks, at: 0), "before every end nothing is past")
+    }
+
     func testAClickPlaysAndShiftOrCommandSelects() {
         XCTAssertEqual(TranscriptLineClick(modifiers: []), .play)
         XCTAssertEqual(TranscriptLineClick(modifiers: .shift), .extendSelection)

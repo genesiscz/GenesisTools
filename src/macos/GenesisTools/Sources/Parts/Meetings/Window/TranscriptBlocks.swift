@@ -104,6 +104,17 @@ struct TranscriptBlock: Equatable, Identifiable {
         guard let line = block.lines.last(where: { $0.isHeard(at: position) }) else { return nil }
         return TranscriptHeard(blockID: block.id, lineID: line.id)
     }
+
+    /// The end of the last block the playback has passed: the latest block end at or before `position`. A block is
+    /// past at this value exactly when it is past at `position`, but the value changes only when the playback crosses
+    /// a block's end, so a view that takes it in place of the 10 Hz position renders again every few seconds.
+    static func passedEnd(in blocks: [TranscriptBlock], at position: Double?) -> Double? {
+        guard let position else { return nil }
+        return blocks.reduce(nil) { latest, block in
+            guard let end = block.endSec, end <= position else { return latest }
+            return max(latest ?? end, end)
+        }
+    }
 }
 
 /// Which block and line the player is in now. Only this block's view gets a non-nil `heardLineID`.
@@ -144,7 +155,8 @@ struct TranscriptBlocksList: View {
     var dimsPast = true
     /// Draws the round initials badge before each block (Riverside). Neutral grey: colour means state (G-SPK-6).
     var showsAvatar = true
-    /// The player's position, read only to say which blocks are past; nil dims nothing.
+    /// A block whose end is at or before this is past; nil dims nothing. Pass `TranscriptBlock.passedEnd(in:at:)`,
+    /// never the raw position: a value that changes per tick re-runs this list and lays out its whole column.
     var pastBefore: Double? = nil
     /// The line the selection popover points at (R43), and the popover: it opens beside that line's block.
     var popoverLine: String? = nil
