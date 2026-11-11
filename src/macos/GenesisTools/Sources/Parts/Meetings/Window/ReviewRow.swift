@@ -26,9 +26,12 @@ struct ReviewRowView: View {
     /// A question draws in the ask hue (not in the classic look).
     private var asks: Bool { row.isQuestion && look != .classic }
 
+    /// An answered question whose answer is being changed: its choices show, its earlier answer confirmed among them.
+    private var changing: Bool { !row.isOpen && detail.changingRows.contains(row.id) }
+
     var body: some View {
         Group {
-            if row.isOpen || editing || meanwhile != nil || held {
+            if row.isOpen || editing || meanwhile != nil || held || changing {
                 open
             } else {
                 folded
@@ -70,6 +73,12 @@ struct ReviewRowView: View {
                 RowEditor(row: row, detail: detail)
             } else if row.isOpen {
                 choices
+            } else if changing {
+                VStack(alignment: .leading, spacing: 6) {
+                    choices
+                    GhostButton("Keep \(row.answer ?? "the answer")", symbol: "arrow.uturn.backward",
+                                tooltip: "Leave the answer as it is") { detail.keepAnswer(row) }
+                }
             } else {
                 HStack(spacing: 8) {
                     decidedMark
@@ -433,7 +442,9 @@ struct ReviewRowView: View {
 
     @ViewBuilder
     private func revertButton(words: Bool) -> some View {
-        let tooltip = "Take this decision back for this row and edit it"
+        let tooltip = row.isQuestion
+            ? "Change the answer: it stays until you pick another, and what it carried is asked again"
+            : "Take this decision back for this row and edit it"
         if words {
             LiveButton(tooltip: tooltip, enabled: !busy, pressable: true, action: { detail.revertAndEdit(row) }) {
                 Text("Revert and edit").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).fixedSize()

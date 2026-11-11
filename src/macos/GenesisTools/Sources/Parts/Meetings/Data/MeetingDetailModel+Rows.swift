@@ -115,6 +115,12 @@ extension MeetingDetailModel {
         editingRow = nil
     }
 
+    /// "Keep" on a question whose answer was about to change: it folds back with its answer.
+    func keepAnswer(_ row: ReviewRow) {
+        changingRows.remove(row.id)
+        if editingRow == row.id { editingRow = nil }
+    }
+
     /// One decision on a row through the journal. With `meetings.rows.askReach` always, a decision that reaches beyond
     /// its row (look-alikes it settles, other lines, the dictionary) asks first with the "This also affects" sheet.
     func decide(_ row: ReviewRow, _ action: DecisionAction, askReach: Bool = true) {
@@ -246,6 +252,7 @@ extension MeetingDetailModel {
         ownTokens.insert(entry.token)
         // What this answer left out stays out when it is changed after a "Revert and edit".
         if entry.action.kind == "answer" { carriedStruck[row.id] = entry.action.except }
+        changingRows.remove(row.id)
         drafts[row.id] = nil
         reasons[row.id] = nil
         decidedMeanwhile[row.id] = nil
@@ -314,7 +321,14 @@ extension MeetingDetailModel {
     }
 
     /// "Revert and edit" on a decided row (R16, G35): its decision is taken back for this row only, and its editor opens.
+    /// An answered question keeps its answer and shows its choices instead: the next one replaces it in one entry and
+    /// asks again about what it carried (`changing`), and "Keep" leaves it as it was (genesiscz.md 6).
     func revertAndEdit(_ row: ReviewRow) {
+        if row.isQuestion, row.decision?.token != nil, service != nil {
+            changingRows.insert(row.id)
+            selectedRow = row.id
+            return
+        }
         guard let token = row.decision?.token else {
             edit(row)
             return

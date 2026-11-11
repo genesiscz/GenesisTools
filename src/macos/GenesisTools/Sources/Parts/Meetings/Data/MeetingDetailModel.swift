@@ -84,6 +84,8 @@ final class MeetingDetailModel {
     var pendingReach: PendingReach?
     /// The sheet's struck items: they leave the decision (genesiscz.md 6).
     var pendingStruck: Set<String> = []
+    /// Answered questions whose answer is being changed: their choices show until a new answer replaces it or "Keep".
+    var changingRows: Set<String> = []
     /// What this window's last answer to a question row left out, by row id: a changed answer strikes it again.
     @ObservationIgnored var carriedStruck: [String: [String]] = [:]
     /// The History sheet: the meeting's journal, or one row's (G43).
