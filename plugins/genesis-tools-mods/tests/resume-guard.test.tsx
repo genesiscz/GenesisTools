@@ -241,6 +241,21 @@ test("resume guard: an unknown size passes and is logged; the transcript's last 
     });
 });
 
+test("resume guard: a finished agent the engine no longer lists is found by its transcript and refused once", async () => {
+    const { host, files, lines } = fixture();
+    files.set(`${SESSION_DIR}/subagents/agent-a1b2c3d4e5f60789.jsonl`, {
+        text: `${JSON.stringify({ message: { usage: { input_tokens: 180_000, output_tokens: 10 } } })}\n`,
+        mtimeMs: Date.now() - 9 * MINUTE,
+    });
+
+    expect(await guardResume(host, send("a1b2c3d4e5f60789"))).toContain("is idle for 9 min");
+    expect(await guardResume(host, send("a1b2c3d4e5f60789"))).toBeUndefined();
+    expect(guardLog(lines).map((record) => record.decision)).toEqual(["refused", "passed-after-refusal"]);
+    // A name that is no agent id and has no transcript is still another session's.
+    expect(await guardResume(host, send("some-other-session"))).toBeUndefined();
+    expect(guardLog(lines).at(-1)).toMatchObject({ decision: "skipped", reason: "not-an-agent" });
+});
+
 test("resume guard: after a reload the transcript's mtime gives the idle time", async () => {
     const { host, agents, files } = fixture();
     agents.push(agent("wf-agent"));
