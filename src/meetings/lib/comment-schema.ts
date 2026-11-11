@@ -34,6 +34,9 @@ export type CommentListener = z.infer<typeof commentListenerSchema>;
 export const meetingCommentSchema = commentSchema.extend({
     state: z.enum(["staged", "sent"]),
     sentAt: z.string().optional(),
+    readAt: z.string().optional(),
+    readBy: savedDecisionActorSchema.optional(),
+    withdrawnAt: z.string().optional(),
     /** The journal entry of its send (kind `comment`). */
     token: z.string().optional(),
 });

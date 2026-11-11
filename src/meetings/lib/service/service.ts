@@ -184,6 +184,7 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
             root: (options.store?.() ?? new MeetingStore()).root,
             emit: (meeting, parts) => emit("meeting.changed", { meeting, parts }),
             peopleChanged: () => emit("people.changed", {}),
+            commentsChanged: (meeting) => emit("comment.changed", { meeting }),
             ...(options.watch?.subscribe ? { subscribe: options.watch.subscribe } : {}),
             ...(options.watch?.coalesceMs !== undefined ? { coalesceMs: options.watch.coalesceMs } : {}),
         });

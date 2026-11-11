@@ -15,7 +15,7 @@ extension MeetingsSettingsModel {
         guard let service else { throw MeetingsService.Unavailable(reason: "no Meetings service in this build") }
         do {
             return try await service.call(method, params)
-        } catch is MeetingsService.Unavailable {
+        } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
             try await Task.sleep(for: .seconds(3))
             return try await service.call(method, params)
         }

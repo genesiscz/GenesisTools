@@ -1,3 +1,4 @@
+import { meetingCommentSchema } from "@app/meetings/lib/comment-schema";
 import { FINDING_KINDS, findingSchema } from "@app/meetings/lib/findings";
 import { matchDraftSchema } from "@app/meetings/lib/match-preview";
 import { SUGGEST_RULES } from "@app/meetings/lib/suggest";
@@ -403,6 +404,33 @@ export const editorProject = defineMethod({
     doc: "Makes the meeting's screen recording an editor project in its folder: recording.json, proxy.mp4 (per 10 s window the display that changed most, or one display) and proxy.transcript.json, the transcript as captions with the speakers' names. Then movies.open(folder) edits it, and its findOnScreen(text) searches the OCR.",
 });
 
+export const commentsList = defineMethod({
+    name: "comments",
+    params: z.object({}).strict(),
+    result: z.array(meetingCommentSchema),
+    resultName: "MeetingComment[]",
+    effect: "read",
+    doc: "List this meeting's staged and sent comments, with read receipts and withdrawals.",
+});
+export const commentRead = defineMethod({
+    name: "readComment",
+    params: z.object({ id: z.string().min(1) }).strict(),
+    positional: ["id"],
+    result: meetingCommentSchema,
+    resultName: "MeetingComment",
+    effect: "destructive",
+    doc: "Acknowledge a sent comment before acting on it. Refuses a comment withdrawn before acknowledgement.",
+});
+export const commentWithdraw = defineMethod({
+    name: "withdrawComment",
+    params: z.object({ id: z.string().min(1) }).strict(),
+    positional: ["id"],
+    result: meetingCommentSchema,
+    resultName: "MeetingComment",
+    effect: "destructive",
+    doc: "Withdraw an unread comment. Refuses a comment the receiver has already acknowledged.",
+});
+
 export const meetingsToolsetApi = defineApi({
     id: "meetings",
     global: "meetings",
@@ -430,6 +458,9 @@ export const meetingsToolsetApi = defineApi({
             summary: "An opened meeting; `id` and `title` name it. Every call reads the meeting as saved now.",
             methods: [
                 info,
+                commentsList,
+                commentRead,
+                commentWithdraw,
                 lines,
                 transcript,
                 evidence,

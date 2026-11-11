@@ -92,6 +92,13 @@ export async function readScreen(
     return { meeting: record.id, recorded: true, displays: timeline.displays, frames };
 }
 
+export async function readTimeline(
+    params: MeetingsParsedParams<"meeting.timeline">,
+    store: MeetingStore
+): Promise<MeetingsResult<"meeting.timeline">> {
+    return screenTimeline({ store, record: recordOf(store, params.meeting), all: params.all, frame: params.frame });
+}
+
 export async function readWaveform(
     params: MeetingsParsedParams<"meeting.waveform">,
     store: MeetingStore,

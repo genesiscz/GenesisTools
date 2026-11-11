@@ -94,6 +94,7 @@ struct ScreenBesidePlayback: View {
     let pickDisplay: (Int?) -> Void
     var toggleFollows: () -> Void = {}
     var openFrame: (() -> Void)? = nil
+    var showText: (() -> Void)? = nil
 
     var body: some View {
         if recorded {
@@ -101,16 +102,17 @@ struct ScreenBesidePlayback: View {
                 header
                 frame
             }
-            .frame(height: height + 26, alignment: .top)
+            .frame(height: height + 50, alignment: .top)
         }
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
-            Text(verbatim: caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                .instantTooltip(Self.sentence(atSec: atSec, apartSec: apartSec) ?? "")
-            Spacer(minLength: 4)
-            if displays.count > 1 {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(verbatim: caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    .instantTooltip(Self.sentence(atSec: atSec, apartSec: apartSec) ?? "")
+                Spacer(minLength: 4)
+                if displays.count > 1 {
                 MenuButton(style: .genHoverPlain(), items: menuItems) {
                     HStack(spacing: 3) {
                         Image(systemName: "display")
@@ -123,15 +125,23 @@ struct ScreenBesidePlayback: View {
                 }
                 .instantTooltip("Pick the display the frames come from")
                 .accessibilityLabel("Display: \(selectedName)")
+                }
             }
-            IconButton(systemName: follows ? "link" : "link.badge.plus",
-                       tooltip: follows ? "The frame follows the playback. Click to hold it." : "Held. Click to follow the playback again.",
-                       size: 11, tint: follows ? .accentColor : nil, action: toggleFollows)
-            if let openFrame {
-                IconButton(systemName: "arrow.up.forward.square", tooltip: "Open the frame", size: 11, action: openFrame)
+            HStack(spacing: 6) {
+                KitToggleChip("Follows", isOn: Binding(get: { follows }, set: { _ in toggleFollows() }),
+                              hue: .play, size: .small,
+                              tooltip: "Follow playback, or hold the current frame",
+                              identifier: "meetings.screen.follows")
+                if let openFrame {
+                    GhostButton("Open frame", symbol: "arrow.up.forward.square", tooltip: "Open this frame in the image viewer", action: openFrame)
+                }
+                if let showText {
+                    GhostButton("OCR text", symbol: "text.viewfinder", tooltip: "Read and copy all recognized text in this frame", action: showText)
+                }
             }
+            .font(.system(size: 10))
         }
-        .frame(height: 20)
+        .frame(height: 44, alignment: .topLeading)
     }
 
     private var frame: some View {

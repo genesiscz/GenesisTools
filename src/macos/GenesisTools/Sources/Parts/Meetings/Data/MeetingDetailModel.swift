@@ -231,14 +231,16 @@ final class MeetingDetailModel {
     func readTimeline(quiet: Bool) {
         let all = MeetingsPreferences.timelineLines() == .all
         read(\.timeline, generation: \.timelineGeneration,
-             .command(["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []), timeoutSeconds: 120),
+             .service(MeetingsAPI.MeetingTimeline.self, .init(meeting: id, all: all),
+                      orRun: ["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []), timeoutSeconds: 120),
              quiet: quiet, revision: .timeline)
     }
 
     /// Every OCR line of one frame, for the frame sheet's "All text" when the timeline was read with changed lines only.
     func frameLines(file: String) async throws -> [OcrBox] {
-        let view = try await MeetingsCLI.json(ScreenTimeline.self, ["screen", id, "--timeline", "--json", "--frame", file],
-                                              timeoutSeconds: 120)
+        let view = try await MeetingsRead<ScreenTimeline>
+            .service(MeetingsAPI.MeetingTimeline.self, .init(meeting: id, frame: file),
+                     orRun: ["screen", id, "--timeline", "--json", "--frame", file], timeoutSeconds: 120).run()
         return view.frames.first?.lines ?? []
     }
 
@@ -458,7 +460,7 @@ final class MeetingDetailModel {
                 notices.push(StackedNotice(text: done, actions: [.undo { [weak self] id in
                     self?.revert(token: entry.token, items: nil, replacing: id)
                 }]))
-            } catch is MeetingsService.Unavailable {
+            } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
                 busy.remove(key)
                 change(key, args, done: done, reloadTranscript: reloadTranscript)
             } catch {
@@ -492,6 +494,7 @@ final class MeetingDetailModel {
             if self.timeline != .idle, self.mustRead(.timeline, revisions?.timeline) || force { self.readTimeline(quiet: true) }
             if self.rows != .idle, recordStale || force { self.readRows(quiet: true) }
             if proposals, self.proposals != .idle { self.readProposals(quiet: true) }
+            if self.comments != .idle { self.loadComments() }
         }
     }
 

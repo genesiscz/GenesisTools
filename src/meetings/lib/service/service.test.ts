@@ -382,10 +382,10 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         const missing = await failure(client.call("meeting.show", { ref: "nope" }));
         expect(missing).toBeInstanceOf(MeetingsServiceError);
         expect(missing).toMatchObject({ code: "meeting-not-found" });
-        expect(errorText(missing)).toBe('No meeting "nope". List them: tools meetings list');
+        expect(errorText(missing)).toBe('[meeting-not-found] No meeting "nope". List them: tools meetings list');
         const ambiguous = await failure(client.call("meeting.show", { ref: "2026-11-03" }));
         expect(ambiguous).toMatchObject({ code: "meeting-ref" });
-        expect(errorText(ambiguous)).toBe(`"2026-11-03" fits 2 meetings: ${RETRO.id}, ${REVIEW.id}`);
+        expect(errorText(ambiguous)).toBe(`[meeting-ref] "2026-11-03" fits 2 meetings: ${RETRO.id}, ${REVIEW.id}`);
     });
 
     test("meeting.transcript answers the corrected lines; a meeting without a source keeps its state code", async () => {
@@ -706,6 +706,35 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(none).toMatchObject({ code: "unplayable", data: { code: "unplayable", reason: "no-audio" } });
     });
 
+    test("a receiver reads comments explicitly; only unread comments can be withdrawn", async () => {
+        const { client, store } = await ADAPTERS[kind](agentHello);
+        await client.call("comment.stage", {
+            meeting: REVIEW.id,
+            target: { kind: "time", atSec: 2 },
+            text: "Read this",
+        });
+        await client.call("comment.stage", {
+            meeting: REVIEW.id,
+            target: { kind: "time", atSec: 3 },
+            text: "Withdraw this",
+        });
+        await client.call("comment.send", { meeting: REVIEW.id });
+        const read = await client.call("comment.read", { meeting: REVIEW.id, id: "c1" });
+        expect(read.readAt).toBe(NOW.toISOString());
+        expect(await failure(client.call("comment.withdraw", { meeting: REVIEW.id, id: "c1" }))).toMatchObject({
+            code: "already-read",
+        });
+        const withdrawn = await client.call("comment.withdraw", { meeting: REVIEW.id, id: "c2" });
+        expect(withdrawn.withdrawnAt).toBe(NOW.toISOString());
+        expect(await failure(client.call("comment.read", { meeting: REVIEW.id, id: "c2" }))).toMatchObject({
+            code: "withdrawn-comment",
+        });
+        expect(MeetingComments.of(store, REVIEW.id).list()).toMatchObject([
+            { id: "c1", readAt: NOW.toISOString() },
+            { id: "c2", withdrawnAt: NOW.toISOString() },
+        ]);
+    });
+
     test("comments: staged until sent, sent to the listeners with a journal entry and comment.sent, and never taken back", async () => {
         const { client, store } = await ADAPTERS[kind](agentHello);
         const heard: MeetingsEventMessage[] = [];
@@ -719,6 +748,11 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
         await client.call("comment.stage", { meeting: REVIEW.id, target: { kind: "time", atSec: 4 }, text: "Drop it" });
         const unstaged = await client.call("comment.unstage", { meeting: REVIEW.id, id: "c2" });
+        expect(await client.call("comment.send", { meeting: REVIEW.id, requireListener: true })).toEqual({
+            sent: [],
+            listeners: [],
+        });
+        expect(MeetingComments.of(store, REVIEW.id).list()[0]?.state).toBe("staged");
         MeetingComments.of(store, REVIEW.id, { now: () => NOW }).join({ pid: LISTENER_PID, actor: { kind: "listen" } });
         const listed = await client.call("comment.list", { meeting: REVIEW.id });
         const sent = await client.call("comment.send", { meeting: REVIEW.id, reason: "for the next round" });
@@ -1154,6 +1188,17 @@ describe("the Meetings service's connections", () => {
         expect(await heard.next()).toEqual({ method: "people.changed", params: {} });
     });
 
+    test("listener journal changes refresh the meeting's comment receiver state", async () => {
+        const folder = fakeFolderEvents();
+        const { service, store } = await startService({ watch: { subscribe: folder.subscribe, coalesceMs: 0 } });
+        const client = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => client.close());
+        const heard = eventQueue();
+        await client.subscribe({ meeting: REVIEW.id, events: ["comment.changed"] }, heard.push);
+        folder.raise(join(store.folder(REVIEW.id), "comments.ndjson"));
+        expect(await heard.next()).toEqual({ method: "comment.changed", params: { meeting: REVIEW.id } });
+    });
+
     test("the folder watch tells meeting.changed for a write outside the service, once per meeting and burst, and never for its own decisions, clips or journal lines", async () => {
         const folder = fakeFolderEvents();
         const { service, store } = await startService({ watch: { subscribe: folder.subscribe, coalesceMs: 0 } });
@@ -1504,6 +1549,32 @@ async function captureExamples(): Promise<Example[]> {
     );
     await ask(window, "meeting.speakers", { meeting: REVIEW.id }, "Talk time per label, its spans, and the hints.");
     await ask(window, "meeting.screen", { meeting: REVIEW.id }, "No screen recording: no frames, no pane.");
+    await ask(window, "meeting.timeline", { meeting: REVIEW.id }, "No screen recording: a useful read failure.");
+    const frameFolder = store.folder(RETRO.id);
+    mkdirSync(join(frameFolder, "frames"), { recursive: true });
+    // A one-pixel PNG is enough to verify the image metadata and pixel-box contract.
+    writeFileSync(
+        join(frameFolder, "frames/screen.png"),
+        Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jP/0AAAAASUVORK5CYII=",
+            "base64"
+        )
+    );
+    writeFileSync(
+        join(frameFolder, "ocr.jsonl"),
+        `${SafeJSON.stringify({
+            file: "frames/screen.png",
+            at: RETRO.start,
+            displayId: 1,
+            blocks: [{ text: "Agenda", confidence: 1, bounds: { x: 0, y: 0, width: 1, height: 1 } }],
+        })}\n`
+    );
+    await ask(
+        window,
+        "meeting.timeline",
+        { meeting: RETRO.id, frame: "frames/screen.png" },
+        "A frame with all OCR boxes."
+    );
     await ask(
         window,
         "meeting.waveform",
@@ -1535,6 +1606,19 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "comment.send", { meeting: REVIEW.id }, "Every staged comment; the journal keeps the entry.");
     await ask(window, "comment.unstage", { meeting: REVIEW.id, id: "c1" }, "A sent comment: already-sent.");
     await ask(window, "comment.send", { meeting: REVIEW.id, ids: ["c7"] }, "No such comment: unknown-comment.");
+    await ask(window, SUBSCRIBE, { meeting: REVIEW.id, events: ["comment.changed"] });
+    await ask(window, "comment.read", { meeting: REVIEW.id, id: "c1" }, "A receiver acknowledges the first comment.");
+    await ask(window, "comment.withdraw", { meeting: REVIEW.id, id: "c1" }, "An acknowledged comment: already-read.");
+    await ask(window, "comment.stage", { meeting: REVIEW.id, target: selection, text: "Withdraw before reading" });
+    await ask(window, "comment.send", { meeting: REVIEW.id, ids: ["c3"] });
+    await ask(window, "comment.withdraw", { meeting: REVIEW.id, id: "c3" });
+    await ask(window, "comment.read", { meeting: REVIEW.id, id: "c3" }, "The withdrawal won: withdrawn-comment.");
+    await ask(window, "comment.list", { meeting: REVIEW.id }, "Read receipts and withdrawals survive reopening.");
+    examples.push({
+        method: "comment.changed",
+        direction: "service→client",
+        notification: window.lines.find((line) => line.method === "comment.changed"),
+    });
     await ask(
         window,
         "people.known",
@@ -1733,6 +1817,10 @@ function normalized(examples: Example[]): unknown {
             .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
             .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
             // An error's stack names this checkout's paths and line numbers.
+            .replace(
+                /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
+                '"$1":"<meetings>/$2"'
+            )
             .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
             // A file preset's availability is the host's (/System/Library/Sounds is on a Mac only).
             .replace(/"available":(true|false)/g, '"available":"<host>"'),
@@ -1751,10 +1839,12 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 protocol: MEETINGS_PROTOCOL,
                 about: "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these; src/meetings/lib/service/service.test.ts checks every one against the method's schemas and against a live service. Regenerate: set examples to [] and run bun run test src/meetings/lib/service/service.test.ts",
                 examples: SafeJSON.parse(
-                    SafeJSON.stringify(captured, { strict: true }).replace(
-                        /"stack":"(?:[^"\\]|\\.)*"/g,
-                        '"stack":"<stack>"'
-                    ),
+                    SafeJSON.stringify(captured, { strict: true })
+                        .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
+                        .replace(
+                            /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
+                            '"$1":"<meetings>/$2"'
+                        ),
                     { strict: true }
                 ),
             };
@@ -1820,6 +1910,8 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 "unplayable",
                 "unknown-comment",
                 "already-sent",
+                "already-read",
+                "withdrawn-comment",
                 "unknown-person",
                 "unknown-merge",
                 "code-mismatch",

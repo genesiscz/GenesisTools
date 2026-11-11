@@ -121,6 +121,8 @@ struct PinCluster: Identifiable, Equatable {
 
     var id: String { pins.map(\.id).joined(separator: "+") }
     var isSingle: Bool { pins.count == 1 }
+    /// A dense mark keeps one useful title beside its count, preferring the playing or unanswered item.
+    var caption: String { (pins.first { $0.state == state } ?? pins.first)?.text ?? "" }
     /// The seconds the pins span.
     var range: ClosedRange<Double> { (pins.map(\.sec).min() ?? 0)...(pins.map(\.sec).max() ?? 0) }
     /// Dimmed only when every pin in it is.
@@ -176,7 +178,7 @@ struct PinCluster: Identifiable, Equatable {
             if lane == nil, let farthest, item.x - farthest.x >= markWidth { lane = farthest.row }
             if let lane {
                 last[lane] = marks.count
-                marks.append((pins: [item.pin], x: item.x, lane: lane, want: wants(item.pin)))
+                marks.append((pins: [item.pin], x: item.x, lane: lane, want: max(markWidth, wants(item.pin))))
             } else if let join = last[0] {
                 marks[join].pins.append(item.pin)
                 marks[join].want = markWidth
@@ -245,8 +247,9 @@ struct TimelinePinsRow: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let clusters = lanes > 1 ? PinCluster.laid(pins, in: view, width: proxy.size.width, lanes: lanes)
-                : PinCluster.clusters(pins, in: view, width: proxy.size.width)
+            let captionRoom: CGFloat = showsText ? 72 : PinMark.markWidth
+            let clusters = lanes > 1 ? PinCluster.laid(pins, in: view, width: proxy.size.width, lanes: lanes, markWidth: captionRoom)
+                : PinCluster.clusters(pins, in: view, width: proxy.size.width, markWidth: captionRoom)
             ZStack(alignment: .topLeading) {
                 ForEach(clusters) { cluster in
                     PinMark(cluster: cluster, showsText: showsText, expands: cluster.expands(in: view), actions: actions, stateLook: stateLook)
@@ -336,8 +339,8 @@ struct PinMark: View {
                     .frame(minWidth: Self.iconWidth, minHeight: 14)
                     .background(Capsule().fill(fill))
             }
-            if showsText, cluster.isSingle, cluster.room > 40 {
-                Text(verbatim: cluster.pins[0].text)
+            if showsText, cluster.room > 40 {
+                Text(verbatim: cluster.caption)
                     .font(.system(size: 10, weight: look == .classic ? .regular : .medium))
                     .lineLimit(1)
                     .truncationMode(.tail)

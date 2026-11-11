@@ -292,7 +292,7 @@ struct StagedCommentsBar: View {
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
                 .instantTooltip(listeners.isEmpty
                     ? "Nobody runs tools meetings listen on this meeting. The comments stay staged."
-                    : "Sends every staged comment as one message. A sent comment cannot be taken back.")
+                    : "Sends every staged comment as one message. An unread comment can be withdrawn.")
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 8)

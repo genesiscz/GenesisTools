@@ -42,14 +42,7 @@ enum PeopleCalls {
     @MainActor
     static func write<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, orRun args: [String],
                                                 service: MeetingsService?) async throws -> M.Result {
-        if let service {
-            do {
-                return try await service.call(method, params)
-            } catch is MeetingsService.Unavailable {
-                try Task.checkCancellation()
-            }
-        }
-        return try await MeetingsCLI.json(M.Result.self, args)
+        try await MeetingsService.write(method, params, service: service, orRun: args)
     }
 
     /// `people assign <meeting> <person> --from --to [--label] [--email] --json`: one stretch given to a person when no
@@ -241,7 +234,7 @@ extension MeetingDetailModel {
                             self?.revert(token: entry.token, items: nil, replacing: id) { self?.afterAssign() }
                         }]))
                         return
-                    } catch is MeetingsService.Unavailable {
+                    } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
                         try Task.checkCancellation()
                     }
                 }

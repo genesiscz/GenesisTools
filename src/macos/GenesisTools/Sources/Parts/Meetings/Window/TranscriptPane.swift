@@ -50,6 +50,7 @@ struct TranscriptBlocksPane: View {
     @State private var anchor: TranscriptBlockLine?
     @State private var popoverLine: String?
     @State private var jump = 0
+    @State private var sentExpanded = false
 
     var body: some View {
         let blocks = TranscriptBlock.filter(built, query: filter)
@@ -182,12 +183,40 @@ struct TranscriptBlocksPane: View {
 
     @ViewBuilder
     private var staged: some View {
-        let comments = detail.comments.value?.comments.filter { $0.state == "staged" } ?? []
-        if !comments.isEmpty || detail.commentDelivery != .idle {
+        let all = detail.comments.value?.comments ?? []
+        let comments = all.filter { $0.state == "staged" }
+        let sent = all.filter { $0.state == "sent" }
+        if !comments.isEmpty || !sent.isEmpty || detail.commentDelivery != .idle {
             Divider()
-            StagedCommentsBar(comments: comments.map(StagedCommentLine.init), listeners: detail.comments.value?.listeners ?? [],
-                              delivery: detail.commentDelivery, send: { detail.sendComments() },
-                              unstage: { detail.unstageComment($0) })
+            if !comments.isEmpty || detail.commentDelivery != .idle {
+                StagedCommentsBar(comments: comments.map(StagedCommentLine.init), listeners: detail.comments.value?.listeners ?? [],
+                                  delivery: detail.commentDelivery, send: { detail.sendComments() },
+                                  unstage: { detail.unstageComment($0) })
+            }
+            if !sent.isEmpty {
+                DisclosureGroup("Sent comments (\(sent.count))", isExpanded: $sentExpanded) {
+                    ForEach(sent.reversed()) { comment in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(StagedCommentLine(comment).rangeText).monospacedDigit()
+                            Text(comment.text).frame(maxWidth: .infinity, alignment: .leading)
+                            Text(comment.withdrawnAt != nil ? "Withdrawn" : comment.readAt != nil ? "Read" : "Unread")
+                                .foregroundStyle(.secondary)
+                                .help(comment.readAt.map { "Acknowledged at \($0)" } ?? "Waiting for a receiver to acknowledge this comment")
+                            if comment.canWithdraw {
+                                Button("Withdraw") { detail.withdrawComment(comment.id) }
+                                    .buttonStyle(.link)
+                                    .accessibilityIdentifier("meetings.comment.withdraw.\(comment.id)")
+                            }
+                        }
+                        .font(.system(size: 11))
+                        .padding(.vertical, 3)
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .onChange(of: detail.commentDelivery) { _, delivery in
+                    if case .sent = delivery { sentExpanded = true }
+                }
+            }
         }
     }
 }

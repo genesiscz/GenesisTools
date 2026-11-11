@@ -38,6 +38,7 @@
             "meeting.audio",
             "meeting.speakers",
             "meeting.screen",
+            "meeting.timeline",
             "meeting.waveform",
             "meetings.overview",
             "config.read",
@@ -48,6 +49,8 @@
             "comment.stage",
             "comment.list",
             "comment.unstage",
+            "comment.read",
+            "comment.withdraw",
             "comment.send",
             "people.known",
             "people.add",
@@ -76,9 +79,10 @@
             "decision.applied",
             "decision.reverted",
             "comment.sent",
+            "comment.changed",
             "people.changed"
           ],
-          "version": "024b84a79aec"
+          "version": "49a8558a7fbf"
         }
       }
     },
@@ -435,10 +439,10 @@
         "id": 9,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
-          "show": "2v7c93fc50hf4",
-          "transcript": "3ds9f3wk9uke7",
-          "speakers": "252gmwdao1vsx",
-          "timeline": "344k1uiqysg92"
+          "show": "wdqsb94s14iq",
+          "transcript": "sb6w20238a74",
+          "speakers": "2pvbjrroskad3",
+          "timeline": "3bqg3jh8kmorc"
         }
       }
     },
@@ -655,6 +659,7 @@
             "meeting.audio",
             "meeting.speakers",
             "meeting.screen",
+            "meeting.timeline",
             "meeting.waveform",
             "meetings.overview",
             "config.read",
@@ -665,6 +670,8 @@
             "comment.stage",
             "comment.list",
             "comment.unstage",
+            "comment.read",
+            "comment.withdraw",
             "comment.send",
             "people.known",
             "people.add",
@@ -693,9 +700,10 @@
             "decision.applied",
             "decision.reverted",
             "comment.sent",
+            "comment.changed",
             "people.changed"
           ],
-          "version": "024b84a79aec"
+          "version": "49a8558a7fbf"
         }
       }
     },
@@ -751,7 +759,7 @@
         "id": 2,
         "result": {
           "entry": {
-            "token": "d0bc8e18-b5c2-4085-8db3-f87f8c81fd2f",
+            "token": "1b321357-d1c6-48ff-b42e-70ff4704f90f",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -810,7 +818,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "d0bc8e18-b5c2-4085-8db3-f87f8c81fd2f",
+                    "token": "1b321357-d1c6-48ff-b42e-70ff4704f90f",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -862,7 +870,7 @@
         "id": 3,
         "result": {
           "entry": {
-            "token": "f9f6dbe9-6296-4c29-b508-db760df7d526",
+            "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -922,7 +930,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "f9f6dbe9-6296-4c29-b508-db760df7d526",
+                    "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1093,7 +1101,7 @@
                     "id": "i1"
                   },
                   "decision": {
-                    "token": "f9f6dbe9-6296-4c29-b508-db760df7d526",
+                    "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b",
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
@@ -1157,7 +1165,7 @@
         "method": "decision.revert",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "f9f6dbe9-6296-4c29-b508-db760df7d526"
+          "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b"
         }
       },
       "reply": {
@@ -1165,7 +1173,7 @@
         "id": 4,
         "result": {
           "entry": {
-            "token": "d5183abd-3c03-491c-aa5f-47e5a5e813f6",
+            "token": "23e5af8b-3fd4-4ce2-8215-0d623616ee62",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -1175,7 +1183,7 @@
             },
             "action": {
               "kind": "revert",
-              "token": "f9f6dbe9-6296-4c29-b508-db760df7d526"
+              "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b"
             },
             "decided": [],
             "settled": [],
@@ -1202,7 +1210,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "f9f6dbe9-6296-4c29-b508-db760df7d526",
+                    "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1267,7 +1275,7 @@
         "id": 5,
         "result": {
           "entry": {
-            "token": "513f1f4d-8fec-4f15-a33f-d17fb5dcb6d4",
+            "token": "8212aac4-fa64-4c34-baec-605aec014c63",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -1326,7 +1334,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "513f1f4d-8fec-4f15-a33f-d17fb5dcb6d4",
+                    "token": "8212aac4-fa64-4c34-baec-605aec014c63",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1496,7 +1504,7 @@
                     "id": "i1"
                   },
                   "decision": {
-                    "token": "513f1f4d-8fec-4f15-a33f-d17fb5dcb6d4",
+                    "token": "8212aac4-fa64-4c34-baec-605aec014c63",
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
@@ -1579,7 +1587,7 @@
               "i1"
             ],
             "entry": {
-              "token": "513f1f4d-8fec-4f15-a33f-d17fb5dcb6d4",
+              "token": "8212aac4-fa64-4c34-baec-605aec014c63",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
@@ -1638,7 +1646,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "513f1f4d-8fec-4f15-a33f-d17fb5dcb6d4",
+                      "token": "8212aac4-fa64-4c34-baec-605aec014c63",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -1687,7 +1695,7 @@
           "meeting": "2026-11-03-1000-design-review",
           "entries": [
             {
-              "token": "513f1f4d-8fec-4f15-a33f-d17fb5dcb6d4",
+              "token": "8212aac4-fa64-4c34-baec-605aec014c63",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
@@ -1746,7 +1754,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "513f1f4d-8fec-4f15-a33f-d17fb5dcb6d4",
+                      "token": "8212aac4-fa64-4c34-baec-605aec014c63",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -1767,7 +1775,7 @@
               "corrections": []
             },
             {
-              "token": "d5183abd-3c03-491c-aa5f-47e5a5e813f6",
+              "token": "23e5af8b-3fd4-4ce2-8215-0d623616ee62",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
@@ -1777,7 +1785,7 @@
               },
               "action": {
                 "kind": "revert",
-                "token": "f9f6dbe9-6296-4c29-b508-db760df7d526"
+                "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b"
               },
               "decided": [],
               "settled": [],
@@ -1804,7 +1812,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "f9f6dbe9-6296-4c29-b508-db760df7d526",
+                      "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -1963,7 +1971,7 @@
           },
           "delaySec": 2,
           "repeatGapSec": 1,
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-KDvIyy/gt-test-home-KcATYs/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-3a0yw3o9gxpjm.wav"
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Vwt1oS/gt-test-home-Ed8eAy/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-1zguw0lehqxkd.wav"
         }
       }
     },
@@ -1983,7 +1991,7 @@
         "jsonrpc": "2.0",
         "id": 22,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-KDvIyy/mtg-audio-oRXKgk/upload.ogg",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Vwt1oS/mtg-audio-08PCls/upload.ogg",
           "tracks": 1,
           "channels": 2,
           "durationSec": 45
@@ -2040,7 +2048,7 @@
         "jsonrpc": "2.0",
         "id": 24,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-KDvIyy/gt-test-home-KcATYs/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Vwt1oS/gt-test-home-Ed8eAy/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
           "sound": {
             "hz": 880,
             "sec": 0.15,
@@ -2067,7 +2075,7 @@
         "jsonrpc": "2.0",
         "id": 25,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-KDvIyy/gt-test-home-KcATYs/.genesis-tools/meetings-cache/tones/tone-a2ihri6ep544.wav",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Vwt1oS/gt-test-home-Ed8eAy/.genesis-tools/meetings-cache/tones/tone-a2ihri6ep544.wav",
           "sound": {
             "hz": 2000,
             "sec": 0.03,
@@ -2411,12 +2419,65 @@
       }
     },
     {
+      "method": "meeting.timeline",
+      "direction": "client→service",
+      "note": "No screen recording: a useful read failure.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 30,
+        "method": "meeting.timeline",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 30,
+        "error": {
+          "code": 1100,
+          "message": "2026-11-03-1000-design-review has no screen recording (no frames.jsonl or ocr.jsonl)",
+          "data": {
+            "code": "failed"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
+        }
+      }
+    },
+    {
+      "method": "meeting.timeline",
+      "direction": "client→service",
+      "note": "A frame with all OCR boxes.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "method": "meeting.timeline",
+        "params": {
+          "meeting": "2026-11-03-1400-retro",
+          "frame": "frames/screen.png"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "result": {
+          "meeting": "2026-11-03-1400-retro",
+          "folder": "<meetings>/2026-11-03-1400-retro",
+          "displays": [],
+          "frames": [],
+          "pending": 0
+        }
+      }
+    },
+    {
       "method": "meeting.waveform",
       "direction": "client→service",
       "note": "Peaks for the strip, 0 to 1 of the loudest 100 ms.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 30,
+        "id": 32,
         "method": "meeting.waveform",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2427,7 +2488,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 30,
+        "id": 32,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "fromSec": 0,
@@ -2448,7 +2509,7 @@
       "note": "The meetings with what each waits for.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 31,
+        "id": 33,
         "method": "meetings.overview",
         "params": {
           "days": 3650
@@ -2456,9 +2517,9 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 31,
+        "id": 33,
         "result": {
-          "generatedAt": "2026-11-11T23:21:14.029Z",
+          "generatedAt": "2026-11-11T23:34:07.030Z",
           "days": 3650,
           "applyAbove": 0.5,
           "meetings": [
@@ -2528,7 +2589,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 32,
+        "id": 34,
         "method": "config.read",
         "params": {
           "path": "global.playback.listen.longestClipSec"
@@ -2536,9 +2597,9 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 32,
+        "id": 34,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-KDvIyy/gt-test-home-KcATYs/.genesis-tools/meetings/config.json",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Vwt1oS/gt-test-home-Ed8eAy/.genesis-tools/meetings/config.json",
           "value": 30
         }
       }
@@ -2548,7 +2609,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 33,
+        "id": 35,
         "method": "config.set",
         "params": {
           "path": "global.playback.listen.longestClipSec",
@@ -2557,7 +2618,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 33,
+        "id": 35,
         "result": {
           "path": [
             "global",
@@ -2575,7 +2636,7 @@
       "note": "Back to its default.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 34,
+        "id": 36,
         "method": "config.unset",
         "params": {
           "path": "global.playback.listen.longestClipSec"
@@ -2583,7 +2644,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 34,
+        "id": 36,
         "result": {
           "path": [
             "global",
@@ -2601,7 +2662,7 @@
       "note": "The review rows, in the order listen asks.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 35,
+        "id": 37,
         "method": "meeting.rows",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -2609,7 +2670,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 35,
+        "id": 37,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "rows": [
@@ -2685,7 +2746,7 @@
                 "id": "i1"
               },
               "decision": {
-                "token": "513f1f4d-8fec-4f15-a33f-d17fb5dcb6d4",
+                "token": "8212aac4-fa64-4c34-baec-605aec014c63",
                 "actor": {
                   "kind": "agent",
                   "harness": "claude-code",
@@ -2711,7 +2772,7 @@
       "note": "Clip 5s: the selection's Moment, 5 s from its start.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 36,
+        "id": 38,
         "method": "moment.plan",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2731,7 +2792,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 36,
+        "id": 38,
         "result": {
           "moment": {
             "meeting": "2026-11-03-1000-design-review",
@@ -2773,7 +2834,7 @@
       "note": "A comment on the selected words, for the listening agent.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 37,
+        "id": 39,
         "method": "comment.stage",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2794,7 +2855,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 37,
+        "id": 39,
         "result": {
           "id": "c1",
           "at": "2026-11-03T10:00:00.000Z",
@@ -2823,7 +2884,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 38,
+        "id": 40,
         "method": "comment.stage",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2836,7 +2897,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 38,
+        "id": 40,
         "result": {
           "id": "c2",
           "at": "2026-11-03T10:00:00.000Z",
@@ -2858,7 +2919,7 @@
       "note": "Taken back before it was sent.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 39,
+        "id": 41,
         "method": "comment.unstage",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2867,7 +2928,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 39,
+        "id": 41,
         "result": {
           "id": "c2",
           "at": "2026-11-03T10:00:00.000Z",
@@ -2889,7 +2950,7 @@
       "note": "Who listens now: a send names them, or keeps them.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 40,
+        "id": 42,
         "method": "comment.list",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -2897,7 +2958,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 40,
+        "id": 42,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "comments": [
@@ -2941,7 +3002,7 @@
       "note": "Every staged comment; the journal keeps the entry.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 41,
+        "id": 43,
         "method": "comment.send",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -2949,7 +3010,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 41,
+        "id": 43,
         "result": {
           "sent": [
             {
@@ -2973,7 +3034,7 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "f990b031-9246-4077-9f7d-2701bed4d2da"
+              "token": "d268ce80-e222-4933-bdd0-d65102296228"
             }
           ],
           "listeners": [
@@ -2986,7 +3047,7 @@
             }
           ],
           "entry": {
-            "token": "f990b031-9246-4077-9f7d-2701bed4d2da",
+            "token": "d268ce80-e222-4933-bdd0-d65102296228",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -3029,7 +3090,7 @@
       "note": "A sent comment: already-sent.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 42,
+        "id": 44,
         "method": "comment.unstage",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -3038,7 +3099,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 42,
+        "id": 44,
         "error": {
           "code": 1100,
           "message": "Comment c1 was sent at 2026-11-03T10:00:00.000Z; it cannot change.",
@@ -3058,7 +3119,7 @@
       "note": "No such comment: unknown-comment.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 43,
+        "id": 45,
         "method": "comment.send",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -3069,7 +3130,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 43,
+        "id": 45,
         "error": {
           "code": 1100,
           "message": "No staged comment c7.",
@@ -3084,12 +3145,434 @@
       }
     },
     {
+      "method": "subscribe",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 46,
+        "method": "subscribe",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "events": [
+            "comment.changed"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 46,
+        "result": {
+          "events": [
+            "comment.changed"
+          ]
+        }
+      }
+    },
+    {
+      "method": "comment.read",
+      "direction": "client→service",
+      "note": "A receiver acknowledges the first comment.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 47,
+        "method": "comment.read",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "id": "c1"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 47,
+        "result": {
+          "id": "c1",
+          "at": "2026-11-03T10:00:00.000Z",
+          "target": {
+            "kind": "selection",
+            "from": {
+              "atSec": 2,
+              "line": 0
+            },
+            "to": {
+              "atSec": 9,
+              "line": 1
+            }
+          },
+          "text": "The button is the checkout button",
+          "quote": "The button moved",
+          "actor": {
+            "kind": "window"
+          },
+          "state": "sent",
+          "sentAt": "2026-11-03T10:00:00.000Z",
+          "token": "d268ce80-e222-4933-bdd0-d65102296228",
+          "readAt": "2026-11-03T10:00:00.000Z",
+          "readBy": {
+            "kind": "window"
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.withdraw",
+      "direction": "client→service",
+      "note": "An acknowledged comment: already-read.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 48,
+        "method": "comment.withdraw",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "id": "c1"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 48,
+        "error": {
+          "code": 1100,
+          "message": "Comment c1 was read at 2026-11-03T10:00:00.000Z; it cannot be withdrawn.",
+          "data": {
+            "code": "already-read"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.stage",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 49,
+        "method": "comment.stage",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "selection",
+            "from": {
+              "atSec": 2,
+              "line": 0
+            },
+            "to": {
+              "atSec": 9,
+              "line": 1
+            }
+          },
+          "text": "Withdraw before reading"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 49,
+        "result": {
+          "id": "c3",
+          "at": "2026-11-03T10:00:00.000Z",
+          "target": {
+            "kind": "selection",
+            "from": {
+              "atSec": 2,
+              "line": 0
+            },
+            "to": {
+              "atSec": 9,
+              "line": 1
+            }
+          },
+          "text": "Withdraw before reading",
+          "actor": {
+            "kind": "window"
+          },
+          "state": "staged"
+        }
+      }
+    },
+    {
+      "method": "comment.send",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 50,
+        "method": "comment.send",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "ids": [
+            "c3"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 50,
+        "result": {
+          "sent": [
+            {
+              "id": "c3",
+              "at": "2026-11-03T10:00:00.000Z",
+              "target": {
+                "kind": "selection",
+                "from": {
+                  "atSec": 2,
+                  "line": 0
+                },
+                "to": {
+                  "atSec": 9,
+                  "line": 1
+                }
+              },
+              "text": "Withdraw before reading",
+              "actor": {
+                "kind": "window"
+              },
+              "state": "sent",
+              "sentAt": "2026-11-03T10:00:00.000Z",
+              "token": "dae7b694-1e36-4aa1-803d-49dedcb48534"
+            }
+          ],
+          "listeners": [
+            {
+              "pid": 4343,
+              "at": "2026-11-03T10:00:00.000Z",
+              "actor": {
+                "kind": "listen"
+              }
+            }
+          ],
+          "entry": {
+            "token": "dae7b694-1e36-4aa1-803d-49dedcb48534",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "window"
+            },
+            "action": {
+              "kind": "comment",
+              "comments": [
+                {
+                  "id": "c3",
+                  "target": {
+                    "kind": "selection",
+                    "from": {
+                      "atSec": 2,
+                      "line": 0
+                    },
+                    "to": {
+                      "atSec": 9,
+                      "line": 1
+                    }
+                  },
+                  "text": "Withdraw before reading"
+                }
+              ]
+            },
+            "decided": [],
+            "settled": [],
+            "skipped": [],
+            "changes": [],
+            "labels": [],
+            "corrections": []
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.withdraw",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 51,
+        "method": "comment.withdraw",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "id": "c3"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 51,
+        "result": {
+          "id": "c3",
+          "at": "2026-11-03T10:00:00.000Z",
+          "target": {
+            "kind": "selection",
+            "from": {
+              "atSec": 2,
+              "line": 0
+            },
+            "to": {
+              "atSec": 9,
+              "line": 1
+            }
+          },
+          "text": "Withdraw before reading",
+          "actor": {
+            "kind": "window"
+          },
+          "state": "sent",
+          "sentAt": "2026-11-03T10:00:00.000Z",
+          "token": "dae7b694-1e36-4aa1-803d-49dedcb48534",
+          "withdrawnAt": "2026-11-03T10:00:00.000Z"
+        }
+      }
+    },
+    {
+      "method": "comment.read",
+      "direction": "client→service",
+      "note": "The withdrawal won: withdrawn-comment.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 52,
+        "method": "comment.read",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "id": "c3"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 52,
+        "error": {
+          "code": 1100,
+          "message": "Comment c3 was withdrawn before it was read.",
+          "data": {
+            "code": "withdrawn-comment"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.list",
+      "direction": "client→service",
+      "note": "Read receipts and withdrawals survive reopening.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 53,
+        "method": "comment.list",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 53,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "comments": [
+            {
+              "id": "c1",
+              "at": "2026-11-03T10:00:00.000Z",
+              "target": {
+                "kind": "selection",
+                "from": {
+                  "atSec": 2,
+                  "line": 0
+                },
+                "to": {
+                  "atSec": 9,
+                  "line": 1
+                }
+              },
+              "text": "The button is the checkout button",
+              "quote": "The button moved",
+              "actor": {
+                "kind": "window"
+              },
+              "state": "sent",
+              "sentAt": "2026-11-03T10:00:00.000Z",
+              "token": "d268ce80-e222-4933-bdd0-d65102296228",
+              "readAt": "2026-11-03T10:00:00.000Z",
+              "readBy": {
+                "kind": "window"
+              }
+            },
+            {
+              "id": "c3",
+              "at": "2026-11-03T10:00:00.000Z",
+              "target": {
+                "kind": "selection",
+                "from": {
+                  "atSec": 2,
+                  "line": 0
+                },
+                "to": {
+                  "atSec": 9,
+                  "line": 1
+                }
+              },
+              "text": "Withdraw before reading",
+              "actor": {
+                "kind": "window"
+              },
+              "state": "sent",
+              "sentAt": "2026-11-03T10:00:00.000Z",
+              "token": "dae7b694-1e36-4aa1-803d-49dedcb48534",
+              "withdrawnAt": "2026-11-03T10:00:00.000Z"
+            }
+          ],
+          "listeners": [
+            {
+              "pid": 4343,
+              "at": "2026-11-03T10:00:00.000Z",
+              "actor": {
+                "kind": "listen"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "comment.changed",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "comment.changed",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "comment": {
+            "id": "c1",
+            "at": "2026-11-03T10:00:00.000Z",
+            "target": {
+              "kind": "selection",
+              "from": {
+                "atSec": 2,
+                "line": 0
+              },
+              "to": {
+                "atSec": 9,
+                "line": 1
+              }
+            },
+            "text": "The button is the checkout button",
+            "quote": "The button moved",
+            "actor": {
+              "kind": "window"
+            },
+            "state": "sent",
+            "sentAt": "2026-11-03T10:00:00.000Z",
+            "token": "d268ce80-e222-4933-bdd0-d65102296228",
+            "readAt": "2026-11-03T10:00:00.000Z",
+            "readBy": {
+              "kind": "window"
+            }
+          }
+        }
+      }
+    },
+    {
       "method": "people.known",
       "direction": "client→service",
       "note": "The person picker's list: ranked for the meeting and the moment, with each source's state; nothing preselected.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 44,
+        "id": 54,
         "method": "people.known",
         "params": {
           "query": "ex",
@@ -3099,7 +3582,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 44,
+        "id": 54,
         "result": {
           "query": "ex",
           "people": [
@@ -3157,7 +3640,7 @@
       "note": "The picker's Add 'Robin Example' as new speaker: a person in the people book.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 45,
+        "id": 55,
         "method": "people.add",
         "params": {
           "name": "Robin Example",
@@ -3167,7 +3650,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 45,
+        "id": 55,
         "result": {
           "entry": {
             "name": "Robin Example",
@@ -3199,7 +3682,7 @@
       "note": "Left out of every list; hidden: false shows them.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 46,
+        "id": 56,
         "method": "people.hide",
         "params": {
           "person": "robin@example.com"
@@ -3207,7 +3690,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 46,
+        "id": 56,
         "result": {
           "person": {
             "id": "email:robin@example.com",
@@ -3233,7 +3716,7 @@
       "note": "Nobody known by that name: unknown-person.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 47,
+        "id": 57,
         "method": "people.hide",
         "params": {
           "person": "Nobody Example"
@@ -3241,7 +3724,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 47,
+        "id": 57,
         "error": {
           "code": 1100,
           "message": "Nobody known is \"Nobody Example\". Search: tools meetings people <text>",
@@ -3261,7 +3744,7 @@
       "note": "What a merge links (meetings, renamed labels); nothing is written and no meeting record changes on a merge.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 48,
+        "id": 58,
         "method": "people.planMerge",
         "params": {
           "a": "Alex Example",
@@ -3270,7 +3753,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 48,
+        "id": 58,
         "result": {
           "people": [
             {
@@ -3331,7 +3814,7 @@
       "note": "An alias in the people book; its token splits it again.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 49,
+        "id": 59,
         "method": "people.merge",
         "params": {
           "a": "Alex Example",
@@ -3340,10 +3823,10 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 49,
+        "id": 59,
         "result": {
           "merge": {
-            "token": "f0119557-e5c4-4802-9deb-3ad923e1046c",
+            "token": "4e0c03e5-4986-419c-b9ef-98301bcd7565",
             "people": [
               {
                 "name": "Alex Example"
@@ -3417,18 +3900,18 @@
       "note": "The merge split again.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 50,
+        "id": 60,
         "method": "people.unmerge",
         "params": {
-          "token": "f0119557-e5c4-4802-9deb-3ad923e1046c"
+          "token": "4e0c03e5-4986-419c-b9ef-98301bcd7565"
         }
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 50,
+        "id": 60,
         "result": {
           "merge": {
-            "token": "f0119557-e5c4-4802-9deb-3ad923e1046c",
+            "token": "4e0c03e5-4986-419c-b9ef-98301bcd7565",
             "people": [
               {
                 "name": "Alex Example"
@@ -3450,7 +3933,7 @@
       "note": "No merge has that token: unknown-merge.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 51,
+        "id": 61,
         "method": "people.unmerge",
         "params": {
           "token": "nope"
@@ -3458,7 +3941,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 51,
+        "id": 61,
         "error": {
           "code": 1100,
           "message": "No merge has the token nope. See them: tools meetings people --json",
@@ -3478,7 +3961,7 @@
       "note": "A second Robin.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 52,
+        "id": 62,
         "method": "people.add",
         "params": {
           "name": "Robin Example",
@@ -3487,7 +3970,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 52,
+        "id": 62,
         "result": {
           "entry": {
             "name": "Robin Example",
@@ -3517,7 +4000,7 @@
       "note": "A name two people share: ambiguous-person, with the candidates to pick from.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 53,
+        "id": 63,
         "method": "people.hide",
         "params": {
           "person": "Robin Example"
@@ -3525,7 +4008,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 53,
+        "id": 63,
         "error": {
           "code": 1100,
           "message": "\"Robin Example\" names 2 people: Robin Example <robin@example.com>, Robin Example <robin.two@example.com>. Name one by email or id.",
@@ -3573,7 +4056,7 @@
       "note": "One line given to a person: the assignment, and the stretches of the same label it may also reach.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 54,
+        "id": 64,
         "method": "decision.plan",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -3591,10 +4074,10 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 54,
+        "id": 64,
         "result": {
           "entry": {
-            "token": "f2901bee-e5ec-48a4-a096-f5d91a5bfeda",
+            "token": "415d8ed4-2310-4090-bf99-f1ef04017989",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -3645,7 +4128,7 @@
       "note": "The settings page's Add project; added: false when it was known.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 55,
+        "id": 65,
         "method": "projects.add",
         "params": {
           "name": "Atlas"
@@ -3653,7 +4136,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 55,
+        "id": 65,
         "result": {
           "name": "Atlas",
           "added": true
@@ -3666,7 +4149,7 @@
       "note": "remove takes labels away the same way.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 56,
+        "id": 66,
         "method": "projects.labels",
         "params": {
           "project": "Atlas",
@@ -3677,7 +4160,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 56,
+        "id": 66,
         "result": {
           "project": "Atlas",
           "labels": [
@@ -3692,7 +4175,7 @@
       "note": "The page's Save rules: a project's source folders and title words in one write; expect names the value read.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 57,
+        "id": 67,
         "method": "config.edit",
         "params": {
           "edits": [
@@ -3714,7 +4197,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 57,
+        "id": 67,
         "result": [
           {
             "path": [
@@ -3749,7 +4232,7 @@
       "note": "Each recent meeting against the saved rules (now) and the draft being edited.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 58,
+        "id": 68,
         "method": "projects.preview",
         "params": {
           "draft": {
@@ -3764,7 +4247,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 58,
+        "id": 68,
         "result": [
           {
             "id": "2026-11-03-1400-retro",
@@ -3796,7 +4279,7 @@
       "note": "An entry in the project's dictionary.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 59,
+        "id": 69,
         "method": "dictionary.add",
         "params": {
           "entry": {
@@ -3809,7 +4292,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 59,
+        "id": 69,
         "result": {
           "entry": {
             "type": "fix",
@@ -3827,7 +4310,7 @@
       "note": "An Undo's add of an entry made again since: dictionary-exists, and it is left as it is.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 60,
+        "id": 70,
         "method": "dictionary.add",
         "params": {
           "entry": {
@@ -3841,7 +4324,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 60,
+        "id": 70,
         "error": {
           "code": 1100,
           "message": "Atlass is in the project Atlas dictionary already; it was left as it is",
@@ -3861,7 +4344,7 @@
       "note": "The global entries, then the project's, each with its level.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 61,
+        "id": 71,
         "method": "dictionary.show",
         "params": {
           "project": "Atlas"
@@ -3869,7 +4352,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 61,
+        "id": 71,
         "result": {
           "project": "Atlas",
           "abbrExpansion": "every",
@@ -3889,7 +4372,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 62,
+        "id": 72,
         "method": "dictionary.test",
         "params": {
           "phrase": "The Atlass page",
@@ -3898,7 +4381,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 62,
+        "id": 72,
         "result": {
           "phrase": "The Atlass page",
           "text": "The Atlas page",
@@ -3926,7 +4409,7 @@
       "note": "removed: false when it was not there.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 63,
+        "id": 73,
         "method": "dictionary.remove",
         "params": {
           "value": "Atlass",
@@ -3935,7 +4418,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 63,
+        "id": 73,
         "result": {
           "value": "Atlass",
           "level": "project Atlas",
@@ -3949,7 +4432,7 @@
       "note": "The pairings one calendar entry made; left: the person is no longer paired with the project.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 64,
+        "id": 74,
         "method": "projects.unpair",
         "params": {
           "entry": "cal-2041"
@@ -3957,7 +4440,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 64,
+        "id": 74,
         "result": {
           "removed": [
             {
@@ -3976,7 +4459,7 @@
       "note": "One person from one project: nothing when they were not paired.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 65,
+        "id": 75,
         "method": "projects.unpair",
         "params": {
           "project": "Atlas",
@@ -3988,7 +4471,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 65,
+        "id": 75,
         "result": {
           "removed": []
         }
@@ -4000,13 +4483,13 @@
       "note": "The values the rule fields offer: each source's folders, the Calendar app's calendars, words and labels in use.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 66,
+        "id": 76,
         "method": "projects.suggestions",
         "params": {}
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 66,
+        "id": 76,
         "result": {
           "folders": {
             "wisprflow": {
@@ -4040,7 +4523,7 @@
       "note": "The people of the project's meetings not paired with it yet.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 67,
+        "id": 77,
         "method": "projects.meetingPeople",
         "params": {
           "project": "Atlas"
@@ -4048,7 +4531,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 67,
+        "id": 77,
         "result": [
           {
             "name": "Alex Example",
@@ -4068,7 +4551,7 @@
       "note": "Pair one of them; a person not on a calendar entry is paired by hand, with the meeting in the note.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 68,
+        "id": 78,
         "method": "projects.pairFromMeetings",
         "params": {
           "project": "Atlas",
@@ -4081,7 +4564,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 68,
+        "id": 78,
         "result": {
           "project": "Atlas",
           "paired": [
@@ -4103,7 +4586,7 @@
       "note": "Its settings, pairings and meetings.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 69,
+        "id": 79,
         "method": "projects.rename",
         "params": {
           "from": "Atlas",
@@ -4112,7 +4595,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 69,
+        "id": 79,
         "result": {
           "from": "Atlas",
           "to": "Harbor",
@@ -4128,7 +4611,7 @@
       "note": "Refused while a meeting has it; unassign leaves the meeting without a project.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 70,
+        "id": 80,
         "method": "projects.remove",
         "params": {
           "name": "Harbor"
@@ -4136,7 +4619,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 70,
+        "id": 80,
         "error": {
           "code": 1100,
           "message": "1 meeting has the project Harbor: 2026-11-03-1000-design-review. Rename it instead, or remove it with --unassign to leave them without a project.",
@@ -4156,7 +4639,7 @@
       "note": "The backup keeps the removed settings.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 71,
+        "id": 81,
         "method": "projects.remove",
         "params": {
           "name": "Harbor",
@@ -4165,13 +4648,13 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 71,
+        "id": 81,
         "result": {
           "name": "Harbor",
           "unassigned": [
             "2026-11-03-1000-design-review"
           ],
-          "backup": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-KDvIyy/gt-test-home-KcATYs/.genesis-tools/backups/meetings/2026-11-03-1000-project-Harbor.json"
+          "backup": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Vwt1oS/gt-test-home-Ed8eAy/.genesis-tools/backups/meetings/2026-11-03-1000-project-Harbor.json"
         }
       }
     },
@@ -4184,7 +4667,7 @@
         "params": {
           "meeting": "2026-11-03-1000-design-review",
           "entry": {
-            "token": "f9f6dbe9-6296-4c29-b508-db760df7d526",
+            "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -4244,7 +4727,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "f9f6dbe9-6296-4c29-b508-db760df7d526",
+                    "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -4276,9 +4759,9 @@
         "method": "decision.reverted",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "f9f6dbe9-6296-4c29-b508-db760df7d526",
+          "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b",
           "entry": {
-            "token": "d5183abd-3c03-491c-aa5f-47e5a5e813f6",
+            "token": "23e5af8b-3fd4-4ce2-8215-0d623616ee62",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -4288,7 +4771,7 @@
             },
             "action": {
               "kind": "revert",
-              "token": "f9f6dbe9-6296-4c29-b508-db760df7d526"
+              "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b"
             },
             "decided": [],
             "settled": [],
@@ -4315,7 +4798,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "f9f6dbe9-6296-4c29-b508-db760df7d526",
+                    "token": "f8f0d873-e624-40f9-8394-261ce8f3da5b",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -4365,7 +4848,7 @@
         "method": "comment.sent",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "f990b031-9246-4077-9f7d-2701bed4d2da",
+          "token": "d268ce80-e222-4933-bdd0-d65102296228",
           "comments": [
             {
               "id": "c1",
@@ -4388,7 +4871,7 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "f990b031-9246-4077-9f7d-2701bed4d2da"
+              "token": "d268ce80-e222-4933-bdd0-d65102296228"
             }
           ],
           "listeners": [
@@ -4442,6 +4925,7 @@
             "meeting.audio",
             "meeting.speakers",
             "meeting.screen",
+            "meeting.timeline",
             "meeting.waveform",
             "meetings.overview",
             "config.read",
@@ -4452,6 +4936,8 @@
             "comment.stage",
             "comment.list",
             "comment.unstage",
+            "comment.read",
+            "comment.withdraw",
             "comment.send",
             "people.known",
             "people.add",
@@ -4480,9 +4966,10 @@
             "decision.applied",
             "decision.reverted",
             "comment.sent",
+            "comment.changed",
             "people.changed"
           ],
-          "version": "024b84a79aec"
+          "version": "49a8558a7fbf"
         }
       }
     },

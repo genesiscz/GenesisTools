@@ -321,6 +321,9 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.MeetingSpeakers.name:
                 try roundTrip(MeetingsAPI.MeetingSpeakers.Params.self, params, label)
                 if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.MeetingSpeakers.Result.self, result).speakers.isEmpty, label) }
+            case MeetingsAPI.MeetingTimeline.name:
+                try roundTrip(MeetingsAPI.MeetingTimeline.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(ScreenTimeline.self, result) }
             case MeetingsAPI.MeetingScreen.name:
                 try roundTrip(MeetingsAPI.MeetingScreen.Params.self, params, label)
                 if let result { _ = try MeetingsService.decode(MeetingsAPI.MeetingScreen.Result.self, result) }
@@ -358,6 +361,16 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.CommentUnstage.name:
                 try roundTrip(MeetingsAPI.CommentUnstage.Params.self, params, label)
                 if let result { _ = try MeetingsService.decode(MeetingsAPI.CommentUnstage.Result.self, result) }
+            case MeetingsAPI.CommentRead.name:
+                try roundTrip(MeetingsAPI.CommentRead.Params.self, params, label)
+                if let result { XCTAssertNotNil(try MeetingsService.decode(MeetingComment.self, result).readAt) }
+            case MeetingsAPI.CommentWithdraw.name:
+                try roundTrip(MeetingsAPI.CommentWithdraw.Params.self, params, label)
+                if let result { XCTAssertNotNil(try MeetingsService.decode(MeetingComment.self, result).withdrawnAt) }
+            case MeetingsAPI.CommentChanged.name:
+                let notification = try XCTUnwrap((example["notification"] as? [String: Any])?["params"])
+                let changed = try MeetingsService.decode(MeetingsAPI.CommentChanged.self, notification)
+                XCTAssertEqual(changed.meeting, Self.design)
             case MeetingsAPI.CommentSend.name:
                 try roundTrip(MeetingsAPI.CommentSend.Params.self, params, label)
                 if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.CommentSend.Result.self, result).entry?.action.kind, "comment") }
@@ -423,7 +436,8 @@ final class MeetingsServiceTests: XCTestCase {
     private static let wavebMethods = [
         MeetingsAPI.DecisionPlan.name, MeetingsAPI.DecisionApply.name, MeetingsAPI.DecisionRevert.name, MeetingsAPI.JournalRead.name,
         MeetingsAPI.MomentPlan.name, MeetingsAPI.MomentClipCut.name, MeetingsAPI.TonePreview.name, MeetingsAPI.MeetingAudio.name,
-        MeetingsAPI.MeetingSpeakers.name, MeetingsAPI.MeetingScreen.name, MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name,
+        MeetingsAPI.MeetingSpeakers.name, MeetingsAPI.MeetingScreen.name, MeetingsAPI.MeetingTimeline.name,
+        MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name,
         MeetingsAPI.ConfigRead.name, MeetingsAPI.ConfigSet.name, MeetingsAPI.ConfigUnset.name, MeetingsAPI.MeetingRows.name,
         MeetingsAPI.CommentStage.name, MeetingsAPI.CommentList.name, MeetingsAPI.CommentUnstage.name, MeetingsAPI.CommentSend.name,
     ]
@@ -554,6 +568,22 @@ final class MeetingsServiceTests: XCTestCase {
         }
         XCTAssertEqual(commands.runs, [["show", Self.design, "--json"], ["show", Self.design, "--json"]])
         XCTAssertEqual(fake.count("meeting.show"), 1, "the service the window cannot read is not asked again before the backoff")
+    }
+
+    func testAWriteWithAnUnreadableReplyNeverRunsAgainAsACommand() async throws {
+        try writeServiceEntry()
+        fake.answers["comment.stage"] = ["result": ["id": "c1"]]
+        let service = makeService()
+        do {
+            _ = try await MeetingsService.write(MeetingsAPI.CommentStage.self,
+                                                .init(meeting: Self.design, target: .time(3), text: "Check", quote: nil),
+                                                service: service, orRun: ["comments", "stage"], command: command())
+            XCTFail("An unreadable mutation reply must surface the uncertainty")
+        } catch let failure as MeetingsService.Unavailable {
+            XCTAssertFalse(failure.safeToRetry)
+        }
+        XCTAssertEqual(fake.count("comment.stage"), 1)
+        XCTAssertTrue(commands.runs.isEmpty)
     }
 
     func testNoServiceRunsTheCommandAndStartsOneInTheBackground() async throws {

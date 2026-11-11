@@ -264,6 +264,7 @@ private struct DockScreen: View {
     @State private var throttle = ScreenFrameThrottle()
     @State private var image: NSImage?
     @State private var held: Double?
+    @State private var textFrame: MeetingsAPI.MeetingScreen.Frame?
 
     var body: some View {
         let chosen = dock.displays[meeting]
@@ -284,8 +285,14 @@ private struct DockScreen: View {
                                  held = position()
                                  dock.screenFollows.toggle()
                              },
-                             openFrame: frame.map { frame in { PathOpener.primary(frame.path) } })
-            .task(id: frame?.path) { await show(frame) }
+                             openFrame: frame.map { frame in { PathOpener.primary(frame.path) } },
+                             showText: frame.map { frame in { textFrame = frame } })
+            .task(id: frame?.path) { await show(frame, display: display) }
+            .sheet(isPresented: Binding(get: { textFrame != nil }, set: { if !$0 { textFrame = nil } })) {
+                if let frame = textFrame {
+                    PlaybackFrameText(meeting: meeting, frame: frame) { textFrame = nil }
+                }
+            }
     }
 
     /// The Moment's OCR hit, on the frame that carries it.
@@ -295,7 +302,7 @@ private struct DockScreen: View {
     }
 
     /// Reads the frame off the main thread, at most one change a second; a frame asked too soon waits its turn.
-    private func show(_ frame: MeetingsAPI.MeetingScreen.Frame?) async {
+    private func show(_ frame: MeetingsAPI.MeetingScreen.Frame?, display: Int?) async {
         guard let frame else { return }
         var file = throttle.offer(frame.path, at: Self.now())
         while file == nil, throttle.pending == frame.path {
@@ -304,18 +311,64 @@ private struct DockScreen: View {
             file = throttle.due(at: Self.now())
         }
         guard let file else { return }
-        let url = URL(fileURLWithPath: file)
-        let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
+        let decoded = await FrameThumbnails.shared.image(path: file, maxPixel: 720)
         guard !Task.isCancelled else {
             throttle.failed(file)
             return
         }
-        if let data, let decoded = NSImage(data: data), throttle.decoded(file, at: Self.now()) {
+        if let decoded, throttle.decoded(file, at: Self.now()) {
             image = decoded
+            let frames = screen.frames.filter { display == nil || $0.displayId == display }
+            if let index = frames.firstIndex(where: { $0.path == file }) {
+                for neighbor in [index - 1, index + 1] where frames.indices.contains(neighbor) {
+                    guard !Task.isCancelled else { return }
+                    _ = await FrameThumbnails.shared.image(path: frames[neighbor].path, maxPixel: 720)
+                }
+            }
         } else {
             throttle.failed(file)
         }
     }
 
     private static func now() -> Double { ProcessInfo.processInfo.systemUptime }
+}
+
+/// The OCR text stays selectable without opening an external image viewer.
+private struct PlaybackFrameText: View {
+    let meeting: String
+    let frame: MeetingsAPI.MeetingScreen.Frame
+    let close: () -> Void
+    @State private var lines: Loadable<[OcrBox]> = .idle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("OCR text at \(MeetingsFormat.clock(frame.meetingSec))").font(.headline)
+                Spacer()
+                Button("Close", action: close).keyboardShortcut(.cancelAction)
+            }
+            LoadablePane(state: lines, reading: "Reading the frame's text…", retry: { Task { await load() } }) { boxes in
+                ScrollView {
+                    Text(verbatim: boxes.isEmpty ? "No text was recognized in this frame." : boxes.map(\.text).joined(separator: "\n"))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 480, minHeight: 320)
+        .task { await load() }
+    }
+
+    private func load() async {
+        lines = .loading(previous: lines.value)
+        do {
+            let timeline = try await MeetingsRead<ScreenTimeline>
+                .service(MeetingsAPI.MeetingTimeline.self, .init(meeting: meeting, frame: frame.file),
+                         orRun: ["screen", meeting, "--timeline", "--json", "--frame", frame.file], timeoutSeconds: 120).run()
+            if !Task.isCancelled { lines = .loaded(timeline.frames.first?.lines ?? []) }
+        } catch {
+            if !Task.isCancelled { lines = .failed(asFailure(error), previous: lines.value) }
+        }
+    }
 }

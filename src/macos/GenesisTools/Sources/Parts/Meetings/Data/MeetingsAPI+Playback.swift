@@ -312,6 +312,16 @@ extension MeetingsAPI {
         }
     }
 
+    enum MeetingTimeline: MeetingsServiceMethod {
+        static let name = "meeting.timeline"
+        struct Params: Codable, Equatable {
+            var meeting: String
+            var all: Bool? = nil
+            var frame: String? = nil
+        }
+        typealias Result = ScreenTimeline
+    }
+
     /// `meeting.waveform`: peaks for the whole-conversation strip and the zoomed timeline.
     enum MeetingWaveform: MeetingsServiceMethod {
         static let name = "meeting.waveform"

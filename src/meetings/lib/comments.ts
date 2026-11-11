@@ -47,6 +47,8 @@ const commentLineSchema = z.discriminatedUnion("kind", [
         actor: savedDecisionActorSchema,
         comments: z.array(commentSchema),
     }),
+    z.object({ kind: z.literal("read"), at: z.string(), id: z.string(), actor: savedDecisionActorSchema }),
+    z.object({ kind: z.literal("withdrawn"), at: z.string(), id: z.string(), actor: savedDecisionActorSchema }),
     z.object({ kind: z.literal("listening"), listener: commentListenerSchema }),
     z.object({ kind: z.literal("left"), at: z.string(), pid: z.number().int() }),
 ]);
@@ -55,7 +57,7 @@ export type CommentLine = z.infer<typeof commentLineSchema>;
 /** Why a comment step was refused: the code lets the window tell a stale list from a wrong id. */
 export class CommentError extends Error {
     constructor(
-        readonly code: "unknown-comment" | "already-sent",
+        readonly code: "unknown-comment" | "already-sent" | "already-read" | "withdrawn-comment",
         message: string
     ) {
         super(message);
@@ -137,6 +139,16 @@ export class MeetingComments {
             } else if (line.kind === "sent") {
                 for (const sent of line.comments) {
                     comments.set(sent.id, { ...sent, state: "sent", sentAt: line.at, token: line.token });
+                }
+            } else if (line.kind === "read" || line.kind === "withdrawn") {
+                const comment = comments.get(line.id);
+                if (comment) {
+                    comments.set(
+                        line.id,
+                        line.kind === "read"
+                            ? { ...comment, readAt: line.at, readBy: line.actor }
+                            : { ...comment, withdrawnAt: line.at }
+                    );
                 }
             }
         }
@@ -228,6 +240,52 @@ export class MeetingComments {
         return comments.map((comment) => ({ ...comment, state: "sent", sentAt: sent.at, token: sent.token }));
     }
 
+    /** A receiver acknowledges a sent comment before acting on it. Delivery alone is not a read receipt. */
+    acknowledge(id: string, actor: DecisionActor): MeetingComment {
+        return this.transaction(() => {
+            const comment = this.list().find((entry) => entry.id === id);
+            if (comment?.state !== "sent") {
+                throw new CommentError("unknown-comment", `No sent comment ${id}.`);
+            }
+            if (comment.withdrawnAt) {
+                throw new CommentError("withdrawn-comment", `Comment ${id} was withdrawn before it was read.`);
+            }
+            if (comment.readAt) {
+                return comment;
+            }
+
+            const at = this.now();
+            this.append({ kind: "read", id, at, actor });
+            return { ...comment, readAt: at, readBy: actor };
+        });
+    }
+
+    /** A sent comment can be withdrawn until a receiver acknowledges it. Followers receive a retraction event. */
+    withdraw(id: string, actor: DecisionActor): MeetingComment {
+        return this.transaction(() => {
+            const comment = this.list().find((entry) => entry.id === id);
+            if (!comment) {
+                throw new CommentError("unknown-comment", `No comment ${id}.`);
+            }
+            if (comment.readAt) {
+                throw new CommentError(
+                    "already-read",
+                    `Comment ${id} was read at ${comment.readAt}; it cannot be withdrawn.`
+                );
+            }
+            if (comment.withdrawnAt) {
+                return comment;
+            }
+            if (comment.state === "staged") {
+                return this.unstage(id, actor);
+            }
+
+            const at = this.now();
+            this.append({ kind: "withdrawn", id, at, actor });
+            return { ...comment, withdrawnAt: at };
+        });
+    }
+
     /** A listening process starts: senders count it until it leaves or its pid ends. */
     join(listener: { pid: number; actor: DecisionActor }): void {
         this.append({ kind: "listening", listener: { pid: listener.pid, at: this.now(), actor: listener.actor } });
@@ -282,6 +340,10 @@ export class MeetingComments {
 
 /** The lines `--with-comments` prints for one send: one per comment, each with `type: "comment"`. */
 export function commentStreamLines(line: CommentLine): Array<Record<string, unknown>> {
+    if (line.kind === "withdrawn") {
+        return [{ type: "comment-withdrawn", event: "comment.withdrawn", id: line.id, at: line.at }];
+    }
+
     if (line.kind !== "sent") {
         return [];
     }

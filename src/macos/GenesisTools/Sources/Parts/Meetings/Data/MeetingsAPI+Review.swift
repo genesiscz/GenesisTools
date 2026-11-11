@@ -417,6 +417,18 @@ extension MeetingsAPI {
         typealias Result = MeetingComment
     }
 
+    enum CommentRead: MeetingsServiceMethod {
+        static let name = "comment.read"
+        typealias Params = CommentUnstage.Params
+        typealias Result = MeetingComment
+    }
+
+    enum CommentWithdraw: MeetingsServiceMethod {
+        static let name = "comment.withdraw"
+        typealias Params = CommentUnstage.Params
+        typealias Result = MeetingComment
+    }
+
     /// `comment.send`: the staged comments (or only `ids`) to the listening agent; it cannot be taken back.
     enum CommentSend: MeetingsServiceMethod {
         static let name = "comment.send"
@@ -425,6 +437,7 @@ extension MeetingsAPI {
             var meeting: String
             var ids: [String]?
             var reason: String?
+            var requireListener: Bool? = nil
         }
 
         struct Result: Decodable, Equatable {
@@ -449,6 +462,12 @@ extension MeetingsAPI {
         let meeting: String
         let token: String
         let entry: JournalEntry
+    }
+
+    struct CommentChanged: Decodable, Equatable {
+        static let name = "comment.changed"
+        let meeting: String
+        let comment: MeetingComment?
     }
 
     /// `comment.sent`: comments went to the listening agent (`listeners` empty: nobody listened).
@@ -733,10 +752,15 @@ struct MeetingComment: Decodable, Equatable, Identifiable {
     let text: String
     let quote: String?
     let actor: DecisionActor
-    /// staged or sent.
+    /// staged or sent; a sent comment can carry its receipt or withdrawal time.
     let state: String
     let sentAt: String?
     let token: String?
+    var readAt: String? = nil
+    var readBy: DecisionActor? = nil
+    var withdrawnAt: String? = nil
+
+    var canWithdraw: Bool { state == "sent" && readAt == nil && withdrawnAt == nil }
 }
 
 /// A `listen --subscribe-answers --with-comments` process: who a send reaches.

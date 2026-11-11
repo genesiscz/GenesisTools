@@ -10,10 +10,13 @@ import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { reviewRow } from "@app/meetings/lib/review-rows";
+import { withMeetingsClient } from "@app/meetings/lib/service/client";
 import {
     add,
     assignApply,
     assignAsk,
+    commentRead,
+    commentWithdraw,
     configGet,
     configSet,
     confirm,
@@ -265,6 +268,16 @@ export class MeetingsToolset extends ReplToolset {
 
         return {
             id,
+            comments: () =>
+                withMeetingsClient(async (client) => (await client.call("comment.list", { meeting: id })).comments),
+            readComment: (comment: string) => {
+                const params = commentRead.params.parse({ id: comment });
+                return withMeetingsClient((client) => client.call("comment.read", { meeting: id, ...params }));
+            },
+            withdrawComment: (comment: string) => {
+                const params = commentWithdraw.params.parse({ id: comment });
+                return withMeetingsClient((client) => client.call("comment.withdraw", { meeting: id, ...params }));
+            },
             get title() {
                 return current().title;
             },

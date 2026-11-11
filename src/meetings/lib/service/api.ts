@@ -516,6 +516,50 @@ const meetingScreen = defineMethod({
     effect: "read",
 });
 
+const ocrBoxSchema = z.object({
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+    text: z.string(),
+    confidence: z.number(),
+});
+
+const meetingTimeline = defineMethod({
+    name: "meeting.timeline",
+    params: z
+        .object({
+            meeting: meetingRef,
+            all: z.boolean().optional(),
+            frame: z.string().optional(),
+        })
+        .strict(),
+    result: z.object({
+        meeting: z.string(),
+        folder: z.string(),
+        displays: z.array(z.object({ id: z.number().optional(), name: z.string().optional(), frames: z.number() })),
+        frames: z.array(
+            z.object({
+                file: z.string(),
+                path: z.string(),
+                at: z.string(),
+                meetingSec: z.number(),
+                displayId: z.number().optional(),
+                width: z.number(),
+                height: z.number(),
+                lineCount: z.number(),
+                changed: z.array(ocrBoxSchema),
+                lines: z.array(ocrBoxSchema).optional(),
+                pending: z.literal(true).optional(),
+            })
+        ),
+        pending: z.number(),
+    }),
+    resultName: "ScreenTimeline",
+    doc: "Screen frames with changed OCR boxes, or every OCR line with all or a selected frame. Matches screen --timeline --json.",
+    effect: "read",
+});
+
 const meetingWaveform = defineMethod({
     name: "meeting.waveform",
     params: z
@@ -650,6 +694,24 @@ const commentUnstage = defineMethod({
     effect: "reversible",
 });
 
+const commentRead = defineMethod({
+    name: "comment.read",
+    params: z.object({ meeting: meetingRef, id: z.string().min(1) }).strict(),
+    result: meetingCommentSchema,
+    resultName: "MeetingComment",
+    doc: "Acknowledge a sent comment before acting on it. A delivery is not a read. Refuses a withdrawn comment.",
+    effect: "destructive",
+});
+
+const commentWithdraw = defineMethod({
+    name: "comment.withdraw",
+    params: z.object({ meeting: meetingRef, id: z.string().min(1) }).strict(),
+    result: meetingCommentSchema,
+    resultName: "MeetingComment",
+    doc: "Withdraw a comment until a receiver acknowledges it. Live followers receive a comment-withdrawn retraction.",
+    effect: "destructive",
+});
+
 const commentSend = defineMethod({
     name: "comment.send",
     params: z
@@ -658,6 +720,8 @@ const commentSend = defineMethod({
             /** Only these staged comments; absent: every staged one. */
             ids: z.array(z.string().min(1)).min(1).optional(),
             reason: z.string().optional(),
+            /** Keep them staged when the receiver disconnected before Send. */
+            requireListener: z.boolean().optional(),
         })
         .strict(),
     result: z.object({
@@ -1037,6 +1101,7 @@ export const meetingsApi = defineApi({
         meetingAudio,
         meetingSpeakers,
         meetingScreen,
+        meetingTimeline,
         meetingWaveform,
         overview,
         configRead,
@@ -1047,6 +1112,8 @@ export const meetingsApi = defineApi({
         commentStage,
         commentList,
         commentUnstage,
+        commentRead,
+        commentWithdraw,
         commentSend,
         peopleKnown,
         peopleAdd,
@@ -1113,6 +1180,7 @@ export const MEETINGS_EVENTS = [
     "decision.applied",
     "decision.reverted",
     "comment.sent",
+    "comment.changed",
     "people.changed",
 ] as const;
 export type MeetingsEvent = (typeof MEETINGS_EVENTS)[number];
@@ -1127,6 +1195,7 @@ export const subscribeResultSchema = z.object({ events: z.array(z.string()) });
 
 export const NOTIFICATION_SCHEMAS = {
     "people.changed": z.object({}),
+    "comment.changed": z.object({ meeting: z.string(), comment: meetingCommentSchema.optional() }),
     /** A meeting's files changed: the parts whose `meeting.revisions` token would differ now. */
     "meeting.changed": z.object({ meeting: z.string(), parts: z.array(z.enum(MEETING_PARTS)).min(1) }),
     /** A decision was made through the service: its journal entry, with its actor, reason and every item it changed. */
@@ -1173,6 +1242,8 @@ export const MEETINGS_ERROR_CODES = [
     "unknown-comment",
     /** The comment was sent: it cannot be unstaged or sent again. */
     "already-sent",
+    "already-read",
+    "withdrawn-comment",
     /** A people method's person names nobody the directory knows. */
     "unknown-person",
     /** A people method's person names several people: data `{ code, candidates }`, each a KnownPerson. */

@@ -28,6 +28,7 @@ import { momentClipPath, planMoment } from "./moment";
 import { meetingBadges, meetingsOverview } from "./overview";
 import { removeProject, renameProject } from "./project-admin";
 import { screenTimeline } from "./screen-timeline";
+import { InProcessMeetingsClient } from "./service/client";
 import { openMeetingsWindow, windowOpenArgs } from "./window";
 import { revisionsRead, revisionTokens } from "./window-reads";
 
@@ -298,6 +299,18 @@ describe("screen timeline", () => {
             ["Item two"],
         ]);
         expect(view.frames[1]).toMatchObject({ meetingSec: 20, width: 400, height: 200, lineCount: 2 });
+        const client = new InProcessMeetingsClient({ deps: { store: () => meetings } });
+        try {
+            const typed = await client.call("meeting.timeline", { meeting: created.id });
+            expect(typed).toEqual(view);
+            const selected = await client.call("meeting.timeline", { meeting: created.id, frame: rows[1].file });
+            expect(selected.frames).toHaveLength(1);
+            expect(selected.frames[0]?.lines?.map((box) => box.text)).toEqual(["Agenda", "Item two"]);
+            const all = await client.call("meeting.timeline", { meeting: created.id, all: true });
+            expect(all.frames.every((frame) => frame.lines?.length === 2)).toBe(true);
+        } finally {
+            client.close();
+        }
     });
 });
 

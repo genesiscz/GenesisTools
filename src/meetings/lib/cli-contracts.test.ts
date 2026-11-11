@@ -10,16 +10,26 @@ import { Command } from "commander";
 import { z } from "zod";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
+import { MeetingComments } from "./comments";
 import { journalEntrySchema } from "./decision-actions";
 import { meetingListRow, selectMeetings } from "./list-rows";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
-import { enumHint, errorText, fail, formatFlag } from "./shared";
+import { MeetingsServiceError } from "./service/handlers";
+import { enumHint, errorJSON, errorText, fail, formatFlag } from "./shared";
 import { linkedSource } from "./sources";
 
 /**
  * What the `tools meetings` commands promise a script or the Meetings window: a refusal names a command that runs,
  * an error code leads its sentence, a JSON shape stays. Each test pins one promise.
  */
+test("service comment refusals keep their code in human and JSON errors", () => {
+    const error = new MeetingsServiceError("already-read", "The receiver acknowledged it.");
+    expect(errorText(error)).toBe("[already-read] The receiver acknowledged it.");
+    expect(SafeJSON.parse(errorJSON(error), { strict: true })).toMatchObject({
+        error: { data: { code: "already-read" } },
+    });
+});
+
 const failureRecordSchema = z.object({
     error: z.object({
         message: z.string(),
@@ -764,6 +774,38 @@ describe("rows --json: the review rows (F3)", () => {
             reason: "the calendar says so",
             at,
         });
+    });
+});
+
+describe("comment commands without a service", () => {
+    test("stage, send and acknowledge use the persisted comment state", async () => {
+        const store = new MeetingStore();
+        const meeting = await store.create(
+            { title: "Comment command", start: "2026-11-02T14:00:00.000Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const printed: string[] = [];
+        const output = spyOn(out, "result").mockImplementation((value) => printed.push(String(value)));
+        const run = async (...args: string[]) => {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "comments" });
+            await program.parseAsync(["comments", ...args, "--json"], { from: "user" });
+        };
+        try {
+            await run("stage", meeting.id, "--target", '{"kind":"time","atSec":3}', "--text", "Check this word");
+            await run("send", meeting.id);
+            await run("read", meeting.id, "c1");
+            expect(printed).toHaveLength(3);
+            expect(MeetingComments.of(new MeetingStore(), meeting.id).list()[0]).toMatchObject({
+                id: "c1",
+                state: "sent",
+                text: "Check this word",
+                readAt: expect.any(String),
+            });
+        } finally {
+            output.mockRestore();
+            process.exitCode = 0;
+        }
     });
 });
 

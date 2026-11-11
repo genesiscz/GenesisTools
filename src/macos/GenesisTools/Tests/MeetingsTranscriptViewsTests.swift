@@ -137,6 +137,18 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     // MARK: Selection popover and staged comments
 
+    func testNativeSelectionReportsTheSelectedWord() async {
+        let text = TranscriptWordText.TextView()
+        text.string = "alpha beta gamma"
+        let selected = expectation(description: "native selected range")
+        text.selected = { range in
+            XCTAssertEqual(range, NSRange(location: 6, length: 4))
+            selected.fulfill()
+        }
+        text.setSelectedRange(NSRange(location: 6, length: 4))
+        await fulfillment(of: [selected], timeout: 1)
+    }
+
     func testWordSelectionKeepsItsQuoteAndLineFractions() throws {
         let line = TranscriptBlockLine(id: "l1", index: 4, startSec: 10, endSec: 20, text: "Hi 🌍 alpha beta")
         let range = (line.text as NSString).range(of: "alpha")

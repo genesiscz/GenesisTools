@@ -65,6 +65,16 @@ struct TranscriptWordText: NSViewRepresentable {
             }
         }
 
+        override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+            super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+            if !stillSelecting { reportSelection() }
+        }
+
+        override func setSelectedRange(_ charRange: NSRange) {
+            super.setSelectedRange(charRange)
+            reportSelection()
+        }
+
         override func mouseDown(with event: NSEvent) {
             reportedRange = nil
             if !event.modifierFlags.intersection([.command, .shift]).isEmpty {

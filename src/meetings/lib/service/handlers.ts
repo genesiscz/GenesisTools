@@ -243,6 +243,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
         "meeting.speakers": async (params) => (await reads()).readSpeakers(params, storeOf(), deps),
         "meeting.screen": async (params) => (await reads()).readScreen(params, storeOf()),
+        "meeting.timeline": async (params) => (await reads()).readTimeline(params, storeOf()),
         "meeting.waveform": async (params) => (await reads()).readWaveform(params, storeOf(), deps),
         "meetings.overview": async (params) => (await reads()).readOverview(params, storeOf()),
         "config.read": async (params) => (await reads()).readConfig(params),
@@ -255,6 +256,10 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "comment.unstage": async (params, context) =>
             (await comments()).unstageComment(params, context, storeOf(), deps),
         "comment.send": async (params, context) => (await comments()).sendComments(params, context, storeOf(), deps),
+        "comment.read": async (params, context) =>
+            (await comments()).acknowledgeComment(params, context, storeOf(), deps),
+        "comment.withdraw": async (params, context) =>
+            (await comments()).withdrawComment(params, context, storeOf(), deps),
         // The people directory loads Contacts (darwinkit) only when a call asks for people.
         "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
         "people.add": async (params, context) =>

@@ -493,7 +493,7 @@ extension MeetingDetailModel {
             if changed.parts.contains("transcript") { transcriptChanged() }
             if changed.parts.contains("speakers"), speakers != .idle { readSpeakers(quiet: true) }
             if changed.parts.contains("timeline"), timeline != .idle { readTimeline(quiet: true) }
-        case .commentSent, .peopleChanged:
+        case .commentSent, .commentChanged, .peopleChanged:
             break
         }
     }
@@ -554,7 +554,7 @@ extension MeetingDetailModel {
                 return try await service.call(MeetingsAPI.DecisionApply.self,
                                               .init(meeting: meeting, action: action, reason: reason, onDecided: "refuse",
                                                     lowPriority: lowPriority == .show ? "show" : "hide"))
-            } catch is MeetingsService.Unavailable {
+            } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
                 try Task.checkCancellation()
             }
         }
@@ -586,7 +586,7 @@ extension MeetingDetailModel {
         if let service {
             do {
                 return try await service.call(MeetingsAPI.DecisionRevert.self, .init(meeting: meeting, token: token, items: items))
-            } catch is MeetingsService.Unavailable {
+            } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
                 try Task.checkCancellation()
             }
         }

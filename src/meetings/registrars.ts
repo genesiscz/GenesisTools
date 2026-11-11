@@ -21,6 +21,7 @@ export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
     { names: ["screen-note"], load: async () => (await import("./commands/screen-note")).registerScreenNoteCommand },
     { names: ["ocr"], load: async () => (await import("./commands/ocr")).registerOcrCommand },
     { names: ["play"], load: async () => (await import("./commands/play")).registerPlayCommand },
+    { names: ["comments"], load: async () => (await import("./commands/comments")).registerCommentsCommand },
     { names: ["listen"], load: async () => (await import("./commands/listen")).registerListenCommand },
     { names: ["watch", "autostart"], load: async () => (await import("./commands/watch")).registerWatchCommands },
     { names: ["projects"], load: async () => (await import("./commands/projects")).registerProjectsCommand },

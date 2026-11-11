@@ -2,7 +2,6 @@ import { formatMissingEnumHelp, isInteractive, suggestCommand } from "@genesiscz
 import { redactCurrentRunText } from "@genesiscz/utils/cli/failures/watch";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import * as p from "@genesiscz/utils/prompts/p";
 import { rpcErrorBody } from "@genesiscz/utils/rpc/errors";
 
@@ -102,6 +101,7 @@ export function errorJSON(error: unknown): string {
     return SafeJSON.stringify({
         error: {
             code: body.code,
+            ...(errorCode(error) ? { data: { code: errorCode(error) } } : {}),
             message: redactCurrentRunText(errorText(error)),
             ...(stack ? { stack: redactCurrentRunText(stack) } : {}),
             issue: {
@@ -124,9 +124,12 @@ export function fail(error: unknown): void {
  * `[no-transcript-source] …`), which the window reads.
  */
 export function errorText(err: unknown): string {
-    if (err instanceof MeetingsConflictError || err instanceof MeetingsStateError) {
-        return `[${err.code}] ${err.message}`;
-    }
+    const code = errorCode(err);
+    const message = err instanceof Error ? err.message : String(err);
+    return code ? `[${code}] ${message}` : message;
+}
 
-    return err instanceof Error ? err.message : String(err);
+/** Service refusals and local state errors keep the same machine-readable code. */
+function errorCode(error: unknown): string | undefined {
+    return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined;
 }

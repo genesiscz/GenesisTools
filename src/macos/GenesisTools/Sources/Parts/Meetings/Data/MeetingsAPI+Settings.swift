@@ -49,7 +49,7 @@ enum MeetingsConfigWrite: Equatable {
                     _ = try await service.call(MeetingsAPI.ConfigUnset.self, .init(path: pathArgument, expect: expect))
                 }
                 return
-            } catch is MeetingsService.Unavailable {
+            } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
                 try Task.checkCancellation()
             }
         }

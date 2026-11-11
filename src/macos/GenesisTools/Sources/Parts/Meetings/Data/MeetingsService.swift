@@ -205,6 +205,7 @@ enum MeetingsAPI {
         DecisionApplied.name: { .decisionApplied(try MeetingsService.decode(DecisionApplied.self, $0)) },
         DecisionReverted.name: { .decisionReverted(try MeetingsService.decode(DecisionReverted.self, $0)) },
         CommentSent.name: { .commentSent(try MeetingsService.decode(CommentSent.self, $0)) },
+        CommentChanged.name: { .commentChanged(try MeetingsService.decode(CommentChanged.self, $0)) },
         PeopleChanged.name: { .peopleChanged(try MeetingsService.decode(PeopleChanged.self, $0)) },
     ]
 
@@ -213,7 +214,7 @@ enum MeetingsAPI {
         static let name = "people.changed"
     }
 
-    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, PeopleChanged.name]
+    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, CommentChanged.name, PeopleChanged.name]
 }
 
 /// One event of the Meetings service, as the window hears it.
@@ -222,6 +223,7 @@ enum MeetingsEvent: Equatable {
     case decisionApplied(MeetingsAPI.DecisionApplied)
     case decisionReverted(MeetingsAPI.DecisionReverted)
     case commentSent(MeetingsAPI.CommentSent)
+    case commentChanged(MeetingsAPI.CommentChanged)
     case peopleChanged(MeetingsAPI.PeopleChanged)
 
     /// The meeting the event is about.
@@ -231,6 +233,7 @@ enum MeetingsEvent: Equatable {
         case .decisionApplied(let event): return event.meeting
         case .decisionReverted(let event): return event.meeting
         case .commentSent(let event): return event.meeting
+        case .commentChanged(let event): return event.meeting
         case .peopleChanged: return nil
         }
     }
@@ -240,7 +243,7 @@ enum MeetingsEvent: Equatable {
         switch self {
         case .decisionApplied(let event): return event.entry
         case .decisionReverted(let event): return event.entry
-        case .meetingChanged, .commentSent, .peopleChanged: return nil
+        case .meetingChanged, .commentSent, .commentChanged, .peopleChanged: return nil
         }
     }
 }
@@ -372,6 +375,8 @@ final class MeetingsService {
     /// The service did not answer the call; the caller runs the command instead.
     struct Unavailable: Error, Equatable, CustomStringConvertible {
         let reason: String
+        /// False once a request may have changed data, even if its reply could not be read.
+        var safeToRetry = true
         var description: String { reason }
     }
 
@@ -469,6 +474,27 @@ final class MeetingsService {
         }
     }
 
+    /// A mutation may use the command only when the service could not have applied it.
+    static func write<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params,
+                                               service: MeetingsService?, orRun args: [String],
+                                               command: (([String], Int) async throws -> M.Result)? = nil) async throws -> M.Result {
+        if let service {
+            do {
+                return try await service.call(method, params)
+            } catch let failure as Unavailable where failure.safeToRetry {
+                try Task.checkCancellation()
+            }
+        }
+        if let command { return try await command(args, 60) }
+        let data = try await MeetingsCLI.run(args)
+        do {
+            return try JSONDecoder().decode(M.Result.self, from: data)
+        } catch {
+            throw MeetingsCLI.Failure(sentence: "The command completed, but its reply could not be read. Reload before retrying.",
+                                      detail: "\(args.joined(separator: " ")): \(error)")
+        }
+    }
+
     /// From now on the connection hears these events (each listener hears them, `listen`). The subscription is kept:
     /// while no connection is open (the service hung up, exited on a code change, was not running yet), this side
     /// connects again by itself and sends it, then signals `.resumed`. Throws `Unavailable` while no service answers.
@@ -525,7 +551,7 @@ final class MeetingsService {
             guard remote.code == MeetingsAPI.refusedCode, let code = remote.decodeData(MeetingsAPI.ErrorData.self)?.code else {
                 // Not a refusal (an older service without the method, params it does not take): the command answers.
                 HubPerf.log("meetings.service: \(method) answered \(remote.code) \(remote.message); the command answers it")
-                return Unavailable(reason: "\(method) answered \(remote.code): \(remote.message)")
+                return Unavailable(reason: "\(method) answered \(remote.code): \(remote.message)", safeToRetry: [-32601, -32602].contains(remote.code))
             }
             if MeetingsAPI.connectionRefusals.contains(code) {
                 HubPerf.log("meetings.service: \(method) refused the connection [\(code)] \(remote.message)")
@@ -538,7 +564,7 @@ final class MeetingsService {
         case let failure as JSONRPCSocketClient.Failure:
             // A service that does not answer in time may hang: the next call opens a new connection.
             if case .timeout = failure { drop(client) }
-            return Unavailable(reason: "\(method): \(failure.localizedDescription)")
+            return Unavailable(reason: "\(method): \(failure.localizedDescription)", safeToRetry: false)
         case let decoding as DecodeFailure:
             // A service this app cannot read (another checkout or version: the window's hello names no code) is not the
             // answer. The command answers, as with no service, and shows its own format error when it cannot be read
@@ -546,9 +572,9 @@ final class MeetingsService {
             HubPerf.log("meetings.service: \(method) answered a shape the window cannot read (\(decoding.error)); "
                 + "the command answers it: \(decoding.preview.prefix(300))")
             drop(client, backoff: timing.refusedBackoff)
-            return Unavailable(reason: "\(method): the answer does not decode")
+            return Unavailable(reason: "\(method): the answer does not decode", safeToRetry: false)
         default:
-            return Unavailable(reason: "\(method): \(error)")
+            return Unavailable(reason: "\(method): \(error)", safeToRetry: false)
         }
     }
 

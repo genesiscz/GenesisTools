@@ -136,6 +136,20 @@ final class MeetingsTimelineTests: XCTestCase {
         XCTAssertEqual(PinCluster.laid([pin("a", 10), pin("b", 9000)], in: 0...100, width: 500, lanes: 2).count, 1, "a pin outside the view is left out")
     }
 
+    func testDensePinsReserveCaptionRoomAndKeepAnUnansweredTitle() {
+        let pins = (0..<24).map { index in
+            TimelinePin(id: "i\(index)", sec: Double(index) * 2, text: "Item \(index)", state: index == 2 ? .question : .done)
+        }
+        let clusters = PinCluster.laid(pins, in: 0...60, width: 600, lanes: 2, markWidth: 72)
+        for cluster in clusters where cluster.x < 528 {
+            XCTAssertGreaterThanOrEqual(cluster.room, 72)
+            XCTAssertFalse(cluster.caption.isEmpty)
+        }
+        XCTAssertLessThan(clusters.count, pins.count)
+        let question = clusters.first { $0.pins.contains { $0.id == "i2" } }
+        XCTAssertEqual(question?.caption, "Item 2")
+    }
+
     func testAMarkThatNoZoomTakesApartOpensAListInsteadOfAZoom() {
         let same = PinCluster(pins: [TimelinePin(id: "a", sec: 3059, text: "a", state: .done), TimelinePin(id: "b", sec: 3059, text: "b", state: .done)],
                               x: 0, room: 0)

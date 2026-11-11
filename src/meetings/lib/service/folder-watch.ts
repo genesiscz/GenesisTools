@@ -43,12 +43,19 @@ export function partsOfPath(relativePath: string): { meeting: string; parts: Mee
     return undefined;
 }
 
+/** Comment and listener writes live together in this one journal. */
+function commentMeeting(relativePath: string): string | undefined {
+    const [meeting, file, ...rest] = relativePath.split(/[/\\]/);
+    return meeting && !meeting.startsWith(".") && file === "comments.ndjson" && rest.length === 0 ? meeting : undefined;
+}
+
 export interface FolderWatchOptions {
     /** The meetings store's folder (one folder per meeting below it). */
     root: string;
     /** Tells the subscribers of a meeting what changed. */
     emit: (meeting: string, parts: MeetingPart[]) => void;
     peopleChanged?: () => void;
+    commentsChanged?: (meeting: string) => void;
     /** The event source; @parcel/watcher's when absent (tests pass a fake, as createWatcher allows). */
     subscribe?: WatcherOptions["subscribe"];
     coalesceMs?: number;
@@ -72,7 +79,7 @@ export class MeetingsFolderWatch {
             ignorePatterns: [`**/${MOMENTS_FOLDER}/**`, "**/evidence/**", "**/.*"],
             filter: (event) => {
                 const path = relative(this.options.root, event.path);
-                return path === PEOPLE_FILE || partsOfPath(path) !== undefined;
+                return path === PEOPLE_FILE || commentMeeting(path) !== undefined || partsOfPath(path) !== undefined;
             },
             ...(this.options.subscribe ? { subscribe: this.options.subscribe } : {}),
         });
@@ -95,11 +102,17 @@ export class MeetingsFolderWatch {
     private heard(events: Array<{ path: string }>): void {
         const changed = new Map<string, Set<MeetingPart>>();
         let peopleChanged = false;
+        const commentMeetings = new Set<string>();
 
         for (const event of events) {
             const relativePath = relative(this.options.root, event.path);
             if (relativePath === PEOPLE_FILE) {
                 peopleChanged = true;
+                continue;
+            }
+            const comments = commentMeeting(relativePath);
+            if (comments) {
+                commentMeetings.add(comments);
                 continue;
             }
             const found = partsOfPath(relativePath);
@@ -121,6 +134,9 @@ export class MeetingsFolderWatch {
             this.options.peopleChanged?.();
         }
 
+        for (const meeting of commentMeetings) {
+            this.options.commentsChanged?.(meeting);
+        }
         for (const [meeting, parts] of changed) {
             log.debug({ meeting, parts: [...parts] }, "a meeting changed outside the service");
             this.options.emit(
