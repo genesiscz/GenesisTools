@@ -393,6 +393,29 @@ describe("worktree backup", () => {
         expect(plan.blockers[0]).toContain("hides them from git diff (many/f-0001.txt)");
     });
 
+    it("clears both flags with the two commands the blocker names, where one combined call is not enough", async () => {
+        // The test above deleted many/f-0001.txt under assume-unchanged: it comes back first.
+        repo.write({ file: "many/f-0001.txt", content: "1\n", cwd: spare });
+        await repo.git(["update-index", "--skip-worktree", "--", "README.md"], { cwd: spare });
+        repo.write({ file: "README.md", content: "both flags\n", cwd: spare });
+        expect((await planWorktreeBackup({ path: spare })).blockers[0]).toContain("git diff (README.md)");
+        expect((await planWorktreeBackup({ path: spare })).blockers[0]).toContain(
+            "git update-index --no-assume-unchanged -- <paths>, then git update-index --no-skip-worktree -- <paths>"
+        );
+
+        // One call with both flags clears only the first, so the edit stays hidden.
+        await repo.git(["update-index", "--no-assume-unchanged", "--no-skip-worktree", "--", "README.md"], {
+            cwd: spare,
+        });
+        expect((await planWorktreeBackup({ path: spare })).blockers[0]).toContain("git diff (README.md)");
+
+        await repo.git(["update-index", "--no-skip-worktree", "--", "README.md"], { cwd: spare });
+        const plan = await planWorktreeBackup({ path: spare });
+
+        expect(plan.blockers).toEqual([]);
+        expect(plan.changed).toEqual(["README.md"]);
+    });
+
     it("takes the base from the other branches when no candidate gives one, and refuses --remove without a base", async () => {
         const lone = await TestRepo.create({ prefix: "gt-wt-backup-nobase-" });
 

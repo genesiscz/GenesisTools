@@ -151,6 +151,58 @@ describe("sanitizeHar", () => {
     });
 });
 
+describe("sanitizeHar on an OAuth redirect", () => {
+    test("redacts an encoded code name, an id_token_hint, and the code in Location and Referer", () => {
+        const messages: CdpMessage[] = [
+            { method: "Page.frameStartedLoading", params: { frameId: "F1" } },
+            {
+                method: "Network.requestWillBeSent",
+                params: {
+                    requestId: "r1",
+                    frameId: "F1",
+                    timestamp: 1,
+                    wallTime: 1700000000,
+                    type: "Document",
+                    initiator: { type: "other" },
+                    request: {
+                        method: "GET",
+                        url: "https://idp.example.com/authorize?id_token_hint=hint-secret&co%64e=encoded-secret&state=keepme",
+                        headers: { Referer: "https://app.example.com/start?code=referer-secret" },
+                    },
+                },
+            },
+            {
+                method: "Network.responseReceived",
+                params: {
+                    requestId: "r1",
+                    frameId: "F1",
+                    timestamp: 1.2,
+                    response: {
+                        url: "https://idp.example.com/authorize",
+                        protocol: "http/1.1",
+                        status: 302,
+                        statusText: "Found",
+                        mimeType: "text/html",
+                        headers: { Location: "https://app.example.com/callback?code=location-secret&state=keepme" },
+                        encodedDataLength: 100,
+                        connectionId: 1,
+                    },
+                },
+            },
+            { method: "Network.loadingFinished", params: { requestId: "r1", timestamp: 1.4, encodedDataLength: 100 } },
+        ];
+
+        const text = SafeJSON.stringify(sanitizeHar(harFromMessages(messages)));
+
+        // The page title is the request URL too, so the first two cover it as well.
+        for (const secret of ["hint-secret", "encoded-secret", "referer-secret", "location-secret"]) {
+            expect(text).not.toContain(secret);
+        }
+        expect(text).toContain("co%64e=[REDACTED]");
+        expect(text).toContain("state=keepme");
+    });
+});
+
 describe("sanitizeHar custom credential headers", () => {
     // 2026-11-02: a HAR written with --sanitize still carried a live `authToken` request header.
     test("masks authToken and other credential headers by name, case-insensitive; keeps ordinary ones", () => {

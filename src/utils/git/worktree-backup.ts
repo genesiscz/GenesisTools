@@ -945,7 +945,7 @@ async function inspectWorktree(options: PlanWorktreeBackupOptions): Promise<Insp
         const shown = state.hidden.slice(0, 5).join(", ");
         const more = state.hidden.length > 5 ? ` and ${state.hidden.length - 5} more` : "";
         blockers.push(
-            `Tracked files differ from the index, or are gone, while assume-unchanged or skip-worktree hides them from git diff (${shown}${more}), so no patch would hold them; clear the flags first with git update-index --no-assume-unchanged <paths>, then git update-index --no-skip-worktree <paths> (one call applies only the first of the two). The check reads raw bytes and the executable bit without clean filters, so a filtered file counts as changed.`
+            `Tracked files differ from the index, or are gone, while assume-unchanged or skip-worktree hides them from git diff (${shown}${more}), so no patch would hold them; clear the flags first with git update-index --no-assume-unchanged -- <paths>, then git update-index --no-skip-worktree -- <paths> (one call applies only the first of the two). The check reads raw bytes and the executable bit without clean filters, so a filtered file counts as changed.`
         );
     }
 

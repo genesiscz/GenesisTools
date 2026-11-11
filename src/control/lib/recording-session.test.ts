@@ -1119,6 +1119,33 @@ describe("nativeSegmentRecorder", () => {
         expect(starts).toEqual([{ firstFrameAt: 1_700_000_000_123.4 }, undefined]);
     });
 
+    it("a run that ended because a restart could not leave the excluded windows out is a failure with the reason", async () => {
+        const output = join(root, "segment.mp4");
+        const reason = "could not restart the recording on display 2: windows 7 must be left out of the movie";
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async () => {
+            await writeFile(output, "movie");
+            return {
+                ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                captureFailed: false,
+                sessionDir: join(root, "session"),
+                warnings: [reason],
+                capture: {
+                    data: { endedEarly: "exclusion-unresolved", endedEarlyReason: reason, stats: { durationMs: 900 } },
+                },
+            };
+        });
+        const result = await nativeSegmentRecorder().record({
+            target: display,
+            output,
+            maxSeconds: 3,
+            signal: new AbortController().signal,
+            onRecording: () => {},
+        });
+
+        // Not a deadline: the session must pause with the reason, not start the next segment.
+        expect(result).toMatchObject({ ok: true, endedBy: "failure", error: reason, code: "exclusion-unresolved" });
+    });
+
     it("a stop on a recorder that failed probes its movie and drops an unfinished one", async () => {
         const { result, output, probes } = await stoppedRun(true);
         expect(probes).toBe(1);

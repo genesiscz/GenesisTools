@@ -232,7 +232,23 @@ export async function captureLiveWindow(opts: {
 
 /** Redact Cookie / Set-Cookie / Authorization headers, cookie values, and credential-shaped POST params. */
 const SENSITIVE_PARAM =
-    /^(password|passwd|pwd|secret|authorization|code|access_token|refresh_token|id_token|token|client_secret)$/i;
+    /^(password|passwd|pwd|secret|authorization|code|access_token|refresh_token|id_token|id_token_hint|token|client_secret)$/i;
+
+/** Headers whose value is a URL, where an OAuth `?code=` rides along a redirect (`Location`) or the next request. */
+const URL_HEADERS = new Set(["location", "content-location", "referer"]);
+
+/** A query or form name as the server reads it: `co%64e` is `code`. A malformed escape is matched as written. */
+function isSensitiveParam(name: string): boolean {
+    let decoded = name;
+
+    try {
+        decoded = decodeURIComponent(name.replaceAll("+", " "));
+    } catch {
+        // A lone "%" is no escape: the name stays as written, and the raw match below still runs.
+    }
+
+    return SENSITIVE_PARAM.test(decoded) || SENSITIVE_PARAM.test(name);
+}
 
 function redactJsonDeep(value: unknown): unknown {
     if (Array.isArray(value)) {
@@ -255,7 +271,7 @@ function redactJsonDeep(value: unknown): unknown {
 function redactUrl(url: string): string {
     return url
         .replace(/([?&])([^=&#]+)=([^&#]*)/g, (all, sep: string, name: string, _v) =>
-            SENSITIVE_PARAM.test(name) ? `${sep}${name}=[REDACTED]` : all
+            isSensitiveParam(name) ? `${sep}${name}=[REDACTED]` : all
         )
         .replace(/#.+$/, "#[REDACTED]");
 }
@@ -273,7 +289,7 @@ export function sanitizeHar(har: HarFile): HarFile {
     for (const entry of clone.log.entries) {
         entry.request.url = redactUrl(entry.request.url);
         for (const q of entry.request.queryString ?? []) {
-            if (SENSITIVE_PARAM.test(q.name)) {
+            if (isSensitiveParam(q.name)) {
                 q.value = "[REDACTED]";
             }
         }
@@ -285,6 +301,8 @@ export function sanitizeHar(har: HarFile): HarFile {
         for (const h of [...entry.request.headers, ...(entry.response?.headers ?? [])]) {
             if (sensitiveHeaderKind(h.name) !== null) {
                 h.value = "[REDACTED]";
+            } else if (URL_HEADERS.has(h.name.toLowerCase())) {
+                h.value = redactUrl(h.value);
             }
         }
 

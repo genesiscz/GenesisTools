@@ -48,7 +48,7 @@ Every hooks command that writes something is a **dry run by default**. Add `--wr
 | `login` | Attach as an agent and receive messages. Registers a new `--agent-name` on first use. |
 | `message [body...]` | Send a message: direct (`--to`), broadcast (no `--to`), reply (`--reply`) or pure ack. |
 | `request` | Send a message to one agent and block until the correlated reply arrives. |
-| `leave` | Announce that an agent stops listening: one `agent_left`, which a login receives by its `--presence` mode (main by default). A Monitor re-arm posts no leave; a re-arm that fails posts one `lapsed` leave 90 s after the login ended. A hard-killed login (`SIGKILL`, a crash) writes nothing: its 90 s start only when a stale-lock sweep reaps its lock (`login`, `message`, `discover` and `listen` run one), so with no sweep no lapse comes. |
+| `leave` | Announce that an agent stops listening: one `agent_left`, which a login receives by its `--presence` mode (main by default). A Monitor re-arm posts no leave; a re-arm that fails leaves a 90 s grace, and the `lapsed` leave is written by the first watching login or stale-lock sweep (`login`, `message`, `discover` and `listen` run one) after the grace, so in a session where nothing runs, none comes. A hard-killed login (`SIGKILL`, a crash) writes nothing: its grace starts only when a sweep reaps its lock. |
 | `discover` | List every registered agent of the session. |
 | `listen` | Follow a session feed in human-friendly form. Read-only. |
 

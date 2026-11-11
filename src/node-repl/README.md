@@ -398,7 +398,8 @@ is what a REPL means by it. TypeScript is stripped first with `Bun.Transpiler`.
   `chooser: "jev"` or `"auto"` they call Jev, which is paid. `computer.verify_state` and `computer.await_condition`
   have no default mode: pass `exact` for a free readback, or `jev: true` for a semantic check, which calls Jev and is
   paid. Without either, `verify_state` throws `JEV_NOT_ENABLED` and `await_condition` is refused. A semantic
-  `await_condition` pays for one evaluation per meaningful state change, up to `max_requests` (12 by default).
+  `await_condition` pays for one evaluation of the first observation and one per meaningful state change after it,
+  up to `max_requests` (12 by default), so a wait whose state never changes still costs one.
 
 ## Configuration
 

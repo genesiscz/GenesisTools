@@ -51,10 +51,15 @@ tools ai image "a red bicycle in the rain" -o bike.png
 (`src/ai/index.ts:167` and `:288`). Passing it silently gets you the default implementation, so do not rely on it to
 steer either verb. `translate` does honour `--provider`, and it also saves that provider as the `translate` task
 default before it translates, even when the translation then fails: later translations without the flag use it too.
-That save also clears the task's saved model, so note the current default first (`tools ai config default list`).
+That save normally also clears the task's saved model, so note the current default first
+(`tools ai config default list`). One case saves nothing: when the task default is a model with no provider and you
+pass the default provider (`--provider local-hf`), the default stays, and the translation can use that saved model
+instead of the provider you asked for.
 `tools ai config default set translate <model-ref>` sets the default back. Give it a ref that names a model
 (`@account/<id>:<model>`), or a bare `@account/<id>` together with `--provider <id>`: a bare account ref alone goes to
-`defaults.account.translate`, and the provider that `--provider` left in `defaults.task.translate` comes first.
+`defaults.account.translate`, and the provider that `--provider` left in `defaults.task.translate` comes first. When
+the old default had its own provider and a bare model, pass that provider again with `--provider`, or the one
+`translate --provider` saved stays beside the model.
 
 ### Local models
 
@@ -109,7 +114,9 @@ tools ai config doctor [--live] [--json]        # master key, vault, credentials
   `account: "@account/<id>"` refs. A proxy account linked only by an old name field (`grok.accountName`,
   `anthropicSub.accountName`, `openaiSub.accountName`) gets its ref when `tools ai-proxy serve` starts; until then,
   or when that rewrite failed, the check does not see it, so look for those fields in the proxy config before you
-  remove an account. `--force` skips that check too: it
+  remove an account. A proxy config that cannot be read counts as no references at all, so the removal goes ahead
+  without `--force` when nothing else holds the account: check that `tools ai-proxy` reads its config before you
+  remove an account it might use. `--force` skips that check too: it
   removes the account and its vault entries anyway, and the proxy config can keep a reference to an account that is
   gone.
 - `secret set` does not link the value to an account. `rotate`, `export` and `import` need `--yes` or

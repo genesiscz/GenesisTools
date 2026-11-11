@@ -195,10 +195,14 @@ describe("session records", () => {
     it("never creates or tightens a debug folder in the real store, as a storage cached before the sandbox would name", () => {
         const realDir = join(realGenesisToolsRoot(), "ai-proxy");
         const inReal = (calls: unknown[][]): unknown[][] => calls.filter(([path]) => String(path).startsWith(realDir));
-        // Stubs, so even a run without the guard leaves the real store as it was.
+        // Stubs that record AND throw: even with the guard switched off (GENESIS_TOOLS_ALLOW_REAL_HOME_IN_TESTS), the
+        // capture stops at its first folder call, before any write reaches the real store.
+        const refuse = (): never => {
+            throw new Error("the test refuses to touch the real store");
+        };
         const baseDir = spyOn(getAiProxyStorage(), "getBaseDir").mockReturnValue(realDir);
-        const mkdir = spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
-        const chmod = spyOn(fs, "chmodSync").mockImplementation(() => undefined);
+        const mkdir = spyOn(fs, "mkdirSync").mockImplementation(refuse);
+        const chmod = spyOn(fs, "chmodSync").mockImplementation(refuse);
         env.testing.set("AI_PROXY_DEBUG_CAPTURE", "1");
 
         try {

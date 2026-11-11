@@ -24,13 +24,22 @@ public func displayChangeAction(changed: CGDirectDisplayID, flags: CGDisplayChan
 
 /// Why a recording ended before its duration, as `endedEarly` names it.
 public enum CaptureEarlyEnd: String {
+    /// A restart on another display could not leave out the windows the movie must leave out, so the run ended.
+    case exclusionUnresolved = "exclusion-unresolved"
     case displayRemoved = "display-removed"
     case streamError = "stream-error"
     case stopped
 }
 
 /// A missing display explains a stream error, so it wins; a stream error wins over a stop request that came after it.
-public func captureEarlyEnd(cancelled: Bool, displayRemoved: Bool, streamFailed: Bool) -> CaptureEarlyEnd? {
+/// An exclusion that ended a restart wins over all of them: it says why the display could not be replaced.
+public func captureEarlyEnd(
+    cancelled: Bool, displayRemoved: Bool, streamFailed: Bool, exclusionUnresolved: Bool = false
+) -> CaptureEarlyEnd? {
+    if exclusionUnresolved {
+        return .exclusionUnresolved
+    }
+
     if displayRemoved {
         return .displayRemoved
     }
