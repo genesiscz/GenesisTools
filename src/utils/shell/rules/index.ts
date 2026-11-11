@@ -16,7 +16,7 @@ import { type ShellScan, scanShell } from "../scan";
 import { biomeRules } from "./biome";
 import { destructiveRules } from "./destructive";
 import { devnullRules } from "./devnull";
-import { correctedPart } from "./excerpt";
+import { type CorrectedLimits, correctedPart } from "./excerpt";
 import { findRules } from "./find";
 import { gitRules } from "./git";
 import { pipelineRules } from "./pipeline";
@@ -101,6 +101,8 @@ export interface RenderOptions {
     explained?: ReadonlySet<string>;
     /** The command did not run: the compact form keeps the reason, so the message is enough to act on alone. */
     denied?: boolean;
+    /** When a corrected command prints whole, and how long its cut part may be (`guard.corrected`). */
+    corrected?: CorrectedLimits;
 }
 
 /** The first sentence of a rule's `why`. A `$?` or `e.g.` inside it is no end, because no capital follows. */
@@ -135,6 +137,7 @@ export function renderViolation(violation: ShellViolation, options: RenderOption
             command: options.command,
             suggestion: violation.suggestion,
             matched: { index: violation.index, length: violation.matched.length },
+            limits: options.corrected,
         });
 
         lines.push(

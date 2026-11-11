@@ -259,6 +259,11 @@ export interface GuardConfig {
     harnesses: SomeHarnesses<Record<string, HookOutcome>>;
     models: Record<string, Record<string, HookOutcome>>;
     longCommand: { lines: number; chars: number };
+    /**
+     * The corrected command in a guard message: printed whole up to `wholeMaxChars`, else the statement that changed,
+     * cut to its lines or a window around the change when it is longer than `partMaxChars`.
+     */
+    corrected: { wholeMaxChars: number; partMaxChars: number };
     /** Context notes shown per rule per session before the rule goes quiet. */
     contextCapPerSession: number;
     /**
