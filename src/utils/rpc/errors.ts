@@ -31,12 +31,14 @@ export interface ErrorIssue extends IssueHint {
 export interface RpcErrorOptions {
     /** The error this refusal reports; its stack is the one the reply carries. */
     cause?: unknown;
-    issue?: IssueHint;
+    issue?: IssueHint | ErrorIssue;
+    /** The stack supplied by a remote peer, replacing this client's construction stack. */
+    stack?: string;
 }
 
 /** A refused call: the code goes to the caller in the error reply, the message as its text. */
 export class RpcError extends Error {
-    readonly issue?: IssueHint;
+    readonly issue?: IssueHint | ErrorIssue;
 
     constructor(
         readonly code: number,
@@ -47,6 +49,9 @@ export class RpcError extends Error {
         super(message, options.cause === undefined ? undefined : { cause: options.cause });
         this.name = "RpcError";
         this.issue = options.issue;
+        if (options.stack !== undefined) {
+            this.stack = options.stack;
+        }
     }
 }
 
