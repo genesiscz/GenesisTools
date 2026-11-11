@@ -10,6 +10,7 @@ import { type LiveRecording, MEETING_SOURCE_IDS, type MeetingSourceId } from "@g
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { assignSweep, hasOpenAssignSteps } from "./assign";
 import { linkSource } from "./link";
+import { ensureOcrWorkers } from "./ocr-worker";
 import { readRecorderState } from "./recorder-shared";
 import { pruneCapturesDaily } from "./retention";
 import { meetingSource } from "./sources";
@@ -481,6 +482,22 @@ export async function watchOnce(
 }
 
 /**
+ * Every look: a recent meeting with frames that have no OCR row and no live OCR worker gets one, so OCR resumes after
+ * its worker died (a reinstall, a crash) or a recorder that never started it. Never fails a look.
+ */
+async function resumeOcr(store: MeetingStore): Promise<void> {
+    try {
+        const started = await ensureOcrWorkers(store);
+
+        if (started.length > 0) {
+            log.info({ meetings: started }, "OCR workers started for meetings with unread frames");
+        }
+    } catch (err) {
+        log.warn({ err }, "the OCR worker check failed");
+    }
+}
+
+/**
  * Once a day: the frames, OCR and editor files of meetings past `capture.retentionDays` go to the trash. Never fails
  * a look.
  */
@@ -518,6 +535,7 @@ export async function watchLoop(store: MeetingStore): Promise<void> {
 
     while (!stopped) {
         await pruneOldCaptures(store);
+        await resumeOcr(store);
         const result = await watchOnce(store).catch((err: unknown) => {
             log.warn({ err }, "watch tick failed");
             return "failed" as const;
