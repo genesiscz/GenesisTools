@@ -434,8 +434,11 @@ package func runHub(_ args: [String]) -> Never {
                 }
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
-            FileHandle.standardError.write(Data("hub snapshot: not settled within 60 s\n".utf8))
+        // The give-up timer leaves room for the configured load wait (GENESIS_HUB_SNAPSHOT_WAIT, up to 50 s)
+        // plus the focus and settle pauses around it, so it never fires before the fallback capture.
+        let giveUp = max(60, HubSnapshotLoads.deadline + 30)
+        DispatchQueue.main.asyncAfter(deadline: .now() + giveUp) {
+            FileHandle.standardError.write(Data("hub snapshot: not settled within \(Int(giveUp)) s\n".utf8))
             exit(1)
         }
         window.orderInForSnapshot()
