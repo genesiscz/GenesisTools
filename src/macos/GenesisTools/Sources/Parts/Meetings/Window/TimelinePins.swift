@@ -54,21 +54,25 @@ struct TimelinePin: Identifiable, Equatable {
         return word.trimmingCharacters(in: .whitespaces) + "…"
     }
 
-    var symbol: String {
-        switch state {
-        // A suggestion waiting for an answer carries the sparkle its chip carries; a confirmed one the check.
-        case .open: return "sparkles"
-        case .playing: return "play.fill"
-        case .done: return "checkmark"
-        case .rejected: return "xmark"
-        case .question: return "questionmark"
+    /// The pin's glyph under `meetings.rows.stateLook`. In the hue-and-glyph look a suggestion waiting for an answer
+    /// carries the sparkle its chip carries, a confirmed one the check and a rejected one the cross; the shade look keeps
+    /// the older flags, with a rejected pin drawn as a decided one.
+    func symbol(_ stateLook: MeetingsPreferences.Rows.StateLook) -> String {
+        switch (state.shown(stateLook), stateLook) {
+        case (.open, .hueAndGlyph): return "sparkles"
+        case (.playing, .hueAndGlyph): return "play.fill"
+        case (.open, .shade), (.playing, .shade): return "flag.fill"
+        case (.done, _): return "checkmark"
+        case (.rejected, _): return "xmark"
+        case (.question, _): return "questionmark"
         }
     }
 
-    var tint: Color {
-        switch state {
+    /// The classic look's tint under `meetings.rows.stateLook`.
+    func tint(_ stateLook: MeetingsPreferences.Rows.StateLook) -> Color {
+        switch state.shown(stateLook) {
         case .open: return .accentColor
-        case .done: return KitHue.done.ink
+        case .done: return stateLook == .shade ? .secondary : KitHue.done.ink
         case .rejected: return KitHue.danger.ink
         case .question: return .purple
         case .playing: return .primary
@@ -87,11 +91,16 @@ struct TimelinePin: Identifiable, Equatable {
 }
 
 extension TimelinePin.State {
-    /// The state's colour by its meaning, in a look: an open row needs care, a decided one is done, a question asks,
-    /// the playing one plays.
-    var hue: KitHue {
-        switch self {
-        case .open: return .play
+    /// The state as `meetings.rows.stateLook` draws it: the shade look has no rejected pin of its own.
+    func shown(_ stateLook: MeetingsPreferences.Rows.StateLook) -> Self {
+        stateLook == .shade && self == .rejected ? .done : self
+    }
+
+    /// The state's colour by its meaning, in a look: an open row is a suggestion (care in the shade look), a decided
+    /// one is done, a rejected one is danger, a question asks, the playing one plays.
+    func hue(_ stateLook: MeetingsPreferences.Rows.StateLook) -> KitHue {
+        switch shown(stateLook) {
+        case .open: return stateLook == .shade ? .care : .play
         case .done: return .done
         case .rejected: return .danger
         case .question: return .ask
@@ -231,6 +240,8 @@ struct TimelinePinsRow: View {
     var showsText: Bool = true
     /// Rows for pins that are close in time (`PinCluster.laid`); 1 merges them into counts on one row.
     var lanes: Int = 1
+    /// How suggested, confirmed and rejected pins differ (`meetings.rows.stateLook`), read once here for every mark.
+    @AppStorage(MeetingsPreferences.Rows.stateLook.key) private var stateLook = MeetingsPreferences.Rows.stateLook.defaultValue
 
     var body: some View {
         GeometryReader { proxy in
@@ -238,7 +249,7 @@ struct TimelinePinsRow: View {
                 : PinCluster.clusters(pins, in: view, width: proxy.size.width)
             ZStack(alignment: .topLeading) {
                 ForEach(clusters) { cluster in
-                    PinMark(cluster: cluster, showsText: showsText, expands: cluster.expands(in: view), actions: actions)
+                    PinMark(cluster: cluster, showsText: showsText, expands: cluster.expands(in: view), actions: actions, stateLook: stateLook)
                         .offset(x: max(0, cluster.x - PinMark.iconWidth / 2), y: CGFloat(cluster.lane) * PinMark.laneHeight)
                 }
             }
@@ -269,6 +280,8 @@ struct PinMark: View {
     /// A click on a merged mark zooms to its pins; false opens a list of them (a zoom would show the same marks).
     var expands: Bool = true
     let actions: TimelinePinsRow.Actions
+    /// `meetings.rows.stateLook`, read once by the pins row.
+    var stateLook = MeetingsPreferences.Rows.stateLook.defaultValue
     @FocusState private var focused: Bool
     @Environment(\.kitLook) private var look
 
@@ -312,7 +325,7 @@ struct PinMark: View {
     private var label: some View {
         HStack(spacing: 3) {
             if cluster.isSingle {
-                glyph(cluster.pins[0].symbol)
+                glyph(cluster.pins[0].symbol(stateLook))
             } else {
                 Text(verbatim: "\(cluster.pins.count)")
                     .font(.system(size: 9, weight: .bold).monospacedDigit())
@@ -351,11 +364,11 @@ struct PinMark: View {
 
     /// Text and glyph: the classic tint, or the ink of the state's hue.
     private var tint: Color {
-        look == .classic ? TimelinePin(id: "", sec: 0, text: "", state: cluster.state).tint : cluster.state.hue.ink
+        look == .classic ? TimelinePin(id: "", sec: 0, text: "", state: cluster.state).tint(stateLook) : cluster.state.hue(stateLook).ink
     }
 
     /// A count's capsule and a pin's disc.
-    private var fill: Color { look == .classic ? tint : cluster.state.hue.solid }
+    private var fill: Color { look == .classic ? tint : cluster.state.hue(stateLook).solid }
 
     private var tooltip: String {
         if cluster.isSingle, let pin = cluster.pins.first { return "\(MeetingsFormat.clock(pin.sec)) · \(pin.text)" }
