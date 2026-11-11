@@ -24,3 +24,15 @@ Loaded by Claude Code when you read, write or edit a file under `.github/`, `scr
   while tsc, the tests and its own launch passed; a launch now also reports a 5xx page and exits 1
   (`reportBrokenDashboard`).
 - **`lint-rules.ts` and `placeholder-check.sh` scan tracked files only** (`git ls-files`). Run them after the last commit, or after `git add` of every new file. A run before staging proves nothing about a new file.
+
+## Rosters: patterns the architecture build removed (`scripts/ci/rosters/`)
+
+A roster keeps one removed pattern from coming back (a bare `fetch` beside `Api.send`, a `launchctl` call outside the
+launchd module, a lock deleted by hand). Each is a `<name>.definition.ts` (an ast-grep matcher, an optional finer test,
+the owning module as `allowedIn`, the review candidate it guards), listed once in `rosters/index.ts`.
+`bun scripts/ci/rosters/generate.ts` scans the tree and writes `rosters.json`: the files that still hold the pattern and
+how many times. lint-rules turns every definition into a rule with those counts, so a new file with a match fails at
+once, a listed file fails when its count grows, and a count that fell must be lowered (run the generator). The manifest
+only shrinks: the generator never writes growth, `--check` exits 1 on it, and lint-rules refuses a `rosters.json` edited
+up against the base. A new definition is seeded by the generator with what the tree holds that day. A real exception is
+`// lint-rules-ignore: <why>` on the line, never a manifest edit.

@@ -1,0 +1,38 @@
+{
+    "roster-ado-fetch-outside-api": {
+        "src/azure-devops/commands/maintenance.ts": 1,
+        "src/azure-devops/lib/ancestors.ts": 1,
+        "src/azure-devops/timelog-api.ts": 1
+    },
+    "roster-cdp-socket-outside-connect": {},
+    "roster-cmux-send-outside-surface-input": {
+        "src/claude/commands/cmux/find.ts": 1,
+        "src/claude/lib/cmux/pane-send.ts": 2,
+        "src/cmux/lib/restore-in-place.ts": 2,
+        "src/cmux/lib/restore.ts": 1
+    },
+    "roster-cmux-tree-outside-reader": {},
+    "roster-doctor-direct-delete": {},
+    "roster-launchctl-outside-launchd-agent": {
+        "src/control/lib/simulator/simctl.ts": 1,
+        "src/doctor/analyzers/startup.ts": 2,
+        "src/hub/lib/procs/sources.ts": 1,
+        "src/telegram-bot/lib/webhook/tunnel.ts": 1,
+        "src/utils/macos/notifications.ts": 1,
+        "src/utils/mobile/simulator.ts": 1,
+        "src/utils/services/inventory.ts": 1,
+        "src/utils/services/lifecycle.ts": 2
+    },
+    "roster-lock-unlink-outside-pidfile": {
+        "src/agents/lib/hooks/log.ts": 1,
+        "src/agents/lib/slot-lock.ts": 1,
+        "src/codex/lib/desktop/apply.ts": 1,
+        "src/stash/lib/apply-recovery.ts": 1,
+        "src/utils/rm/trash.ts": 1,
+        "src/utils/storage/file-lock.ts": 1
+    },
+    "roster-mcp-provider-write-outside-cycle": {},
+    "roster-provider-fetch-outside-exchange": {
+        "src/ai-proxy/lib/providers/openai-subscription.ts": 1
+    }
+}
