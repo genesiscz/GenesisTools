@@ -292,6 +292,16 @@ describe("the guard explains a rule once per loop", () => {
             const dialect = { needle: "compacted", parse: () => ({ at: since + 1, compaction: false }) };
             expect(compactedInTail(rollout, since, dialect, 40)).toBe(true);
             expect(HARNESS_HOOK_FACTS.grok.compactedSince(transcript, since)).toBe(true);
+
+            // Grok: a compaction count of 0 in signals.json proves none happened; any other count is a maybe.
+            const grokDir = join(dir, "grok-session");
+            mkdirSync(grokDir);
+            const chat = join(grokDir, "chat_history.jsonl");
+            writeFileSync(chat, "");
+            writeFileSync(join(grokDir, "signals.json"), SafeJSON.stringify({ turnCount: 3, compactionCount: 0 }));
+            expect(HARNESS_HOOK_FACTS.grok.compactedSince(chat, since)).toBe(false);
+            writeFileSync(join(grokDir, "signals.json"), SafeJSON.stringify({ turnCount: 9, compactionCount: 1 }));
+            expect(HARNESS_HOOK_FACTS.grok.compactedSince(chat, since)).toBe(true);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
