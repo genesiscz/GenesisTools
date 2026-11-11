@@ -8,6 +8,7 @@ import type { SessionSubagent } from "@genesiscz/utils/ai/transcripts/subagents"
 import { DEFAULT_TURN_LIMIT, type TranscriptProvider } from "@genesiscz/utils/ai/transcripts/types";
 import { listSessionAgents, type SessionAgents } from "@genesiscz/utils/ai/transcripts/workflows";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -45,7 +46,7 @@ function printSessionAgents(result: SessionAgents): void {
             run.name ?? "(no record)",
             run.status ?? "no record",
             `${run.results} of ${run.agents} results`,
-            run.startedAt,
+            run.startedAt === null ? null : `started ${formatLocalDateTimeStamp(run.startedAt)} local`,
             run.durationMs === null ? null : formatDuration(run.durationMs),
         ].filter(Boolean);
         out.println(`\nworkflow ${run.runId}  ${facts.join("  ")}`);

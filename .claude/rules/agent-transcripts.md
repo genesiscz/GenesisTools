@@ -72,7 +72,10 @@ provider, so a new provider is a list of members to fill in and no feature parse
   (`workflow-types.ts`): `runs` (each run with its agents joined by id from the run record, the journal and the
   transcript folder), `results` and `grep`, plus the static `support`. Claude reads its Workflow tool's files
   (`readers/claude-workflows.ts`); Codex and Grok have no such tool and answer `{ supported: false, reason }`
-  (`noWorkflowReader`); a test fake uses `noWorkflows`. A session's sub-agent transcripts, the ones of its workflow
+  (`noWorkflowReader`); a test fake uses `noWorkflows`. Each agent of a run carries its journal lines and the retry
+  that replaced it (`journal`, `supersededBy`), so a caller cites a line and never opens the journal itself. The
+  session-analyzer skill in GenesisClaude calls `tools ai sessions workflows` (2026-11-11): do not add a second
+  reader of these files anywhere. A session's sub-agent transcripts, the ones of its workflow
   runs included, are enumerated in ONE place: `claudeSubagentTranscripts` in `readers/claude-paths.ts` (the folder walk
   itself is `claudeSubagentFolders` in `claude-subagent-path.ts`, which a hook can load). `listSubagents` returns one
   agent per id: a revived workflow agent has two files, kept in `files`.
