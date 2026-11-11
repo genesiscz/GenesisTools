@@ -1,5 +1,6 @@
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import {
+    pickWorkflowAgent,
     pickWorkflowRun,
     type WorkflowAgent,
     type WorkflowAgentGrep,
@@ -8,15 +9,18 @@ import {
     workflowRunTotals,
 } from "@genesiscz/utils/agent-sessions/workflow-types";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
-import { listSubagents } from "@genesiscz/utils/ai/transcripts/subagents";
+import { listSubagents, type SessionSubagent } from "@genesiscz/utils/ai/transcripts/subagents";
 import {
     sessionWorkflowRuns,
     summarizeWorkflowRun,
+    sumWorkflowUsage,
     type WorkflowAgentUsage,
+    type WorkflowRunUsage,
     workflowAgentUsage,
     workflowReaderSupport,
 } from "@genesiscz/utils/ai/transcripts/workflows";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { formatBytes, formatCost, formatDuration, formatTokens } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
@@ -26,6 +30,11 @@ const SCHEMA = "sessions.workflows@1";
 /** A harness with no reader: the answer is the reason, never "0 runs". */
 function noReaderLine(provider: string, reason: string): string {
     return `${provider}: no workflow reader. ${reason}`;
+}
+
+/** An instant as the machine's local time. The JSON forms keep the UTC instant. */
+function local(iso: string | null): string {
+    return iso === null ? "" : formatLocalDateTimeStamp(iso);
 }
 
 /** `tools ai sessions workflows list` with no session: which providers have a workflow reader, and why not. */
@@ -81,14 +90,103 @@ async function runsOf(
     return null;
 }
 
-export async function printWorkflowList(session: ResolvedTranscript, options: { json?: boolean }): Promise<void> {
+type AgentUsage = Map<WorkflowAgent, WorkflowAgentUsage | null>;
+
+/** The calls, tokens and list-price cost of each agent of a run that has a transcript. */
+async function usageOf(session: ResolvedTranscript, run: WorkflowRun): Promise<AgentUsage> {
+    return concurrentMap({
+        items: run.agents.filter((agent) => agent.transcript !== null),
+        fn: (agent) => workflowAgentUsage(session.provider, agent.transcript ?? ""),
+        concurrency: 8,
+        onError: (agent, error) =>
+            logger.warn({ error, transcript: agent.transcript }, "[ai sessions workflows] usage unreadable"),
+    });
+}
+
+function runUsage(run: WorkflowRun, usage: AgentUsage): WorkflowRunUsage {
+    return sumWorkflowUsage(run.agents.filter((agent) => agent.transcript !== null).map((agent) => usage.get(agent)));
+}
+
+function usageCells(usage: WorkflowAgentUsage | WorkflowRunUsage | null | undefined): string[] {
+    if (!usage) {
+        return ["", "", ""];
+    }
+
+    const tokens = usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
+    return [String(usage.calls), formatTokens(tokens), usage.costUsd === null ? "unpriced" : formatCost(usage.costUsd)];
+}
+
+/** What an agent's journal rows and its run's retries say, in one word, for the RESULT column. */
+function resultCell(agent: WorkflowAgent): string {
+    if (agent.hasResult) {
+        return formatBytes(agent.resultBytes);
+    }
+
+    return agent.supersededBy ? `retried as ${agent.supersededBy.agentId}` : "none";
+}
+
+/**
+ * One row per agent of a run. TRANSCRIPT is what the agent's own file says now (`running`, `done`, `stopped`), the
+ * same reading a sub-agent listing shows; RECORD is the state the run record wrote when the run ended.
+ */
+function agentTable(run: WorkflowRun, live: ReadonlyMap<string, SessionSubagent>, usage: AgentUsage | null): string {
+    return formatTable(
+        run.agents.map((agent) => [
+            agent.label ?? "",
+            agent.phase ?? "",
+            agent.model ?? "",
+            agent.state ?? "",
+            agent.transcript ? (live.get(agent.agentId)?.state ?? "") : "no file",
+            resultCell(agent),
+            formatBytes(agent.bytes),
+            agent.sources.join("+"),
+            ...(usage ? [...usageCells(usage.get(agent)), String(live.get(agent.agentId)?.toolCalls ?? "")] : []),
+            agent.agentId,
+        ]),
+        [
+            "LABEL",
+            "PHASE",
+            "MODEL",
+            "RECORD",
+            "TRANSCRIPT",
+            "RESULT",
+            "SIZE",
+            "SOURCES",
+            ...(usage ? ["CALLS", "TOKENS", "COST", "TOOLS"] : []),
+            "AGENT",
+        ],
+        { maxColWidth: 40 }
+    );
+}
+
+/** The session's sub-agent rows of these runs, by agent id: where each agent's transcript stands now. */
+function liveAgents(
+    session: ResolvedTranscript,
+    runs: readonly WorkflowRun[],
+    scan: boolean
+): Map<string, SessionSubagent> {
+    const ids = runs.flatMap((run) => run.agents.map((agent) => agent.agentId));
+    return new Map(listSubagents(session, { ids, scan }).subagents.map((agent) => [agent.id, agent]));
+}
+
+export interface WorkflowListRequest {
+    json?: boolean;
+    /** Each run with its agents: the whole run in `--json`, a table under each run otherwise. */
+    agents?: boolean;
+    /** Read every agent transcript of every run for its calls, tokens and list-price cost. */
+    usage?: boolean;
+}
+
+export async function printWorkflowList(session: ResolvedTranscript, options: WorkflowListRequest): Promise<void> {
     const runs = await runsOf(session, { json: options.json, strict: false });
 
     if (!runs) {
         return;
     }
 
-    const summaries = runs.map(summarizeWorkflowRun);
+    const usage = options.usage
+        ? new Map(await Promise.all(runs.map(async (run) => [run, await usageOf(session, run)] as const)))
+        : null;
 
     if (options.json) {
         out.result({
@@ -96,11 +194,19 @@ export async function printWorkflowList(session: ResolvedTranscript, options: { 
             sessionId: session.sessionId,
             provider: session.provider,
             reader: { supported: true },
-            runs: summaries,
+            runs: options.agents ? runs : runs.map(summarizeWorkflowRun),
+            ...(usage
+                ? {
+                      usage: Object.fromEntries(
+                          runs.map((run) => [run.runId, runUsage(run, usage.get(run) ?? new Map())])
+                      ),
+                  }
+                : {}),
         });
         return;
     }
 
+    const summaries = runs.map(summarizeWorkflowRun);
     const agents = summaries.reduce((sum, run) => sum + run.agents, 0);
     const results = summaries.reduce((sum, run) => sum + run.results, 0);
     out.println(`${summaries.length} workflow runs in ${session.sessionId}: ${agents} agents, ${results} results`);
@@ -111,43 +217,53 @@ export async function printWorkflowList(session: ResolvedTranscript, options: { 
 
     out.println(
         formatTable(
-            summaries.map((run) => [
-                run.runId,
-                run.name ?? "(no record)",
-                run.status ?? "no record",
-                run.startedAt ?? "",
-                run.durationMs === null ? "" : formatDuration(run.durationMs),
-                String(run.agents),
-                String(run.transcripts),
-                String(run.results),
-                run.phases.join(", "),
-            ]),
-            ["RUN", "NAME", "STATUS", "STARTED (UTC)", "DURATION", "AGENTS", "FILES", "RESULTS", "PHASES"],
-            { alignRight: [5, 6, 7], maxColWidth: 44 }
+            runs.map((run, index) => {
+                const summary = summaries[index];
+                return [
+                    run.runId,
+                    run.name ?? "(no record)",
+                    run.status ?? "no record",
+                    local(run.startedAt),
+                    run.durationMs === null ? "" : formatDuration(run.durationMs),
+                    String(summary?.agents ?? 0),
+                    String(summary?.transcripts ?? 0),
+                    String(summary?.results ?? 0),
+                    ...(usage ? usageCells(runUsage(run, usage.get(run) ?? new Map())) : []),
+                    run.phases.join(", "),
+                ];
+            }),
+            [
+                "RUN",
+                "NAME",
+                "STATUS",
+                "STARTED (local)",
+                "DURATION",
+                "AGENTS",
+                "FILES",
+                "RESULTS",
+                ...(usage ? ["CALLS", "TOKENS", "COST"] : []),
+                "PHASES",
+            ],
+            { alignRight: usage ? [5, 6, 7, 8, 9, 10] : [5, 6, 7], maxColWidth: 44 }
         )
     );
-}
 
-function usageCells(usage: WorkflowAgentUsage | null | undefined): string[] {
-    if (!usage) {
-        return ["", "", ""];
+    const noRecord = runs.filter((run) => run.recordPath === null);
+
+    if (noRecord.length > 0) {
+        out.println(
+            `${noRecord.length} runs have transcripts and no run record (stopped before the record was written): ${noRecord.map((run) => run.runId).join(", ")}`
+        );
     }
 
-    const tokens = usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
-    return [String(usage.calls), formatTokens(tokens), usage.costUsd === null ? "unpriced" : formatCost(usage.costUsd)];
-}
+    if (options.agents) {
+        const live = liveAgents(session, runs, options.usage === true);
 
-async function usageOf(
-    session: ResolvedTranscript,
-    run: WorkflowRun
-): Promise<Map<WorkflowAgent, WorkflowAgentUsage | null>> {
-    return concurrentMap({
-        items: run.agents.filter((agent) => agent.transcript !== null),
-        fn: (agent) => workflowAgentUsage(session.provider, agent.transcript ?? ""),
-        concurrency: 8,
-        onError: (agent, error) =>
-            logger.warn({ error, transcript: agent.transcript }, "[ai sessions workflows] usage unreadable"),
-    });
+        for (const run of runs) {
+            out.println(`\n${run.runId}  ${run.name ?? "(no record)"}  ${run.status ?? "no record"}`);
+            out.println(agentTable(run, live, usage?.get(run) ?? null));
+        }
+    }
 }
 
 export async function printWorkflowRun(
@@ -163,8 +279,6 @@ export async function printWorkflowRun(
 
     const run = pickWorkflowRun(runs, wanted);
     const usage = options.usage ? await usageOf(session, run) : null;
-    // Whether each agent still works comes from its own transcript's tail, the same reading a sub-agent listing shows.
-    const live = new Map(listSubagents(session).subagents.map((agent) => [agent.filePath, agent]));
 
     if (options.json) {
         out.result({
@@ -185,7 +299,7 @@ export async function printWorkflowRun(
         ["summary", run.summary],
         // A killed run records a whole stack trace; its first line is the reason, and --json has the rest.
         ["error", run.error?.split("\n")[0] ?? null],
-        ["started", run.startedAt],
+        ["started", run.startedAt === null ? null : `${local(run.startedAt)} local`],
         ["duration", run.durationMs === null ? null : formatDuration(run.durationMs)],
         ["model", run.defaultModel],
         ["phases", run.phases.join(", ") || null],
@@ -202,35 +316,20 @@ export async function printWorkflowRun(
     out.println(
         `  ${"agents".padEnd(12)}${totals.agents} (${totals.withTranscript} with a transcript, ${totals.withResult} with a result, ${formatBytes(totals.bytes)}); the run record says ${run.reported.agents ?? "nothing"}`
     );
-    out.println(
-        formatTable(
-            run.agents.map((agent) => [
-                agent.label ?? "",
-                agent.phase ?? "",
-                agent.model ?? "",
-                agent.state ?? "",
-                agent.transcript ? (live.get(agent.transcript)?.state ?? "") : "no file",
-                agent.hasResult ? formatBytes(agent.resultBytes) : "none",
-                formatBytes(agent.bytes),
-                agent.sources.join("+"),
-                ...(usage ? usageCells(usage.get(agent)) : []),
-                agent.agentId,
-            ]),
-            [
-                "LABEL",
-                "PHASE",
-                "MODEL",
-                "RECORD",
-                "TRANSCRIPT",
-                "RESULT",
-                "SIZE",
-                "SOURCES",
-                ...(usage ? ["CALLS", "TOKENS", "COST"] : []),
-                "AGENT",
-            ],
-            { maxColWidth: 40 }
-        )
-    );
+
+    if (usage) {
+        const [calls, tokens, cost] = usageCells(runUsage(run, usage));
+        out.println(`  ${"usage".padEnd(12)}${calls} calls, ${tokens} tokens, ${cost}`);
+    }
+
+    out.println(agentTable(run, liveAgents(session, [run], options.usage === true), usage));
+    const unrecorded = run.agents.filter((agent) => !agent.sources.includes("record"));
+
+    if (run.recordPath && unrecorded.length > 0) {
+        out.println(
+            `${unrecorded.length} agents started and are absent from the run record (a retry, or an agent the run dropped): ${unrecorded.map((agent) => agent.label ?? agent.agentId).join(", ")}`
+        );
+    }
 }
 
 export interface WorkflowGrepRequest extends WorkflowGrepOptions {
@@ -268,6 +367,7 @@ export async function printWorkflowGrep(session: ResolvedTranscript, request: Wo
         out.println(
             `\n${agent.runId}  ${agent.agent.label ?? agent.agent.agentId}  ${agent.agent.agentId}  ${agent.matchingLines} matching line(s)`
         );
+        out.println(`  ${agent.agent.transcript}`);
 
         for (const hit of agent.hits) {
             // `assistant`: the agent wrote it. `tool-result`: it was shown it. `prompt`: it was told it.
@@ -276,11 +376,14 @@ export async function printWorkflowGrep(session: ResolvedTranscript, request: Wo
     }
 }
 
-/** The final structured answer of one agent of a run, by agent id or by its label. */
+/**
+ * The final structured answer of one agent of a run (by id or label), or of every agent of the run when no agent is
+ * named. Always JSON: a result is the agent's structured answer.
+ */
 export async function printWorkflowResult(
     session: ResolvedTranscript,
     wantedRun: string,
-    wantedAgent: string
+    wantedAgent: string | undefined
 ): Promise<void> {
     const runs = await runsOf(session, { strict: true });
 
@@ -289,19 +392,29 @@ export async function printWorkflowResult(
     }
 
     const run = pickWorkflowRun(runs, wantedRun);
-    const agent = run.agents.find((candidate) => candidate.agentId === wantedAgent || candidate.label === wantedAgent);
-
-    if (!agent) {
-        throw new Error(
-            `no agent "${wantedAgent}" in ${run.runId}; it has: ${run.agents.map((candidate) => `${candidate.agentId} (${candidate.label ?? "no label"})`).join(", ")}`
-        );
-    }
-
     const results = resolveHistoryProvider(session.provider).reader.workflows.results(run);
 
+    if (wantedAgent === undefined) {
+        out.result({
+            schema: SCHEMA,
+            runId: run.runId,
+            results: run.agents.map((agent) => ({
+                agentId: agent.agentId,
+                label: agent.label,
+                phase: agent.phase,
+                hasResult: results.has(agent.agentId),
+                result: results.get(agent.agentId) ?? null,
+            })),
+        });
+        return;
+    }
+
+    const agent = pickWorkflowAgent(run, wantedAgent);
+
     if (!results.has(agent.agentId)) {
+        const retry = agent.supersededBy ? `; the run retried the step as ${agent.supersededBy.agentId}` : "";
         throw new Error(
-            `${agent.agentId} (${agent.label ?? "no label"}) returned no result in ${run.runId}: the journal has none for it${run.status ? ` (run status: ${run.status})` : ""}`
+            `${agent.agentId} (${agent.label ?? "no label"}) returned no result in ${run.runId}: the journal has none for it${run.status ? ` (run status: ${run.status})` : ""}${retry}`
         );
     }
 

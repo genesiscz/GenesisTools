@@ -16,6 +16,22 @@ import type { SessionFacts } from "./analysis-types";
  */
 export type WorkflowAgentSource = "record" | "journal" | "disk";
 
+/** An agent's rows in its run's journal, by 1-based line, so a reader can open the row that proves a claim. */
+export interface WorkflowJournalRows {
+    /** The step the agent ran. A retry of a step is another agent with the same key. */
+    key: string | null;
+    startedLine: number | null;
+    resultLine: number | null;
+}
+
+/** The agent a run started later for the same step, when the earlier one returned no result. */
+export interface WorkflowSupersession {
+    agentId: string;
+    /** 1-based journal line of the later agent's start. */
+    startedLine: number;
+    hasResult: boolean;
+}
+
 export interface WorkflowAgent {
     agentId: string;
     label: string | null;
@@ -35,6 +51,13 @@ export interface WorkflowAgent {
     resultBytes: number;
     promptPreview: string | null;
     sources: WorkflowAgentSource[];
+    /** The agent's rows in the run's journal; null when the journal never named it. */
+    journal: WorkflowJournalRows | null;
+    /**
+     * The retry that replaced this attempt: the run started the same step again and this agent has no result. Null
+     * for an agent with a result, and for the last attempt of a step.
+     */
+    supersededBy: WorkflowSupersession | null;
 }
 
 export interface WorkflowRun {
@@ -161,4 +184,34 @@ export function pickWorkflowRun(runs: readonly WorkflowRun[], wanted: string): W
     }
 
     throw new Error(`"${wanted}" matches ${matches.length} runs: ${matches.map((run) => run.runId).join(", ")}`);
+}
+
+/**
+ * One agent of a run by its id (exact, then a prefix) or its label (exact, then a part of it, without case). Throws
+ * when it names no agent or several, with the agents it could have meant.
+ */
+export function pickWorkflowAgent(run: WorkflowRun, wanted: string): WorkflowAgent {
+    const needle = wanted.toLowerCase();
+    const label = (agent: WorkflowAgent): string => agent.label?.toLowerCase() ?? "";
+    const matches = [
+        (agent: WorkflowAgent) => agent.agentId === wanted,
+        (agent: WorkflowAgent) => agent.agentId.toLowerCase().startsWith(needle),
+        (agent: WorkflowAgent) => label(agent) === needle,
+        (agent: WorkflowAgent) => label(agent).includes(needle),
+    ]
+        .map((test) => run.agents.filter(test))
+        .find((found) => found.length > 0);
+    const [only] = matches ?? [];
+    const names = (agents: readonly WorkflowAgent[]): string =>
+        agents.map((agent) => `${agent.agentId} (${agent.label ?? "no label"})`).join(", ");
+
+    if (only && matches?.length === 1) {
+        return only;
+    }
+
+    if (!matches) {
+        throw new Error(`no agent "${wanted}" in ${run.runId}; it has: ${names(run.agents) || "none"}`);
+    }
+
+    throw new Error(`"${wanted}" matches ${matches.length} agents of ${run.runId}: ${names(matches)}`);
 }

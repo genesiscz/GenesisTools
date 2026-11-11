@@ -65,9 +65,14 @@ export function registerSessionsWorkflowsCommand(sessions: Command): void {
     workflows
         .command("list [session-id]")
         .description("The runs of a session; without a session, which providers have a workflow reader")
+        .option("--agents", "Each run with its agents: the whole run in --json, a table under each run otherwise")
+        .option("--usage", "Read every agent transcript of every run for its calls, tokens and list-price cost")
         .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
-        .option("--json", `Print { schema: "sessions.workflows@1", sessionId, provider, reader, runs }`)
-        .action(async (sessionId: string | undefined, opts: SessionOptions) => {
+        .option(
+            "--json",
+            `Print { schema: "sessions.workflows@1", sessionId, provider, reader, runs, usage? }; with --agents each run is the whole run that "show --json" prints`
+        )
+        .action(async (sessionId: string | undefined, opts: SessionOptions & { agents?: boolean; usage?: boolean }) => {
             // Lazy: the readers and the pricing catalog load only for this verb.
             const lib = await import("@app/ai/lib/sessions/session-workflows");
 
@@ -88,7 +93,7 @@ export function registerSessionsWorkflowsCommand(sessions: Command): void {
         .description(
             "One run (id prefix or name): its record, and each agent with its label, phase, model, state and result"
         )
-        .option("--usage", "Read every agent transcript for its calls, tokens and list-price cost")
+        .option("--usage", "Read every agent transcript for its calls, tokens, list-price cost and tool calls")
         .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
         .option("--json", `Print { schema: "sessions.workflows@1", sessionId, run, usage? }`)
         .action(async (sessionId: string, run: string, opts: SessionOptions & { usage?: boolean }) => {
@@ -168,10 +173,12 @@ export function registerSessionsWorkflowsCommand(sessions: Command): void {
         );
 
     workflows
-        .command("result <session-id> <run> <agent>")
-        .description("The final structured answer of one agent of a run (agent id or label), as JSON")
+        .command("result <session-id> <run> [agent]")
+        .description(
+            "The final structured answer of one agent of a run (its id or a prefix, its label or a part of it), or of every agent of the run when no agent is named, as JSON"
+        )
         .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
-        .action(async (sessionId: string, run: string, agent: string, opts: SessionOptions) => {
+        .action(async (sessionId: string, run: string, agent: string | undefined, opts: SessionOptions) => {
             const session = await sessionOf(sessionId, opts);
 
             if (session) {

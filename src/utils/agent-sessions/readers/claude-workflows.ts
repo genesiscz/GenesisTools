@@ -30,7 +30,9 @@ import type {
     WorkflowAgentSource,
     WorkflowGrepHit,
     WorkflowGrepOptions,
+    WorkflowJournalRows,
     WorkflowRun,
+    WorkflowSupersession,
 } from "../workflow-types";
 import {
     type ClaudeSubagentFile,
@@ -104,6 +106,7 @@ interface AgentDraft {
     promptPreview: string | null;
     hasResult: boolean;
     resultBytes: number;
+    journal: WorkflowJournalRows | null;
     sources: Set<WorkflowAgentSource>;
 }
 
@@ -125,6 +128,7 @@ function draftFor(drafts: Map<string, AgentDraft>, agentId: string): AgentDraft 
         promptPreview: null,
         hasResult: false,
         resultBytes: 0,
+        journal: null,
         sources: new Set(),
     };
     drafts.set(agentId, draft);
@@ -162,26 +166,29 @@ function readRecordAgents(record: Row | null, drafts: Map<string, AgentDraft>): 
     }
 }
 
-function journalRows(journalPath: string): Row[] {
+/** The journal's rows with their 1-based line: a line is the evidence a caller cites. */
+function journalRows(journalPath: string): Array<{ line: number; row: Row }> {
     if (!existsSync(journalPath)) {
         return [];
     }
 
-    const rows: Row[] = [];
+    const rows: Array<{ line: number; row: Row }> = [];
 
-    for (const line of readFileSync(journalPath, "utf8").split("\n")) {
-        const row = line.trim() ? parseRow(line) : null;
+    readFileSync(journalPath, "utf8")
+        .split("\n")
+        .forEach((raw, index) => {
+            const row = raw.trim() ? parseRow(raw) : null;
 
-        if (row) {
-            rows.push(row);
-        }
-    }
+            if (row) {
+                rows.push({ line: index + 1, row });
+            }
+        });
 
     return rows;
 }
 
 function readJournalAgents(journalPath: string, drafts: Map<string, AgentDraft>): void {
-    for (const row of journalRows(journalPath)) {
+    for (const { line, row } of journalRows(journalPath)) {
         const agentId = text(row.agentId);
 
         if (!agentId) {
@@ -190,17 +197,58 @@ function readJournalAgents(journalPath: string, drafts: Map<string, AgentDraft>)
 
         const draft = draftFor(drafts, agentId);
         draft.sources.add("journal");
+        draft.journal ??= { key: null, startedLine: null, resultLine: null };
+        draft.journal.key ??= text(row.key);
 
         if (row.type === "started") {
             draft.label = draft.label ?? text(row.label);
             draft.phase = draft.phase ?? text(row.phase);
+            draft.journal.startedLine ??= line;
         }
 
         if (row.type === "result") {
             draft.hasResult = true;
             draft.resultBytes = Buffer.byteLength(SafeJSON.stringify(row.result ?? null) ?? "");
+            draft.journal.resultLine = line;
         }
     }
+}
+
+/**
+ * For each agent with no result: the agent the run started later for the same step key. The later attempt that
+ * recorded a result wins; with none, the last attempt. In session 1d7131fa a step was started twice (journal L2 and
+ * L3 of one run) and only the second agent returned, so the first one reads as replaced, not as lost work.
+ */
+function supersessions(drafts: Iterable<AgentDraft>): Map<string, WorkflowSupersession> {
+    const attempts = new Map<string, Array<{ agentId: string; startedLine: number; hasResult: boolean }>>();
+
+    for (const draft of drafts) {
+        const key = draft.journal?.key;
+        const startedLine = draft.journal?.startedLine;
+
+        if (key && startedLine) {
+            attempts.set(key, [
+                ...(attempts.get(key) ?? []),
+                { agentId: draft.agentId, startedLine, hasResult: draft.hasResult },
+            ]);
+        }
+    }
+
+    const replaced = new Map<string, WorkflowSupersession>();
+
+    for (const step of attempts.values()) {
+        step.sort((a, b) => a.startedLine - b.startedLine);
+        step.forEach((attempt, index) => {
+            const later = step.slice(index + 1);
+            const winner = later.find((candidate) => candidate.hasResult) ?? later.at(-1);
+
+            if (winner && !attempt.hasResult) {
+                replaced.set(attempt.agentId, winner);
+            }
+        });
+    }
+
+    return replaced;
 }
 
 function readDiskAgents(files: readonly ClaudeSubagentFile[], drafts: Map<string, AgentDraft>): void {
@@ -253,6 +301,7 @@ function readRun(input: {
 
     readDiskAgents(files, drafts);
 
+    const replaced = supersessions(drafts.values());
     const agents: WorkflowAgent[] = [...drafts.values()].map((draft) => {
         const onDisk = draft.sources.has("disk") && runDir !== null;
         const transcript = onDisk ? claudeSubagentFiles(runDir, draft.agentId).transcript : null;
@@ -271,6 +320,8 @@ function readRun(input: {
             resultBytes: draft.resultBytes,
             promptPreview: draft.promptPreview,
             sources: [...draft.sources],
+            journal: draft.journal,
+            supersededBy: replaced.get(draft.agentId) ?? null,
         };
     });
     const recordedPhases = Array.isArray(record?.phases)
@@ -339,7 +390,7 @@ export function claudeWorkflowRuns(sessionTranscript: string): WorkflowRun[] {
 function claudeWorkflowResults(run: WorkflowRun): Map<string, unknown> {
     const results = new Map<string, unknown>();
 
-    for (const row of run.journalPath ? journalRows(run.journalPath) : []) {
+    for (const { row } of run.journalPath ? journalRows(run.journalPath) : []) {
         const agentId = text(row.agentId);
 
         if (row.type === "result" && agentId) {

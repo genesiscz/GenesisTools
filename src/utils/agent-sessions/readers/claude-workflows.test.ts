@@ -18,7 +18,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { buildSessionReport } from "../analysis/report";
 import { factsOf } from "../analysis-types";
 import { claudeHistoryReader, codexHistoryReader, grokHistoryReader } from "../compact-readers";
-import { pickWorkflowRun, type WorkflowRun, workflowRunTotals } from "../workflow-types";
+import { pickWorkflowAgent, pickWorkflowRun, type WorkflowRun, workflowRunTotals } from "../workflow-types";
 import { subagentFiles } from "./claude-changes-parse";
 import {
     claudeSubagentCandidates,
@@ -366,6 +366,47 @@ describe("the Claude workflow reader", () => {
         expect(pickWorkflowRun(runs, "REVIEW-changes").runId).toBe(RUN_A);
         expect(() => pickWorkflowRun(runs, "nope")).toThrow(/no workflow run matches/);
         expect(() => pickWorkflowRun(runs, "wf_")).toThrow(/matches 2 runs/);
+    });
+
+    test("pickWorkflowAgent takes an id, an id prefix, a label or a part of it, and refuses a miss or an ambiguous one", async () => {
+        const run = pickWorkflowRun(await runsOf(parent), RUN_A);
+        expect(pickWorkflowAgent(run, "aaa1").agentId).toBe("aaa1");
+        expect(pickWorkflowAgent(run, "bb").agentId).toBe("bbb2");
+        expect(pickWorkflowAgent(run, "review:perf").agentId).toBe("ccc3");
+        expect(pickWorkflowAgent(run, "VERIFY").agentId).toBe("bbb2");
+        expect(() => pickWorkflowAgent(run, "review")).toThrow(/matches 2 agents/);
+        expect(() => pickWorkflowAgent(run, "nobody")).toThrow(/no agent "nobody"/);
+    });
+
+    test("an agent's journal rows carry their lines, and an attempt with no result names the retry that replaced it", async () => {
+        const local = buildSession();
+        const journal = join(local.replace(/\.jsonl$/, ""), "subagents", "workflows", RUN_B, "journal.jsonl");
+        writeFileSync(
+            journal,
+            jsonl([
+                { type: "launched" },
+                { type: "started", key: "v2:9", agentId: "ddd4", label: "implement x", phase: "Build" },
+                { type: "started", key: "v2:9", agentId: "eee5", label: "implement x", phase: "Build" },
+                { type: "result", key: "v2:9", agentId: "eee5", result: { ok: true } },
+            ])
+        );
+        const runs = await runsOf(local);
+        const byId = new Map(pickWorkflowRun(runs, RUN_B).agents.map((agent) => [agent.agentId, agent]));
+        expect(byId.get("ddd4")).toMatchObject({
+            journal: { key: "v2:9", startedLine: 2, resultLine: null },
+            supersededBy: { agentId: "eee5", startedLine: 3, hasResult: true },
+        });
+        expect(byId.get("eee5")).toMatchObject({
+            journal: { key: "v2:9", startedLine: 3, resultLine: 4 },
+            supersededBy: null,
+        });
+        // A step that ran once replaces nothing: an agent with no result there is not "retried".
+        const once = pickWorkflowRun(runs, RUN_A).agents;
+        expect(once.map((agent) => [agent.agentId, agent.journal?.startedLine, agent.supersededBy])).toEqual([
+            ["aaa1", 2, null],
+            ["bbb2", 4, null],
+            ["ccc3", 5, null],
+        ]);
     });
 });
 
