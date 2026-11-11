@@ -670,6 +670,9 @@ struct TimelineAction: Identifiable {
     let symbol: String
     let title: String
     var disabled = false
+    /// Drawn as its own icon on a hovered row: the way to open the event and its copy action. The rest sit in the
+    /// row's more-menu unless `HubActivityRows.allActionsKey` is on (hub UX C36).
+    var pinned = false
     let run: Run
 }
 
@@ -844,8 +847,9 @@ extension HubModel {
     @MainActor
     func timelineActions(for event: TimelineEvent, timeline: HubTimelineModel) -> [TimelineAction] {
         var actions: [TimelineAction] = []
-        func add(_ id: String, _ symbol: String, _ title: String, disabled: Bool = false, _ perform: @escaping () -> Void) {
-            actions.append(TimelineAction(id: id, symbol: symbol, title: title, disabled: disabled, run: .perform(perform)))
+        func add(_ id: String, _ symbol: String, _ title: String, disabled: Bool = false, pinned: Bool = false,
+                 _ perform: @escaping () -> Void) {
+            actions.append(TimelineAction(id: id, symbol: symbol, title: title, disabled: disabled, pinned: pinned, run: .perform(perform)))
         }
         func popover(_ id: String, _ symbol: String, _ title: String, _ popover: TimelinePopover) {
             actions.append(TimelineAction(id: id, symbol: symbol, title: title, run: .popover(popover)))
@@ -853,7 +857,7 @@ extension HubModel {
 
         switch event.timelineKind {
         case .session, .sessionStart:
-            add("open", "text.bubble", "Open in the hub") { [weak self] in self?.openTimelineSession(event) }
+            add("open", "text.bubble", "Open in the hub", pinned: true) { [weak self] in self?.openTimelineSession(event) }
             if let session = timelineSession(event) {
                 popover("resume", "play.circle", "Resume this session (pick the terminal target)", .resume(session))
             }
@@ -867,9 +871,9 @@ extension HubModel {
             }
             let folder = event.cwd ?? ""
             add("cursor", "chevron.left.forwardslash.chevron.right", "Open the folder in Cursor", disabled: folder.isEmpty) { PathOpener.cursor(folder) }
-            add("copy", "doc.on.doc", "Copy the session id") { PathOpener.copy(event.sessionId ?? "") }
+            add("copy", "doc.on.doc", "Copy the session id", pinned: true) { PathOpener.copy(event.sessionId ?? "") }
         case .commit:
-            add("diff", "rectangle.split.2x1", "Show this commit in the in-app diff") { [weak self] in self?.openTimelineEvent(event) }
+            add("diff", "rectangle.split.2x1", "Show this commit in the in-app diff", pinned: true) { [weak self] in self?.openTimelineEvent(event) }
             add("host", "arrow.up.right.square", "Open the commit on the host") { [weak self] in
                 guard let self else { return }
                 if let url = self.timelineHostURL(event) {
@@ -878,7 +882,7 @@ extension HubModel {
                     self.post("The repository's origin is not known yet; try again in a moment.", .warning)
                 }
             }
-            add("copy", "number", "Copy the sha") { PathOpener.copy(event.sha ?? "") }
+            add("copy", "number", "Copy the SHA", pinned: true) { PathOpener.copy(event.sha ?? "") }
             add("prs", "arrow.triangle.pull", "Open the PRs that contain it") { [weak self, weak timeline] in
                 guard let self, let timeline else { return }
                 if case .commit(let detail)? = timeline.details[event.id] {
@@ -906,9 +910,12 @@ extension HubModel {
                 }
             }
             add("pr", "arrow.triangle.pull", "Open the PR in the hub", disabled: event.pr == nil) { [weak self] in self?.openTimelinePR(event) }
-            add("diff", "rectangle.split.2x1", "Show the pushed tip in the in-app diff") { [weak self] in self?.openTimelineEvent(event) }
+            add("diff", "rectangle.split.2x1", "Show the pushed tip in the in-app diff", pinned: true) { [weak self] in self?.openTimelineEvent(event) }
+            if let sha = event.sha {
+                add("copy", "number", "Copy the pushed SHA", pinned: true) { PathOpener.copy(sha) }
+            }
         case .pr, .ci:
-            add("hub", "arrow.triangle.pull", "Open in the hub") { [weak self] in self?.openTimelinePR(event) }
+            add("hub", "arrow.triangle.pull", "Open in the hub", pinned: true) { [weak self] in self?.openTimelinePR(event) }
             add("host", "arrow.up.right.square", "Open on the host") { [weak self] in
                 if let url = self?.timelineHostURL(event) { ExternalOpener.open(url) }
             }
@@ -930,10 +937,10 @@ extension HubModel {
             add("host", "arrow.up.right.square", "Open the comment on the host") { [weak self] in
                 if let url = self?.timelineHostURL(event) { ExternalOpener.open(url) }
             }
-            add("diff", "rectangle.split.2x1", "Open the PR's diff at this file") { [weak self] in self?.openTimelinePR(event, reveal: event.path) }
+            add("diff", "rectangle.split.2x1", "Open the PR's diff at this file", pinned: true) { [weak self] in self?.openTimelinePR(event, reveal: event.path) }
         case .decision:
-            add("open", "questionmark.bubble", "Open the session's Decisions pane") { [weak self] in self?.openTimelineEvent(event) }
-            add("copy", "doc.on.doc", "Copy the question") { PathOpener.copy(event.title) }
+            add("open", "questionmark.bubble", "Open the session's Decisions pane", pinned: true) { [weak self] in self?.openTimelineEvent(event) }
+            add("copy", "doc.on.doc", "Copy the question", pinned: true) { PathOpener.copy(event.title) }
         }
         return actions
     }
@@ -977,6 +984,7 @@ struct TimelineListView: View {
                 }
             }
             .padding(.bottom, 12)
+            .genScrollBars()
         }
     }
 
@@ -1209,6 +1217,20 @@ extension TimelineEvent {
         let hour = date.map { TimelineHour.start(of: $0).timeIntervalSince1970 } ?? 0
         return "\(hour)|\(id)"
     }
+
+    /// The title a row draws. A commit's conventional "type(scope): " prefix goes unless `keepsPrefix`
+    /// (`HubActivityRows.commitPrefixKey`): long scopes such as "fix(GenesisKit, GenesisHub): " filled the row
+    /// before the part that says what changed (hub UX C37). The tooltip and the open row keep the whole line.
+    func shownTitle(keepsPrefix: Bool) -> String {
+        guard !keepsPrefix, timelineKind == .commit else { return title }
+        return Self.droppingCommitPrefix(title)
+    }
+
+    static func droppingCommitPrefix(_ title: String) -> String {
+        guard let match = title.range(of: #"^[A-Za-z]+(\([^)]*\))?!?:\s+"#, options: .regularExpression),
+              match.upperBound < title.endIndex else { return title }
+        return String(title[match.upperBound...])
+    }
 }
 
 /// The feed grouped by day, then by hour inside a day.
@@ -1250,6 +1272,9 @@ struct TimelineMain: View {
     /// the title (snapshot at 1000 pt, 2026-09-25). One geometry read for the list, not one per row.
     @State private var compact = false
     static let compactWidth: CGFloat = 1180
+    /// Settings, Hub, Panes, Activity: read once here and handed to every row as values.
+    @AppStorage(HubActivityRows.allActionsKey, store: HubDefaults.store) private var allActions = false
+    @AppStorage(HubActivityRows.commitPrefixKey, store: HubDefaults.store) private var commitPrefix = false
 
     static let hourFormat: DateFormatter = {
         let formatter = DateFormatter()
@@ -1306,7 +1331,9 @@ struct TimelineMain: View {
                                         compact: compact,
                                         expanded: timeline.isExpanded(event),
                                         projectPicked: event.project != nil && timeline.project == event.project,
-                                        forge: event.repo.flatMap { repos.facts(for: $0)?.forge }
+                                        forge: event.repo.flatMap { repos.facts(for: $0)?.forge },
+                                        allActions: allActions,
+                                        commitPrefix: commitPrefix
                                     )
                                     .equatable()
                                     .swrFlash(timeline.changed.contains(event.id), cornerRadius: 6)
@@ -1322,6 +1349,7 @@ struct TimelineMain: View {
                     footer(shown: events.count)
                 }
                 .padding(.bottom, 16)
+                .genScrollBars()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1336,13 +1364,17 @@ struct TimelineMain: View {
         .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.compactWidth }) { compact = $0 }
         // The find re-runs when the shown rows change, a row folds open or closed, or a detail lands.
         .panelFind(find, revision: findRevision(events)) {
-            events.map { TimelineRowView.searchable($0, detail: timeline.isExpanded($0) ? timeline.details[$0.id] : nil, compact: compact) }
+            events.map {
+                TimelineRowView.searchable($0, detail: timeline.isExpanded($0) ? timeline.details[$0.id] : nil, compact: compact,
+                                           commitPrefix: commitPrefix)
+            }
         }
     }
 
     private func findRevision(_ events: [TimelineEvent]) -> String {
         let open = events.filter(timeline.isExpanded).map { "\($0.id)\(timeline.details[$0.id] == nil ? "" : "+")" }
         return events.map(\.rowID).joined(separator: "\n") + "\u{1}" + open.joined(separator: "\n") + (compact ? "\u{2}" : "")
+            + (commitPrefix ? "\u{3}" : "")
     }
 
     static let loadFailedText = "The activity could not be read."
@@ -1528,11 +1560,16 @@ struct TimelineRowView: View, Equatable {
     let projectPicked: Bool
     /// The repository's web pages (`RepoFactsStore`), for the branch and author links.
     let forge: ForgeWeb?
+    /// `HubActivityRows.allActionsKey`: every action as its own icon, not open and copy plus a more-menu.
+    var allActions = false
+    /// `HubActivityRows.commitPrefixKey`: a commit title keeps its "type(scope): " prefix.
+    var commitPrefix = false
     @State private var popover: TimelinePopover?
 
     static func == (a: TimelineRowView, b: TimelineRowView) -> Bool {
         a.event == b.event && a.compact == b.compact && a.expanded == b.expanded
             && a.projectPicked == b.projectPicked && a.forge == b.forge
+            && a.allActions == b.allActions && a.commitPrefix == b.commitPrefix
     }
 
     private static let timeFormat: DateFormatter = {
@@ -1543,12 +1580,12 @@ struct TimelineRowView: View, Equatable {
 
     /// What ⌘F searches in a row: the texts the row shows, under the keys its FindTexts use, plus
     /// the texts of its folded-open detail while it is open (nothing of a closed one).
-    static func searchable(_ event: TimelineEvent, detail: TimelineDetail?, compact: Bool = false) -> PanelFindRow {
+    static func searchable(_ event: TimelineEvent, detail: TimelineDetail?, compact: Bool = false, commitPrefix: Bool = false) -> PanelFindRow {
         // In drawing order; the branch shows on every kind but a push (its title already names it),
-        // and on no row of a compact list.
+        // and on no row of a compact list. The title is the one the row draws (`shownTitle`).
         let own = [
             PanelFindField("project", event.project ?? ""),
-            PanelFindField("title", event.title),
+            PanelFindField("title", event.shownTitle(keepsPrefix: commitPrefix)),
             PanelFindField("detail", event.detail ?? ""),
             PanelFindField("branch", event.timelineKind == .push || compact ? "" : event.branch ?? ""),
             PanelFindField("author", event.author ?? ""),
@@ -1614,19 +1651,21 @@ struct TimelineRowView: View, Equatable {
                 LiveButton(tooltip: "\(event.title)\n\(openTooltip)") {
                     model.openTimelineEvent(event)
                 } label: {
-                    FindText(event.title, field: "title")
+                    FindText(event.shownTitle(keepsPrefix: commitPrefix), field: "title")
                         .font(.system(size: 12.5))
                         .foregroundColor(Color.white.opacity(0.9))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
+                // The subject first, its details after the gap with the author and the age: the sha and the branch
+                // right behind the title read as part of it and took the room its end needed (hub UX C37).
+                Spacer(minLength: 6)
                 if let detail = event.detail {
                     detailLabel(detail, kind: kind)
                 }
                 if let branch = event.branch, kind != .push, !compact {
                     branchLabel(branch)
                 }
-                Spacer(minLength: 6)
                 if let author = event.author, kind != .session, kind != .sessionStart {
                     authorLabel(author)
                 }
@@ -1636,7 +1675,7 @@ struct TimelineRowView: View, Equatable {
                     .lineLimit(1)
                     .fixedSize()
                     .frame(minWidth: 52, alignment: .trailing)
-                TimelineRowActions(actions: actions) { run($0) }
+                TimelineRowActions(actions: actions, all: allActions) { run($0) }
             }
             .padding(.horizontal, 8)
             .frame(minHeight: 26)
@@ -1811,15 +1850,31 @@ private struct TimelineRowFill: View {
 /// on every row, so a resting strip is hidden from VoiceOver.
 private struct TimelineRowActions: View {
     let actions: [TimelineAction]
+    /// Every action as an icon (`HubActivityRows.allActionsKey`); off, the pinned ones and a more-menu (hub UX C36).
+    var all = false
     let run: (TimelineAction) -> Void
     @Environment(\.rowLive) private var live
 
     var body: some View {
+        let shown = all ? actions : actions.filter(\.pinned)
+        let more = all ? [] : actions.filter { !$0.pinned }
         HStack(spacing: 2) {
-            ForEach(actions) { action in
+            ForEach(shown) { action in
                 IconButton(systemName: action.symbol, tooltip: action.title, size: 11) { run(action) }
                     .disabled(action.disabled)
                     .opacity(action.disabled ? 0.35 : 1)
+            }
+            if !more.isEmpty {
+                MenuButton(style: .genHoverIcon(), items: {
+                    more.map { action -> MenuButtonItem in .action(action.title, enabled: !action.disabled) { run(action) } }
+                }) {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 11))
+                        .frame(width: 16, height: 16)
+                }
+                .fixedSize()
+                .instantTooltip("More actions")
+                .accessibilityLabel(Text("More actions"))
             }
         }
         // Faint until the row is hovered: at 0.55 every row's five glyphs made the list busy, and at rest they read

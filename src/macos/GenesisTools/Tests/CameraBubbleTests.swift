@@ -95,16 +95,10 @@ final class CameraBubbleTests: XCTestCase {
         XCTAssertEqual(EffectLanes.resolve(project).map { "\($0.lane.title):\($0.items.map(\.id))" }, ["Zooms:[]", "Camera:[\"k1\"]"])
     }
 
-    func testPauseBeforeTheFirstFrameDoesNotOffsetTheCameraTimeline() {
-        let writer = CameraMovieWriter(url: FileManager.default.temporaryDirectory.appendingPathComponent("unused-\(UUID().uuidString).mov"))
-        writer.pause()
-        writer.resume()
-        XCTAssertEqual(writer.pausedTotal, 0)
-    }
-
-    func testCameraTimeLeavesThePausedTimeOut() {
-        XCTAssertEqual(CameraMovieWriter.presentationSeconds(uptime: 110, first: 100, pausedTotal: 4), 6)
-        XCTAssertEqual(CameraMovieWriter.presentationSeconds(uptime: 99, first: 100, pausedTotal: 0), 0)
+    func testCameraTimeRunsOnTheWallClockFromTheFirstFrame() {
+        // Paused time stays in: the recording cuts the movie to the screen's spans afterwards.
+        XCTAssertEqual(CameraMovieWriter.presentationSeconds(uptime: 110, first: 100), 10)
+        XCTAssertEqual(CameraMovieWriter.presentationSeconds(uptime: 99, first: 100), 0)
     }
 
     /// The bubbles the TypeScript camera op writes for camera-ops.json's cases (recording-editor.test.ts applies them)

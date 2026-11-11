@@ -102,9 +102,9 @@ export const suggest = defineMethod({
     name: "items.suggest",
     params: z.object({ rules: z.array(z.string()).optional() }).strict(),
     result: z.unknown(),
-    resultName: "{ fresh: items.list rows, warnings }",
+    resultName: "{ fresh: items.list rows, retired: string[], warnings }",
     effect: "reversible",
-    doc: `Run the rules on the transcript and add what they find as suggested items, in one save. rules: any of ${SUGGEST_RULES.join(", ")} (default all). A word check that cannot run is a warning.`,
+    doc: `Run the rules on the transcript and add what they find as suggested items, in one save. rules: any of ${SUGGEST_RULES.join(", ")} (default all). \`retired\` names the suggested items the dictionary or the slang rule settles now (rejected in the same save). A word check that cannot run is a warning.`,
 });
 export const decide = {
     result: z.unknown(),
@@ -132,11 +132,16 @@ export const reject = defineMethod({
 });
 export const reopen = defineMethod({
     name: "items.reopen",
-    params: z.object({ ids: ids.min(1), token: z.string().min(1).optional() }).strict(),
+    params: z
+        .object({ ids: ids.optional(), token: z.string().min(1).optional() })
+        .strict()
+        .refine((params) => (params.ids?.length ?? 0) > 0 || params.token !== undefined, {
+            message: "items.reopen needs ids, or the token of the decision to undo",
+        }),
     result: z.unknown(),
     resultName: "{ reopened: string[], skipped: { id, reason }[] }",
     effect: "reversible",
-    doc: "Undo a confirm or a reject: each item gets back what the decision changed. Pass the `token` the decision answered; an item decided again since is refused, and nothing is reopened (NR20).",
+    doc: "Undo a confirm, a reject or a speaker rename: each item gets back what the decision changed. Pass the `token` the decision answered; an item decided again since is refused, and nothing is reopened (NR20). A token with no ids undoes its whole decision, a rename's labels included.",
 });
 export const speakers = defineMethod({
     name: "speakers.stats",
@@ -150,9 +155,9 @@ export const rename = defineMethod({
     params: z.object({ label: z.string().min(1), name: z.string().min(1) }).strict(),
     positional: ["label", "name"],
     result: z.unknown(),
-    resultName: recordDoc,
+    resultName: `${recordDoc} with token`,
     effect: "reversible",
-    doc: 'Name a speaker label ("Speaker 2" → "Alice"): this meeting\'s transcripts use the name from now on. A label the linked transcript does not have is refused, with the labels it has.',
+    doc: 'Name a speaker label ("Speaker 2" → "Alice"): this meeting\'s transcripts use the name from now on. A label the linked transcript does not have is refused, with the labels it has. `token` undoes it with items.reopen({ token }); it is null when the label had that name already.',
 });
 export const set = defineMethod({
     name: "set",

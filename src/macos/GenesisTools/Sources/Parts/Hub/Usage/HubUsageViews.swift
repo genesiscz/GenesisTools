@@ -46,6 +46,7 @@ struct UsageListView: View {
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 8)
+            .genScrollBars()
         }
     }
 }
@@ -146,14 +147,17 @@ struct UsageMain: View {
                     if let error = usage.sectionAckError {
                         NoticePill(text: "The alert was not acknowledged.", more: error, tone: .error)
                     }
-                    if !usage.warnings.isEmpty {
-                        InfoStrip(usage.warnings.map(\.message).joined(separator: "\n"))
-                    }
                     content
+                    // How the numbers were counted is a footnote under the section, not a banner above it: the banner
+                    // pushed the table and the lanes down on every visit (UX pass 2026-11-09, C47).
+                    if !usage.warnings.isEmpty {
+                        UsageFootnote(lines: usage.warnings.map(\.message))
+                    }
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .genScrollBars()
             }
         }
         .hubSurface(.content)
@@ -221,6 +225,28 @@ struct UsageMain: View {
             return accounts == 0 ? "" : Plural.count(accounts, "account")
         default: return usage.section.detail
         }
+    }
+}
+
+/// Notes on how a section's numbers were counted, small and quiet under the section.
+struct UsageFootnote: View {
+    let lines: [String]
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10))
+                .foregroundColor(ReviewPalette.dim)
+            Text(verbatim: lines.joined(separator: " "))
+                .font(.system(size: 11))
+                .foregroundColor(ReviewPalette.dim)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .padding(.top, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: "Note: " + lines.joined(separator: " ")))
     }
 }
 

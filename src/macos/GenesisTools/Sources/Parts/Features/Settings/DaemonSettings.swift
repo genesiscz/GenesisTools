@@ -153,6 +153,32 @@ enum DaemonFormat {
         default: return ("no exit yet", .blue)
         }
     }
+
+    /// Idle, running now, or the worst recent state: when a run of the window failed or timed out, that leads and the
+    /// last result follows ("1 of 2 runs timed out · last run ok"), so the title never says ok above a red Fail %
+    /// (hub UX pass C56a, 2026-11-10).
+    static func stateTitle(enabled: Bool, stats: DaemonTaskStats?, running: Bool, lastRunInFlight: Bool) -> String {
+        if running { return "Running now" }
+        guard let stats, let last = stats.lastRun else { return enabled ? "No run in the last 24 hours" : "Off" }
+        if lastRunInFlight { return "Running now" }
+        let state = DaemonFormat.status(last.status).label
+        var parts = enabled ? [] : ["Off"]
+        if let trouble = troubleSummary(stats) {
+            parts += [trouble, "last run \(state)"]
+        } else {
+            parts.append(enabled ? "Last run \(state)" : "last run \(state)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "1 of 2 runs failed", "1 of 2 runs timed out", or "3 of 9 runs failed or timed out"; nil when every run ended ok.
+    private static func troubleSummary(_ stats: DaemonTaskStats) -> String? {
+        let failed = stats.failed + stats.killed
+        let bad = failed + stats.timedOut
+        guard bad > 0 else { return nil }
+        let what = stats.timedOut == 0 ? "failed" : failed == 0 ? "timed out" : "failed or timed out"
+        return "\(bad) of \(Plural.count(stats.runs, "run", "runs")) \(what)"
+    }
 }
 
 @MainActor
@@ -497,13 +523,8 @@ private struct DaemonTaskCard: View, Equatable {
         return Date().timeIntervalSince(started) * 1000 < Double(task.timeoutMs)
     }
 
-    /// Idle, running now, or the last result.
     private var stateTitle: String {
-        if running { return "Running now" }
-        guard let last = stats?.lastRun else { return task.enabled ? "No run in the last 24 hours" : "Off" }
-        if lastRunInFlight { return "Running now" }
-        let state = DaemonFormat.status(last.status).label
-        return task.enabled ? "Last run \(state)" : "Off · last run \(state)"
+        DaemonFormat.stateTitle(enabled: task.enabled, stats: stats, running: running, lastRunInFlight: lastRunInFlight)
     }
 
     private var scheduleLine: String {

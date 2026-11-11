@@ -212,12 +212,25 @@ export interface ApprovalRows {
     done: Promise<void>;
 }
 
-function sizeUpdate(path: string, item: RmMeasuredItem | null): ApprovalItemUpdate {
+/** An update for one row: an aside copy's update names the copy, so another row of its path keeps its own facts. */
+function rowUpdate(
+    wanted: Pick<RmRequestTarget, "path" | "stored">,
+    fields: Omit<ApprovalItemUpdate, "path" | "storedAt">
+): ApprovalItemUpdate {
+    return { path: wanted.path, ...(wanted.stored ? { storedAt: wanted.stored } : {}), ...fields };
+}
+
+function sizeUpdate(wanted: MeasuredPath, item: RmMeasuredItem | null): ApprovalItemUpdate {
     if (!item) {
-        return { path, measuring: false };
+        return rowUpdate(wanted, { measuring: false });
     }
 
-    return { path, bytes: item.bytes, empty: item.empty, folderStats: item.folderStats, measuring: false };
+    return rowUpdate(wanted, {
+        bytes: item.bytes,
+        empty: item.empty,
+        folderStats: item.folderStats,
+        measuring: false,
+    });
 }
 
 function nextTurn(): Promise<void> {
@@ -235,7 +248,7 @@ function takeSaved<T extends { wanted: MeasuredPath }>(
         const fresh = freshMeasurement(saved, wanted, deps.mtimeOf);
 
         if (fresh) {
-            updates.push(sizeUpdate(wanted.path, fresh));
+            updates.push(sizeUpdate(wanted, fresh));
         }
 
         return fresh === null;
@@ -296,7 +309,7 @@ async function measureRows(input: {
             }
         }
 
-        updates.push(sizeUpdate(wanted.path, item));
+        updates.push(sizeUpdate(wanted, item));
     }
 }
 
@@ -311,7 +324,7 @@ async function folderFacts(
             return;
         }
 
-        updates.push({ path: wanted.path, empty: isEmptyDir(target.path), folderStats: folderStats(target.path) });
+        updates.push(rowUpdate(wanted, { empty: isEmptyDir(target.path), folderStats: folderStats(target.path) }));
         await nextTurn();
     }
 }
@@ -331,8 +344,11 @@ async function fillRows(input: {
     const git = deps
         .probeGit(entries.map(({ wanted }) => ({ path: wanted.path, aside: wanted.stored !== undefined })))
         .then((found) => {
+            // Git knows the path, not the copy: every row of the path gets the same facts.
             for (const [path, facts] of found) {
-                updates.push({ path, git: facts });
+                for (const { wanted } of entries.filter((entry) => entry.wanted.path === path)) {
+                    updates.push(rowUpdate(wanted, { git: facts }));
+                }
             }
         })
         .catch((error: unknown) => logger.debug({ error }, "rm: git facts for the approval window failed"));
@@ -373,8 +389,9 @@ export function approvalRows(
     options: { signal: AbortSignal; deps?: Partial<ApprovalRowDeps> }
 ): ApprovalRows {
     const deps = { ...DEFAULT_ROW_DEPS, ...options.deps };
+    // Only an in-place row is decided with the other requests that name its path (`settleShared`).
     const alsoIn = requestsAlsoNaming(
-        entries.map((entry) => entry.wanted.path),
+        entries.filter((entry) => !entry.wanted.stored).map((entry) => entry.wanted.path),
         request.id,
         listRmRequests()
     );
@@ -395,7 +412,7 @@ export function approvalRows(
             storedAt: wanted.stored,
             reason: cameBack(wanted) ? CAME_BACK_REASON : approvalItemReason(wanted.rule, wanted.reason),
             rule: wanted.rule,
-            alsoIn: alsoIn.get(wanted.path),
+            alsoIn: wanted.stored ? undefined : alsoIn.get(wanted.path),
         };
 
         if (isDelete && !known) {
@@ -460,19 +477,34 @@ export function approvalRequestInfo(request: RmRequest, items: ApprovalItem[]): 
     };
 }
 
-/** The ticked entries and the rest; nothing unticked (`selected` null) approves them all. */
+/** What the window ticked: rows by location when it sends them, else paths; null paths and no locations is all. */
+export type RowSelection = Pick<ApprovalChoices, "selected" | "selectedAt">;
+
+/** Where a row's object is now, the window's name for the row: an aside copy's place, else its path. */
+export function rowLocation(target: Pick<RmRequestTarget, "path" | "stored">): string {
+    return target.stored ?? target.path;
+}
+
+/**
+ * The ticked entries and the rest. The window names its ticked rows by location, so two rows of one path (two
+ * requests' aside copies of it) are decided apart; an app build that sends only paths ticks every row of a path
+ * together, and the answer by path matches what it showed. Nothing unticked approves them all.
+ */
 export function splitBySelection(
     entries: readonly ApproveEntry[],
-    selected: readonly string[] | null
+    selection: RowSelection
 ): { approved: ApproveEntry[]; denied: ApproveEntry[] } {
-    if (!selected) {
+    const { selected, selectedAt } = selection;
+
+    if (!selected && !selectedAt) {
         return { approved: [...entries], denied: [] };
     }
 
-    const picked = new Set(selected);
+    const picked = new Set(selectedAt ?? selected);
+    const key = (entry: ApproveEntry) => (selectedAt ? rowLocation(entry.wanted) : entry.wanted.path);
     return {
-        approved: entries.filter((entry) => picked.has(entry.wanted.path)),
-        denied: entries.filter((entry) => !picked.has(entry.wanted.path)),
+        approved: entries.filter((entry) => picked.has(key(entry))),
+        denied: entries.filter((entry) => !picked.has(key(entry))),
     };
 }
 
@@ -651,8 +683,8 @@ export type ApprovalDenyCheck = (target: RmTarget, rules: RmRuleContext) => stri
 
 /**
  * Does what the person answered for one request: a Deny puts everything back; otherwise the ticked rows of
- * `selected` (null: every row) are checked again (the prompt can wait for minutes) and moved, the unticked ones put
- * back, and `blocked` (refused before the prompt, or not shown in it) keeps the request pending.
+ * `selection` (none named: every row) are checked again (the prompt can wait for minutes) and moved, the unticked
+ * ones put back, and `blocked` (refused before the prompt, or not shown in it) keeps the request pending.
  */
 export function applyApprovalAnswer(input: {
     ctx: RunContext;
@@ -660,12 +692,12 @@ export function applyApprovalAnswer(input: {
     openEntries: readonly ApproveEntry[];
     blocked: readonly ApproveEntry[];
     answer: PersonAnswer;
-    selected: readonly string[] | null;
+    selection: RowSelection;
     denyOf: ApprovalDenyCheck;
     /** Starts the background drain after the move; tests replace it. */
     kickDrainer?: (config: RunContext["config"]) => void;
 }): void {
-    const { ctx, request, openEntries, blocked, answer, selected, denyOf } = input;
+    const { ctx, request, openEntries, blocked, answer, selection, denyOf } = input;
     const id = request.id;
 
     if (!answer.approved) {
@@ -677,7 +709,7 @@ export function applyApprovalAnswer(input: {
         return;
     }
 
-    const { approved, denied } = splitBySelection(openEntries, selected);
+    const { approved, denied } = splitBySelection(openEntries, selection);
 
     if (approved.length === 0) {
         const outcome = denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });

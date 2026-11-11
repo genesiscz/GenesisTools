@@ -43,6 +43,9 @@ private struct RecorderRecordingSettings: View {
         }
     }
 
+    /// While still at Same: one frame rate, so Change needed has nothing to switch.
+    private var stillRateIsSame: Bool { model.capture(\.idleFps).wrappedValue == 0 }
+
     private var recordingCard: some View {
         let countdown = model.capture(\.countdown)
         return NativeSettingsCard("Recording", subtitle: "The capture picker's options. They apply to the next recording, also one started from the menu bar or a shortcut.") {
@@ -55,6 +58,8 @@ private struct RecorderRecordingSettings: View {
                     Text(verbatim: "\(model.capture(\.countdownSeconds).wrappedValue) s")
                         .font(.system(size: 12)).monospacedDigit()
                 }
+                // AppKit's disabled stepper reads as live over the settings backdrop; dim it with the row (C53).
+                .nativeSettingsDisabledLook()
                 .accessibilityIdentifier("recorder.settings.countdownSeconds")
             }
             .disabled(!countdown.wrappedValue)
@@ -70,11 +75,26 @@ private struct RecorderRecordingSettings: View {
                 options: CaptureOptions.idleRates.map { NativeSettingsOption($0, $0 == 0 ? "Same" : "\(Self.number($0)) fps") },
                 selection: model.capture(\.idleFps), minSegmentWidth: 52)
             Divider()
+            // With While still at Same there is no still rate to leave, so the threshold changes nothing (C53).
             NativeSettingsSegmented(
-                "Change needed", detail: "How much of the picture must change to leave the still rate.",
+                "Change needed",
+                detail: stillRateIsSame
+                    ? "While still is Same, so the rate never changes. Pick a still rate to use it."
+                    : "How much of the picture must change to leave the still rate.",
                 identifier: "recorder.settings.threshold",
                 options: CaptureOptions.thresholds.map { NativeSettingsOption($0, "\(Self.number($0)) %") },
                 selection: model.capture(\.threshold), minSegmentWidth: 52)
+                .disabled(stillRateIsSame)
+            Divider()
+            NativeSettingsSegmented(
+                "When another app takes the focus", detail: "What the open capture picker does when you click another app or window.",
+                identifier: "recorder.settings.pickerFocusLoss",
+                options: [
+                    NativeSettingsOption(CapturePickerFocusLoss.stayOpen, "Stay open",
+                                         detail: "It stays until its close button, Escape, a choice or a start from the menu bar."),
+                    NativeSettingsOption(CapturePickerFocusLoss.close, "Close", detail: "It closes as a cancel."),
+                ],
+                selection: model.choice(CapturePickerFocusLoss.key, CapturePickerFocusLoss.stayOpen), minSegmentWidth: 80)
         }
     }
 
@@ -123,10 +143,10 @@ private struct RecorderRecordingSettings: View {
                 identifier: "recorder.settings.cameraPreview",
                 options: [
                     NativeSettingsOption(CameraPreviewPolicy.everyCameraRecording, "Every recording with the camera",
-                                         detail: "Also a recording the CLI or an agent started. Such a recording did not leave the preview out, so its screen movie shows the preview too, under the bubble the editor draws.",
+                                         detail: "Also a recording the CLI or an agent started. Every such recording leaves the preview out of its screen movie, so only the bubble the editor draws shows.",
                                          symbol: "video"),
                     NativeSettingsOption(CameraPreviewPolicy.pickerRecordings, "Picker recordings",
-                                         detail: "Only a recording the capture picker started; its movie leaves the preview out. Others record the camera with no preview.",
+                                         detail: "Only a recording the capture picker or the Start shortcut started; its movie leaves the preview out. Others record the camera with no preview.",
                                          symbol: "rectangle.dashed.badge.record"),
                     NativeSettingsOption(CameraPreviewPolicy.never, "Never",
                                          detail: "No preview, not even in the picker. The camera still records, and the editor places the bubble.",
@@ -192,13 +212,57 @@ private struct RecorderRecordingSettings: View {
                 identifier: "recorder.settings.failureStyle",
                 options: [
                     NativeSettingsOption(RecorderFailureStyle.notice, "Notice",
-                                         detail: "A note under the menu bar item that stays until you close it, with the details behind a click. Rename asks in a small panel. Neither brings the recorder's windows to the front."),
+                                         detail: "A small window with the error, its log and buttons to try again or copy the context for an agent. Rename asks in a small panel. Neither brings the recorder's windows to the front."),
                     NativeSettingsOption(RecorderFailureStyle.alert, "Alert",
                                          detail: "A dialog that brings the recorder and its windows to the front and waits for you."),
                 ],
                 selection: model.choice(RecorderFailureStyle.key, RecorderFailureStyle.notice), minSegmentWidth: 72)
+            failureNoticeRows
+                .disabled(model.choice(RecorderFailureStyle.key, RecorderFailureStyle.notice).wrappedValue != .notice)
         }
         .nativeSettingsAnchor("menu-bar")
+    }
+
+    /// The notice's own choices; they do nothing while failures show as an alert, so they grey out then.
+    @ViewBuilder
+    private var failureNoticeRows: some View {
+        Divider()
+        NativeSettingsSegmented(
+            "Notice details", detail: "Whether the notice opens with its log showing: each warning and every step, or the raw output.",
+            identifier: "recorder.settings.failureDetails",
+            options: [
+                NativeSettingsOption(RecorderFailureDetails.open, "Open",
+                                     detail: "The log shows under the error; drag the window's edge to make it larger."),
+                NativeSettingsOption(RecorderFailureDetails.folded, "Folded",
+                                     detail: "Only the error and its buttons; Show details opens the log."),
+            ],
+            selection: model.choice(RecorderFailureDetails.key, RecorderFailureDetails.open), minSegmentWidth: 64)
+        Divider()
+        NativeSettingsSegmented(
+            "Notice place", detail: "Where the failure notice appears.",
+            identifier: "recorder.settings.failurePlacement",
+            options: [
+                NativeSettingsOption(FailureNoticePlacement.belowAnchor, "Menu bar item",
+                                     detail: "Under the recorder's menu bar item, or the top right corner while the item is hidden."),
+                NativeSettingsOption(FailureNoticePlacement.topRight, "Top right",
+                                     detail: "The top right corner, where macOS shows notifications."),
+                NativeSettingsOption(FailureNoticePlacement.center, "Centre",
+                                     detail: "The middle of the screen's upper part, where macOS shows an alert."),
+            ],
+            selection: model.choice(RecorderFailureStyle.placementKey, FailureNoticePlacement.belowAnchor), minSegmentWidth: 72)
+        Divider()
+        NativeSettingsSegmented(
+            "Notice closes", detail: "Whether the notice goes away by itself. The pointer on it holds it open.",
+            identifier: "recorder.settings.failureAutoClose",
+            options: [
+                NativeSettingsOption(RecorderFailureAutoClose.never, "Never",
+                                     detail: "It stays until you close it (Escape, or its close button)."),
+                NativeSettingsOption(RecorderFailureAutoClose.oneMinute, "After 1 min",
+                                     detail: "It closes a minute after it appeared or after the pointer left it."),
+                NativeSettingsOption(RecorderFailureAutoClose.fiveMinutes, "After 5 min",
+                                     detail: "It closes five minutes after it appeared or after the pointer left it."),
+            ],
+            selection: model.choice(RecorderFailureAutoClose.key, RecorderFailureAutoClose.never), minSegmentWidth: 72)
     }
 
     private static func number(_ value: Double) -> String {

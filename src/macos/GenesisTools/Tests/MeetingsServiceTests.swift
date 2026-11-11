@@ -271,9 +271,13 @@ final class MeetingsServiceTests: XCTestCase {
                     XCTAssertFalse(entry.changes.isEmpty, "\(label): the item before and after decode")
                 }
                 if let data = (reply?["error"] as? [String: Any])?["data"] {
-                    let refused = try MeetingsService.decode(AlreadyDecided.self, data)
-                    XCTAssertEqual(refused.code, "already-decided", label)
-                    XCTAssertNotNil(refused.entry, "\(label): the refusal names the entry that decided it")
+                    let code = try MeetingsService.decode(MeetingsAPI.ErrorData.self, data).code
+                    if code == "already-decided" {
+                        let refused = try MeetingsService.decode(AlreadyDecided.self, data)
+                        XCTAssertNotNil(refused.entry, "\(label): the refusal names the entry that decided it")
+                    } else {
+                        XCTAssertEqual(code, "failed", label)
+                    }
                 }
             case MeetingsAPI.DecisionRevert.name:
                 try roundTrip(MeetingsAPI.DecisionRevert.Params.self, params, label)
@@ -487,7 +491,9 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(record.id, Self.design)
         XCTAssertEqual(record.project, "Atlas")
         let revisions = try await MeetingDetailModel.revisionsRead(Self.design).run(service: service, command: command())
-        XCTAssertEqual(revisions.show, "32y96zb50zq92")
+        let fixture = try XCTUnwrap(MeetingsFixture.reply(MeetingsAPI.Revisions.name, params: ["ref": Self.design])?["result"])
+        let expected = try MeetingsService.decode(MeetingsAPI.Revisions.Result.self, fixture)
+        XCTAssertEqual(revisions.show, expected.show)
         let transcript = try await MeetingDetailModel.transcriptRead(Self.design).run(service: service, command: command())
         XCTAssertEqual(transcript.entries.map(\.speaker), ["Dana Example", "Alex Example"])
 
@@ -667,6 +673,36 @@ final class MeetingsServiceTests: XCTestCase {
         service.unsubscribe()
         try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertEqual(fake.count("hello"), 2, "without a subscription nothing connects again")
+    }
+
+    /// A new connection whose subscribe goes unanswered would stay connected and hear nothing (the kept subscription
+    /// also keeps it from closing when idle): the window drops it and connects again until a subscribe is answered.
+    func testASilentSubscribeOnANewConnectionIsTriedAgainOnAnother() async throws {
+        try writeServiceEntry()
+        let log = commands!
+        let service = MeetingsService(folder: folder, timing: .init(helloTimeout: 0.3, startThrottle: 30, refusedBackoff: 60,
+                                                                    idleClose: 60, reconnectDelay: 0.05),
+                                      pid: 4242, startService: { log.starts += 1 })
+        var resumed = 0
+        let listening = service.listen { signal in
+            if signal == .resumed { resumed += 1 }
+        }
+        defer { listening.cancel() }
+        _ = try await service.subscribe(meeting: Self.design, events: ["meeting.changed"])
+
+        fake.silent = ["subscribe"]
+        fake.hangUp()
+        for _ in 0..<200 where fake.count("subscribe") < 3 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertGreaterThanOrEqual(fake.count("hello"), 3, "a silent subscribe dropped its connection and a new one opened")
+        XCTAssertEqual(resumed, 0, "no subscribe was answered yet")
+
+        fake.silent = []
+        for _ in 0..<300 where resumed == 0 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(resumed, 1, "the next connection carried the subscription and told the subscriber")
+        let hellos = fake.count("hello")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fake.count("hello"), hellos, "an answered subscribe keeps its connection")
+        service.unsubscribe()
     }
 
     func testACancelledReadIsCancelledOnTheWireAndRunsNoCommand() async throws {

@@ -70,7 +70,10 @@ interface RenderOptions {
     isCurrentNote?: (target: string) => boolean;
     /** Called with the raw target of `![[x]]`, `[[x]]`, `![](x)` and `[t](x)` (relative and file: hrefs only). */
     resolveAsset?: (target: string) => ResolvedAsset | null;
-    /** Relative and file: links and images render as plain text, so a rendered attachment cannot reach further files. */
+    /**
+     * Relative and file: links and images render as plain text unless `resolveAsset` names them, so a rendered
+     * attachment reaches only what its resolver allows (a linked note's own images on the share page).
+     */
     inertLocalLinks?: boolean;
     idPrefix?: string;
     /** Wrap each top-level block in `data-line-start`/`data-line-end` (1-based source lines, frontmatter counted). */
@@ -746,15 +749,14 @@ interface ImageRequest {
 
 function renderImage(opts: RenderOptions, image: ImageRequest): string {
     const local = isLocalHref(image.href);
-
-    if (local && opts.inertLocalLinks) {
-        return `<span class="dd-md-inert-link">${escapeHtml(image.alt || image.href)}</span>`;
-    }
-
     const asset = local ? (opts.resolveAsset?.(image.href) ?? null) : null;
 
     if (asset) {
         return renderAsset(asset, escapeHtml(image.alt || asset.name), true, image.size);
+    }
+
+    if (local && opts.inertLocalLinks) {
+        return `<span class="dd-md-inert-link">${escapeHtml(image.alt || image.href)}</span>`;
     }
 
     const src = escapeHtml(sanitizeUrl(image.href, SAFE_IMG_SRC_RE));
@@ -851,15 +853,14 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook, openHtml: string[]
                 },
                 link(token: Tokens.Link): string {
                     const local = isLocalHref(token.href);
-
-                    if (local && opts.inertLocalLinks) {
-                        return `<span class="dd-md-inert-link">${this.parser.parseInline(token.tokens)}</span>`;
-                    }
-
                     const asset = local ? (opts.resolveAsset?.(token.href) ?? null) : null;
 
                     if (asset) {
                         return renderAsset(asset, this.parser.parseInline(token.tokens), false);
+                    }
+
+                    if (local && opts.inertLocalLinks) {
+                        return `<span class="dd-md-inert-link">${this.parser.parseInline(token.tokens)}</span>`;
                     }
 
                     // On a shared page a local file the page does not serve (a code file outside the vault)

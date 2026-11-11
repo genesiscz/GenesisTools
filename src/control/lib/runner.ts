@@ -284,7 +284,7 @@ export async function runAxAsyncWithRecovery(options: {
  */
 let verifiedBinary: string | null = null;
 
-export function ensureBinary(): string {
+export function ensureBinary(trigger = "first-use"): string {
     refuseRealMachineInTest("ax-tool (ensureBinary hands out, and may build, the real binary)");
     if (verifiedBinary !== null) {
         return verifiedBinary;
@@ -299,7 +299,7 @@ export function ensureBinary(): string {
         logger.info({ source: SWIFT_SOURCE }, "ax-tool binary missing or stale; compiling native CLI");
         // The worker holds a cross-process lock around check-and-build, so concurrent first runs
         // compile once; ensureBinary stays synchronous because every runAx caller is.
-        const r = spawnSync(process.execPath, [BUILD_WORKER, BINARY_PATH, SWIFT_SOURCE, BUILD_LOCK], {
+        const r = spawnSync(process.execPath, [BUILD_WORKER, BINARY_PATH, SWIFT_SOURCE, BUILD_LOCK, trigger], {
             timeout: NATIVE_BUILD_WORKER_TIMEOUT_MS,
             encoding: "utf-8",
             stdio: ["ignore", "pipe", "inherit"],
@@ -342,9 +342,12 @@ let pendingBuild: PendingBuild | null = null;
 export async function ensureBinaryAsync({
     signal,
     onBuild,
+    trigger = "first-use",
 }: {
     signal?: AbortSignal;
     onBuild?: () => void;
+    /** Who needs the binary; a rebuild's log line names it. */
+    trigger?: string;
 } = {}): Promise<string> {
     refuseRealMachineInTest("ax-tool (ensureBinaryAsync hands out, and may build, the real binary)");
     if (verifiedBinary !== null) {
@@ -361,29 +364,72 @@ export async function ensureBinaryAsync({
     }
 
     onBuild?.();
-    if (!pendingBuild) {
-        const build = buildInOwnGroup();
-        pendingBuild = build;
-        void build.binary.then(
-            () => {
-                pendingBuild = null;
-            },
-            () => {
-                pendingBuild = null;
-            }
-        );
-    }
-
-    const build = pendingBuild;
+    const build = pendingBuild ?? trackBuild(buildInOwnGroup(trigger));
     signal?.addEventListener("abort", () => build.release(), { once: true });
     return untilAborted(build.binary, signal);
 }
 
-function buildInOwnGroup(): PendingBuild {
-    logger.info({ source: SWIFT_SOURCE }, "ax-tool binary missing or stale; compiling native CLI in its own group");
+/** Keeps `build` as this process's one pending build until it settles. */
+function trackBuild(build: PendingBuild): PendingBuild {
+    pendingBuild = build;
+    void build.binary.then(
+        () => {
+            pendingBuild = null;
+        },
+        (error) => {
+            logger.debug({ error }, "the pending ax-tool build failed");
+            pendingBuild = null;
+        }
+    );
+    return build;
+}
+
+export type PrewarmOutcome = "fresh" | "started" | "building";
+
+/**
+ * Builds a stale ax-tool in the background, so the next recording start finds a fresh binary instead of waiting
+ * 20 to 60 s on "preparing". The recorder service calls it when it starts and at each check (a native source change).
+ * It never waits: the compile leads its own process group and outlives this process. `needsBuild` and `start` are
+ * the freshness check and the compile, which a test replaces.
+ */
+export function prewarmAxTool({
+    trigger,
+    needsBuild = () => nativeNeedsBuild({ binary: BINARY_PATH, sourceDir: SWIFT_SOURCE }),
+    start,
+}: {
+    trigger: string;
+    needsBuild?: () => boolean;
+    start?: (trigger: string) => PendingBuild;
+}): PrewarmOutcome {
+    if (pendingBuild) {
+        return "building";
+    }
+
+    if (!needsBuild()) {
+        return "fresh";
+    }
+
+    const begin =
+        start ??
+        ((reason: string) => {
+            refuseRealMachineInTest("ax-tool (a prewarm builds the real binary)");
+            return buildInOwnGroup(reason);
+        });
+    logger.info({ trigger }, "ax-tool is stale; building it ahead of the next recording");
+    const build = trackBuild(begin(trigger));
+    void build.binary.catch((error) => logger.warn({ error, trigger }, "the ax-tool prewarm build failed"));
+    build.release();
+    return "started";
+}
+
+function buildInOwnGroup(trigger: string): PendingBuild {
+    logger.info(
+        { source: SWIFT_SOURCE, trigger },
+        "ax-tool binary missing or stale; compiling native CLI in its own group"
+    );
     // stderr is ignored: once a cancelled caller is gone, a write to its pipe would end the compile
     // with SIGPIPE. The worker's stdout result carries a failure's compiler output.
-    const child = spawn(process.execPath, [BUILD_WORKER, BINARY_PATH, SWIFT_SOURCE, BUILD_LOCK], {
+    const child = spawn(process.execPath, [BUILD_WORKER, BINARY_PATH, SWIFT_SOURCE, BUILD_LOCK, trigger], {
         detached: true,
         stdio: ["ignore", "pipe", "ignore"],
     });

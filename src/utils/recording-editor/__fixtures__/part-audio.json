@@ -1,0 +1,125 @@
+{
+    "about": "A part export (partOf in project.ts, TimelineMap.part in Swift) keeps the audio that plays across its start, so the part sounds like the same stretch of the whole export. part is in OUTPUT microseconds. A movie voiceover that starts before the part and plays into it starts at the part's first frame with skipUs (how far into its file) and a shorter durationUs; one that ends before the part is dropped; card voiceovers stay with the cards, which the export of a part leaves out. music.inWhole names where the part's first frame plays in the whole export (after the intro card) and the whole export's length, so the music goes on from that place in its file and fades only at the whole's ends. spans are voiceoverExportSpans of the part without its cards (the export's), the places VoiceoverMix.exportPlacements lays the clips. recording-editor.test.ts and Tests/RecorderHuntR2PartExportAudioTests.swift run this case.",
+    "edit": {
+        "version": 1,
+        "source": {
+            "video": "/rec/screen.mp4",
+            "durationUs": 20000000,
+            "width": 1920,
+            "height": 1080
+        },
+        "clips": [
+            {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 20000000,
+                "speed": 1
+            }
+        ],
+        "zooms": [],
+        "audio": {
+            "include": true,
+            "volume": 1,
+            "mutedTracks": [],
+            "music": {
+                "file": "/music/bed.mp3",
+                "volume": 0.5,
+                "duck": 0.6,
+                "fadeMs": 1500
+            },
+            "voiceovers": [
+                {
+                    "id": "v1",
+                    "atUs": 4000000,
+                    "file": "/voice/one.mp3",
+                    "durationUs": 6000000,
+                    "volume": 1
+                },
+                {
+                    "id": "v2",
+                    "atUs": 8000000,
+                    "file": "/voice/two.mp3",
+                    "durationUs": 2000000,
+                    "volume": 1
+                },
+                {
+                    "id": "v3",
+                    "atUs": 1000000,
+                    "file": "/voice/three.mp3",
+                    "durationUs": 2000000,
+                    "volume": 1
+                },
+                {
+                    "id": "vintro",
+                    "atUs": 0,
+                    "file": "/voice/intro.mp3",
+                    "durationUs": 1000000,
+                    "volume": 1,
+                    "card": "intro"
+                }
+            ]
+        },
+        "export": {
+            "codec": "h264",
+            "maxHeight": 0,
+            "output": ""
+        },
+        "revision": 1,
+        "cards": {
+            "intro": {
+                "title": "Demo",
+                "seconds": 2
+            },
+            "end": {
+                "text": "Thanks",
+                "qr": false,
+                "seconds": 1
+            }
+        }
+    },
+    "part": {
+        "fromUs": 6000000,
+        "toUs": 12000000
+    },
+    "voiceovers": [
+        {
+            "id": "v1",
+            "atUs": 6000000,
+            "skipUs": 2000000,
+            "file": "/voice/one.mp3",
+            "durationUs": 4000000,
+            "volume": 1
+        },
+        {
+            "id": "v2",
+            "atUs": 8000000,
+            "file": "/voice/two.mp3",
+            "durationUs": 2000000,
+            "volume": 1
+        },
+        {
+            "id": "vintro",
+            "atUs": 0,
+            "file": "/voice/intro.mp3",
+            "durationUs": 1000000,
+            "volume": 1,
+            "card": "intro"
+        }
+    ],
+    "inWhole": {
+        "atUs": 8000000,
+        "lengthUs": 23000000
+    },
+    "spans": [
+        {
+            "id": "v1",
+            "startUs": 0,
+            "playUs": 4000000
+        },
+        {
+            "id": "v2",
+            "startUs": 2000000,
+            "playUs": 2000000
+        }
+    ]
+}

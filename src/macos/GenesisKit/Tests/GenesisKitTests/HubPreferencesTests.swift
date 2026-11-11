@@ -154,4 +154,15 @@ final class HubPreferencesTests: XCTestCase {
         let order = store.sections.map(\.id)
         XCTAssertEqual(order.firstIndex(of: "hub"), order.firstIndex(of: "widgets").map { $0 + 1 })
     }
+
+    /// `--sketch <area>=<option>` picks one redesign option per area for one run: a later pair for an area wins, a
+    /// malformed pair is skipped, and a run without the flag draws every current view.
+    func testDesignSketchReadsOnePickPerAreaFromTheArguments() {
+        XCTAssertEqual(DesignSketch.parse(["GenesisTools", "--hub", "--sketch", "prDetail=a", "--sketch", "lists=b"]),
+                       ["prDetail": "a", "lists": "b"])
+        XCTAssertEqual(DesignSketch.parse(["--sketch", "prDetail=a", "--sketch", "prDetail=b"]), ["prDetail": "b"])
+        XCTAssertEqual(DesignSketch.parse(["--sketch", "prDetail", "--sketch", "=a", "--sketch", "lists=", "--sketch"]), [:])
+        XCTAssertEqual(DesignSketch.parse(["--sketch", "transcript=a=b"]), ["transcript": "a=b"])
+        XCTAssertNil(DesignSketch.option("prDetail"), "the test run has no --sketch")
+    }
 }

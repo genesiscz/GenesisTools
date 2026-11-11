@@ -67,7 +67,7 @@ function pathCell(entry: RmLedgerEntry, cwd: string): string {
 
     return isInside(entry.path, cwd)
         ? middleCut(relative(cwd, entry.path) || ".", PATH_MAX)
-        : shortRmPath(entry.path, displayContext(entry.caller ?? null), PATH_MAX);
+        : shortRmPath(entry.path, displayContext(entry.caller ?? null), { max: PATH_MAX });
 }
 
 function runRow(run: RmLedgerEntry[], cwd: string): string {

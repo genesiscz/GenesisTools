@@ -89,6 +89,7 @@ export const claudeDriver: MonitorDriver = {
                     cacheCreationTokens: event.cacheCreationTokens,
                     ...(event.cacheCreation1hTokens ? { cacheCreation1hTokens: event.cacheCreation1hTokens } : {}),
                     cacheReadTokens: event.cacheReadTokens,
+                    ...(event.serviceTier ? { serviceTier: event.serviceTier } : {}),
                 });
             },
             snapshot(): unknown {

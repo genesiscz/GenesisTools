@@ -61,8 +61,14 @@ export interface ChatAnswerState {
     setCheckedAt: (session: string, at: number) => void | Promise<void>;
     offset: (session: string, transcript: string) => number | undefined;
     setOffset: (session: string, transcript: string, offset: number) => void | Promise<void>;
+    /** `id`: a decision id, or `excludedSentBackKey(id)` for the send-back of an answer that rules letters out. */
     sentBack: (session: string, id: string) => boolean;
     markSentBack: (session: string, ids: string[]) => void | Promise<void>;
+}
+
+/** The send-back mark of a decision's answer that rules letters out, apart from its unclear or remind mark. */
+function excludedSentBackKey(id: string): string {
+    return `${id}:excluded`;
 }
 
 export type { ReadSession } from "./chat-reading";
@@ -278,9 +284,15 @@ async function runChatAnswers(
     const toRecord =
         config.chatAnswers === "remind" ? answers.filter(({ row }) => !state.sentBack(session, row.id)) : [];
     // An answer that rules a letter out is never stored by the hook, in either mode: the agent records its reading.
-    const toRead = forAgent.filter(({ row }) => !state.sentBack(session, row.id));
+    // Its send-back has its own mark: an earlier "unclear" or "remind" send-back about the same decision must not
+    // swallow the clear answer that follows it.
+    const toRead = forAgent.filter(({ row }) => !state.sentBack(session, excludedSentBackKey(row.id)));
     const toCheck = unclear.filter(({ row }) => !state.sentBack(session, row.id));
     const sentBack = [...toRecord, ...toRead, ...toCheck].map(({ row }) => row.id);
+    const marks = [
+        ...[...toRecord, ...toCheck].map(({ row }) => row.id),
+        ...toRead.map(({ row }) => excludedSentBackKey(row.id)),
+    ];
     const users = read.entries.filter((entry) => entry.role === "user" && userText(entry) !== undefined);
 
     // Empty reads are runs too: their boundary and issues explain why no answer was recorded.
@@ -307,8 +319,8 @@ async function runChatAnswers(
         sentBack,
     });
 
-    if (sentBack.length > 0) {
-        await state.markSentBack(session, sentBack);
+    if (marks.length > 0) {
+        await state.markSentBack(session, marks);
     }
 
     // A failed write returns no row. Keep its evidence in the next read rather than passing it permanently.

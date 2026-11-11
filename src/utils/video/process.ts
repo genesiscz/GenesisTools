@@ -28,21 +28,31 @@ function watchdogReason({ program, status }: { program: string; status: number |
     return cutShort ? `${program} stopped: ${cutShort}` : null;
 }
 
+/**
+ * Runs ffmpeg or ffprobe and returns its stdout. With `onStdout`, each stdout chunk goes to it as it comes, nothing is
+ * buffered, and the returned text is only the last 16 KB.
+ */
 export async function runVideoCommand({
     command,
     signal,
     timeoutMs = 120_000,
+    onStdout,
 }: {
     command: string[];
     signal?: AbortSignal;
     timeoutMs?: number;
+    onStdout?: (chunk: Uint8Array) => void;
 }): Promise<string> {
-    logger.debug({ command, timeoutMs }, "Video process started");
-    const result = await profiler
-        .scope("video")
-        .measureAsync(command[0], () =>
-            boundedCommand({ command, signal, timeoutMs, maxBufferBytes: 32 * 1024 * 1024 })
-        );
+    logger.debug({ command, timeoutMs, streamed: Boolean(onStdout) }, "Video process started");
+    const result = await profiler.scope("video").measureAsync(command[0], () =>
+        boundedCommand({
+            command,
+            signal,
+            timeoutMs,
+            maxBufferBytes: 32 * 1024 * 1024,
+            ...(onStdout ? { streamOnly: true, onStdout } : {}),
+        })
+    );
     signal?.throwIfAborted();
     if (result.error || result.status !== 0) {
         logger.warn(

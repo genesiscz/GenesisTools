@@ -16,9 +16,12 @@ export function registerDrawCommand(program: Command): void {
     program
         .command("draw <image>")
         .description(
-            'Draw annotations onto an existing image from a JSON plan — highlight (rounded-rect outline), box, ellipse, arrow, label, blur (redact), crop (applied last), grid (coordinate finder).\nCoordinates are NATURAL IMAGE PIXELS. Works on any capture source (playwright, peekaboo, screencapture) — annotation is post-processing.\nPlan: {annotations: [{kind: "highlight", rect: {x,y,w,h}, label: {text: "…"}}], preset?} or a bare annotations array.'
+            'Draw annotations onto an existing image from a plan — highlight (rounded-rect outline), box, ellipse, arrow, label, blur (redact), crop (applied last), grid (coordinate finder).\nCoordinates are NATURAL IMAGE PIXELS. Works on any capture source (playwright, peekaboo, screencapture) — annotation is post-processing.\nPlan: {annotations: [{kind: "highlight", rect: {x,y,w,h}, preset?, label: {text: "…", position?, offset?, leader?}}], preset?} or a bare annotations array.\nLabel positions: top-left (default), top-right, top, bottom-left, bottom-right, bottom, left, right, inside; a label that would leave the image or cover an earlier label moves to the next free position.'
         )
-        .requiredOption("--annotate <json-or-path>", "inline JSON (starts with { or [) or a path to plan.json")
+        .requiredOption(
+            "--annotate <json-or-path>",
+            "inline JSON (starts with { or [) or a plan file: .json, .jsonc (comments allowed) or .ts (export default defineAnnotations({...}) from @genesis-tools/annotate)"
+        )
         .option("--out <path>", "output path (default <input>-annotated.png, or the plan's output field)")
         .option("--in-place", "overwrite the input image (the original is NEVER mutated without this)")
         .option(

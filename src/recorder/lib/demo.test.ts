@@ -5,13 +5,15 @@ import { join } from "node:path";
 import * as captureRunner from "@app/control/lib/capture-runner";
 import * as runner from "@app/control/lib/runner";
 import * as cli from "@genesiscz/utils/cli";
+import { cutIssues } from "@genesiscz/utils/recording-editor/check";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
 import * as projectOps from "@genesiscz/utils/recording-editor/project";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import * as probe from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
-import { type DemoDriver, demoEditOps, demoScriptSchema, runDemo, subtractRanges } from "./demo";
+import { type DemoDriver, type DemoStepTiming, demoEditOps, demoScriptSchema, runDemo, subtractRanges } from "./demo";
 import * as edit from "./edit";
 import * as library from "./library";
 import * as serviceClient from "./service-client";
@@ -80,6 +82,70 @@ describe("demoEditOps", () => {
     });
 });
 
+describe("demoEditOps keeps a caption's minimum on screen", () => {
+    /** The demo's ops applied to a whole movie of `durationMs`, as runDemo's driver.edit does. */
+    function applied(ops: EditOp[], durationMs: number) {
+        return ops.reduce(
+            (project, op) => projectOps.applyOp(project, op),
+            projectOps.wholeProject({
+                video: "/tmp/screen.mp4",
+                durationUs: durationMs * 1000,
+                width: 1920,
+                height: 1080,
+            })
+        );
+    }
+
+    const shortened = (ops: EditOp[], durationMs: number) =>
+        cutIssues(applied(ops, durationMs)).filter((issue) => issue.kind === "cut-shortens-text");
+
+    test("a quick step's caption plays its captionMinSeconds: the wait cut after it starts at the caption's end", () => {
+        const quick: DemoStepTiming[] = [
+            { caption: "Open the settings", startMs: 1000, runEndMs: 1200, endMs: 2200 },
+            { caption: "Pick Dark", startMs: 6000, runEndMs: 6200, endMs: 7200 },
+        ];
+        const ops = demoEditOps({ steps: quick, durationMs: 10_000 });
+
+        expect(ops.filter((op) => op.op === "cut")).toEqual([
+            { op: "cut", from: 2.8, to: 5.7 },
+            { op: "cut", from: 8.2, to: 10 },
+        ]);
+        expect(ops.filter((op) => op.op === "text").map((op) => [op.from, op.to])).toEqual([
+            [1, 2.8],
+            [6, 7.8],
+        ]);
+        expect(shortened(ops, 10_000)).toEqual([]);
+    });
+
+    test("a quick last step keeps its caption's minimum: the tail cut starts after the caption", () => {
+        const quickLast: DemoStepTiming[] = [
+            { caption: "Open the settings", startMs: 1000, runEndMs: 2500, endMs: 3500 },
+            { caption: "Pick Settings", startMs: 3500, runEndMs: 3700, endMs: 3700 },
+        ];
+        const ops = demoEditOps({ steps: quickLast, durationMs: 8000 });
+
+        expect(ops.filter((op) => op.op === "cut")).toEqual([{ op: "cut", from: 5.3, to: 8 }]);
+        expect(shortened(ops, 8000)).toEqual([]);
+    });
+
+    test("without a caption the wait and tail cuts still start keepSeconds and tailSeconds after the step", () => {
+        const quick: DemoStepTiming[] = [
+            { caption: "Open the settings", startMs: 1000, runEndMs: 1200, endMs: 2200 },
+            { caption: " ", startMs: 6000, runEndMs: 6200, endMs: 6300 },
+        ];
+
+        expect(demoEditOps({ steps: quick, durationMs: 10_000, edit: { captions: false } })).toEqual([
+            { op: "cut", from: 2.5, to: 5.7 },
+            { op: "cut", from: 7.3, to: 10 },
+        ]);
+        // The blank caption of the last step draws nothing, so its minimum keeps nothing either.
+        expect(demoEditOps({ steps: quick, durationMs: 10_000 }).filter((op) => op.op === "cut")).toEqual([
+            { op: "cut", from: 2.8, to: 5.7 },
+            { op: "cut", from: 7.3, to: 10 },
+        ]);
+    });
+});
+
 function fakeDriver() {
     let clock = 0;
     const marks: string[] = [];
@@ -90,6 +156,9 @@ function fakeDriver() {
             return {
                 async mark(label: string) {
                     marks.push(label);
+                    return { atMs: clock };
+                },
+                async time() {
                     return { atMs: clock };
                 },
                 async stop() {
@@ -182,6 +251,63 @@ describe("runDemo", () => {
     });
 });
 
+describe("runDemo on the movie clock", () => {
+    /** A recording whose first frame comes `firstFrameMs` after start() resolved; marks wait for it, as movieTimeOfMark does. */
+    function slowFirstFrame(firstFrameMs: number) {
+        let clock = 0;
+        let frameAt = 0;
+        const movieTime = () => Math.max(0, clock - frameAt);
+        const driver: DemoDriver = {
+            async start() {
+                frameAt = clock + firstFrameMs;
+                return {
+                    async mark() {
+                        clock = Math.max(clock, frameAt);
+                        return { atMs: movieTime() };
+                    },
+                    async time() {
+                        return { atMs: movieTime() };
+                    },
+                    async stop() {
+                        return "/library/video-demo";
+                    },
+                };
+            },
+            durationMs: async () => clock,
+            idleMs: async () => [],
+            edit: async () => undefined,
+            sleep: async (ms) => {
+                clock += ms;
+            },
+            now: () => clock,
+        };
+        return { driver, advance: (ms: number) => (clock += ms) };
+    }
+
+    test("a mark that waits for the first frame does not count that wait into the step", async () => {
+        const fake = slowFirstFrame(800);
+        const result = await runDemo({
+            driver: fake.driver,
+            settleSeconds: 0,
+            export: false,
+            steps: [{ caption: "Open", run: () => fake.advance(2000), holdSeconds: 0.5 }],
+        });
+        expect(result.steps[0]).toEqual({ caption: "Open", startMs: 0, runEndMs: 2000, endMs: 2500 });
+    });
+
+    test("without markers a step starts at the movie time the recording answers, not the wall time since start()", async () => {
+        const fake = slowFirstFrame(300);
+        const result = await runDemo({
+            driver: fake.driver,
+            settleSeconds: 1,
+            export: false,
+            edit: { markers: false },
+            steps: [{ caption: "Open", run: () => fake.advance(2000), holdSeconds: 0.5 }],
+        });
+        expect(result.steps[0]).toEqual({ caption: "Open", startMs: 700, runEndMs: 2700, endMs: 3200 });
+    });
+});
+
 describe("demo script (the JSON door)", () => {
     test("takes tools, shell and wait steps with defaults, and names a step without a caption", () => {
         const script = demoScriptSchema.parse({
@@ -254,7 +380,7 @@ describe.skipIf(!hasFfmpeg)("movieDemoDriver on a recording session", () => {
                     }
 
                     copyFileSync(clip, output);
-                    onRecording?.();
+                    onRecording?.({ sessionDir: join(scratch, "no-session") });
 
                     if (!signal.aborted) {
                         await new Promise<void>((resolve) =>
@@ -324,6 +450,8 @@ describe.skipIf(!hasFfmpeg)("movieDemoDriver on a recording session", () => {
             expect(manifest?.title).toBe("Northwind checkout");
             const markers = markerList.parse(manifest?.settings.markers);
             expect(markers.map((marker) => marker.label)).toEqual(["Open the cart", "Break", "Pay"]);
+            // The marks count from the movie's first frame, and the manifest says so (older recordings lack the key).
+            expect(manifest?.settings.markerClock).toBe("movie");
             expect(result.steps.map((step) => step.startMs)).toEqual(markers.map((marker) => marker.atMs));
             expect(result.failed).toEqual([{ caption: "Break", error: "no such button" }]);
 
@@ -540,5 +668,74 @@ describe("movie survey on one time base", () => {
             part.mockRestore();
             still.mockRestore();
         }
+    });
+});
+
+describe("movie.export() lengths", () => {
+    /** An edit of 8 s that plays (0-2 s and 4-10 s of a 10 s source). */
+    function cutEdit(): string {
+        const folder = mkdtempSync(join(tmpdir(), "export-length-"));
+        const path = join(folder, "screen.edit.json");
+        const project = projectOps.wholeProject({
+            video: join(folder, "screen.mp4"),
+            durationUs: 10_000_000,
+            width: 496,
+            height: 1080,
+        });
+        projectOps.writeProject(path, {
+            ...project,
+            clips: [
+                { id: "c1", fromUs: 0, toUs: 2_000_000, speed: 1 },
+                { id: "c2", fromUs: 4_000_000, toUs: 10_000_000, speed: 1 },
+            ],
+        });
+        return path;
+    }
+
+    async function exported(path: string, fileSeconds: number, options: { from?: number; to?: number } = {}) {
+        const spies = [
+            spyOn(library, "requireRecorderPart").mockReturnValue(undefined),
+            spyOn(edit, "exportAs").mockImplementation(async () => ({
+                ok: true,
+                path: "/x/out.mp4",
+                bytes: 1,
+                seconds: 0,
+            })),
+            spyOn(probe, "probeVideo").mockImplementation(
+                async () =>
+                    ({ durationUs: fileSeconds * 1_000_000, width: 496, height: 1080 }) as Awaited<
+                        ReturnType<typeof probe.probeVideo>
+                    >
+            ),
+        ];
+
+        try {
+            return await new Movie(path).export(options);
+        } finally {
+            for (const spy of spies) {
+                spy.mockRestore();
+            }
+        }
+    }
+
+    test("outputSeconds is the movie without its cards as info() says, exportSeconds the file with them", async () => {
+        const path = cutEdit();
+        const movie = new Movie(path);
+        await movie.introCard({ title: "Demo", seconds: 3 });
+        await movie.endCard({ text: "Thanks", seconds: 2 });
+        const info = await movie.info();
+        // The renderer's file: 3 s intro + 8 s movie + 2 s end card.
+        const answer = await exported(path, 13);
+        expect(answer.outputSeconds).toBe(info.outputSeconds);
+        expect(answer.exportSeconds).toBeCloseTo(13, 3);
+    });
+
+    test("a part export has both lengths near the part", async () => {
+        const path = cutEdit();
+        const movie = new Movie(path);
+        await movie.introCard({ title: "Demo", seconds: 3 });
+        const answer = await exported(path, 2.5, { from: 1, to: 3.5 });
+        expect(answer.outputSeconds).toBeCloseTo(2.5, 3);
+        expect(answer.exportSeconds).toBeCloseTo(2.5, 3);
     });
 });

@@ -34,15 +34,22 @@ final class SessionTranscriptScrollTests: XCTestCase {
     /// blocks, which `Rig.codeBlocks` finds), and the user's values come back afterwards.
     private static let wrapKeys = ["sessionTranscript.wrapInputs", "sessionTranscript.wrapOutputs"]
     private var savedWrap: [Any?] = []
+    /// The output fold (`TranscriptOutputFold`) is on by default and folds every output at six lines, Verbose
+    /// included: every test starts with it off, so a level's own limit decides the rows, and the user's value comes
+    /// back afterwards.
+    private var savedFold: Any?
 
     override func setUp() {
         super.setUp()
         savedWrap = Self.wrapKeys.map { UserDefaults.standard.object(forKey: $0) }
         Self.wrapKeys.forEach { UserDefaults.standard.set(false, forKey: $0) }
+        savedFold = UserDefaults.standard.object(forKey: TranscriptOutputFold.key)
+        UserDefaults.standard.set(0, forKey: TranscriptOutputFold.key)
     }
 
     override func tearDown() {
         zip(Self.wrapKeys, savedWrap).forEach { UserDefaults.standard.set($1, forKey: $0) }
+        UserDefaults.standard.set(savedFold, forKey: TranscriptOutputFold.key)
         super.tearDown()
     }
 
@@ -470,6 +477,14 @@ final class SessionTranscriptScrollTests: XCTestCase {
         rig.settle(1.5)
         let whole = table.rect(ofRow: row).height
         XCTAssertGreaterThan(whole, trimmed + 20 * 14, "Verbose must show the whole output")
+
+        // The output fold folds a long output at Verbose too (hub UX C18), and turning it off opens it again.
+        UserDefaults.standard.set(6, forKey: TranscriptOutputFold.key)
+        rig.settle(1.5)
+        XCTAssertLessThan(table.rect(ofRow: row).height, trimmed, "a six-line fold must fold Verbose's output below the ten lines of Inputs + output")
+        UserDefaults.standard.set(0, forKey: TranscriptOutputFold.key)
+        rig.settle(1.5)
+        XCTAssertEqual(table.rect(ofRow: row).height, whole, accuracy: 1, "with the fold off, Verbose must show the whole output again")
 
         UserDefaults.standard.set(TranscriptVerbosity.inputs.rawValue, forKey: key)
         rig.settle(1.5)

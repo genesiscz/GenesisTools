@@ -53,6 +53,39 @@ checklist.md or motion.md as well.
     scored requests, and nobody opened the densest real meeting to look for overlap, truncation and dead text. Rule:
     after "all green", open the densest real data at the smallest and at the default window size, and read every
     string and every mark.
+
+- 2026-11-09 21:12 — **A PR commit link showed an empty hub for 20 s, then the whole PR, then the commit (Martin: "it
+  shouldnt load the entire PR first ... focus on the commits alone THEN in smaller priority the rest").**
+  - *The part a link names waited for the slowest source of the whole.* The pick needed the forge's commit list, which
+    predated the commit, so it waited for `hub pr show` (18.9 s) while the review painted 450 files nobody asked for.
+    Fix: the commit is read from the checkout the review already reads, and opens first; the forge's answer settles
+    it later (unified 333dc73fc2). Rule: a link to a part (a commit, a file, a line) shows that part from the
+    nearest source that has it, and the slow source only confirms or corrects.
+  - *A push threw the reader's page away.* A new head built a new review: the file list went empty and 687 files were
+    parsed again. Now the review follows the head in place and the page re-parses only what changed. Rule: a newer
+    answer to the same question updates what is on screen; it never rebuilds the view. Bench: HubBench `headmove`.
+
+- 2026-11-09 13:13 — **The recorder's failure note: a title cut at "{", and the whole log as a 340 pt column of raw text
+  (Martin: "it should probably somehow nicely show me the error log ... the size should be also whole different").**
+  - *The title was "The recording stopped at once (exit 1): {."* `ToolsRunner.problem` trimmed every line before it
+    looked for `error:`, so the indented field `error: {` (four spaces in) of a WARN entry won over the real
+    `error: …` line below it. Reproduced with the old function on the real start log (it returns `{`). Fix: only
+    lines at column 0 can be
+    the problem line, and the headline is now `FailureLog.headline` (GenesisKit), which reads the log as entries and
+    fields. Rule: a CLI's pretty log nests fields under an entry; never search it line by line after trimming.
+  - *The details were the raw output in a fixed 340 pt column, about 1,400 pt tall, with nothing to act on.* Raw
+    output behind Details is the checklist's minimum, not a design. Fix: GenesisKit `FailureNoticePanel` +
+    `FailureNoticeView` (Controls/FailureNotice/): a resizable window sized to its content up to a cap, the error as
+    the headline, what ran and what to do under it, Try again (the same start), Copy context for agents (a markdown
+    block with the command, exit, folder, build, log paths and the whole output), Copy log, Open log at this run's
+    line, Show folder, and the log rendered with `MarkdownContentView` (warnings with pretty JSON and stacks folded
+    to their first frame, then every step on one line; Raw log as a tab). Rule: a failure that carries a log gets a
+    window an agent can be handed, not a pill.
+  - *First try:* the details repeated the headline as their first section, and the posted row of the draft window
+    gave every child its own identifier, so `tools control press --id issue-draft.done` found nothing. Fix: the
+    details start at the warnings; one identifier per element. Commits **90d29a7267**, **397df157ff**, draft window
+    **a6aec2e5bd**, form-shaped body **e042908699**. Rule: an `.accessibilityIdentifier` on a container names every
+    child that has none; put it on the element a test presses.
 - 2026-11-01 21:52 — **Markdown viewer: task boxes, the reading position after a change on disk, file names as links.**
   - *The first task box drew at the small macOS control size (about 11 pt beside 16 px text).* `width:1em` on an
     `<input>` uses the input's own 13.33 px control font, and WebKit picks the control size from that. Fix:

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { GATE_ONLY_TAG } from "@genesiscz/utils/ai/config/selectors";
 import {
     auditPath,
+    autoAllowCommand,
     GATE_API_KEY_PROVIDERS,
     GATE_PROVIDERS,
     GateDeniedError,
@@ -9,10 +10,14 @@ import {
     isGateProvider,
     listGrants,
     listVaultGrants,
+    loadVaultAutoAllow,
     readAuditTail,
     requestAccountAccess,
     revokeGrants,
     revokeVaultGrants,
+    updateVaultAutoAllow,
+    type VaultAutoAllowSettings,
+    vaultAutoAllowPath,
     vaultGrantsPath,
 } from "@genesiscz/utils/ai/gate";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
@@ -230,6 +235,8 @@ export function registerGateCommands(program: Command): void {
             }
         });
 
+    registerAutoAllowCommands(gate);
+
     gate.command("status")
         .description("Is the approval window reachable? (read-only)")
         .action(() => {
@@ -240,4 +247,177 @@ export function registerGateCommands(program: Command): void {
             out.println(`${pc.dim("grants")} ${grantsPath()}`);
             out.println(`${pc.dim("audit ")} ${auditPath()}`);
         });
+}
+
+/** What the switch means: off stops only this bypass, and a remembered allow still skips the window. */
+const AUTO_ALLOW_OFF = `off: no command skips the window on this list (a remembered allow still does; \`${toolCommand("ai gate revoke")}\` drops it)`;
+
+/** The human view of the settings: the switch, the list, the agent apps, the notification and the file. */
+function printAutoAllow(settings: VaultAutoAllowSettings): void {
+    renderCliHeader("Vault key without a window", settings.enabled ? pc.green("on") : pc.yellow(AUTO_ALLOW_OFF));
+    out.println(
+        "  Commands on this list get the vault key with no window when an agent starts them; each one is logged."
+    );
+    renderCliSection("Commands");
+    for (const command of settings.commands) {
+        out.println(`  tools ${command}`);
+    }
+
+    renderCliSection("Agent apps (besides Claude Code, Codex and Grok CLI processes)");
+    for (const app of settings.agentApps) {
+        out.println(`  ${app}`);
+    }
+
+    renderCliSection("Notification");
+    out.println(`  ${settings.notify ? "on: one per auto-allow" : "off: the audit line only"}`);
+    renderCliSection("File");
+    out.println(`  ${pc.dim(vaultAutoAllowPath())}`);
+}
+
+/** A settings file the app cannot decode (or a lock that stays held) is an error line and exit code 1, not a trace. */
+function reportAutoAllowError(err: unknown): void {
+    out.log.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+}
+
+/** An argument that names nothing is refused before the file is touched. */
+function refuseEmpty(value: string, what: string): boolean {
+    if (value) {
+        return false;
+    }
+
+    out.log.error(`Pass ${what}; an empty one would match nothing.`);
+    process.exitCode = 1;
+    return true;
+}
+
+/** Applies one change under the file's lock and prints the saved settings, or the error. */
+async function changeAutoAllow(change: (settings: VaultAutoAllowSettings) => VaultAutoAllowSettings): Promise<void> {
+    try {
+        printAutoAllow(await updateVaultAutoAllow(change));
+    } catch (err) {
+        reportAutoAllowError(err);
+    }
+}
+
+/** `tools ai gate auto-allow` and its subcommands; GenesisTools.app reads the file they write. */
+function registerAutoAllowCommands(gate: Command): void {
+    const autoAllow = gate
+        .command("auto-allow")
+        .description(
+            "Commands that get the vault key with no window when an agent starts them (default: claude and ai warmup and usage)"
+        )
+        .option("--json", "Machine-readable output")
+        .action((opts: { json?: boolean }) => {
+            let settings: VaultAutoAllowSettings;
+            try {
+                settings = loadVaultAutoAllow();
+            } catch (err) {
+                reportAutoAllowError(err);
+                return;
+            }
+
+            if (opts.json) {
+                out.result({ ...settings, path: vaultAutoAllowPath() });
+                return;
+            }
+
+            printAutoAllow(settings);
+        });
+
+    autoAllow
+        .command("add <command...>")
+        .description(`Put a command on the list: \`add claude warmup\` lets "${toolCommand("claude warmup")}" through`)
+        .action(async (words: string[]) => {
+            const command = autoAllowCommand(words);
+            if (refuseEmpty(command, "a command")) {
+                return;
+            }
+
+            // The app matches `<tool> <subcommand>` exactly, so any other shape would sit on the list and match nothing.
+            if (command.split(" ").length !== 2) {
+                out.log.error(`A command is a tool and its subcommand, like "claude warmup"; got "${command}".`);
+                process.exitCode = 1;
+                return;
+            }
+
+            await changeAutoAllow((settings) => ({
+                ...settings,
+                commands: settings.commands.includes(command) ? settings.commands : [...settings.commands, command],
+            }));
+        });
+
+    autoAllow
+        .command("remove <command...>")
+        .description(
+            `Take a command off the list; it then asks in the window unless an allow is remembered (\`${toolCommand("ai gate revoke")}\`)`
+        )
+        .action(async (words: string[]) => {
+            const command = autoAllowCommand(words);
+            if (refuseEmpty(command, "a command")) {
+                return;
+            }
+
+            await changeAutoAllow((settings) => ({
+                ...settings,
+                commands: settings.commands.filter((known) => known !== command),
+            }));
+        });
+
+    autoAllow
+        .command("add-agent <app>")
+        .description('Count the processes an app starts as an agent\'s (its process name, e.g. "Grok Bot")')
+        .action(async (raw: string) => {
+            const app = raw.trim();
+            if (refuseEmpty(app, "an app name")) {
+                return;
+            }
+
+            await changeAutoAllow((settings) => ({
+                ...settings,
+                agentApps: settings.agentApps.includes(app) ? settings.agentApps : [...settings.agentApps, app],
+            }));
+        });
+
+    autoAllow
+        .command("remove-agent <app>")
+        .description("Stop counting an app's processes as an agent's")
+        .action(async (raw: string) => {
+            const app = raw.trim();
+            if (refuseEmpty(app, "an app name")) {
+                return;
+            }
+
+            await changeAutoAllow((settings) => ({
+                ...settings,
+                agentApps: settings.agentApps.filter((known) => known !== app),
+            }));
+        });
+
+    autoAllow
+        .command("notify <state>")
+        .description(
+            "on or off: a notification for every auto-allow (on by default); the audit line is written either way"
+        )
+        .action(async (value: string) => {
+            if (value !== "on" && value !== "off") {
+                out.log.error(`Expected on or off, got "${value}".`);
+                process.exitCode = 1;
+                return;
+            }
+
+            await changeAutoAllow((settings) => ({ ...settings, notify: value === "on" }));
+        });
+
+    autoAllow
+        .command("enable")
+        .description("Let the listed commands through again")
+        .action(() => changeAutoAllow((settings) => ({ ...settings, enabled: true })));
+
+    autoAllow
+        .command("disable")
+        .description(
+            `Stop this bypass (the list is kept); a remembered allow still skips the window, \`${toolCommand("ai gate revoke")}\` drops it`
+        )
+        .action(() => changeAutoAllow((settings) => ({ ...settings, enabled: false })));
 }

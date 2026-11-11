@@ -101,32 +101,34 @@ struct StoredProposalsList: View {
         if model.proposal == nil, model.pr != nil {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    Text("Agent reviews")
+                    // "Stored", "proposals": the PR's threads below can come from a review bot, so "No agent review"
+                    // above a page of a bot's threads read as false (hub UX pass C49).
+                    Text("Stored agent proposals")
                         .font(.system(size: 11.5, weight: .semibold))
                     Spacer(minLength: 0)
                 }
                 switch model.storedProposals {
                 case .failed(_, let reason):
-                    Text("Could not read the stored reviews: \(reason)")
+                    Text("Could not read the stored proposals: \(reason)")
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.removed)
                         .fixedSize(horizontal: false, vertical: true)
                 case .looking:
-                    Text("Looking for a stored review…")
+                    Text("Looking for a stored proposal…")
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.dim)
                 case .idle:
                     // The lookup needs the PR's identity, which comes with its threads.
-                    Text("Stored reviews show once the PR's threads load.")
+                    Text("Stored proposals show once the PR's threads load.")
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.dim)
                 case .found(let identity, let choices):
                     if choices.isEmpty {
-                        Text("No agent review is stored for \(identity.label) yet.")
+                        Text("None for \(identity.label) yet. A proposal holds a local agent's draft replies before they go to the PR.")
                             .font(.system(size: 11))
                             .foregroundColor(ReviewPalette.dim)
                             .fixedSize(horizontal: false, vertical: true)
-                        GhostButton("Look again", symbol: "arrow.clockwise", tooltip: "Look for a stored review of this PR again") {
+                        GhostButton("Look again", symbol: "arrow.clockwise", tooltip: "Look for a stored proposal for this PR again") {
                             model.lookupStoredProposals()
                         }
                     } else {

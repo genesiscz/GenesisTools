@@ -8,7 +8,7 @@ import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-re
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import { ancestorPids } from "../lib/decision/frontmost";
-import { ffmpegSegmentJoiner, nativeSegmentRecorder } from "../lib/recording-native";
+import { ffmpegSegmentJoiner, movieLengthMs, nativeSegmentRecorder } from "../lib/recording-native";
 import {
     parseRecordingCommand,
     RECORDING_SESSION_MAX_SECONDS,
@@ -170,7 +170,11 @@ export function registerCaptureSessionCommands(capture: Command): void {
 
                 control?.observe(event);
 
-                if (event.event === "state" || event.event === "error") {
+                // Each state event re-anchors the floating controls' clock on the movie time; an error changes only
+                // the entry.
+                if (event.event === "state") {
+                    void control?.status().then((status) => live?.notifyStatus(status));
+                } else if (event.event === "error") {
                     void control
                         ?.status()
                         .then((status) => live?.update({ state: status.state, warning: status.warning }));
@@ -209,6 +213,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
                         indicator: flags.indicator,
                     }),
                     join: ffmpegSegmentJoiner,
+                    measure: movieLengthMs,
                     emit,
                     maxSeconds: boundedNumber(flags.maxSeconds, "--max-seconds", 1, RECORDING_SESSION_MAX_SECONDS),
                 });

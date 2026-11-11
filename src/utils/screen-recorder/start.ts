@@ -31,7 +31,7 @@ import {
     type OcrSinkKind,
     ocrSinkFor,
 } from "./frame-output";
-import { RECORDING_MANIFEST, type RecordingManifest, recordingsLibraryDir } from "./library";
+import { RECORDING_MANIFEST, type RecordingManifest, readRecordingManifestSafe, recordingsLibraryDir } from "./library";
 import { liveRecordingId } from "./live";
 import { emptyPieceVerdict, FRAME_RECORDING_METHODS, FrameRecording } from "./recording";
 import { patchChange, type SessionCapture } from "./session";
@@ -120,6 +120,13 @@ interface PendingFrame {
 export const FRAME_FLUSHES = ["finish", "piece"] as const;
 export type FrameFlush = (typeof FRAME_FLUSHES)[number];
 
+/** The limits of a frames recording (`recorder.start()`, `tools recorder start --frames`); the start help names them. */
+export const FRAMES_START_LIMITS = {
+    fps: { min: 0.5, max: 120 },
+    maxDurationSec: { min: 1, max: 7200 },
+    defaultMaxDurationSec: 600,
+} as const;
+
 const METHODS: readonly RecorderMethod[] = [...FRAME_RECORDING_METHODS, "discard"];
 
 function stamp(date: Date): string {
@@ -183,7 +190,7 @@ export class LibraryRecording extends FrameRecording<number> {
             pieces: {
                 dir: join(folder, ".pieces"),
                 sec: options.pieceSec ?? 60,
-                maxMs: (options.maxDurationSec ?? 600) * 1000,
+                maxMs: (options.maxDurationSec ?? FRAMES_START_LIMITS.defaultMaxDurationSec) * 1000,
                 // Every capture records the sound, without the muted sources.
                 audioOwnership: "every",
                 request: (now) => ({ heartbeatSec: now.heartbeatSec || undefined }),
@@ -416,7 +423,8 @@ export class LibraryRecording extends FrameRecording<number> {
         const manifest: RecordingManifest = {
             version: 1,
             id: this.id,
-            title: this.options.title ?? this.id,
+            // A rename while it records (tools recorder rename, the window) wrote the file: keep that title.
+            title: readRecordingManifestSafe(this.folder)?.manifest?.title ?? this.options.title ?? this.id,
             startedAt: this.startedAt.toISOString(),
             ...(final ? { endedAt: new Date().toISOString() } : {}),
             displays: this.choice.recorded(),

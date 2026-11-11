@@ -17,6 +17,15 @@ struct HubWorktree: Identifiable, Hashable, Codable {
     var isMain: Bool
 
     var name: String { (path as NSString).lastPathComponent }
+
+    /// The folder name without the repository's name in front: in the `web-app` group, `web-app-pr-123-b1` reads
+    /// `pr-123-b1`. The group header already names the repository, and sibling folders differ only after it.
+    var shortName: String {
+        guard !isMain, name.count > repo.count + 1, name.lowercased().hasPrefix(repo.lowercased()) else { return name }
+        let rest = name.dropFirst(repo.count)
+        guard let separator = rest.first, "-_.".contains(separator) else { return name }
+        return String(rest.dropFirst())
+    }
 }
 
 enum WorktreeDiscovery {
@@ -390,6 +399,7 @@ struct WorktreeListView: View {
                     }
                 }
                 .padding(.bottom, 12)
+                .genScrollBars()
             }
             .modifier(SidebarReveal(
                 proxy: proxy,
@@ -430,10 +440,13 @@ struct WorktreeRow: View, Equatable {
                     .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(worktree.name)
-                    .font(.system(size: 10.5))
+                // Siblings share the repository prefix and often a ticket prefix: cut in the middle, so the ending
+                // that tells two checkouts apart stays.
+                Text(worktree.shortName)
+                    .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
                     .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer(minLength: 4)
             if count > 0 {
@@ -465,7 +478,6 @@ struct WorktreeDetailView: View {
     @ObservedObject private var repos = RepoFactsStore.shared
     let worktree: HubWorktree
     @State private var launchingNew = false
-    @State private var resuming: HubSession?
 
     var body: some View {
         let _ = RenderProbe.hit("worktrees.detail.body")
@@ -506,29 +518,16 @@ struct WorktreeDetailView: View {
                 }
                 .buttonStyle(.genHoverPlain())
             } details: {
-                VStack(alignment: .leading, spacing: 8) {
+                // One button for the sessions that worked here, with search inside: a sideways strip of 156 chips
+                // ran off the edge and hid all but a handful (UX pass 2026-11-09, C30).
+                HStack(spacing: 12) {
                     PathLabel(path: worktree.path)
                     if !touching.isEmpty {
-                        // The chips scroll sideways with no indicator, so the count says how many there
-                        // are: the row used to end in a cut "Open R" with nothing to say 30 more followed.
-                        HStack(spacing: 8) {
-                            Text(verbatim: "\(touching.count) session\(touching.count == 1 ? "" : "s")")
-                                .font(.system(size: 11))
-                                .foregroundColor(ReviewPalette.dim)
-                                .fixedSize()
-                                .instantTooltip("Agent sessions that worked in this worktree; the row scrolls sideways")
-                            // No scroller in a one-line strip, so its cut edge fades to say it continues (H16).
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 6) {
-                                    ForEach(touching) { session in
-                                        sessionChip(session)
-                                    }
-                                }
-                                .scrollOverflowContent()
-                            }
-                            .scrollOverflowHints(.horizontal, fade: 36)
-                        }
+                        // A search typed for one worktree does not follow the reader to the next one.
+                        WorktreeSessionsButton(model: model, sessions: touching)
+                            .id(worktree.path)
                     }
+                    Spacer(minLength: 0)
                 }
             }
 
@@ -555,27 +554,140 @@ struct WorktreeDetailView: View {
             }
         }
     }
+}
 
-    private func sessionChip(_ session: HubSession) -> some View {
-        HStack(spacing: 6) {
+/// "156 sessions": the agent sessions that worked in a worktree, in a popover with search. Each row opens the session
+/// or resumes it; Resume shows the cmux target picker in the same popover.
+struct WorktreeSessionsButton: View {
+    var model: HubModel
+    let sessions: [HubSession]
+    @State private var open = false
+    /// Kept here, so a search typed and dismissed by an outside click is still there when the list opens again.
+    @State private var query = ""
+
+    var body: some View {
+        GhostButton(
+            Plural.count(sessions.count, "session"), symbol: "bubble.left.and.bubble.right",
+            tooltip: "Agent sessions that worked in this worktree: search them, open one or resume it",
+            trailingSymbol: "chevron.down", height: 22
+        ) { open.toggle() }
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            WorktreeSessionsList(model: model, sessions: sessions, query: $query) { open = false }
+        }
+    }
+}
+
+struct WorktreeSessionsList: View {
+    var model: HubModel
+    let sessions: [HubSession]
+    @Binding var query: String
+    let close: () -> Void
+    @State private var resuming: HubSession?
+    @FocusState private var focused: Bool
+
+    static let rowHeight: CGFloat = 30
+
+    /// The sessions whose title, agent, branch or id holds every word of the search, newest first as the hub lists them.
+    private var shown: [HubSession] {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace)
+        guard !words.isEmpty else { return sessions }
+        return sessions.filter { session in
+            let text = "\(session.displayTitle) \(session.provider) \(session.gitBranch ?? "") \(session.sessionId)".lowercased()
+            return words.allSatisfy { text.contains($0) }
+        }
+    }
+
+    var body: some View {
+        if let resuming {
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    self.resuming = nil
+                } label: {
+                    Label("All sessions", systemImage: "chevron.left").font(.system(size: 11.5))
+                }
+                .buttonStyle(.genHoverPlain())
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .instantTooltip("Back to the list of this worktree's sessions")
+                LaunchPicker(mode: .resume(resuming)) { outcome in
+                    if let notice = outcome.notice { model.notice = notice }
+                    close()
+                }
+            }
+        } else {
+            list
+        }
+    }
+
+    private var list: some View {
+        let shown = shown
+        return VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(ReviewPalette.dim)
+                TextField(Plural.count(sessions.count, "session") + ": filter by title, agent or branch", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .focused($focused)
+                    .onSubmit { if let first = shown.first { open(first) } }
+                    .accessibilityLabel("Filter the sessions")
+                if !query.isEmpty {
+                    IconButton(systemName: "xmark.circle.fill", tooltip: "Clear the filter", size: 10) { query = "" }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+            .onTapGesture { focused = true }
+            Divider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if shown.isEmpty {
+                        Text(verbatim: "No session matches “\(query.trimmingCharacters(in: .whitespaces))”.")
+                            .font(.system(size: 12))
+                            .foregroundColor(ReviewPalette.dim)
+                            .padding(12)
+                    }
+                    ForEach(shown) { session in
+                        row(session)
+                    }
+                }
+                .padding(.vertical, 4)
+                .scrollOverflowContent()
+                .genScrollBars()
+            }
+            .scrollOverflowHints(.vertical)
+            .frame(height: min(CGFloat(max(shown.count, 1)) * Self.rowHeight + 8, 420))
+        }
+        .frame(width: 480)
+        .onAppear { focused = true }
+    }
+
+    private func row(_ session: HubSession) -> some View {
+        HStack(spacing: 8) {
             ProviderBadge(provider: session.provider, size: 15)
-            Text(session.displayTitle).lineLimit(1).frame(maxWidth: 220, alignment: .leading)
-            LiveAgo(date: session.lastActivity, style: .brief).foregroundColor(ReviewPalette.dim)
-            Button("Open") { model.openSession(session) }
-                .instantTooltip("Show this session's transcript, changes and decisions")
+            Text(verbatim: session.displayTitle)
+                .font(.system(size: 12))
+                .foregroundColor(Color.white.opacity(0.88))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(session.displayTitle)
+            Spacer(minLength: 6)
+            LiveAgo(date: session.lastActivity, style: .brief)
+                .font(.system(size: 11))
+                .foregroundColor(ReviewPalette.dim)
+            Button("Open") { open(session) }
+                .accessibilityLabel("Open \(session.displayTitle)")
             Button("Resume") { resuming = session }
-                .instantTooltip("Resume it in cmux; pick where first")
+                .accessibilityLabel("Resume \(session.displayTitle) in cmux")
         }
         .font(.system(size: 11.5))
         .buttonStyle(.genHoverPlain())
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.05)))
-        .popover(isPresented: Binding(get: { resuming?.id == session.id }, set: { if !$0 { resuming = nil } }), arrowEdge: .bottom) {
-            LaunchPicker(mode: .resume(session)) { outcome in
-                resuming = nil
-                if let notice = outcome.notice { model.notice = notice }
-            }
-        }
+        .padding(.horizontal, 12)
+        .frame(height: Self.rowHeight)
+    }
+
+    private func open(_ session: HubSession) {
+        close()
+        model.openSession(session)
     }
 }

@@ -80,7 +80,14 @@ struct PRActivitySettingsView: View {
         }
         .disabled(store.busy && store.status == nil)
 
-        NativeSettingsCard("Projects", subtitle: "Each project polls at its own cadence. A failing one backs off alone.") {
+        // With PR notifications off nothing is polled, so the project list and the defaults below are moot: they stay
+        // visible, dimmed and disabled, and their subtitle says why (hub UX pass C53, 2026-11-10).
+        NativeSettingsCard(
+            "Projects",
+            subtitle: config.enabled
+                ? "Each project polls at its own cadence. A failing one backs off alone."
+                : "Turn PR notifications on to use these. Nothing is polled while it is off."
+        ) {
             let paths = config.repos.keys.sorted {
                 name($0).localizedCaseInsensitiveCompare(name($1)) == .orderedAscending
             }
@@ -91,17 +98,25 @@ struct PRActivitySettingsView: View {
             ForEach(paths, id: \.self) { path in
                 PRActivityProjectRow(path: path, name: name(path), config: config, status: status, store: store)
                     .equatable()
+                    .nativeSettingsDisabledLook()
                 if path != paths.last { Divider() }
             }
             HStack {
                 Button("Add a project…") { addProject() }
                     .buttonStyle(.bordered).nativeSettingsPointer()
+                    .nativeSettingsDisabledLook()
                     .accessibilityIdentifier("prActivity.addProject")
                 Spacer(minLength: 0)
             }
         }
+        .disabled(!config.enabled)
 
-        NativeSettingsCard("Defaults", subtitle: "A project follows these until you change its own cadence or events.") {
+        NativeSettingsCard(
+            "Defaults",
+            subtitle: config.enabled
+                ? "A project follows these until you change its own cadence or events."
+                : "Turn PR notifications on to use these."
+        ) {
             NativeSettingsRow("Cadence", detail: HubNotifyWords.cadenceDetail) {
                 Picker("Cadence", selection: Binding(
                     get: { config.intervalMinutes },
@@ -112,6 +127,7 @@ struct PRActivitySettingsView: View {
                     }
                 }
                 .pickerStyle(.menu).labelsHidden().frame(width: 170)
+                .nativeSettingsDisabledLook()
                 .accessibilityIdentifier("prActivity.defaultCadence")
             }
             Divider()
@@ -128,6 +144,7 @@ struct PRActivitySettingsView: View {
                 identifier: "prActivity.onlyMine",
                 isOn: Binding(get: { config.onlyMine }, set: { store.set(["--only-mine", $0 ? "on" : "off"]) }))
         }
+        .disabled(!config.enabled)
 
         HStack(spacing: 12) {
             Button("Send a test") { store.sendTest(pr: nil) }
@@ -192,8 +209,9 @@ private struct PRActivityProjectRow: View, Equatable {
                 }
                 Spacer(minLength: 8)
                 if watched {
-                    cadenceMenu
-                    eventsMenu
+                    // Each menu shows only a value ("Every 5 min", "All events"), so a caption names it (C58).
+                    labeled("Cadence", cadenceMenu)
+                    labeled("Events", eventsMenu)
                 }
                 Toggle("Watch \(name)", isOn: Binding(
                     get: { watched },
@@ -238,6 +256,15 @@ private struct PRActivityProjectRow: View, Equatable {
         .fixedSize()
         .instantTooltip(HubNotifyWords.eventsDetail)
         .accessibilityIdentifier("prActivity.repo.\(name).events")
+    }
+
+    /// A per-project picker with its field name above it, in the row's caption style.
+    private func labeled(_ caption: String, _ control: some View) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(caption).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            control.accessibilityLabel("\(caption) for \(name)")
+        }
     }
 
     private func menuLabel(_ text: String) -> some View {

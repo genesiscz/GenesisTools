@@ -14,10 +14,15 @@ public struct AgentRosterRow: View {
     public var unread: Int
     public var selected: Bool
     public var showsRunningLabel: Bool
+    /// The harness and role pills. A list where every row has the same one hides it (hub UX C42): "claude" and
+    /// "background" on every row said nothing and pushed the model and account down to one letter.
+    public var showsProvider: Bool
+    public var showsRole: Bool
 
     public init(title: String, provider: String, role: String, model: String? = nil, account: String? = nil,
                 status: String, startedAt: Date? = nil, lastAt: Date? = nil, toolCalls: Int = 0,
-                unread: Int = 0, selected: Bool = false, showsRunningLabel: Bool = false) {
+                unread: Int = 0, selected: Bool = false, showsRunningLabel: Bool = false,
+                showsProvider: Bool = true, showsRole: Bool = true) {
         self.title = title
         self.provider = provider
         self.role = role
@@ -30,6 +35,14 @@ public struct AgentRosterRow: View {
         self.unread = unread
         self.selected = selected
         self.showsRunningLabel = showsRunningLabel
+        self.showsProvider = showsProvider
+        self.showsRole = showsRole
+    }
+
+    /// The narrowest an account name is cut to: whole up to about ten characters, so it never reads as one letter
+    /// ("o… f" in a 320 pt sidebar, hub UX C41). A longer one (an account with its team) keeps about ten.
+    static func accountMinWidth(_ account: String) -> CGFloat {
+        min(CGFloat(account.count) * 6.2, 62)
     }
 
     public var body: some View {
@@ -51,14 +64,21 @@ public struct AgentRosterRow: View {
                     }
                 }
                 HStack(spacing: 5) {
-                    Badge(provider, color: AgentRosterStyle.harnessColor(provider), look: .filled)
-                    Badge(role)
-                    // The model's family word ("opus", never "claude-…"), then the account; both give way before the numbers.
+                    if showsProvider {
+                        Badge(provider, color: AgentRosterStyle.harnessColor(provider), look: .filled)
+                    }
+                    if showsRole {
+                        Badge(role)
+                    }
+                    // The model's family word ("opus", never "claude-…") is never cut; the account gives way first,
+                    // and only past its first ten characters.
                     if let model, !model.isEmpty {
-                        Text(verbatim: SessionNativeLog.shortModel(model)).lineLimit(1).layoutPriority(-1)
+                        Text(verbatim: SessionNativeLog.shortModel(model)).lineLimit(1).fixedSize()
                     }
                     if let account, !account.isEmpty {
-                        Text(verbatim: account).truncationMode(.tail).layoutPriority(-2)
+                        Text(verbatim: account).truncationMode(.tail)
+                            .frame(minWidth: Self.accountMinWidth(account), alignment: .leading)
+                            .layoutPriority(-1)
                     }
                     Spacer(minLength: 0)
                     // Words when they fit, glyphs when they do not: "247 tools · run 1h 05m" ran past a 320 pt sidebar.
@@ -140,9 +160,17 @@ public struct AgentRosterGroupLabel: View {
                     }
                 }
                 HStack(spacing: 6) {
-                    if let project { Text(project).layoutPriority(-2) }
+                    // The project keeps about six characters: it gave way first and read "c" beside a long account. More
+                    // than six pushed the age past the row's edge beside "21 sub-agents · 3 running".
+                    if let project {
+                        Text(project).truncationMode(.tail)
+                            .frame(minWidth: min(CGFloat(project.count) * 6.2, 36), alignment: .leading)
+                            .layoutPriority(-2)
+                    }
                     if let account {
-                        Text(account).padding(.horizontal, 5).padding(.vertical, 1)
+                        Text(account).truncationMode(.tail)
+                            .frame(minWidth: AgentRosterRow.accountMinWidth(account), alignment: .leading)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
                             .background(Capsule().stroke(.white.opacity(0.15))).layoutPriority(-1)
                     }
                     // `total` counts sub-agents; the session's own Main row is listed under it, so "0 agents" read wrong.

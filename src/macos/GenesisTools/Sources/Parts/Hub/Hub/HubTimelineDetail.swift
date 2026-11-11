@@ -274,7 +274,8 @@ enum TimelineDetailFind {
             fields += session.subagents.map { PanelFindField("agent.\($0.id)", agentLabel($0)) }
             return fields
         case .commit(let commit):
-            var fields = [PanelFindField("body", commit.body), PanelFindField("branches", commit.branches.joined(separator: ", "))]
+            var fields = [PanelFindField("subject", commit.subject), PanelFindField("body", commit.body),
+                          PanelFindField("branches", commit.branches.joined(separator: ", "))]
             fields += commit.files.map { PanelFindField("file.\($0.path)", $0.path) }
             fields += commit.prs.map { PanelFindField("pr.\($0.ref)", "\($0.ref) \($0.title)") }
             return fields
@@ -496,6 +497,12 @@ struct TimelineCommitDetailView: View {
                 if let url = model.timelineHostURL(event) {
                     ExternalLink(text: "on the host", url: url, font: .system(size: 11), glyph: .onHover, tooltip: "The commit page")
                 }
+            }
+            // The whole subject, wrapped: the row starts at what changed and cuts the end (hub UX C37).
+            DetailLine(kicker: "Subject") {
+                FindText(detail.subject, field: "subject").font(.system(size: 11.5)).foregroundColor(Color.white.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
             if !detail.body.isEmpty {
                 DetailLine(kicker: "Message") {

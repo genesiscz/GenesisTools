@@ -42,6 +42,7 @@ export const claudeAnalysis: SessionAnalysisReader = {
                 output: event.outputTokens,
                 sidechain: event.isSidechain === true,
                 aggregate: false,
+                ...(event.serviceTier ? { serviceTier: event.serviceTier } : {}),
             });
         });
 

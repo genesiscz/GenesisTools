@@ -8,6 +8,7 @@ interface RawUsage {
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
     cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
+    speed?: string;
 }
 
 interface RawMessage {
@@ -31,6 +32,15 @@ function num(value: number | undefined): number {
 
 function isRawLine(value: unknown): value is RawLine {
     return typeof value === "object" && value !== null;
+}
+
+/**
+ * The service tier a Claude call was billed at. Claude Code writes `usage.speed` on every call, and only `fast`
+ * changes the price (fast mode bills a multiple of the standard rates), so `standard` and a missing field are
+ * the standard tier: undefined. Every reader of a Claude usage object asks this one function.
+ */
+export function claudeServiceTier(usage: { speed?: unknown }): "fast" | undefined {
+    return usage.speed === "fast" ? "fast" : undefined;
 }
 
 export function parseTranscriptLine(line: string): UsageEvent | null {
@@ -61,6 +71,8 @@ export function parseTranscriptLine(line: string): UsageEvent | null {
         return null;
     }
 
+    const serviceTier = claudeServiceTier(message.usage);
+
     return {
         messageId: message.id,
         ...(raw.isSidechain === true ? { isSidechain: true } : {}),
@@ -75,5 +87,6 @@ export function parseTranscriptLine(line: string): UsageEvent | null {
             ? { cacheCreation1hTokens: num(message.usage.cache_creation?.ephemeral_1h_input_tokens) }
             : {}),
         cacheReadTokens: num(message.usage.cache_read_input_tokens),
+        ...(serviceTier ? { serviceTier } : {}),
     };
 }

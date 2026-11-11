@@ -18,6 +18,8 @@ import {
     resultMessage,
     runTimeoutFor,
     runTimeoutHint,
+    StderrTail,
+    streamPrinter,
     withoutStreamed,
 } from "./engine";
 import {
@@ -101,6 +103,29 @@ describe("the output limit of a turn", () => {
         }
     });
 
+    // Round 2 of #745: the limit cut only the text, so a thrown 300,000 character message came back whole.
+    it("cuts a failed turn's error and stack the same way, and the failure stays a failure", async () => {
+        const engine = new ReplEngine({ defaultTimeoutMs: 10_000, maxOutputChars: 100 });
+        try {
+            const failed = await engine.run("throw new Error('z'.repeat(1000))");
+            expect(failed.ok).toBe(false);
+            const [error, errorNote] = (failed.error ?? "").split("\n… ");
+            expect(error).toBe("z".repeat(100));
+            expect(errorNote).toStartWith("[output cut at 100 of 1,000 characters; all of it is in ");
+            const errorPath = errorNote.match(/all of it is in (\S+)\. Read/)?.[1] ?? "";
+            expect(readFileSync(errorPath, "utf8")).toBe("z".repeat(1000));
+            const [stack, stackNote] = (failed.stack ?? "").split("\n… ");
+            expect(stack).toHaveLength(100);
+            const stackPath = stackNote.match(/all of it is in (\S+)\. Read/)?.[1] ?? "";
+            expect(readFileSync(stackPath, "utf8")).toContain(`Error: ${"z".repeat(1000)}`);
+            expect(resultMessage(failed)).toStartWith(`${stack}\n… [output cut at 100 of `);
+            const short = await engine.run("throw new Error('short')");
+            expect(short.error).toBe("short");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
     it("keeps text up to the limit whole, and a limit of 0 keeps everything", () => {
         const writeRest = () => {
             throw new Error("nothing should be written");
@@ -131,11 +156,62 @@ describe("console output streams while the turn runs", () => {
         }
     });
 
-    it("leaves the turn text whole when nothing streamed or the streamed lines are not in it", () => {
+    it("leaves the turn text whole when nothing streamed or the text does not start with the streamed lines", () => {
         expect(withoutStreamed("a\nb", [])).toBe("a\nb");
-        expect(withoutStreamed("note\nx\ny\nresult", ["x", "y"])).toBe("note\nresult");
+        expect(withoutStreamed("x\ny\nresult", ["x", "y"])).toBe("result");
         expect(withoutStreamed("x\ny", ["x", "y"])).toBe("");
         expect(withoutStreamed("other", ["x"])).toBe("other");
+        expect(withoutStreamed("xy\nresult", ["x"])).toBe("xy\nresult");
+    });
+
+    // A nodeRepl.write line between two console lines did not stream, the console lines were no longer one run in the
+    // text, and the CLI printed them twice and out of order.
+    it("streams nodeRepl.write lines too, in the order of the text, so the printed lines come out whole", async () => {
+        const seen: string[] = [];
+        const engine = new ReplEngine({ defaultTimeoutMs: 10_000, onOutput: (line) => seen.push(line) });
+        try {
+            const result = await engine.run('console.log("a"); nodeRepl.write("b"); console.log("c"); "done"');
+            expect(seen).toEqual(["a", "b", "c"]);
+            expect(result.text).toBe("a\nb\nc\ndone");
+            expect(withoutStreamed(result.text, seen)).toBe("done");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    it("prints no line after the first one that does not fit, so what printed is the start of the cut text", async () => {
+        const printed: string[] = [];
+        const printer = streamPrinter({ max: 12, print: (line) => printed.push(line) });
+        const engine = new ReplEngine({ defaultTimeoutMs: 10_000, maxOutputChars: 12, onOutput: printer.onOutput });
+        try {
+            const result = await engine.run('console.log("aaaa"); console.log("bbbbbbbbbb"); console.log("c"); "done"');
+            printer.stop();
+            expect(printed).toEqual(["aaaa"]);
+            expect(printer.printed).toEqual(["aaaa"]);
+            expect(withoutStreamed(result.text, printer.printed)).toStartWith("bbbbbbb\n… [output cut at 12 of ");
+        } finally {
+            await engine.shutdown();
+        }
+
+        printer.onOutput("after");
+        expect(printed).toEqual(["aaaa"]);
+    });
+});
+
+describe("the worker's stderr tail", () => {
+    it("holds a bounded part of a line that never ends, and still quotes the lines after it", () => {
+        const tail = new StderrTail();
+        for (let chunk = 0; chunk < 20; chunk++) {
+            tail.push("x".repeat(100_000));
+        }
+
+        expect(tail.pendingChars).toBeLessThanOrEqual(1200);
+        tail.push("\nnext line\npartial");
+        expect(tail.pendingChars).toBe("partial".length);
+        const quoted = tail.quote("stderr");
+        expect(quoted).toContain(`  ${"x".repeat(300)}…`);
+        expect(quoted).toContain("  next line");
+        expect(quoted).toContain("  partial");
     });
 });
 
@@ -339,6 +415,15 @@ describe("ReplEngine", () => {
         );
         const path = await engine.run("await import('/nonexistent/nr31.ts')");
         expect(path.error).toBe("Cannot find module '/nonexistent/nr31.ts': no file is there.");
+    });
+
+    it("a file that is there but lacks a package keeps Bun's message, which names the missing package", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "nr31-dep-"));
+        const file = join(folder, "has-dep.ts");
+        writeFileSync(file, 'import "nr31-missing-dependency";\nexport const value = 1;\n');
+        const result = await engine.run(`await import(${SafeJSON.stringify(file)})`);
+        expect(result.error).toStartWith("Cannot find package 'nr31-missing-dependency'");
+        expect(result.error).not.toContain("no file is there");
     });
 
     // NR17: a folder that does not exist was answered "module directory registered".
@@ -877,43 +962,34 @@ it("reset with toolsets disposes them at once while a turn waits, and the turn h
 it("a module directory added while a turn runs answers at once and leaves the turn running", async () => {
     const dir = mkdtempSync(join(tmpdir(), "node-repl-dir-"));
     mkdirSync(join(dir, "node_modules"));
+    // The registration's timer is the default timeout (1 s, the margin a loaded runner needs to answer it); every
+    // other turn names its own budget.
     const engine = new ReplEngine({ defaultTimeoutMs: 1000 });
     try {
-        await engine.run("1");
-        const running = engine.run("await sleep(2500); 'done'", 60_000);
+        await engine.run("1", 60_000);
+        const running = engine.run("await sleep(1500); 'done'", 60_000);
         await Bun.sleep(100);
         const registered = await engine.addModuleDir(dir);
         expect(registered.ok).toBe(true);
+        // Answered by the worker, before the 1 s timer would.
         expect(registered.durationMs).toBeLessThan(900);
         expect((await running).text).toBe("done");
 
-        // A turn that keeps the CPU busy holds the registration; its timer answers without killing the worker.
-        await engine.run("globalThis.keptBehindBusyTurn = 1");
-        const busy = engine.run("const until = Date.now() + 1800; while (Date.now() < until) {} 'busy done'", 60_000);
+        // A turn that keeps the CPU busy holds the registration; its timer answers without killing the worker. The
+        // turn outlasts the timer (fired about 1.1 s in) by 600 ms.
+        await engine.run("globalThis.keptBehindBusyTurn = 1", 60_000);
+        const busy = engine.run("const until = Date.now() + 1700; while (Date.now() < until) {} 'busy done'", 60_000);
         await Bun.sleep(100);
         const waited = await engine.addModuleDir(join(dir, "."));
         expect(waited.error).toContain("behind the running turn");
         expect((await busy).text).toBe("busy done");
-        expect((await engine.run("globalThis.keptBehindBusyTurn")).text).toBe("1");
+        expect((await engine.run("globalThis.keptBehindBusyTurn", 60_000)).text).toBe("1");
     } finally {
         await engine.shutdown();
     }
 }, 20_000);
 
-// REPL-F5: nodeRepl.write lines did not stream, so the streamed console lines were not one run in the text and the
-// CLI printed all of them twice.
-it("nodeRepl.write streams beside console lines, so the streamed lines come out of the text whole", async () => {
-    const seen: string[] = [];
-    const engine = new ReplEngine({ onOutput: (line) => seen.push(line) });
-    try {
-        const result = await engine.run('console.log("a"); nodeRepl.write("b"); console.log("c"); 1');
-        expect(seen).toEqual(["a", "b", "c"]);
-        expect(withoutStreamed(result.text, seen)).toBe("1");
-    } finally {
-        await engine.shutdown();
-    }
-});
-
+// REPL-F5, end to end through the CLI: its printer stops for good at the first line past --max-output.
 it("run stops streaming after the first line past --max-output, so no line prints twice", async () => {
     const cli = join(import.meta.dir, "..", "index.ts");
     const code = 'console.log("x".repeat(15000)); console.log("y".repeat(6000)); console.log("z".repeat(100)); 1';

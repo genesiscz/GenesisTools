@@ -13,6 +13,8 @@ const { log } = logger.scoped("share-assets");
 
 export const SHARE_ASSET_MAX_BYTES = 25 * 1024 * 1024;
 export const SHARE_ASSET_HASH_RE = /^[0-9a-f]{64}$/;
+/** The `note=` key of a linked note's panel URL (`linkedNoteKey`). */
+export const SHARE_NOTE_KEY_RE = /^[0-9a-f]{16}$/;
 
 type AssetKind = Exclude<ResolvedAsset["kind"], "page">;
 
@@ -121,10 +123,44 @@ export interface ShareAssetIndex {
     /** Raw reference text as the note wrote it (`../artifacts/x.webp`) to the asset. */
     byTarget: Map<string, ShareAsset>;
     byHash: Map<string, ShareAsset>;
+    /**
+     * The images each linked note references itself, by the note's `linkedNoteKey`, then by the reference as that
+     * note wrote it. One level deep and images only (Martin, 2026-11-09, decision 50 a): a linked note's side panel and
+     * its `![[note]]` show its pictures, while its links stay text. They are served by hash like every other asset.
+     * The key names the note's file, not its bytes: two notes with the same text in two folders find different
+     * pictures under the same `![[shot.png]]`.
+     */
+    linkedImages: Map<string, Map<string, ShareAsset>>;
+    /** Real path of the shared note itself (`isSharedNote`). */
+    sharedNote: string;
 }
 
 export function shareAssetUrl(slug: string, hash: string): string {
     return `/share/${encodeURIComponent(slug)}?asset=${hash}`;
+}
+
+/**
+ * True when `asset` is the shared note itself. The real paths are compared, not the vault paths: on macOS a composed
+ * link opens a file whose name the disk keeps decomposed, so the two spellings name one file, while a file system that
+ * keeps both spellings as two files gives two real paths.
+ */
+export function isSharedNote(index: ShareAssetIndex, asset: ShareAsset): boolean {
+    return asset.absPath === index.sharedNote;
+}
+
+/** A linked note's key in `linkedImages` and in its panel URL: its real path, hashed, so the URL names no folder. */
+export function linkedNoteKey(asset: ShareAsset): string {
+    return hashAsset(Buffer.from(asset.absPath, "utf8")).slice(0, 16);
+}
+
+/**
+ * The query that opens `asset` in the side panel: `asset=<hash>`, plus `note=<linkedNoteKey>` for a linked note that
+ * shows images of its own, because the hash names its bytes and two notes with the same bytes can show other pictures.
+ */
+export function assetPanelQuery(index: ShareAssetIndex, asset: ShareAsset): string {
+    const key = asset.kind === "markdown" ? linkedNoteKey(asset) : null;
+
+    return key !== null && index.linkedImages.has(key) ? `asset=${asset.hash}&note=${key}` : `asset=${asset.hash}`;
 }
 
 /**
@@ -380,7 +416,9 @@ export async function buildShareAssetIndex(options: {
     const { vaultRoot, notePath, source } = options;
     const vaultReal = await realpath(resolve(vaultRoot));
     const noteDir = posix.dirname(notePath) === "." ? "" : posix.dirname(notePath);
-    const index: ShareAssetIndex = { byTarget: new Map(), byHash: new Map() };
+    // The note was just read, so it resolves; the lexical path is only a fallback for a file removed since.
+    const sharedNote = await realpath(resolve(vaultRoot, notePath)).catch(() => resolve(vaultReal, notePath));
+    const index: ShareAssetIndex = { byTarget: new Map(), byHash: new Map(), linkedImages: new Map(), sharedNote };
     const vaultRoots = [...new Set([resolve(vaultRoot), vaultReal])];
     const targets = collectAssetTargets(source);
 
@@ -391,21 +429,22 @@ export async function buildShareAssetIndex(options: {
     const attachSetting = await readAttachmentFolder(vaultRoot);
     let vaultFiles: string[] | null = null;
 
-    for (const target of targets) {
+    /** The asset `target` names, looked up as Obsidian does from a note in `fromDir`; `only` limits the kinds. */
+    const resolveTarget = async (target: string, fromDir: string, only?: AssetKind): Promise<ShareAsset | null> => {
         const parsed = parseTarget(target, vaultRoots);
         const type = parsed ? assetTypeFor(parsed.path) : null;
 
-        if (!parsed || !type) {
-            continue;
+        if (!parsed || !type || (only !== undefined && type.kind !== only)) {
+            return null;
         }
 
         const cleaned = parsed.path;
-        const attachDir = attachmentDir(attachSetting, noteDir);
+        const attachDir = attachmentDir(attachSetting, fromDir);
         const candidates = (
             parsed.exact
                 ? [cleaned]
                 : [
-                      posix.join(noteDir, cleaned),
+                      posix.join(fromDir, cleaned),
                       cleaned,
                       attachDir === null ? null : posix.join(attachDir, posix.basename(cleaned)),
                   ]
@@ -426,7 +465,7 @@ export async function buildShareAssetIndex(options: {
 
         if (!found && !parsed.exact) {
             vaultFiles ??= await listVaultFiles(vaultRoot);
-            const match = pickVaultWideMatch(vaultFiles, cleaned, noteDir);
+            const match = pickVaultWideMatch(vaultFiles, cleaned, fromDir);
             const loaded = match ? await loadCandidate(vaultRoot, vaultReal, match) : null;
 
             if (match && loaded) {
@@ -435,11 +474,11 @@ export async function buildShareAssetIndex(options: {
         }
 
         if (!found) {
-            log.debug({ notePath, target }, "share asset reference did not resolve");
-            continue;
+            log.debug({ notePath, fromDir, target }, "share asset reference did not resolve");
+            return null;
         }
 
-        const asset: ShareAsset = {
+        return {
             hash: hashAsset(found.bytes),
             absPath: found.absPath,
             vaultPath: found.rel,
@@ -448,14 +487,80 @@ export async function buildShareAssetIndex(options: {
             contentType: type.contentType,
             language: type.language,
         };
+    };
 
-        index.byTarget.set(target, asset);
-        index.byHash.set(asset.hash, asset);
+    for (const target of targets) {
+        const asset = await resolveTarget(target, noteDir);
+
+        if (asset) {
+            index.byTarget.set(target, asset);
+            index.byHash.set(asset.hash, asset);
+        }
     }
 
-    log.debug({ notePath, targets: targets.length, resolved: index.byHash.size }, "share asset index built");
+    // One level deeper, images only: what each linked note shows of its own, found from that note's folder.
+    const linkedNotes = new Map(
+        [...index.byTarget.values()]
+            .filter((asset) => asset.kind === "markdown" && !isSharedNote(index, asset))
+            .map((asset) => [linkedNoteKey(asset), asset])
+    );
+
+    for (const [key, linked] of linkedNotes) {
+        const loaded = await loadCandidate(vaultRoot, vaultReal, linked.vaultPath);
+
+        if (!loaded || hashAsset(loaded.bytes) !== linked.hash) {
+            continue;
+        }
+
+        const fromDir = posix.dirname(linked.vaultPath) === "." ? "" : posix.dirname(linked.vaultPath);
+        const images = new Map<string, ShareAsset>();
+
+        for (const target of collectAssetTargets(redactSecretsInText(loaded.bytes.toString("utf8")))) {
+            const asset = await resolveTarget(target, fromDir, "image");
+
+            if (asset) {
+                images.set(target, asset);
+                index.byHash.set(asset.hash, asset);
+            }
+        }
+
+        if (images.size > 0) {
+            index.linkedImages.set(key, images);
+        }
+    }
+
+    log.debug(
+        {
+            notePath,
+            targets: targets.length,
+            resolved: index.byHash.size,
+            linkedImages: [...index.linkedImages.values()].reduce((sum, images) => sum + images.size, 0),
+        },
+        "share asset index built"
+    );
 
     return index;
+}
+
+/**
+ * How a linked note's panel or `![[note]]` resolves its references: only its own images (`linkedImages` under
+ * `noteKey`), at the URL `url` gives (the live page's hash URL, or a saved page's `data:` URL); everything else stays
+ * text.
+ */
+export function linkedImageResolver(options: {
+    index: ShareAssetIndex;
+    noteKey: string;
+    url: (asset: ShareAsset) => string | null;
+}): (target: string) => ResolvedAsset | null {
+    const { index, noteKey, url } = options;
+    const images = index.linkedImages.get(noteKey);
+
+    return (target) => {
+        const asset = images?.get(target);
+        const href = asset ? url(asset) : null;
+
+        return asset && href ? { url: href, kind: "image", name: asset.name } : null;
+    };
 }
 
 /**
@@ -519,11 +624,17 @@ export function renderJsonAssetHtml(text: string): string {
 }
 
 /**
- * A referenced note, rendered for the side panel. Its own links, images and embeds stay text, so the
- * panel never reaches a file the shared note did not reference itself.
+ * A referenced note, rendered for the side panel. Its links and embeds stay text, so the panel never reaches a note or
+ * file the shared note did not reference itself; its own images show when `resolveImage` names them
+ * (`linkedImageResolver`).
  */
-export function renderMarkdownAssetHtml(text: string): string {
-    return renderMarkdown(text, { resolveWikilink: () => null, inertLocalLinks: true, lineAnchors: true }).html;
+export function renderMarkdownAssetHtml(text: string, resolveImage?: (target: string) => ResolvedAsset | null): string {
+    return renderMarkdown(text, {
+        resolveWikilink: () => null,
+        inertLocalLinks: true,
+        lineAnchors: true,
+        resolveAsset: resolveImage,
+    }).html;
 }
 
 /** A window of at most CODE_WINDOW_LINES lines, starting a little above the requested range. */
@@ -628,6 +739,27 @@ async function readAssetBodies(options: {
 }
 
 /**
+ * Every file the share carries besides the note itself: what the note references, and the images its linked notes
+ * show, so an unzipped linked note still shows its pictures. One entry per name the notes use: a symlink alias keeps
+ * its own entry, so its link still works after unzipping, while two spellings of one name for one file (a composed
+ * link to a decomposed file name) count and zip once.
+ */
+export function shareAttachments(index: ShareAssetIndex): ShareAsset[] {
+    const byEntry = new Map<string, ShareAsset>();
+    const linkedImages = [...index.linkedImages.values()].flatMap((images) => [...images.values()]);
+
+    for (const asset of [...index.byTarget.values(), ...linkedImages]) {
+        const entry = `${asset.absPath}\0${asset.vaultPath.normalize("NFC")}`;
+
+        if (!isSharedNote(index, asset) && !byEntry.has(entry)) {
+            byEntry.set(entry, asset);
+        }
+    }
+
+    return [...byEntry.values()];
+}
+
+/**
  * The shared note and every file it references, as zip entries under one folder named after the note.
  * Paths keep their layout below the deepest folder they all share, so relative links and wikilinks in the
  * note still resolve after unzipping. Every attachment goes through `readShareAsset`, so the zip holds the
@@ -644,17 +776,9 @@ export async function buildShareBundle(options: {
     const { vaultRoot, index, notePath, noteText, folderName } = options;
 
     const noteData = new TextEncoder().encode(noteText);
-    const byPath = new Map<string, ShareAsset>();
-
-    for (const asset of index.byTarget.values()) {
-        if (asset.vaultPath !== notePath && !byPath.has(asset.vaultPath)) {
-            byPath.set(asset.vaultPath, asset);
-        }
-    }
-
     const read = await readAssetBodies({
         vaultRoot,
-        assets: byPath.values(),
+        assets: shareAttachments(index),
         startBytes: noteData.length,
         what: "share bundle",
     });
@@ -678,18 +802,24 @@ export async function buildShareBundle(options: {
     return { entries, skipped };
 }
 
-/** The side-panel body for a text asset; `lines` narrows a code file to a window around the range. */
-export function renderShareAssetFragment(
-    asset: ShareAsset,
-    text: string,
-    lines: { start: number; end: number } | null
-): string {
+/**
+ * The side-panel body for a text asset; `lines` narrows a code file to a window around the range, and `resolveImage`
+ * shows a note's own images (`linkedImageResolver`).
+ */
+export function renderShareAssetFragment(options: {
+    asset: ShareAsset;
+    text: string;
+    lines: { start: number; end: number } | null;
+    resolveImage?: (target: string) => ResolvedAsset | null;
+}): string {
+    const { asset, text, lines, resolveImage } = options;
+
     if (asset.kind === "json") {
         return renderJsonAssetHtml(text);
     }
 
     if (asset.kind === "markdown") {
-        return renderMarkdownAssetHtml(text);
+        return renderMarkdownAssetHtml(text, resolveImage);
     }
 
     return renderCodeAssetHtml({ text, language: asset.language ?? "plaintext", lines });
@@ -718,14 +848,14 @@ function dataUrl(contentType: string, body: Buffer): string {
 
 /**
  * Everything a saved copy of the share page needs offline: each media file as a `data:` URL, and each text
- * asset pre-rendered once per line range the note links to. `panelBase(hash)` is the chip URL without
+ * asset pre-rendered once per line range the note links to. `panelBase(asset)` is the chip URL without
  * its `#L` fragment. Bodies come from `readShareAsset`, so they are masked; a changed file is left out.
  * Returns null when the files together exceed `SHARE_BUNDLE_MAX_BYTES`.
  */
 export async function buildShareEmbed(options: {
     vaultRoot: string;
     index: ShareAssetIndex;
-    panelBase: (hash: string) => string;
+    panelBase: (asset: ShareAsset) => string;
     sourceBytes: number;
 }): Promise<ShareEmbed | null> {
     const { vaultRoot, index, panelBase, sourceBytes } = options;
@@ -760,10 +890,19 @@ export async function buildShareEmbed(options: {
         }
 
         const lines = lineRangeOf(target);
-        const key = embeddedPanelKey(panelBase(asset.hash), lines);
+        const key = embeddedPanelKey(panelBase(asset), lines);
         embed.raws[asset.hash] ??= dataUrl(asset.contentType, body);
         embed.panels[key] ??= {
-            html: renderShareAssetFragment(asset, body.toString("utf8"), lines),
+            html: renderShareAssetFragment({
+                asset,
+                text: body.toString("utf8"),
+                lines,
+                resolveImage: linkedImageResolver({
+                    index,
+                    noteKey: linkedNoteKey(asset),
+                    url: (image) => embed.media.get(image.hash) ?? null,
+                }),
+            }),
             raw: asset.hash,
         };
     }
@@ -876,12 +1015,24 @@ export function noteSection(text: string, fragment: string): string {
 }
 
 /** An embedded note or section, rendered like the side panel: its own links, images and embeds stay text. */
-export function renderTransclusionHtml(text: string, fragment: string, idPrefix = ""): string {
+export function renderTransclusionHtml(options: {
+    text: string;
+    fragment: string;
+    idPrefix?: string;
+    /** The note's own images (`linkedImageResolver`); without it they stay text. */
+    resolveImage?: (target: string) => ResolvedAsset | null;
+}): string {
+    const { text, fragment, idPrefix = "", resolveImage } = options;
     const section = noteSection(text, fragment);
 
     if (!section.trim()) {
         return `<p class="dd-md-transclusion-missing">${fragment ? "This section is not in the note." : "The note is empty."}</p>`;
     }
 
-    return renderMarkdown(section, { resolveWikilink: () => null, inertLocalLinks: true, idPrefix }).html;
+    return renderMarkdown(section, {
+        resolveWikilink: () => null,
+        inertLocalLinks: true,
+        idPrefix,
+        resolveAsset: resolveImage,
+    }).html;
 }

@@ -1,0 +1,27 @@
+{
+    "about": "The plates Captions.swift TextPlates draws for these texts on the canvas, sized, wrapped and aligned as Looks.drawText does, in whole pixels. RecorderTextMetricsTests writes each plate (RECORDER_TEXT_CASES_WRITE=1) and holds the renderer to it; recording-editor.test.ts holds check()'s textBox to it within 2 px. To add a case, add a row with any plate and record the file again.",
+    "canvas": { "width": 1920, "height": 1080 },
+    "cases": [
+        { "text": "Hello", "size": 0.05, "plate": { "width": 200, "height": 105 } },
+        { "text": "Zákazník napíše do poradny", "size": 0.05, "block": { "width": 0.4, "align": "center" }, "plate": { "width": 749, "height": 105 } },
+        { "text": "Recepce zrovna telefonuje, zprávu nečte.", "size": 0.029, "block": { "width": 0.4, "align": "center" }, "plate": { "width": 614, "height": 61 } },
+        { "text": "Každý krok nastavení se v ukázce objeví jako krátký titulek, jeden po druhém, v pořadí, v jakém je projde nový uživatel.", "size": 0.04, "block": { "width": 0.4, "align": "center" }, "plate": { "width": 728, "height": 237 } },
+        { "text": "První řádek\nDruhý řádek s háčky: ěščřžýáíé", "size": 0.045, "plate": { "width": 745, "height": 152 } },
+        { "text": "Öffnen Sie die Einstellungen für Größe und Straße", "size": 0.06, "block": { "width": 0.3, "align": "left" }, "plate": { "width": 576, "height": 358 } },
+        { "text": "Zażółć gęślą jaźń — łódź płynie po rzece", "size": 0.05, "block": { "width": 0.35, "align": "right" }, "plate": { "width": 672, "height": 168 } },
+        { "text": "Supercalifragilisticexpialidocious and more", "size": 0.06, "block": { "width": 0.2, "align": "center" }, "plate": { "width": 384, "height": 435 } },
+        { "text": "Napíše „rezervace“ a pošle ji (hned) e-mailem…", "size": 0.035, "block": { "width": 0.25, "align": "center" }, "plate": { "width": 416, "height": 164 } },
+        { "text": "AVATAR Toyota WAVE", "size": 0.08, "plate": { "width": 943, "height": 167 } },
+        { "text": "Malý popisek pod obrázkem, který se zalomí do více řádků.", "size": 0.02, "block": { "width": 0.2, "align": "center" }, "plate": { "width": 376, "height": 69 } },
+        { "text": "Velký nadpis", "size": 0.12, "plate": { "width": 906, "height": 252 } },
+        { "text": "Termín 10:30, 12. 11. 2026", "size": 0.045, "plate": { "width": 631, "height": 95 } },
+        { "text": "Nový účet\n\nPřihlášení trvá minutu", "size": 0.05, "block": { "width": 0.4, "align": "center" }, "plate": { "width": 683, "height": 231 } },
+        { "text": "\nPotvrzení přijde e-mailem", "size": 0.03, "block": { "width": 0.3, "align": "right" }, "plate": { "width": 576, "height": 101 } },
+        { "text": "Krok 1\n\nKrok 2", "size": 0.04, "block": { "width": 0.4, "align": "left" }, "plate": { "width": 184, "height": 186 } },
+        { "text": "Hotovo\n", "size": 0.05, "block": { "width": 0.4, "align": "center" }, "plate": { "width": 250, "height": 168 } },
+        { "text": "Hotovo\n\n", "size": 0.05, "block": { "width": 0.4, "align": "right" }, "plate": { "width": 768, "height": 231 } },
+        { "text": "Samoobslužný e-mailový formulář", "size": 0.04, "block": { "width": 0.25, "align": "center" }, "plate": { "width": 397, "height": 135 } },
+        { "text": "Platba kartou/převodem hned", "size": 0.04, "block": { "width": 0.25, "align": "center" }, "plate": { "width": 361, "height": 135 } },
+        { "text": "Nový-rezervační-systém pro ordinace", "size": 0.05, "block": { "width": 0.2, "align": "left" }, "plate": { "width": 354, "height": 294 } }
+    ]
+}

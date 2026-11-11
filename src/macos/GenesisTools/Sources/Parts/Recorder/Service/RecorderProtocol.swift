@@ -36,6 +36,9 @@ enum RecorderProtocol {
         /// `edit.undo`: the ops it took back; `edit.redo`: the ops it made again.
         let undone: [String]?
         let redone: [String]?
+        /// `edit.apply` and `gesture.commit`: false when the ops changed nothing, so the service made no undo step;
+        /// nil from an older service.
+        let changed: Bool?
     }
 
     struct Loudness: Decodable, Equatable {

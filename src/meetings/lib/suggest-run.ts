@@ -2,11 +2,10 @@ import { logger } from "@genesiscz/utils/logger";
 import { languageSettings, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
 import { contextFileText, contextMoment } from "./context-file";
 import { OpenedMeeting } from "./opened-meeting";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
-import { type SuggestRule, settledTermItems, suggestItems } from "./suggest";
+import { knownRoot, type SuggestRule, settledTermItems, suggestItems } from "./suggest";
 import type { WordCheckChoice } from "./word-check";
 
 const { log } = logger.scoped("meetings-suggest");
@@ -95,8 +94,7 @@ export async function runSuggest(options: {
     };
     let fresh: MeetingItem[] = [];
     let retired: string[] = [];
-    const known = (word: string) =>
-        isEnglishWord(word) || (wordCheck !== undefined && wordCheck.verdict(word).class !== "unknown");
+    const known = knownRoot(wordCheck);
 
     try {
         await store.update(record.id, { command: "suggest", change: "suggest findings and questions" }, (current) => {

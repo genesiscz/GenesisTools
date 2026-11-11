@@ -9,6 +9,16 @@ struct EditorView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(EditorModel.lanesShownKey) private var lanesShown = 4
 
+    /// Why the Style tab offers no cursor settings, or nil when the editor draws the cursor. A track that names cursor
+    /// pictures without them beside it (a copy that left cursor-shapes/ behind) is not a system-cursor movie.
+    static func cursorNote(for track: CursorTrack) -> String? {
+        if track.drawsCursor { return nil }
+        if track.shapeChanges.isEmpty {
+            return "This recording has the system cursor in its picture. Record without --system-cursor to draw a smoothed cursor of any size."
+        }
+        return "This recording's cursor pictures are missing: copy its cursor-shapes folder beside its cursor track to draw the cursor."
+    }
+
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
@@ -231,6 +241,12 @@ struct WideButton: View {
     }
 }
 
+extension EditProject.Zoom {
+    /// A picture zoom may follow the cursor. A canvas zoom holds its focus (0...1 of the canvas): the cursor moves inside
+    /// the picture, so the renderer never follows it there (ZoomCurve.canvasView) and the service refuses follow for one.
+    var offersFollowCursor: Bool { target != .canvas }
+}
+
 private struct ZoomInspector: View {
     @Bindable var model: EditorModel
 
@@ -249,18 +265,28 @@ private struct ZoomInspector: View {
                        in: 1.1...4)
                     .accessibilityLabel("Zoom level")
                     .accessibilityIdentifier("recorder.zoom.level")
-                if model.project.zooms.count > 1 {
-                    WideButton(title: "Apply Zoom Level to All") { model.applyScaleToAll(zoom.scale) }
+                let alike = model.project.zooms.filter { EditorModel.sameTarget($0, zoom) }.count
+                if alike > 1 {
+                    let title = alike == model.project.zooms.count ? "Apply Zoom Level to All"
+                        : zoom.target == .canvas ? "Apply Zoom Level to All Canvas Zooms" : "Apply Zoom Level to All Picture Zooms"
+                    WideButton(title: title) { model.applyScaleToAll(of: zoom.id) }
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
                 SectionLabel(text: "Zoom mode")
-                GenSegmentedTabs("Zoom mode", items: [.init(EditProject.ZoomMode.follow, "Follow Cursor"), .init(.manual, "Manual")],
-                                 selection: Binding(get: { zoom.mode }, set: { mode in model.updateZoom(id) { $0.mode = mode } }),
-                                 minSegmentWidth: 110, identifier: "recorder.zoom.mode", fillsWidth: true)
-                if zoom.mode == .follow && model.cursor == nil {
-                    Text("This recording has no cursor track, so the zoom holds the focus below.")
+                if zoom.offersFollowCursor {
+                    GenSegmentedTabs("Zoom mode", items: [.init(EditProject.ZoomMode.follow, "Follow Cursor"), .init(.manual, "Manual")],
+                                     selection: Binding(get: { zoom.mode }, set: { mode in model.updateZoom(id) { $0.mode = mode } }),
+                                     minSegmentWidth: 110, identifier: "recorder.zoom.mode", fillsWidth: true)
+                    if zoom.mode == .follow && model.cursor == nil {
+                        Text("This recording has no cursor track, so the zoom holds the focus below.")
+                            .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    }
+                } else {
+                    Text("A canvas zoom holds the focus below. The cursor moves inside the picture, so only a picture zoom follows it.")
                         .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("recorder.zoom.mode.canvas")
                 }
                 FocusPicker(model: model, zoom: zoom)
             }
@@ -330,26 +356,80 @@ private struct MotionBlurSection: View {
     }
 }
 
+/// The zoom focus picker's geometry, in the space a zoom's focus counts in. All rects are 0...1 of that space or of the
+/// picture, from the top left. A picture zoom's space is the movie's picture. A canvas zoom's is the framed canvas
+/// (R5 4: ZoomCurve.canvasView, Looks.zoomCanvas), so its picker shows the canvas with the tile where the frame puts the
+/// picture, and a point in the picker is the focus the export reads. Before 2026-11-09 every zoom's picker showed the
+/// bare picture: a drag onto the phone of a phone-left frame stored 0.5, and the export zoomed into the background.
+struct FocusPickerLayout: Equatable {
+    /// Width over height of the space.
+    var aspect: CGFloat
+    /// Where the picture's tile is drawn in the space.
+    var tile: CGRect
+    /// The part of the picture the tile shows.
+    var crop: CGRect
+    /// The zoomed view at the zoom's full scale, as ZoomCurve.View draws it.
+    var box: CGRect
+    /// The frame drawn around the tile; nil when the space is the picture.
+    var frame: EditProject.Frame?
+
+    static func make(project: EditProject, zoom: EditProject.Zoom) -> FocusPickerLayout {
+        let source = CGSize(width: max(1, CGFloat(project.source.width)), height: max(1, CGFloat(project.source.height)))
+        let half = 0.5 / max(1, zoom.scale)
+        let box = ZoomCurve.View(scale: zoom.scale, centerX: min(max(zoom.focusX, half), 1 - half),
+                                 centerY: min(max(zoom.focusY, half), 1 - half)).rect
+        let whole = CGRect(x: 0, y: 0, width: 1, height: 1)
+        // Without a frame the canvas is the picture.
+        guard zoom.target == .canvas, let frame = project.frame else {
+            return FocusPickerLayout(aspect: source.width / source.height, tile: whole, crop: whole, box: box, frame: nil)
+        }
+        let sizes = EditRenderer.outputSizes(source: source, maxHeight: 0, aspect: frame.aspect)
+        // The renderer's placement. A cover crop follows the cursor while the movie plays; the picker shows it centred.
+        let placement = Looks.framePlacement(frame, picture: sizes.picture, canvas: sizes.canvas)
+        // Core Image counts y from the bottom, the picker from the top.
+        func topLeft(_ rect: CGRect, of size: CGSize) -> CGRect {
+            CGRect(x: rect.minX / size.width, y: 1 - rect.maxY / size.height, width: rect.width / size.width, height: rect.height / size.height)
+        }
+        return FocusPickerLayout(aspect: sizes.canvas.width / sizes.canvas.height, tile: topLeft(placement.inner, of: sizes.canvas),
+                                 crop: placement.crop.map { topLeft($0, of: sizes.picture) } ?? whole, box: box, frame: frame)
+    }
+
+    /// The focus a point of a picker `size` large stands for, kept inside the space.
+    func focus(at point: CGPoint, size: CGSize) -> (x: Double, y: Double) {
+        (min(max(0, Double(point.x / max(1, size.width))), 1), min(max(0, Double(point.y / max(1, size.height))), 1))
+    }
+}
+
 /// The frame under the zoom with the zoomed rectangle on it; dragging moves the focus.
 private struct FocusPicker: View {
     @Bindable var model: EditorModel
     let zoom: EditProject.Zoom
 
     var body: some View {
-        let aspect = CGFloat(model.project.source.width) / CGFloat(max(1, model.project.source.height))
+        let layout = FocusPickerLayout.make(project: model.project, zoom: zoom)
         GeometryReader { geometry in
             let size = geometry.size
-            let side = 1 / zoom.scale
-            let rect = CGRect(x: (min(max(zoom.focusX, side / 2), 1 - side / 2) - side / 2) * size.width,
-                              y: (min(max(zoom.focusY, side / 2), 1 - side / 2) - side / 2) * size.height,
-                              width: side * size.width, height: side * size.height)
+            let rect = Self.scaled(layout.box, to: size)
+            let tile = Self.scaled(layout.tile, to: size)
             ZStack(alignment: .topLeading) {
-                if let tile = model.filmstrip.tile(atSource: zoom.startUs) {
-                    Image(decorative: tile.image, scale: 1).resizable().aspectRatio(contentMode: .fill)
-                        .frame(width: size.width, height: size.height).clipped()
+                if let frame = layout.frame {
+                    Rectangle().fill(Self.fill(frame.background))
                 } else {
                     Color.black
                 }
+                Group {
+                    if let image = model.filmstrip.tile(atSource: zoom.startUs)?.image {
+                        let full = CGSize(width: tile.width / max(1e-6, layout.crop.width), height: tile.height / max(1e-6, layout.crop.height))
+                        Image(decorative: image, scale: 1).resizable()
+                            .frame(width: full.width, height: full.height)
+                            .offset(x: -layout.crop.minX * full.width, y: -layout.crop.minY * full.height)
+                    } else {
+                        Color.black
+                    }
+                }
+                .frame(width: tile.width, height: tile.height, alignment: .topLeading)
+                .clipShape(RoundedRectangle(cornerRadius: (layout.frame?.cornerRadius ?? 0) * min(size.width, size.height), style: .continuous))
+                .offset(x: tile.minX, y: tile.minY)
                 Color.black.opacity(0.35)
                 RoundedRectangle(cornerRadius: 4).strokeBorder(Color.white, lineWidth: 1.5)
                     .frame(width: rect.width, height: rect.height)
@@ -359,9 +439,10 @@ private struct FocusPicker: View {
             }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                let focus = layout.focus(at: value.location, size: size)
                 model.updateZoom(zoom.id) {
-                    $0.focusX = Double(value.location.x / size.width)
-                    $0.focusY = Double(value.location.y / size.height)
+                    $0.focusX = focus.x
+                    $0.focusY = focus.y
                     if $0.mode == .follow, model.cursor != nil {
                         $0.mode = .manual
                         model.show("Set to Manual: the zoom holds the place you picked.", error: false)
@@ -369,11 +450,12 @@ private struct FocusPicker: View {
                 }
             })
         }
-        .aspectRatio(aspect, contentMode: .fit)
+        .aspectRatio(layout.aspect, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement()
         .accessibilityLabel("Zoom focus")
-        .accessibilityValue("x \(Int((zoom.focusX * 100).rounded()))%, y \(Int((zoom.focusY * 100).rounded()))%")
+        .accessibilityValue("x \(Int((zoom.focusX * 100).rounded()))%, y \(Int((zoom.focusY * 100).rounded()))%"
+            + (layout.frame == nil ? "" : " of the canvas"))
         .accessibilityAdjustableAction { direction in nudgeFocus(dx: direction == .increment ? 0.02 : -0.02, dy: 0) }
         .accessibilityAction(named: "Move Up") { nudgeFocus(dx: 0, dy: -0.02) }
         .accessibilityAction(named: "Move Down") { nudgeFocus(dx: 0, dy: 0.02) }
@@ -385,12 +467,28 @@ private struct FocusPicker: View {
         .accessibilityIdentifier("recorder.zoom.focus")
     }
 
-    /// The keyboard and VoiceOver path to aim the zoom: 2 % of the picture per step, kept inside it.
+    /// The keyboard and VoiceOver path to aim the zoom: 2 % of the picker's space per step (the picture, or the canvas
+    /// for a canvas zoom), kept inside it.
     private func nudgeFocus(dx: Double, dy: Double) {
         model.updateZoom(zoom.id) {
             $0.focusX = min(max(0, $0.focusX + dx), 1)
             $0.focusY = min(max(0, $0.focusY + dy), 1)
             if $0.mode == .follow { $0.mode = .manual }
+        }
+    }
+
+    private static func scaled(_ rect: CGRect, to size: CGSize) -> CGRect {
+        CGRect(x: rect.minX * size.width, y: rect.minY * size.height, width: rect.width * size.width, height: rect.height * size.height)
+    }
+
+    /// The frame's background as the picker draws it: an image background shows its first color, as the renderer does
+    /// while the picture is missing, so the inspector reads no file.
+    private static func fill(_ background: EditProject.Background) -> AnyShapeStyle {
+        switch background.kind {
+        case .none: AnyShapeStyle(Color.black)
+        case .gradient where background.colors.count > 1:
+            AnyShapeStyle(LinearGradient(colors: background.colors.map(swiftColor), startPoint: .topLeading, endPoint: .bottomTrailing))
+        case .color, .gradient, .image: AnyShapeStyle(background.colors.first.map(swiftColor) ?? .black)
         }
     }
 }
@@ -570,12 +668,12 @@ private struct StyleInspector: View {
                 }
                 SectionLabel(text: "Padding", value: "\(Int((frame.padding * 100).rounded()))%")
                 Slider(value: Binding(get: { frame.padding }, set: { value in model.setLooks { $0.frame?.padding = (value * 200).rounded() / 200 } }),
-                       in: 0...0.2)
+                       in: EditLimits.framePadding)
                     .accessibilityLabel("Padding")
                     .accessibilityIdentifier("recorder.style.padding")
-                SectionLabel(text: "Corners", value: sizeLabel(frame.cornerRadius, model.project))
+                SectionLabel(text: "Corners", value: sizeLabel(frame.cornerRadius, model, .canvasShort))
                 Slider(value: Binding(get: { frame.cornerRadius }, set: { value in model.setLooks { $0.frame?.cornerRadius = (value * 1000).rounded() / 1000 } }),
-                       in: 0...0.05)
+                       in: EditLimits.frameCornerRadius)
                     .accessibilityLabel("Corners")
                     .accessibilityIdentifier("recorder.style.corners")
                 SwitchRow("Shadow", isOn: Binding(get: { frame.shadow }, set: { on in model.setLooks { $0.frame?.shadow = on } }))
@@ -612,11 +710,7 @@ struct CursorInspector: View {
                 .accessibilityIdentifier("recorder.style.clicks")
                 .instantTooltip("A ring at each click as it plays. To move or delete single marks, Annotate → Circle Every Click adds editable circles instead.")
                 SwitchRow("Click sound", isOn: Binding(get: { clicks?.sound == true }, set: { on in
-                    model.setLooks { project in
-                        var next = project.clicks ?? EditProject.Clicks()
-                        next.sound = on ? true : nil
-                        project.clicks = next
-                    }
+                    model.setLooks { $0.clicks = EditProject.Clicks.settingSound(on, in: $0.clicks) }
                 }))
                 .instantTooltip("A soft tick at each click in the movie's sound; off by default")
                 .accessibilityIdentifier("recorder.style.clickSound")
@@ -638,9 +732,9 @@ struct CursorInspector: View {
                         .accessibilityLabel("Click color \(Self.clickColorNames[hex] ?? hex)")
                     }
                 }
-                SectionLabel(text: "Size", value: sizeLabel(clicks.radius, model.project))
+                SectionLabel(text: "Size", value: sizeLabel(clicks.radius, model, .pictureHeight))
                 Slider(value: Binding(get: { clicks.radius }, set: { value in model.setLooks { $0.clicks?.radius = (value * 1000).rounded() / 1000 } }),
-                       in: 0.01...0.1)
+                       in: EditLimits.clicksRadius)
                     .accessibilityLabel("Click size")
                     .accessibilityIdentifier("recorder.style.clickSize")
             }
@@ -675,15 +769,15 @@ struct CursorInspector: View {
                             SectionLabel(text: "Hide after", value: String(format: "%.1f s", Double(hide) / 1000))
                             Slider(value: Binding(get: { Double(hide) }, set: { value in
                                 model.setCursor { $0.hideAfterMs = Int((value / 250).rounded() * 250) }
-                            }), in: 500...5000)
+                            }), in: 250...EditLimits.cursorHideAfterMs.upperBound)
                                 .accessibilityLabel("Hide the cursor after")
                                 .accessibilityIdentifier("recorder.style.cursorHideAfter")
                         }
                     }
                 }
                 if cursor.show { SmoothCursorSection(model: model) } // fx B (round 4)
-            } else if model.cursor != nil {
-                Text("This recording has the system cursor in its picture. Record without --system-cursor to draw a smoothed cursor of any size.")
+            } else if let track = model.cursor, let note = EditorView.cursorNote(for: track) {
+                Text(note)
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -712,9 +806,9 @@ private struct CaptionsInspector: View {
                     GenSegmentedTabs("Shortcuts position", items: EditProject.CaptionPosition.allCases.map { .init($0, $0.rawValue.capitalized) },
                                      selection: Binding(get: { keys.position }, set: { value in model.setLooks { $0.keys?.position = value } }),
                                      minSegmentWidth: 60, identifier: "recorder.style.keysPosition", fillsWidth: true)
-                    SectionLabel(text: "Shortcut size", value: sizeLabel(keys.size, model.project))
+                    SectionLabel(text: "Shortcut size", value: sizeLabel(keys.size, model, .canvasShort, atLeast: 8))
                     Slider(value: Binding(get: { keys.size }, set: { value in model.setLooks { $0.keys?.size = (value * 1000).rounded() / 1000 } }),
-                           in: 0.03...0.1)
+                           in: EditLimits.keysSize)
                         .accessibilityLabel("Shortcut size")
                         .accessibilityIdentifier("recorder.style.keysSize")
                 }
@@ -743,9 +837,9 @@ private struct CaptionsInspector: View {
                     GenSegmentedTabs("Captions position", items: EditProject.CaptionPosition.allCases.map { .init($0, $0.rawValue.capitalized) },
                                      selection: Binding(get: { captions.position }, set: { value in model.setLooks { $0.captions?.position = value } }),
                                      minSegmentWidth: 60, identifier: "recorder.style.captionsPosition", fillsWidth: true)
-                    SectionLabel(text: "Text size", value: sizeLabel(captions.size, model.project))
+                    SectionLabel(text: "Text size", value: sizeLabel(captions.size, model, .canvasShort, atLeast: 8))
                     Slider(value: Binding(get: { captions.size }, set: { value in model.setLooks { $0.captions?.size = (value * 1000).rounded() / 1000 } }),
-                           in: 0.025...0.08)
+                           in: EditLimits.captionsSize)
                         .accessibilityLabel("Caption text size")
                         .accessibilityIdentifier("recorder.style.captionsSize")
                     // R4 6 karaoke captions
@@ -772,13 +866,32 @@ private struct CaptionsInspector: View {
 
 }
 
-/// A size kept as a fraction of the picture's short side, in pixels of the export ("6 px · 0.5%"), so a user can
-/// picture it; the stored value stays relative.
+/// What the renderer sizes a relative value by: the canvas's short side (texts, captions, shortcut keys, the frame's
+/// corners), the picture's short side (a shape's line) or the picture's height (the click rings).
+enum SizeBasis {
+    case canvasShort, pictureShort, pictureHeight
+
+    /// The pixels the export draws `fraction` at, on its planned canvas (EditRenderer.plannedOutput, so the frame's
+    /// shape, a fixed size and the H.264 budget count); `atLeast` is the renderer's floor (8 for a text's font).
+    func pixels(_ fraction: Double, in project: EditProject, nominalFps: Double? = nil, atLeast: Double = 0) -> Int {
+        let plan = EditRenderer.plannedOutput(export: project.export,
+                                              source: CGSize(width: project.source.width, height: project.source.height),
+                                              aspect: project.frame?.aspect, nominalFps: nominalFps)
+        let basis = switch self {
+        case .canvasShort: min(plan.canvas.width, plan.canvas.height)
+        case .pictureShort: min(plan.picture.width, plan.picture.height)
+        case .pictureHeight: plan.picture.height
+        }
+        return Int(max(atLeast, (fraction * Double(basis)).rounded()))
+    }
+}
+
+/// A size kept as a fraction, in pixels of the export ("6 px · 0.5%"), so a user can picture it; the stored value
+/// stays relative.
 @MainActor
-private func sizeLabel(_ fraction: Double, _ project: EditProject) -> String {
-    let short = Double(min(project.source.width, project.source.height))
-    let exported = project.export.maxHeight > 0 ? min(short, Double(project.export.maxHeight)) : short
-    return "\(Int((fraction * exported).rounded())) px · " + String(format: "%.1f%%", fraction * 100)
+private func sizeLabel(_ fraction: Double, _ model: EditorModel, _ basis: SizeBasis, atLeast: Double = 0) -> String {
+    "\(basis.pixels(fraction, in: model.project, nominalFps: model.sourceNominalFps, atLeast: atLeast)) px · "
+        + String(format: "%.1f%%", fraction * 100)
 }
 
 private func swiftColor(_ hex: String) -> Color {
@@ -835,9 +948,8 @@ struct CaptionLinesList: View {
                         }
                         .buttonStyle(.genHoverPlain())
                         .instantTooltip("Go to this line")
-                        TextField("", text: Binding(get: { hidden ? line.text : (fixes[key] ?? line.text) }, set: { value in
-                            model.fixCaption(line, text: value == line.text ? nil : value)
-                        }), axis: .vertical)
+                        DraftTextField(title: "", stored: hidden ? line.text : (fixes[key] ?? line.text), words: EditLimits.captionFix,
+                                       axis: .vertical, refuse: { model.show($0, error: true) }) { model.typeCaption(line, text: $0) }
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                         .foregroundStyle(hidden ? RecorderPalette.dim : RecorderPalette.text)
@@ -961,7 +1073,7 @@ private struct TextInspector: View {
             }
             if !model.markers.isEmpty {
                 WideButton(title: "Title Every Marker", systemImage: "list.number") { model.titleMarkers() }
-                    .instantTooltip("A 2.5 s step title at each of the \(Plural.count(model.markers.count, "marker")) set while recording (\"1. \(model.markers[0].label)\"); ⌘Z takes them back")
+                    .instantTooltip("A step title that plays 2.5 s of the finished movie at each of the \(Plural.count(model.markers.count, "marker")) set while recording (\"1. \(model.markers[0].label)\"); ⌘Z takes them back")
                     .accessibilityIdentifier("recorder.text.titleMarkers")
             }
             if let clicks = model.cursor?.clicks.count, clicks > 0 {
@@ -1029,10 +1141,10 @@ private struct TextInspector: View {
     private func editor(_ note: EditProject.TextNote) -> some View {
         let id = note.id
         return VStack(alignment: .leading, spacing: 8) {
-            TextField("Text", text: Binding(get: { note.text }, set: { value in
-                let words = String(value.prefix(200))
+            DraftTextField(title: "Text", stored: note.text, words: EditLimits.text, axis: .vertical,
+                           refuse: { model.show($0, error: true) }) { words in
                 if !words.trimmingCharacters(in: .whitespaces).isEmpty { model.updateText(id) { $0.text = words } }
-            }), axis: .vertical)
+            }
             .lineLimit(1...3)
             .textFieldStyle(.roundedBorder)
             .accessibilityIdentifier("recorder.text.words")
@@ -1053,13 +1165,14 @@ private struct TextInspector: View {
             GenSegmentedTabs("Style", items: [.init(EditProject.TextStyle.plate, "On a plate"), .init(.plain, "Plain")],
                              selection: Binding(get: { note.style }, set: { value in model.updateText(id) { $0.style = value } }),
                              minSegmentWidth: 90, identifier: "recorder.text.style", fillsWidth: true)
-            SectionLabel(text: "Size", value: sizeLabel(note.size, model.project))
+            SectionLabel(text: "Size", value: sizeLabel(note.size, model, .canvasShort, atLeast: 8))
             Slider(value: Binding(get: { note.size }, set: { value in model.updateText(id) { $0.size = (value * 1000).rounded() / 1000 } }), in: 0.02...0.15)
                 .accessibilityLabel("Text size")
                 .accessibilityIdentifier("recorder.text.size")
             // R4 6 animated texts
             TextAnimateControls(model: model, note: note)
-            SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(note.endUs - note.startUs) / 1_000_000))
+            // The slider sets the length in the recording, as the ops take it; the row says how long it plays.
+            SectionLabel(text: "Lasts", value: editLength(model.project, fromUs: note.startUs, toUs: note.endUs))
             Slider(value: Binding(get: { Double(note.endUs - note.startUs) / 1_000_000 }, set: { value in
                 model.updateText(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
             }), in: 0.2...max(0.3, Double(model.project.source.durationUs - note.startUs) / 1_000_000))
@@ -1138,14 +1251,17 @@ private struct RedactionEditor: View {
 
     var body: some View {
         let id = redaction.id
+        // A part with keyframes follows its text: the controls show and move its box at its start, and every key with it.
+        let tracked = redaction.track?.isEmpty == false
+        let shown = RedactionTrack.shownRect(redaction, atSourceUs: redaction.startUs)
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Name (what it hides)", text: Binding(get: { redaction.label ?? "" }, set: { value in
+            DraftTextField(title: "Name (what it hides)", stored: redaction.label ?? "", refuse: { model.show($0, error: true) }) { value in
                 let name = String(value.prefix(60))
                 model.updateRedaction(id) { $0.label = name.trimmingCharacters(in: .whitespaces).isEmpty ? nil : name }
-            }))
+            }
             .textFieldStyle(.roundedBorder)
             .accessibilityIdentifier("recorder.hide.name")
-            if redaction.follow == true {
+            if redaction.follow == true && !tracked {
                 Text("Centred on the pointer: only its size below counts.")
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1163,9 +1279,10 @@ private struct RedactionEditor: View {
             SwitchRow("Follow the cursor", isOn: Binding(get: { redaction.follow == true }, set: { on in
                 model.updateRedaction(id) { $0.follow = on ? true : nil }
             }))
-            .disabled(model.cursor == nil)
+            .disabled(model.cursor == nil || tracked)
             .accessibilityIdentifier("recorder.hide.follow")
-            .instantTooltip(model.cursor == nil ? "This recording has no cursor track"
+            .instantTooltip(tracked ? "This part follows its text through its keyframes, so it cannot follow the pointer"
+                            : model.cursor == nil ? "This recording has no cursor track"
                             : "The part keeps its size and moves with the pointer, so a spotlight lights where you point")
             if redaction.style == .spotlight {
                 GenSegmentedTabs("Lit shape", items: [.init(EditProject.SpotlightCutout.rounded, "Rounded"), .init(.rect, "Rectangle"), .init(.circle, "Circle")],
@@ -1187,13 +1304,25 @@ private struct RedactionEditor: View {
                 }), in: 0...0.3)
                     .accessibilityLabel("How far the dim fades in from the lit shape")
             }
-            SectionLabel(text: "Width", value: "\(Int((redaction.width * 100).rounded()))%")
-            Slider(value: Binding(get: { redaction.width }, set: { value in model.updateRedaction(id) { $0.width = (value * 200).rounded() / 200 } }), in: 0.02...1)
+            SectionLabel(text: "Width", value: "\(Int((shown.width * 100).rounded()))%")
+            Slider(value: Binding(get: { Double(shown.width) }, set: { value in
+                model.updateRedaction(id) { part in
+                    var box = RedactionTrack.shownRect(part, atSourceUs: part.startUs)
+                    box.size.width = (value * 200).rounded() / 200
+                    part = RedactionTrack.moved(part, to: box, atSourceUs: part.startUs)
+                }
+            }), in: 0.02...1)
                 .accessibilityLabel("Hidden part width")
-            SectionLabel(text: "Height", value: "\(Int((redaction.height * 100).rounded()))%")
-            Slider(value: Binding(get: { redaction.height }, set: { value in model.updateRedaction(id) { $0.height = (value * 200).rounded() / 200 } }), in: 0.02...1)
+            SectionLabel(text: "Height", value: "\(Int((shown.height * 100).rounded()))%")
+            Slider(value: Binding(get: { Double(shown.height) }, set: { value in
+                model.updateRedaction(id) { part in
+                    var box = RedactionTrack.shownRect(part, atSourceUs: part.startUs)
+                    box.size.height = (value * 200).rounded() / 200
+                    part = RedactionTrack.moved(part, to: box, atSourceUs: part.startUs)
+                }
+            }), in: 0.02...1)
                 .accessibilityLabel("Hidden part height")
-            SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(redaction.endUs - redaction.startUs) / 1_000_000))
+            SectionLabel(text: "Lasts", value: editLength(model.project, fromUs: redaction.startUs, toUs: redaction.endUs))
             Slider(value: Binding(get: { Double(redaction.endUs - redaction.startUs) / 1_000_000 }, set: { value in
                 model.updateRedaction(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
             }), in: 0.2...max(0.3, Double(model.project.source.durationUs - redaction.startUs) / 1_000_000))
@@ -1210,11 +1339,12 @@ private struct RedactionThumb: View {
     let redaction: EditProject.Redaction
 
     var body: some View {
+        let shown = RedactionTrack.shownRect(redaction, atSourceUs: redaction.startUs)
         Group {
             if let tile = model.filmstrip.tile(atSource: redaction.startUs),
-               let crop = tile.image.cropping(to: CGRect(x: redaction.x * Double(tile.image.width), y: redaction.y * Double(tile.image.height),
-                                                         width: max(1, redaction.width * Double(tile.image.width)),
-                                                         height: max(1, redaction.height * Double(tile.image.height))).integral) {
+               let crop = tile.image.cropping(to: CGRect(x: shown.minX * Double(tile.image.width), y: shown.minY * Double(tile.image.height),
+                                                         width: max(1, shown.width * Double(tile.image.width)),
+                                                         height: max(1, shown.height * Double(tile.image.height))).integral) {
                 Image(decorative: crop, scale: 1).resizable().aspectRatio(contentMode: .fill)
             } else {
                 Image(systemName: "eye.slash").font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
@@ -1237,8 +1367,10 @@ private struct RedactionPicker: View {
         let aspect = CGFloat(model.project.source.width) / CGFloat(max(1, model.project.source.height))
         GeometryReader { geometry in
             let size = geometry.size
-            let rect = CGRect(x: redaction.x * size.width, y: redaction.y * size.height,
-                              width: redaction.width * size.width, height: redaction.height * size.height)
+            // Where the part shows at its start: a part with keyframes moves them all with this box.
+            let shown = RedactionTrack.shownRect(redaction, atSourceUs: redaction.startUs)
+            let rect = CGRect(x: shown.minX * size.width, y: shown.minY * size.height,
+                              width: shown.width * size.width, height: shown.height * size.height)
             ZStack(alignment: .topLeading) {
                 if let tile = model.filmstrip.tile(atSource: redaction.startUs) {
                     Image(decorative: tile.image, scale: 1).resizable().aspectRatio(contentMode: .fill)
@@ -1258,9 +1390,10 @@ private struct RedactionPicker: View {
                     ? CGSize(width: value.startLocation.x - rect.minX, height: value.startLocation.y - rect.minY)
                     : CGSize(width: rect.width / 2, height: rect.height / 2))
                 grab = offset
-                model.updateRedaction(redaction.id) {
-                    $0.x = Double((value.location.x - offset.width) / size.width)
-                    $0.y = Double((value.location.y - offset.height) / size.height)
+                model.updateRedaction(redaction.id) { part in
+                    var box = RedactionTrack.shownRect(part, atSourceUs: part.startUs)
+                    box.origin = CGPoint(x: (value.location.x - offset.width) / size.width, y: (value.location.y - offset.height) / size.height)
+                    part = RedactionTrack.moved(part, to: box, atSourceUs: part.startUs)
                 }
             }.onEnded { _ in grab = nil })
         }
@@ -1386,6 +1519,22 @@ private struct NoiseReductionSection: View {
 }
 
 /// Music under the movie: a file, its level and how far it dips under speech.
+// R4 8 music ducking
+/// Why the music under the music settings ducks under nothing, by check()'s rule (voiceovers.ts `musicDucking`): the
+/// renderer's drop (`MusicMix.Duck.of`), under the transcript's lines unless the ducking object turns that off, and
+/// under the voiceovers unless it turns those off. nil when something ducks it or it asks for no drop.
+enum MusicDuckHint {
+    static func text(_ project: EditProject, hasTranscript: Bool) -> String? {
+        let ducking = project.audio.ducking
+        let underVoiceovers = (ducking?.voiceovers ?? true) && !(project.audio.voiceovers ?? []).isEmpty
+        guard project.audio.music != nil, MusicMix.Duck.of(project).drop > 0, !underVoiceovers else { return nil }
+        guard ducking?.transcript ?? true else {
+            return "Nothing ducks: the music drops only under voiceovers here (Under the transcript's lines is off), and the edit has none."
+        }
+        return hasTranscript ? nil : "Nothing ducks yet: the movie has no transcript (Captions tab → Transcribe)."
+    }
+}
+
 private struct MusicSection: View {
     @Bindable var model: EditorModel
     /// The chosen file's length in seconds, read once per file, for the "Starts at" slider.
@@ -1454,8 +1603,8 @@ private struct MusicSection: View {
                     .instantTooltip("While a transcript line or a voiceover plays the music drops by this much, so speech stays clear")
                 }
                 DuckingSection(model: model)
-                if model.zoom.captionLines.isEmpty && (model.project.audio.voiceovers ?? []).isEmpty && music.duck > 0 {
-                    Text("Nothing ducks yet: the movie has no transcript (Captions tab → Transcribe).")
+                if let hint = MusicDuckHint.text(model.project, hasTranscript: !model.zoom.captionLines.isEmpty) {
+                    Text(hint)
                         .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1607,6 +1756,10 @@ private struct ExportInspector: View {
 
     var body: some View {
         let settings = model.project.export
+        // The export's own size rule: its frame rate, a fixed size and the H.264 budget, so the labels match the file.
+        let plan = EditRenderer.plannedOutput(export: settings,
+                                              source: CGSize(width: model.project.source.width, height: model.project.source.height),
+                                              aspect: model.project.frame?.aspect, nominalFps: model.sourceNominalFps)
         VStack(alignment: .leading, spacing: 12) {
             Text("Export").font(.system(size: 15, weight: .semibold))
                 // Once the edit rests for 0.4 s after a save: a drag saves many revisions, and each check is a tools run.
@@ -1653,6 +1806,19 @@ private struct ExportInspector: View {
                 GenSegmentedTabs("Size", items: offered.map { .init($0, $0 == 0 ? "Source" : ($0 == 2160 ? "4K" : "\($0)p")) },
                                  selection: Binding(get: { settings.maxHeight }, set: { value in model.setExport { $0.maxHeight = value } }),
                                  minSegmentWidth: 36, identifier: "recorder.export.size", fillsWidth: true)
+                // A fixed size (the exportSettings op) wins over Size and the presets, so it says so and can be cleared.
+                if let fixed = settings.size, fixed.width != nil || fixed.height != nil {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(verbatim: "The edit asks for exactly \(Int(plan.canvas.width)) × \(Int(plan.canvas.height)); that wins over Size and the presets.")
+                            .font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        IconButton(systemName: "xmark.circle.fill", tooltip: "Clear the fixed size: Size and the presets decide again", size: 12) {
+                            model.setExport { $0.size = nil }
+                        }
+                        .accessibilityIdentifier("recorder.export.clearSize")
+                    }
+                }
             }
             // A GIF has no sound and no player for subtitles or chapters; WebM players read WebVTT; only an MP4 carries chapters.
             if settings.format != .gif {
@@ -1674,19 +1840,17 @@ private struct ExportInspector: View {
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            let source = CGSize(width: model.project.source.width, height: model.project.source.height)
-            // A screen recording exports at 60 fps; the label uses the same size rule as the export.
-            let aspect = model.project.frame?.aspect
-            let size = EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: aspect,
-                                                h264Fps: settings.codec == .h264 ? 60 : nil).canvas
-            let full = EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: aspect).canvas
-            let capped = size.height < full.height
+            let size = plan.canvas
             let movie = (settings.format ?? .mp4) == .mp4
             let part = model.exportPart
             let length = part.map { $0.toUs - $0.fromUs } ?? model.durationUs
+            // A whole export plays its intro and end cards around the movie (a part has none). The file size estimate
+            // keeps the movie's length: card frames are about 5 % of the file.
+            let cards = part == nil ? CardSpans.cardsNote(model.project) : nil
+            let fileLength = part == nil ? CardSpans.exportLengthUs(model.project) : length
             HStack {
                 SectionLabel(text: "Part", value: part.map { formatClockRange($0.fromUs, $0.toUs) }
-                    ?? "Everything (\(formatClock(model.durationUs, tenths: true)))")
+                    ?? "Everything (\(formatClock(model.durationUs, tenths: true))\(cards == nil ? "" : " + cards"))")
                 if part != nil {
                     IconButton(systemName: "xmark.circle.fill", tooltip: "Export the whole edit again", size: 12) { model.clearPart() }
                         .accessibilityIdentifier("recorder.export.clearPart")
@@ -1703,20 +1867,20 @@ private struct ExportInspector: View {
                     .font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(length, tenths: true))"
-                                                      : formatClock(length, tenths: true))
+            let played = formatClock(fileLength, tenths: true) + (cards.map { " (\($0))" } ?? "")
+            SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(played)" : played)
             if movie {
-                let bytes = EditExporter.estimatedBytes(size: size, lengthUs: length, codec: settings.codec)
+                let bytes = EditExporter.estimatedBytes(size: size, lengthUs: length, codec: settings.codec, fps: plan.fps)
                 SectionLabel(text: "File size", value: "about \(ByteFormat.file(bytes))")
-                    .instantTooltip("From screen exports of this kind (about 0.08 bits per pixel and frame at 60 fps, HEVC 40 % less); a busy movie can be twice as large")
+                    .instantTooltip("From screen exports of this kind (about 0.08 bits per pixel and frame, at the export's \(Int(plan.fps)) fps, HEVC 40 % less); a busy movie can be twice as large")
                 if bytes > 25_000_000 {
                     Text("Many chats take 25 MB at most: the Chat preset (720p) or a part from In to Out makes it smaller.")
                         .font(.system(size: 11)).foregroundStyle(Color.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if capped && movie {
-                Text(verbatim: "H.264 at 60 fps stops at \(Int(size.width)) × \(Int(size.height)). HEVC keeps \(Int(full.width)) × \(Int(full.height)).")
+            if plan.budgetCapped && movie {
+                Text(verbatim: "H.264 at \(Int(plan.fps)) fps stops at \(Int(size.width)) × \(Int(size.height)). HEVC keeps \(Int(plan.unbudgeted.width)) × \(Int(plan.unbudgeted.height)).")
                     .font(.system(size: 11))
                     .foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1771,7 +1935,7 @@ private struct PreviewView: View {
                     .aspectRatio(aspect, contentMode: .fit)
                     .padding(28)
             } else {
-                picture(aspect: aspect)
+                picture(aspect: aspect, canvas: canvas)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1779,7 +1943,7 @@ private struct PreviewView: View {
         .accessibilityLabel("Preview")
     }
 
-    private func picture(aspect: CGFloat) -> some View {
+    private func picture(aspect: CGFloat, canvas: CGSize) -> some View {
             Group {
                 if let still {
                     Image(decorative: still, scale: 1).resizable()
@@ -1797,7 +1961,7 @@ private struct PreviewView: View {
                     CameraBubbleHandle(model: model, clock: model.clock)
                 } else if model.tab == .text && !model.isPlaying {
                     ZStack {
-                        TextHandles(model: model, clock: model.clock)
+                        TextHandles(model: model, clock: model.clock, canvas: canvas)
                         ShapeHandles(model: model, clock: model.clock)
                     }
                 } else if model.tab == .find && !model.isPlaying {
@@ -1861,6 +2025,73 @@ private struct PreviewProblemView: View {
     }
 }
 
+/// What a drag on the Hide tab's preview does to a hidden part or spotlight. A part is stored whole, in source
+/// fractions, and the renderer hides all of it; the outline shows only the piece the picture shows, because a zoom or a
+/// cover crop can put the rest outside it. So a drag starts from the whole part and moves it whole: writing the shown
+/// piece back made a plain click shrink the part, and outside the zoom the export no longer hid the rest. A grip sits
+/// on the shown corner, and its edge follows the pointer while the pointer is inside the picture. Out past the
+/// picture's edge nobody sees the edge, so one that already reached further keeps its place there.
+enum HiddenPartDrag {
+    enum Grip: CaseIterable { case topLeft, topRight, bottomLeft, bottomRight }
+
+    /// A canvas rect (0...1 from the top left) in the overlay's points.
+    static func viewRect(_ canvas: CGRect, size: CGSize) -> CGRect {
+        CGRect(x: canvas.minX * size.width, y: canvas.minY * size.height, width: canvas.width * size.width, height: canvas.height * size.height)
+    }
+
+    /// The piece of the part the picture shows, in the overlay's points: the outline, and where the grips sit. Nil when
+    /// none of it shows, so the part has no outline and no grips to drag.
+    static func shown(_ stored: CGRect, size: CGSize, map: Looks.SourceToCanvas) -> CGRect? {
+        let piece = map.rect(stored).intersection(map.shown)
+        guard !piece.isNull, piece.width > 0, piece.height > 0 else { return nil }
+        return viewRect(piece, size: size)
+    }
+
+    /// The whole part moved by a drag of `delta` points.
+    static func moved(_ stored: CGRect, by delta: CGSize, size: CGSize, map: Looks.SourceToCanvas) -> CGRect {
+        source(viewRect(map.rect(stored), size: size).offsetBy(dx: delta.width, dy: delta.height), size: size, map: map)
+    }
+
+    /// The part with the edges at `grip` dragged by `delta` points; the edges it did not grab stay where they are.
+    static func resized(_ stored: CGRect, grip: Grip, by delta: CGSize, size: CGSize, map: Looks.SourceToCanvas) -> CGRect {
+        let whole = viewRect(map.rect(stored), size: size), picture = viewRect(map.shown, size: size)
+        // A grabbed edge starts where it shows, under the grip, and goes with the pointer inside the picture.
+        func low(_ edge: CGFloat, _ bound: CGFloat, _ by: CGFloat) -> CGFloat {
+            let to = max(edge, bound) + by
+            return to <= bound ? min(edge, to) : to
+        }
+        func high(_ edge: CGFloat, _ bound: CGFloat, _ by: CGFloat) -> CGFloat {
+            let to = min(edge, bound) + by
+            return to >= bound ? max(edge, to) : to
+        }
+        var minX = whole.minX, minY = whole.minY, maxX = whole.maxX, maxY = whole.maxY
+        switch grip {
+        case .topLeft, .bottomLeft: minX = low(minX, picture.minX, delta.width)
+        case .topRight, .bottomRight: maxX = high(maxX, picture.maxX, delta.width)
+        }
+        switch grip {
+        case .topLeft, .topRight: minY = low(minY, picture.minY, delta.height)
+        case .bottomLeft, .bottomRight: maxY = high(maxY, picture.maxY, delta.height)
+        }
+        let sized = CGRect(x: min(minX, maxX - 4), y: min(minY, maxY - 4), width: max(4, abs(maxX - minX)), height: max(4, abs(maxY - minY)))
+        return source(sized, size: size, map: map)
+    }
+
+    static func corner(_ grip: Grip, of rect: CGRect) -> CGPoint {
+        switch grip {
+        case .topLeft: CGPoint(x: rect.minX, y: rect.minY)
+        case .topRight: CGPoint(x: rect.maxX, y: rect.minY)
+        case .bottomLeft: CGPoint(x: rect.minX, y: rect.maxY)
+        case .bottomRight: CGPoint(x: rect.maxX, y: rect.maxY)
+        }
+    }
+
+    private static func source(_ rect: CGRect, size: CGSize, map: Looks.SourceToCanvas) -> CGRect {
+        map.sourceRect(ofCanvas: CGRect(x: rect.minX / size.width, y: rect.minY / size.height,
+                                        width: rect.width / size.width, height: rect.height / size.height))
+    }
+}
+
 /// The Hide tab on the preview itself: every hidden part showing at the playhead is outlined where it lands (through
 /// the zoom and the frame); the selected one has a dashed frame to drag and corner handles to size it. With none
 /// selected, a drag on the picture draws a new hidden part from the playhead.
@@ -1868,9 +2099,8 @@ private struct HiddenPartHandles: View {
     @Bindable var model: EditorModel
     let clock: PlayheadClock
     @State private var drawing: CGRect?
+    /// The part's box at the playhead when the drag began, in source fractions.
     @State private var grabbed: CGRect?
-
-    private enum Grip: CaseIterable { case topLeft, topRight, bottomLeft, bottomRight }
 
     var body: some View {
         GeometryReader { geometry in
@@ -1879,9 +2109,7 @@ private struct HiddenPartHandles: View {
             let sourceUs = TimelineMap.sourceTime(atOutput: clock.outUs, in: model.project)
             // A part that follows the cursor is outlined where the picture draws it now.
             let showing = (model.project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
-                .map { ZoomState.placed($0, atSourceUs: sourceUs, track: model.cursor) }
-            let toView = { (rect: CGRect) in CGRect(x: rect.minX * size.width, y: rect.minY * size.height,
-                                                    width: rect.width * size.width, height: rect.height * size.height) }
+                .map { ZoomState.placed($0, atSourceUs: sourceUs, track: model.cursor, pointer: CursorTrack.Pointer(model.project)) }
             ZStack(alignment: .topLeading) {
                 // The surface that draws a new part; a tap on it still plays and pauses.
                 Color.clear.contentShape(Rectangle())
@@ -1898,38 +2126,44 @@ private struct HiddenPartHandles: View {
                     })
                     .accessibilityLabel("Draw a part to hide")
                 ForEach(showing) { redaction in
-                    // Only the part the picture shows: a zoom or a cover crop can put the rest outside it.
-                    let mapped = map.rect(CGRect(x: redaction.x, y: redaction.y, width: redaction.width, height: redaction.height))
-                    let rect = toView(mapped.intersection(map.shown).isNull ? .zero : mapped.intersection(map.shown))
-                    let selected = model.selectedRedaction == redaction.id
-                    Rectangle()
-                        .strokeBorder(Color.white.opacity(selected ? 1 : 0.6), style: StrokeStyle(lineWidth: selected ? 1.5 : 1, dash: [5, 3]))
-                        .background(Color.white.opacity(selected ? 0.06 : 0.001))
-                        .frame(width: rect.width, height: rect.height)
-                        .contentShape(Rectangle())
-                        .offset(x: rect.minX, y: rect.minY)
-                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                            model.selectedRedaction = redaction.id
-                            let start = grabbed ?? rect
-                            grabbed = start
-                            move(redaction.id, to: start.offsetBy(dx: value.translation.width, dy: value.translation.height), size: size, map: map)
-                        }.onEnded { _ in grabbed = nil })
-                        .instantTooltip("\(redaction.style.rawValue.capitalized): drag to move")
-                        .accessibilityLabel("\(redaction.style == .spotlight ? "Spotlight" : "Hidden part"), \(redaction.style.rawValue)")
-                    if selected {
-                        ForEach(Grip.allCases, id: \.self) { grip in
-                            let corner = Self.corner(grip, of: rect)
-                            RoundedRectangle(cornerRadius: 2).fill(Color.white)
-                                .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Color.black.opacity(0.4), lineWidth: 1))
-                                .frame(width: 10, height: 10)
-                                .contentShape(Rectangle().inset(by: -5))
-                                .offset(x: corner.x - 5, y: corner.y - 5)
-                                .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                                    let start = grabbed ?? rect
-                                    grabbed = start
-                                    move(redaction.id, to: Self.resized(start, grip: grip, by: value.translation), size: size, map: map)
-                                }.onEnded { _ in grabbed = nil })
-                                .accessibilityHidden(true)
+                    let stored = CGRect(x: redaction.x, y: redaction.y, width: redaction.width, height: redaction.height)
+                    // Outlined only where the picture shows it; a drag still changes the whole part (HiddenPartDrag).
+                    if let rect = HiddenPartDrag.shown(stored, size: size, map: map) {
+                        let selected = model.selectedRedaction == redaction.id
+                        Rectangle()
+                            .strokeBorder(Color.white.opacity(selected ? 1 : 0.6), style: StrokeStyle(lineWidth: selected ? 1.5 : 1, dash: [5, 3]))
+                            .background(Color.white.opacity(selected ? 0.06 : 0.001))
+                            .frame(width: rect.width, height: rect.height)
+                            .contentShape(Rectangle())
+                            .offset(x: rect.minX, y: rect.minY)
+                            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                                model.selectedRedaction = redaction.id
+                                let start = grabbed ?? stored
+                                grabbed = start
+                                // A press only selects the part.
+                                guard value.translation != .zero else { return }
+                                move(redaction.id, to: HiddenPartDrag.moved(start, by: value.translation, size: size, map: map),
+                                     atSourceUs: sourceUs)
+                            }.onEnded { _ in grabbed = nil })
+                            .instantTooltip("\(redaction.style.rawValue.capitalized): drag to move")
+                            .accessibilityLabel("\(redaction.style == .spotlight ? "Spotlight" : "Hidden part"), \(redaction.style.rawValue)")
+                        if selected {
+                            ForEach(HiddenPartDrag.Grip.allCases, id: \.self) { grip in
+                                let corner = HiddenPartDrag.corner(grip, of: rect)
+                                RoundedRectangle(cornerRadius: 2).fill(Color.white)
+                                    .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Color.black.opacity(0.4), lineWidth: 1))
+                                    .frame(width: 10, height: 10)
+                                    .contentShape(Rectangle().inset(by: -5))
+                                    .offset(x: corner.x - 5, y: corner.y - 5)
+                                    .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                                        let start = grabbed ?? stored
+                                        grabbed = start
+                                        guard value.translation != .zero else { return }
+                                        move(redaction.id, to: HiddenPartDrag.resized(start, grip: grip, by: value.translation, size: size, map: map),
+                                             atSourceUs: sourceUs)
+                                    }.onEnded { _ in grabbed = nil })
+                                    .accessibilityHidden(true)
+                            }
                         }
                     }
                 }
@@ -1944,45 +2178,38 @@ private struct HiddenPartHandles: View {
         }
     }
 
-    private func move(_ id: String, to rect: CGRect, size: CGSize, map: Looks.SourceToCanvas) {
-        let canvas = CGRect(x: rect.minX / size.width, y: rect.minY / size.height,
-                            width: max(4, rect.width) / size.width, height: max(4, rect.height) / size.height)
-        let source = map.sourceRect(ofCanvas: canvas)
-        model.updateRedaction(id) {
-            $0.x = source.minX
-            $0.y = source.minY
-            $0.width = source.width
-            $0.height = source.height
-        }
-    }
-
-    private static func corner(_ grip: Grip, of rect: CGRect) -> CGPoint {
-        switch grip {
-        case .topLeft: CGPoint(x: rect.minX, y: rect.minY)
-        case .topRight: CGPoint(x: rect.maxX, y: rect.minY)
-        case .bottomLeft: CGPoint(x: rect.minX, y: rect.maxY)
-        case .bottomRight: CGPoint(x: rect.maxX, y: rect.maxY)
-        }
-    }
-
-    /// The rectangle with one corner moved; the opposite corner stays where it is.
-    private static func resized(_ rect: CGRect, grip: Grip, by delta: CGSize) -> CGRect {
-        var minX = rect.minX, minY = rect.minY, maxX = rect.maxX, maxY = rect.maxY
-        switch grip {
-        case .topLeft: minX += delta.width; minY += delta.height
-        case .topRight: maxX += delta.width; minY += delta.height
-        case .bottomLeft: minX += delta.width; maxY += delta.height
-        case .bottomRight: maxX += delta.width; maxY += delta.height
-        }
-        return CGRect(x: min(minX, maxX - 4), y: min(minY, maxY - 4), width: max(4, abs(maxX - minX)), height: max(4, abs(maxY - minY)))
+    /// Puts the part at `rect` (source fractions) where it shows now; a part with keyframes moves every key with it, so
+    /// the outline follows the drag and the export hides the new place (RedactionTrack.moved).
+    private func move(_ id: String, to rect: CGRect, atSourceUs sourceUs: Int64) {
+        model.updateRedaction(id) { $0 = RedactionTrack.moved($0, to: rect, atSourceUs: sourceUs) }
     }
 }
 
-/// The Text tab on the preview: a grip at the centre of every text showing at the playhead; a drag moves it (in the
-/// canvas, where a text lives), a click selects it.
+/// Where the Text tab's grip sits on the preview, as a share of the picture from its top left: the centre of the plate
+/// the renderer draws at rest (Looks.textPlateUnitRect, measured on the export's canvas). A text's x, y is the centre of
+/// its block, and a left- or right-aligned plate sits against the block's edge or is kept inside at the canvas's edge,
+/// so a grip at x, y floated beside the plate. The centre lies on the plate for every alignment and edge, and keeps
+/// the grip where it was for a centred text. It is the centre of the part of the plate the picture shows: a plate taller
+/// than the canvas is kept at its bottom and runs out of the top, and the overlay is not clipped to the picture, so the
+/// whole plate's centre drew the grip above the preview. textOrigin keeps the plate's corner on the canvas, so that part
+/// is never empty. A text that makes no plate keeps its grip at x, y.
+enum TextGrip {
+    static func point(_ note: EditProject.TextNote, canvas: CGSize) -> CGPoint {
+        guard let plate = Looks.textPlateUnitRect(note, canvas: canvas) else { return CGPoint(x: note.x, y: note.y) }
+        let shown = plate.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        return CGPoint(x: shown.midX, y: shown.midY)
+    }
+}
+
+/// The Text tab on the preview: a grip on the plate of every text showing at the playhead (TextGrip); a drag moves it
+/// (in the canvas, where a text lives), a click selects it.
 private struct TextHandles: View {
     @Bindable var model: EditorModel
     let clock: PlayheadClock
+    /// The canvas the export draws (PreviewView): this overlay has its shape, so a share of it times `size` is a point
+    /// here. The preview's player renders at most 1440 pixels high; its plates differ from the canvas's only by the
+    /// font size's rounding.
+    let canvas: CGSize
     @State private var grabbed: CGPoint?
 
     var body: some View {
@@ -1994,7 +2221,8 @@ private struct TextHandles: View {
                 Color.clear.allowsHitTesting(false)
                 ForEach(showing) { note in
                     let selected = model.selectedText == note.id
-                    let center = CGPoint(x: note.x * size.width, y: note.y * size.height)
+                    let grip = TextGrip.point(note, canvas: canvas)
+                    let center = CGPoint(x: grip.x * size.width, y: grip.y * size.height)
                     Circle()
                         .fill(selected ? RecorderPalette.zoom : Color.white.opacity(0.85))
                         .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 1))
@@ -2002,6 +2230,10 @@ private struct TextHandles: View {
                             .foregroundStyle(selected ? Color.white : Color.black.opacity(0.7)))
                         .frame(width: 22, height: 22)
                         .contentShape(Circle().inset(by: -6))
+                        // Set, never pushed, as on a shape's middle handle: a grip that goes away under the pointer
+                        // gets no exit.
+                        .onHover { inside in (inside ? NSCursor.openHand : NSCursor.arrow).set() }
+                        .onDisappear { NSCursor.arrow.set() }
                         .offset(x: center.x - 11, y: center.y - 11)
                         .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                             model.selectedText = note.id
@@ -2068,7 +2300,7 @@ struct ShapeRow: View {
                         .accessibilityAddTraits(shape.color == hex ? .isSelected : [])
                     }
                 }
-                SectionLabel(text: "Line", value: sizeLabel(shape.width, model.project))
+                SectionLabel(text: "Line", value: sizeLabel(shape.width, model, .pictureShort))
                 Slider(value: Binding(get: { shape.width }, set: { value in model.updateShape(shape.id) { $0.width = (value * 2000).rounded() / 2000 } }), in: 0.002...0.03)
                     .accessibilityLabel("\(name) line width")
                 SectionLabel(text: "Appears", value: nil)
@@ -2086,7 +2318,7 @@ struct ShapeRow: View {
                 GhostButton("Start at Playhead", symbol: "arrow.right.to.line", tooltip: "Move the start here and keep the length",
                             identifier: "recorder.shape.startHere") { model.moveShapeStart(shape.id) }
                 let longest = max(0.6, min(15, Double(model.project.source.durationUs - shape.startUs) / 1_000_000))
-                SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(shape.endUs - shape.startUs) / 1_000_000))
+                SectionLabel(text: "Lasts", value: editLength(model.project, fromUs: shape.startUs, toUs: shape.endUs))
                 Slider(value: Binding(get: { min(longest, Double(shape.endUs - shape.startUs) / 1_000_000) }, set: { value in
                     model.updateShape(shape.id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
                 }), in: 0.5...longest)

@@ -62,6 +62,12 @@ struct AgentNode: Codable, Equatable, Identifiable, Sendable {
 
     /// This node or one below it is running.
     var anyRunning: Bool { isRunning || nested.contains(where: \.anyRunning) }
+
+    /// The statuses of an agent that ended for good. `idle` is a teammate waiting for work, so it is not one.
+    static let endedStatuses: Set<String> = ["completed", "failed", "killed"]
+
+    /// This node and every node below it ended (completed, failed or killed).
+    var isFinished: Bool { Self.endedStatuses.contains(status) && nested.allSatisfy(\.isFinished) }
 }
 
 struct AgentParent: Codable, Equatable, Identifiable, Sendable {
@@ -141,6 +147,22 @@ enum AgentTree {
 
     static func mainKey(_ parent: String) -> String {
         key(parent: parent, child: mainChild)
+    }
+
+    /// Splits a parent's children into the rows that stay in sight and the finished ones that fold into one row.
+    /// Only a finished agent folds, so an idle teammate stays live; `stays` also keeps a running, recently active or
+    /// open one in sight.
+    static func foldFinished(_ children: [AgentNode], stays: (AgentNode) -> Bool) -> (live: [AgentNode], finished: [AgentNode]) {
+        var live: [AgentNode] = []
+        var finished: [AgentNode] = []
+        for child in children {
+            if child.isFinished, !stays(child) {
+                finished.append(child)
+            } else {
+                live.append(child)
+            }
+        }
+        return (live, finished)
     }
 
     static func split(_ key: String) -> (parent: String?, child: String)? {
@@ -369,6 +391,31 @@ final class HubAgentsModel: ObservableObject {
         selected?.parent ?? selectedMain
     }
 
+    /// The mode came on screen with nothing open and "Open the newest live agent" on (Settings, Hub, Panes): the
+    /// first fresh list opens one. A cached list is not enough: the agent it names may have finished meanwhile.
+    private var openNewestDue = false
+
+    /// The newest running sub-agent across every session, else the newest live session's Main row. Nothing when the
+    /// reader opened something first, a link asked for an agent, or nothing is live.
+    private func openNewestIfDue() {
+        guard openNewestDue else { return }
+        openNewestDue = false
+        guard selectedID == nil, pendingRequest == nil else { return }
+        let running = parents.flatMap { parent in
+            AgentTree.flatten(parent.children).filter(\.isRunning).map { (parent: parent, node: $0) }
+        }
+        if let newest = running.max(by: { ($0.node.last ?? .distantPast) < ($1.node.last ?? .distantPast) }) {
+            HubPerf.log("agents.openNewest \(newest.node.id) of \(newest.parent.sessionId.prefix(8))")
+            foldOverride[newest.parent.sessionId] = true
+            selectedID = AgentTree.key(parent: newest.parent.sessionId, child: newest.node.id)
+            revealRequest += 1
+        } else if let parent = parents.filter(isPresent).max(by: { ($0.last ?? .distantPast) < ($1.last ?? .distantPast) }) {
+            HubPerf.log("agents.openNewest main of \(parent.sessionId.prefix(8))")
+            openMain(parent)
+            revealRequest += 1
+        }
+    }
+
     /// A parent row's title, the Main row, a child's breadcrumb, Return: the lead session in the detail.
     func openMain(_ parent: AgentParent) {
         HubMainBusy.measure("agents.openMain")
@@ -526,6 +573,8 @@ final class HubAgentsModel: ObservableObject {
         active = true
         // Opening the mode is an explicit action: the first list sorts fresh.
         resortNext = true
+        openNewestDue = selectedID == nil && pendingRequest == nil
+            && (HubDefaults.store.object(forKey: HubAgentsEntry.openNewestKey) as? Bool ?? true)
         HubPerf.log("agents.activate")
         if !loaded {
             Task {
@@ -655,6 +704,7 @@ final class HubAgentsModel: ObservableObject {
                     }
                 }
                 apply(envelope, scope: scope)
+                if scope == nil { openNewestIfDue() }
             case .failure(let failure):
                 span.end("failed")
                 error = "\(failure)"
@@ -1082,14 +1132,41 @@ private enum AgentListItem: Identifiable {
     case main(AgentParent)
     case child(AgentNode, parent: String?, depth: Int)
     case more(parent: String, hidden: Int)
+    /// A session's finished sub-agents in one row: open, they follow it.
+    case finished(parent: String, count: Int, open: Bool)
 
     var id: String {
         switch self {
         case .parent(let parent, _, _, _): return "p|" + parent.sessionId
         case .child(let node, let parent, _): return "c|" + AgentTree.key(parent: parent, child: node.id)
         case .more(let parent, _): return "m|" + parent
+        case .finished(let parent, _, _): return "f|" + parent
         case .main(let parent): return "c|" + AgentTree.mainKey(parent.sessionId)
         }
+    }
+}
+
+/// Which roster pills the shown rows need (hub UX C42). A pill that every shown row carries says nothing, so it goes:
+/// the harness pill when every Main and agent row runs on one harness, an agent's kind ("background") when every agent
+/// row has the same one. A Main row's "lead" is always the same, and its title already says it.
+private struct AgentRosterPills: Equatable {
+    var showsProvider = true
+    var showsRole = true
+
+    init(_ rows: [AgentListItem]) {
+        var providers = Set<String>()
+        var roles = Set<String>()
+        for row in rows {
+            switch row {
+            case .main(let parent): providers.insert(parent.provider)
+            case .child(let node, _, _):
+                providers.insert(node.harness)
+                roles.insert(node.kind)
+            default: break
+            }
+        }
+        showsProvider = providers.count > 1
+        showsRole = roles.count > 1
     }
 }
 
@@ -1124,6 +1201,10 @@ struct AgentsListView: View {
     @AppStorage("hub.agents.statusFilter") private var statusRaw = AgentStatusFilter.active.rawValue
     /// Parents whose finished children show beyond the first `shownPerParent`.
     @State private var expandedAll = Set<String>()
+    /// Parents whose folded finished sub-agents the reader opened.
+    @State private var expandedFinished = Set<String>()
+    /// Settings, Hub, Panes: a session's finished sub-agents fold into one row.
+    @AppStorage(HubAgentsEntry.foldFinishedKey, store: HubDefaults.store) private var foldFinished = true
     /// A row click puts the keyboard on the list, for Left, Right and Return.
     @FocusState private var listFocused: Bool
     @GenReduceMotion private var reduceMotion
@@ -1136,7 +1217,7 @@ struct AgentsListView: View {
         case .all: return true
         case .active: return node.anyRunning || agents.isActive(parent: parent, child: node.id)
         case .idle: return node.status == "idle"
-        case .off: return ["completed", "failed", "killed"].contains(node.status)
+        case .off: return AgentNode.endedStatuses.contains(node.status)
         }
     }
 
@@ -1176,19 +1257,41 @@ struct AgentsListView: View {
             guard open else { continue }
             rows.append(.main(parent))
             let limit = expandedAll.contains(parent.sessionId) ? Int.max : Self.shownPerParent
+            // Finished sub-agents fold into one row under the live ones (an idle teammate is live); the open agent
+            // always stays in sight. Under the Off filter every row is a finished one, so nothing folds there.
+            let folds = foldFinished && status != .off
+            let (live, finished) = AgentTree.foldFinished(children) { !folds || stays($0, parent: parent.sessionId) }
+            let finishedOpen = expandedFinished.contains(parent.sessionId)
             var shown = 0
-            for child in children {
+            for child in live {
                 if shown >= limit, !child.anyRunning {
                     continue
                 }
                 shown += 1
                 append(child, parent: parent.sessionId, depth: 0, into: &rows)
             }
-            if children.count > shown {
-                rows.append(.more(parent: parent.sessionId, hidden: children.count - shown))
+            if !finished.isEmpty {
+                rows.append(.finished(parent: parent.sessionId, count: finished.count, open: finishedOpen))
+            }
+            var visible = live.count
+            if finishedOpen {
+                visible += finished.count
+                for child in finished where shown < limit {
+                    shown += 1
+                    append(child, parent: parent.sessionId, depth: 0, into: &rows)
+                }
+            }
+            if visible > shown {
+                rows.append(.more(parent: parent.sessionId, hidden: visible - shown))
             }
         }
         return rows
+    }
+
+    /// Stays out of the finished fold: running, active in the last two minutes, or holding the open agent.
+    private func stays(_ node: AgentNode, parent: String) -> Bool {
+        node.anyRunning || agents.isActive(parent: parent, child: node.id)
+            || AgentTree.flatten([node]).contains { AgentTree.key(parent: parent, child: $0.id) == agents.selectedID }
     }
 
     private func append(_ node: AgentNode, parent: String?, depth: Int, into rows: inout [AgentListItem]) {
@@ -1222,6 +1325,7 @@ struct AgentsListView: View {
         // Read once per body and handed to every row as a value, so a row whose values did not change skips its
         // body (`.equatable()` on each row type in `row(_:selectedID:)`).
         let selectedID = agents.selectedID
+        let pills = AgentRosterPills(sections.flatMap(\.rows))
         Group {
             if !agents.loaded && agents.parents.isEmpty {
                 SkeletonRows(count: 10, leading: .dot)
@@ -1250,7 +1354,7 @@ struct AgentsListView: View {
                             ForEach(sections, id: \.title) { section in
                                 Section {
                                     ForEach(section.rows) { item in
-                                        row(item, selectedID: selectedID)
+                                        row(item, selectedID: selectedID, pills: pills)
                                             .transition(SWR.rowTransition)
                                     }
                                     if section.title == "Live", section.rows.isEmpty {
@@ -1270,6 +1374,7 @@ struct AgentsListView: View {
                             }
                         }
                         .padding(.bottom, 12)
+                        .genScrollBars()
                     }
                     // Reorders wait while the pointer is over the list, and happen when it leaves.
                     .onHover { agents.holdOrder = $0 }
@@ -1333,7 +1438,7 @@ struct AgentsListView: View {
     /// Each row is a value with its actions as closures and `.equatable()` here: a refresh that changes nothing a
     /// row draws skips its body (`agents.childRow.body` ran 21 to 25 times per refresh, 2026-10-29).
     @ViewBuilder
-    private func row(_ item: AgentListItem, selectedID: String?) -> some View {
+    private func row(_ item: AgentListItem, selectedID: String?, pills: AgentRosterPills) -> some View {
         switch item {
         case .parent(let parent, let open, let running, let total):
             AgentParentRow(
@@ -1349,7 +1454,7 @@ struct AgentsListView: View {
         case .main(let parent):
             AgentMainRow(
                 parent: parent, present: agents.isPresent(parent),
-                selected: selectedID == AgentTree.mainKey(parent.sessionId),
+                selected: selectedID == AgentTree.mainKey(parent.sessionId), showsProvider: pills.showsProvider,
                 select: {
                     listFocused = true
                     agents.openMain(parent)
@@ -1359,7 +1464,7 @@ struct AgentsListView: View {
         case .child(let node, let parent, let depth):
             let key = AgentTree.key(parent: parent, child: node.id)
             AgentChildRow(
-                node: node, depth: depth, selected: selectedID == key, showsProject: parent == nil,
+                node: node, depth: depth, selected: selectedID == key, showsProject: parent == nil, pills: pills,
                 select: {
                     HubMainBusy.measure("agents.select")
                     listFocused = true
@@ -1380,6 +1485,32 @@ struct AgentsListView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverPlain())
+        case .finished(let parent, let count, let open):
+            Button {
+                GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
+                    if open {
+                        expandedFinished.remove(parent)
+                    } else {
+                        expandedFinished.insert(parent)
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                    Text(verbatim: Plural.count(count, "finished agent"))
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(ReviewPalette.dim)
+                .padding(.leading, 40)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.genHoverPlain())
+            .instantTooltip(open ? "Fold this session's finished sub-agents" : "Show this session's finished sub-agents")
+            .accessibilityValue(Text(open ? "Expanded" : "Collapsed"))
         }
     }
 }
@@ -1446,6 +1577,8 @@ private struct AgentMainRow: View, Equatable {
     /// In the Live group: drawn as "running".
     let present: Bool
     let selected: Bool
+    /// `AgentRosterPills.showsProvider`: off while every row runs on one harness.
+    let showsProvider: Bool
     let select: () -> Void
 
     /// The fields the row draws, not `children`.
@@ -1453,13 +1586,14 @@ private struct AgentMainRow: View, Equatable {
         a.parent.sessionId == b.parent.sessionId && a.parent.provider == b.parent.provider
             && a.parent.model == b.parent.model && a.parent.account == b.parent.account
             && a.parent.lastAt == b.parent.lastAt && a.present == b.present && a.selected == b.selected
+            && a.showsProvider == b.showsProvider
     }
 
     var body: some View {
         let _ = RenderProbe.hit("agents.mainRow.body")
         AgentRosterRow(title: "Main", provider: parent.provider, role: "lead", model: parent.model,
                        account: parent.account, status: present ? "running" : "recent", lastAt: parent.last,
-                       selected: selected, showsRunningLabel: true)
+                       selected: selected, showsRunningLabel: true, showsProvider: showsProvider, showsRole: false)
             .padding(.leading, 30).padding(.trailing, 10).padding(.vertical, 5)
             .background(selectionBackground).padding(.horizontal, 6)
             .rowButton { select() }
@@ -1480,10 +1614,12 @@ private struct AgentChildRow: View, Equatable {
     let depth: Int
     let selected: Bool
     let showsProject: Bool
+    let pills: AgentRosterPills
     let select: () -> Void
 
     static func == (a: AgentChildRow, b: AgentChildRow) -> Bool {
         a.node == b.node && a.depth == b.depth && a.selected == b.selected && a.showsProject == b.showsProject
+            && a.pills == b.pills
     }
 
     var body: some View {
@@ -1492,7 +1628,8 @@ private struct AgentChildRow: View, Equatable {
         AgentRosterRow(title: node.title, provider: node.harness, role: node.kind, model: node.model,
                        account: account.isEmpty ? nil : account,
                        status: node.status, startedAt: node.started, lastAt: node.last,
-                       toolCalls: node.toolCalls ?? 0, unread: node.unreadMail ?? 0, selected: selected)
+                       toolCalls: node.toolCalls ?? 0, unread: node.unreadMail ?? 0, selected: selected,
+                       showsProvider: pills.showsProvider, showsRole: pills.showsRole)
             .instantTooltip(AgentTree.started(node.started).map { "Started \($0)" } ?? "Start time unknown")
             .padding(.leading, 30 + CGFloat(depth) * 14).padding(.trailing, 10).padding(.vertical, 5)
             .background(
@@ -1762,6 +1899,7 @@ struct AgentChildDetails: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
+                    .genScrollBars()
                 }
                 .frame(maxHeight: 200)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))
@@ -1803,6 +1941,7 @@ struct AgentChildDetails: View {
                         }
                     }
                     .padding(6)
+                    .genScrollBars()
                 }
                 .frame(maxHeight: 150)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))

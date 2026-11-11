@@ -158,6 +158,8 @@ public struct SessionTranscriptList: View {
     /// Line wrapping in tool calls, per block kind (`TranscriptWrap`).
     @AppStorage("sessionTranscript.wrapInputs") private var wrapInputs = false
     @AppStorage("sessionTranscript.wrapOutputs") private var wrapOutputs = false
+    /// Output lines a tool call shows before "… +N lines" at every level (`TranscriptOutputFold`; 0 is off).
+    @AppStorage(TranscriptOutputFold.key) private var outputFold = TranscriptOutputFold.defaultLines
     @State private var query = ""
     @State private var appliedQuery = ""
     @State private var chips: Set<TranscriptFilter> = []
@@ -297,9 +299,7 @@ public struct SessionTranscriptList: View {
                 }
                 HStack(spacing: 8) {
                     chipBar
-                    verbosityMenu
-                    expandButtons
-                    wrapMenu
+                    viewMenu
                     Spacer(minLength: 0)
                 }
             }
@@ -348,11 +348,7 @@ public struct SessionTranscriptList: View {
     private var toolbarControls: some View {
         chipBar
 
-        verbosityMenu
-
-        expandButtons
-
-        wrapMenu
+        viewMenu
 
         windowNoteSlot
 
@@ -425,19 +421,49 @@ public struct SessionTranscriptList: View {
         TranscriptVerbosity(rawValue: verbosityRaw) ?? .inputs
     }
 
-    // A drawn `MenuButton` (Genesis UI/MenuButton.swift, GenesisTools Hub/HubMenuButton.swift), not a `Menu`. The
-    // toolbar is a ViewThatFits, which builds a new NSPopUpButton for every measurement of each of its three layouts.
-    private var verbosityMenu: some View {
+    private var wrap: TranscriptWrap {
+        TranscriptWrap(inputs: wrapInputs, outputs: wrapOutputs, outputFold: TranscriptOutputFold.lines(outputFold))
+    }
+
+    /// One view menu: the detail level, Expand all and Collapse all, and line wrapping. Expand, collapse and wrap were
+    /// three bare icons of equal weight beside it, and the wrap glyph read as "reply" (hub UX C20).
+    /// A drawn `MenuButton` (Genesis UI/MenuButton.swift, GenesisTools Hub/HubMenuButton.swift), not a `Menu`. The
+    /// toolbar is a ViewThatFits, which builds a new NSPopUpButton for every measurement of each of its three layouts.
+    private var viewMenu: some View {
         MenuButton(style: .genHoverPlain(brighten: 0.12)) {
-            TranscriptVerbosity.allCases.map { level in
-                .action(level.title, checked: level == verbosity) { verbosityRaw = level.rawValue }
-            }
+            [.note("Detail")]
+                + TranscriptVerbosity.allCases.map { level in
+                    .action(level.title, checked: level == verbosity) { verbosityRaw = level.rawValue }
+                }
+                + [
+                    .divider,
+                    .action("Expand all tool calls and thinking") { expansion.setAll(true) },
+                    .action("Collapse all tool calls and thinking") { expansion.setAll(false) },
+                    .divider,
+                    .note("Line wrapping"),
+                    .action("Wrap tool inputs", checked: wrapInputs) { setWrap(inputs: !wrapInputs, outputs: wrapOutputs) },
+                    .action("Wrap tool outputs", checked: wrapOutputs) { setWrap(inputs: wrapInputs, outputs: !wrapOutputs) },
+                ]
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: verbosity.symbol)
                     .font(.system(size: 10.5))
-                Text(verbatim: verbosity.title)
-                    .font(.system(size: 11.5, weight: .medium))
+                // As wide as the widest level's title: a pick never changes the toolbar's width, so its ViewThatFits
+                // never switches layouts and the list's height and the reader's place stay where they were.
+                ZStack(alignment: .leading) {
+                    ForEach(TranscriptVerbosity.allCases) { level in
+                        Text(verbatim: level.title).hidden()
+                    }
+                    Text(verbatim: verbosity.title)
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                // Wrapping is on: the menu holds a second choice besides the level. Its place is kept while it is off,
+                // for the same reason.
+                Image(systemName: "text.word.spacing")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(SessionPalette.blue)
+                    .opacity(wrap.any ? 1 : 0)
+                    .accessibilityHidden(true)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
             }
@@ -448,57 +474,10 @@ public struct SessionTranscriptList: View {
             .contentShape(Capsule())
         }
         .fixedSize()
-        .instantTooltip("Transcript detail: \(verbosity.detail)")
+        .instantTooltip("View: \(verbosity.detail); \(wrap.detail). Expand all, Collapse all and wrapping are in this menu")
+        .accessibilityLabel(Text("Transcript view"))
+        .accessibilityValue(Text("\(verbosity.title), \(wrap.detail)"))
         .accessibilityIdentifier("session-transcript-verbosity")
-    }
-
-    private var expandButtons: some View {
-        HStack(spacing: 2) {
-            Button { expansion.setAll(true) } label: {
-                Image(systemName: "arrow.up.and.down.text.horizontal")
-                    .font(.system(size: 11, weight: .medium))
-                    .frame(width: 20, height: 20)
-            }
-            .buttonStyle(.genHoverIcon(accent: SessionPalette.blue, diameter: 22))
-            .instantTooltip("Expand all tool calls and thinking")
-            .accessibilityIdentifier("session-transcript-expand-all")
-
-            Button { expansion.setAll(false) } label: {
-                Image(systemName: "arrow.down.and.line.horizontal.and.arrow.up")
-                    .font(.system(size: 11, weight: .medium))
-                    .frame(width: 20, height: 20)
-            }
-            .buttonStyle(.genHoverIcon(accent: SessionPalette.blue, diameter: 22))
-            .instantTooltip("Collapse all tool calls and thinking")
-            .accessibilityIdentifier("session-transcript-collapse-all")
-        }
-        .foregroundStyle(SessionPalette.secondary)
-    }
-
-    private var wrap: TranscriptWrap { TranscriptWrap(inputs: wrapInputs, outputs: wrapOutputs) }
-
-    /// Line wrapping for tool inputs and outputs, each on its own (Martin, 2026-09-30: long commands
-    /// were clipped sideways). Lit while either wraps.
-    private var wrapMenu: some View {
-        MenuButton(style: .genHoverIcon(accent: SessionPalette.blue, diameter: 22)) {
-            [
-                .action("Wrap tool inputs", checked: wrapInputs) { setWrap(inputs: !wrapInputs, outputs: wrapOutputs) },
-                .action("Wrap tool outputs", checked: wrapOutputs) { setWrap(inputs: wrapInputs, outputs: !wrapOutputs) },
-                .divider,
-                .action("Wrap both", checked: wrapInputs && wrapOutputs) { setWrap(inputs: true, outputs: true) },
-                .action("Wrap neither", checked: !wrap.any) { setWrap(inputs: false, outputs: false) },
-            ]
-        } label: {
-            Image(systemName: "arrow.turn.down.left")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(wrap.any ? SessionPalette.blue : SessionPalette.secondary)
-                .frame(width: 20, height: 20)
-        }
-        .fixedSize()
-        .instantTooltip("Line wrapping in tool calls: \(wrap.detail)")
-        .accessibilityLabel(Text("Line wrapping"))
-        .accessibilityValue(Text(wrap.detail))
-        .accessibilityIdentifier("session-transcript-wrap")
     }
 
     private func setWrap(inputs: Bool, outputs: Bool) {

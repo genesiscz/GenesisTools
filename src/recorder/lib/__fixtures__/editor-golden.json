@@ -1298,13 +1298,6 @@
           "aspect": "16:9",
           "fit": "cover"
         },
-        "clicks": {
-          "highlight": true,
-          "color": "#FFD60A",
-          "radius": 0.03,
-          "durationMs": 450,
-          "sound": true
-        },
         "motion": {
           "blur": 0.4
         }

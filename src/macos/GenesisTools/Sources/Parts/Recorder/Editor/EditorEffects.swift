@@ -42,10 +42,9 @@ extension EditorModel {
         guard moveHead, item.kind == .zoom, let zoom = project.zooms.first(where: { $0.id == item.id }) else { return }
         let now = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
         guard now < zoom.startUs || now >= zoom.endUs else { return }
-        let settled = min(zoom.endUs - 1, zoom.startUs + Int64(zoom.easeInMs) * 1000)
-        if let at = TimelineMap.outputTime(ofSource: settled, in: project) ?? TimelineMap.outputTime(ofSource: zoom.startUs, in: project) {
-            seek(at)
-        }
+        // Its ease in runs in the movie as it plays (ZoomCurve), from its first shown frame.
+        guard let shown = TimelineMap.shown(fromUs: zoom.startUs, toUs: zoom.endUs, in: project) else { return }
+        seek(min(shown.endOut - 1, shown.startOut + Int64(zoom.easeInMs) * 1000))
     }
 
     /// Moves or trims an item in source time. A speed item is its clip and does not move.
@@ -83,7 +82,7 @@ extension EditorModel {
         case .zoom: addZoom(atOutput: fromOut, durationUs: max(500_000, length ?? 2_000_000), lane: lane)
         case .hide: addRedaction(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
         case .spotlight: addSpotlight(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
-        case .text: addText(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
+        case .text: addText(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane, lead: toOut == nil)
         case .shape: addShape(.box, atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
         case .speed: speedRange(fromOut: fromOut, toOut: toOut ?? fromOut + 2_000_000, speed: 2)
         case .cameraHide: addCameraHidden(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)

@@ -23,7 +23,18 @@ import {
 } from "../lib/format-monitor";
 import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
-import { announceLeave, leaveReasonOf, logInAndAnnounceJoin } from "../lib/leave";
+import {
+    announceDueLapses,
+    announceLeave,
+    endsInRearm,
+    hasDueRearm,
+    leaveReasonOf,
+    logInAndAnnounceJoin,
+    type RearmTracker,
+    rearmTrackerFrom,
+    rearmUntil,
+    trackRearm,
+} from "../lib/leave";
 import { onShutdown } from "../lib/lifecycle";
 import { createListenerFilter, WORKER_STEP_KIND } from "../lib/listener-filter";
 import {
@@ -40,11 +51,20 @@ import { readSessionMeta, type SessionMeta } from "../lib/session-meta";
 import { resolveSession } from "../lib/session-resolve";
 import { readSlotPayload, releaseSlot, runStaleSweep, slotLockPath, tryAcquireSlot } from "../lib/slot-lock";
 import { assertOwnerThread } from "../lib/thread-owner";
-import type { AgentRecord, FeedEvent, SessionPaths, SlotLockPayload } from "../lib/types";
+import {
+    type AgentRecord,
+    type FeedEvent,
+    PRESENCE_MODES,
+    type PresenceMode,
+    type SessionPaths,
+    type SlotLockPayload,
+} from "../lib/types";
 
 const LISTEN_CAP_MS = 8 * 60 * 60 * 1000;
 const WATCH_DEBOUNCE_MS = 0;
 const WATCH_POLL_MS = 150;
+/** How often a watching login checks its pending re-arms for a lapse that is due. */
+const LAPSE_CHECK_MS = 5_000;
 
 const log = logger.child({ component: "agents:login" });
 
@@ -64,6 +84,7 @@ interface LoginOpts {
     excludeKinds?: string;
     hideWorkerSteps?: boolean;
     filter?: string;
+    presence?: string;
 }
 
 interface ActiveLogin {
@@ -79,6 +100,12 @@ interface ActiveLogin {
     cursorSeq: number;
     feedCursor: FeedLogCursor;
     listenerFilter: (event: FeedEvent) => boolean;
+    /** The `--presence` flag; absent means the agent's default (`presenceModeFor`). */
+    presence: PresenceMode | undefined;
+    /** Logins that ended with a `rearm_until`, kept from every event read; a due one is announced as lapsed. */
+    rearms: RearmTracker;
+    /** True while a lapse check holds the feed lock, so the timer never stacks two. */
+    lapseCheckRunning: boolean;
 }
 
 async function pickAgent(records: AgentRecord[]): Promise<AgentRecord | null> {
@@ -319,7 +346,7 @@ function claimSlot({
 }
 
 function isDeliverable(event: FeedEvent, active: ActiveLogin): boolean {
-    if (!active.observer && !isVisibleToAgent(event, active.record, active.meta)) {
+    if (!active.observer && !isVisibleToAgent(event, active.record, { meta: active.meta, presence: active.presence })) {
         return false;
     }
 
@@ -357,6 +384,7 @@ async function drainPending(active: ActiveLogin): Promise<number> {
 
     for (const event of events) {
         learnAgentNames(active.names, event);
+        trackRearm(active.rearms, event);
 
         if (isDeliverable(event, active)) {
             deliverable.push(event);
@@ -379,35 +407,63 @@ async function drainPending(active: ActiveLogin): Promise<number> {
     return deliverable.length;
 }
 
+/**
+ * Announce the lapses that are due among the re-arms this login saw. Every watching login runs it, so a failed
+ * Monitor re-arm is reported even when the agent that lapsed was the only one writing to the feed; `announceLapses`
+ * decides under the feed lock, so the watchers never write one lapse twice.
+ */
+async function checkLapses(active: ActiveLogin): Promise<void> {
+    const now = Date.now();
+
+    if (active.lapseCheckRunning || !hasDueRearm(active.rearms.pending, now)) {
+        return;
+    }
+
+    active.lapseCheckRunning = true;
+
+    try {
+        await announceDueLapses(active.paths, active.rearms.pending, now);
+    } catch (err) {
+        log.warn({ err }, "lapse check failed; the next check retries");
+    } finally {
+        active.lapseCheckRunning = false;
+    }
+}
+
 async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitOnFirst: boolean): Promise<boolean> {
     let emittedAny = false;
     let drainError: unknown;
+    const lapseTimer = setInterval(() => void checkLapses(active), LAPSE_CHECK_MS);
 
-    await watchFileFeed({
-        path: active.paths.feedPath,
-        deadlineAt,
-        debounceMs: WATCH_DEBOUNCE_MS,
-        pollFallbackMs: WATCH_POLL_MS,
-        onChange: async () => {
-            const before = active.cursorSeq;
-            let emitted: number;
-            try {
-                emitted = await drainPending(active);
-            } catch (error) {
-                drainError = error;
-                return { done: true };
-            }
-
-            if (emitted > 0) {
-                emittedAny = true;
-                log.debug({ before, after: active.cursorSeq }, "drained while watching");
-
-                if (exitOnFirst) {
+    try {
+        await watchFileFeed({
+            path: active.paths.feedPath,
+            deadlineAt,
+            debounceMs: WATCH_DEBOUNCE_MS,
+            pollFallbackMs: WATCH_POLL_MS,
+            onChange: async () => {
+                const before = active.cursorSeq;
+                let emitted: number;
+                try {
+                    emitted = await drainPending(active);
+                } catch (error) {
+                    drainError = error;
                     return { done: true };
                 }
-            }
-        },
-    });
+
+                if (emitted > 0) {
+                    emittedAny = true;
+                    log.debug({ before, after: active.cursorSeq }, "drained while watching");
+
+                    if (exitOnFirst) {
+                        return { done: true };
+                    }
+                }
+            },
+        });
+    } finally {
+        clearInterval(lapseTimer);
+    }
 
     if (drainError !== undefined) {
         throw drainError;
@@ -417,6 +473,23 @@ async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitO
 
 /** Exit status of a `--once --timeout` that expired with an empty mailbox. 124 is what coreutils `timeout` uses. */
 export const LOGIN_TIMEOUT_EXIT = 124;
+
+function parsePresence(raw: string | undefined): PresenceMode | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    const mode = PRESENCE_MODES.find((candidate) => candidate === raw.trim());
+
+    if (!mode) {
+        throw new FriendlyError(
+            `--presence must be one of ${PRESENCE_MODES.join(", ")} (got ${raw})`,
+            "Example: --presence changes"
+        );
+    }
+
+    return mode;
+}
 
 function parseTimeoutSeconds(opts: LoginOpts): number | undefined {
     if (opts.timeout === undefined) {
@@ -467,12 +540,15 @@ async function emitLoggedOut({
     reason,
     mode,
     loginId,
+    rearm,
 }: {
     paths: SessionPaths;
     record: AgentRecord;
     reason: "signal" | "clean_exit" | "cap";
     mode: "stream" | "once";
     loginId: string;
+    /** The agent restarts this login (a killed Monitor, a `--once --timeout`): no leave, a grace instead. */
+    rearm: boolean;
 }): Promise<void> {
     const { appendFeed } = await import("../lib/feed");
     await appendFeed(paths, {
@@ -480,7 +556,13 @@ async function emitLoggedOut({
         agent_id: record.agent_id,
         reason,
         mode,
+        login_id: loginId,
+        ...(rearm ? { rearm_until: rearmUntil() } : {}),
     });
+
+    if (rearm) {
+        return;
+    }
 
     // Both the shutdown handler and the finally block end a login; one leave per process.
     const leaveReason = leaveReasonOf(mode, reason);
@@ -517,6 +599,7 @@ function emitResumeHint(record: AgentRecord, mode: "stream" | "once"): void {
 
 async function runLoginImpl(opts: LoginOpts): Promise<void> {
     const timeoutSeconds = parseTimeoutSeconds(opts);
+    const presence = parsePresence(opts.presence);
     const format = resolveFeedFormat({
         format: opts.format,
         terminalDefault: opts.observer ? "pretty" : "json",
@@ -557,6 +640,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
     try {
         const meta = readSessionMeta(paths);
         const cursorSeq = readCursor(paths, record.agent_id);
+        const feedAtLogin = await readFeed(paths);
         active = {
             paths,
             record,
@@ -566,7 +650,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             observer: Boolean(opts.observer),
             format,
             // Only a monitor headline names recipients, so only that format reads the whole feed for names.
-            names: format === "monitor" ? agentNamesFrom(await readFeed(paths)) : new Map(),
+            names: format === "monitor" ? agentNamesFrom(feedAtLogin) : new Map(),
             cursorSeq,
             feedCursor: new FeedLogCursor({ paths, sinceSeq: cursorSeq }),
             listenerFilter: createListenerFilter({
@@ -576,6 +660,10 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
                     .join(","),
                 expression: opts.filter,
             }),
+            presence,
+            // Seeded from the whole feed: a re-arm that started before this login's cursor can still lapse.
+            rearms: rearmTrackerFrom(feedAtLogin),
+            lapseCheckRunning: false,
         };
 
         await emitLoggedIn({ paths, record, mode, loginId });
@@ -610,7 +698,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
         }
 
         try {
-            await emitLoggedOut({ paths, record: active.record, reason, mode, loginId });
+            await emitLoggedOut({ paths, record: active.record, reason, mode, loginId, rearm: endsInRearm(reason) });
         } catch (err) {
             log.warn({ err }, "logged_out emit failed during shutdown");
         }
@@ -650,14 +738,14 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
                 // Mail that landed between the watcher's last look and the deadline is delivered, not a timeout.
                 const late = received ? 0 : await drainPending(active);
 
-                // Nobody is listening once this returns, unless the agent starts it again (then that is a join):
-                // `timeout` when --timeout ended the wait, `cap` when the receiver waited the whole cap.
-                if (!received && late === 0 && !leaveAnnounced) {
+                // A receiver that waited the whole cap has left. One that hit its --timeout is a polling loop that
+                // starts the next `--once` at once: its logged_out carries a re-arm grace instead of a leave.
+                if (!received && late === 0 && timeoutSeconds === undefined && !leaveAnnounced) {
                     leaveAnnounced = true;
                     await announceLeave(paths, {
                         agent_id: record.agent_id,
                         agent_name: record.agent_name,
-                        reason: timeoutSeconds !== undefined ? "timeout" : "cap",
+                        reason: "cap",
                         login_id: loginId,
                     });
                 }
@@ -696,7 +784,14 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
         }
 
         try {
-            await emitLoggedOut({ paths, record: active.record, reason: exitReason, mode, loginId });
+            await emitLoggedOut({
+                paths,
+                record: active.record,
+                reason: exitReason,
+                mode,
+                loginId,
+                rearm: endsInRearm(exitReason) || timedOut,
+            });
         } catch (err) {
             log.warn({ err }, "logged_out emit failed on exit");
         }
@@ -745,6 +840,10 @@ export function registerLoginCommand(program: Command): void {
             `Hide a ${toolCommand("codex spawn")} worker's per-step events (kind "${WORKER_STEP_KIND}": each finished command, reply or file change); keep its mail, approvals and turn events`
         )
         .option("--filter <expr>", 'Filter structured bodies, e.g. .op=="approval_request"')
+        .option(
+            "--presence <mode>",
+            "Which agent_joined / agent_left events to receive: none (default for an agent that is not main), changes (default for main: joins and real departures, a failed Monitor re-arm shows as reason lapsed), all (default in a --debug session)"
+        )
         .action(async (opts: LoginOpts) => {
             await runLogin(opts);
         });

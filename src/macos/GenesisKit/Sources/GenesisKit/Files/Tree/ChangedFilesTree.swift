@@ -69,9 +69,17 @@ public enum ChangedFilesTree {
     /// a chain of single-child folders collapses into one row, like Codex's review pane. With several roots, each root
     /// is one top-level row in root order (never folded into its first folder), with its files under it; a root with
     /// no files keeps its row. `collapsed` holds the ids of the folded folders and roots.
-    public static func rows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>, roots: [ChangedFilesTreeRoot] = []) -> [ChangedFilesTreeRow] {
+    ///
+    /// `foldAbove` (tree only): a folder with more files than this starts folded, unless it holds half of its root's
+    /// files or more, so the folder most of a change is in stays open; 0 never folds (`HubFileTreeFold`). Expanded media
+    /// folders filled the tree (hub UX C26). `opened` holds the folders the reader opened, which stay open.
+    public static func rows(
+        _ files: [DiffFile], tree: Bool, collapsed: Set<String>, roots: [ChangedFilesTreeRoot] = [],
+        foldAbove: Int = 0, opened: Set<String> = []
+    ) -> [ChangedFilesTreeRow] {
+        let fold = Fold(above: foldAbove, opened: opened)
         guard roots.count > 1 else {
-            return rows(files, tree: tree, collapsed: collapsed, depth: 0, strip: "")
+            return rows(files, tree: tree, collapsed: collapsed, fold: fold, depth: 0, strip: "")
         }
 
         return roots.enumerated().flatMap { index, root -> [ChangedFilesTreeRow] in
@@ -80,7 +88,7 @@ public enum ChangedFilesTree {
             let open = !collapsed.contains(root.rowID)
             let row = ChangedFilesTreeRow(id: root.rowID, depth: 0, kind: .root(index: index, additions: totals.0, deletions: totals.1), expanded: open)
             guard open else { return [row] }
-            return [row] + rows(own, tree: tree, collapsed: collapsed, depth: 1, strip: root.prefix + "/")
+            return [row] + rows(own, tree: tree, collapsed: collapsed, fold: fold, depth: 1, strip: root.prefix + "/")
         }
     }
 
@@ -93,11 +101,23 @@ public enum ChangedFilesTree {
         return roots.firstIndex { $0.prefix == head }
     }
 
+    /// When a folder starts folded by its size (see `rows`).
+    private struct Fold {
+        let above: Int
+        let opened: Set<String>
+
+        func folds(_ id: String, files: Int, of total: Int) -> Bool {
+            above > 0 && files > above && files * 2 < total && !opened.contains(id)
+        }
+    }
+
     private final class Node {
         let name: String
         let path: String
         var children: [String: Node] = [:]
         var files: [DiffFile] = []
+        /// Files under this folder, nested ones included.
+        var fileCount = 0
         /// Every file under this folder, nested ones included: summed once while the tree is built.
         var additions = 0
         var deletions = 0
@@ -109,7 +129,7 @@ public enum ChangedFilesTree {
     }
 
     /// One root's rows. `strip` is the root's prefix: folder names read without it, ids keep it.
-    private static func rows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>, depth: Int, strip: String) -> [ChangedFilesTreeRow] {
+    private static func rows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>, fold: Fold, depth: Int, strip: String) -> [ChangedFilesTreeRow] {
         guard tree else {
             let grouped = Dictionary(grouping: files, by: \.directory)
             return grouped.keys.sorted().flatMap { directory -> [ChangedFilesTreeRow] in
@@ -135,6 +155,7 @@ public enum ChangedFilesTree {
                 node = child
                 node.additions += file.additions
                 node.deletions += file.deletions
+                node.fileCount += 1
             }
             node.files.append(file)
         }
@@ -149,7 +170,7 @@ public enum ChangedFilesTree {
                     label += "/\(only.name)"
                 }
                 let id = "dir:\(folder.path)"
-                let open = !collapsed.contains(id)
+                let open = !collapsed.contains(id) && !fold.folds(id, files: folder.fileCount, of: files.count)
                 result.append(ChangedFilesTreeRow(id: id, depth: depth, kind: .directory(name: label, additions: folder.additions, deletions: folder.deletions), expanded: open))
                 if open {
                     walk(folder, depth: depth + 1)

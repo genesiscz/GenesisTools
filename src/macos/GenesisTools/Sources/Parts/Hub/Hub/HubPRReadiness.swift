@@ -240,10 +240,27 @@ struct PRReadinessBadge: View {
         case "ready":
             return ("checkmark.seal.fill", ReviewPalette.added, "ready")
         case "blocked":
-            let text = verdictWord ? "blocked" : readiness.unresolved > 0 ? "\(readiness.unresolved) open" : readiness.ci == "failed" ? "CI" : "blocked"
-            return ("xmark.octagon.fill", ReviewPalette.removed, text)
+            return ("xmark.octagon.fill", ReviewPalette.removed, verdictWord ? "blocked" : blockedWord(readiness))
         default:
             return ("clock", ReviewPalette.modified, readiness.reviewedHead == false ? "re-review" : "waiting")
         }
+    }
+
+    /// A blocked row's one word, in the order the reasons weigh: a draft is not for merging yet, open threads are the
+    /// reviewers' words, then failed checks and conflicts. One vocabulary on every row (hub UX C9): "CI" alone beside
+    /// a red mark read like the CI icon a second time.
+    static func blockedWord(_ readiness: PRReadiness) -> String {
+        if readiness.draft { return "draft" }
+        if readiness.unresolved > 0 { return "\(readiness.unresolved) open" }
+        if readiness.ci == "failed" { return "checks failed" }
+        if readiness.reasons.contains(where: { $0.contains("merge conflicts") }) { return "conflicts" }
+        if readiness.reasons.contains(where: { $0.contains("changes are requested") }) { return "changes asked" }
+        return "blocked"
+    }
+
+    /// The row's word already says the CI state: "checks failed", or "ready" (green checks or none).
+    static func saysCI(_ readiness: PRReadiness?) -> Bool {
+        guard let readiness else { return false }
+        return readiness.verdict == "ready" || (readiness.verdict == "blocked" && blockedWord(readiness) == "checks failed")
     }
 }

@@ -65,10 +65,11 @@ function isWasteItems(value: unknown): value is WasteItem[] {
 /**
  * Version 2: a sub-agent's own transcript is scanned as its own cache (version 1 cached it as no waste), and a call
  * is priced at its service tier. Version 3: a call is priced through its harness's candidate ladder and recorded-cost
- * rule (`CallPricing`), so a Grok `-build` model is priced and Grok's plan metering is no longer its cost. A file of
- * an older version is ignored, so every transcript is scanned again.
+ * rule (`CallPricing`), so a Grok `-build` model is priced and Grok's plan metering is no longer its cost. Version 4:
+ * a Claude fast-mode call got its fast-tier rates and Fable 5.2 got catalog prices. A file of an older version is
+ * ignored, so every transcript is scanned again.
  */
-export const WASTE_CACHE_VERSION = 3;
+export const WASTE_CACHE_VERSION = 4;
 
 const wasteCache = new FileIdentityCache<WasteItem[]>({
     limit: 20_000,

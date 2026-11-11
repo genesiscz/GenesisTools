@@ -86,6 +86,8 @@ const editAnswer = z.object({
     warnings: z.array(z.string()).optional(),
     removedIdleUs: z.array(z.tuple([z.number(), z.number()])).optional(),
     loudness: z.object({ measuredLufs: z.number().nullable(), volume: z.number() }).optional(),
+    /** false: the ops changed nothing, so no revision and no undo step was made. */
+    changed: z.literal(false).optional(),
 });
 const windowRow = z.object({ path: z.string(), title: z.string(), window: z.number().int() });
 export const windowStateSchema = z.object({ front: windowRow.optional(), open: z.array(windowRow) });
@@ -107,8 +109,14 @@ export const serviceApi = defineApi({
         defineMethod({
             name: "session.open",
             params: z.object({ path, holder }),
-            // undoDepth: the undo steps the edit keeps (they outlive a close), so a reopened window can undo them.
-            result: z.object({ path, ...project, undoDepth: z.number().int().nonnegative().optional() }),
+            // undoDepth and redoDepth: the undo and redo steps the edit keeps (they outlive a close), so a reopened
+            // window can undo and redo them.
+            result: z.object({
+                path,
+                ...project,
+                undoDepth: z.number().int().nonnegative().optional(),
+                redoDepth: z.number().int().nonnegative().optional(),
+            }),
             doc: "Opens (or holds once more) the edit session of a recording; the connection's holder holds it until session.close or the connection's end. Opening it again for the same holder reads it and adds no hold.",
             effect: "read",
         }),
@@ -314,6 +322,7 @@ export const hostApi = defineApi({
                     tab: z.enum(EDITOR_TABS).optional(),
                     selectZoom: z.number().int().nonnegative().optional(),
                     selectClip: z.number().int().nonnegative().optional(),
+                    selectMarker: z.number().int().nonnegative().optional(),
                     part: spanSchema.optional(),
                     range: spanSchema.optional(),
                     comment: z.number().int().nonnegative().optional(),
@@ -328,8 +337,12 @@ export const hostApi = defineApi({
         defineMethod({
             name: "camera.start",
             params: z.object({ folder: path }),
-            result: z.object({ started: z.literal(true) }),
-            doc: "Starts the camera bubble for a recording folder; 1014 when macOS denies the camera, 1015 when it is busy.",
+            result: z.object({
+                started: z.literal(true),
+                /** The camera preview's windows on screen; an app from before this field sends none. */
+                windowIds: z.array(z.number().int()).optional(),
+            }),
+            doc: "Starts the camera bubble for a recording folder, before its movie starts, and answers the preview's windowIds, which the movie must leave out (--exclude-window-ids); 1014 when macOS denies the camera, 1015 when it is busy.",
             effect: "reversible",
         }),
         defineMethod({

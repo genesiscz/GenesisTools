@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, rename, rm, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import { type RecordingTarget, recordingTargetSchema } from "./recording-targets";
@@ -30,6 +32,8 @@ const SLOW_START_MS = 8000;
 /** A rest of the limit shorter than this starts no new segment: a capture's start costs about as long, and the
  * recorder's deadline runs from its own launch, so such a refill ran past the limit (10.31 s for 10, 25.35 s for 20). */
 const MIN_REFILL_MS = 1000;
+/** A mark made while a segment arms waits this long for its first frame: as long as a recorder may arm (startCapture). */
+const MARK_WAIT_MS = 15_000;
 
 export const recordingCommandSchema = z.discriminatedUnion("cmd", [
     z.object({ cmd: z.literal("pause") }),
@@ -80,6 +84,8 @@ export type RecordingSessionEvent =
           durationMs: number;
           target: RecordingTarget;
           frames?: number;
+          firstFrameAt?: number;
+          movieMs?: number;
       }
     | {
           event: "done";
@@ -113,8 +119,13 @@ export interface SegmentResult {
     /** True when the movie at `output` exists and is complete. */
     ok: boolean;
     endedBy: SegmentEnd;
-    /** The recorder's own measure of the movie, when it reported one. */
+    /**
+     * The run's wall time as the recorder measured it, when it reported one. It also counts the wait for the first frame
+     * and the stop, so it is not the movie's length: that is `movieMs`, and the saved file's own length is `MovieMeasure`.
+     */
     durationMs?: number;
+    /** The movie's own length (from its first frame to its end), when the recorder reported it. */
+    movieMs?: number;
     /** Frames written into the movie, when the recorder reported them. */
     frames?: number;
     error?: string;
@@ -122,10 +133,16 @@ export interface SegmentResult {
     code?: string;
 }
 
+/** When a run's first frame was captured (epoch ms), as the recorder measured it: the movie's time 0. */
+export interface SegmentStart {
+    firstFrameAt: number;
+}
+
 /**
  * One recorder run: records `target` into `output` until `maxSeconds` or until `signal` aborts, then finalizes the
- * movie. `onRecording` runs once, when the first frame is in. Resolves after the recorder exited; never rejects for
- * a recording problem (that is `endedBy: "failure"`).
+ * movie. `onRecording` runs once, when the first frame is in, with that frame's time when the recorder said it (the
+ * session hears of the frame later: ax-tool writes its PNG first). Resolves after the recorder exited; never rejects
+ * for a recording problem (that is `endedBy: "failure"`).
  */
 export interface SegmentRecorder {
     record(input: {
@@ -135,7 +152,7 @@ export interface SegmentRecorder {
         output: string;
         maxSeconds: number;
         signal: AbortSignal;
-        onRecording: () => void;
+        onRecording: (start?: SegmentStart) => void;
         /** The recorder needs a slow step before it can start (a compile after an update). */
         onPreparing?: () => void;
     }): Promise<SegmentResult>;
@@ -144,9 +161,14 @@ export interface SegmentRecorder {
 export interface FinishedSegment {
     index: number;
     path: string;
+    /** The run's wall time: the recorder's `durationMs`, or the session's own when it reported none. */
     durationMs: number;
     target: RecordingTarget;
     frames?: number;
+    /** When its first frame was captured (epoch ms): the wall time of its movie's time 0. */
+    firstFrameAt?: number;
+    /** Its length in the joined movie: the recorder's movie length, or its duration when it reported none. */
+    movieMs?: number;
 }
 
 /** The frames of the whole movie and its average rate: undefined unless every segment reported its frames. */
@@ -163,8 +185,18 @@ export function movieFrameStats(
     return { frames, averageFps };
 }
 
-/** Joins finished segments into `output`, one H.264 MP4, and returns the joined movie's length. */
-export type SegmentJoiner = (input: { segments: FinishedSegment[]; output: string }) => Promise<{ durationMs: number }>;
+/**
+ * Joins finished segments into `output`, one H.264 MP4, and returns the joined movie's length. `lengthsMs` is how long
+ * each segment lasts in that movie, in the order given (where the join starts the next one); a joiner that cannot
+ * measure them leaves it out, and the session then uses the recorder's movie lengths.
+ */
+export type SegmentJoiner = (input: {
+    segments: FinishedSegment[];
+    output: string;
+}) => Promise<{ durationMs: number; lengthsMs?: number[] }>;
+
+/** A saved movie's length (ms), measured the way a `SegmentJoiner` measures the movie it joined. */
+export type MovieMeasure = (path: string) => Promise<number>;
 
 export type RecordingOutcome = "done" | "discarded" | "failed";
 
@@ -173,8 +205,15 @@ interface ActiveSegment {
     path: string;
     target: RecordingTarget;
     maxSeconds: number;
+    /** When the run was asked for; its first frame cannot come earlier. */
+    requestedAt: number;
     /** When the first frame came in; unset while the recorder arms. */
     startedAt?: number;
+    /** Where this run starts in the joined movie: the movie length of every earlier segment. */
+    movieOffsetMs: number;
+    /** Settles when the first frame is in or the run ended without one. */
+    framed: Promise<void>;
+    settleFramed: () => void;
     /** The reason the `recording` state will carry once the first frame is in. */
     reason: RecordingStateReason;
     controller: AbortController;
@@ -205,6 +244,10 @@ export class RecordingSession {
     private counter = 0;
     /** Wall time of every finished segment, capped at its run's own limit. */
     private recordedMs = 0;
+    /** Movie length of every finished segment: where the next one starts in the joined movie. */
+    private movieMs = 0;
+    /** Each saved segment's length in the saved movie (by segment index), as the join or the measure read it. */
+    private readonly savedLengthsMs = new Map<number, number>();
     private queue: Promise<void> = Promise.resolve();
     private ticker: ReturnType<typeof setInterval> | undefined;
     private settle: (outcome: RecordingOutcome) => void = () => {};
@@ -224,6 +267,8 @@ export class RecordingSession {
             output: string;
             recorder: SegmentRecorder;
             join: SegmentJoiner;
+            /** Measures a one-segment movie at `output`, so its length is the file's as a joined movie's is. */
+            measure: MovieMeasure;
             emit: (event: RecordingSessionEvent) => void;
             maxSeconds?: number;
             segmentSeconds?: number;
@@ -319,6 +364,55 @@ export class RecordingSession {
         return this.recordedMs + (this.current ? this.liveMs(this.current) : 0);
     }
 
+    /**
+     * The kept segments on the wall clock, in movie order: where each starts in the joined movie and when its first
+     * frame was captured. A restart drops the earlier segments, so the spans start at 0 again; the camera, which kept
+     * running, is cut to them after the recording (`alignCameraMovie`). Once the movie is saved each span is as long
+     * as its segment lasts in that file (the join's own lengths, the ones the cursor track is shifted by); the
+     * recorder's `movieMs` differs from it by 13 to 48 ms per segment, which would add up against the screen.
+     */
+    movieSpans(): RecordingSpan[] {
+        let sourceStartMs = 0;
+        return [...this.segments]
+            .sort((a, b) => a.index - b.index)
+            .flatMap((segment) => {
+                const lengthMs = this.savedLengthsMs.get(segment.index) ?? segment.movieMs ?? segment.durationMs;
+                const span =
+                    segment.firstFrameAt === undefined
+                        ? []
+                        : [{ sourceStartMs, firstFrameEpochMs: segment.firstFrameAt, lengthMs }];
+                sourceStartMs += lengthMs;
+                return span;
+            });
+    }
+
+    /**
+     * Where a mark made now lands in the joined movie: the movie length of the finished segments plus the time since
+     * the running segment's first frame. A mark made while a segment arms waits (at most `MARK_WAIT_MS`) for that
+     * frame, because the recorder captures it before the session hears of it; a mark made before the first frame,
+     * or in a segment that never records one, is at the segment's start (0 in the first segment).
+     */
+    async movieTimeOfMark(): Promise<number> {
+        const at = this.now();
+        const run = this.current;
+
+        if (!run) {
+            return this.movieMs;
+        }
+
+        if (run.startedAt === undefined) {
+            await withTimeout(run.framed, MARK_WAIT_MS).catch(() => {
+                log.debug({ index: run.index }, "a mark waited for a first frame that did not come");
+            });
+        }
+
+        if (run.startedAt === undefined) {
+            return run.movieOffsetMs;
+        }
+
+        return run.movieOffsetMs + Math.min(Math.max(0, at - run.startedAt), run.maxSeconds * 1000);
+    }
+
     /** Time a run has been in the movie: none while it arms, never past its own limit. */
     private liveMs(run: ActiveSegment): number {
         if (run.startedAt === undefined) {
@@ -375,6 +469,7 @@ export class RecordingSession {
                 await this.stopSegment();
                 await this.deleteSegments();
                 this.recordedMs = 0;
+                this.movieMs = 0;
                 this.beginSegment("user");
                 return;
             case "stop":
@@ -419,11 +514,19 @@ export class RecordingSession {
         const maxSeconds = Math.min(this.segmentSeconds, (this.limitMs - this.recordedMs) / 1000);
         const controller = new AbortController();
         const target = this.target;
+        let settleFramed = () => {};
+        const framed = new Promise<void>((resolve) => {
+            settleFramed = resolve;
+        });
         const run: ActiveSegment = {
             index,
             path,
             target,
             maxSeconds,
+            requestedAt: this.now(),
+            movieOffsetMs: this.movieMs,
+            framed,
+            settleFramed,
             reason,
             controller,
             stopping: false,
@@ -439,7 +542,7 @@ export class RecordingSession {
                 output: path,
                 maxSeconds,
                 signal: controller.signal,
-                onRecording: () => this.markRecording(run),
+                onRecording: (start) => this.markRecording(run, start),
                 onPreparing: () => {
                     run.preparing = true;
                     this.options.emit({ event: "preparing", message: PREPARING_MESSAGE });
@@ -457,19 +560,25 @@ export class RecordingSession {
 
         void run.result.then((result) => {
             clearTimeout(run.slowStart);
+            run.settleFramed();
             if (!run.stopping) {
                 void this.enqueue(() => this.endedByItself(run, result));
             }
         });
     }
 
-    /** The run's first frame is in: from here its time is in the movie. */
-    private markRecording(run: ActiveSegment): void {
+    /**
+     * The run's first frame is in: from here its time is in the movie. The movie starts at the frame the recorder
+     * captured (`start`), which it reports after writing that frame's PNG; without it, at the moment the session hears.
+     */
+    private markRecording(run: ActiveSegment, start?: SegmentStart): void {
         if (this.current !== run || run.stopping || run.startedAt !== undefined) {
             return;
         }
 
-        run.startedAt = this.now();
+        const now = this.now();
+        run.startedAt = Math.min(now, Math.max(run.requestedAt, start?.firstFrameAt ?? now));
+        run.settleFramed();
         clearTimeout(run.slowStart);
         log.debug({ index: run.index }, "recording segment started");
         this.setState("recording", run.reason);
@@ -507,17 +616,21 @@ export class RecordingSession {
             return;
         }
 
+        const durationMs = result.durationMs ?? wallMs;
         const segment: FinishedSegment = {
             index: run.index,
             path: run.path,
-            durationMs: result.durationMs ?? wallMs,
+            durationMs,
             target: run.target,
             ...(result.frames === undefined ? {} : { frames: result.frames }),
+            firstFrameAt: run.startedAt,
+            movieMs: result.movieMs ?? durationMs,
         };
         this.segments.push(segment);
         // The longer of the movie and the wall time this session saw: the recorder's deadline runs from its own launch,
         // so its movie can be longer, and the limit must count what the movie holds.
         this.recordedMs += Math.max(wallMs, segment.durationMs);
+        this.movieMs += segment.movieMs ?? durationMs;
         this.options.emit({ event: "segment", ...segment });
     }
 
@@ -565,7 +678,8 @@ export class RecordingSession {
         try {
             if (ordered.length === 1) {
                 await this.moveMovie(ordered[0].path);
-                durationMs = ordered[0].durationMs;
+                durationMs = await this.savedLengthMs(ordered[0]);
+                this.savedLengthsMs.set(ordered[0].index, durationMs);
             } else {
                 durationMs = await this.joinMovie(ordered);
             }
@@ -591,6 +705,20 @@ export class RecordingSession {
             ...movieFrameStats(ordered, durationMs),
         });
         this.end("done");
+    }
+
+    /**
+     * The saved one-segment movie's length. A movie the probe cannot read is still saved, so it keeps the recorder's
+     * movie length, which is the nearer of the two figures it reported.
+     */
+    private async savedLengthMs(segment: FinishedSegment): Promise<number> {
+        try {
+            return await this.options.measure(this.options.output);
+        } catch (error) {
+            const fallbackMs = segment.movieMs ?? segment.durationMs;
+            log.warn({ error, output: this.options.output, fallbackMs }, "the saved movie could not be measured");
+            return fallbackMs;
+        }
     }
 
     private async deleteSegments(): Promise<void> {
@@ -657,8 +785,14 @@ export class RecordingSession {
     private async joinMovie(ordered: FinishedSegment[]): Promise<number> {
         const temporary = this.temporaryOutput();
         try {
-            const { durationMs } = await this.options.join({ segments: ordered, output: temporary });
+            const { durationMs, lengthsMs } = await this.options.join({ segments: ordered, output: temporary });
             await this.moveMovie(temporary);
+            if (lengthsMs?.length === ordered.length) {
+                for (const [position, segment] of ordered.entries()) {
+                    this.savedLengthsMs.set(segment.index, lengthsMs[position]);
+                }
+            }
+
             return durationMs;
         } finally {
             await unlink(cursorTrackPath(temporary)).catch((error: unknown) => {
@@ -772,30 +906,123 @@ export function concatListLine(path: string): string {
     return `file '${path.replaceAll("'", "'\\''")}'`;
 }
 
+/** Where one segment's picture sits in a re-encoded joined movie, in joined pixels; `into` is the joined frame. */
+export interface SegmentPlacement {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    into: { w: number; h: number };
+}
+
+/** The frame a re-encoded join writes: the first segment's size, rounded down to even sides as H.264 needs. */
+export function joinedFrameSize({ width, height }: { width: number; height: number }): { w: number; h: number } {
+    return { w: Math.max(2, Math.floor(width / 2) * 2), h: Math.max(2, Math.floor(height / 2) * 2) };
+}
+
+/**
+ * Where a `width` x `height` picture lands in the `into` frame when it is scaled to fit and centred on black: ffmpeg's
+ * force_original_aspect_ratio=decrease with force_divisible_by=2 for the size, and the centring offsets rounded down
+ * to even, as yuv420p's chroma rounds them. joinSegmentsArgv writes these numbers into its filter and
+ * joinCursorTracks moves the segment's rows by the same ones, so the cursor lands on the pixels that show it.
+ */
+export function letterboxPlacement({
+    width,
+    height,
+    into,
+}: {
+    width: number;
+    height: number;
+    into: { w: number; h: number };
+}): SegmentPlacement {
+    const w = Math.min(into.w, Math.round((into.h * width) / height / 2) * 2);
+    const h = Math.min(into.h, Math.round((into.w * height) / width / 2) * 2);
+    return { x: Math.floor((into.w - w) / 4) * 2, y: Math.floor((into.h - h) / 4) * 2, w, h, into };
+}
+
 /**
  * The cursor tracks of the segments (`<segment>.cursor.jsonl`) as one track of the joined movie: each segment's
- * times move by the length of the segments before it, so a pause leaves no gap in the track either.
+ * times move by the length of the segments before it, so a pause leaves no gap in the track either. A segment with a
+ * `placement` was letterboxed into the joined frame: its `x` and `y` (0...1 of its own picture) move into that picture,
+ * and its `pw` grows by the joined frame's width over the picture's, so the joined width over `pw` stays the pixels
+ * one of its points covers. Every other key of a row is kept.
  */
-export function joinCursorTracks(parts: Array<{ text: string; offsetMs: number }>): string {
+export function joinCursorTracks(
+    parts: Array<{ text: string; offsetMs: number; placement?: SegmentPlacement }>
+): string {
     const lines: string[] = [];
 
     for (const part of parts) {
         for (const line of part.text.split("\n")) {
             const match = /^\{"t":(-?[\d.]+)(,.*)$/.exec(line.trim());
 
-            if (match) {
-                lines.push(`{"t":${(Number(match[1]) + part.offsetMs).toFixed(1)}${match[2]}`);
+            if (!match) {
+                continue;
             }
+
+            const t = (Number(match[1]) + part.offsetMs).toFixed(1);
+            const placed = part.placement ? placedCursorRow(line.trim(), t, part.placement) : null;
+            lines.push(placed ?? `{"t":${t}${match[2]}`);
         }
     }
 
     return lines.length ? `${lines.join("\n")}\n` : "";
 }
 
+/** One cursor row moved into its segment's letterboxed picture; null when the row is not a JSON object. */
+function placedCursorRow(line: string, t: string, placement: SegmentPlacement): string | null {
+    let row: unknown;
+    try {
+        row = SafeJSON.parse(line, { strict: true });
+    } catch (error) {
+        log.debug({ error, line }, "a cursor row is not JSON; kept it unplaced");
+        return null;
+    }
+
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+        return null;
+    }
+
+    const { x, y, w, h, into } = placement;
+    const fields = Object.entries(row).map(([key, value]) => {
+        let text: string;
+
+        if (key === "t") {
+            text = t;
+        } else if (key === "x" && typeof value === "number") {
+            text = ((x + value * w) / into.w).toFixed(5);
+        } else if (key === "y" && typeof value === "number") {
+            text = ((y + value * h) / into.h).toFixed(5);
+        } else if (key === "pw" && typeof value === "number") {
+            text = ((value * into.w) / w).toFixed(1);
+        } else {
+            text = SafeJSON.stringify(value, { strict: true });
+        }
+
+        return `${SafeJSON.stringify(key, { strict: true })}:${text}`;
+    });
+    return `{${fields.join(",")}}`;
+}
+
+/** Where each segment's picture sits when a join re-encodes them into the first segment's `width` x `height`. */
+export function segmentPlacements({
+    sizes,
+    width,
+    height,
+}: {
+    sizes: Array<{ width: number; height: number }>;
+    width: number;
+    height: number;
+}): SegmentPlacement[] {
+    const into = joinedFrameSize({ width, height });
+    return sizes.map((size) => letterboxPlacement({ ...size, into }));
+}
+
 /**
  * ffmpeg arguments that join segments of any sizes into one H.264 MP4 at the first segment's size: each input is
- * scaled to fit, padded with black and given square pixels, then the concat filter chains them. The recorder writes
- * variable frame rate movies (a frame only when something moved), so the output keeps their timestamps.
+ * scaled to fit and centred on black at its segmentPlacements place (the same numbers the cursor track moves by),
+ * given square pixels, then the concat filter chains them. The recorder writes variable frame rate movies (a frame
+ * only when something moved), so the output keeps their timestamps.
  */
 export function joinSegmentsArgv({
     inputs,
@@ -806,7 +1033,8 @@ export function joinSegmentsArgv({
     audioTracks = audio ? 1 : 0,
     audioTitles,
 }: {
-    inputs: string[];
+    /** Each segment's file and its picture's size as shown (`probeVideo`'s displayWidth and displayHeight). */
+    inputs: Array<{ path: string; width: number; height: number }>;
     width: number;
     height: number;
     output: string;
@@ -816,12 +1044,11 @@ export function joinSegmentsArgv({
     /** One per audio track, in track order. */
     audioTitles?: string[];
 }): string[] {
-    const w = Math.max(2, Math.floor(width / 2) * 2);
-    const h = Math.max(2, Math.floor(height / 2) * 2);
-    const chains = inputs.map(
-        (_, index) =>
-            `[${index}:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
-            `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v${index}]` +
+    const placements = segmentPlacements({ sizes: inputs, width, height });
+    const chains = placements.map(
+        ({ x, y, w, h, into }, index) =>
+            `[${index}:v]scale=${w}:${h},pad=${into.w}:${into.h}:${x}:${y}:color=black,` +
+            `setsar=1,format=yuv420p,settb=AVTB[v${index}]` +
             Array.from(
                 { length: audioTracks },
                 (_, track) => `;[${index}:a:${track}]aresample=async=1:first_pts=0[a${index}_${track}]`
@@ -843,7 +1070,7 @@ export function joinSegmentsArgv({
             "-loglevel",
             "error",
             "-y",
-            ...inputs.flatMap((input) => ["-i", input]),
+            ...inputs.flatMap((input) => ["-i", input.path]),
             "-filter_complex",
             `${chains.join(";")};${labels}concat=n=${inputs.length}:v=1:a=${audioTracks}[out]${outputs.join("")}`,
             "-map",
@@ -877,7 +1104,7 @@ export function joinSegmentsArgv({
         "-loglevel",
         "error",
         "-y",
-        ...inputs.flatMap((input) => ["-i", input]),
+        ...inputs.flatMap((input) => ["-i", input.path]),
         "-filter_complex",
         `${chains.join(";")};${labels}concat=n=${inputs.length}:v=1:a=0[out]`,
         "-map",

@@ -353,6 +353,11 @@ final class PRsModel: ObservableObject {
     private(set) var pendingReveal: PRReveal?
     /// A commit to select in one PR's review once the review and the PR's commits are in (`request(_:commit:)`).
     private(set) var pendingCommit: PRCommitPick?
+    /// The checkout's answer for the pending link's commits, asked before the forge lists the PR's commits.
+    private var linkLocal: PRLinkLocal?
+    /// The PR whose new review waits for the checkout's answer about a link's commits (`showReview`); the PR's cached
+    /// commits, when they arrive first and list the commit, open it at once.
+    private var deferredReview: String?
     /// The commit row the overview scrolls to, set when a link selected it.
     @Published private(set) var commitScroll: PRCommitScroll?
     /// The range a link's `commit=<from>..<to>` set, so the commits list marks its commits even when it spans
@@ -360,6 +365,9 @@ final class PRsModel: ObservableObject {
     @Published private(set) var linkedRange: PRLinkedRange?
     /// The parent or local-commit lookup of the last link: an older link's answer sets no scope or notice.
     private var rangeLookup: UUID?
+    /// The local-commit lookup (`pickLocalCommits`) and the link it answers. It reads the checkout against the head the
+    /// review showed when it began, so a head move drops it and the link is asked again (`dropLocalLookup`).
+    private var localLookup: (lookup: UUID, pick: PRCommitPick)?
     /// What a link asked of a PR and could not get (its commit is not in the PR), in that PR's header until
     /// dismissed or another PR opens. Not in `errors`: every list load replaces those.
     @Published var notice: PRNotice?
@@ -799,29 +807,25 @@ final class PRsModel: ObservableObject {
         review.reveal(path: pending.path, thread: pending.threadID)
     }
 
-    /// The pending commit, once the review on screen is its PR's and the PR's commits are in. It stays
-    /// pending until a detail fetched after the request answers for the head the review shows: a review
-    /// rebuilt for a moved head or a new base starts on the whole PR again, and a cached detail can
-    /// predate the commit. Then it is selected for good, or the PR is said not to hold it.
+    /// The pending commit, once the review on screen is its PR's: from the PR's commits when they list it, else from
+    /// the checkout while the forge has not answered (`showLocalFirst`). It stays pending until a detail fetched after
+    /// the request answers for the head the review shows, since a cached detail can predate the commit. Then it is
+    /// selected for good, or the PR is said not to hold it.
     private func pickPendingCommit() {
         guard let pending = pendingCommit, let review, let id = reviewPRID, let shown = prs.first(where: { $0.id == id }),
-              pending.ref.matches(shown), let commits = details[id]?.commits else { return }
-        let settled = (detailFetched[id].map { $0 >= pending.asked } ?? false) && reviewHeadSha == shown.headSha
-        guard let commit = HubCommitSha.find(pending.sha, in: commits) else {
+              pending.ref.matches(shown) else { return }
+        let commits = details[id]?.commits ?? []
+        let settled = details[id]?.commits != nil && (detailFetched[id].map { $0 >= pending.asked } ?? false)
+            && reviewHeadSha == shown.headSha
+        let last = pending.to.flatMap { HubCommitSha.find($0, in: commits) }
+        guard let commit = HubCommitSha.find(pending.sha, in: commits), pending.to == nil || last != nil else {
             if settled {
                 pickLocalCommits(pending, in: shown, commits: commits, review: review)
+            } else {
+                // Not listed yet (no list, or a list from before the push): the checkout shows them first.
+                showLocalFirst(pending, in: shown, commits: commits, review: review)
             }
             return
-        }
-        var last: HubPRDetail.Commit?
-        if let to = pending.to {
-            guard let found = HubCommitSha.find(to, in: commits) else {
-                if settled {
-                    pickLocalCommits(pending, in: shown, commits: commits, review: review)
-                }
-                return
-            }
-            last = found
         }
         if settled {
             pendingCommit = nil
@@ -832,6 +836,100 @@ final class PRsModel: ObservableObject {
         } else {
             showLinkedCommit(commit, prID: id, review: review)
         }
+    }
+
+    /// The link's commits from the checkout while the forge has not listed them (no list yet, or a cached one from
+    /// before they were pushed): they show now, and the pick stays pending until the forge's answer settles it. The
+    /// first call asks the checkout (`lookUpLinkLocally`), whose answer calls this again.
+    private func showLocalFirst(_ pending: PRCommitPick, in shown: HubPR, commits: [HubPRDetail.Commit], review: ReviewModel) {
+        guard let local = linkLocal, local.pick == pending, local.repo == review.home.path else {
+            lookUpLinkLocally(pending, pr: shown, repo: review.home.path)
+            return
+        }
+        guard case .found(let found, let parent) = local.state else { return }
+        let whole = Self.scope(shown, detail: details[shown.id], fetch: fetchedHead(shown))
+        let (scope, range) = Self.localScope(found, parent: parent, commits: commits, pr: shown, whole: whole)
+        HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
+        HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
+        if let range { linkedRange = range }
+        guard review.scope != scope else { return }
+        HubPerf.log("prs.commit \(shown.label) \(scope.title) from the checkout, before the forge lists it")
+        review.setScope(scope)
+    }
+
+    /// Asks the checkout at `repo` where the pending link's commits are, off the main thread, once per link and
+    /// checkout: a few git calls (`HubLocalCommits.resolve`), against the PR's head and base as the hub knows them now.
+    /// A head the hub has not seen yet (a commit pushed after the list) still counts, as `resolve` takes commits after
+    /// the head. The answer builds the review (`showReview`) or moves the one on screen (`pickPendingCommit`).
+    private func lookUpLinkLocally(_ pending: PRCommitPick, pr: HubPR, repo: String) {
+        if let current = linkLocal, current.pick == pending, current.repo == repo { return }
+        linkLocal = PRLinkLocal(pick: pending, repo: repo, state: .asking)
+        let ends = [pending.sha] + (pending.to.map { [$0] } ?? [])
+        let head = pr.headSha ?? "HEAD"
+        let bases = [details[pr.id]?.baseSha, fetchedHead(pr)?.base, "origin/\(pr.baseBranch)"].compactMap { $0 }
+        let pushed = Set(details[pr.id]?.commits?.map(\.sha) ?? [])
+        let span = HubPerf.begin("prs.commit.local", "\(pr.label) \(HubCommitSpan(from: pending.sha, to: pending.to).label)", awaits: true)
+        Task {
+            let state = await Task.detached(priority: .userInitiated) { () -> PRLinkLocal.State in
+                guard case .success(let found) = HubLocalCommits.resolve(ends: ends, repo: repo, head: head, bases: bases, pushed: pushed) else {
+                    return .none
+                }
+                return .found(found, parent: found.last == nil ? nil : HubCommitLookup.parent(of: found.first, in: repo))
+            }.value
+            guard var current = linkLocal, current.pick == pending, current.repo == repo else {
+                span.end("superseded")
+                return
+            }
+            current.state = state
+            linkLocal = current
+            if case .found(let found, _) = state {
+                span.end("\(Plural.count(found.count, "commit")), \(found.unpushed) after the head the hub knows")
+            } else {
+                span.end("not in this checkout's PR line; the forge decides")
+            }
+            guard let shown = selected else { return }
+            switch Self.linkLookupFollowUp(pickStillPending: pendingCommit == pending, linkNamesSelected: pending.ref.matches(shown),
+                                           reviewDeferred: deferredReview == shown.id,
+                                           reviewOnScreen: reviewPRID == shown.id && review?.home.path == repo) {
+            case .nothing: return
+            case .pickCommit: pickPendingCommit()
+            case .buildReview: showDiff(shown)
+            }
+        }
+    }
+
+    /// What the checkout's answer about a link's commits does once it lands (`lookUpLinkLocally`).
+    enum LinkLookupFollowUp: Equatable {
+        case nothing, pickCommit, buildReview
+    }
+
+    /// The answer acts only while the link names the PR on screen. A pick still pending selects its commit in the review on
+    /// screen, or builds the review. A pick that went meanwhile (a failed detail, `detailFailed`) still builds a review
+    /// that `showReview` deferred for this answer: without it the PR showed its overview and no diff until a list
+    /// reload (2026-11-10, PR #756 review).
+    nonisolated static func linkLookupFollowUp(pickStillPending: Bool, linkNamesSelected: Bool, reviewDeferred: Bool,
+                                               reviewOnScreen: Bool) -> LinkLookupFollowUp {
+        guard linkNamesSelected else { return .nothing }
+        guard pickStillPending else { return reviewDeferred ? .buildReview : .nothing }
+        return reviewOnScreen ? .pickCommit : .buildReview
+    }
+
+    /// The diff of a link's commits read from the checkout: one commit; or a range from the commit before its first one
+    /// (`parent`, else `<first>^`), or from the PR's own base (`whole`) when the first one is the PR's first listed
+    /// commit. With a range, the listed commits it covers, for the commits list to mark.
+    nonisolated static func localScope(_ local: HubLocalCommits, parent: String?, commits: [HubPRDetail.Commit], pr: HubPR,
+                                       whole: DiffScope) -> (scope: DiffScope, range: PRLinkedRange?) {
+        guard let last = local.last else { return (.commit(sha: local.first, title: local.title), nil) }
+        let label = "\(pr.label) \(local.first.prefix(7))..\(last.prefix(7)) (\(Plural.count(local.count, "commit")))"
+        let index = commits.firstIndex(where: { $0.sha == local.first })
+        let scope: DiffScope
+        if index == 0, case .range(let base, _, _, let fallback) = whole {
+            scope = .range(base: base, head: last, label: label, fallbackBase: fallback)
+        } else {
+            scope = .range(base: parent ?? local.first + "^", head: last, label: label)
+        }
+        // The listed commits it covers: the pushed ones from its first on; none when it starts after the pushed head.
+        return (scope, PRLinkedRange(scope: scope, shas: index.map { Set(commits[$0...].map(\.sha)) } ?? []))
     }
 
     /// A link's commit that the forge does not list may be one the PR's checkout has not pushed yet, one past the end
@@ -854,7 +952,7 @@ final class PRsModel: ObservableObject {
         }
         let pushed = Set(commits.map(\.sha))
         let bases = [details[shown.id]?.baseSha, fetchedHead(shown)?.base, "origin/\(shown.baseBranch)"].compactMap { $0 }
-        let lookup = beginRangeLookup()
+        let lookup = beginLocalLookup(pending)
         Task.detached(priority: .userInitiated) { [weak self] in
             let found = HubLocalCommits.resolve(ends: ends, repo: repo, head: head, bases: bases, pushed: pushed)
             let rewritten: HubLocalCommits.Rewritten?
@@ -931,21 +1029,14 @@ final class PRsModel: ObservableObject {
         HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
         HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
         HubPerf.log("prs.commit \(pr.label) \(local.first.prefix(10))\(local.last.map { "..\($0.prefix(10))" } ?? "") local unpushed=\(local.unpushed)")
-        let scope: DiffScope
-        if let last = local.last {
-            let label = "\(pr.label) \(local.first.prefix(7))..\(last.prefix(7)) (\(Plural.count(local.count, "commit")))"
-            let index = commits.firstIndex(where: { $0.sha == local.first })
-            // The PR's first commit starts at the PR's own base; any other at its first parent from git (`rangeScope`).
-            if index == 0, case .range(let base, _, _, let fallback) = Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)) {
-                scope = .range(base: base, head: last, label: label, fallbackBase: fallback)
-            } else {
-                scope = .range(base: local.first + "^", head: last, label: label)
-            }
-            // The listed commits it covers: the pushed ones from its first on; none when it starts after the pushed head.
-            linkedRange = PRLinkedRange(scope: scope, shas: index.map { Set(commits[$0...].map(\.sha)) } ?? [])
-        } else {
-            scope = .commit(sha: local.first, title: local.title)
+        // The parent the checkout already named for this link (`lookUpLinkLocally`), so the diff shown first stays.
+        var parent: String?
+        if let early = linkLocal, early.pick == pending, case .found(let found, let named) = early.state, found.first == local.first {
+            parent = named
         }
+        let whole = Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr))
+        let (scope, range) = Self.localScope(local, parent: parent, commits: commits, pr: pr, whole: whole)
+        if let range { linkedRange = range }
         if review.scope != scope { review.setScope(scope) }
         if local.unpushed > 0 {
             notice = PRNotice(ref: pending.ref, text: "\(Plural.count(local.unpushed, "commit")) of this link \(local.unpushed == 1 ? "is" : "are") not pushed yet; the diff comes from \((review.repo.path as NSString).abbreviatingWithTildeInPath)", isError: false)
@@ -963,9 +1054,30 @@ final class PRsModel: ObservableObject {
     }
 
     func finishRangeLookup(_ lookup: UUID, apply: () -> Void) {
+        if localLookup?.lookup == lookup { localLookup = nil }
         guard rangeLookup == lookup else { return }
         rangeLookup = nil
         apply()
+    }
+
+    /// `beginRangeLookup` for the local-commit lookup of `pick` (`pickLocalCommits`), which clears the pick while git
+    /// runs: the lookup keeps it, so a head move can ask again (`dropLocalLookup`).
+    func beginLocalLookup(_ pick: PRCommitPick) -> UUID {
+        let lookup = beginRangeLookup()
+        localLookup = (lookup, pick)
+        return lookup
+    }
+
+    /// The review of `pr` moves to a new head in place (`moveHead`), so the same review would accept a local-commit
+    /// lookup asked against the old head, and its answer would set a scope or notice for a head no longer shown. That
+    /// lookup is dropped and its link is pending again, so `pickPendingCommit` asks against the new head (2026-11-10, PR
+    /// #756 review). A parent lookup of a link's range stays: that range does not depend on the head.
+    func dropLocalLookup(movingTo pr: HubPR) {
+        guard let asked = localLookup else { return }
+        localLookup = nil
+        guard asked.lookup == rangeLookup, asked.pick.ref.matches(pr) else { return }
+        rangeLookup = nil
+        if pendingCommit == nil { pendingCommit = asked.pick }
     }
 
     /// A link's `commit=<from>..<to>`: those commits of the PR, both ends included, in either order.
@@ -1306,28 +1418,43 @@ final class PRsModel: ObservableObject {
     /// The embedded review of `pr` at `path`: its worktree, or the main checkout with `fetch` naming the
     /// head there. Rebuilt only when the PR, the folder, the stored proposal or the head changed.
     private func showReview(_ pr: HubPR, path: String, fetch: HubPRFetch?) {
+        let home = URL(fileURLWithPath: path).path
         // Same PR in a different worktree: the old model still points at the old checkout.
-        guard reviewPRID != pr.id || review?.home.path != URL(fileURLWithPath: path).path
+        guard reviewPRID != pr.id || review?.home.path != home
             || reviewProposalStamp != pr.proposalStamp || reviewHeadSha != pr.headSha else { return }
         if reviewPRID == pr.id, reviewHeadSha != pr.headSha, details[pr.id]?.headSha != pr.headSha {
             // A new head can come with a new recorded base (a rebase): fetch the detail again. A detail
             // already for this head (it is what noticed the push) stays.
             details[pr.id] = nil
         }
+        // Only the head moved (a push, a force push, a rebase): the review on screen follows it in place.
+        if reviewPRID == pr.id, let current = review, current.home.path == home, reviewProposalStamp == pr.proposalStamp {
+            moveHead(of: current, to: pr, fetch: fetch)
+            return
+        }
         let samePR = reviewPRID == pr.id
         let sameHead = reviewHeadSha == pr.headSha
+        let scope: DiffScope
+        if samePR, let previous = review, previous.repo.path == home, sameHead {
+            // Only the proposal changed (a review landed, no push): the commit the reader picked still exists.
+            scope = previous.scope
+        } else if let opening = openingScope(pr, path: home, fetch: fetch) {
+            scope = opening
+        } else {
+            // A link's commits open first: the checkout is asked (a few git calls) instead of loading the whole PR
+            // first. Another PR's diff does not stay under this PR's header meanwhile.
+            if !samePR { clearReview() }
+            deferredReview = pr.id
+            return
+        }
+        deferredReview = nil
         reviewPRID = pr.id
         reviewProposalStamp = pr.proposalStamp
         reviewHeadSha = pr.headSha
         let next = ReviewModel(repo: URL(fileURLWithPath: path), options: DiffViewOptions.remembered())
         next.embedded = true
         next.openInWindow = { [weak self] in self?.openInReviewWindow(pr) }
-        // Only the proposal changed (a review landed, no push): the commit the reader picked still exists.
-        if samePR, let previous = review, previous.repo.path == URL(fileURLWithPath: path).path, sameHead {
-            next.scope = previous.scope
-        } else {
-            next.scope = Self.scope(pr, detail: details[pr.id], fetch: fetch)
-        }
+        next.scope = scope
         if let fetch {
             // The main checkout is on another branch: file actions open the host's copy at the head.
             next.remoteHead = ReviewRemoteHead(branch: pr.headBranch, sha: fetch.head, base: fetch.mergeBase ?? fetch.base,
@@ -1355,6 +1482,57 @@ final class PRsModel: ObservableObject {
         review = next
         revealPending()
         pickPendingCommit()
+    }
+
+    /// The scope a new review of `pr` opens on: the pending link's commits when the PR's commits list its one commit or
+    /// the checkout placed them (`lookUpLinkLocally`), else the whole PR. Nil while the checkout is asked.
+    private func openingScope(_ pr: HubPR, path: String, fetch: HubPRFetch?) -> DiffScope? {
+        let whole = Self.scope(pr, detail: details[pr.id], fetch: fetch)
+        guard let pending = pendingCommit, pending.ref.matches(pr) else { return whole }
+        if pending.to == nil, let commit = details[pr.id]?.commits.flatMap({ HubCommitSha.find(pending.sha, in: $0) }) {
+            return .commit(sha: commit.sha, title: commit.title)
+        }
+        guard let local = linkLocal, local.pick == pending, local.repo == path else {
+            lookUpLinkLocally(pending, pr: pr, repo: path)
+            return nil
+        }
+        switch local.state {
+        case .asking:
+            return nil
+        case .found(let found, let parent):
+            return Self.localScope(found, parent: parent, commits: details[pr.id]?.commits ?? [], pr: pr, whole: whole).scope
+        case .none:
+            return whole
+        }
+    }
+
+    /// The PR on screen at a new head (a push, a force push, a rebase): the same review and its page follow it, so the
+    /// diff is not built again from nothing. A review of the whole PR moves to the new head and base, and the page
+    /// parses again only the files whose text changed (`ReviewModel.follow`). A commit, a range or a compare on screen
+    /// stays, since its diff does not depend on the head, and a pending link picks its own (`pickPendingCommit`). A link
+    /// whose checkout lookup ran against the old head is pending again (`dropLocalLookup`).
+    private func moveHead(of current: ReviewModel, to pr: HubPR, fetch: HubPRFetch?) {
+        dropLocalLookup(movingTo: pr)
+        let whole = Self.showsWholePR(current.scope, pr: pr, head: current.remoteHead?.sha ?? reviewHeadSha ?? "HEAD")
+        let linked = pendingCommit.map { $0.ref.matches(pr) } ?? false
+        let follows = whole && !linked
+        HubPerf.log("prs.review \(pr.label) head \(reviewHeadSha?.prefix(10) ?? "-") -> \(pr.headSha?.prefix(10) ?? "-") in place: "
+            + (follows ? "the whole PR follows it" : "\(current.scope.title) stays"))
+        reviewHeadSha = pr.headSha
+        let remote = fetch.map { ReviewRemoteHead(branch: pr.headBranch, sha: $0.head, base: $0.mergeBase ?? $0.base, forge: pr.commitForge) }
+        if follows {
+            current.follow(Self.scope(pr, detail: details[pr.id], fetch: fetch), remoteHead: remote)
+        } else if let remote {
+            current.remoteHead = remote
+        }
+        revealPending()
+        pickPendingCommit()
+    }
+
+    /// Whether `scope` is the whole PR (`scope(_:detail:fetch:)`) at `head`, not a range a link or the reader picked.
+    nonisolated static func showsWholePR(_ scope: DiffScope, pr: HubPR, head: String) -> Bool {
+        guard case .range(_, let shown, let label, _) = scope else { return false }
+        return shown == head && label.hasPrefix("\(pr.label) vs ")
     }
 
     /// The review on screen in its own window (`GenesisTools --review`): the same folder, commit range,
@@ -1442,6 +1620,9 @@ final class PRsModel: ObservableObject {
             // Only the review: `select` would start a second detail load while the first still runs.
             if selectedID == key, let current = selected, let root = current.repoRoot, let fetch = fetchedHead(current) {
                 showReview(current, path: root, fetch: fetch)
+            } else if selectedID == key, case .failed = state, reviewPRID == key {
+                // The diff of the older head stayed while this one fetched (`showDiff`); without the new head it goes.
+                clearReview()
             }
         }
     }
@@ -1479,7 +1660,12 @@ final class PRsModel: ObservableObject {
                 }.value
                 if let cached, details[key] == nil {
                     details[key] = cached
-                    pickPendingCommit()
+                    // A review waiting for the checkout opens now when this list names the link's commit.
+                    if deferredReview == key, selectedID == key, let pr = selected {
+                        showDiff(pr)
+                    } else {
+                        pickPendingCommit()
+                    }
                 }
             }
         }
@@ -1512,7 +1698,12 @@ final class PRsModel: ObservableObject {
             if let fetch = fetchedHead(pr) {
                 showReview(pr, path: root, fetch: fetch)
             } else {
-                clearReview()
+                // A new head of the PR on screen fetches behind its diff, which then moves in place (`moveHead`). Another
+                // PR's diff, or a head whose fetch failed, goes at once.
+                let failed = fetchState(pr).map { if case .failed = $0 { true } else { false } } ?? false
+                if failed || reviewPRID != pr.id || review?.home.path != URL(fileURLWithPath: root).path {
+                    clearReview()
+                }
                 if fetches[pr.id].map({ $0.forHead != pr.headSha }) ?? true {
                     fetchHead(pr, root: root)
                 }
@@ -1607,8 +1798,10 @@ final class PRsModel: ObservableObject {
                     prefetchThreads(row, headMoved: true)
                     showDiff(row)
                 }
-            } else if reviewPRID == key, detail.baseSha != nil, previous?.baseSha != detail.baseSha {
-                review?.setScope(Self.scope(current, detail: detail, fetch: fetchedHead(current)))
+            } else if reviewPRID == key, detail.baseSha != nil, previous?.baseSha != detail.baseSha, let review,
+                      Self.showsWholePR(review.scope, pr: current, head: review.remoteHead?.sha ?? reviewHeadSha ?? "HEAD") {
+                // The recorded base arrived or moved (a rebase): the whole PR follows it in place. A commit stays.
+                review.follow(Self.scope(current, detail: detail, fetch: fetchedHead(current)), remoteHead: nil)
             }
             // A row only `openDirect` keeps (the list does not hold it, and it may have come from disk): this
             // answer is its one fresh source, so its title, state and checks follow it too.
@@ -1646,6 +1839,71 @@ final class PRsModel: ObservableObject {
         review?.setScope(Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)))
     }
 
+    /// HubBench `commitlink`: a hub that listed `ref` before `sha` was pushed. Its row's head and its detail go back to
+    /// the commit before `sha` in the cached detail's list, in memory only. Says what it did, for the log.
+    func benchRewind(_ ref: HubPRRef, before sha: String) -> String {
+        guard let index = prs.firstIndex(where: ref.matches) else { return "no row for \(ref.label)" }
+        let id = prs[index].id
+        guard let data = PRListCache.readDetail(id) ?? PRListCache.readDetail(for: ref),
+              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let commits = json["commits"] as? [[String: Any]],
+              let at = commits.firstIndex(where: { ($0["sha"] as? String).map { HubCommitSha.matches(sha, $0) } ?? false }), at > 0,
+              let parent = commits[at - 1]["sha"] as? String else { return "no cached detail lists \(sha) after another commit" }
+        json["commits"] = Array(commits[..<at])
+        json["headSha"] = parent
+        guard let rewound = try? JSONSerialization.data(withJSONObject: json),
+              var row = try? JSONDecoder().decode(HubPR.self, from: rewound),
+              let detail = try? JSONDecoder().decode(HubPRDetail.self, from: rewound) else { return "the rewound detail does not decode" }
+        row.localWorktree = prs[index].localWorktree
+        prs[index] = row
+        details[id] = detail
+        detailFetched[id] = nil
+        return "\(ref.label) at \(parent.prefix(10)), \(at) of \(commits.count) commits"
+    }
+
+    /// HubBench `headmove`: `ref`'s row and detail at `head` in memory, as a list from before a push, with the detail
+    /// counted as fresh so that no forge answer moves it by itself. Returns the head it replaced, and a note.
+    func benchSetHead(_ ref: HubPRRef, head: String) -> (real: String?, note: String) {
+        guard let index = prs.firstIndex(where: ref.matches) else { return (nil, "no row for \(ref.label)") }
+        let id = prs[index].id
+        guard let (row, detail, real) = Self.benchShow(ref, id: id, head: head) else { return (nil, "no cached detail of \(ref.label)") }
+        var shown = row
+        shown.localWorktree = prs[index].localWorktree
+        prs[index] = shown
+        details[id] = detail
+        detailFetched[id] = Date()
+        return (real, "\(ref.label) at \(head.prefix(10)), its head \(real?.prefix(10) ?? "-")")
+    }
+
+    /// HubBench `headmove`: what a forge answer with a new head does in `loadDetail`: the row, its threads and its diff
+    /// move to `head`.
+    func benchMoveHead(_ ref: HubPRRef, to head: String) -> String {
+        guard let index = prs.firstIndex(where: ref.matches) else { return "no row for \(ref.label)" }
+        let id = prs[index].id
+        guard let (row, detail, _) = Self.benchShow(ref, id: id, head: head) else { return "no cached detail of \(ref.label)" }
+        var moved = row
+        moved.localWorktree = prs[index].localWorktree
+        details[id] = detail
+        prs[index] = moved
+        if selectedID == id {
+            prefetchThreads(moved, headMoved: true)
+            showDiff(moved)
+        }
+        return "\(ref.label) moved to \(head.prefix(10))"
+    }
+
+    /// The PR's cached `hub pr show` answer with its head replaced, as its row and detail, and the head it had.
+    private static func benchShow(_ ref: HubPRRef, id: String, head: String) -> (HubPR, HubPRDetail, String?)? {
+        guard let data = PRListCache.readDetail(id) ?? PRListCache.readDetail(for: ref),
+              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let real = json["headSha"] as? String
+        json["headSha"] = head
+        guard let changed = try? JSONSerialization.data(withJSONObject: json),
+              let row = try? JSONDecoder().decode(HubPR.self, from: changed),
+              let detail = try? JSONDecoder().decode(HubPRDetail.self, from: changed) else { return nil }
+        return (row, detail, real)
+    }
+
     /// The PR's own base, not the branch scope's guess (which picks master for a stacked PR). The
     /// base commit the host recorded wins over `origin/<base>`, which can be stale or gone: a merged
     /// PR showed +50473 lines against an old `origin/` ref where the host shows +1895. A fetched head
@@ -1669,6 +1927,8 @@ struct PRListView: View {
     @ObservedObject var prs: PRsModel
     @StateObject private var prefs = GroupPrefs(key: "prs.repos")
     @ObservedObject private var readiness = PRReadinessStore.shared
+    /// When a row shows its CI icon (Settings → Hub → Panes → PR list; `HubPRRowCI`).
+    @AppStorage(HubPRRowCI.key, store: HubDefaults.store) private var rowCI = HubPRRowCI.unusual.rawValue
     @GenReduceMotion private var reduceMotion
     /// The list's keyboard focus: a click on a row gives it, then Up and Down move the selection (`SidebarArrowKeys`).
     @FocusState private var listFocused: Bool
@@ -1789,8 +2049,9 @@ struct PRListView: View {
                         ForEach(groups, id: \.project) { group in
                             Section {
                                 if !prefs.collapsed.contains(group.project) {
+                                    let usual = HubPRRowCI.stored(rowCI) == .always ? nil : PRRow.usualCI(group.rows)
                                     ForEach(group.rows) { pr in
-                                        row(pr)
+                                        row(pr, usualCI: usual)
                                             .id(pr.id)
                                             .transition(SWR.rowTransition)
                                     }
@@ -1827,6 +2088,7 @@ struct PRListView: View {
                         moreProjects(shown: Set(groups.map(\.project)))
                     }
                     .padding(.bottom, 12)
+                    .genScrollBars()
                 }
                 .modifier(SidebarReveal(
                     proxy: proxy,
@@ -1911,15 +2173,21 @@ struct PRListView: View {
         .equatable()
     }
 
-    private func row(_ pr: HubPR) -> some View {
+    /// `usualCI`: the CI state most of the project's rows share; a row in that state leaves its CI icon out.
+    private func row(_ pr: HubPR, usualCI: String?) -> some View {
         // A value row (`PRRow`, `Equatable`): a publish of the hub's models re-renders it only when what it shows
         // changed, and at rest it carries no button, tooltip or link (`live`), so a drag step or a focus walk
         // with an accessibility client meets 40 labels, not 40 × 3 responders.
-        PRRow(
+        let ready = readiness.readiness(for: pr)
+        let always = HubPRRowCI.stored(rowCI) == .always
+        return PRRow(
             pr: pr,
             selected: prs.selectedID == pr.id,
             flash: prs.changed.contains(pr.id),
-            readiness: readiness.readiness(for: pr),
+            readiness: ready,
+            showsCI: always || (pr.ci != usualCI && !PRReadinessBadge.saysCI(ready)),
+            usualCI: usualCI,
+            failedChecks: (prs.details[pr.id]?.checks ?? []).filter { $0.status == "failed" }.map(\.name),
             select: { listFocused = true; prs.select(pr, opened: true) }
         )
         .equatable()
@@ -1981,10 +2249,39 @@ struct PRRow: View, Equatable {
     /// New or updated after a refresh: flashes once.
     let flash: Bool
     let readiness: PRReadiness?
+    /// The CI icon shows: its state differs from most of the project's PRs, and the readiness word does not say it.
+    var showsCI = true
+    /// The CI state most of the project's PRs share, for the icon's tooltip; nil when there is none.
+    var usualCI: String?
+    /// The failed checks' names, when the PR's detail was loaded: the icon's tooltip names them.
+    var failedChecks: [String] = []
     let select: () -> Void
 
     static func == (a: PRRow, b: PRRow) -> Bool {
         a.pr == b.pr && a.selected == b.selected && a.flash == b.flash && a.readiness == b.readiness
+            && a.showsCI == b.showsCI && a.usualCI == b.usualCI && a.failedChecks == b.failedChecks
+    }
+
+    /// The CI state most of a project's rows share: one red mark on nearly every row said nothing (hub UX C9). nil
+    /// when fewer than three rows report CI or no state holds more than half of them, so every row shows its own.
+    static func usualCI(_ rows: [HubPR]) -> String? {
+        let states = rows.compactMap(\.ci)
+        guard states.count >= 3 else { return nil }
+        let counts = Dictionary(grouping: states, by: { $0 }).mapValues(\.count)
+        guard let top = counts.max(by: { $0.value < $1.value }), top.value * 2 > states.count else { return nil }
+        return top.key
+    }
+
+    /// What the CI icon's tooltip adds to its sentence: the failed checks, and how this project's PRs usually do.
+    private var ciNote: String? {
+        var parts: [String] = []
+        if pr.ci == "failed", !failedChecks.isEmpty {
+            parts.append("Failed: " + failedChecks.joined(separator: ", "))
+        }
+        if let usualCI, usualCI != pr.ci {
+            parts.append("Most \(pr.repo) \(pr.isGitLab ? "MRs" : "PRs"): \(CIBadge.sentence(usualCI).lowercased())")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
     var body: some View {
@@ -2053,7 +2350,9 @@ struct PRRow: View, Equatable {
                     .instantTooltip("The branch is checked out locally: New session here works in its worktree")
             }
             PRReadinessBadge(readiness: readiness)
-            CIBadge(ci: pr.ci)
+            if showsCI {
+                CIBadge(ci: pr.ci, note: ciNote)
+            }
         }
         .fixedSize()
     }
@@ -2196,6 +2495,8 @@ struct CIBadge: View {
     let ci: String?
     /// The checks page; the badge opens it when set.
     var url: URL?
+    /// More lines for the tooltip under the sentence (the failed checks' names, the project's usual state).
+    var note: String?
     /// Its link and tooltip exist only while its row is live (`liveRow`); alone, it is always live.
     @Environment(\.rowLive) private var live
 
@@ -2209,15 +2510,7 @@ struct CIBadge: View {
                 default: return ("clock", ReviewPalette.dim)
                 }
             }()
-            let sentence: String = {
-                switch ci {
-                case "success": return "All checks passed"
-                case "failed": return "Some checks failed"
-                case "running": return "Checks are running"
-                case "pending": return "Checks are waiting to start"
-                default: return "The checks report “\(ci)”"
-                }
-            }()
+            let sentence = Self.sentence(ci) + (note.map { "\n" + $0 } ?? "")
             let icon = Image(systemName: symbol).font(.system(size: 11)).foregroundColor(color)
             if let url, live {
                 Button { ExternalOpener.open(url) } label: { icon }
@@ -2239,6 +2532,19 @@ struct CIBadge: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text(verbatim: sentence))
             }
+        }
+    }
+}
+
+extension CIBadge {
+    /// The CI state in words.
+    static func sentence(_ ci: String) -> String {
+        switch ci {
+        case "success": return "All checks passed"
+        case "failed": return "Some checks failed"
+        case "running": return "Checks are running"
+        case "pending": return "Checks are waiting to start"
+        default: return "The checks report “\(ci)”"
         }
     }
 }
@@ -2319,11 +2625,18 @@ struct PRDetailView: View {
     // Folded sections, one key each so every PR opens the same way.
     @AppStorage("hub.prs.fold.description") private var foldDescription = false
     @AppStorage("hub.prs.fold.sessions") private var foldSessions = false
-    @AppStorage("hub.prs.fold.commits") private var foldCommits = false
+    /// One choice for every PR: open by default, and a fold or unfold anywhere applies to all (Martin, 2026-11-10).
+    @AppStorage(HubPROverview.commitsFoldedKey) private var foldCommits = false
+    /// Settings, Hub, Panes, PR overview: every description in full instead of its first paragraph.
+    @AppStorage(HubPROverview.descriptionWholeKey) private var descriptionWhole = false
+    /// The reader's Show description / Show less, per PR (`PRDescriptionChoices`).
+    @AppStorage(HubPROverview.descriptionChoicesKey) private var descriptionChoices = ""
     @AppStorage("hub.prs.fold.checks") private var foldChecks = false
     @State private var launching = false
     @State private var reviewing = false
     @State private var width: CGFloat = 0
+    /// The overview column's visible height: the description may take 60% of it before it folds.
+    @State private var overviewHeight: CGFloat = 0
     @State private var find = PanelFindModel(scope: "pr.overview", title: "this PR")
 
     /// The first message of a review session. Only the PR's URL comes from outside, and it came from
@@ -2399,9 +2712,9 @@ struct PRDetailView: View {
                         Button("Copy \(pr.label) and title") { Clipboard.copy("\(pr.label) \(pr.title)", what: "title") }
                     }
                     .layoutPriority(1)
-                statePill
+                // One merge state: "Draft, not mergeable", or the state and the readiness verdict (C15).
+                PRHeaderState(pr: pr, mergeable: detail.flatMap { $0.headSha == nil || pr.headSha == nil || $0.headSha == pr.headSha ? $0.mergeable : nil })
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
-                PRReadinessHeaderChip(pr: pr)
                 Spacer()
                 if let notice = model.headerNotice {
                     NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
@@ -2480,9 +2793,8 @@ struct PRDetailView: View {
                     if let add = detail.additions, let del = detail.deletions {
                         lineStat(added: add, removed: del, url: filesURL)
                     }
-                    if let mergeable = detail.mergeable {
-                        Text(mergeable).foregroundColor(mergeable == "conflicting" ? ReviewPalette.removed : ReviewPalette.dim)
-                    }
+                    // Git's mergeability is part of the title row's state (`PRHeaderState`): "mergeable" here sat
+                    // beside "blocked it is a draft" (hub UX pass C15).
                 }
                 if let approvals = pr.approvals, approvals > 0 {
                     Label("\(approvals)", systemImage: "hand.thumbsup").instantTooltip("\(approvals) approvals")
@@ -2508,12 +2820,6 @@ struct PRDetailView: View {
                     .padding(.top, 6)
             }
         }
-    }
-
-    /// Open / Draft / Merged / Closed in the same color as the state icon.
-    private var statePill: some View {
-        let tone = PRStateTone(pr: pr)
-        return Badge(tone.title, color: tone.color, look: .tone, tooltip: "\(pr.isGitLab ? "MR" : "PR") state: \(tone.title)")
     }
 
     /// `+33560 −2119`: with a diff (a worktree, or the head fetched) a click shows the whole PR beside
@@ -2625,18 +2931,18 @@ struct PRDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if let body = detail?.body?.trimmed, !body.isEmpty {
                     PRSection(title: "Description", folded: $foldDescription) {
-                        MarkdownContentView(markdown: linkedDescription(body), style: .hub)
-                            .findField("desc")
-                            .findRow(Self.descriptionID)
-                            .tint(Color(red: 0.62, green: 0.78, blue: 1))
-                            .environment(\.openURL, OpenURLAction { url in
-                                if let id = PRDescriptionLinker.prID(from: url) {
-                                    if !prs.open(id: id) { model.post("That PR is no longer in the list", .warning) }
-                                } else {
-                                    ExternalOpener.open(url)
-                                }
-                                return .handled
-                            })
+                        PRDescriptionView(markdown: linkedDescription(body), whole: descriptionShownWhole,
+                                          foldHeight: PRDescriptionView.foldHeight(column: overviewHeight)) { whole in
+                            descriptionChoices = PRDescriptionChoices.set(descriptionChoices, pr: pr.id, whole: whole)
+                        }
+                        .environment(\.openURL, OpenURLAction { url in
+                            if let id = PRDescriptionLinker.prID(from: url) {
+                                if !prs.open(id: id) { model.post("That PR is no longer in the list", .warning) }
+                            } else {
+                                ExternalOpener.open(url)
+                            }
+                            return .handled
+                        })
                     }
                     .id(Self.descriptionSectionID)
                 } else if detail == nil {
@@ -2673,8 +2979,15 @@ struct PRDetailView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .genScrollBars()
         }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { overviewHeight = $0 }
         .modifier(PRCommitScrollTarget(prs: prs, prID: pr.id))
+    }
+
+    /// The whole description, or the first paragraph: the reader's choice for this PR, else the setting.
+    private var descriptionShownWhole: Bool {
+        PRDescriptionChoices.whole(descriptionChoices, pr: pr.id) ?? descriptionWhole
     }
 
     // MARK: Find (⌘F in the overview)
@@ -2682,6 +2995,7 @@ struct PRDetailView: View {
     private static let sessionsID = "pr.sessions"
     private static let descriptionSectionID = "pr.description.section"
     private static let descriptionID = "pr.description"
+    static var descriptionRowID: String { descriptionID }
     private static let checksID = "pr.checks"
 
     /// Changes when anything the overview shows changes: the sessions found, the detail, the PR.
@@ -2715,10 +3029,90 @@ struct PRDetailView: View {
             foldSessions = false
         } else if match.row == Self.descriptionID {
             foldDescription = false
+            if !descriptionShownWhole {
+                descriptionChoices = PRDescriptionChoices.set(descriptionChoices, pr: pr.id, whole: true)
+            }
         } else if match.row.hasPrefix("check:") {
             foldChecks = false
         } else {
             foldCommits = false
+        }
+    }
+}
+
+/// The reader's Show description / Show less per PR, one `<pr id>\t1|0` line each, newest last, at most 200 PRs.
+enum PRDescriptionChoices {
+    static let limit = 200
+
+    static func whole(_ stored: String, pr: String) -> Bool? {
+        for line in stored.split(separator: "\n").reversed() {
+            let parts = line.split(separator: "\t", maxSplits: 1)
+            if parts.count == 2, parts[0] == pr { return parts[1] == "1" }
+        }
+        return nil
+    }
+
+    static func set(_ stored: String, pr: String, whole: Bool) -> String {
+        var lines = stored.split(separator: "\n").map(String.init).filter { !$0.hasPrefix(pr + "\t") }
+        lines.append("\(pr)\t\(whole ? "1" : "0")")
+        return lines.suffix(limit).joined(separator: "\n")
+    }
+}
+
+/// A PR's description, shown whole while it fits in 60% of the overview column's visible height; a longer one is cut
+/// there with a fade and Show description, and open it shows the whole body and Show less. Cut at three lines, the
+/// most important part of a PR read as a teaser (Martin, 2026-11-10: "let it use at least 60% of the height").
+struct PRDescriptionView: View {
+    let markdown: String
+    let whole: Bool
+    /// Where a long description folds: `foldHeight(column:)` of the overview's visible height.
+    let foldHeight: CGFloat
+    let choose: (Bool) -> Void
+    @State private var overflows = false
+    @GenReduceMotion private var reduceMotion
+
+    /// The share of the column's visible height a description shows before it folds.
+    static let columnShare: CGFloat = 0.6
+    /// The fold before the column has a height, and its floor in a very short window.
+    static let minimumFold: CGFloat = 180
+
+    static func foldHeight(column: CGFloat) -> CGFloat {
+        max(minimumFold, (column * columnShare).rounded())
+    }
+
+    var body: some View {
+        let shownWhole = whole || !overflows
+        let fold = foldHeight
+        VStack(alignment: .leading, spacing: 6) {
+            MarkdownContentView(markdown: markdown, style: .hub)
+                .findField("desc")
+                .findRow(PRDetailView.descriptionRowID)
+                .tint(Color(red: 0.62, green: 0.78, blue: 1))
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: Bool.self, of: { $0.size.height > fold + 1 }) { overflows = $0 }
+                .frame(maxHeight: shownWhole ? nil : fold, alignment: .top)
+                .clipped()
+                .mask {
+                    VStack(spacing: 0) {
+                        Rectangle()
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: shownWhole ? 0 : 32)
+                    }
+                }
+            if overflows {
+                Button {
+                    GenMotion.perform(expanding: !shownWhole, reduceMotion: reduceMotion) { choose(!shownWhole) }
+                } label: {
+                    Text(shownWhole ? "Show less" : "Show description")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Color(red: 0.62, green: 0.78, blue: 1))
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip(shownWhole
+                    ? "Fold it back to 60% of the column's height. The hub remembers it for this PR."
+                    : "The whole description. The hub remembers it for this PR.")
+                .accessibilityValue(Text(shownWhole ? "Expanded" : "Collapsed"))
+            }
         }
     }
 }

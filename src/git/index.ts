@@ -87,6 +87,7 @@ Commands:
   config                       Per-repo genesis-tools.config.json: show | init | check
   base                         Which branch is this one based on, and which rule decided
   changes                      Uncommitted changes (or the last N commits) grouped by file modification time
+  worktree                     Worktree policy and backup: config | init | sync-plans | backup
   fsmonitor                    git's file system monitor on globally: status | record | enable | disable
 
 Commits Options:
@@ -142,6 +143,13 @@ Changes Options:
   -c, --commits <n>            Show the files of the last N commits instead of uncommitted changes
   -C, --cwd <path>             Run against the git repo at this path
 
+Worktree Backup Options (worktree backup <path>):
+  --dry-run                    Print the plan and the blockers, write nothing
+  --remove                     Remove the worktree once the backup is proven and nothing changed
+  --note <text>                What the work was, for the backup's README
+  --max-copy-mb <n>            Refuse when untracked and ignored files exceed this many MiB (default: 512)
+  --json                       The plan (with --dry-run) or the result as JSON
+
 Examples:
   # Query commits for a date range
   ${toolCommand("git commits")} --from 2026-02-01 --to 2026-02-08
@@ -173,6 +181,10 @@ Examples:
   # What did I touch, and when?
   ${toolCommand("git changes")}
   ${toolCommand("git changes")} --commits 5
+
+  # Back up a worktree before removing it (~/.genesis-tools/backups/worktrees/<day>-<repo>-<name>/)
+  ${toolCommand("git worktree backup")} .worktrees/feat-y --dry-run
+  ${toolCommand("git worktree backup")} .worktrees/feat-y --remove --note "login form spike"
 
   # Show the repo's scariest files as an ASCII monster
   ${toolCommand("git monster")} src --top 10

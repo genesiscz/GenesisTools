@@ -35,7 +35,7 @@ describe("agents listener filter", () => {
         expect(filter(lifecycle)).toBe(false);
     });
 
-    test("a join and a leave pass --kinds message; per-login lifecycle does not", () => {
+    test("--kinds is honest about presence: message hides a leave, naming agent_left keeps it", () => {
         const filter = createListenerFilter({ kinds: "message" });
         const left: FeedEvent = {
             type: "agent_left",
@@ -54,8 +54,12 @@ describe("agents listener filter", () => {
             reason: "clean_exit",
         };
 
-        expect(filter(left)).toBe(true);
+        // Before 2026-11-10 presence passed every --kinds, and a child's `--kinds message` still woke it on
+        // every peer's Monitor re-arm.
+        expect(filter(left)).toBe(false);
         expect(filter(loggedOut)).toBe(false);
+        expect(createListenerFilter({ kinds: "message,agent_left" })(left)).toBe(true);
+        expect(createListenerFilter({ excludeKinds: "agent_left" })(left)).toBe(false);
     });
 
     test("supports the documented jq-ish equality expression", () => {

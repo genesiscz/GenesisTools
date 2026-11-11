@@ -69,6 +69,53 @@ describe("pricing ladder", () => {
         expect(sonnet && effectivePricing(sonnet, { at: new Date("2026-10-07T12:00:00Z") }).cachedReadPer1M).toBe(0.1);
     });
 
+    test("Fable 5.2 fast mode bills 2x, and Gemini launch prices end on their dates", async () => {
+        const fable = await pricingFor("anthropic", "claude-fable-5-2");
+        const argon = await pricingFor("google", "gemini-4-argon");
+        const flash = await pricingFor("google", "gemini-3.8-flash");
+
+        expect(fable && effectivePricing(fable, { serviceTier: "fast" })).toMatchObject({
+            inputPer1M: 16,
+            outputPer1M: 80,
+            cachedReadPer1M: 0.4,
+        });
+        expect(argon && effectivePricing(argon, { at: new Date("2026-11-30T23:00:00Z") }).inputPer1M).toBe(2);
+        expect(argon && effectivePricing(argon, { at: new Date("2026-12-01T00:00:00Z") }).inputPer1M).toBe(4);
+        expect(flash && effectivePricing(flash, { at: new Date("2026-12-31T12:00:00Z") }).outputPer1M).toBe(3.75);
+        expect(flash && effectivePricing(flash, { at: new Date("2027-01-01T00:00:00Z") }).outputPer1M).toBe(7.5);
+    });
+
+    test("Gemini Priority bills 1.8x of the price of its day, and 2.5 Pro takes 3.8 Flash rates from 2026-12-01", async () => {
+        const argon = await pricingFor("google", "gemini-4-argon");
+        const flash = await pricingFor("google", "gemini-3.6-flash");
+        const lite = await pricingFor("google", "gemini-3.5-flash-lite");
+        const pro = await pricingFor("google", "gemini-2.5-pro");
+        const priority = (at: string) => ({ serviceTier: "priority", at: new Date(at) });
+
+        expect(argon && effectivePricing(argon, priority("2026-11-15T12:00:00Z")).inputPer1M).toBe(3.6);
+        expect(argon && effectivePricing(argon, priority("2026-12-01T00:00:00Z")).inputPer1M).toBe(7.2);
+        expect(flash && effectivePricing(flash, priority("2026-12-31T12:00:00Z")).outputPer1M).toBe(6.75);
+        expect(flash && effectivePricing(flash, priority("2027-01-01T00:00:00Z")).outputPer1M).toBe(13.5);
+        expect(lite && effectivePricing(lite, { serviceTier: "priority" }).inputPer1M).toBe(0.54);
+
+        expect(pro && effectivePricing(pro, { at: new Date("2026-11-30T23:00:00Z") })).toMatchObject({
+            inputPer1M: 1.25,
+            outputPer1M: 10,
+        });
+        expect(pro && effectivePricing(pro, { at: new Date("2026-12-01T00:00:00Z") })).toMatchObject({
+            inputPer1M: 0.75,
+            outputPer1M: 3.75,
+            cachedReadPer1M: 0.075,
+        });
+        expect(pro && effectivePricing(pro, { at: new Date("2027-01-01T00:00:00Z") })).toMatchObject({
+            inputPer1M: 1.5,
+            outputPer1M: 7.5,
+        });
+        expect(pro && effectivePricing(pro, priority("2026-12-15T00:00:00Z")).inputPer1M).toBe(1.35);
+        // A priority call before the reroute has no published 2.5 Pro priority rate here, so it stays at the base.
+        expect(pro && effectivePricing(pro, priority("2026-11-15T00:00:00Z")).inputPer1M).toBe(1.25);
+    });
+
     test("a static entry never prices another provider's route", async () => {
         expect(await pricingFor("openrouter", "claude-opus-5")).toBeUndefined();
         expect(await pricingFor("openai", "claude-opus-5")).toBeUndefined();
@@ -109,6 +156,7 @@ describe("pricing ladder", () => {
             "claude-sonnet-5",
             "claude-fable-5",
             "claude-fable-5-1",
+            "claude-fable-5-2",
         ]) {
             const pricing = await pricingFor("anthropic", id);
 

@@ -357,6 +357,14 @@ describe("decision hub hooks", () => {
         // Said once per decision.
         expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toBeNull();
         expect(readDecisions(log.file)[0]?.state).toBe("open");
+
+        // An earlier send-back about the same decision (an unclear "D1 maybe") does not swallow this clear answer.
+        sent.clear();
+        sent.add(steps.id);
+        const afterUnclear = await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps);
+        expect(afterUnclear && "decision" in afterUnclear ? afterUnclear.reason : "").toContain(
+            '❓ DECISION 1: b), not c) from "D1: b) not c), it is slow"'
+        );
     });
 
     it("reads each transcript row once: from the agent's last reply on, a bare answer still found", async () => {
@@ -704,6 +712,21 @@ describe("decision hub hooks", () => {
         ]);
         // A long message keeps its start and the line that answers, so a review sees why it matched.
         expect(run?.users[1]?.candidates).toEqual(["D1 a) keep it"]);
+
+        // An answer that rules a letter out reads as left for the agent, with the letter it ruled out.
+        const excluding = { line: -3, text: "D1 a) not b)" };
+        expect(
+            run
+                ? userMessageOutcome(
+                      {
+                          ...run,
+                          unambiguous: [],
+                          forAgent: [{ number: 1, option: "a", excluded: "b", answer: "", evidence: excluding }],
+                      },
+                      excluding
+                  )
+                : ""
+        ).toBe("for the agent D1 a) not b)");
     });
 
     it("logs a completed chat read with no user messages", async () => {
