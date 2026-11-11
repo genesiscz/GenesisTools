@@ -43,7 +43,7 @@ struct ReachSheet: View {
         .frame(maxWidth: 520)
     }
 
-    /// "Besides Q11 (→ Ussov Stanislav), this decision also changes:" — a changed answer says so.
+    /// "Besides Q11 (→ Alice Example), this decision also changes:" — a changed answer says so.
     static func lead(_ pending: MeetingDetailModel.PendingReach) -> String {
         let answer = pending.action.answer.map { " (→ \($0))" } ?? ""
         let verb = pending.action.replaces == nil ? "this decision also changes" : "the changed answer also changes"
