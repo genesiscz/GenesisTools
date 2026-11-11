@@ -72,7 +72,8 @@ public struct FlowWidget: View {
                                        fixes: notice.fixes)
                                 .accessibilityIdentifier("flow-widget-legacy")
                         } else if let error = runtime.lastError ?? flow.lastError ?? focus.lastError {
-                            NoticePill(text: error, tone: .error)
+                            NoticePill(text: error, tone: .error,
+                                       fixes: [.details(FailureReport.unexpected(error, outcome: "Flow could not do that", action: "Run Flow", area: "flow", app: .launch))])
                         }
                     }.padding(18)
                 }

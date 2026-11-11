@@ -44,7 +44,7 @@ struct WidgetUsageModuleView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     header
                     ForEach([store.error, store.ackError].compactMap { $0 }, id: \.self) { error in
-                        Text(verbatim: error).font(.caption2).foregroundStyle(KitPalette.removed).lineLimit(3)
+                        FailureInline(message: error, outcome: "The usage did not load", action: "Load the usage", area: "widget", identifier: "widget.usage.failure")
                     }
                     ForEach(store.warnings) { warning in
                         Text(verbatim: warning.message).font(.caption2).foregroundStyle(UsageTone.severity("warning")).lineLimit(3)

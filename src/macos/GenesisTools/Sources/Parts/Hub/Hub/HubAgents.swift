@@ -1916,6 +1916,10 @@ struct AgentChildDetails: View {
             }
             .buttonStyle(.genHoverPlain())
             .instantTooltip("Messages this teammate received and sent; waiting ones are in its inbox and not delivered yet")
+            if mailOpen, agents.mail == nil, !agents.loadingMail, let error = agents.mailError {
+                FailureInline(message: error, outcome: "The team mail did not load", action: "Read the team mail",
+                              area: "hub", identifier: "agents.mail.failure") { agents.loadMail() }
+            }
             if mailOpen, let mail = agents.mail, !mail.isEmpty {
                 let rows = mailRows(mail)
                 ScrollView {

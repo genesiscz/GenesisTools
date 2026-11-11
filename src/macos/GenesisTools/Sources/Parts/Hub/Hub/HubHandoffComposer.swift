@@ -373,10 +373,8 @@ struct HandoffComposerSheet: View {
     @ViewBuilder
     private var preview: some View {
         if let error, draft == nil {
-            Text(verbatim: error)
-                .font(SessionPalette.mono(11.5))
-                .foregroundStyle(SessionPalette.red)
-                .textSelection(.enabled)
+            FailureInline(message: error, outcome: "The handoff could not be drafted", action: "Draft the handoff",
+                          area: "hub", identifier: "handoff.failure")
                 .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else if let draft {

@@ -300,7 +300,8 @@ struct AgentSendForm: View {
                 }
             }
             if let loadError {
-                Text(verbatim: loadError).font(.system(size: 11.5)).foregroundColor(ReviewPalette.removed).lineLimit(3)
+                FailureInline(message: loadError, outcome: "The sessions to send to did not load",
+                              action: "List the sessions", area: "review", identifier: "agent-send.failure")
             }
             ForEach(sessions) { session in
                 row(id: session.sessionId) {

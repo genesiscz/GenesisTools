@@ -2543,7 +2543,9 @@ struct InboxDecisionCard: View, Equatable {
         VStack(alignment: .leading, spacing: 6) {
             if let failure = state.writeError {
                 // One sentence; the tool's own words behind Details, never cut in the middle (F10).
-                NoticePill(text: failure, more: state.writeErrorDetail, tone: .error)
+                NoticePill(text: failure, more: state.writeErrorDetail, tone: .error,
+                           fixes: [.details(FailureReport.unexpected(state.writeErrorDetail ?? failure, outcome: failure,
+                                                                     action: "Send the answer", area: "hub", app: .launch))])
             }
             if let record = item.delivery {
                 VStack(alignment: .leading, spacing: 2) {

@@ -118,8 +118,7 @@ struct PrivateDataSection: View {
                 .instantTooltip("Reads the screen text (a movie: one frame a second, the first time can take minutes) and lists what looks private")
                 .accessibilityIdentifier("recorder.hide.findPrivate")
             if let failure {
-                Text(verbatim: failure).font(.system(size: 11.5)).foregroundStyle(Color(red: 1, green: 0.45, blue: 0.42))
-                    .fixedSize(horizontal: false, vertical: true)
+                FailureInline(message: failure, outcome: "The private parts could not be found", action: "Find private text on screen", area: "recorder", identifier: "recorder.hide.failure")
             }
             if let hits {
                 if hits.isEmpty {
@@ -261,8 +260,7 @@ struct WaitsSection: View {
                 .instantTooltip("Compares the picture four times a second (once per movie, then cached) and proposes 4× to 8×")
                 .accessibilityIdentifier("recorder.clip.findWaits")
             if let failure {
-                Text(verbatim: failure).font(.system(size: 11.5)).foregroundStyle(Color(red: 1, green: 0.45, blue: 0.42))
-                    .fixedSize(horizontal: false, vertical: true)
+                FailureInline(message: failure, outcome: "The waits could not be found", action: "Find the waits in the clip", area: "recorder", identifier: "recorder.waits.failure")
             }
             if let waits {
                 if waits.isEmpty {

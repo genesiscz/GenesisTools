@@ -983,7 +983,7 @@ public struct LiveWidgetView: View {
             transcript: model.transcript, cards: shownCards, outgoing: model.outgoing,
             activity: model.sessionActivity, provider: model.selected?.target.provider ?? ""))
         if let error = model.transcriptError {
-            Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+            FailureInline(message: error, outcome: "The conversation did not load", action: "Read the conversation", area: "widget", identifier: "widget.transcript.failure")
         }
         ForEach(timeline) { item in
             VStack(alignment: .leading, spacing: 5) {
@@ -1208,7 +1208,9 @@ public struct LiveWidgetView: View {
             if let error = message.error, !(message.state == "waiting-route" && message.receipt?.channel == "session-queue") {
                 // What happened in one sentence; the transport's own text only behind Details.
                 NoticePill(text: Self.outgoingProblem(message), more: error,
-                           tone: message.state == "failed" ? .error : .warning)
+                           tone: message.state == "failed" ? .error : .warning,
+                           fixes: [.details(FailureReport.unexpected(error, outcome: Self.outgoingProblem(message),
+                                                                     action: "Send a message", area: "widget", app: .launch))])
             }
             if message.isWithdrawable || message.needsRecovery {
                 HStack {

@@ -256,7 +256,10 @@ struct PRChecksSection: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Fetching the failing log")
             } else if let failure = store.failures[url] {
-                NoticePill(text: "The log could not be read", detail: failure, isError: true) { store.dismissFailure(url) }
+                NoticePill(text: "The log could not be read", detail: failure, isError: true,
+                           fixes: [.details(FailureReport.unexpected(failure, outcome: "The check's log could not be read",
+                                                                     action: "Read the failing log", area: "hub",
+                                                                     app: .launch))]) { store.dismissFailure(url) }
             } else if let render = store.logs[url] {
                 logBody(render)
                 toolbar(check, url: url, render: render)
@@ -276,7 +279,8 @@ struct PRChecksSection: View {
     private func logBody(_ render: CheckLogRender) -> some View {
         let log = render.log
         if let error = log.error {
-            Text(verbatim: error).font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim).textSelection(.enabled)
+            FailureInline(message: error, outcome: "Part of the check's log could not be read",
+                          action: "Read the failing log", area: "hub", identifier: "checks.log.failure")
         }
         if !log.errors.isEmpty {
             VStack(alignment: .leading, spacing: 2) {

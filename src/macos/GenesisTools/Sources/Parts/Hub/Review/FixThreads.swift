@@ -263,7 +263,8 @@ struct PRTaskForm<Summary: View>: View {
                 }
             }
             if let planError {
-                Text(verbatim: planError).font(.system(size: 11.5)).foregroundColor(ReviewPalette.removed).lineLimit(3)
+                FailureInline(message: planError, outcome: "The sessions that could fix these threads did not load",
+                              action: "Find the owning sessions", area: "review", identifier: "fix-threads.failure")
             }
             ForEach(plan?.candidates ?? []) { owner in
                 targetRow(id: owner.sessionId, selected: choice == owner.sessionId) {

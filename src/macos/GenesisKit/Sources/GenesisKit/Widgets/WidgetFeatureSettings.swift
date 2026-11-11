@@ -970,8 +970,7 @@ private struct WidgetDictationSettings: View {
             NativeSettingsCard("Live dictation", subtitle: "Text stays editable before you send it to an agent.") {
                 if loading { ProgressView().controlSize(.small) }
                 if let failure {
-                    Text(failure).foregroundStyle(.orange).font(.caption)
-                    Button("Try again") { Task { await load() } }.buttonStyle(.bordered)
+                    FailureInline(message: failure, outcome: "The dictation settings did not load", action: "Load the dictation settings", area: "widget", identifier: "widget.dictation.failure") { Task { await load() } }
                 }
                 NativeSettingsRow("Provider") {
                     Picker(
@@ -1149,7 +1148,7 @@ private struct WidgetAgentHooksCard: View {
                 }
             }
             if let failure {
-                Text(failure).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                FailureInline(message: failure, outcome: "The agent hooks step failed", action: "Read or change the agent hooks", area: "widget", identifier: "widget.hooks.failure")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -1223,6 +1222,11 @@ private struct WidgetSettingsError: View {
                 Image(systemName: "exclamationmark.triangle")
                 Text(error).font(.caption).textSelection(.enabled)
                 Spacer()
+                KitButton("Details", symbol: "doc.text.magnifyingglass", kind: .ghost, size: .small,
+                          identifier: "widget.settings.error.details") {
+                    FailureReporter.shared.showDetails(FailureReport.unexpected(
+                        error, outcome: "A widget setting failed", action: "Change a widget setting", area: "widget", app: .launch))
+                }
                 Button("Dismiss") { model.error = nil }
             }.padding(10).background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         }

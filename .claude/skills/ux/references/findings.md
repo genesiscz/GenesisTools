@@ -676,3 +676,10 @@ checklist.md or motion.md as well.
   glyph, the rows stand in two groups, the two calendar numbers have one picture, and the model keeps the newest
   value and writes it next. Rule: put the unit in the control; when a control can fire faster than its host saves,
   test two quick changes and read the saved value, not the screen.
+- 2026-11-11 01:20 — **A sandbox home that half the app ignores puts real data into a picture.** A worker took pictures of the
+  hub under `GENESIS_TOOLS_HOME=<scratch>`, and the Agents mode and the Activity page drew real session titles and
+  account names. The app asked the hub server on the real home's socket: `ToolsServerClient.defaultSocketPath` joined
+  `.genesis-tools` to the real home by hand, as about 40 other Swift paths did, while three copies of the override
+  lived in other files. Now every Swift path goes through `GenesisToolsHome` (GenesisKitBase/Paths), and lint-rules
+  `swift-hand-joined-genesis-tools` fails a hand join. Rule: before you keep a picture made under a sandbox home,
+  look for one real title or name in it; one hit means some path still reads the real home.

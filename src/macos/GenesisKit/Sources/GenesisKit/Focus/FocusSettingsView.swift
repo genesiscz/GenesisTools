@@ -32,7 +32,9 @@ public struct FocusSettingsView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             if let error = configuration.lastError {
-                NoticePill(text: error, isError: true, dismiss: configuration.dismissError)
+                NoticePill(text: error, isError: true,
+                           fixes: [.details(FailureReport.unexpected(error, outcome: "A Focus setting failed", action: "Change Focus", area: "focus", app: .launch))],
+                           dismiss: configuration.dismissError)
             }
             if !controller.available {
                 ledgerErrorCard

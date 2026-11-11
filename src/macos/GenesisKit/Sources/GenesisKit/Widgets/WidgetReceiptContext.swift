@@ -52,10 +52,10 @@ struct WidgetReceiptContextView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     if let failure {
-                        Text("Could not refresh: " + failure).font(.caption).foregroundStyle(.secondary)
+                        FailureInline(message: failure, outcome: "The context did not refresh", action: "Refresh the context", area: "widget", identifier: "widget.receipt.refresh.failure")
                     }
                 } else if let message = context?.error ?? failure {
-                    Text(message).font(.caption).foregroundStyle(.secondary)
+                    FailureInline(message: message, outcome: "The context did not load", action: "Load the context", area: "widget", identifier: "widget.receipt.failure")
                 } else if loading {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)

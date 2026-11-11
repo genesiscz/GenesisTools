@@ -959,9 +959,7 @@ private struct FlowTransformsPane: View {
             }
 
             if let failure {
-                Text(failure)
-                    .font(GenTypography.caption(11))
-                    .foregroundStyle(Color.genError)
+                FailureInline(message: failure, outcome: "Flow could not do that", action: "Run Flow", area: "flow", identifier: "flow.failure")
                     .fixedSize(horizontal: false, vertical: true)
             }
 

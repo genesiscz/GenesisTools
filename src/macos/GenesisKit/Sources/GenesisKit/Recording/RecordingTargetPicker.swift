@@ -293,11 +293,9 @@ public struct RecordingTargetPicker: View {
                 slowLoad = true
             }
         case let .failed(message):
-            VStack(spacing: 8) {
-                Text(message).font(.system(size: 12)).foregroundStyle(SessionPalette.secondary)
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                Button("Try again", action: onRetry).buttonStyle(.genHover())
-            }
+            FailureInline(message: message, outcome: "The list of what to record did not load",
+                          action: "List the screens and windows", area: "recorder", form: .pane,
+                          identifier: "recording.picker.failure") { onRetry() }
             .frame(maxWidth: .infinity, minHeight: 120)
         case .loaded:
             if rows.isEmpty {

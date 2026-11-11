@@ -37,7 +37,10 @@ struct EditorView: View {
                             // On the preview's bottom edge: over the transport bar it covered the play buttons.
                             .overlay(alignment: .bottom) {
                                 if let notice = model.notice {
-                                    NoticePill(text: notice, isError: model.noticeIsError, dismiss: { model.notice = nil })
+                                    NoticePill(text: notice, isError: model.noticeIsError,
+                                               fixes: model.noticeIsError
+                                                   ? [.details(FailureReport.unexpected(notice, outcome: notice, action: "Edit the recording", area: "recorder", app: .launch))] : [],
+                                               dismiss: { model.notice = nil })
                                         .padding(.bottom, 12)
                                         .id(notice)
                                 }
