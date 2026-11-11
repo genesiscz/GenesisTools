@@ -77,6 +77,8 @@ public struct GitDiffView: View {
                 // On the next turn: the event can arrive inside a SwiftUI update.
                 case .failed(let shown): DispatchQueue.main.async { c?.onFailure?(shown) }
                 case .rendered: DispatchQueue.main.async { c?.onFailure?(nil) }
+                // This view reads no files itself: the ask ends at once, so the page's button does not wait on it.
+                case .showLargeFile(let id): c?.renderer?.largeFileFailed(id: id, reason: "this diff view cannot read a file whole")
                 default: break
                 }
             }

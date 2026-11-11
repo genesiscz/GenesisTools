@@ -66,6 +66,7 @@ const GROK_4_20: ModelRate = { inputUsdPerMTok: 2, outputUsdPerMTok: 6 };
 const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
     // $10/$50 list for both. The $25/$125 this row carried until 2026-09-23 was Mythos Preview's
     // price, copied in when the table was first written (cf69a6b0c) and never Fable's.
+    { ids: ["claude-fable-5-2"], rate: { inputUsdPerMTok: 8, outputUsdPerMTok: 40 } },
     { ids: ["claude-fable-5-1", "claude-fable-5"], rate: { inputUsdPerMTok: 10, outputUsdPerMTok: 50 } },
     { ids: ["claude-opus-5-5"], rate: { inputUsdPerMTok: 4, outputUsdPerMTok: 20 } },
     {

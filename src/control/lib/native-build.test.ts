@@ -143,7 +143,7 @@ test("builds that start together compile once, and the later one reuses the fres
     writeFileSync(join(sourceDir, "Sources", "main.swift"), "print(1)");
     let compiles = 0;
     // The compiler boundary: it yields once, so the second caller is already waiting when it finishes.
-    const build = async (): Promise<void> => {
+    const build = async (): Promise<undefined> => {
         compiles++;
         await new Promise((resolve) => setImmediate(resolve));
         mkdirSync(join(sourceDir, ".build", "release"), { recursive: true });
@@ -169,4 +169,51 @@ test("the build, lock-wait and worker budgets each cover the one nested inside t
     expect(NATIVE_BUILD_TIMEOUT_MS).toBeGreaterThanOrEqual(240_000);
     expect(NATIVE_BUILD_LOCK_WAIT_MS).toBeGreaterThan(NATIVE_BUILD_TIMEOUT_MS);
     expect(NATIVE_BUILD_WORKER_TIMEOUT_MS).toBeGreaterThan(NATIVE_BUILD_LOCK_WAIT_MS + NATIVE_BUILD_TIMEOUT_MS);
+});
+
+// Regression test: 2026-11-09 11:49Z a recording start waited 50 s for an ax-tool rebuild, and the day log said only
+// "binary missing or stale" and "built successfully": no cause, no source fingerprint, no cost.
+test("a rebuild reports its trigger, the source fingerprint, its time, exit, CPU and peak memory", async () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), "control-build-report-"));
+    const binary = join(sourceDir, ".build", "release", "ax-tool");
+    mkdirSync(join(sourceDir, "Sources"));
+    mkdirSync(join(sourceDir, "SnapshotSupport"));
+    writeFileSync(join(sourceDir, "Package.swift"), "package");
+    writeFileSync(join(sourceDir, "Sources", "main.swift"), "print(1)");
+    const fingerprint = captureNativeSources(sourceDir).fingerprint;
+    const build = async () => {
+        mkdirSync(join(sourceDir, ".build", "release"), { recursive: true });
+        writeFileSync(binary, "compiled");
+        return { exitCode: 0, cpuMs: 41_000, peakRssBytes: 512 * 1024 * 1024 };
+    };
+
+    const result = await buildNativeOnce({
+        binary,
+        sourceDir,
+        lockPath: join(sourceDir, ".build", "ax-tool-build.lock"),
+        build,
+        trigger: "recorder-service-start",
+    });
+
+    expect(result.built).toBe(true);
+    expect(result.report).toMatchObject({
+        trigger: "recorder-service-start",
+        fingerprint,
+        exitCode: 0,
+        cpuMs: 41_000,
+        peakRssMb: 512,
+    });
+    expect(result.report?.ms).toBeGreaterThanOrEqual(0);
+});
+
+test("the compiler boundary measures the build process with its children: exit, CPU and peak memory", async () => {
+    const stats = await nativeBuild.swiftReleaseBuild(tmpdir(), [
+        process.execPath,
+        "-e",
+        "new Uint8Array(64e6).fill(1)",
+    ]);
+
+    expect(stats.exitCode).toBe(0);
+    expect(stats.cpuMs).toBeGreaterThan(0);
+    expect(stats.peakRssBytes).toBeGreaterThan(64e6);
 });

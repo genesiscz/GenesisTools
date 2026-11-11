@@ -266,6 +266,7 @@ struct HubDigestPanel: View {
                 }
                 .padding(14)
                 .scrollOverflowContent()
+                .genScrollBars()
             }
             // The last row sat cut at the panel's bottom edge with nothing saying the list goes on (H16).
             .scrollOverflowHints()

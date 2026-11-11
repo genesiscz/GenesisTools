@@ -8,6 +8,9 @@ struct EditGesture {
     let id: String
     /// The edit when the gesture began: every preview's ops start from it.
     let mark: EditProject
+    /// The mark with the window's own steps on it (`change`): the next step is built on it, not on the service's
+    /// answer, so an agent's item or the service's order in that answer never becomes part of the drag's ops.
+    var draft: EditProject?
     var ops: [EditOp] = []
     /// The previews sent; only the answer to the newest one is drawn.
     var sent = 0
@@ -26,20 +29,31 @@ extension EditorModel {
     /// A change the window's controls make on a copy of the edit (a slider, a toggle, a drag of an item's place):
     /// drawn at once, sent as the ops that name it (EditOpDiff), and merged with the steps that follow within 0.6 s.
     func change(_ build: (inout EditProject) -> Void) {
-        var candidate = project
+        // The open gesture's draft is the base: the frame draws the service's answers, the ops name only this window's.
+        var base = gesture?.draft ?? project
+        var candidate = base
         build(&candidate)
-        guard candidate != project else { return }
-        let parts = Self.changedParts(project, candidate)
-        let key = parts.joined(separator: ",")
-        if gesture?.key != key { finishGesture() }
-        let mark = gesture?.mark ?? project
+        guard candidate != base else { return }
+        var parts = Self.changedParts(base, candidate)
+        var key = parts.joined(separator: ",")
+        if let open = gesture, open.key != key {
+            finishGesture()
+            base = project
+            candidate = base
+            build(&candidate)
+            guard candidate != base else { return }
+            parts = Self.changedParts(base, candidate)
+            key = parts.joined(separator: ",")
+        }
+        let mark = gesture?.mark ?? base
         guard let ops = EditOpDiff.ops(from: mark, to: candidate) else {
             HubPerf.log("recorder.editor: a change of \(key) has no op; it was not sent")
             show("This change cannot be sent to the edit.", error: true)
             return
         }
         step(key: key, ops: ops)
-        adopt(candidate, rebuild: parts.contains("clips") || parts.contains("audio"), debounceAudio: parts == ["audio"])
+        gesture?.draft = candidate
+        adopt(candidate, rebuild: Self.needsNewMovie(project, candidate), debounceAudio: parts == ["audio"])
     }
 
     /// A continuous change named by its ops (from the gesture's mark): a zoom dragged in time, a clip edge, the camera.
@@ -76,7 +90,7 @@ extension EditorModel {
             switch result {
             case let .success(answer):
                 guard answer.superseded != true else { return }
-                self.adopt(answer.project, rebuild: answer.project.clips != self.project.clips || answer.project.audio != self.project.audio,
+                self.adopt(answer.project, rebuild: Self.needsNewMovie(self.project, answer.project),
                            debounceAudio: answer.project.clips == self.project.clips)
             case let .failure(error):
                 self.show(EditorSession.reason(error), error: true)
@@ -103,12 +117,24 @@ extension EditorModel {
                 guard let self else { return }
                 switch result {
                 case let .success(answer):
-                    self.adopt(answer.project, rebuild: answer.project.clips != self.project.clips || answer.project.audio != self.project.audio)
+                    // Ops that changed nothing make no step on the service (an older service: the edit is the
+                    // drag's start), so the step the drag put on the stack goes too, or the next ⌘Z would name
+                    // "Changes" and take back the change before it.
+                    if answer.changed == false || (answer.changed == nil && answer.project == open.mark),
+                       let at = self.undoStack.lastIndex(of: .edit(open.mark)) {
+                        self.undoStack.remove(at: at)
+                        self.refreshUndoState()
+                    }
+                    self.adopt(answer.project, rebuild: Self.needsNewMovie(self.project, answer.project))
                 case let .failure(error):
                     if let at = self.undoStack.lastIndex(of: .edit(open.mark)) { self.undoStack.remove(at: at) }
                     self.refreshUndoState()
                     self.show(EditorSession.reason(error), error: true)
-                    self.adopt(open.mark, rebuild: open.mark.clips != self.project.clips || open.mark.audio != self.project.audio)
+                    // The service's edit, not the mark: an agent's change it holds stays drawn.
+                    self.session.refetch { [weak self] next in
+                        guard let self else { return }
+                        self.adopt(next, rebuild: Self.needsNewMovie(self.project, next))
+                    }
                 }
                 self.refetchIfOutsideChanged()
                 if case .success = result { self.gestureSaved(true) } else { self.gestureSaved(false) }
@@ -173,7 +199,7 @@ extension EditorModel {
     func took(_ next: EditProject, before: EditProject) {
         guard next != before || next != project else { return }
         record(before: before)
-        adopt(next, rebuild: next.clips != project.clips || next.audio != project.audio)
+        adopt(next, rebuild: Self.needsNewMovie(project, next))
     }
 
     /// One undo step in the Edit menu's names; the service (or the CLI's undo file) holds the step itself.
@@ -186,8 +212,8 @@ extension EditorModel {
         canRedo = false
     }
 
-    /// Draws `next`: the zoom filter told, the movie made again when clips or the sound changed (a sound slider's
-    /// steps once it rests for 0.2 s), the paused frame drawn again otherwise.
+    /// Draws `next`: the zoom filter told, the movie made again when an input the renderer reads once changed
+    /// (needsNewMovie; a sound slider's steps once it rests for 0.2 s), the paused frame drawn again otherwise.
     func adopt(_ next: EditProject, rebuild rebuildMovie: Bool, debounceAudio: Bool = false) {
         guard next != project else { return }
         project = next
@@ -261,7 +287,7 @@ extension EditorModel {
                 guard let self else { return }
                 switch result {
                 case let .success(answer):
-                    self.adopt(answer.project, rebuild: answer.project.clips != self.project.clips || answer.project.audio != self.project.audio)
+                    self.adopt(answer.project, rebuild: Self.needsNewMovie(self.project, answer.project))
                     self.announce("Undid", change)
                 case let .failure(error):
                     self.failMove(move)
@@ -290,7 +316,7 @@ extension EditorModel {
             // The CLI keeps no redo: nothing to redo until the service runs.
             if let at = self.redoStack.lastIndex(of: move.counterpart) { self.redoStack.remove(at: at) }
             self.refreshUndoState()
-            self.adopt(next, rebuild: next.clips != self.project.clips || next.audio != self.project.audio)
+            self.adopt(next, rebuild: Self.needsNewMovie(self.project, next))
             self.announce("Undid", change)
         }
     }
@@ -310,7 +336,7 @@ extension EditorModel {
             guard let self else { return }
             switch result {
             case let .success(answer):
-                self.adopt(answer.project, rebuild: answer.project.clips != self.project.clips || answer.project.audio != self.project.audio)
+                self.adopt(answer.project, rebuild: Self.needsNewMovie(self.project, answer.project))
                 self.announce("Undid", (name: "an Earlier Change", tab: nil))
             case let .failure(error):
                 if let at = self.redoStack.lastIndex(of: counterpart) { self.redoStack.remove(at: at) }
@@ -338,7 +364,7 @@ extension EditorModel {
             guard let self else { return }
             switch result {
             case let .success(answer):
-                self.adopt(answer.project, rebuild: answer.project.clips != self.project.clips || answer.project.audio != self.project.audio)
+                self.adopt(answer.project, rebuild: Self.needsNewMovie(self.project, answer.project))
                 self.announce("Redid", change)
             case let .failure(error):
                 self.failMove(move)
@@ -533,9 +559,10 @@ extension EditorModel {
         }
         historyGeneration += 1
         let previous = project
-        // An agent that transcribed the movie and turned captions on: read the transcript it cached.
-        adopt(next, rebuild: next.clips != project.clips || next.audio != project.audio)
-        if next.captions != nil, !hasTranscript { hasTranscript = zoom.reloadCaptions() }
+        adopt(next, rebuild: Self.needsNewMovie(project, next))
+        // An agent that transcribed the movie and turned captions on: read the transcript it cached now, before the
+        // file watch's pause ends.
+        if next.captions != nil { reloadTranscript() }
         refreshUndoState()
         // The window's own op names itself in its notice.
         guard ownOpsRunning == 0 else { return }
@@ -550,8 +577,7 @@ extension EditorModel {
         refreshUndoState()
         guard next != project else { return }
         HubPerf.log("recorder.editor: the service's edit (revision \(next.revision)) replaces the window's (revision \(project.revision))")
-        adopt(next, rebuild: next.clips.map(\.fromUs) != project.clips.map(\.fromUs) || next.clips.map(\.toUs) != project.clips.map(\.toUs)
-            || next.clips.map(\.speed) != project.clips.map(\.speed) || next.audio != project.audio)
+        adopt(next, rebuild: Self.needsNewMovie(project, next))
     }
 
     /// ⌘S: the open change ends now; the service saves it a moment later (the CLI at once).

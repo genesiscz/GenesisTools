@@ -70,6 +70,19 @@ describe("safe restack helpers", () => {
         expect(resolveSameText("a.ts", block("return x", "returnx")).unresolved).toBe(1);
     });
 
+    test("keeps a line break that automatic semicolon insertion reads as the end of a statement", () => {
+        const fn = (body: string) => `function f() {${body}}`;
+        expect(resolveSameText("a.ts", block(fn("\n    return\n    x;\n"), fn(" return x; "))).unresolved).toBe(1);
+        expect(resolveSameText("a.ts", block("a\n++b", "a ++b")).unresolved).toBe(1);
+        expect(resolveSameText("a.ts", block("const x = [\n    1,\n    2,\n];", "const x = [1, 2];")).unresolved).toBe(
+            0
+        );
+        expect(resolveSameText("a.ts", block("f(\n    a,\n    b\n);", "f(a, b);")).unresolved).toBe(0);
+        expect(
+            resolveSameText("a.ts", block("const y =\n    long;\nfoo();", "const y = long; foo();")).unresolved
+        ).toBe(0);
+    });
+
     test("only resolves a version line when it is the version file's only conflict", () => {
         const file = ".claude-plugin/marketplace.json";
         const version = block('  "version": "1.2.3",', '  "version": "1.3.0",');

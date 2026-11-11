@@ -107,7 +107,7 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
         return;
     }
 
-    if (!opts.clip && opts.start === false) {
+    if (opts.start === false) {
         const planned = await withMeetingsClient((client) =>
             client.call("moment.plan", { meeting: record.id, target })
         );
@@ -279,6 +279,6 @@ export function registerPlayCommand(program: Command): void {
             "--json",
             "print { audioPath, startSec, player, pid } for --at alone; for a Moment the Moment, with path, player and pid when made"
         )
-        .option("--no-start", "resolve and start nothing (no sound); a Moment is planned, not cut")
+        .option("--no-start", "resolve and start nothing (no sound); a Moment is planned, not cut, even with --clip")
         .action(play);
 }

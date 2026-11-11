@@ -23,11 +23,19 @@ export function displayContext(caller: RmCaller | null): ShortPathContext {
     return { home: homedir(), tmpdir: tmpdir().replace(/\/+$/, ""), sessionId: caller?.sessionId ?? null };
 }
 
+export interface ShortRmPathOptions {
+    /** The widest the path may be, in characters (default 48). */
+    max?: number;
+    /** How a path wider than `max` is cut (default `middleCut`). */
+    cut?: (text: string, max: number) => string;
+}
+
 /**
  * A path as a list row shows it: ~ for home, /tmp for /private/tmp, $TMPDIR for the per-user temp folder,
  * <scratch> for the asker's own scratch, <project>/<session8> for another session's, cut in the middle.
  */
-export function shortRmPath(path: string, ctx: ShortPathContext, max = 48): string {
+export function shortRmPath(path: string, ctx: ShortPathContext, options: ShortRmPathOptions = {}): string {
+    const { max = 48, cut = middleCut } = options;
     let p = path.startsWith("/private/tmp/") || path === "/private/tmp" ? path.slice("/private".length) : path;
     const tmp = ctx.tmpdir.replace(/^\/private/, "");
 
@@ -46,7 +54,7 @@ export function shortRmPath(path: string, ctx: ShortPathContext, max = 48): stri
         p = `~${p.slice(ctx.home.length)}`;
     }
 
-    return middleCut(p, max);
+    return cut(p, max);
 }
 
 /** Cuts the middle and keeps the last segment whole when it fits: "~/Projects/a-long-client-folder-n…/.smoke.tmp.ts". */
@@ -63,6 +71,28 @@ export function middleCut(text: string, max: number): string {
     }
 
     return `${text.slice(0, max - base.length - 1)}…${base}`;
+}
+
+/**
+ * Drops whole folders after the first one until the path fits, keeping the tail that tells two paths apart:
+ * "~/…/vitrinka/.worktrees/fix-2026-11-09-card-flip/vitrinka". `middleCut` when the tail alone does not fit.
+ */
+export function tailCut(text: string, max: number): string {
+    if (text.length <= max) {
+        return text;
+    }
+
+    const parts = text.split("/");
+
+    for (let drop = 1; drop < parts.length - 1; drop++) {
+        const candidate = [parts[0], "…", ...parts.slice(1 + drop)].join("/");
+
+        if (candidate.length <= max) {
+            return candidate;
+        }
+    }
+
+    return middleCut(text, max);
 }
 
 export type AgeLevel = "fresh" | "day" | "old";

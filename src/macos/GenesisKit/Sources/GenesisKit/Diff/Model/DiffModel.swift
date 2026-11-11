@@ -521,6 +521,9 @@ public protocol DiffRenderer: AnyObject {
     func showComments(_ comments: [RenderedComment])
     /// A thread action ended: `ok` clears the card's reply or edit box, else it stays for another try.
     func threadActionFinished(id: String, ok: Bool)
+    /// The host cannot bring a large file the page asked for (`DiffRendererEvent.showLargeFile`): the page's
+    /// "Loading…" button offers the file again, its tooltip naming `reason`.
+    func largeFileFailed(id: String, reason: String)
     /// The PR thread ids the cards show as picked for "Fix threads".
     func setThreadSelection(_ ids: [String])
     /// j / k: scroll to this card and mark it (nil clears the mark); `reply` opens its reply box (r).
@@ -531,4 +534,10 @@ public protocol DiffRenderer: AnyObject {
     func setBlame(_ payload: AgentBlamePayload)
     /// A snapshot's `--blame`: that line's tip without a pointer.
     func showBlame(fileID: String, line: Int)
+    /// GenesisKit's overlay scroll bar or the system's (Settings → Hub → Appearance → Scroll bars).
+    func setScrollBars(_ style: GenScrollBarStyle)
+}
+
+public extension DiffRenderer {
+    func setScrollBars(_ style: GenScrollBarStyle) {}
 }

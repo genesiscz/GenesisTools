@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { appliedLine } from "@app/meetings/lib/item-text";
+import { appliedLine, itemWhat } from "@app/meetings/lib/item-text";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -74,6 +74,8 @@ const STATUS_COLOR: Record<MeetingItem["status"], (text: string) => string> = {
     rejected: pc.dim,
 };
 
+/** The WHAT column's width: a longer item is cut, but a quote keeps its source (`itemWhat`). */
+const WHAT_WIDTH = 90;
 function percent(confidence: number | undefined): string {
     return confidence === undefined ? "—" : `${Math.round(confidence * 100)} %`;
 }
@@ -90,7 +92,7 @@ function printItems(record: MeetingRecord, items: MeetingItem[]): void {
             item.kind,
             STATUS_COLOR[item.status](item.status),
             percent(item.confidence),
-            truncateDisplay(row.what, 90),
+            truncateDisplay(itemWhat(item, { width: WHAT_WIDTH }), WHAT_WIDTH),
             item.rules.join(", "),
         ]);
     }
@@ -518,6 +520,11 @@ async function reopen(
     ids: string[],
     opts: { token?: string; reason?: string; json?: boolean }
 ): Promise<void> {
+    if (!opts.token && ids.length === 0) {
+        fail(`Name the items to reopen (i1 i2 …), or undo a whole decision with --token <token>.`);
+        return;
+    }
+
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -529,7 +536,12 @@ async function reopen(
         const reason = opts.reason ? { reason: opts.reason } : {};
         const decided = await withMeetingsClient((client) =>
             opts.token
-                ? client.call("decision.revert", { meeting: record.id, token: opts.token, items: ids, ...reason })
+                ? client.call("decision.revert", {
+                      meeting: record.id,
+                      token: opts.token,
+                      ...(ids.length > 0 ? { items: ids } : {}),
+                      ...reason,
+                  })
                 : client.call("decision.apply", {
                       meeting: record.id,
                       action: { kind: "reopen", items: ids },
@@ -712,7 +724,10 @@ export function registerItemCommands(program: Command): void {
             "--word-check <provider>",
             `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
         )
-        .option("--json", "print the new items")
+        .option(
+            "--json",
+            "print the new items as a JSON array (the retired ids are not in it; items --json shows them)"
+        )
         .action(suggest);
 
     program
@@ -817,7 +832,10 @@ export function registerItemCommands(program: Command): void {
     program
         .command("reopen")
         .argument("<meeting>", MEETING_REF)
-        .argument("<items...>", "item ids: i1 i2 …, or with --token a question's number: Q12")
+        .argument(
+            "[items...]",
+            "item ids: i1 i2 …, or with --token a question's number: Q12; with --token and none, the whole entry (a speaker rename too)"
+        )
         .description(
             "Put confirmed or rejected items back to suggested: the Undo of confirm and reject, and with --token of any decision journal entry"
         )

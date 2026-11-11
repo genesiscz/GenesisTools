@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { newestLoadedModuleMtime } from "@genesiscz/utils/bun/loaded-modules";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
@@ -136,7 +136,9 @@ export type ServiceHostStart<S> =
  */
 export async function startServiceHost<S>(options: ServiceHostOptions<S>): Promise<ServiceHostStart<S>> {
     const { dir } = options;
-    mkdirSync(dir, { recursive: true });
+    // The service answers with the owner's private data, and `hello` is no login: only the owner may reach its folder.
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
     const pidPath = servicePidPath(dir);
     // A live holder keeps the claim, this process's own included: one service per folder.
     const claim = await claimPidFile(pidPath, {
@@ -273,6 +275,8 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
             label,
             ...(options.supersedes ? { supersedes: options.supersedes } : {}),
         });
+        // Only the owner may connect, also where the folder's mode is not checked on the way in.
+        chmodSync(socket, 0o600);
         atomicWriteFileSync(entryPath, SafeJSON.stringify(entry, null, 2));
         return listening;
     });

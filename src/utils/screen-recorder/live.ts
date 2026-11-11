@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { JobInfo } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
-import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
+import { classifyPid, processStartMs, readProcessCommand, START_MS_TOLERANCE } from "@genesiscz/utils/process-identity";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { RpcSocketServer } from "@genesiscz/utils/rpc/socket-server";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -65,6 +65,8 @@ export const liveEntrySchema = z.object({
     displays: z.array(z.object({ id: z.number(), name: z.string() })).default([]),
     frames: z.number().int().nonnegative().default(0),
     lastFrameAt: z.string().optional(),
+    /** A movie recording's wall time of its movie's time 0 (its first frame), once that frame is in. */
+    firstFrameAt: z.string().optional(),
     warning: z.string().optional(),
     folder: z.string().optional(),
     /** The RPC methods this recording serves (`RECORDER_METHODS`); the menu bar shows a button per control. */
@@ -105,10 +107,21 @@ function parseOrNull(text: string): unknown {
     }
 }
 
-/** False when the entry's process ended or its pid now belongs to another program. */
+/**
+ * False when the entry's process ended or its pid now belongs to another program: a process that started after the
+ * entry was written took a recycled pid (the recorder writes `startedAt` after its own start), with or without a
+ * command to compare. The app's LiveRecordingStore.entryIsAlive keeps the same rule.
+ */
 export function isLiveEntryAlive(entry: LiveEntry): boolean {
     const status = classifyPid(entry.pid, entry.pidCommand).status;
-    return status === "live" || status === "unverified";
+
+    if (status !== "live" && status !== "unverified") {
+        return false;
+    }
+
+    const processStarted = processStartMs(entry.pid);
+    const entryStarted = Date.parse(entry.startedAt);
+    return processStarted === null || Number.isNaN(entryStarted) || processStarted <= entryStarted + START_MS_TOLERANCE;
 }
 
 /** The running recordings, for a UI. An entry whose process is gone is left out, never deleted here. */
@@ -148,13 +161,29 @@ export function listLiveRecordings(dir = liveRecordingsDir()): LiveEntry[] {
     return entries.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
 }
 
+/** The folders running recorders write into (each live entry's `folder`, resolved). */
+export function liveRecordingFolders(dir = liveRecordingsDir()): Set<string> {
+    return new Set(listLiveRecordings(dir).flatMap((entry) => (entry.folder ? [resolve(entry.folder)] : [])));
+}
+
+/**
+ * Whether a running recorder writes into `folder`. The library leaves such a folder where it is until the stop, as the
+ * Recordings window does: no trash, and `last` names the newest recording that has ended.
+ */
+export function isRecordingLive(folder: string, dir = liveRecordingsDir()): boolean {
+    return liveRecordingFolders(dir).has(resolve(folder));
+}
+
 export function readLiveRecording(id: string, dir = liveRecordingsDir()): LiveEntry | undefined {
     return listLiveRecordings(dir).find((entry) => entry.id === id);
 }
 
 export type LiveEntryChange = Partial<
-    Pick<LiveEntry, "title" | "state" | "displays" | "frames" | "lastFrameAt" | "warning">
+    Pick<LiveEntry, "title" | "state" | "displays" | "frames" | "lastFrameAt" | "firstFrameAt" | "warning">
 >;
+
+/** What `notifyStatus` takes from a recorder's status: its state and warning, and a movie's recorded time. */
+export type LiveStatus = Pick<RecorderStatus, "state" | "warning" | "elapsedMs" | "elapsedRunning" | "limitMs">;
 
 /** Methods that answer after the recording's post-processing (OCR, the summary, the collect): a discard waits for it too. */
 const FINISHING_METHODS = new Set(["stop", "discard"]);
@@ -284,9 +313,47 @@ export class LiveRecordingServer {
         return { ...this.entry };
     }
 
+    /** Writes the change and notifies `state` when the state word changed. */
     update(change: LiveEntryChange): void {
-        if (this.closed) {
+        const before = this.apply(change);
+
+        if (!before) {
             return;
+        }
+
+        if (change.state && change.state !== before.state) {
+            this.emit("state", { state: change.state });
+        }
+
+        this.notifyWarning(before, change);
+    }
+
+    /**
+     * A recorder's status after one of its own state events: the entry takes its state and warning (and `change`), and
+     * every subscriber gets a `state` notification with the movie's recorded time even when the state word stayed, so
+     * a client's clock re-anchors on each start, arm, pause, rollover and restart. The entry file keeps no time: the
+     * socket is the live source.
+     */
+    notifyStatus(status: LiveStatus, change: LiveEntryChange = {}): void {
+        const before = this.apply({ ...change, state: status.state, warning: status.warning });
+
+        if (!before) {
+            return;
+        }
+
+        this.emit("state", {
+            state: status.state,
+            ...(status.elapsedMs === undefined ? {} : { elapsedMs: status.elapsedMs }),
+            ...(status.elapsedRunning === undefined ? {} : { elapsedRunning: status.elapsedRunning }),
+            ...(status.limitMs === undefined ? {} : { limitMs: status.limitMs }),
+        });
+        this.notifyWarning(before, { warning: status.warning });
+    }
+
+    /** The entry before the change, or undefined once the recording closed. */
+    private apply(change: LiveEntryChange): LiveEntry | undefined {
+        if (this.closed) {
+            return undefined;
         }
 
         const before = this.entry;
@@ -298,11 +365,10 @@ export class LiveRecordingServer {
 
         this.write();
         this.registration?.changed(change);
+        return before;
+    }
 
-        if (change.state && change.state !== before.state) {
-            this.emit("state", { state: change.state });
-        }
-
+    private notifyWarning(before: LiveEntry, change: LiveEntryChange): void {
         if ("warning" in change && change.warning !== before.warning) {
             this.emit("warning", { warning: change.warning ?? null });
         }

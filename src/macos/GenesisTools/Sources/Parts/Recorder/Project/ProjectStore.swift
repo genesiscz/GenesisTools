@@ -94,7 +94,9 @@ final class ProjectStore {
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw EditRenderer.RenderError.noVideoTrack(video.path)
         }
-        let size = try await track.load(.naturalSize)
+        // The upright size, as the renderer and the TypeScript side read it: a phone clip turned 90° is taller than wide.
+        let (natural, transform) = try await track.load(.naturalSize, .preferredTransform)
+        let size = EditRenderer.displaySize(natural, transform: transform)
         guard size.width.isFinite, size.height.isFinite, abs(size.width) >= 2, abs(size.height) >= 2 else {
             throw OpenError.unplayable(video.path, "its picture is \(size.width)×\(size.height)")
         }

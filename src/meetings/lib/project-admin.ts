@@ -1,8 +1,9 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfigStore, projectNameSchema } from "@genesiscz/utils/meetings/config";
+import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { type AssignInbox, decisionInbox } from "./assign-inbox";
@@ -47,21 +48,23 @@ export async function renameProject(options: {
 }): Promise<ProjectRename> {
     const { config, store, from, to } = options;
     projectNameSchema.parse(to);
-    const current = await config.read();
 
-    if (!current.projects[from]) {
-        throw new Error(`No project ${from}. The known ones: ${Object.keys(current.projects).join(", ") || "none"}`);
-    }
-
-    if (current.projects[to]) {
-        throw new Error(`A project ${to} exists already; pick another name, or move its meetings and remove it first.`);
-    }
-
+    // Both names are checked inside the config lock: another process may add `to` or rename `from` while this waits.
     await config.update((raw) => {
-        if (isObject(raw.projects)) {
-            raw.projects[to] = raw.projects[from] ?? {};
-            delete raw.projects[from];
+        const projects = isObject(raw.projects) ? raw.projects : {};
+
+        if (projects[from] === undefined) {
+            throw new Error(`No project ${from}. The known ones: ${Object.keys(projects).join(", ") || "none"}`);
         }
+
+        if (projects[to] !== undefined) {
+            throw new Error(
+                `A project ${to} exists already; pick another name, or move its meetings and remove it first.`
+            );
+        }
+
+        projects[to] = projects[from];
+        delete projects[from];
 
         for (const match of sourceMatches(raw)) {
             if (match[from] !== undefined) {
@@ -73,24 +76,65 @@ export async function renameProject(options: {
 
     const meetings: string[] = [];
 
+    // The list is a snapshot: a meeting moved to another project since keeps that project, and is not reported. A
+    // folder step (waiting or asked) that names the old project follows the rename, so a late answer cannot bring it back.
     for (const record of store.list().filter((one) => one.project === from || folderStepNames(one, from))) {
-        await store.update(record.id, { command: "projects rename", change: `project ${from} → ${to}` }, (next) => {
-            if (next.project === from) {
-                next.project = to;
-            }
+        let renamed = false;
+        const changed = await store.updateIf(
+            record.id,
+            { command: "projects rename", change: `project ${from} → ${to}` },
+            (next) => {
+                let stepRenamed = false;
 
-            if (next.assign?.folder?.project === from) {
-                next.assign.folder.project = to;
-            }
-        });
+                if (next.project === from) {
+                    next.project = to;
+                    renamed = true;
+                }
 
-        if (record.project === from) {
+                if (next.assign?.folder?.project === from) {
+                    next.assign.folder.project = to;
+                    stepRenamed = true;
+                }
+
+                return renamed || stepRenamed;
+            }
+        );
+
+        if (changed && renamed) {
             meetings.push(record.id);
         }
     }
 
     log.debug({ from, to, meetings: meetings.length }, "project renamed");
     return { from, to, meetings };
+}
+
+/**
+ * Writes a removal backup under a name no earlier backup has (`<base>.json`, then `<base>-2.json`, ...): the stamp has
+ * minutes only, and a project removed twice in one minute must keep both removed blocks. Exclusive creation (`wx`)
+ * refuses a name another process took meanwhile.
+ */
+function writeBackup(options: { folder: string; base: string; text: string }): string {
+    mkdirSync(options.folder, { recursive: true });
+
+    for (let n = 1; ; n += 1) {
+        const path = join(options.folder, `${options.base}${n === 1 ? "" : `-${n}`}.json`);
+
+        if (existsSync(path)) {
+            continue;
+        }
+
+        try {
+            writeFileSync(path, options.text, { flag: "wx" });
+            return path;
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+                throw error;
+            }
+
+            log.debug({ path }, "backup name taken meanwhile; the next one is tried");
+        }
+    }
 }
 
 export interface ProjectRemoval {
@@ -126,7 +170,8 @@ export async function removeProject(options: {
     const using = store.list().filter((record) => record.project === name);
 
     if (using.length > 0 && !options.unassign) {
-        throw new Error(
+        throw new MeetingsConflictError(
+            "project-in-use",
             `${using.length === 1 ? "1 meeting has" : `${using.length} meetings have`} the project ${name}: ${using.map((record) => record.id).join(", ")}. ` +
                 "Rename it instead, or remove it with --unassign to leave them without a project."
         );
@@ -134,7 +179,7 @@ export async function removeProject(options: {
 
     const stamp = localStamp(options.now ?? new Date());
     const folder = options.backupRoot ?? genesisToolsDir("backups", "meetings");
-    const backup = join(folder, `${stamp}-project-${name}.json`);
+    let backup = "";
     let removed: unknown;
     const pairings: Record<string, unknown> = {};
 
@@ -148,11 +193,11 @@ export async function removeProject(options: {
             }
         }
 
-        mkdirSync(folder, { recursive: true });
-        writeFileSync(
-            backup,
-            `${SafeJSON.stringify({ project: name, block: removed ?? {}, sources: pairings }, null, 4)}\n`
-        );
+        backup = writeBackup({
+            folder,
+            base: `${stamp}-project-${name}`,
+            text: `${SafeJSON.stringify({ project: name, block: removed ?? {}, sources: pairings }, null, 4)}\n`,
+        });
 
         if (isObject(raw.projects)) {
             delete raw.projects[name];
@@ -161,28 +206,44 @@ export async function removeProject(options: {
 
     const unassigned: string[] = [];
 
-    for (const record of store.list().filter((one) => one.project === name || folderStepNames(one, name))) {
-        let withdrawn: string | undefined;
-        await store.update(record.id, { command: "projects remove", change: `project ${name} removed` }, (next) => {
-            if (next.project === name) {
-                next.project = undefined;
-            }
+    // `using` is a snapshot taken before the config lock: a meeting moved to another project since keeps it, and only
+    // a meeting in it loses the project. A folder step (waiting or asked) that names the project is closed too, so a
+    // late answer cannot bring the removed project back.
+    const usingIds = new Set(using.map((record) => record.id));
 
-            if (next.assign?.folder?.project === name) {
-                withdrawn = next.assign.folder.formId;
-                delete next.assign.folder;
+    for (const record of store.list().filter((one) => usingIds.has(one.id) || folderStepNames(one, name))) {
+        let cleared = false;
+        let withdrawn: string | undefined;
+        const changed = await store.updateIf(
+            record.id,
+            { command: "projects remove", change: `project ${name} removed` },
+            (next) => {
+                let stepClosed = false;
+
+                if (usingIds.has(next.id) && next.project === name) {
+                    next.project = undefined;
+                    cleared = true;
+                }
+
+                if (next.assign?.folder?.project === name) {
+                    withdrawn = next.assign.folder.formId;
+                    delete next.assign.folder;
+                    stepClosed = true;
+                }
+
+                return cleared || stepClosed;
             }
-        });
+        );
 
         // The posted folder question names a project that is gone, and its answer would do nothing: withdraw it.
-        if (withdrawn) {
+        if (changed && withdrawn) {
             const formId = withdrawn;
             await inbox.cancel(formId).catch((err: unknown) => {
                 log.warn({ err, meeting: record.id, formId }, "the folder question could not be withdrawn");
             });
         }
 
-        if (record.project === name) {
+        if (changed && cleared) {
             unassigned.push(record.id);
         }
     }

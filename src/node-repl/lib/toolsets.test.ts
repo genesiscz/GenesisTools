@@ -10,6 +10,7 @@ import { DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { ReplEngine } from "@app/node-repl/lib/engine";
+import { BrowserToolset } from "@app/node-repl/lib/toolsets/browser";
 import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
 import { missingCameraWarning } from "@app/recorder/lib/camera-recorder";
 import {
@@ -24,9 +25,13 @@ import {
 import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "@app/recorder/lib/frames-recording";
 import { requireRecorderPart } from "@app/recorder/lib/library";
 import {
+    chapterLines,
     chapterMetadata,
+    chapterPoints,
     chaptersOf,
     chaptersOfPart,
+    EMBEDDED_CHAPTER_MIN_SECONDS,
+    exportChapterPoints,
     markersOf,
     recordingFolderOf,
     spreadTimes,
@@ -37,7 +42,9 @@ import {
     parseStartFlags,
     readStartArgs,
     refuseTargetOffScreen,
+    START_LIMITS,
     type StartRequest,
+    withStartOptions,
 } from "@app/recorder/lib/start-options";
 import {
     fixOutcome,
@@ -52,6 +59,7 @@ import {
 import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
+import * as converter from "@genesiscz/utils/audio/converter";
 import * as cli from "@genesiscz/utils/cli";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -60,8 +68,14 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-gate";
 import transcriptCuts from "@genesiscz/utils/recording-editor/__fixtures__/transcript-cuts.json";
 import transcriptWordsFixture from "@genesiscz/utils/recording-editor/__fixtures__/transcript-words.json";
+import * as denoise from "@genesiscz/utils/recording-editor/denoise";
 import { RecordingEditor } from "@genesiscz/utils/recording-editor/editor";
-import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import {
+    readProject,
+    transcriptCachePath,
+    wholeProject,
+    writeProject,
+} from "@genesiscz/utils/recording-editor/project";
 import { searchMethods } from "@genesiscz/utils/repl/discovery";
 import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
@@ -90,7 +104,7 @@ import {
     RecorderClient,
     readLiveRecording,
 } from "@genesiscz/utils/screen-recorder/live";
-import { LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
+import { FRAMES_START_LIMITS, LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
 import {
     type CaptureRequest,
     type CaptureResult,
@@ -101,6 +115,7 @@ import {
 } from "@genesiscz/utils/screen-recorder/types";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { createCanvas } from "@napi-rs/canvas";
+import { Command } from "commander";
 
 /** Writes one PNG every 60 ms of a colour that changes with each frame, until the capture ends. */
 class FakeRecorder extends FrameRecorder {
@@ -216,6 +231,79 @@ const ctx: ToolsetContext = {
     write: () => undefined,
 };
 
+/** One opened meeting, as the meetings tests call it. */
+interface MeetingHandle {
+    readonly id: string;
+    readonly title: string;
+    readonly record: { items: Array<{ id: string; status: string }> };
+    items: {
+        add(input: unknown): Promise<unknown>;
+        confirm(input: unknown): Promise<{ decided: string[]; token?: string }>;
+        reopen(input: unknown): Promise<{ reopened: string[] }>;
+        reject(input: unknown): Promise<{ decided: string[] }>;
+        list(input?: unknown): unknown[];
+    };
+    set(input: unknown): Promise<{ project: string | null; labels: string[] }>;
+    settings(): Promise<SettingsAnswer>;
+    setSettings(patch: unknown): Promise<SettingsAnswer>;
+    mark(label: string): Promise<RecordingMarker>;
+}
+
+/** The meetings toolset's global, as the meetings tests call it. */
+interface MeetingsHandle {
+    list(): Array<{ id: string; seconds: number | null }>;
+    open(ref: string): MeetingHandle;
+    config: { get(path?: string): Promise<unknown> };
+    projects: {
+        labels(input: unknown): Promise<string[]>;
+        pair(input: unknown): Promise<unknown>;
+        unpair(input: unknown): Promise<unknown>;
+        people(input?: unknown): Promise<Array<{ project: string; name: string }>>;
+    };
+}
+
+/** Loads the meetings toolset and gives its global the one shape the tests share. */
+async function loadMeetings(): Promise<MeetingsHandle> {
+    const { meetings } = (await new MeetingsToolset().load(ctx)) as { meetings: MeetingsHandle };
+    return meetings;
+}
+
+/** The browser toolset's global, as its test calls it. */
+interface BrowserHandle {
+    open(input: { port: number; url: string }): Promise<{ id: string; url: string; title: string }>;
+}
+
+/** A browser toolset whose CDP port is a fake driver: the tab opens and loads, and the tab list then fails. */
+class TabsFailBrowser extends BrowserToolset {
+    constructor(port: number) {
+        super();
+        this.drivers.set(port, {
+            tabs: async () => {
+                throw new Error("the browser dropped the connection");
+            },
+            evaluate: async () => undefined,
+            navigate: async () => true,
+            open: async () => ({ id: "tab-1", url: "about:blank", title: "" }),
+            waitForRequest: async () => {
+                throw new Error("not used");
+            },
+            close: () => undefined,
+        });
+    }
+}
+
+describe("browser toolset", () => {
+    // An open tab whose details could not be read was refused, so the caller never got the id to close it with.
+    test("open still answers the tab's id when the tab list fails after the load", async () => {
+        const { browser } = (await new TabsFailBrowser(9555).load(ctx)) as { browser: BrowserHandle };
+        expect(await browser.open({ port: 9555, url: "https://example.com/" })).toEqual({
+            id: "tab-1",
+            url: "https://example.com/",
+            title: "",
+        });
+    });
+});
+
 describe("toolset method names", () => {
     test("a missing method names the real ones, while inspection and await still read missing names", async () => {
         const ctx: ToolsetContext = { scratchDir: tmpdir(), show: async () => {}, write: () => {} };
@@ -273,6 +361,76 @@ describe("toolset method names", () => {
     });
 });
 
+describe("itemsAt agrees with the frame the renderer draws", () => {
+    const fixture = (segments: Array<{ text: string; start: number; end: number }>) => {
+        const folder = mkdtempSync(join(tmpdir(), "items-at-frame-"));
+        const video = join(folder, "screen.mp4");
+        const path = join(folder, "edit.json");
+        writeProject(path, wholeProject({ video, durationUs: 12_000_000, width: 100, height: 100 }));
+        writeFileSync(transcriptCachePath(video), SafeJSON.stringify({ text: "", segments }));
+        return new Movie(path);
+    };
+
+    test("itemsAt names a caption only while captions show, the line the renderer picks, and what is said in spoken", async () => {
+        const movie = fixture([
+            { text: "Hello", start: 0.5, end: 3 },
+            { text: "Next", start: 2.5, end: 4 },
+        ]);
+
+        // No captions op: the export draws no caption, and the transcript line is still said there.
+        expect(await movie.itemsAt(1)).toMatchObject({ caption: null, spoken: "Hello" });
+        await movie.captions({ show: true });
+        expect(await movie.itemsAt(1)).toMatchObject({ caption: "Hello", spoken: "Hello" });
+        // Two lines overlap at 2.7 s: the renderer draws the later one (CaptionTrack.line picks the last started line).
+        expect(await movie.itemsAt(2.7)).toMatchObject({ caption: "Next", spoken: "Next" });
+        await movie.captions({ show: false });
+        expect(await movie.itemsAt(2.7)).toMatchObject({ caption: null, spoken: "Next" });
+        expect(await movie.itemsAt(5)).toMatchObject({ caption: null, spoken: null });
+    });
+
+    test("itemsAt names a canvas zoom and a picture zoom that play together, the glide between linked zooms and a lens", async () => {
+        const movie = fixture([]);
+        await movie.zoom({ from: 1, to: 7, target: "canvas", scale: 1.5 });
+        await movie.zoom({ from: 2, to: 4, scale: 2 });
+        await movie.zoom({ from: 4.3, to: 6, scale: 2.5 });
+        await movie.lens({ from: 2.8, to: 3.2 });
+
+        const now = await movie.itemsAt(3);
+        expect(now.zoom).toMatchObject({ from: 2, to: 4, scale: 2 });
+        expect(now.canvasZoom).toMatchObject({ from: 1, to: 7, scale: 1.5, target: "canvas" });
+        expect(now.lenses).toMatchObject([{ from: 2.8, to: 3.2 }]);
+        // 2-4 s and 4.3-6 s are linked (0.3 s apart, under one ease out and one ease in): the view glides between them
+        // from 3.55 s to 4.75 s, the gap at 4.15 s included.
+        expect((await movie.itemsAt(4.15)).zoom).toMatchObject({
+            glide: { from: { from: 2, to: 4 }, to: { from: 4.3, to: 6 } },
+        });
+        expect((await movie.itemsAt(5)).zoom).toMatchObject({ from: 4.3, to: 6, scale: 2.5 });
+        // Control: before the picture zooms only the canvas zoom shows, and no lens.
+        const early = await movie.itemsAt(1.5);
+        expect(early).toMatchObject({ zoom: null, lenses: [] });
+        expect(early.canvasZoom).toMatchObject({ target: "canvas" });
+        expect((await movie.itemsAt(8)).canvasZoom).toBeNull();
+    });
+
+    test("itemsAt names the hidden parts the export snaps to a cut or to the next part, with their own times", async () => {
+        const movie = fixture([]);
+        const rect = { x: 0.3, y: 0.3, width: 0.4, height: 0.4 };
+        await movie.redact({ from: 7, to: 8, rect, style: "black" });
+        await movie.redact({ from: 8.2, to: 9.85, rect, style: "black" });
+        await movie.cut(10, 11.5);
+
+        // The 0.2 s gap between the parts closes, and the second part's end 0.15 s before the cut runs to the cut.
+        const gap = await movie.itemsAt(8.1);
+        expect(gap.redactions).toMatchObject([{ from: 7, to: 8, drawn: { from: 7, to: 8.2 } }]);
+        expect((await movie.itemsAt(9.9)).redactions).toMatchObject([{ from: 8.2, to: 9.85, drawn: { to: 10 } }]);
+        // Control: snapMs 0 draws each part exactly as placed.
+        await movie.redactionJoins({ snapMs: 0 });
+        expect((await movie.itemsAt(8.1)).redactions).toEqual([]);
+        expect((await movie.itemsAt(9.9)).redactions).toEqual([]);
+        expect((await movie.itemsAt(7.5)).redactions).toMatchObject([{ from: 7, to: 8 }]);
+    });
+});
+
 // NR1 (deep test 2026-11-06): find() ran tools transcribe on a movie with no transcript and no sound; a vault-key
 // dialog stayed on the user's screen after the turn timed out. The spy throws, so a path that reaches it fails loudly.
 describe("a read call never starts the paid transcription", () => {
@@ -282,6 +440,10 @@ describe("a read call never starts the paid transcription", () => {
             spawned.push([...args]);
             throw new Error(`execTool reached: ${args.join(" ")}`);
         });
+        // transcript() reads the movie's audio tracks and mixes them before the paid call (91af263157); the movie here
+        // is only a path, so one track is reported and the mix is skipped.
+        const tracks = spyOn(denoise, "audioTrackCount").mockResolvedValue(1);
+        const mix = spyOn(converter, "convertFileToMonoMp3").mockImplementation(async (_input, output) => output);
 
         try {
             const { movies } = (await new MoviesToolset().load(ctx)) as {
@@ -310,6 +472,8 @@ describe("a read call never starts the paid transcription", () => {
             expect(spawned).toHaveLength(1);
         } finally {
             run.mockRestore();
+            tracks.mockRestore();
+            mix.mockRestore();
         }
     });
 
@@ -455,6 +619,11 @@ test("editor.open of a video recording's folder opens its movie, a frames folder
     );
     writeFileSync(join(folder, "screen.mp4"), "not really a movie");
     expect(editSourceOf(folder)).toEqual({ file: join(folder, "screen.mp4") });
+    mkdirSync(join(folder, "frames"));
+    expect(editSourceOf(join(folder, "frames"))).toEqual({ file: join(folder, "screen.mp4") });
+    // A folder of its own inside the recording is edited as the frames it holds.
+    mkdirSync(join(folder, "picked"));
+    expect(editSourceOf(join(folder, "picked"))).toEqual({ file: join(folder, "picked") });
 
     const frames = mkdtempSync(join(tmpdir(), "gt-frames-folder-"));
     expect(editSourceOf(frames)).toEqual({ file: frames });
@@ -478,6 +647,24 @@ test("a library row carries its length and its movie's size", () => {
     };
     expect(withLength(row)).toMatchObject({ seconds: 90, bytes: 1234 });
     expect(withLength({ ...row, endedAt: undefined, movie: undefined })).toMatchObject({ seconds: null, bytes: null });
+});
+
+// Round 2 hunt (r2-movies-list-length): seconds was the wall time from start to stop, so a paused recording read longer
+// than its movie and a plain-movie duplicate read 0 s.
+test("a library row's length is its movie's length, the wall span only without one", () => {
+    const row = {
+        id: "rec",
+        title: "Rec",
+        folder: "/nowhere",
+        startedAt: "2026-11-05T10:00:00.000Z",
+        endedAt: "2026-11-05T10:00:30.000Z",
+        frames: 0,
+        edited: false,
+    };
+    expect(withLength({ ...row, durationMs: 12_400 }).seconds).toBe(12);
+    expect(withLength(row).seconds).toBe(30);
+    expect(withLength({ ...row, endedAt: row.startedAt, durationMs: 5_000 }).seconds).toBe(5);
+    expect(withLength({ ...row, endedAt: undefined, recording: true }).seconds).toBeNull();
 });
 
 // NR37: removeLane('zooms') removed the built-in zoom lane, and the movie had no lane for zooms after it.
@@ -622,8 +809,8 @@ describe("what a cut costs, in the answer of the call", () => {
         const marker = readProject(path).markers?.[0]?.id ?? "";
         const text = readProject(path).texts?.[0]?.id ?? "";
 
-        expect((await movie.cut(3, 6.5)).warnings).toEqual([
-            'The text "Title" (1 to 4 s) loses 1 s of its 3 s to a cut',
+        expect((await movie.cut(2, 6.5)).warnings).toEqual([
+            `The text "Title" (1 to 4 s) loses 2 s of its 3 s to a cut and plays for 1 s; movie.retime({ id: "${text}", to: 7 }) fixes it`,
             `The marker "Step two" at 6.2 s never plays: that time is cut, so it is no chapter; movie.apply([{"op":"unmarker","id":"${marker}"},{"op":"marker","at":6.5,"label":"Step two"}]) fixes it`,
             'The recorded marker "Recorded" at 5 s never plays: that time is cut, so it is no chapter; movie.marker(6.5, "Recorded") fixes it',
         ]);
@@ -723,6 +910,34 @@ describe("movie chapters", () => {
             )
         ).toEqual(["0:00 Start", "0:30 Next"]);
         expect(chaptersOf([])).toEqual([]);
+    });
+
+    // Round 1 hunt (intro-card-export-clock): chapters() and `markers --chapters` printed output times for the exported
+    // file's description, so each link opened the upload the intro card's length early.
+    test("on the exported file's clock: the card's title at 0:00 once, every marker the card's length later", () => {
+        const folder = join(tmpdir(), "gt-no-such-recording");
+        const project = {
+            ...wholeProject({ video: join(folder, "talk.mp4"), durationUs: 60_000_000, width: 100, height: 100 }),
+            cards: { intro: { title: "Demo", seconds: 3 } },
+            markers: [
+                { id: "m1", atUs: 12_000_000, label: "Login" },
+                { id: "m2", atUs: 30_000_000, label: "Dashboard" },
+            ],
+        };
+        const opened = { path: join(folder, "talk.edit.json"), project };
+
+        expect(exportChapterPoints(opened, { minSeconds: 1 })).toEqual([
+            { at: 0, label: "Demo" },
+            { at: 15, label: "Login" },
+            { at: 33, label: "Dashboard" },
+        ]);
+        expect(chapterLines(exportChapterPoints(opened))).toEqual(["0:00 Demo", "0:15 Login", "0:33 Dashboard"]);
+        expect(chapterLines(exportChapterPoints(opened, { intro: "Start" }))[0]).toBe("0:00 Start");
+        expect(chapterLines(exportChapterPoints(opened, { clock: "output" }))).toEqual([
+            "0:00 Intro",
+            "0:12 Login",
+            "0:30 Dashboard",
+        ]);
     });
 
     test("a line's words come as cutWords reads them, and the editor's pick of one place cuts only that place", async () => {
@@ -868,6 +1083,20 @@ describe("movie chapters", () => {
         expect(defaultExportName(join(root, "talk.mov"))).toBe("talk-edited");
     });
 
+    // Round 2 hunt (r2-default-export-name): the window's EditExporter.defaultName is the reference. It trims spaces and
+    // dots from both ends together, keeps 80 characters as the eye counts them, and reads any recording.json's title.
+    test("the default export name follows the window's rule", () => {
+        const nameFor = (manifest: Record<string, unknown>) => {
+            const folder = mkdtempSync(join(tmpdir(), "gt-export-name-"));
+            writeFileSync(join(folder, "recording.json"), SafeJSON.stringify(manifest));
+            return defaultExportName(join(folder, "screen.mp4"));
+        };
+
+        expect(nameFor({ title: ". Demo: part 1 ." })).toBe("Demo- part 1");
+        expect(nameFor({ title: `${"a".repeat(79)}😀b` })).toBe(`${"a".repeat(79)}😀`);
+        expect(nameFor({ title: "..." })).toBe("screen-edited");
+    });
+
     test("a copied recording's edit belongs to the copy, even when its movie is still the original's", () => {
         const root = mkdtempSync(join(tmpdir(), "gt-rec-folder-"));
         const original = join(root, "original");
@@ -889,6 +1118,22 @@ describe("movie chapters", () => {
         expect(recordingFolderOf({ path: join(original, "edit.json"), project })).toBe(original);
         const loose = wholeProject({ video: join(plain, "movie.mp4"), durationUs: 1_000_000, width: 10, height: 10 });
         expect(recordingFolderOf({ path: join(plain, "movie.edit.json"), project: loose })).toBeUndefined();
+    });
+});
+
+describe("embedded movie chapters and the progress bar", () => {
+    test("markers under a second apart make one chapter named by the first, as the bar divides", () => {
+        const markers = [
+            { plays: 0.4, label: "Start" },
+            { plays: 5, label: "Five" },
+            { plays: 5.4, label: "Five and a bit" },
+            { plays: 9, label: "Nine" },
+        ];
+        expect(chapterPoints(markers, { minSeconds: EMBEDDED_CHAPTER_MIN_SECONDS })).toEqual([
+            { at: 0, label: "Start" },
+            { at: 5, label: "Five" },
+            { at: 9, label: "Nine" },
+        ]);
     });
 });
 
@@ -1557,6 +1802,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             recorder,
             rates: { activeFps: 60, idleFps: 60, threshold: 0.5 },
             join: async () => ({ durationMs: 2000 }),
+            measure: async () => 1000,
             emit: (event) => control?.observe(event),
             tickMs: 0,
             slowStartMs: 0,
@@ -1628,6 +1874,19 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(doc("settings")).toContain("fixed");
     });
 
+    // Round 2 hunt (r2-docs-units): movies.record said it records "with an on-screen countdown" while it starts at once
+    // unless countdown is given, and cameraHide said touching hidden parts "are joined" while each stays its own item.
+    test("movies: record says it starts at once unless countdown is given, and cameraHide keeps touching parts apart", async () => {
+        const { moviesApi } = await import("@app/recorder/lib/toolset");
+        const record = moviesApi.methods.find((method) => method.name === "record")?.doc ?? "";
+        const movie = moviesApi.handles?.find((handle) => handle.name === "Movie")?.methods ?? [];
+        const cameraHide = movie.find((method) => method.name === "cameraHide")?.doc ?? "";
+        expect(record).toContain("starts at once unless countdown");
+        expect(record).not.toContain("with an on-screen countdown");
+        expect(cameraHide).toContain("stays hidden across the join");
+        expect(cameraHide).not.toContain("are joined");
+    });
+
     test("movies: a MovieRecording reads and changes the settings of a real library recording's control over its socket", async () => {
         const { MovieRecording } = await import("@app/recorder/lib/toolset");
         const root = mkdtempSync(join(tmpdir(), "gt-movie-settings-"));
@@ -1669,14 +1928,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Findings", start: "2026-11-02T16:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: {
-                open(ref: string): {
-                    readonly record: { items: unknown[] };
-                    items: { add(input: unknown): Promise<unknown> };
-                };
-            };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         const answer = await meeting.items.add({
             findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }],
@@ -1685,6 +1937,28 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         // The answer is the added item, not the meeting record (NR5).
         expect(answer).toMatchObject({ added: [{ kind: "question", status: "suggested" }], warnings: [] });
         expect(Object.keys(answer as object).sort()).toEqual(["added", "warnings"]);
+    });
+
+    test("meetings: items.suggest names the items it retired beside the fresh ones", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Suggest", start: "2026-11-02T17:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const runner = await import("@app/meetings/lib/suggest-run");
+        const run = spyOn(runner, "runSuggest").mockResolvedValue({ fresh: [], retired: ["i7"], warnings: [] });
+
+        try {
+            const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+                meetings: { open(ref: string): { items: { suggest(input?: unknown): Promise<unknown> } } };
+            };
+            expect(await meetings.open(record.id).items.suggest()).toEqual({
+                fresh: [],
+                retired: ["i7"],
+                warnings: [],
+            });
+        } finally {
+            run.mockRestore();
+        }
     });
 
     // NR20: the handle had no id, a confirm's token had no door back, and an unknown config path printed nothing.
@@ -1699,9 +1973,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Running", start: "2026-11-02T19:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { list(): Array<{ id: string; seconds: number | null }> };
-        };
+        const meetings = await loadMeetings();
         const rows = meetings.list();
         expect(rows.find((row) => row.id === ended.id)?.seconds).toBe(1500);
         expect(rows.find((row) => row.id === running.id)?.seconds).toBeNull();
@@ -1712,21 +1984,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Undo", start: "2026-11-02T17:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: {
-                open(ref: string): {
-                    readonly id: string;
-                    readonly title: string;
-                    readonly record: { items: Array<{ id: string; status: string }> };
-                    items: {
-                        add(input: unknown): Promise<unknown>;
-                        confirm(input: unknown): Promise<{ decided: string[]; token?: string }>;
-                        reopen(input: unknown): Promise<{ reopened: string[] }>;
-                    };
-                };
-                config: { get(path?: string): Promise<unknown> };
-            };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         expect(meeting.id).toBe(record.id);
         expect(meeting.title).toBe("Undo");
@@ -1760,9 +2018,15 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { command: "new", change: "test" }
         );
         const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { open(ref: string): { speakers: { rename(label: string, name: string): Promise<unknown> } } };
+            meetings: {
+                open(ref: string): {
+                    speakers: { rename(label: string, name: string): Promise<{ token: string | null }> };
+                    items: { reopen(input: unknown): Promise<{ reopened: string[]; skipped: unknown[] }> };
+                };
+            };
         };
-        await meetings.open(record.id).speakers.rename("Speaker 2", "Alex Example");
+        const meeting = meetings.open(record.id);
+        const renamed = await meeting.speakers.rename("Speaker 2", "Alex Example");
 
         const journal = new DecisionJournal({ store });
         const [entry] = journal.read(record.id);
@@ -1770,9 +2034,12 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             action: { kind: "rename", label: "Speaker 2", name: "Alex Example" },
             labels: [{ label: "Speaker 2", after: "Alex Example" }],
         });
+        expect(renamed.token).toBe(entry!.token);
         expect(store.read(record.id)?.speakers.labels).toEqual({ "Speaker 2": "Alex Example" });
 
-        await journal.revert({ meeting: record.id, token: entry!.token, actor: { kind: "cli" } });
+        // eve PR #754 r2: the toolset gave no token back, and items.reopen refused a call with no ids.
+        await expect(meeting.items.reopen({})).rejects.toThrow("items.reopen needs ids, or the token");
+        expect(await meeting.items.reopen({ token: renamed.token })).toEqual({ reopened: [], skipped: [] });
         expect(store.read(record.id)?.speakers.labels).toEqual({});
     });
 
@@ -1784,9 +2051,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Labels", start: "2026-11-02T14:00:00.000Z", createdBy: "new", labels: ["kickoff"] },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { open(ref: string): { set(input: unknown): Promise<{ labels: string[] }> } };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         await expect(meeting.set({ unlabel: ["nosuch"] })).rejects.toThrow(
             `${record.id} has no label "nosuch". Its labels: kickoff`
@@ -1797,9 +2062,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
 
     // R2-MC10: an unknown project answered [] here, while the CLI refused it.
     test("meetings: projects.labels refuses a project nobody knows, and adding a label makes one", async () => {
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { projects: { labels(input: unknown): Promise<string[]> } };
-        };
+        const meetings = await loadMeetings();
         await expect(meetings.projects.labels({ project: "r2-mc10-nosuch" })).rejects.toThrow(
             "No project r2-mc10-nosuch. The known ones:"
         );
@@ -1813,9 +2076,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Kinds", start: "2026-11-02T13:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { open(ref: string): { items: { list(input?: unknown): unknown[] } } };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         expect(() => meeting.items.list({ kind: "bogus" })).toThrow(
             'expected one of "speaker-range"|"label"|"join"|"term"|"question"'
@@ -1829,17 +2090,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Reject", start: "2026-11-02T12:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: {
-                open(ref: string): {
-                    readonly record: { items: Array<{ id: string; status: string }> };
-                    items: {
-                        add(input: unknown): Promise<unknown>;
-                        reject(input: unknown): Promise<{ decided: string[] }>;
-                    };
-                };
-            };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         await meeting.items.add({
             findings: [{ kind: "term", at: 1, heard: "jason", proposed: "JSON", confidence: 0.9, reason: "a fixture" }],
@@ -1857,15 +2108,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Planning", start: "2026-11-02T15:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: {
-                open(ref: string): {
-                    settings(): Promise<SettingsAnswer>;
-                    setSettings(patch: unknown): Promise<SettingsAnswer>;
-                    mark(label: string): Promise<RecordingMarker>;
-                };
-            };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         await expect(meeting.settings()).rejects.toThrow("not being recorded");
         await expect(meeting.mark("demo starts")).rejects.toThrow("not being recorded");
@@ -1900,18 +2143,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Offers review", start: "2026-11-03T15:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        type Meeting = { set(input: unknown): Promise<{ project: string | null; labels: string[] }> };
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: {
-                open(ref: string): Meeting;
-                projects: {
-                    labels(input: unknown): Promise<string[]>;
-                    pair(input: unknown): Promise<unknown>;
-                    unpair(input: unknown): Promise<unknown>;
-                    people(input?: unknown): Promise<Array<{ project: string; name: string }>>;
-                };
-            };
-        };
+        const meetings = await loadMeetings();
         const set = await meetings.open(record.id).set({ project: "repl-offers", labels: ["Offers 2.0"] });
 
         expect(set).toMatchObject({ project: "repl-offers", labels: ["Offers 2.0"] });
@@ -2088,23 +2320,32 @@ test("shutdown prevents a worker timer from starting another recording during fi
 });
 
 describe("movies.record() takes the options of tools recorder start", () => {
-    /** A fake `tools recorder start`: the CLI's own flag parse, then a live movie entry, as the real one makes. */
-    function fakeRecorder() {
+    /**
+     * A fake `tools recorder start`: the CLI's own flag parse, then a live movie entry, as the real one makes, which
+     * gains its first frame `firstFrameAfterMs` later.
+     */
+    function fakeRecorder(firstFrameAfterMs = 0) {
         const started: StartRequest[] = [];
         const servers: LiveRecordingServer[] = [];
         const start: MovieRecorderDeps["start"] = (args) => {
             expect(args.slice(0, 2)).toEqual(["recorder", "start"]);
             const request = parseStartFlags(readStartArgs(args.slice(2)));
             started.push(request);
-            servers.push(
-                new LiveRecordingServer({
-                    id: `movie-start-${process.pid}-${started.length}`,
-                    kind: "movie",
-                    title: request.title ?? "Screen recording",
-                    folder: join(mkdtempSync(join(tmpdir(), "movie-start-")), `video-${started.length}`),
-                    control: new SettingsControl(),
-                })
-            );
+            const server = new LiveRecordingServer({
+                id: `movie-start-${process.pid}-${started.length}`,
+                kind: "movie",
+                title: request.title ?? "Screen recording",
+                folder: join(mkdtempSync(join(tmpdir(), "movie-start-")), `video-${started.length}`),
+                control: new SettingsControl(),
+            });
+            servers.push(server);
+            const frame = () => server.update({ firstFrameAt: new Date().toISOString() });
+
+            if (firstFrameAfterMs === 0) {
+                frame();
+            } else {
+                setTimeout(frame, firstFrameAfterMs);
+            }
         };
         const close = () => {
             for (const server of servers.splice(0)) {
@@ -2226,6 +2467,24 @@ describe("movies.record() takes the options of tools recorder start", () => {
         }
     });
 
+    test("record() resolves once the movie has its first frame, not when its entry appears", async () => {
+        const fake = fakeRecorder(700);
+        const { movies } = (await new MoviesToolset({ start: fake.start, checkTarget: fake.checkTarget }).load(
+            ctx
+        )) as {
+            movies: { record(options: unknown): Promise<{ entry: { firstFrameAt?: string } }> };
+        };
+
+        try {
+            const asked = Date.now();
+            const recording = await movies.record({ title: "First frame" });
+            expect(Date.now() - asked).toBeGreaterThanOrEqual(650);
+            expect(recording.entry.firstFrameAt).toBeString();
+        } finally {
+            fake.close();
+        }
+    });
+
     test("the camera is refused while the menu bar recorder does not run, from the REPL and from the core", async () => {
         const fake = fakeRecorder();
         let face: "held" | "free" = "free";
@@ -2289,6 +2548,27 @@ describe("movies.record() takes the options of tools recorder start", () => {
             })
         ).rejects.toBeInstanceOf(RecordingStartCancelled);
         expect(order).toEqual(["prepare", "countdown 2"]);
+    });
+});
+
+describe("tools recorder start names the limits each kind of recording checks", () => {
+    const help = (flag: string) =>
+        withStartOptions(new Command()).options.find((option) => option.long === flag)?.description ?? "";
+
+    test("--fps and --max-seconds name the movie and the --frames ranges", () => {
+        expect(help("--fps")).toContain(`${START_LIMITS.fps.min}–${START_LIMITS.fps.max} for a movie`);
+        expect(help("--fps")).toContain(`${FRAMES_START_LIMITS.fps.min}–${FRAMES_START_LIMITS.fps.max} with --frames`);
+        expect(help("--max-seconds")).toContain(
+            `1–${FRAMES_START_LIMITS.maxDurationSec.max} with --frames (default ${FRAMES_START_LIMITS.defaultMaxDurationSec})`
+        );
+    });
+
+    test("recorder.start() refuses what the limits refuse", () => {
+        expect(recorderStartSchema.safeParse({ fps: FRAMES_START_LIMITS.fps.max + 1 }).success).toBe(false);
+        expect(recorderStartSchema.safeParse({ fps: FRAMES_START_LIMITS.fps.min }).success).toBe(true);
+        expect(
+            recorderStartSchema.safeParse({ maxDurationSec: FRAMES_START_LIMITS.maxDurationSec.max + 1 }).success
+        ).toBe(false);
     });
 });
 

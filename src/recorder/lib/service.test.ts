@@ -1,10 +1,21 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    renameSync,
+    rmSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import { cameraMoviePath } from "@genesiscz/utils/recording-editor/camera";
+import { applyOp, readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import type { RpcProgress } from "@genesiscz/utils/rpc/peer";
 import { type RpcNotification, RpcSocketClient, type RpcSocketClientOptions } from "@genesiscz/utils/rpc/socket-client";
 import {
@@ -19,22 +30,27 @@ import {
 } from "@genesiscz/utils/screen-recorder/control";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
-import type { z } from "zod";
+import * as videoProbe from "@genesiscz/utils/video/probe";
+import * as videoProcess from "@genesiscz/utils/video/process";
+import { z } from "zod";
 import goldenFixture from "./__fixtures__/editor-golden.json";
 import screenOpsFixture from "./__fixtures__/screen-hit-ops.json";
 import fixture from "./__fixtures__/service-protocol.json";
 import schemasFixture from "./__fixtures__/service-protocol.schemas.json";
 import * as edits from "./edit";
-import { editProject, readUndoSteps, undoEdit } from "./edit";
+import { editProject, readUndoSteps, redoEdit, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
-import { EDITOR_TABS, shortRecordingId } from "./library";
-import { applyEdit, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
+import { EDITOR_TABS, editorWindowKeyOf, shortRecordingId } from "./library";
+import { chaptersOfPart } from "./moments";
+import { applyEdit, callerParams, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
+import * as serviceClient from "./service-client";
 import { hostCloseEditor, hostStill, ServiceConnectionLost, ServiceHost, withServiceClient } from "./service-client";
 import {
     HOST_METHODS,
+    HOST_SCHEMAS,
     hostApi,
     readLiveService,
     recordingEventSchema,
@@ -44,7 +60,7 @@ import {
     type ServiceEntry,
     serviceApi,
 } from "./service-protocol";
-import { Movie, moviesApi } from "./toolset";
+import { Movie, moviesApi, recordingMovie } from "./toolset";
 
 const closing: Array<() => void> = [];
 
@@ -339,6 +355,44 @@ function hello(role: "host" | "client" | "recording", answers?: string[]) {
     return { role, protocol: SERVICE_PROTOCOL, pid: process.pid, ...(answers ? { answers } : {}) };
 }
 
+describe("one undo and redo journal for the session and the file", () => {
+    test("ops that change nothing say so and make no undo step", async () => {
+        const { session } = await openSession(editFixture("gt-es-noop-"));
+        const first = await session.apply([{ op: "volume", volume: 0.5 }], { by: "agent" });
+        expect(first.changed).toBeUndefined();
+        const depth = session.undoDepth;
+        const again = await session.apply([{ op: "volume", volume: 0.5 }], { by: "agent" });
+        expect(again.changed).toBe(false);
+        expect(session.undoDepth).toBe(depth);
+
+        session.beginGesture("g");
+        const empty = await session.commitGesture("g", { by: "editor" });
+        expect(empty.changed).toBe(false);
+    });
+
+    test("a session takes the file's redo when the undo was the file's last change", async () => {
+        const path = editFixture("gt-es-redo-in-");
+        await editProject(path, [{ op: "volume", volume: 0.4 }]);
+        await undoEdit(path);
+        const { session } = await openSession(path);
+        expect(session.redoDepth).toBe(1);
+        const redone = await session.redo({ by: "editor" });
+        expect(redone.redone).toEqual(["volume"]);
+        expect(redone.project.audio.volume).toBe(0.4);
+    });
+
+    test("an undo in the session can be redone from the file after the session closes", async () => {
+        const path = editFixture("gt-es-redo-out-");
+        const { session } = await openSession(path);
+        await session.apply([{ op: "volume", volume: 0.4 }], { by: "agent" });
+        await session.undo({ by: "agent" });
+        session.close();
+        const redone = await redoEdit(path);
+        expect(redone.redone).toEqual(["volume"]);
+        expect(redone.project.audio.volume).toBe(0.4);
+    });
+});
+
 describe("the recorder service", () => {
     test("hello names the methods, refuses another protocol (1011) and a second host (1012); a second start finds the first", async () => {
         const { dir, service } = await serviceFixture();
@@ -487,6 +541,29 @@ describe("the recorder service", () => {
         await app.call<unknown>("session.close", { path, holder: "window-1" });
         await Bun.sleep(20);
         expect(service.sessions.size).toBe(0);
+    });
+
+    // Regression test: hunt 2026-11-09 r2-editor-follows-moved-recording: a trashed recording's window made its folder again
+    test("a recording moved away while a window edits it: its save makes no folder again, edits are refused and the close releases the hold", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 50 });
+        const path = editFixture("rs-moved-away-");
+        const app = await connect(service.entry);
+        await app.call<unknown>("hello", hello("host"));
+        const opened = await app.call<{ path: string }>("session.open", { path, holder: "window-1" });
+        await app.call<unknown>("edit.apply", { path: opened.path, ops: [{ op: "volume", volume: 0.4 }] });
+        renameSync(dirname(opened.path), `${dirname(opened.path)}-trashed`);
+        await Bun.sleep(250);
+
+        expect(existsSync(dirname(opened.path))).toBe(false);
+        await expect(
+            app.call<unknown>("edit.apply", { path: opened.path, ops: [{ op: "volume", volume: 0.5 }] })
+        ).rejects.toThrow("the recording was moved or trashed; close this window");
+        expect(await app.call<unknown>("session.close", { path: opened.path, holder: "window-1" })).toEqual({
+            closed: true,
+        });
+        await Bun.sleep(20);
+        expect(service.sessions.size).toBe(0);
+        expect(existsSync(dirname(opened.path))).toBe(false);
     });
 
     // Regression test: 2026-11-05 recorder service review, finding 12 — a service edit without an open session told nobody
@@ -663,14 +740,12 @@ describe("the recorder service", () => {
             "--out",
             "/tmp/s.png",
         ]);
-        expect(await client.call<unknown>("window.open", { path: "/rec/talk/screen.edit.json", focus: false })).toEqual(
-            {
-                opened: true,
-                window: 7,
-            }
-        );
+        expect(await client.call<unknown>("window.open", { path: "/rec/talk/edit.json", focus: false })).toEqual({
+            opened: true,
+            window: 7,
+        });
         expect(opened[0]).toEqual(
-            expect.arrayContaining(["--recorder", "--edit", "/rec/talk/screen.edit.json", "--no-focus"])
+            expect.arrayContaining(["--recorder", "--edit", "/rec/talk/edit.json", "--no-focus"])
         );
         expect(await client.call<unknown>("window.list", {})).toEqual({
             open: [{ path: "/rec/talk", title: "Talk", window: 7 }],
@@ -724,6 +799,396 @@ describe("finishing an export", () => {
         await expect(edits.finishExport({ value: path, answer: { ok: true, path: movie } })).rejects.toThrow(
             `${movie} does not exist`
         );
+    });
+
+    // Round 2 hunt (r2-intermediate-format-settings): the Export tab hides the subtitle file for a GIF, so the edit's
+    // export.subtitles default writes none beside a GIF; an explicit ask still does.
+    test("a GIF gets no subtitle file from the edit's default, an MP4 does, and an explicit ask writes one", async () => {
+        const root = mkdtempSync(join(tmpdir(), "rs-finish-gif-"));
+        const path = join(root, "clip.edit.json");
+        const base = wholeProject({ video: join(root, "clip.mp4"), durationUs: 4_000_000, width: 100, height: 100 });
+        writeProject(path, { ...base, export: { ...base.export, subtitles: "srt", chapters: false } });
+        writeFileSync(join(root, "clip.transcript.json"), '{"segments":[{"start":0.5,"end":1.5,"text":"Hello"}]}');
+        const gif = join(root, "clip.gif");
+        const mp4 = join(root, "out.mp4");
+        writeFileSync(gif, "movie");
+        writeFileSync(mp4, "movie");
+
+        const fromGif = await edits.finishExport({ value: path, answer: { ok: true, path: gif } });
+        expect(fromGif.subtitles).toBeUndefined();
+        expect(existsSync(join(root, "clip.srt"))).toBe(false);
+
+        const fromMp4 = await edits.finishExport({ value: path, answer: { ok: true, path: mp4 } });
+        expect(fromMp4.subtitles).toBe(join(root, "out.srt"));
+
+        const asked = await edits.finishExport({ value: path, answer: { ok: true, path: gif }, subtitles: "vtt" });
+        expect(asked.subtitles).toBe(join(root, "clip.vtt"));
+    });
+});
+
+describe("finishing a part export of an edit with cards", () => {
+    /** A 10 s edit with a 3 s intro and end card, one transcript line at source 2.5 s and markers at 3 s and 4.5 s. */
+    function cardedEdit(prefix: string): { path: string; root: string } {
+        const root = mkdtempSync(join(tmpdir(), prefix));
+        const path = join(root, "talk.edit.json");
+        writeProject(path, {
+            ...wholeProject({ video: join(root, "talk.mp4"), durationUs: 10_000_000, width: 100, height: 100 }),
+            cards: { intro: { title: "Demo", seconds: 3 }, end: { text: "Bye", qr: false, seconds: 3 } },
+            markers: [
+                { id: "m1", atUs: 3_000_000, label: "Step one" },
+                { id: "m2", atUs: 4_500_000, label: "Step two" },
+            ],
+        });
+        writeFileSync(
+            join(root, "talk.transcript.json"),
+            '{"segments":[{"start":2.5,"end":3.5,"text":"Hello there"}]}'
+        );
+        return { path, root };
+    }
+
+    // Round 1 hunt (part-export-cards): a part plays no cards on any route, so its cues start from the part, while the
+    // window's `recorder finish --from --to` moved them by the whole edit's intro.
+    test("a part's subtitles start from the part, not after the intro; a whole export still moves them by it", async () => {
+        const { path, root } = cardedEdit("rs-finish-part-");
+        const movie = join(root, "part.webm");
+        writeFileSync(movie, "movie");
+
+        const part = await edits.finishExport({
+            value: path,
+            answer: { ok: true, path: movie },
+            subtitles: "srt",
+            part: { fromUs: 2_000_000, toUs: 5_000_000 },
+        });
+        expect(part.subtitles).toBe(join(root, "part.srt"));
+        expect(readFileSync(join(root, "part.srt"), "utf8")).toContain("00:00:00,500 --> 00:00:01,500");
+
+        await edits.finishExport({ value: path, answer: { ok: true, path: movie }, subtitles: "srt" });
+        expect(readFileSync(join(root, "part.srt"), "utf8")).toContain("00:00:05,500 --> 00:00:06,500");
+    });
+
+    test("a part's chapters have no intro chapter and start from the part", async () => {
+        const { path, root } = cardedEdit("rs-finish-chapters-");
+        const movie = join(root, "part.mp4");
+        writeFileSync(movie, "movie");
+        const written: string[] = [];
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async ({ input }) => ({
+            path: input,
+            durationUs: 3_000_000,
+            width: 100,
+            height: 100,
+            displayWidth: 100,
+            displayHeight: 100,
+            rotation: 0,
+            bytes: 5,
+            codec: "h264",
+        }));
+        const ffmpeg = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            written.push(readFileSync(command[command.indexOf("ffmetadata") + 2] ?? "", "utf8"));
+            writeFileSync(command.at(-1) ?? "", "movie");
+            return "";
+        });
+        closing.push(
+            () => probe.mockRestore(),
+            () => ffmpeg.mockRestore()
+        );
+
+        const answer = await edits.finishExport({
+            value: path,
+            answer: { ok: true, path: movie },
+            part: { fromUs: 2_000_000, toUs: 5_000_000 },
+        });
+
+        // The part starts in the 0:00 chapter chapterPoints adds before the first marker; no chapter names the intro card.
+        expect(answer.chapters).toBe(3);
+        expect(written[0]).not.toContain("title=Demo");
+        expect(written[0]).toContain("START=1000\nEND=2500\ntitle=Step one");
+    });
+
+    // Round 1 hunt (intro-card-export-clock): subtitles() and `tools recorder subtitles` write the file the export is
+    // named after, but without the intro's lead, so a player showed every cue 3 s early beside the exported movie.
+    test("the subtitle file named after the export follows its clock; clock output and a part do not move", async () => {
+        const { path, root } = cardedEdit("rs-subtitles-clock-");
+        const whole = await edits.writeSubtitles({ value: path, format: "srt" });
+        expect(readFileSync(whole.path, "utf8")).toContain("00:00:05,500 --> 00:00:06,500");
+
+        const output = join(root, "output.srt");
+        await edits.writeSubtitles({ value: path, format: "srt", out: output, clock: "output" });
+        expect(readFileSync(output, "utf8")).toContain("00:00:02,500 --> 00:00:03,500");
+
+        const part = join(root, "part.srt");
+        await edits.writeSubtitles({
+            value: path,
+            format: "srt",
+            out: part,
+            part: { fromUs: 2_000_000, toUs: 5_000_000 },
+        });
+        expect(readFileSync(part, "utf8")).toContain("00:00:00,500 --> 00:00:01,500");
+    });
+
+    // Round 1 hunt (intro-card-export-clock): the whole export named the card at 0:00 and then chapterPoints' own
+    // "Intro" at the card's end, a second intro chapter.
+    test("a whole export's chapters name the intro card at 0:00 once and move every marker by it", async () => {
+        const { path, root } = cardedEdit("rs-finish-whole-chapters-");
+        const movie = join(root, "talk-export.mp4");
+        writeFileSync(movie, "movie");
+        const written: string[] = [];
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async ({ input }) => ({
+            path: input,
+            durationUs: 16_000_000,
+            width: 100,
+            height: 100,
+            displayWidth: 100,
+            displayHeight: 100,
+            rotation: 0,
+            bytes: 5,
+            codec: "h264",
+        }));
+        const ffmpeg = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            written.push(readFileSync(command[command.indexOf("ffmetadata") + 2] ?? "", "utf8"));
+            writeFileSync(command.at(-1) ?? "", "movie");
+            return "";
+        });
+        closing.push(
+            () => probe.mockRestore(),
+            () => ffmpeg.mockRestore()
+        );
+
+        const answer = await edits.finishExport({ value: path, answer: { ok: true, path: movie } });
+
+        expect(answer.chapters).toBe(3);
+        expect(written[0]).toContain("START=0\nEND=6000\ntitle=Demo");
+        expect(written[0]).toContain("START=6000\nEND=7500\ntitle=Step one");
+        expect(written[0]).not.toContain("title=Intro");
+    });
+});
+
+describe("a part export's chapters on every route", () => {
+    /** A 60 s edit with markers at 10, 20 and 30 s. */
+    function markedEdit(prefix: string): { path: string; root: string } {
+        const root = mkdtempSync(join(tmpdir(), prefix));
+        const path = join(root, "talk.edit.json");
+        writeProject(path, {
+            ...wholeProject({ video: join(root, "talk.mp4"), durationUs: 60_000_000, width: 100, height: 100 }),
+            markers: [
+                { id: "m1", atUs: 10_000_000, label: "Step 1" },
+                { id: "m2", atUs: 20_000_000, label: "Step 2" },
+                { id: "m3", atUs: 30_000_000, label: "Step 3" },
+            ],
+        });
+        return { path, root };
+    }
+
+    /** The renderer writes a movie, ffprobe answers 15 s, and ffmpeg's chapter metadata is kept. */
+    function spyExport(): string[] {
+        const written: string[] = [];
+        const host = spyOn(serviceClient, "hostExport").mockImplementation(async ({ out }) => {
+            const to = out ?? "";
+            writeFileSync(to, "movie");
+            return { ok: true, path: to };
+        });
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async ({ input }) => ({
+            path: input,
+            durationUs: 15_000_000,
+            width: 100,
+            height: 100,
+            displayWidth: 100,
+            displayHeight: 100,
+            rotation: 0,
+            bytes: 5,
+            codec: "h264",
+        }));
+        const ffmpeg = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            written.push(readFileSync(command[command.indexOf("ffmetadata") + 2] ?? "", "utf8"));
+            writeFileSync(command.at(-1) ?? "", "movie");
+            return "";
+        });
+        closing.push(
+            () => host.mockRestore(),
+            () => probe.mockRestore(),
+            () => ffmpeg.mockRestore()
+        );
+        return written;
+    }
+
+    // Round 2 hunt (r2-part-export-chapters): exportAs finished the trimmed copy, whose markers before the part are
+    // cut, so its first chapter was a generic "Intro", while the window's `recorder finish --from --to` named the
+    // marker current at the part start.
+    test("exportAs with a part names the chapter current at the part start at 0:00, as finishExport does", async () => {
+        const { path, root } = markedEdit("rs-part-chapters-");
+        const written = spyExport();
+        const part = { fromUs: 25_000_000, toUs: 40_000_000 };
+
+        const answer = await edits.exportAs(path, { part, out: join(root, "part.mp4") });
+
+        expect(answer).toMatchObject({ ok: true, chapters: 2 });
+        expect(written[0]).toContain("START=0\nEND=5000\ntitle=Step 2");
+        expect(written[0]).toContain("START=5000\nEND=15000\ntitle=Step 3");
+        expect(written[0]).not.toContain("title=Intro");
+
+        const movie = join(root, "window.mp4");
+        writeFileSync(movie, "movie");
+        await edits.finishExport({ value: path, answer: { ok: true, path: movie }, part });
+        expect(written[1]).toBe(written[0] ?? "");
+    });
+
+    test("chaptersOfPart folds a chapter under 1 s after the part start into the 0:00 chapter", () => {
+        const chapters = [
+            { at: 0, label: "Intro" },
+            { at: 10, label: "Step 1" },
+            { at: 20.5, label: "Step 2" },
+        ];
+        expect(chaptersOfPart(chapters, { from: 20, to: 40 })).toEqual([{ at: 0, label: "Step 2" }]);
+        expect(chaptersOfPart(chapters, { from: 19, to: 40 })).toEqual([
+            { at: 0, label: "Step 1" },
+            { at: 1.5, label: "Step 2" },
+        ]);
+    });
+});
+
+describe("the format an export asks for", () => {
+    /** A 10 s edit whose window picked `format`, with chapters off so the MP4 route needs no ffmpeg. */
+    function formattedEdit(prefix: string, format: "mp4" | "gif"): { path: string; root: string } {
+        const root = mkdtempSync(join(tmpdir(), prefix));
+        const path = join(root, "talk.edit.json");
+        const project = wholeProject({
+            video: join(root, "talk.mp4"),
+            durationUs: 10_000_000,
+            width: 100,
+            height: 100,
+        });
+        writeProject(path, { ...project, export: { ...project.export, format, chapters: false } });
+        return { path, root };
+    }
+
+    /** Records what reaches the renderer and ffmpeg; each writes its output, as the real ones do. */
+    function spyRenders(): { hostOuts: string[]; ffmpegOuts: string[] } {
+        const hostOuts: string[] = [];
+        const ffmpegOuts: string[] = [];
+        const host = spyOn(serviceClient, "hostExport").mockImplementation(async ({ out }) => {
+            const to = out ?? "";
+            hostOuts.push(to);
+            writeFileSync(to, "movie");
+            return { ok: true, path: to };
+        });
+        const ffmpeg = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            const to = command.at(-1) ?? "";
+            ffmpegOuts.push(to);
+            writeFileSync(to, "movie");
+            return "";
+        });
+        closing.push(
+            () => host.mockRestore(),
+            () => ffmpeg.mockRestore()
+        );
+        return { hostOuts, ffmpegOuts };
+    }
+
+    // Round 1 hunt (part-export-format): a part took the edit's export.format over the --out extension, so
+    // `export --from --to -o clip.mp4` wrote a GIF, while the same call without --from/--to wrote an MP4.
+    test("askedExportFormat: an asked format, then the out extension, then the edit's format, then mp4", () => {
+        const gif = { export: { format: "gif" as const } };
+        expect(edits.askedExportFormat({ out: "/x/clip.mp4", project: gif })).toBe("mp4");
+        expect(edits.askedExportFormat({ out: "/x/clip.GIF", project: { export: { format: "mp4" } } })).toBe("gif");
+        expect(edits.askedExportFormat({ project: gif })).toBe("gif");
+        expect(edits.askedExportFormat({ project: { export: {} } })).toBe("mp4");
+        expect(edits.askedExportFormat({ format: "webm", out: "/x/clip.mp4", project: gif })).toBe("webm");
+        expect(edits.askedExportFormat({ out: "/x/clip.mov", project: gif })).toBe("mov");
+    });
+
+    test("a part export to clip.mp4 of an edit set to GIF writes an MP4, as a whole export does", async () => {
+        const { path, root } = formattedEdit("rs-part-format-", "gif");
+        const renders = spyRenders();
+        const out = join(root, "clip.mp4");
+
+        const answer = await edits.exportAs(path, { part: { fromUs: 2_000_000, toUs: 5_000_000 }, out });
+
+        expect(answer).toMatchObject({ ok: true, path: out });
+        expect(renders.hostOuts).toEqual([out]);
+        expect(renders.ffmpegOuts).toEqual([]);
+        expect(readProject(path).export.format).toBe("gif");
+    });
+
+    test("a part export to clip.gif of an edit set to MP4 makes the GIF from the rendered movie", async () => {
+        const { path, root } = formattedEdit("rs-part-format-gif-", "mp4");
+        const renders = spyRenders();
+        const out = join(root, "clip.gif");
+
+        const answer = await edits.exportAs(path, { part: { fromUs: 2_000_000, toUs: 5_000_000 }, out });
+
+        expect(answer).toMatchObject({ ok: true, path: out });
+        expect(renders.ffmpegOuts).toEqual([out]);
+        expect(renders.hostOuts).not.toContain(out);
+        expect(existsSync(out)).toBe(true);
+    });
+
+    test("a part export to an unknown extension is refused, as a whole export is", async () => {
+        const { path, root } = formattedEdit("rs-part-format-mov-", "gif");
+        const renders = spyRenders();
+
+        const part = await edits.exportAs(path, {
+            part: { fromUs: 2_000_000, toUs: 5_000_000 },
+            out: join(root, "clip.mov"),
+        });
+        const whole = await edits.exportAs(path, { out: join(root, "clip.mov") });
+
+        expect(part).toEqual(whole);
+        expect(part.ok).toBe(false);
+        expect(renders.hostOuts).toEqual([]);
+    });
+});
+
+describe("a denoised export's render copy", () => {
+    // Round 1 hunt (denoise-render-sidecars): the copy renders from .denoise/, where the renderer finds no
+    // recording.json, so the burned-in progress bar lost every marker set while recording.
+    test("denoisedRenderProject carries the recording's markers beside the edit's own, in time order, and renders the cleaned movie", () => {
+        const folder = mkdtempSync(join(tmpdir(), "rs-denoise-"));
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id: "video-denoise",
+                title: "denoise",
+                startedAt: "2026-11-09T10:00:00Z",
+                displays: [],
+                frames: [],
+                settings: {
+                    markers: [
+                        { atMs: 4_000, label: "second step" },
+                        { atMs: 1_500, label: "x".repeat(100) },
+                    ],
+                },
+            })
+        );
+        const path = join(folder, "edit.json");
+        const whole = wholeProject({
+            video: join(folder, "screen.mp4"),
+            durationUs: 10_000_000,
+            width: 100,
+            height: 100,
+        });
+        writeProject(path, {
+            ...whole,
+            markers: [{ id: "m1", atUs: 2_000_000, label: "edit marker" }],
+            audio: { ...whole.audio, denoise: { method: "afftdn", reductionDb: 12 } },
+        });
+        const cleanedPath = join(folder, ".denoise", "screen-abc.mp4");
+        const copy = edits.denoisedRenderProject({
+            opened: { path, project: readProject(path), fresh: false },
+            cleanedPath,
+        });
+
+        expect(copy.source.video).toBe(cleanedPath);
+        expect(copy.audio).not.toHaveProperty("denoise");
+        expect(copy.markers).toEqual([
+            { id: "recorded-1", atUs: 1_500_000, label: "x".repeat(80) },
+            { id: "m1", atUs: 2_000_000, label: "edit marker" },
+            { id: "recorded-0", atUs: 4_000_000, label: "second step" },
+        ]);
+        // The renderer reads the copy as an edit: a recorded label over the edit markers' cap must not break it.
+        const written = join(folder, "denoised.edit.json");
+        writeProject(written, copy);
+        expect(readProject(written).markers).toHaveLength(3);
+        expect(readProject(path).markers).toEqual([{ id: "m1", atUs: 2_000_000, label: "edit marker" }]);
     });
 });
 
@@ -855,9 +1320,7 @@ describe("the REPL's and the CLI's way to the service", () => {
         expect(await client.call<unknown>("window.close", { path: "/rec/other/screen.edit.json" })).toEqual({
             closed: false,
         });
-        await expect(
-            client.call<unknown>("window.close", { path: "/rec/talk/screen.edit.json" })
-        ).rejects.toMatchObject({
+        await expect(client.call<unknown>("window.close", { path: "/rec/talk/edit.json" })).rejects.toMatchObject({
             code: RPC_ERRORS.hostUnavailable,
         });
         await expect(client.call<unknown>("window.close", { window: 7 })).rejects.toMatchObject({
@@ -911,6 +1374,47 @@ describe("the REPL's and the CLI's way to the service", () => {
         } finally {
             rmSync(folder, { recursive: true, force: true });
         }
+    });
+
+    // H1-111: tools recorder fix, cut-words, cut-fillers and replace-words, and the Movie that stop() and demo() return,
+    // saved the edit beside the service, so the window's open session lost its undo history.
+    test("recordingMovie, the Movie of the CLI's edit commands, stop() and demo(), edits the window's open session through the service", async () => {
+        const { dir, service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-cli-fix-");
+        writeProject(
+            path,
+            applyOp(applyOp(readProject(path), { op: "marker", at: 6.2, label: "Step" }), {
+                op: "cut",
+                from: 3,
+                to: 6.5,
+            })
+        );
+        const window = await connect(service.entry);
+        await window.call<unknown>("hello", hello("host"));
+        await window.call<unknown>("session.open", { path });
+        await window.call<unknown>("edit.apply", {
+            path,
+            ops: [{ op: "volume", volume: 0.5 }],
+            baseRevision: readProject(path).revision,
+        });
+        const session = service.sessions.get(path);
+        expect(session?.undoDepth).toBe(1);
+
+        // In this test the service runs in this process, so a local save would reach the session too: the call itself
+        // must go over the socket, as it does from a CLI process that has no session of its own.
+        const spy = spyOn(RpcSocketClient.prototype, "call");
+
+        try {
+            await recordingMovie(path, undefined, { dir }).fix();
+            expect(spy.mock.calls.map(([method]) => method)).toContain("movie.fix");
+        } finally {
+            spy.mockRestore();
+        }
+
+        await Bun.sleep(10);
+
+        expect(session?.current.project.markers?.map((marker) => marker.atUs)).toEqual([6_500_000]);
+        expect(session?.undoDepth).toBe(2);
     });
 
     test("a REPL Movie's edit goes into the window's open session through the service, and runs locally without one", async () => {
@@ -969,6 +1473,7 @@ describe("the REPL's and the CLI's way to the service", () => {
             await movie.frame({ background: { kind: "image", image: "bg.png" } });
             await movie.apply([{ op: "introCard", logo: "" }]);
             await applyEdit(path, [{ op: "introCard", title: "Demo", logo: "logo.png" }], { dir });
+            await movie.apply([{ op: "exportSettings", output: "demo.mp4" }]);
         } finally {
             process.chdir(before);
         }
@@ -983,6 +1488,7 @@ describe("the REPL's and the CLI's way to the service", () => {
             "movie.frame",
             "movie.apply",
             "edit.apply",
+            "movie.apply",
         ]);
         expect(sent[0].params).toMatchObject({ to: join(cwd, "cut-copy") });
         expect(sent[1].params).toMatchObject({ title: "Demo", logo: join(cwd, "logo.png") });
@@ -990,6 +1496,66 @@ describe("the REPL's and the CLI's way to the service", () => {
         // "" removes the logo: it stays "".
         expect(sent[3].params).toMatchObject({ ops: [{ op: "introCard", logo: "" }] });
         expect(sent[4].params).toMatchObject({ ops: [{ op: "introCard", logo: join(cwd, "logo.png") }] });
+        // The export file an edit keeps: a relative one would be found later in the renderer's own folder.
+        expect(sent[5].params).toMatchObject({ ops: [{ op: "exportSettings", output: join(cwd, "demo.mp4") }] });
+        // A bare ~ is the home folder, as a shell reads it.
+        expect(callerParams("duplicate", { to: "~" })).toEqual({ to: homedir() });
+        expect(callerParams("duplicate", { to: "~/copy" })).toEqual({ to: join(homedir(), "copy") });
+    });
+
+    // Regression test: every `file` was resolved against the caller's cwd, so a bare camera name sent
+    // through the service was stored as "<cwd>/camera.mov" and no bubble could load, while the same call without a
+    // service stored "camera.mov", which the camera schema reads beside the source movie.
+    test("a bare camera file name reaches the service as the caller wrote it, so it stays beside the movie", async () => {
+        const { dir } = await serviceFixture();
+        const methods = moviesApi.handles.find((handle) => handle.name === "Movie")?.methods ?? [];
+        const viaMovie = editFixture("rs-camera-");
+        const viaApply = editFixture("rs-camera-apply-");
+        const viaCli = editFixture("rs-camera-cli-");
+        const local = editFixture("rs-camera-local-");
+
+        for (const path of [viaMovie, viaApply, viaCli, local]) {
+            writeFileSync(join(dirname(path), "camera.mov"), "");
+        }
+
+        const cwd = realpathSync(mkdtempSync(join(tmpdir(), "rs-caller-cwd-")));
+        writeFileSync(join(cwd, "song.mp3"), "");
+        const before = process.cwd();
+        const spy = spyOn(RpcSocketClient.prototype, "call");
+        process.chdir(cwd);
+
+        try {
+            await serviceRoutedMovie(new Movie(viaMovie), methods, { dir }).camera({ file: "camera.mov" });
+            await serviceRoutedMovie(new Movie(viaApply), methods, { dir }).apply([
+                { op: "camera", file: "camera.mov" },
+            ]);
+            await applyEdit(viaCli, [{ op: "camera", file: "camera.mov" }], { dir });
+            // music resolves its file against the cwd in the caller's process too, so it still goes resolved.
+            await serviceRoutedMovie(new Movie(viaMovie), methods, { dir }).music({ file: "song.mp3" });
+            await applyEdit(local, [{ op: "camera", file: "camera.mov" }], {
+                dir: mkdtempSync(join(tmpdir(), "rs-none-")),
+            });
+        } finally {
+            process.chdir(before);
+        }
+
+        const sent = spy.mock.calls
+            .filter(([method]) => method.startsWith("movie.") || method === "edit.apply")
+            .map(([method, params]) => ({ method, params }));
+        spy.mockRestore();
+        expect(sent.map((call) => call.method)).toEqual(["movie.camera", "movie.apply", "edit.apply", "movie.music"]);
+        expect(sent[0].params).toMatchObject({ file: "camera.mov" });
+        expect(sent[1].params).toMatchObject({ ops: [{ op: "camera", file: "camera.mov" }] });
+        expect(sent[2].params).toMatchObject({ ops: [{ op: "camera", file: "camera.mov" }] });
+        expect(sent[3].params).toMatchObject({ file: join(cwd, "song.mp3") });
+
+        for (const path of [viaMovie, viaApply, viaCli, local]) {
+            const project = readProject(path);
+            expect(project.camera?.file).toBe("camera.mov");
+            const movie = cameraMoviePath({ file: project.camera?.file ?? "" }, project.source.video);
+            expect(movie).toBe(join(dirname(path), "camera.mov"));
+            expect(existsSync(movie)).toBe(true);
+        }
     });
 });
 
@@ -1263,6 +1829,29 @@ describe("the window's REPL methods on the service", () => {
         expect(info.audio.volume).toBe(0.3);
         expect(readProject(path).audio.volume).toBe(0.3);
     });
+
+    // H1-112: zod drops an unknown key from a plain object, so fix({ dryRun: true }) ran the fix and saved an undo step.
+    test("a movie method refuses a key it does not take instead of running without it", async () => {
+        const { service } = await serviceFixture();
+        const path = editFixture("rs-strict-");
+        writeProject(path, applyOp(readProject(path), { op: "marker", at: 6.2, label: "Step" }));
+        writeProject(path, applyOp(readProject(path), { op: "cut", from: 3, to: 6.5 }));
+        const before = readFileSync(path, "utf8");
+        const agent = await connect(service.entry);
+        await agent.call<unknown>("hello", hello("client"));
+
+        await expect(agent.call<unknown>("movie.fix", { recording: path, dryRun: true })).rejects.toThrow(
+            'Unrecognized key: "dryRun"'
+        );
+        await expect(agent.call<unknown>("movie.clickGroups", { recording: path, gap: 1 })).rejects.toThrow(
+            "did you mean gapSeconds?"
+        );
+        expect(readFileSync(path, "utf8")).toBe(before);
+        // Control: the same call with the keys it takes runs.
+        await expect(agent.call<{ fixed: string[] }>("movie.fix", { recording: path })).resolves.toMatchObject({
+            fixed: [expect.stringContaining("Step")],
+        });
+    });
 });
 
 describe("the protocol fixture the Swift host tests read", () => {
@@ -1381,6 +1970,39 @@ describe("the inspector tabs", () => {
     });
 });
 
+describe("render.snapshot params", () => {
+    test("are the keys the Swift host's snapshotRequest() reads, out aside", () => {
+        // The Swift host learnt selectMarker after the service schema was written, so the schema stripped it and no
+        // client could ask for a snapshot with a marker selected (2026-11-09). This test keeps both sides equal.
+        const swift = readFileSync(
+            join(
+                moduleDir(import.meta),
+                "../../macos/GenesisTools/Sources/Parts/Recorder/Service/RecorderHostMethods.swift"
+            ),
+            "utf8"
+        );
+        const body = swift.match(/func snapshotRequest\(\)[^{]*\{([\s\S]*?)\n {8}\}\n/)?.[1];
+        expect(body).toBeDefined();
+        const read = [...(body ?? "").matchAll(/(?:int|bool|number|optionalPath|span)\("(\w+)"\)|object\["(\w+)"\]/g)]
+            .map((match) => match[1] ?? match[2] ?? "")
+            .concat(body?.includes("try tab()") ? ["tab"] : []);
+        const params = HOST_SCHEMAS["render.snapshot"].params;
+
+        if (!(params instanceof z.ZodObject)) {
+            throw new Error("render.snapshot params are no z.object");
+        }
+
+        const keys = Object.keys(params.shape).filter((key) => key !== "out");
+        expect([...new Set(read)].sort()).toEqual(keys.sort());
+    });
+
+    test("keep selectMarker", () => {
+        expect(
+            HOST_SCHEMAS["render.snapshot"].params.parse({ out: "/tmp/x.png", path: "/tmp/e", selectMarker: 0 })
+        ).toMatchObject({ selectMarker: 0 });
+    });
+});
+
 export type { RecorderService };
 
 describe("a connection to the service that closes under a call", () => {
@@ -1489,5 +2111,116 @@ describe("a connection to the service that closes under a call", () => {
             },
         });
         await expect(twice).rejects.toThrow("closed twice (ECONNREFUSED; then ECONNREFUSED again)");
+    });
+});
+
+// Regression test: 2026-11-09 12:50 a window recording with the camera failed at once ("the camera needs
+// GenesisTools.app's recorder face connected to the recorder service as its host"): no service ran, and a caller with
+// no live service took the headless face, which never answers the camera.
+describe("a call only the app answers, with no service running", () => {
+    test("starts the service, which launches the face and waits for its hello, and the camera answers", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rs-none-"));
+        let launches = 0;
+        const recorder = serviceClient.recorderHost({
+            dir,
+            launch: async () => {
+                launches += 1;
+                const { service } = await serviceFixture({
+                    hostWaitMs: 5_000,
+                    headless: {
+                        // The face the service launches says hello as the host.
+                        open: () => {
+                            void connect(service.entry, async ({ method }) =>
+                                method === "camera.start" ? { started: true, windowIds: [41] } : { stopped: true }
+                            ).then((face) => face.call("hello", hello("host", ["camera.start", "camera.stop"])));
+                        },
+                    },
+                });
+                return { status: "started", entry: service.entry };
+            },
+        });
+
+        expect(await recorder.call("camera.start", { folder: "/rec/talk" })).toEqual({
+            started: true,
+            windowIds: [41],
+        });
+        expect(launches).toBe(1);
+    });
+
+    test("a service that does not start is the refusal's reason", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rs-none-"));
+        const recorder = serviceClient.recorderHost({
+            dir,
+            launch: async () => ({ status: "failed", reason: "SyntaxError: Export named 'x' not found" }),
+        });
+
+        await expect(recorder.call("camera.start", { folder: "/rec/talk" })).rejects.toMatchObject({
+            code: RPC_ERRORS.hostUnavailable,
+            message: expect.stringContaining("SyntaxError: Export named 'x' not found"),
+        });
+    });
+});
+
+// Regression test: 2026-11-09 00:43, 01:05, 01:12 and 01:33 the service exited for a code change while an export
+// ran through it, and each caller failed with "the connection to the recorder service closed while the call ran".
+describe("a code change while a call runs", () => {
+    test("the service stops only once no call is running", async () => {
+        const source = realpathSync(mkdtempSync(join(tmpdir(), "rs-src-")));
+        const module = join(source, "loaded-busy.ts");
+        writeFileSync(module, "export const loaded = true;\n");
+        await import(module);
+        const { service } = await serviceFixture({ sourceRoot: source, checkEveryMs: 15 });
+        const release = Promise.withResolvers<void>();
+        const face = await connect(service.entry, async () => {
+            await release.promise;
+            return { ok: true, path: "/tmp/out.mp4", bytes: 1024, seconds: 1 };
+        });
+        await face.call("hello", hello("host", ["render.export"]));
+        const client = await connect(service.entry);
+        await client.call("hello", hello("client"));
+        const exporting = client.call<unknown>("render.export", { path: editFixture("rs-busy-"), out: "/tmp/out.mp4" });
+        await Bun.sleep(30);
+        const later = new Date(Date.now() + 60_000);
+        utimesSync(module, later, later);
+
+        expect(await Promise.race([service.stopped, Bun.sleep(300).then(() => "still running")])).toBe("still running");
+        release.resolve();
+        await exporting;
+        expect(await Promise.race([service.stopped, Bun.sleep(1_000).then(() => "still running")])).toBe(
+            "code-changed"
+        );
+    });
+});
+
+describe("building the native recorder ahead of a recording", () => {
+    test("the service asks for a prewarm when it starts and at each check", async () => {
+        const triggers: string[] = [];
+        await serviceFixture({ checkEveryMs: 15, prewarmNative: (trigger) => triggers.push(trigger) });
+        await Bun.sleep(80);
+
+        expect(triggers[0]).toBe("recorder-service-start");
+        expect(triggers.slice(1)).toContain("recorder-service-check");
+    });
+});
+
+describe("an editor window is named by its recording folder or, for a plain movie, by the movie", () => {
+    const root = mkdtempSync(join(tmpdir(), "open-state-"));
+    const loose = join(root, "Desktop");
+    const recording = join(root, "rec");
+    mkdirSync(loose);
+    mkdirSync(recording);
+    writeFileSync(join(loose, "demo.mov"), "");
+    writeFileSync(join(loose, "other.mov"), "");
+    writeFileSync(join(loose, "demo.edit.json"), "{}");
+    writeFileSync(join(recording, "recording.json"), "{}");
+    writeFileSync(join(recording, "screen.mp4"), "");
+
+    test("two plain movies in one folder get their own keys, and a recording keeps its folder", () => {
+        expect(editorWindowKeyOf(join(loose, "demo.mov"))).toBe(join(loose, "demo.mov"));
+        expect(editorWindowKeyOf(join(loose, "other.mov"))).toBe(join(loose, "other.mov"));
+        expect(editorWindowKeyOf(join(loose, "demo.edit.json"))).toBe(join(loose, "demo.mov"));
+        expect(editorWindowKeyOf(join(recording, "edit.json"))).toBe(recording);
+        expect(editorWindowKeyOf(join(recording, "screen.mp4"))).toBe(recording);
+        expect(editorWindowKeyOf(recording)).toBe(recording);
     });
 });

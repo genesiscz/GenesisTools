@@ -89,6 +89,27 @@ final class RecorderOverlayTests: XCTestCase {
         XCTAssertEqual(TextMotion.at(sinceUs: 1_000_000, note: note).drop, 0)
     }
 
+    /// `animate: { kind: "fade", ms }` is how long the text fades in; the fade out keeps its 0.2 s. Before, every fade
+    /// took 0.2 s, whatever its ms.
+    func testAFadeTakesItsOwnLengthToComeIn() {
+        func opacity(_ note: EditProject.TextNote, at us: Int64) -> Double? {
+            var project = EditProject.whole(video: "/movies/demo.mp4", durationUs: 10_000_000, width: 640, height: 360, cursor: nil, recording: nil)
+            project.texts = [note]
+            return ZoomState.texts(atSourceUs: us, project: project).first?.opacity
+        }
+        var note = EditProject.TextNote(id: "t", startUs: 1_000_000, endUs: 6_000_000, text: "Hello world")
+        XCTAssertEqual(opacity(note, at: 1_100_000) ?? -1, 0.5, accuracy: 0.001, "no animate: 0.2 s in")
+        XCTAssertEqual(opacity(note, at: 2_500_000), 1)
+        note.animate = EditProject.TextAnimate(kind: .fade, ms: 3000)
+        XCTAssertEqual(opacity(note, at: 2_500_000) ?? -1, 0.5, accuracy: 0.001, "half way through its 3 s")
+        XCTAssertEqual(opacity(note, at: 4_000_000), 1)
+        XCTAssertEqual(opacity(note, at: 5_900_000) ?? -1, 0.5, accuracy: 0.001, "it still fades out over 0.2 s")
+        note.animate = EditProject.TextAnimate(kind: .fade, ms: 100)
+        XCTAssertEqual(opacity(note, at: 1_100_000), 1, "a short fade is in after 0.1 s")
+        note.animate = EditProject.TextAnimate(kind: .slideUp, ms: 3000)
+        XCTAssertEqual(opacity(note, at: 1_100_000) ?? -1, 0.5, accuracy: 0.001, "a slide-up fades in by its motion, over the usual envelope")
+    }
+
     func testAKaraokeCaptionDrawsTheSaidWordsInItsColour() throws {
         let size = CGSize(width: 640, height: 360)
         let black = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: size))
@@ -251,6 +272,20 @@ final class RecorderOverlayTests: XCTestCase {
         return stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 180 && bytes[$0 + 1] > 150 && bytes[$0 + 2] < 90 }.count
     }
 
+    func testTextPlatesKeepOnlyTheLastPlates() throws {
+        // A karaoke line makes one plate per word said; the cache keeps the newest few, not every one for good.
+        let plates = TextPlates(limit: 4)
+        let line = "one two three four five six seven eight"
+        for said in 1...8 {
+            XCTAssertNotNil(plates.plate(line, fontSize: 24, maxWidth: 600, highlight: (characters: said * 4, color: .yellow)))
+        }
+        XCTAssertEqual(plates.count, 4)
+        let newest = try XCTUnwrap(plates.plate(line, fontSize: 24, maxWidth: 600, highlight: (characters: 32, color: .yellow)))
+        XCTAssertTrue(newest === plates.plate(line, fontSize: 24, maxWidth: 600, highlight: (characters: 32, color: .yellow)),
+                      "a plate still kept is drawn once")
+        XCTAssertEqual(plates.count, 4)
+    }
+
     func testAVoiceoverAndDuckingRoundTripThroughTheEditFile() throws {
         var project = edit()
         project.audio.voiceovers = [.init(id: "v1", atUs: 1_000_000, file: "/v.mp3", durationUs: 2_000_000, volume: 1.4, label: "Intro")]
@@ -262,5 +297,12 @@ final class RecorderOverlayTests: XCTestCase {
         louder.audio.ducking = nil
         XCTAssertEqual(EditOpDiff.ops(from: project, to: louder),
                        [.voiceover(EditOp.Voiceover(id: "v1", volume: 0.5)), .ducking(EditOp.Ducking(enabled: false))])
+        // A clip the change drops is named as its own op; one it adds cannot be named here (no file length yet).
+        var removed = project
+        removed.audio.voiceovers = []
+        XCTAssertEqual(EditOpDiff.ops(from: project, to: removed), [.unvoiceover(EditOp.Unvoiceover(id: "v1"))])
+        var added = project
+        added.audio.voiceovers?.append(.init(id: "v2", atUs: 3_000_000, file: "/w.mp3", durationUs: 1_000_000, volume: 1, label: nil))
+        XCTAssertNil(EditOpDiff.ops(from: project, to: added))
     }
 }

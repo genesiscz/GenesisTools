@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { transitionJoins } from "./fx";
-import { applyOp, describeProject, type EditProject, editOpSchema, editProjectSchema, wholeProject } from "./project";
+import { describeFx, transitionJoins } from "./fx";
+import {
+    applyOp,
+    boundaryWindows,
+    describeProject,
+    type EditProject,
+    editOpSchema,
+    editProjectSchema,
+    wholeProject,
+} from "./project";
 
 const source = { video: "/movies/demo.mp4", durationUs: 20_000_000, width: 1920, height: 1080 };
 
@@ -19,7 +27,7 @@ function cutProject(): EditProject {
 describe("transitions", () => {
     test("an edit without them has a hard cut at every join, and a split joins nothing", () => {
         expect(transitionJoins(cutProject())).toEqual([
-            { clip: "c2", atUs: 5_000_000, kind: "none", ms: 300, own: false },
+            { clip: "c2", atUs: 5_000_000, kind: "none", ms: 300, halfUs: 0, own: false },
         ]);
         expect(editProjectSchema.parse(wholeProject(source)).transitions).toBeUndefined();
     });
@@ -29,7 +37,7 @@ describe("transitions", () => {
         expect(project.transitions?.default).toEqual({ kind: "crossfade", ms: 300 });
         project = applyOp(project, { op: "transition", clip: "c2", kind: "blur", ms: 600 });
         expect(describeProject(project, "/p/edit.json").transitions.joins).toEqual([
-            { clip: "c2", at: 5, kind: "blur", ms: 600, own: true },
+            { clip: "c2", at: 5, kind: "blur", ms: 600, playsMs: 600, own: true },
         ]);
         project = applyOp(project, { op: "transition", clip: "c2", kind: "default" });
         expect(project.transitions).toEqual({ default: { kind: "crossfade", ms: 300 } });
@@ -48,7 +56,7 @@ describe("transitions", () => {
         let project = applyOp(cutProject(), { op: "transition", clip: "c2", kind: "crossfade", ms: 800 });
         project = applyOp(project, { op: "cut", from: 8, to: 8.5 });
         expect(transitionJoins(project)).toEqual([
-            { clip: "c2", atUs: 5_000_000, kind: "crossfade", ms: 800, own: true },
+            { clip: "c2", atUs: 5_000_000, kind: "crossfade", ms: 800, halfUs: 400_000, own: true },
         ]);
         const stale = editProjectSchema.parse({
             ...cutProject(),
@@ -57,6 +65,64 @@ describe("transitions", () => {
         expect(applyOp(stale, { op: "transition", clip: "c9", kind: "default" }).transitions).toEqual({
             default: { kind: "none", ms: 300 },
         });
+    });
+});
+
+/** a [0, 5 s], b [8, 8.3 s] and c [10, 20 s]: two joins, both next to the 0.3 s clip b. */
+function shortMiddle(withB = true): EditProject {
+    return editProjectSchema.parse({
+        ...wholeProject(source),
+        clips: [
+            { id: "a", fromUs: 0, toUs: 5_000_000 },
+            ...(withB ? [{ id: "b", fromUs: 8_000_000, toUs: 8_300_000 }] : []),
+            { id: "c", fromUs: 10_000_000, toUs: 20_000_000 },
+        ],
+        transitions: { default: { kind: "crossfade", ms: 1000 } },
+    });
+}
+
+describe("a transition next to a short clip", () => {
+    test("a join's transition plays at most half of each neighbouring clip, as the renderer draws it", () => {
+        const project = shortMiddle();
+        expect(transitionJoins(project).map((join) => [join.clip, join.atUs, join.halfUs])).toEqual([
+            ["b", 5_000_000, 150_000],
+            ["c", 5_300_000, 150_000],
+        ]);
+        expect(describeFx(project).transitions.joins).toEqual([
+            { clip: "b", at: 5, kind: "crossfade", ms: 1000, playsMs: 300, shortened: true },
+            { clip: "c", at: 5.3, kind: "crossfade", ms: 1000, playsMs: 300, shortened: true },
+        ]);
+        // Two long neighbours play the whole length.
+        const long = shortMiddle(false);
+        expect(transitionJoins(long).map((join) => join.halfUs)).toEqual([500_000]);
+        expect(describeFx(long).transitions.joins).toEqual([
+            { clip: "c", at: 5, kind: "crossfade", ms: 1000, playsMs: 1000 },
+        ]);
+    });
+
+    test("a hard cut plays no transition, and a sped-up clip's half is half of its output length", () => {
+        const cut = editProjectSchema.parse({ ...shortMiddle(), transitions: { default: { kind: "none", ms: 300 } } });
+        expect(transitionJoins(cut).map((join) => join.halfUs)).toEqual([0, 0]);
+        expect(describeFx(cut).transitions.joins.map((join) => [join.ms, join.playsMs, "shortened" in join])).toEqual([
+            [300, 0, false],
+            [300, 0, false],
+        ]);
+        // b at 2x plays 0.15 s, so each join holds 75 ms on b's side.
+        const fast = editProjectSchema.parse({
+            ...shortMiddle(),
+            clips: shortMiddle().clips.map((clip) => (clip.id === "b" ? { ...clip, speed: 2 } : clip)),
+        });
+        expect(transitionJoins(fast).map((join) => [join.atUs, join.halfUs])).toEqual([
+            [5_000_000, 75_000],
+            [5_150_000, 75_000],
+        ]);
+    });
+
+    test("verifyHidden reads the frames of the transition that plays, not of the length asked", () => {
+        expect(boundaryWindows(shortMiddle(), { aroundUs: 0 })).toEqual([[4_850_000, 5_450_000]]);
+        expect(boundaryWindows(shortMiddle(false), { aroundUs: 0 })).toEqual([[4_500_000, 5_500_000]]);
+        const cut = editProjectSchema.parse({ ...shortMiddle(), transitions: { default: { kind: "none", ms: 300 } } });
+        expect(boundaryWindows(cut)).toEqual([[4_800_000, 5_500_000]]);
     });
 });
 
@@ -95,6 +161,9 @@ describe("lens", () => {
         expect(() => editOpSchema.parse({ op: "lens", id: "", from: 1, to: 2 })).toThrow();
         expect(() => editOpSchema.parse({ op: "lens", id: "l 1", from: 1, to: 2 })).toThrow();
         expect(() => editOpSchema.parse({ op: "lens", id: "l".repeat(41), from: 1, to: 2 })).toThrow();
+        // An op that skipped the schema (a Movie of movies.demo()) is refused the same way.
+        expect(() => applyOp(cutProject(), { op: "lens", id: "", from: 1, to: 2 })).toThrow(/a lens id is 1 to 40/);
+        expect(() => applyOp(cutProject(), { op: "lens", id: "l 1", from: 1, to: 2 })).toThrow(/a lens id is 1 to 40/);
         const facts = { generatedIds: [] as string[] };
         const made = applyOp(project, { op: "lens", from: 4, to: 5 }, facts);
         expect(made.lens?.items).toHaveLength(2);

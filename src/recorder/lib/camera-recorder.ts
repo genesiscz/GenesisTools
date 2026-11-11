@@ -6,6 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { CAMERA_SIDECAR } from "@genesiscz/utils/recording-editor/camera";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { recorderHost } from "./service-client";
+import { HOST_SCHEMAS } from "./service-protocol";
 
 const { log } = logger.scoped("recorder-camera");
 
@@ -41,21 +42,28 @@ export interface CameraHost {
 }
 
 /**
- * Asks the menu bar recorder, through the recorder service, to record the camera into the folder. The face's own
- * watch of the live recordings missed it once (review 2026-11-06: the movie came with no camera and exit 0); this
- * call answers. Returns why it cannot (no face, no Camera access, the camera busy), or undefined once it records.
+ * What `camera.start` did: the camera records, and `windowIds` are the camera preview's windows on screen, which the
+ * movie must leave out from its first segment (ScreenCaptureKit ignores the panel's sharing type); or why it did not.
  */
-export async function startRecordingCamera(
-    folder: string,
-    host: CameraHost = recorderHost()
-): Promise<string | undefined> {
+export type CameraStart = { started: true; windowIds: number[] } | { started: false; reason: string };
+
+/**
+ * Asks the menu bar recorder, through the recorder service, to record the camera into the folder, before the screen
+ * movie starts. The face's own watch of the live recordings missed it once (review 2026-11-06: the movie came with no
+ * camera and exit 0); this call answers, with the preview's windows. An app from before the windows answers none.
+ */
+export async function startRecordingCamera(folder: string, host: CameraHost = recorderHost()): Promise<CameraStart> {
     try {
-        await host.call("camera.start", { folder });
-        log.info({ folder }, "the camera records");
-        return undefined;
+        const answer = HOST_SCHEMAS["camera.start"].result.parse(await host.call("camera.start", { folder }));
+        const windowIds = answer.windowIds ?? [];
+        log.info({ folder, windowIds }, "the camera records");
+        return { started: true, windowIds };
     } catch (error) {
         log.warn({ error, folder }, "the camera did not start");
-        return `The camera was asked for, but it did not start: ${error instanceof Error ? error.message : String(error)}`;
+        return {
+            started: false,
+            reason: `The camera was asked for, but it did not start: ${error instanceof Error ? error.message : String(error)}`,
+        };
     }
 }
 

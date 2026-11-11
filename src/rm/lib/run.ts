@@ -574,7 +574,7 @@ function printDryRun(plan: RmPlanItem[], ctx: RunContext, options: ExecuteOption
             size: sizes.has(path) ? formatBytes(sizes.get(path) ?? 0) : "-",
             path: isInside(path, ctx.cwd)
                 ? middleCut(relative(ctx.cwd, path), DRY_PATH_MAX)
-                : shortRmPath(path, display, DRY_PATH_MAX),
+                : shortRmPath(path, display, { max: DRY_PATH_MAX }),
             notes: notes.join(" · "),
         };
     });

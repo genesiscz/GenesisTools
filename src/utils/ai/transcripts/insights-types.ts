@@ -19,6 +19,8 @@ export interface NativeCall extends CallTokens {
     messageId: string;
     model: string | null;
     at: string | null;
+    /** `fast` for a Claude fast-mode call, which bills above the standard rates; absent for a standard call. */
+    serviceTier?: string;
 }
 
 /** When a tool call started and when its result arrived, from the native file's timestamps. */

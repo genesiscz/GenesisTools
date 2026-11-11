@@ -2,20 +2,14 @@ import Foundation
 import GenesisKit
 
 extension DiffViewOptions {
-    /// The layout picked last in any review (its header button, the View menu): every new review window
-    /// and hub review opens with it, after a relaunch too.
-    static let styleKey = "review.diffStyle"
-
+    /// The style a new review opens with: the Diff layout setting (Settings, Hub, Panes; `HubDiffLayout`). Auto opens
+    /// side by side, and the pane's width then decides (`ReviewModel.fitStyle`). The header's Split / Unified button
+    /// picks for one review and is not stored: before 2026-11-09 it was (`review.diffStyle`), and one click made every
+    /// later review keep that style, also in a pane too narrow for two sides.
     static func remembered(in store: UserDefaults = HubDefaults.store) -> DiffViewOptions {
         var options = DiffViewOptions()
-        if let saved = store.string(forKey: styleKey).flatMap(Style.init(rawValue:)) {
-            options.diffStyle = saved
-        }
+        options.diffStyle = HubDiffLayout.stored(in: store) == .unified ? .unified : .split
         return options
-    }
-
-    static func remember(_ style: Style, in store: UserDefaults = HubDefaults.store) {
-        store.set(style.rawValue, forKey: styleKey)
     }
 }
 

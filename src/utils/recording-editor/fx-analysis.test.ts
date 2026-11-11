@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { foldWithIndex } from "@genesiscz/utils/macos/ocr-boxes";
 import { checkProject, issueSummary } from "./check";
-import { anchorTimeUs, movieEvents, nearestEvent } from "./events";
+import { anchorTimeUs, type MovieEvent, movieEvents, nearestEvent, snapTimeUs } from "./events";
 import { blockShifts } from "./motion";
 import {
     edgeFragments,
@@ -28,20 +29,24 @@ import {
 import {
     applyOp,
     boundaryWindows,
+    captionsSchema,
     describeProject,
     editOpSchema,
     editProjectSchema,
     exportToOutputUs,
     hidingOf,
     leakFixOps,
+    leakOverlay,
     leakSourceBox,
     leakSourceKeys,
     type OpFacts,
     opPlacementWarnings,
     parseProject,
     sourceTimeOf,
+    transcriptLines,
     wholeProject,
 } from "./project";
+import { framesMovieEndUs } from "./source";
 import {
     type ChangeStep,
     compareFrames,
@@ -55,6 +60,8 @@ import {
 // Every value here is invented: example.com mail, test card and IBAN numbers, made-up tokens.
 const source = { video: "/movies/screen.mp4", durationUs: 60_000_000, width: 1920, height: 1080 };
 const op = (raw: unknown) => editOpSchema.parse(raw);
+/** The screen-text fixtures' boxes are shares of the 16:9 source picture; the pad tests give other shapes. */
+const aspect = source.width / source.height;
 
 describe("private data patterns", () => {
     test("finds each kind and nothing in ordinary text", () => {
@@ -98,7 +105,7 @@ describe("private hits over time", () => {
             frame(3, [line("Signed in as alice@example.com")]),
             frame(10, [line("Signed in as alice@example.com", 0.1)]),
         ];
-        const hits = privateHits(frames);
+        const hits = privateHits(frames, { aspect });
         expect(hits.map((hit) => [hit.kind, hit.fromUs, hit.toUs])).toEqual([
             ["email", 0, 4_000_000],
             ["email", 9_500_000, 11_000_000],
@@ -107,11 +114,14 @@ describe("private hits over time", () => {
         expect(hits[0].box.x).toBeGreaterThan(0.2);
         expect(hits[0].box.x + hits[0].box.width).toBeLessThanOrEqual(0.52);
         expect(SafeJSON.stringify(hits)).not.toContain("alice@example.com");
-        expect(privateHits(frames).map((hit) => hit.id)).toEqual(hits.map((hit) => hit.id));
+        expect(privateHits(frames, { aspect }).map((hit) => hit.id)).toEqual(hits.map((hit) => hit.id));
     });
 
     test("hidePrivate adds one blurred part per hit, once", () => {
-        const hits = privateHits([frame(2, [line("alice@example.com")]), frame(5, [line("4111 1111 1111 1111", 0.8)])]);
+        const hits = privateHits(
+            [frame(2, [line("alice@example.com")]), frame(5, [line("4111 1111 1111 1111", 0.8)])],
+            { aspect }
+        );
         const facts: OpFacts = { privateHits: hits };
         const once = applyOp(wholeProject(source), op({ op: "hidePrivate" }), facts);
         expect(once.redactions?.map((part) => [part.style, part.label, part.startUs])).toEqual([
@@ -126,6 +136,197 @@ describe("private hits over time", () => {
             /no private hit pnope/
         );
         expect(() => applyOp(wholeProject(source), op({ op: "hidePrivate" }))).toThrow(/screen text/);
+    });
+});
+
+describe("where a frames movie ends", () => {
+    const startedAt = "2026-11-09T10:00:00.000Z";
+    const endedAt = "2026-11-09T10:00:10.000Z";
+    const frames = [{ atUs: 0 }, { atUs: 1_000_000 }];
+
+    test("the last frame holds until the recording ends, as the proxy movie holds it", () => {
+        expect(framesMovieEndUs({ frames, startedAt, endedAt })).toBe(10_000_000);
+    });
+
+    test("a plan that shows a frame after the recording's end runs the movie past that frame, as makeProxy does", () => {
+        expect(framesMovieEndUs({ frames, schedule: [{ atUs: 0 }, { atUs: 12_000_000 }], startedAt, endedAt })).toBe(
+            12_000_001
+        );
+    });
+
+    test("a folder without an end holds its last frame for one second", () => {
+        expect(framesMovieEndUs({ frames })).toBe(2_000_000);
+        expect(framesMovieEndUs({ frames: [] })).toBe(1_000_000);
+    });
+});
+
+describe("a hidden part's pads are the same pixels on any picture shape", () => {
+    const landscape = { width: 1920, height: 1080 };
+    const portrait = { width: 1179, height: 2556 };
+    type Picture = typeof landscape;
+    const shapeOf = (picture: Picture) => picture.width / picture.height;
+    /** A box given in pixels, as shares of `picture`. */
+    const shares = (picture: Picture, px: FractionBox): FractionBox => ({
+        x: px.x / picture.width,
+        y: px.y / picture.height,
+        width: px.width / picture.width,
+        height: px.height / picture.height,
+    });
+
+    test("a match's side pad keeps its 16:9 pixels on a portrait picture, so the first letter stays covered", () => {
+        // The same OCR line at the same pixels on both: 405 x 50 px from x 118 (a phone frame and a 1080p one).
+        const padOn = (picture: Picture, topPx: number) => {
+            const line = {
+                text: "mail: a@b.example",
+                ...shares(picture, { x: 118, y: topPx, width: 405, height: 50 }),
+            };
+            const [hit] = textHits([{ atUs: 0, untilUs: 1_000_000, lines: [line] }], privateMatcher(), {
+                aspect: shapeOf(picture),
+            });
+            const [match] = privateMatcher()(line.text);
+            const startPx = (line.x + (line.width * match.start) / line.text.length) * picture.width;
+            return { leftPx: hit.box.x * picture.width, padPx: startPx - hit.box.x * picture.width };
+        };
+        const tall = padOn(portrait, 1214);
+        const wide = padOn(landscape, 521);
+        // At least a glyph (0.6 of the line's height), and the same pixels on both.
+        expect(tall.padPx).toBeGreaterThanOrEqual(0.6 * 50);
+        expect(Math.abs(tall.padPx - wide.padPx)).toBeLessThan(1);
+        // The ink of the address's first letter starts at 231 px on the portrait frame.
+        expect(tall.leftPx).toBeLessThanOrEqual(231);
+    });
+
+    test("a line 0.02 high keeps its 0.012 pad of a 16:9 width and pads 9:16 by as many line heights in pixels", () => {
+        const line = { text: "alice@example.com", x: 0.3, y: 0.5, width: 0.2, height: 0.02 };
+        const padX = (shape: number) => {
+            const frames: ScreenTextFrame[] = [{ atUs: 0, untilUs: 1_000_000, lines: [line] }];
+            const [hit] = textHits(frames, privateMatcher(), { aspect: shape });
+            return line.x - hit.box.x;
+        };
+        expect(padX(16 / 9)).toBeCloseTo(0.012, 5);
+        expect(padX(9 / 16)).toBeCloseTo((0.012 * (16 / 9)) / (9 / 16), 5);
+    });
+
+    test("a band with no measured travel pads the same text by the same pixels on both shapes", () => {
+        const padsOn = (picture: Picture) => {
+            const box = shares(picture, { x: 400, y: 900, width: 300, height: 45 });
+            const band = sweptBand({
+                box,
+                velocity: { x: 0, y: 0 },
+                travelUs: 0,
+                area: undefined,
+                aspect: shapeOf(picture),
+            });
+            return { x: (box.x - band.x) * picture.width, y: (box.y - band.y) * picture.height };
+        };
+        const wide = padsOn(landscape);
+        const tall = padsOn(portrait);
+        expect(tall.x).toBeCloseTo(wide.x, 1);
+        expect(tall.y).toBeCloseTo(wide.y, 1);
+    });
+
+    test("a sideways drift of a third of a line in pixels does not sweep a portrait band to the picture's edge", () => {
+        // 35 px sideways in 0.3 s beside a text 115 px high: it did not travel.
+        const band = sweptBand({
+            box: { x: 0.4, y: 0.5, width: 0.2, height: 0.045 },
+            velocity: { x: -1e-7, y: 0 },
+            travelUs: 300_000,
+            area: { x: 0, y: 0, width: 1, height: 1 },
+            aspect: shapeOf(portrait),
+        });
+        expect(band.x).toBeGreaterThan(0.3);
+    });
+
+    describe("a carried place and a gap band", () => {
+        const frame = (ms: number, lines: ScreenTextFrame["lines"]): ScreenTextFrame => ({
+            atUs: ms * 1000,
+            untilUs: (ms + 200) * 1000,
+            lines,
+        });
+        /** The name 384 x 40 px from x 128, at `y` of the picture (the scroll moves it by shares of the picture). */
+        const row = (picture: Picture, y: number) => ({
+            text: "Orla Fictive",
+            ...shares(picture, { x: 128, y: y * picture.height, width: 384, height: 40 }),
+        });
+        /** A list that scrolls up by `travel` of the picture from 0.2 s to 0.8 s, fast first and slow at the end. */
+        const scroll = (travel: number, options: { lostAfterUs?: number } = {}): MotionModel => {
+            const offset = (us: number) => {
+                const u = Math.min(1, Math.max(0, (us - 200_000) / 600_000));
+                return -travel * (1 - (1 - u) ** 2);
+            };
+            return {
+                moving: (fromUs, toUs) => Math.max(fromUs, toUs) > 200_000 && Math.min(fromUs, toUs) < 800_000,
+                movingArea: () => ({ x: 0, y: 0, width: 1, height: 1 }),
+                changeEdge: (_box, atUs) => atUs,
+                carry: (box, fromUs, toUs) => {
+                    const direction = toUs >= fromUs ? 1 : -1;
+                    const keys: TrackKey[] = [];
+
+                    for (
+                        let at = fromUs + direction * 33_333;
+                        direction > 0 ? at <= toUs : at >= toUs;
+                        at += direction * 33_333
+                    ) {
+                        if (options.lostAfterUs !== undefined && at > options.lostAfterUs) {
+                            const last = keys.at(-1) ?? { ...box, atUs: fromUs };
+                            return { keys, reachedUs: at, box: last, end: "lost" };
+                        }
+
+                        keys.push({ ...box, atUs: Math.round(at), y: box.y + offset(at) - offset(fromUs) });
+                    }
+
+                    const last = keys.at(-1) ?? { ...box, atUs: fromUs };
+                    return { keys, reachedUs: toUs, box: last, end: "reached" };
+                },
+            };
+        };
+        const matcher = textMatcher({ text: "Orla Fictive" });
+        const framesOn = (picture: Picture) => [
+            frame(0, [row(picture, 0.8)]),
+            frame(200, [row(picture, 0.8)]),
+            frame(800, [row(picture, 0.2)]),
+        ];
+        const readAt = (picture: Picture, y: number) =>
+            textHits([frame(0, [row(picture, y)])], matcher, { aspect: shapeOf(picture) })[0].box;
+
+        test("a carried place gets the same margin in pixels on both shapes", () => {
+            const marginsOn = (picture: Picture) => {
+                const [hit] = textHits(framesOn(picture), matcher, { aspect: shapeOf(picture), motion: scroll(0.6) });
+                const read = readAt(picture, 0.8);
+                const carried = hit.keys.filter((key) => key.atUs > 250_000 && key.atUs < 750_000);
+                expect(carried.length).toBeGreaterThan(0);
+                return carried.map((key) => ({
+                    x: ((key.width - read.width) * picture.width) / 2,
+                    y: ((key.height - read.height) * picture.height) / 2,
+                }));
+            };
+            const [first, ...others] = marginsOn(landscape);
+
+            for (const margin of [...others, ...marginsOn(portrait)]) {
+                expect(margin.x).toBeCloseTo(first.x, 1);
+                expect(margin.y).toBeCloseTo(first.y, 1);
+            }
+        });
+
+        test("the band between two reads the motion could not join gets the same pad in pixels on both shapes", () => {
+            const padOn = (picture: Picture) => {
+                const hits = textHits(framesOn(picture), matcher, {
+                    aspect: shapeOf(picture),
+                    motion: scroll(0.6, { lostAfterUs: 400_000 }),
+                });
+                const gap = hits.flatMap((hit) => hit.uncertain ?? []).find((band) => band.why === "gap");
+                expect(gap).toBeDefined();
+                const top = readAt(picture, 0.2);
+                return {
+                    x: (top.x - (gap?.box.x ?? 0)) * picture.width,
+                    y: (top.y - (gap?.box.y ?? 0)) * picture.height,
+                };
+            };
+            const wide = padOn(landscape);
+            const tall = padOn(portrait);
+            expect(tall.x).toBeCloseTo(wide.x, 1);
+            expect(tall.y).toBeCloseTo(wide.y, 1);
+        });
     });
 });
 
@@ -200,6 +401,10 @@ describe("smooth cursor and old files", () => {
         const drawn = join(folder, "cursor.jsonl");
         writeFileSync(drawn, '{"t":0,"x":0.5,"y":0.5,"shape":"abc","pw":1440}\n');
         const project = wholeProject({ ...source, cursor: drawn });
+        expect(() => applyOp(project, op({ op: "cursorSmooth" }))).toThrow(/cursor pictures are missing/);
+        mkdirSync(join(folder, "cursor-shapes"));
+        writeFileSync(join(folder, "cursor-shapes", "abc.png"), "png");
+        writeFileSync(join(folder, "cursor-shapes", "abc.json"), '{"hotX":0,"hotY":0,"width":16,"height":16}');
         const on = applyOp(project, op({ op: "cursorSmooth", strength: 0.8 }));
         expect(on.cursorSmooth).toEqual({ strength: 0.8, jitterPx: 3, idleFadeSeconds: 2 });
         expect(applyOp(on, op({ op: "cursorSmooth", enabled: false })).cursorSmooth).toBeUndefined();
@@ -221,6 +426,75 @@ describe("smooth cursor and old files", () => {
     });
 });
 
+describe("a frames recording's hidden parts hold each frame's place", () => {
+    const shown = (atUs: number, untilUs: number, y?: number): ScreenTextFrame => ({
+        atUs,
+        untilUs,
+        lines: y === undefined ? [] : [{ text: "mail alice@example.com", x: 0.1, y, width: 0.3, height: 0.03 }],
+    });
+    /** The part, placed as the renderer places it (redactionBoxAt), covers the whole height of the line shown then. */
+    const covers = (part: FractionBox & { track?: readonly TrackKey[] }, atUs: number, y: number) => {
+        const box = redactionBoxAt(part, atUs);
+        return box.y <= y && box.y + box.height >= y + 0.03;
+    };
+    const partOf = (hit: PrivateHit) => ({ ...hit.box, track: hit.keys });
+
+    test("a scroll that comes to rest: the part jumps with each frame and stays on the last one", () => {
+        const frames = [
+            shown(0, 200_000),
+            shown(200_000, 400_000, 0.9),
+            shown(400_000, 600_000, 0.8),
+            shown(600_000, 10_000_000, 0.7),
+            shown(10_000_000, 12_000_000),
+        ];
+        const [hit, ...rest] = textHits(frames, privateMatcher(), { aspect, stills: true });
+        expect(rest).toEqual([]);
+        const part = partOf(hit);
+        expect(covers(part, hit.fromUs, 0.9)).toBe(true);
+        expect(covers(part, 300_000, 0.9)).toBe(true);
+        expect(covers(part, 500_000, 0.8)).toBe(true);
+        expect(covers(part, 700_000, 0.7)).toBe(true);
+        expect(covers(part, 3_000_000, 0.7)).toBe(true);
+        expect(covers(part, 9_900_000, 0.7)).toBe(true);
+    });
+
+    test("a read that jitters between two frames far apart does not drift off the text", () => {
+        const frames = [shown(0, 10_000_000, 0.5), shown(10_000_000, 600_000_000, 0.503)];
+        const [hit, ...rest] = textHits(frames, privateMatcher(), { aspect, stills: true });
+        expect(rest).toEqual([]);
+        const part = partOf(hit);
+        expect(covers(part, 5_000_000, 0.5)).toBe(true);
+        expect(covers(part, 300_000_000, 0.503)).toBe(true);
+        expect(covers(part, 599_000_000, 0.503)).toBe(true);
+    });
+
+    test("hideText's part over still frames covers the text of each frame", () => {
+        const hits = textHits(
+            [shown(2_000_000, 2_200_000, 0.9), shown(2_200_000, 2_400_000, 0.6)],
+            textMatcher({ text: "alice@example.com" }),
+            { aspect, stills: true }
+        );
+        const [part] =
+            applyOp(wholeProject(source), op({ op: "hideText", text: "alice@example.com" }), {
+                textHits: hits,
+            }).redactions ?? [];
+        expect(covers(part, 2_100_000, 0.9)).toBe(true);
+        expect(covers(part, 2_300_000, 0.6)).toBe(true);
+    });
+
+    test("without stills the keys stay the reads, and a hit that stands still keeps one key", () => {
+        const [moving] = textHits([shown(0, 1_000_000, 0.5), shown(1_000_000, 2_000_000, 0.6)], privateMatcher(), {
+            aspect,
+        });
+        expect(moving.keys.map((key) => key.atUs)).toEqual([0, 1_000_000]);
+        const [still] = textHits([shown(0, 1_000_000, 0.5), shown(1_000_000, 2_000_000, 0.5)], privateMatcher(), {
+            aspect,
+            stills: true,
+        });
+        expect(still.keys.map((key) => key.atUs)).toEqual([0]);
+    });
+});
+
 describe("tracked text, exclusions and events", () => {
     const frame = (ms: number, lines: ScreenTextFrame["lines"]): ScreenTextFrame => ({
         atUs: ms * 1000,
@@ -237,6 +511,29 @@ describe("tracked text, exclusions and events", () => {
         // OCR drops or doubles the space: the name is still hidden, as the warning of an unread name assumes.
         expect(privateMatcher(["Bob Builder"])("call BobBuilder now").map((match) => match.kind)).toEqual(["name"]);
         expect(privateMatcher(["Bob Builder"])("call bob  builder now").map((match) => match.kind)).toEqual(["name"]);
+        // One value however OCR spaces it, so the reads of a moving name stay one track.
+        expect(
+            ["call Bob Builder now", "call BobBuilder now"].map(
+                (line) => privateMatcher(["Bob Builder"])(line)[0]?.value
+            )
+        ).toEqual(["bobbuilder", "bobbuilder"]);
+        // A shorter name that matches the head of a longer one does not leave the longer one visible.
+        expect(
+            privateMatcher(["Ann A", "Annabelle Johnson"])("Annabelle Johnson").map((match) => [match.start, match.end])
+        ).toEqual([[0, 17]]);
+        // Two names joined into one span that holds an email: the email stays an email, and the rest of the span is
+        // still hidden as a name, on either side of it.
+        const spans = (names: string[], line: string) =>
+            privateMatcher(names)(line).map((match) => [match.kind, match.start, match.end, match.value]);
+        expect(spans(["alice@example.com Smith", "Smith Jones"], "alice@example.com Smith Jones")).toEqual([
+            ["email", 0, 17, "alice@example.com"],
+            ["name", 18, 29, "smithjones"],
+        ]);
+        expect(spans(["Jane alice@example.com", "alice@example.com Doe"], "Jane alice@example.com Doe")).toEqual([
+            ["name", 0, 4, "jane"],
+            ["email", 5, 22, "alice@example.com"],
+            ["name", 23, 26, "doe"],
+        ]);
         // It scrolls up 0.1 of the picture per 0.2 s sample, then rests.
         const frames = [
             frame(0, []),
@@ -247,7 +544,7 @@ describe("tracked text, exclusions and events", () => {
             frame(1000, [row("alice@example.com", 0.7)]),
             frame(1200, []),
         ];
-        const [hit, ...rest] = textHits(frames, matcher);
+        const [hit, ...rest] = textHits(frames, matcher, { aspect });
         expect(rest).toEqual([]);
         expect([hit.fromUs, hit.toUs]).toEqual([100_000, 1_200_000]);
         expect(hit.keys.map((key) => [key.atUs, Math.round(key.y * 100) / 100])).toEqual([
@@ -257,13 +554,14 @@ describe("tracked text, exclusions and events", () => {
             [1_000_000, 0.69],
         ]);
         // An excluded area is never searched.
-        expect(textHits(frames, matcher, { exclude: [{ x: 0, y: 0.6, width: 1, height: 0.4 }] })).toEqual([]);
+        expect(textHits(frames, matcher, { aspect, exclude: [{ x: 0, y: 0.6, width: 1, height: 0.4 }] })).toEqual([]);
     });
 
     test("hideText adds a part that follows its keyframes and leaves the excluded area visible", () => {
         const hits = textHits(
             [frame(2000, [row("alice@example.com", 0.9)]), frame(2200, [row("alice@example.com", 0.6)])],
-            textMatcher({ text: "alice@example.com" })
+            textMatcher({ text: "alice@example.com" }),
+            { aspect }
         );
         const edited = applyOp(
             wholeProject(source),
@@ -380,7 +678,7 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
             frame(600, []),
             frame(800, [row("Orla Fictive 777 123 456", 0.2)]),
         ];
-        const [hit, ...rest] = textHits(frames, matcher, { motion: scroll(0.6) });
+        const [hit, ...rest] = textHits(frames, matcher, { aspect, motion: scroll(0.6) });
         expect(rest).toEqual([]);
         expect(hit.uncertain).toBeUndefined();
         // Halfway through the move the part is where the motion put the text, not on a straight line between reads.
@@ -391,17 +689,19 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
         expect(Math.abs(centre(placed) - (centre(read) - 0.6 * (1 - (1 - 1 / 3) ** 2)))).toBeLessThan(0.01);
         expect(placed.height).toBeGreaterThan(read.height);
         // Without the motion the 0.6 jump is two hits and the move between them is not hidden.
-        expect(textHits(frames, matcher).length).toBe(2);
+        expect(textHits(frames, matcher, { aspect }).length).toBe(2);
     });
 
     test("a read the motion does not lead to is another text; a gap it cannot follow hides the band between", () => {
         const frames = [frame(0, [row("Orla Fictive", 0.8)]), frame(200, [row("Orla Fictive", 0.8)])];
         // The motion carries it to 0.2, so a read at 0.5 is a second copy of the name, not this one.
         expect(
-            textHits([...frames, frame(800, [row("Orla Fictive", 0.5)])], matcher, { motion: scroll(0.6) }).length
+            textHits([...frames, frame(800, [row("Orla Fictive", 0.5)])], matcher, { aspect, motion: scroll(0.6) })
+                .length
         ).toBe(2);
         // The motion is lost at 0.4 s: the two reads stay apart, and the band from 0.8 up to 0.2 is hidden between them.
         const lost = textHits([...frames, frame(800, [row("Orla Fictive", 0.2)])], matcher, {
+            aspect,
             motion: scroll(0.6, { lostAfterUs: 400_000 }),
         });
         const band = lost
@@ -421,8 +721,8 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
 
     test('unit "line" hides the whole OCR line of a match; "match" only the matched words; a pattern is per line', () => {
         const line = { text: "Orla Fictive   777 123 456", x: 0.1, y: 0.5, width: 0.4, height: 0.03 };
-        const [word] = textHits([frame(0, [line])], textMatcher({ text: "orla fictive" }));
-        const [whole] = textHits([frame(0, [line])], textMatcher({ text: "orla fictive", unit: "line" }));
+        const [word] = textHits([frame(0, [line])], textMatcher({ text: "orla fictive" }), { aspect });
+        const [whole] = textHits([frame(0, [line])], textMatcher({ text: "orla fictive", unit: "line" }), { aspect });
         expect(word.box.x + word.box.width).toBeLessThan(0.35);
         expect(whole.box.x).toBeLessThanOrEqual(0.1);
         expect(whole.box.x + whole.box.width).toBeGreaterThanOrEqual(0.5);
@@ -442,7 +742,7 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
             frame(200, [row("Orla Fictive", 0.2), row("Bram Sample", 0.4), row("call 606 000 111", 0.6)]),
         ];
         const several = textMatcher({ texts: ["orla fictive", "bram sample"], patterns: ["\\d{3} \\d{3} \\d{3}"] });
-        const hits = textHits(frames, several);
+        const hits = textHits(frames, several, { aspect });
         expect(hits.map((hit) => Math.round(hit.keys[0].y * 10) / 10)).toEqual([0.2, 0.4, 0.6]);
         expect(() =>
             applyOp(wholeProject(source), op({ op: "hideText", texts: ["Nobody Here"], patterns: ["^zzz"] }), {
@@ -466,7 +766,9 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
     });
 
     test("info() names each part's kind and the hide request that made it", () => {
-        const hits = textHits([frame(0, [row("Orla Fictive", 0.2)])], textMatcher({ texts: ["Orla Fictive"] }));
+        const hits = textHits([frame(0, [row("Orla Fictive", 0.2)])], textMatcher({ texts: ["Orla Fictive"] }), {
+            aspect,
+        });
         const hidden = applyOp(
             applyOp(wholeProject(source), op({ op: "hideText", texts: ["Orla Fictive"], unit: "line" }), {
                 textHits: hits,
@@ -486,7 +788,8 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
     test("unhide takes a hide back and forgets it, so the same hide runs again; unredact forgets its part too", () => {
         const hits = textHits(
             [frame(0, [row("Orla Fictive", 0.2), row("Bram Sample", 0.5)])],
-            textMatcher({ texts: ["Orla Fictive", "Bram Sample"] })
+            textMatcher({ texts: ["Orla Fictive", "Bram Sample"] }),
+            { aspect }
         );
         const hide = op({ op: "hideText", texts: ["Orla Fictive", "Bram Sample"] });
         const drawn = applyOp(
@@ -569,6 +872,7 @@ describe("uncertain bands stay small (round 7)", () => {
     test("a text that rests where it never moved makes no band, though the picture beside it changes", () => {
         const frames = [name(1000, 0.4), name(1200, 0.4)];
         const hits = textHits(frames, matcher, {
+            aspect,
             motion: model({ path: [0, 0, 0], end: "still", changingUs: 900_000 }),
         });
         expect(hits.flatMap((hit) => hit.uncertain ?? [])).toEqual([]);
@@ -576,7 +880,10 @@ describe("uncertain bands stay small (round 7)", () => {
 
     test("a text a new screen replaced makes no band, and neither does the gap to its next read", () => {
         const frames = [name(1000, 0.4), name(1100, 0.4), name(1500, 0.4, 0.5), name(1600, 0.4, 0.5)];
-        const hits = textHits(frames, matcher, { motion: model({ path: [], end: "scene", changingUs: 900_000 }) });
+        const hits = textHits(frames, matcher, {
+            aspect,
+            motion: model({ path: [], end: "scene", changingUs: 900_000 }),
+        });
         expect(hits.flatMap((hit) => hit.uncertain ?? [])).toEqual([]);
     });
 
@@ -584,6 +891,7 @@ describe("uncertain bands stay small (round 7)", () => {
         // Back from its read the steps shrink to nothing: it started moving gently, as a scroll does.
         const path = [-0.03, -0.05, -0.06, -0.065, -0.065, -0.065, -0.065];
         const hits = textHits([name(1000, 0.4)], matcher, {
+            aspect,
             motion: model({ path, end: "still", changingUs: 200_000 }),
         });
         expect(hits.flatMap((hit) => hit.uncertain ?? [])).toEqual([]);
@@ -594,6 +902,7 @@ describe("uncertain bands stay small (round 7)", () => {
         // matches as still. The quarter-second change steps saw nothing at the right edge.
         const path = [0.04, 0.09, 0.15, 0.15, 0.15, 0.15];
         const hits = textHits([name(1000, 0.4)], matcher, {
+            aspect,
             motion: model({
                 path,
                 end: "still",
@@ -612,6 +921,7 @@ describe("uncertain bands stay small (round 7)", () => {
 
     test("a lost follow is banded only as far as the text could travel, inside the part that moved", () => {
         const hits = textHits([name(1000, 0.4, 0.5)], matcher, {
+            aspect,
             motion: model({
                 path: [0],
                 end: "lost",
@@ -695,6 +1005,57 @@ describe("verifyHidden reads every frame at the edges and says how to fix a leak
         expect(rect?.height).toBeCloseTo(0.05 + 0.1 / 3, 3);
     });
 
+    // Regression test: hunt verifyhidden-moved-picture. With no frame and no zoom the export's box was taken as the
+    // source box, though a tilt, a lens or a transition moves the picture, so the fix op redacted the wrong place.
+    test("a leak with no source read is placed only where the export shows the source as it is", () => {
+        const read: PrivateHit = {
+            id: "h1",
+            kind: "text",
+            label: "Text",
+            masked: "or•••ve",
+            fromUs: 9_000_000,
+            toUs: 14_000_000,
+            box: { x: 0.2, y: 0.3, width: 0.3, height: 0.5 },
+            keys: [],
+        };
+        const canvasBox = { x: 0.5, y: 0.5, width: 0.1, height: 0.02 };
+        const unplaced = {
+            fromUs: 30_000_000,
+            toUs: 31_000_000,
+            label: "Text",
+            masked: "x",
+            sourceHits: [read],
+            canvasBox,
+        };
+        const plain = wholeProject(source);
+
+        const tilted = applyOp(plain, op({ op: "tilt", strength: 1 }));
+        const lensed = applyOp(plain, op({ op: "lens", from: 29, to: 32 }));
+        // The cut 25..29.5 joins at output 25 s; the zoom transition there plays from 24.5 to 25.5 s (source 29..30).
+        const joined = applyOp(
+            applyOp(plain, op({ op: "cut", from: 25, to: 29.5 })),
+            op({ op: "transition", kind: "zoom", ms: 1000 })
+        );
+        const atJoin = { ...unplaced, fromUs: 29_600_000, toUs: 29_800_000 };
+
+        expect(leakSourceBox(plain, unplaced)).toEqual(canvasBox);
+        expect(leakSourceBox(tilted, unplaced)).toBeNull();
+        expect(leakSourceBox(lensed, unplaced)).toBeNull();
+        expect(leakSourceBox(joined, atJoin)).toBeNull();
+        // Far from the join the joined edit shows the source as it is.
+        expect(leakSourceBox(joined, unplaced)).toEqual(canvasBox);
+
+        const keys = [{ atUs: 30_500_000, ...canvasBox }];
+        const sourceKeys = (project: typeof plain, at = keys) =>
+            leakSourceKeys(project, { keys: at, label: "Text", masked: "x", sourceHits: [] });
+        expect(sourceKeys(plain)).toHaveLength(1);
+        expect(sourceKeys(tilted)).toEqual([]);
+        expect(sourceKeys(lensed)).toEqual([]);
+        // Export 25.2 s is inside the join's transition; 30.5 s is past it.
+        expect(sourceKeys(joined, [{ atUs: 25_200_000, ...canvasBox }])).toEqual([]);
+        expect(sourceKeys(joined)).toHaveLength(1);
+    });
+
     test("a moving leak gets one op that follows it frame by frame, never a box over its whole path (round 8)", () => {
         const project = wholeProject(source);
         const read: PrivateHit = {
@@ -744,6 +1105,84 @@ describe("verifyHidden reads every frame at the edges and says how to fix a leak
     });
 });
 
+describe("verifyHidden: a leak the edit's own text or caption draws gets a note, not a redact op", () => {
+    const mail = "alice@example.com";
+    const masked = maskPrivate(mail);
+    const matcher = privateMatcher();
+    // Read on the export where the text sits (no frame, no zoom: the export box is also a place in the source).
+    const canvasBox = { x: 0.4, y: 0.1, width: 0.2, height: 0.04 };
+    const texted = applyOp(wholeProject(source), op({ op: "text", from: 2, to: 5, text: `Mail ${mail}` }));
+
+    test("a leak the edit's own text draws gets no redact op, because the renderer draws texts over the redactions", () => {
+        const id = texted.texts?.[0]?.id ?? "";
+        expect(leakOverlay(texted, { fromUs: 3_000_000, toUs: 3_500_000, masked, matcher, canvasBox })).toEqual({
+            kind: "text",
+            id,
+        });
+        // The source fallback alone places it at the export box: a redact op the renderer draws under the text.
+        const keys = [{ atUs: 3_000_000, ...canvasBox }];
+        const sourceKeys = leakSourceKeys(texted, { keys, label: "Email", masked, sourceHits: [] });
+        expect(
+            leakFixOps([{ label: "Email", source: { at: 3, until: 3.5 }, sourceKeys, sourceBox: canvasBox }])
+        ).toHaveLength(1);
+        // Marked as the text's (no source keys, no source box), it gets no op.
+        expect(
+            leakFixOps([{ label: "Email", source: { at: 3, until: 3.5 }, sourceKeys: [], sourceBox: null }])
+        ).toEqual([]);
+    });
+
+    test("a leak when no text shows, or of another value, is the source picture's and keeps its source box", () => {
+        expect(leakOverlay(texted, { fromUs: 6_000_000, toUs: 7_000_000, masked, matcher, canvasBox })).toBeUndefined();
+        const other = maskPrivate("bob@example.org");
+        expect(
+            leakOverlay(texted, { fromUs: 3_000_000, toUs: 3_500_000, masked: other, matcher, canvasBox })
+        ).toBeUndefined();
+        const unplaced = { fromUs: 6_000_000, toUs: 7_000_000, label: "Email", masked, sourceHits: [] };
+        expect(leakSourceBox(texted, { ...unplaced, canvasBox })).toEqual(canvasBox);
+    });
+
+    test("the same value in the source picture where it was read keeps its source op", () => {
+        const read: PrivateHit = {
+            id: "h1",
+            kind: "email",
+            label: "Email",
+            masked,
+            fromUs: 2_500_000,
+            toUs: 4_000_000,
+            box: canvasBox,
+            keys: [{ atUs: 2_500_000, ...canvasBox }],
+        };
+        const there = { fromUs: 3_000_000, toUs: 3_500_000, masked, matcher, canvasBox };
+        expect(leakOverlay(texted, { ...there, sourceHits: [read] })).toBeUndefined();
+        // Elsewhere in the picture (no frame, no zoom): the read at the text's place is the text's.
+        const elsewhere = { ...read, box: { x: 0.1, y: 0.8, width: 0.2, height: 0.04 } };
+        elsewhere.keys = [{ atUs: 2_500_000, ...elsewhere.box }];
+        expect(leakOverlay(texted, { ...there, sourceHits: [elsewhere] })?.kind).toBe("text");
+        // In a frame the two places cannot be compared: the picture's read keeps the op.
+        const framed = applyOp(texted, op({ op: "frame", aspect: "16:9" }));
+        expect(leakOverlay(framed, { ...there, sourceHits: [elsewhere] })).toBeUndefined();
+    });
+
+    test("a leak the caption line draws gets a note naming the line, with the transcript's fixes applied", () => {
+        const names = privateMatcher(["Alice Fictive"]);
+        const name = maskPrivate("alice fictive");
+        const raw = { segments: [{ text: "Hi Alice Fictive, welcome", start: 10, end: 13 }] };
+        // The captions op needs the transcript file on disk; the edit's captions setting is what leakOverlay reads.
+        const captioned = { ...wholeProject(source), captions: captionsSchema.parse({ show: true }) };
+        const at = { fromUs: 11_000_000, toUs: 12_000_000, masked: name, matcher: names, canvasBox };
+        expect(leakOverlay(captioned, { ...at, captionLines: transcriptLines(raw, captioned) })).toEqual({
+            kind: "caption",
+            at: 10,
+        });
+        // Captions off: the line is not drawn.
+        const off = { ...captioned, captions: captionsSchema.parse({ show: false }) };
+        expect(leakOverlay(off, { ...at, captionLines: transcriptLines(raw, off) })).toBeUndefined();
+        // A fix that took the name out: the caption no longer draws it.
+        const fixed = applyOp(captioned, op({ op: "fixLine", from: 10, text: "Hi there, welcome" }));
+        expect(leakOverlay(fixed, { ...at, captionLines: transcriptLines(raw, fixed) })).toBeUndefined();
+    });
+});
+
 describe("a few digits of a hidden value at the picture's edge are a leak (round 7)", () => {
     // An invented device number the request's pattern matches in the source.
     const matcher = textMatcher({ pattern: "SN-\\d{8}" });
@@ -764,8 +1203,8 @@ describe("a few digits of a hidden value at the picture's edge are a leak (round
         const frames: ScreenTextFrame[] = [
             { atUs: 0, untilUs: 33_000, lines: [{ text: "718263", x: 0.97, y: 0.2, width: 0.03, height: 0.04 }] },
         ];
-        expect(textHits(frames, edgeFragments(matcher, values), { gapUs: 0 }).length).toBe(1);
-        expect(textHits(frames, matcher, { gapUs: 0 }).length).toBe(0);
+        expect(textHits(frames, edgeFragments(matcher, values), { aspect, gapUs: 0 }).length).toBe(1);
+        expect(textHits(frames, matcher, { aspect, gapUs: 0 }).length).toBe(0);
     });
 });
 
@@ -804,9 +1243,9 @@ describe("a part of a hidden value that a box edge cut is a leak anywhere in the
                 lines: [{ text: "(...8263) Kovářová", x: 0.5, y: 0.3, width: 0.3, height: 0.03 }],
             },
         ];
-        const hits = textHits(frames, edgeFragments(matcher, values), { gapUs: 0 });
+        const hits = textHits(frames, edgeFragments(matcher, values), { aspect, gapUs: 0 });
         expect(hits.length).toBe(2);
-        expect(textHits(frames, matcher, { gapUs: 0 }).length).toBe(0);
+        expect(textHits(frames, matcher, { aspect, gapUs: 0 }).length).toBe(0);
     });
 });
 
@@ -870,7 +1309,7 @@ describe("a hidden part stays on its text through a slide-in (round 8)", () => {
             frame(200, [{ text: "Orla Fictive", x: 0.7, y: 0.5, width: 0.25, height: 0.03 }]),
             frame(800, [{ text: "Orla Fictive · 4071-8263", x: 0.4, y: 0.5, width: 0.5, height: 0.03 }]),
         ];
-        const hits = textHits(frames, matcher, { motion: slide({ x: -0.3, y: 0 }) });
+        const hits = textHits(frames, matcher, { aspect, motion: slide({ x: -0.3, y: 0 }) });
         expect(hits.length).toBe(1);
         // At 0.5 s the whole line is half way: x 0.55, 0.5 wide.
         expect(covered(hits, 500_000, { x: 0.55, y: 0.5, width: 0.5 - 0.06, height: 0.03 })).toBe(true);
@@ -885,7 +1324,7 @@ describe("a hidden part stays on its text through a slide-in (round 8)", () => {
             frame(200, [{ text: "4071-8263", x: 0.3, y: at(200), width: 0.2, height: 0.03 }]),
             frame(500, [{ text: "(...8263)", x: 0.4, y: at(500), width: 0.1, height: 0.03 }]),
         ];
-        const hits = textHits(frames, matcher, { motion: slide({ x: 0, y: -0.4 }, { x: 0, y: -0.06 }) });
+        const hits = textHits(frames, matcher, { aspect, motion: slide({ x: 0, y: -0.4 }, { x: 0, y: -0.06 }) });
         expect(covered(hits, 500_000, { x: 0.4, y: at(500), width: 0.1, height: 0.03 })).toBe(true);
     });
 
@@ -894,13 +1333,14 @@ describe("a hidden part stays on its text through a slide-in (round 8)", () => {
         const title = { text: "Orla Fictive", x: 0.6, y: 0.09, width: 0.2, height: 0.02 };
         const frames = [frame(0, [title]), frame(200, [title]), frame(600, [title])];
         // The content behind the title scrolls up; the blocks carry the title with it.
-        const hits = textHits(frames, matcher, { motion: slide({ x: 0, y: -0.3 }) });
+        const hits = textHits(frames, matcher, { aspect, motion: slide({ x: 0, y: -0.3 }) });
         expect(covered(hits, 300_000, { x: 0.6, y: 0.09, width: 0.2, height: 0.02 })).toBe(true);
     });
 
     test("a band where a sideways slide was lost stays in the text's row, though the read drifted a pixel up", () => {
         // A banner lost while it slid left at a tenth of the picture per 0.1 s, drifting 0.0002 up meanwhile.
         const band = sweptBand({
+            aspect,
             box: { x: 0.4, y: 0.5, width: 0.2, height: 0.045 },
             velocity: { x: -1e-6, y: -2e-9 },
             travelUs: 300_000,
@@ -919,7 +1359,7 @@ describe("a hidden part stays on its text through a slide-in (round 8)", () => {
             frame(200, [{ text: "Orla Fictive", x: 0, y: 0.5, width: 0.005, height: 0.03 }]),
             frame(400, [{ text: "Orla Fictive", x: 0, y: 0.5, width: 0.3, height: 0.03 }]),
         ];
-        const [hit] = textHits(frames, matcher, { motion: slide({ x: 0, y: 0 }) });
+        const [hit] = textHits(frames, matcher, { aspect, motion: slide({ x: 0, y: 0 }) });
         expect(hit.fromUs).toBeLessThan(200_000);
         const before = redactionBoxAt({ ...hit.box, track: hit.keys }, hit.fromUs);
         expect(before.width).toBeGreaterThan(0.005);
@@ -1054,6 +1494,40 @@ describe("hidden parts keep whole microseconds (round 7)", () => {
     });
 });
 
+describe("screen text matches without accents, as the Find tab does", () => {
+    test("a literal text without accents finds the accented words and covers them exactly", () => {
+        const line = "Kontakt: Jiří Fiktivní, tel";
+        const found = textMatcher({ text: "Jiri Fiktivni" })(line);
+        expect(found).toHaveLength(1);
+        expect(line.slice(found[0].start, found[0].end)).toBe("Jiří Fiktivní");
+        expect(found[0].value).toBe("jiřífiktivní");
+    });
+
+    test("a decomposed line maps the match back over its combining marks", () => {
+        const line = "Jiří Fiktivní".normalize("NFD");
+        const found = textMatcher({ text: "Jiri" })(line);
+        expect(found).toHaveLength(1);
+        expect(line.slice(found[0].start, found[0].end)).toBe("Jiří".normalize("NFD"));
+        expect(foldWithIndex("aé😀b")).toEqual({ folded: "ae😀b", index: [0, 1, 2, 3, 4, 5] });
+    });
+
+    test("a private name without accents finds the accented name", () => {
+        const line = "Zdeňka Smyšlená";
+        const found = privateMatcher(["Zdenka Smyslena"])(line);
+        expect(found.map((match) => [match.kind, match.start, match.end])).toEqual([["name", 0, line.length]]);
+    });
+
+    test("a pattern still runs on the line as read", () => {
+        const found = textMatcher({ pattern: "Jiří" })("Jiri a Jiří");
+        expect(found.map((match) => match.start)).toEqual([7]);
+    });
+
+    test("an edge fragment without accents is a part of an accented value", () => {
+        const leaks = edgeFragments(textMatcher({ text: "Jiri Fiktivni" }), ["jiřífiktivní"])("Fiktivni, tel");
+        expect(leaks.map((leak) => [leak.start, leak.end, leak.value])).toEqual([[0, 8, "jiřífiktivní"]]);
+    });
+});
+
 describe("hide patterns know every script (round 8)", () => {
     test("\\w, \\b and \\p{L} take Czech letters, without case", () => {
         const surname = textMatcher({ pattern: "\\w+ová" });
@@ -1077,5 +1551,28 @@ describe("hide patterns know every script (round 8)", () => {
             '"Orla"',
             "/\\d{6}/",
         ]);
+    });
+});
+
+// Regression test: hunt r2-snap-lead-end. snap({ at, lead }) dropped lead, and the CLI and the REPL parsed a snap
+// apart; snapTimeUs is the one parse.
+describe("snapTimeUs reads a snap request the same way for the REPL and the CLI", () => {
+    const events: MovieEvent[] = [
+        { kind: "still", index: 1, fromUs: 1_000_000, toUs: 2_500_000 },
+        { kind: "click", index: 1, fromUs: 3_000_000 },
+    ];
+
+    test("the at form moves the snapped time by lead, and end snaps to the nearest stretch end", () => {
+        expect(snapTimeUs(events, { at: 2.8, lead: -0.2 }).atUs).toBe(2_800_000);
+        const end = snapTimeUs(events, { at: 2.8, end: true });
+        expect(end.atUs).toBe(2_500_000);
+        expect(end.edge).toBe("end");
+        expect(snapTimeUs(events, { event: "click", lead: -0.5 }).atUs).toBe(2_500_000);
+    });
+
+    test("a request that mixes the two forms is refused", () => {
+        expect(() => snapTimeUs(events, { at: 1, event: "click" })).toThrow();
+        expect(() => snapTimeUs(events, { at: 1, index: 2 })).toThrow();
+        expect(() => snapTimeUs(events, { event: "click", kinds: ["scene"] })).toThrow();
     });
 });

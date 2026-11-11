@@ -26,6 +26,11 @@ export const voiceoverSchema = z.object({
     card: z.enum(VOICEOVER_CARDS).optional(),
     file: z.string().min(1),
     durationUs: z.number().int().positive(),
+    /**
+     * How far into the file it starts playing, absent from its beginning; `durationUs` is what plays from there. A part
+     * export (partOf) sets it for a line that started before the part, so the part plays the rest of it.
+     */
+    skipUs: z.number().int().nonnegative().optional(),
     /** 0 to 2 (200 %). */
     volume: z.number().min(0).max(2).default(1),
     /** What it says ("Intro"), for the lists. */
@@ -121,7 +126,9 @@ export function applyVoiceover(project: EditProject, op: VoiceoverChange, facts:
     const card = op.card ?? list[index]?.card;
     const atUs = op.atUs ?? list[index]?.atUs;
 
-    if (card !== undefined) {
+    // A card clip's card and time are checked when the op sets them, as a movie clip's time is: a clip whose card went
+    // away or got shorter still takes a volume, label or file change, and check() says it does not play.
+    if (card !== undefined && (op.card !== undefined || op.atUs !== undefined || op.id === undefined)) {
         const seconds = project.cards?.[card]?.seconds;
 
         if (seconds === undefined) {
@@ -131,7 +138,7 @@ export function applyVoiceover(project: EditProject, op: VoiceoverChange, facts:
         if (atUs !== undefined && atUs >= Math.round(seconds * 1_000_000)) {
             throw new Error(`a voiceover at ${atUs / 1_000_000} s is past the ${card} card's ${seconds} s`);
         }
-    } else if (op.atUs !== undefined && op.atUs >= project.source.durationUs) {
+    } else if (card === undefined && op.atUs !== undefined && op.atUs >= project.source.durationUs) {
         throw new Error(
             `a voiceover at ${op.atUs / 1_000_000} s starts after the movie's end (${project.source.durationUs / 1_000_000} s)`
         );
@@ -212,4 +219,24 @@ export function duckGain(project: EditProject): number {
     }
 
     return 1 - (project.audio.music?.duck ?? 0);
+}
+
+/** What the music drops under, by the renderer's rule (`MusicMix.Duck.of` and `MusicMix.speech`). */
+export interface MusicDucking {
+    /** The drop is above nothing: the `ducking` dB when set, else the older `music.duck` share. */
+    drops: boolean;
+    /** It drops under the transcript's lines (when the movie has a transcript): on unless `ducking.transcript` is off. */
+    underTranscript: boolean;
+    /** It drops under a voiceover clip: the edit has one and `ducking.voiceovers` is not off. */
+    underVoiceovers: boolean;
+}
+
+/** The one rule check() and describe() use for whether and under what the music ducks. */
+export function musicDucking(project: EditProject): MusicDucking {
+    const ducking = project.audio.ducking;
+    return {
+        drops: duckGain(project) < 1,
+        underTranscript: ducking?.transcript ?? true,
+        underVoiceovers: (ducking?.voiceovers ?? true) && (project.audio.voiceovers?.length ?? 0) > 0,
+    };
 }

@@ -28,6 +28,12 @@ export interface ApprovalOutcome {
 export interface ApprovalChoices {
     /** The item paths ticked; null when nothing was unticked (all of them). */
     selected: string[] | null;
+    /**
+     * The ticked rows by where each one is now (an aside copy's `storedAt`, else its path), so the window can show
+     * two rows of one path (two requests' set-aside copies of it) and the answer still tells them apart. Absent from
+     * the typed code, the dialog and an app build that sends only `selected`.
+     */
+    selectedAt?: string[];
     disposal: RmDisposal;
     remember: RmRememberChoice;
     /** The note on a deny; null when none. */
@@ -83,6 +89,8 @@ export interface ApprovalItem {
 export interface ApprovalItemUpdate {
     /** The row's `path`. */
     path: string;
+    /** The aside copy the update is for, so it reaches that row and not another row of the same path. */
+    storedAt?: string;
     bytes?: number;
     empty?: boolean;
     folderStats?: FolderStats;
@@ -536,6 +544,7 @@ interface RmApproveReply {
     method?: string;
     reason?: string;
     selected?: unknown;
+    selectedAt?: unknown;
     disposal?: unknown;
     remember?: unknown;
     note?: unknown;
@@ -554,6 +563,9 @@ export function replyChoices(reply: RmApproveReply): ApprovalChoices {
         selected: Array.isArray(reply.selected)
             ? reply.selected.filter((path: unknown): path is string => typeof path === "string")
             : null,
+        ...(Array.isArray(reply.selectedAt)
+            ? { selectedAt: reply.selectedAt.filter((at: unknown): at is string => typeof at === "string") }
+            : {}),
         disposal: reply.disposal === "permanent" ? "permanent" : "trash",
         remember: isRememberChoice(reply.remember) ? reply.remember : "once",
         note: note || null,

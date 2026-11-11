@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { isInteractive } from "@genesiscz/utils/cli";
@@ -83,7 +83,8 @@ export async function runCodesignTrust({ fromNotice }: { fromNotice: boolean }):
         "What this is"
     );
 
-    const apply = await p.confirm({ message: "Apply the codesign trust now?", initialValue: true });
+    // The change is keychain-wide, so Enter alone must not make it (as in offerCodesignTrust).
+    const apply = await p.confirm({ message: "Apply the codesign trust now?", initialValue: false });
 
     if (!apply) {
         out.outro("Nothing changed. Click Always Allow in the next codesign dialog, or run this command later.");
@@ -95,8 +96,19 @@ export async function runCodesignTrust({ fromNotice }: { fromNotice: boolean }):
     const result = await trustCodesignKeys();
     const outputFile = join(genesisAppDir(), "codesign-trust-output.txt");
 
+    // The keychain has changed by now: a failed save is a warning, never a stack trace instead of the summary.
+    let outputSaved = false;
+
     if (result.output) {
-        writeFileSync(outputFile, result.output);
+        try {
+            mkdirSync(genesisAppDir(), { recursive: true });
+            writeFileSync(outputFile, result.output);
+            outputSaved = true;
+        } catch (error) {
+            out.log.warn(
+                `Could not save the security output to ${outputFile}: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
     }
 
     if (!result.ok) {
@@ -114,7 +126,7 @@ export async function runCodesignTrust({ fromNotice }: { fromNotice: boolean }):
             : "security finished without an error."
     );
 
-    if (result.output) {
+    if (outputSaved) {
         out.log.info(`Its full output (one block per key): ${outputFile}`);
     }
 

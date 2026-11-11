@@ -12,9 +12,10 @@ import {
     requestsAlsoNaming,
     ruledLine,
 } from "@genesiscz/utils/rm";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { type DotStatusKind, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
-import { displayContext, formatAgeCell, LOST_COPY_CAUSE, middleCut, shortRmPath } from "./display";
+import { displayContext, formatAgeCell, LOST_COPY_CAUSE, middleCut, shortRmPath, tailCut } from "./display";
 
 /** One request as the listing shows it: its live state on disk, its sizes, and the other requests naming its paths. */
 export interface RequestView {
@@ -104,16 +105,29 @@ function isOpen(view: RequestView): boolean {
     return view.request.status === "pending";
 }
 
-function stateCell(view: RequestView): string {
+function stateOf(view: RequestView): { kind: DotStatusKind; label: string } {
     const { request, live } = view;
-    const { kind, label } =
-        request.status !== "pending"
-            ? CLOSED_STATE[request.status]
-            : live.state === "waiting"
-              ? { kind: "dim" as const, label: live.inPlace === 0 ? "aside" : live.aside === 0 ? "in place" : "mixed" }
-              : TARGET_STATE[live.state];
+    return request.status !== "pending"
+        ? CLOSED_STATE[request.status]
+        : live.state === "waiting"
+          ? { kind: "dim" as const, label: live.inPlace === 0 ? "aside" : live.aside === 0 ? "in place" : "mixed" }
+          : TARGET_STATE[live.state];
+}
+
+function stateCell(view: RequestView): string {
+    const { kind, label } = stateOf(view);
     return formatDotStatus(kind, label.padEnd(9));
 }
+
+/** What each state word of an open request means, for the legend above the `tools rm approve` picker. */
+const STATE_MEANING: Record<string, string> = {
+    aside: "moved out of the way, waiting (approve trashes it, deny puts it back)",
+    "in place": "still where it was (unsaved work, another volume); approve trashes it",
+    mixed: "some paths aside, some in place",
+    "came back": "the path exists again beside its aside copy",
+    "copy lost": "the aside copy is gone",
+    gone: "the path is gone already",
+};
 
 /** One path's cell: its live state while the request is open; once closed, what the person decided for it. */
 function targetStateCell(view: RequestView, index: number): string {
@@ -168,7 +182,7 @@ function decidedShort(request: RmRequest): string {
     return `closed ${date}`;
 }
 
-function whyCell(view: RequestView): string {
+function whyText(view: RequestView): string {
     const rules = [...new Set(view.request.targets.map((target) => target.rule))].filter((rule) => rule !== "default");
     const covering = [...new Set(view.covered.map((entry) => entry.rule))];
     const parts = [
@@ -178,7 +192,12 @@ function whyCell(view: RequestView): string {
         isOpen(view) && view.live.state === "waiting" && view.live.gone > 0 ? `${view.live.gone} gone` : "",
         view.alsoIn.length > 0 ? `same path as ${view.alsoIn.join(" ")}` : "",
     ].filter((part) => part !== "");
-    return parts.length === 0 ? "" : truncateDisplay(parts.join(" · "), WHY_MAX);
+    return parts.join(" · ");
+}
+
+function whyCell(view: RequestView): string {
+    const text = whyText(view);
+    return text === "" ? "" : truncateDisplay(text, WHY_MAX);
 }
 
 function sessionKey(request: RmRequest): string {
@@ -188,7 +207,7 @@ function sessionKey(request: RmRequest): string {
 function requestRow(view: RequestView, now: Date, withSession: boolean): string {
     const { request } = view;
     const first = request.targets[0];
-    const path = first ? shortRmPath(first.path, displayContext(request.caller), PATH_MAX) : "-";
+    const path = first ? shortRmPath(first.path, displayContext(request.caller), { max: PATH_MAX }) : "-";
     const more = request.targets.length > 1 ? ` +${request.targets.length - 1}` : "";
     const why = whyCell(view);
     const session = withSession ? `${sessionKey(request).slice(0, 8).padEnd(8)}  ` : "";
@@ -198,9 +217,53 @@ function requestRow(view: RequestView, now: Date, withSession: boolean): string 
     );
 }
 
-/** One request as a single line, as the picker of `tools rm approve` offers it: id, age, size, state, path, why. */
-export function renderRequestRow(view: RequestView, now: Date): string {
-    return requestRow(view, now, false).trimStart();
+/** The `tools rm approve` picker's own columns before a row: clack's bar, the checkbox and their spaces. */
+export const PICKER_GUTTER = 6;
+
+/** The narrowest a picker row's path gets when the terminal leaves less: the file name stays readable. */
+const PICKER_PATH_MIN = 12;
+
+export interface PickerRowOptions {
+    view: RequestView;
+    now: Date;
+    /** The terminal's width: the row fits in it with the picker's own gutter. */
+    columns: number;
+}
+
+/**
+ * One request as a line of the `tools rm approve` picker, fitted to `columns`: id, how long ago it was asked, size,
+ * state, the path, then a note. The path takes the room the other columns leave, so a wide terminal shows it whole
+ * (2026-11-09: a 25 MB request read `~/Tresors/Projects/LEFTEQ/vitr…/vitrinka` with half the row empty); the note
+ * gets what is left after it.
+ */
+export function renderPickerRow({ view, now, columns }: PickerRowOptions): string {
+    const { request } = view;
+    const first = request.targets[0];
+    const age = formatAgeCell(request.createdAt, now);
+    const ageText = `${age.text} ago`.padStart(8);
+    const ageShown = age.level === "old" ? pc.red(ageText) : age.level === "day" ? pc.yellow(ageText) : ageText;
+    const head = `${pc.bold(request.id)}  ${ageShown}  ${sizeCell(sum(view.sizes))}  ${stateCell(view)}  `;
+    const more = request.targets.length > 1 ? `  +${request.targets.length - 1} more` : "";
+    const room = columns - PICKER_GUTTER - stripAnsi(head).length - more.length;
+    const path = first
+        ? shortRmPath(first.path, displayContext(request.caller), {
+              max: Math.max(PICKER_PATH_MIN, room),
+              cut: tailCut,
+          })
+        : "-";
+    const note = whyText(view);
+    const left = room - path.length - 2;
+    const noteShown = note !== "" && left >= 12 ? `  ${pc.dim(truncateDisplay(note, left))}` : "";
+    return `${head}${path}${more}${noteShown}`;
+}
+
+/** The lines above the picker: what its columns are, and what each state word on its rows means. */
+export function renderPickerLegend(views: readonly RequestView[]): string[] {
+    const states = [...new Set(views.map((view) => stateOf(view).label))].filter((label) => STATE_MEANING[label]);
+    return [
+        "Each row: id · asked how long ago · size · state · path (+ more paths) · note (earlier decisions, the rule that asked)",
+        ...states.map((label) => `${label}: ${STATE_MEANING[label]}`),
+    ];
 }
 
 function pathRows(view: RequestView, now: Date): string[] {
@@ -209,7 +272,7 @@ function pathRows(view: RequestView, now: Date): string[] {
         const rule = target.rule === "default" ? "" : `  ${pc.dim(target.rule)}`;
         return (
             `    ${pc.bold(request.id)}  ${ageCell(request.createdAt, now)}  ${sizeCell(view.sizes[index])}  ` +
-            `${targetStateCell(view, index)}  ${shortRmPath(target.path, displayContext(request.caller), PATH_MAX)}${rule}`
+            `${targetStateCell(view, index)}  ${shortRmPath(target.path, displayContext(request.caller), { max: PATH_MAX })}${rule}`
         );
     });
 }

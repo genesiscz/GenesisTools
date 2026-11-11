@@ -4,8 +4,9 @@ import Foundation
 
 // R4 6 animated captions and texts (agent fx-overlay): the karaoke caption's words said so far and a text's way in.
 
-/// How far a text's `animate` has come `sinceUs` after its start: the letters a typewriter has typed, and a slide-up's
-/// fade and how far below its place it still is (a share of its height).
+/// How far a text's `animate` has come `sinceUs` after its start: nothing for a fade (its `ms` is the opacity
+/// envelope's, ZoomState.textFadeInUs), the letters a typewriter has typed, and a slide-up's fade and how far below its
+/// place it still is (a share of its height).
 enum TextMotion {
     struct State: Equatable {
         var characters: Int
@@ -19,6 +20,7 @@ enum TextMotion {
         let progress = min(1, max(0, Double(sinceUs) / Double(max(1, animate.ms) * 1000)))
         switch animate.kind {
         case .fade:
+            // The fade is the text's opacity envelope, over `animate.ms` (ZoomState.textFadeInUs), not a second one here.
             return full
         case .typewriter:
             return State(characters: Int((Double(note.text.count) * progress).rounded(.up)), opacity: 1, drop: 0)
@@ -75,17 +77,30 @@ struct ProgressMark: Equatable {
 
     static let fadeUs: Int64 = 200_000
 
-    /// The markers (the recording's and the edit's) at their output times, inside the movie, in order; one per time.
+    /// The least gap between two chapters, the MP4's own: moments.ts chapterPoints with EMBEDDED_CHAPTER_MIN_SECONDS,
+    /// so the bar divides only where the exported movie has a chapter.
+    static let minChapterGapUs: Int64 = 1_000_000
+
+    /// The chapters the markers (the recording's and the edit's) start, at their output times, inside the movie, in
+    /// order, folded as the MP4's chapters are: a first marker under `minChapterGapUs` starts the first chapter at 0
+    /// (no divider), and a marker closer than that to the chapter kept before it starts none, so the earlier name stays.
     static func chapters(project: EditProject, recorded: [(us: Int64, label: String)]) -> [(outUs: Int64, label: String)] {
         let lengthUs = project.outputDurationUs
         let all = recorded + (project.markers ?? []).map { (us: $0.atUs, label: $0.label) }
-        var seen = Set<Int64>()
-        return all.compactMap { marker -> (outUs: Int64, label: String)? in
+        let played = all.compactMap { marker -> (outUs: Int64, label: String)? in
             guard let outUs = TimelineMap.outputTime(ofSource: marker.us, in: project), outUs >= 0, outUs < lengthUs else { return nil }
             return (outUs, marker.label)
         }
         .sorted { $0.outUs < $1.outUs }
-        .filter { seen.insert($0.outUs).inserted }
+        var kept: [(outUs: Int64, label: String)] = []
+        for marker in played {
+            guard let last = kept.last else {
+                kept.append(marker.outUs < minChapterGapUs ? (0, marker.label) : marker)
+                continue
+            }
+            if marker.outUs - last.outUs >= minChapterGapUs { kept.append(marker) }
+        }
+        return kept
     }
 
     static func at(outUs: Int64, project: EditProject, recorded: [(us: Int64, label: String)],
@@ -241,6 +256,22 @@ struct CardSpans {
     var leadUs: Int64 { intro.map { Int64(($0.seconds * 1_000_000).rounded()) } ?? 0 }
     var tailUs: Int64 { end.map { Int64(($0.seconds * 1_000_000).rounded()) } ?? 0 }
 
+    /// How long the exported file of the whole edit plays: its intro card, the movie and its end card, as
+    /// info().exportTime.exportSeconds says. The movie's own length (`outputDurationUs`) stays without the cards; a part
+    /// export has none.
+    static func exportLengthUs(_ project: EditProject) -> Int64 {
+        let spans = CardSpans(project: project, enabled: true)
+        return spans.leadUs + project.outputDurationUs + spans.tailUs
+    }
+
+    /// The cards a whole export adds, "3.0 s intro + 4.0 s end card"; nil without any.
+    static func cardsNote(_ project: EditProject) -> String? {
+        let spans = CardSpans(project: project, enabled: true)
+        let parts = [spans.intro.map { String(format: "%.1f s intro", $0.seconds) },
+                     spans.end.map { String(format: "%.1f s end card", $0.seconds) }].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " + ")
+    }
+
     /// The card at a movie output time (negative is the intro), or nil inside the movie.
     func card(atOutput outUs: Int64, movieUs: Int64) -> Frame? {
         if let intro, outUs < 0 {
@@ -255,6 +286,18 @@ struct CardSpans {
 
 extension Looks {
     static let cardFadeUs: Int64 = 400_000
+
+    /// The size of the editor's card still: the export's canvas (`EditRenderer.plannedOutput`, so the frame's shape and
+    /// a fixed export size count) scaled so its long side is `longSide`, in whole pixels. The card is drawn on the
+    /// export's real canvas, so a 9:16 or 1:1 export gets a still of that shape, not a 16:9 one.
+    static func cardStillSize(_ project: EditProject, longSide: CGFloat = 640) -> CGSize {
+        let source = CGSize(width: project.source.width, height: project.source.height)
+        let canvas = EditRenderer.plannedOutput(export: project.export, source: source, aspect: project.frame?.aspect,
+                                                nominalFps: nil).canvas
+        guard canvas.width > 0, canvas.height > 0 else { return CGSize(width: longSide, height: (longSide * 9 / 16).rounded()) }
+        let scale = longSide / max(canvas.width, canvas.height)
+        return CGSize(width: max(1, (canvas.width * scale).rounded()), height: max(1, (canvas.height * scale).rounded()))
+    }
 
     /// A card on the frame's background (its gradient, colour or picture; the default gradient without a frame): the
     /// intro's logo, title, subtitle and date, or the end card's text, link and QR code, centred, fading in and out.

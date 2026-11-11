@@ -471,7 +471,13 @@ async function exportStep(
 
     if (ctx.state.video) {
         await runVideoCommand({
-            command: exportVideoArgv({ input: ctx.state.video.path, output, format: step.format, ...ctx.state.window }),
+            command: exportVideoArgv({
+                input: ctx.state.video.path,
+                output,
+                format: step.format,
+                audioTracks: await audioTracksOf(ctx.state.video.path, ctx.signal),
+                ...ctx.state.window,
+            }),
             signal: ctx.signal,
             timeoutMs: EXPORT_TIMEOUT_MS,
         });
@@ -628,7 +634,7 @@ function compile(options: {
 
                         mkdirSync(dir, { recursive: true });
                         const output = ctx.claim(join(dir, `speed-${index}.mp4`));
-                        const audio = await hasAudio(ctx.state.video.path, ctx.signal);
+                        const audio = (await audioTracksOf(ctx.state.video.path, ctx.signal)) > 0;
                         const video = await newVideo(
                             ctx,
                             speedArgv({ input: ctx.state.video.path, output, factor: step.factor, audio }),
@@ -713,7 +719,8 @@ function compile(options: {
     }));
 }
 
-async function hasAudio(path: string, signal: AbortSignal): Promise<boolean> {
+/** The movie's audio track count: a recording of system sound and mic has two. */
+async function audioTracksOf(path: string, signal: AbortSignal): Promise<number> {
     const raw = await runVideoCommand({
         command: [
             "ffprobe",
@@ -730,7 +737,7 @@ async function hasAudio(path: string, signal: AbortSignal): Promise<boolean> {
         signal,
         timeoutMs: 30_000,
     });
-    return raw.trim().length > 0;
+    return raw.split("\n").filter((line) => line.trim()).length;
 }
 
 /**

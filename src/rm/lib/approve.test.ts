@@ -5,6 +5,7 @@ import {
     mkdirSync,
     mkdtempSync,
     readdirSync,
+    readFileSync,
     realpathSync,
     renameSync,
     writeFileSync,
@@ -73,7 +74,14 @@ import {
 import { shortRmPath } from "./display";
 import { renderLedger } from "./log-view";
 import { type NotifyDeps, notifyDrainFailure, notifyNewRequest, type RequestNotice } from "./notify";
-import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
+import {
+    buildRequestViews,
+    PICKER_GUTTER,
+    renderPickerLegend,
+    renderPickerRow,
+    renderRequestDetail,
+    renderRequestList,
+} from "./requests-view";
 import { type ExecuteDeps, executePlan, type PersonAnswer, printRequestHint, type RunContext } from "./run";
 import { renderConfig, renderPresets, renderRoots } from "./settings-view";
 import { batchSuffix, renderTrash, resolveBatchSuffix } from "./trash-view";
@@ -158,7 +166,7 @@ describe("approve in the window", () => {
             reason: null,
             targets: [{ path: a ?? "", kind: "file", rule: "default", reason: "asked again" }],
         });
-        const { approved, denied } = splitBySelection(entriesOf(request), [a ?? ""]);
+        const { approved, denied } = splitBySelection(entriesOf(request), { selected: [a ?? ""] });
         const before = Date.now();
         const { batch } = approveDelete({
             ctx: context(),
@@ -201,7 +209,7 @@ describe("approve in the window", () => {
             asideDir: join(base, "other-copy"),
         });
         file(original);
-        const { approved, denied } = splitBySelection(entriesOf(request), [original]);
+        const { approved, denied } = splitBySelection(entriesOf(request), { selected: [original] });
         const { batch } = approveDelete({
             ctx: context(),
             request,
@@ -312,7 +320,7 @@ describe("approve in the window", () => {
             throw new Error("expected two targets");
         }
         file(b);
-        const { approved, denied } = splitBySelection(entriesOf(request), [a]);
+        const { approved, denied } = splitBySelection(entriesOf(request), { selected: [a] });
         const choices = { selected: [a], disposal: "trash" as const, remember: "once" as const, note: null };
         const ctx = context();
         const { batch, back } = approveDelete({ ctx, request, approved, denied, choices });
@@ -380,7 +388,7 @@ describe("approve in the window", () => {
             throw new Error("expected two targets");
         }
         const home = dirname(b);
-        const { approved, denied } = splitBySelection(entriesOf(request), [a]);
+        const { approved, denied } = splitBySelection(entriesOf(request), { selected: [a] });
         const choices = { selected: [a], disposal: "trash" as const, remember: "once" as const, note: null };
         chmodSync(home, 0o555);
 
@@ -518,7 +526,7 @@ describe("approve in the window", () => {
                 openEntries,
                 blocked: [],
                 answer: { approved: true, via: "touch-id", choices, deniedByPerson: false },
-                selected: [a.path],
+                selection: { selected: [a.path] },
                 denyOf: () => null,
                 kickDrainer: () => {
                     throw new Error("nothing moved, so no drain starts");
@@ -1406,6 +1414,40 @@ describe("the requests listing", () => {
         expect(text).toContain(`Cancel your own: ${toolCommand("rm")} deny <id>`);
     });
 
+    test("the picker row shows the whole path on a wide terminal and says how long ago it was asked", () => {
+        const deep = "/work/shop/apps/storefront/packages/checkout/screens/summary/banner.webp";
+        const long = req("long01", ASKER, "2026-11-01T13:11:00.000Z", [
+            { path: deep, kind: "file", rule: "git-untracked", reason: "1 untracked file" },
+        ]);
+        const [view] = buildRequestViews([long], { present: () => true, sizeOf: () => 2048 });
+        const wide = view ? stripAnsi(renderPickerRow({ view, now: NOW, columns: 200 })) : "";
+        const narrow = view ? stripAnsi(renderPickerRow({ view, now: NOW, columns: 90 })) : "";
+        const eighty = view ? stripAnsi(renderPickerRow({ view, now: NOW, columns: 80 })) : "";
+        const listed = view ? renderRequestList([view], { now: NOW, caller: PERSON }).map(stripAnsi).join("\n") : "";
+
+        expect(wide).toContain("49m ago");
+        expect(wide).toContain(deep);
+        expect(wide).toContain("git-untracked");
+        // The list keeps its 40 columns for a path; the picker uses the room the terminal has.
+        expect(listed).not.toContain(deep);
+        // Narrow: the path keeps its room, whole leading folders go first so the tail stays, and the note goes.
+        expect(narrow).toContain("/…/checkout/screens/summary/banner.webp");
+        expect(narrow).not.toContain("git-untracked");
+        expect(narrow.length).toBeLessThanOrEqual(90 - PICKER_GUTTER);
+        // 80 columns leave the path less than the list's 40: it takes only that room, so the row stays one line.
+        expect(eighty.length).toBeLessThanOrEqual(80 - PICKER_GUTTER);
+        expect(eighty).toContain("banner.webp");
+    });
+
+    test("the picker legend names the columns and only the states its rows show", () => {
+        const legend = renderPickerLegend(views).join("\n");
+
+        expect(legend).toContain("asked how long ago");
+        expect(legend).toContain("aside: moved out of the way");
+        expect(legend).toContain("in place: still where it was");
+        expect(legend).not.toContain("came back:");
+    });
+
     test("the detail view shows the decision even when nothing was denied", () => {
         const gone = views.find((view) => view.request.id === "gone22");
         const detail = gone ? renderRequestDetail(gone, NOW).map(stripAnsi).join("\n") : "";
@@ -1771,7 +1813,7 @@ describe("a path that came back beside its aside copy", () => {
             "Delete the set-aside copy (the path is back in place)",
         ]);
 
-        const { approved, denied } = splitBySelection(entriesOf(waiting), null);
+        const { approved, denied } = splitBySelection(entriesOf(waiting), { selected: null });
         approveDelete({
             ctx: context(),
             request: waiting,
@@ -2402,7 +2444,7 @@ describe("one window for several requests", () => {
         expect(loadRmRequest(second.id)?.status).toBe("approved");
     });
 
-    test("an aside copy and an in-place path of one name are never two rows of one window", async () => {
+    test("an aside copy and an in-place path of one name are two rows of one window", async () => {
         const folder = join(base, "batch-mixed");
         const path = file(join(folder, "same.txt"));
         const verdict = { kind: "ask" as const, rule: "default", reason: "no rule allows it" };
@@ -2421,8 +2463,7 @@ describe("one window for several requests", () => {
             asideDir: aside.dir,
         });
         const copy = cameBackRequest.targets[0]?.stored ?? "";
-        // The path came back beside the copy, and another session asks for the new one in place. It is the newer
-        // request, so the came-back row is the one the first window shows.
+        // The path came back beside the copy, and another session asks for the new one in place.
         file(path);
         const inPlace: RmRequest = {
             id: "zzzzzzzz",
@@ -2435,28 +2476,75 @@ describe("one window for several requests", () => {
             status: "pending",
         };
         saveRmRequest(inPlace);
-        const lines: string[] = [];
-        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
-            lines.push(stripAnsi(String(raw ?? "")));
-        });
         const prompts: ApprovalPrompt[] = [];
+        await batch([cameBackRequest.id, inPlace.id], person(prompts));
 
-        try {
-            await batch([cameBackRequest.id, inPlace.id], person(prompts, [path]));
-        } finally {
-            println.mockRestore();
-        }
-
-        expect(prompts[0]?.request?.items.map((item) => item.reason)).toEqual([
-            "Delete the set-aside copy (the path is back in place)",
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]?.request?.items.map((item) => [item.path, item.storedAt])).toEqual([
+            [path, copy],
+            [path, undefined],
         ]);
-        // The in-place path waits for a second window of its own, read again after the first answer.
-        expect(prompts[1]?.request?.items.map((item) => item.path)).toEqual([path]);
-        expect(prompts).toHaveLength(2);
-        expect(lines).toContain("zzzzzzzz waits for the next window: another request here names the same path");
-        expect(existsSync(path)).toBe(false);
-        expect(existsSync(copy)).toBe(false);
-        expect(loadRmRequest(inPlace.id)?.status).toBe("approved");
+        expect(prompts[0]?.request?.items[0]?.reason).toBe("Delete the set-aside copy (the path is back in place)");
+        expect([path, copy].map((gone) => existsSync(gone))).toEqual([false, false]);
+        expect([cameBackRequest.id, inPlace.id].map((id) => loadRmRequest(id)?.status)).toEqual([
+            "approved",
+            "approved",
+        ]);
+    });
+
+    test("two requests' aside copies of one folder: one window, and only the ticked copy goes", async () => {
+        // An agent deleted a build folder, made it again and deleted it again: two copies of one path wait.
+        const path = join(base, "batch-two-copies", "F13", "out.txt");
+        const verdict = { kind: "ask" as const, rule: "default", reason: "no rule allows it" };
+        const askAside = (content: string, name: string): RmRequest => {
+            mkdirSync(dirname(path), { recursive: true });
+            writeFileSync(path, content);
+            const aside = moveAside({
+                inputs: [{ target: resolveTarget(path, base), verdict }],
+                caller: AGENT,
+                batchId: newBatchId(),
+                root: join(base, "aside", name),
+            });
+            return createRmRequest({
+                kind: "delete",
+                caller: AGENT,
+                cwd: base,
+                reason: null,
+                targets: aside.moved,
+                asideDir: aside.dir,
+            });
+        };
+        const first = askAside("first build", "batch-two-copies-1");
+        const second = askAside("second build", "batch-two-copies-2");
+        const [firstCopy, secondCopy] = [first, second].map((request) => request.targets[0]?.stored ?? "");
+        const prompts: ApprovalPrompt[] = [];
+        // The person unticks the first copy: the window names the ticked row by where it waits.
+        const tickSecond: ReturnType<typeof person> = async (_ctx, prompt) => {
+            prompts.push({ ...prompt, code: "", caller: PERSON });
+            return {
+                approved: true,
+                via: "touch-id",
+                choices: {
+                    selected: [path],
+                    selectedAt: [secondCopy],
+                    disposal: "trash",
+                    remember: "once",
+                    note: null,
+                },
+                deniedByPerson: false,
+            };
+        };
+        const run = await batchRun([second.id, first.id], tickSecond);
+
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]?.title).toBe("Delete 2 items from 2 requests?");
+        expect(prompts[0]?.request?.items.map((item) => item.storedAt)).toEqual([firstCopy, secondCopy]);
+        expect(run.lines.some((line) => line.includes("waits for the next window"))).toBe(false);
+        // The unticked copy went home, the ticked one to the trash.
+        expect(readFileSync(path, "utf8")).toBe("first build");
+        expect([firstCopy, secondCopy].map((kept) => existsSync(kept))).toEqual([false, false]);
+        expect([first.id, second.id].map((id) => loadRmRequest(id)?.status)).toEqual(["denied", "approved"]);
+        expect(run.exitCode).toBe(0);
     });
 
     /**
@@ -2519,30 +2607,27 @@ describe("one window for several requests", () => {
         return prompts.map((prompt) => prompt.lines[0]?.split(" · ")[0] ?? "");
     }
 
-    test("two requests on one path: the older one's window, then the newer one read again and approved, exit 0", async () => {
+    test("two requests on one path: one window, the older request's rows first, both approved, exit 0", async () => {
         // The newer id sorts first and is named first: only the request order puts the older one first.
         const { older, newer, path, copy } = cameBackPair("batch-order", "0000aaaa");
         const prompts: ApprovalPrompt[] = [];
         const run = await batchRun([newer.id, older.id], person(prompts));
 
-        expect(windowOrder(prompts)).toEqual([older.id, newer.id]);
-        expect(prompts[0]?.request?.items.map((item) => item.reason)).toEqual([
-            "Delete the set-aside copy (the path is back in place)",
+        expect(windowOrder(prompts)).toEqual([older.id]);
+        expect(prompts[0]?.request?.items.map((item) => [item.path, item.storedAt])).toEqual([
+            [path, copy],
+            [path, undefined],
         ]);
-        expect(prompts[1]?.request?.items.map((item) => item.path)).toEqual([path]);
         expect([older.id, newer.id].map((id) => loadRmRequest(id)?.status)).toEqual(["approved", "approved"]);
         expect([copy, path].map((gone) => existsSync(gone))).toEqual([false, false]);
         expect(run.exitCode).toBe(0);
     });
 
-    test("the newer request is left out when its path holds another object after the first decision", async () => {
-        const { older, newer, path, copy } = cameBackPair("batch-changed", "zzzz0671");
+    test("a Deny of the window denies both requests on one path, and the copy stays aside while the path is taken", async () => {
+        const { older, newer, path, copy } = cameBackPair("batch-denied", "zzzz0671");
         const prompts: ApprovalPrompt[] = [];
-        const denyWhileGone: ReturnType<typeof person> = async (_ctx, prompt) => {
+        const deny: ReturnType<typeof person> = async (_ctx, prompt) => {
             prompts.push({ ...prompt, code: "", caller: PERSON });
-            // The sync client takes the live file away again while the window is open, so the Deny puts the older
-            // request's copy back at the path: the newer request was for the live file, not for this one.
-            renameSync(path, join(base, "batch-changed-live-moved"));
             return {
                 approved: false,
                 via: "touch-id",
@@ -2550,20 +2635,17 @@ describe("one window for several requests", () => {
                 deniedByPerson: true,
             };
         };
-        const run = await batchRun([older.id, newer.id], denyWhileGone);
+        const run = await batchRun([older.id, newer.id], deny);
 
         expect(windowOrder(prompts)).toEqual([older.id]);
-        expect(loadRmRequest(older.id)?.status).toBe("denied");
-        expect([copy, path].map((kept) => existsSync(kept))).toEqual([false, true]);
-        expect(loadRmRequest(newer.id)?.status).toBe("pending");
-        expect(run.lines).toContain(
-            `left out ${newer.id}: ${path} changed while the request before it was decided (another file or folder is there now)`
-        );
-        expect(run.lines).toContain(`1 request still waits: ${toolCommand("rm approve", newer.id)}`);
-        expect(run.exitCode).toBe(1);
+        expect(loadRmRequest(newer.id)?.status).toBe("denied");
+        // The live file is still at the path, so the older request's copy cannot go home over it.
+        expect(readFileSync(path, "utf8")).toBe("live");
+        expect(existsSync(copy)).toBe(true);
+        expect(run.lines.some((line) => line.includes("waits for the next window"))).toBe(false);
     });
 
-    test("a window with no answer leaves the waiting request out, names the command, and exits 1", async () => {
+    test("a window with no answer names every request it showed, and exits 1", async () => {
         const { older, newer, path, copy } = cameBackPair("batch-no-answer", "zzzz0672");
         const prompts: ApprovalPrompt[] = [];
         const noAnswer: ReturnType<typeof person> = async (_ctx, prompt) => {
@@ -2578,10 +2660,10 @@ describe("one window for several requests", () => {
         const run = await batchRun([older.id, newer.id], noAnswer);
 
         expect(windowOrder(prompts)).toEqual([older.id]);
+        expect(prompts).toHaveLength(1);
         expect([older.id, newer.id].map((id) => loadRmRequest(id)?.status)).toEqual(["pending", "pending"]);
         expect([copy, path].map((kept) => existsSync(kept))).toEqual([true, true]);
-        expect(run.lines).toContain(`left out ${newer.id}: another request here names the same path`);
-        expect(run.lines).toContain(`1 request still waits: ${toolCommand("rm approve", newer.id)}`);
+        expect(run.lines).toContain(`2 requests still wait: ${toolCommand("rm approve", older.id, newer.id)}`);
         expect(run.exitCode).toBe(1);
     });
 });

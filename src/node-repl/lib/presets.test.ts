@@ -89,6 +89,20 @@ describe("preset store", () => {
         expect(readPreset("twice", dir).script).toBe("return 'second';\n");
     });
 
+    test("replacing a name twice at the same time keeps both old versions in .trash", () => {
+        const dir = root();
+        const now = new Date("2026-11-05T10:00:00Z");
+        const save = (script: string) =>
+            savePreset({ name: "tight", input: { script }, knownToolsets: known, root: dir, now });
+        save("return 1;");
+        const second = save("return 2;");
+        const third = save("return 3;");
+        expect(third.replaced).not.toBe(second.replaced);
+        expect(readFileSync(join(second.replaced ?? "", PRESET_SCRIPT), "utf8")).toBe("return 1;\n");
+        expect(readFileSync(join(third.replaced ?? "", PRESET_SCRIPT), "utf8")).toBe("return 2;\n");
+        expect(readPreset("tight", dir).script).toBe("return 3;\n");
+    });
+
     test("removal moves the folder to .trash and the list drops it", () => {
         const dir = root();
         savePreset({ name: "old", input: { script: "1" }, knownToolsets: known, root: dir });
@@ -131,6 +145,32 @@ describe("preset params", () => {
         expect(() => resolveParams(meta, { count: 1, loud: "yes" })).toThrow(
             'param loud takes true or false (got "yes")'
         );
+    });
+
+    // Round 2 of #745: the type check ran only on a passed value, so a default of another type saved and then ran.
+    test("a default of another type is refused at save, and at run when an older preset.json holds one", () => {
+        const dir = root();
+        expect(() =>
+            savePreset({
+                name: "bad-default",
+                input: { script: "1", params: { count: { type: "number", default: "oops" } } },
+                knownToolsets: known,
+                root: dir,
+            })
+        ).toThrow('param count takes a number, but its default is "oops"');
+        expect(() =>
+            savePreset({
+                name: "bad-default",
+                input: { script: "1", params: { title: { default: 5 } } },
+                knownToolsets: known,
+                root: dir,
+            })
+        ).toThrow("param title takes a string, but its default is 5");
+        expect(existsSync(join(dir, "bad-default"))).toBe(false);
+
+        const older = { ...meta, params: { count: { type: "number" as const, default: "oops" } } };
+        expect(() => resolveParams(older, {})).toThrow('param count takes a number, but its default is "oops"');
+        expect(resolveParams(older, { count: 2 })).toEqual({ count: 2 });
     });
 
     test("text from a command line is read as the param's type", () => {

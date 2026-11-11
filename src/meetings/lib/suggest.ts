@@ -120,6 +120,14 @@ function englishRoots(word: string): string[] {
  * slang or a new term, not a mistake, so they get no item and no question (MC3, 2026-11-06: the latest meeting had 40
  * such items at 30 %, and 8 of its 12 questions asked about them).
  */
+/**
+ * Whether a word root is known: an English word, or a word the language's word check does not call unknown. Without a
+ * word check only English words are known, so a missing check never makes every root known.
+ */
+export function knownRoot(wordCheck?: WordCheck): (word: string) => boolean {
+    return (word) => isEnglishWord(word) || (wordCheck !== undefined && wordCheck.verdict(word).class !== "unknown");
+}
+
 export function spokenOnPurpose(words: string[], known: (word: string) => boolean): Set<string> {
     const families = new Map<string, Set<string>>();
 
@@ -527,7 +535,7 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
     const keptFamilies = new Set([...keep].map(wordFamily));
     const onPurpose = spokenOnPurpose(
         heardUnknown.map((word) => word.heard),
-        (root) => isEnglishWord(root) || wordCheck?.verdict(root).class !== "unknown"
+        knownRoot(wordCheck)
     );
     const unknown = heardUnknown.filter(
         (word) => !onPurpose.has(word.heard.toLowerCase()) && !keptFamilies.has(wordFamily(word.heard))
@@ -942,6 +950,13 @@ const SWAP_HIGH = 0.7;
 const SWAP_WINDOW_LINES = 3;
 const SWAP_MIN_WINDOWS = 2;
 const SWAP_MIN_LINES = 10;
+/** The stretch itself, from its first swapped line's start to its last one's end: two windows can hold a few seconds. */
+const SWAP_MIN_SEC = 600;
+/**
+ * The swap starts and ends somewhere between two lines, and the last line of a call has only an estimated end (5 s),
+ * so the measured stretch may fall this short of 10 min (a swap from 10:00 to the end of a 20 min call measures 595 s).
+ */
+const SWAP_EDGE_SEC = 30;
 const SWAP_MAX_CONFIDENCE = 0.9;
 
 /** A stretch where the recorder put the user's voice under another label and that person's under the user's (R20). */
@@ -981,7 +996,7 @@ function swapWindowState(self: LineEvidence[], other: LineEvidence[]): SwapWindo
 /**
  * R20 over the calibrated energy: the stretches where the user's label and one platform-named label read the other
  * way round than elsewhere in the call. A run of swapped windows may hold one unclear window; a stretch starts and
- * ends at the first and last line that already reads swapped.
+ * ends at the first and last line that already reads swapped, and those lines must span 10 min or more (within `SWAP_EDGE_SEC`).
  */
 function swappedStretches(lines: LineEvidence[], selfName: string, platformLabels: Set<string>): SwapStretch[] {
     const measured = lines.filter((line) => line.energyMic !== undefined);
@@ -1047,8 +1062,16 @@ function swappedStretches(lines: LineEvidence[], selfName: string, platformLabel
                 ...self.filter((line) => line.energyMic! <= SWAP_LOW),
                 ...other.filter((line) => line.energyMic! >= SWAP_HIGH),
             ];
+            const fromSec = Math.min(...reads.map((line) => line.startSec));
+            const lastEndSec = Math.max(...reads.map((line) => line.endSec));
+
+            // Lines bunched at a window seam fill two windows in seconds: the measured stretch must last 10 min.
+            if (lastEndSec - fromSec < SWAP_MIN_SEC - SWAP_EDGE_SEC) {
+                continue;
+            }
+
             stretches.push({
-                fromSec: Math.min(...reads.map((line) => line.startSec)),
+                fromSec,
                 toSec: Math.max(...reads.map((line) => line.startSec)),
                 selfLabel,
                 otherLabel,
@@ -1269,17 +1292,25 @@ function localVoiceFinding(options: {
     return found;
 }
 
+/** A line of `label` at `sec` inside a swapped stretch under one of its two labels: R20 already said who it is. */
+function inSwap(swaps: SwapStretch[], label: string, sec: number): boolean {
+    return swaps.some(
+        (swap) => (label === swap.selfLabel || label === swap.otherLabel) && sec >= swap.fromSec && sec <= swap.toSec
+    );
+}
+
+/** The channel and energy items, and the swapped stretches (R20) that the arrival rule must leave alone too. */
 function evidenceItems(options: {
     meeting: SourceMeeting;
     evidence: MeetingEvidence;
     presence?: Presence[];
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
-}): NewItem[] {
+}): { items: NewItem[]; swaps: SwapStretch[] } {
     const selfName = options.evidence.selfName;
 
     if (!selfName || options.evidence.segments.length === 0) {
         log.debug({ selfName, segments: options.evidence.segments.length }, "no channel evidence");
-        return [];
+        return { items: [], swaps: [] };
     }
 
     // Teams attendance names the user by email; here the user is always `selfName`.
@@ -1329,13 +1360,7 @@ function evidenceItems(options: {
         options.meeting.speakers.filter((speaker) => speaker.origin === "platform").map((speaker) => speaker.name)
     );
     const swaps = swappedStretches(lines, selfName, platformLabels);
-    const swapped = (line: LineEvidence) =>
-        swaps.some(
-            (swap) =>
-                (line.label === swap.selfLabel || line.label === swap.otherLabel) &&
-                line.startSec >= swap.fromSec &&
-                line.startSec <= swap.toSec
-        );
+    const swapped = (line: LineEvidence) => inSwap(swaps, line.label, line.startSec);
 
     for (const swap of swaps) {
         items.push(...swapItems(swap, selfName));
@@ -1457,7 +1482,7 @@ function evidenceItems(options: {
     }
 
     log.debug({ lines: lines.length, items: items.length, swaps }, "evidence items");
-    return items;
+    return { items, swaps };
 }
 
 /** Two items say the same thing: the same kind on the same label, time or word. */
@@ -1564,20 +1589,20 @@ export function suggestItems(options: {
     }
 
     if (options.rules.includes("evidence") && options.evidence) {
-        found.push(
-            ...evidenceItems({
-                meeting,
-                evidence: options.evidence,
-                presence: options.presence,
-                energyMicShare: options.energyMicShare,
-            }),
-            ...arrivalItems({
-                entries: meeting.transcript,
-                lines: lineEvidence(meeting.transcript, options.evidence, options.presence, options.energyMicShare),
-                presence: options.presence,
-                speakingReadings: options.evidence.speaking,
-            })
-        );
+        const channel = evidenceItems({
+            meeting,
+            evidence: options.evidence,
+            presence: options.presence,
+            energyMicShare: options.energyMicShare,
+        });
+        const arrivals = arrivalItems({
+            entries: meeting.transcript,
+            lines: lineEvidence(meeting.transcript, options.evidence, options.presence, options.energyMicShare),
+            presence: options.presence,
+            speakingReadings: options.evidence.speaking,
+        });
+        // A greeting inside a swapped stretch is under a swapped label: R20 already names its speaker.
+        found.push(...channel.items, ...arrivals.filter((item) => !inSwap(channel.swaps, item.label, item.fromSec)));
     }
 
     found.splice(0, found.length, ...found.map(unlabeled.restore));

@@ -1,16 +1,20 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
-import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
+import * as serviceHost from "@genesiscz/utils/rpc/service-host";
+import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { Command } from "commander";
 import { z } from "zod";
+import { registerServeCommand } from "../../commands/serve";
 import { MeetingComments } from "../comments";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
@@ -665,6 +669,55 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
     });
 });
 
+describe("the socket client's subscription", () => {
+    // The dedicated service now supports unsubscribe. Stopping the last listener must stop events on the wire;
+    // an empty subscribe would still hear every meeting.
+    test("the last listener's stop leaves the connection subscribed to nothing, not to every event", async () => {
+        const { service } = await startService();
+        const sent = spyOn(RpcSocketClient.prototype, "call");
+        let unsubscribe: unknown;
+
+        try {
+            const client = await SocketMeetingsClient.connect(service.entry, hello);
+            closing.push(() => client.close());
+            const stop = await client.subscribe({ meeting: REVIEW.id, events: ["meeting.changed"] }, () => {});
+            stop();
+            // The socket answers in order: the stop's unsubscribe went out before this call.
+            await client.call("meetings.list", { limit: 1 });
+            unsubscribe = sent.mock.calls.filter(([method]) => method === UNSUBSCRIBE).at(-1)?.[1];
+        } finally {
+            sent.mockRestore();
+        }
+
+        expect(unsubscribe).toEqual({});
+
+        // What unsubscribe hears on the wire, beside what the old empty subscription heard.
+        const heard = async (stop: boolean): Promise<number> => {
+            const raw = await RpcSocketClient.connect({
+                socket: service.entry.socket,
+                logScope: "test",
+                label: "test",
+            });
+            closing.push(() => raw.close());
+            let count = 0;
+            raw.onNotification(() => {
+                count += 1;
+            });
+            await raw.call("hello", hello);
+            await raw.call("subscribe", { events: [] });
+            if (stop) {
+                await raw.call(UNSUBSCRIBE, {});
+            }
+            service.emit("meeting.changed", { meeting: RETRO.id, parts: ["show"] });
+            await raw.call("meetings.list", { limit: 1 });
+            return count;
+        };
+
+        expect(await heard(false)).toBe(1);
+        expect(await heard(true)).toBe(0);
+    });
+});
+
 describe("the Meetings service's connections", () => {
     test("hello records who the caller is; another protocol or another checkout's code is refused", async () => {
         const { service } = await startService();
@@ -1160,6 +1213,45 @@ function normalized(examples: Example[]): unknown {
     );
 }
 
+// eve PR #754 r2: --detach always started exactly `meetings serve`, so `--detach --no-idle` got a service that exits
+// after ten idle minutes.
+describe("tools meetings serve --detach", () => {
+    test.each([
+        [
+            ["serve", "--detach", "--no-idle"],
+            ["meetings", "serve", "--no-idle"],
+        ],
+        [
+            ["serve", "--detach"],
+            ["meetings", "serve"],
+        ],
+    ])("%p starts %p", async (args, command) => {
+        const entry: serviceHost.ServiceEntry = {
+            version: 1,
+            protocol: 1,
+            pid: 1,
+            socket: "/fixture.sock",
+            startedAt: "2026-11-10T00:00:00.000Z",
+            codeStamp: 0,
+        };
+        const launch = spyOn(serviceHost, "launchService").mockResolvedValue({ status: "running", entry });
+        const result = spyOn(out, "result").mockImplementation(() => undefined);
+
+        try {
+            const program = new Command().exitOverride();
+            registerServeCommand(program);
+            await program.parseAsync(args, { from: "user" });
+
+            expect(launch).toHaveBeenCalledTimes(1);
+            expect(launch.mock.calls[0][0].command).toEqual(command);
+            expect(result).toHaveBeenCalledWith(entry);
+        } finally {
+            launch.mockRestore();
+            result.mockRestore();
+        }
+    });
+});
+
 describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
     test("a live service on the scratch store answers every example as the fixture holds it", async () => {
         const captured = await captureExamples();
@@ -1246,7 +1338,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
 
     test("service.json names the service's protocol and code", async () => {
         const { dir } = await startService();
-        const entry = SafeJSON.parse(await Bun.file(serviceEntryPath(dir)).text(), { strict: true });
+        const entry = SafeJSON.parse(await Bun.file(serviceHost.serviceEntryPath(dir)).text(), { strict: true });
 
         expect(entry).toMatchObject({ version: 1, protocol: MEETINGS_PROTOCOL, code: CODE });
     });

@@ -11,6 +11,9 @@ public struct FocusSettings: Equatable {
 
     public enum TitleMode: String { case full, appOnly = "app-only", hashed }
     public enum URLMode: String { case off, host, hostPath = "host+path" }
+    /// When the timer window shows. `automatic` comes back as it was left and shows itself when a phase starts or a
+    /// nudge fires; `onRequest` shows only when opened (menu bar, shortcut, `genesis focus hud`); `off` never shows.
+    public enum TimerWindow: String, CaseIterable { case automatic, onRequest = "on-request", off }
 
     public struct ProjectRule: Equatable {
         public var name: String
@@ -37,6 +40,7 @@ public struct FocusSettings: Equatable {
     public var interruptionThresholdSec = 45
     /// `time` shows the countdown, `dot` only the phase dot, `off` removes the item.
     public var menuBarStyle = "time"
+    public var timerWindow: TimerWindow = .automatic
     public var excludedBundles: Set<String> = FocusSettings.defaultExcludedBundles
     public var excludedHosts: Set<String> = []
     public var projects: [ProjectRule] = []
@@ -74,6 +78,7 @@ public struct FocusSettings: Equatable {
         if let raw = focus["retentionDays"] { settings.retentionDays = retentionDays(stored: raw) }
         if let value = focus["interruptionThresholdSec"] as? Int, value > 0 { settings.interruptionThresholdSec = value }
         if let raw = focus["menuBarStyle"] as? String, ["time", "dot", "off"].contains(raw) { settings.menuBarStyle = raw }
+        if let raw = focus["timerWindow"] as? String, let mode = TimerWindow(rawValue: raw) { settings.timerWindow = mode }
         if let list = focus["excludedBundles"] as? [String] {
             settings.excludedBundles = Set(list).union(defaultExcludedBundles)
         }
@@ -185,6 +190,7 @@ extension FocusSettings {
             "interruptionThresholdSec": interruptionThresholdSec,
             "retentionDays": retentionDays,
             "menuBarStyle": menuBarStyle,
+            "timerWindow": timerWindow.rawValue,
             "excludedBundles": excludedBundles.subtracting(Self.defaultExcludedBundles).sorted(),
             "excludedHosts": excludedHosts.sorted(),
             "projects": projects.map(\.storedFields),

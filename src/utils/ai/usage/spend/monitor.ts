@@ -246,13 +246,15 @@ interface AgentCache {
  * Bumped to 9 when grok's recorded cost stopped being its list price and Claude's one-hour cache
  * writes got their own rate: a cached row holds a cost computed under the old rules.
  * Bumped to 10 when GPT-6.1 Terra got catalog prices: a Terra row cached before them holds a $0 cost.
+ * Bumped to 11 when a Claude fast-mode call got its fast-tier rates and Fable 5.2 got catalog prices: a fast row
+ * cached before holds a standard-rate cost, and a Fable 5.2 row a $0 cost.
  * Bumped to 5 for Astra context/fast pricing and Codex cache-write tokens.
  * Previously bumped to 4 when file rows gained `accountId`: a v3 row has no account tag,
  * and reporting it under "(unbound)" would be a guess. Discarding the file
  * costs one full re-parse and gets every row tagged from the live root map.
  */
 interface MonitorCache {
-    version: 10;
+    version: 11;
     agents: ByAgent<AgentCache>;
 }
 
@@ -276,7 +278,7 @@ function freshAgentCache(): AgentCache {
 
 function freshCache(): MonitorCache {
     return {
-        version: 10,
+        version: 11,
         agents: byHarness(() => freshAgentCache()),
     };
 }
@@ -325,7 +327,7 @@ function loadCache(storage: Storage): MonitorCache {
     try {
         const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as MonitorCache;
 
-        if (raw?.version === 10 && raw.agents) {
+        if (raw?.version === 11 && raw.agents) {
             const cache = freshCache();
 
             for (const id of AGENT_IDS) {

@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
@@ -14,6 +15,7 @@ import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import type { cutClip } from "./audio";
 import { writeQuestionClips } from "./listen-clips";
+import * as moments from "./moment";
 import {
     clipMoment,
     clipPlan,
@@ -627,6 +629,51 @@ describe("tools meetings play: what the flags name", () => {
             "--at, --item and --target each name what to play; give one of them.",
         ]);
         expect(await refusal("m1", "--item", "Q1", "--to", "1:00")).toEqual(["--to ends the range that --at starts."]);
+    });
+
+    // An agent adds --no-start to stay side-effect free: with --clip beside it the command cut a WAV into moments/.
+    test("--no-start plans the Moment and cuts nothing, even with --clip", async () => {
+        // The command reads the default store, which the test preload keeps in a sandbox.
+        const store = new MeetingStore();
+        const saved = await store.create(
+            { title: "Planning", start: now, createdBy: "new", items: meeting.items },
+            { command: "new", change: "test" }
+        );
+        const target: MomentTarget = { kind: "range", fromSec: 10, toSec: 20 };
+        const planned = { ...planMoment({ record: saved, transcript, listen, target }), meeting: saved.id };
+        const open = spyOn(moments, "openMoment").mockResolvedValue(planned);
+        const cut = spyOn(moments, "clipMoment");
+        const printed: string[] = [];
+        const errors: string[] = [];
+        const result = spyOn(out, "result").mockImplementation((text: string) => {
+            printed.push(text);
+        });
+        const err = spyOn(ui, "err").mockImplementation((line: string) => {
+            errors.push(line);
+        });
+
+        let calls = { open: 0, cut: 0 };
+
+        try {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+            await program.parseAsync(
+                ["play", saved.id, "--target", SafeJSON.stringify(target), "--clip", "--no-start", "--json"],
+                { from: "user" }
+            );
+            // Counted before the restore, which clears them.
+            calls = { open: open.mock.calls.length, cut: cut.mock.calls.length };
+        } finally {
+            open.mockRestore();
+            cut.mockRestore();
+            result.mockRestore();
+            err.mockRestore();
+        }
+
+        expect(errors).toEqual([]);
+        expect(calls).toEqual({ open: 1, cut: 0 });
+        expect(SafeJSON.parse(printed[0]!)).toEqual(planned);
+        expect(readdirSync(store.folder(saved.id))).not.toContain("moments");
     });
 
     test("--target is checked against the Moment targets before any meeting is read", async () => {

@@ -939,12 +939,12 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
     }
 
     /// The open decision card as a session's inbox draws it, rendered in a window that is never ordered front: the
-    /// Context section folded with Show all, the Code section with the cited path and its lines, the confidence chip,
+    /// Context section folded with Show more, the Code section with the cited path and its lines, the confidence chip,
     /// the Recommended badge, the reason on option b and the agent's pick under option a. Code set to Hide leaves the
-    /// Code section out; Context set to Open drops Show all for Show less.
+    /// Code section out; Context set to Open drops Show more for Show less.
     func testTheOpenDecisionCardDrawsItsContextAndCode() throws {
         let text = try decisionCardText(preferences: [:])
-        for expected in ["Context", "Show all", "Code", "tool-rules.ts:9", "High confidence", "Recommended",
+        for expected in ["Context", "Show more", "Code", "tool-rules.ts:9", "High confidence", "Recommended",
                          "RM_USER_VERB", "every delete would ask", "it matches both of your instructions"] {
             XCTAssertTrue(text.contains(expected), "\(expected) in: \(text)")
         }
@@ -954,6 +954,35 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertFalse(hidden.contains("tool-rules.ts:9"), hidden)
         XCTAssertTrue(hidden.contains("Show less"), hidden)
         XCTAssertTrue(hidden.contains("types the command in a terminal"), "open shows the whole context: \(hidden)")
+    }
+
+    /// A decision quoted in another one's context becomes a blockquote of plain lines: its options are never list
+    /// items under the card's own option rows, and the quote ends at the prose after them.
+    func testAQuotedDecisionInAContextIsABlockquoteOfPlainLines() {
+        let context = """
+        I posted both questions.
+        ## ❓ [DECISION 11](https://example.org/d/11): How should T3 show the plan?
+        Claude Code reports the plan only for a stored login.
+
+        - **a)** A T3 change that only you would use.
+        - **b)** A GenesisTools change.
+        - **c)** Leave it.
+
+        I recorded [❓ DECISION 2](https://example.org/d/2): as a).
+        """
+        let quoted = DecisionContextSection.quotingDecisions(context)
+        XCTAssertEqual(quoted, """
+        I posted both questions.
+        > Quoted: [DECISION 11](https://example.org/d/11): How should T3 show the plan?
+        > Claude Code reports the plan only for a stored login.
+        >
+        > a) A T3 change that only you would use.
+        > b) A GenesisTools change.
+        > c) Leave it.
+
+        I recorded [❓ DECISION 2](https://example.org/d/2): as a).
+        """)
+        XCTAssertEqual(DecisionContextSection.quotingDecisions("No quote here: a) b)."), "No quote here: a) b).")
     }
 
     /// A file link in a decision's notes or in the agent's pick lists its ways to open on a right-click, as the card's

@@ -120,6 +120,12 @@ describe("loadImportPolicy", () => {
         expect(() => loadImportPolicy(policyFile("[]"))).toThrow("JSON object");
     });
 
+    it("says a policy that cannot be read cannot be read, not that it is not valid JSON", () => {
+        const path = mkdtempSync(join(tmpdir(), "node-repl-trust-dir-"));
+        expect(() => loadImportPolicy(path)).toThrow(`${path}: cannot be read (`);
+        expect(() => loadImportPolicy(path)).not.toThrow("not valid JSON");
+    });
+
     it("names the file when it is not valid JSON", () => {
         const path = policyFile("{bad json");
         expect(() => loadImportPolicy(path)).toThrow(`${path}: not valid JSON`);

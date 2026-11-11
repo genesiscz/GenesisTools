@@ -411,6 +411,24 @@ final class ApprovalVerifierTests: XCTestCase {
         XCTAssertTrue(model.answered)
     }
 
+    /// Two set-aside copies of one folder and the folder back in place are three checkboxes, each with its own label and
+    /// identifier, so VoiceOver and an identifier-driven script can tell which copy a tick deletes.
+    func testRowsOfOnePathHaveTheirOwnTickLabelAndIdentifier() {
+        let rows = [
+            ApprovalItem(path: "/w/F13", location: "/aside/1/F13", name: "F13", folder: "~/w", size: nil, reason: "r", gone: false,
+                         aside: true, isFolder: true),
+            ApprovalItem(path: "/w/F13", location: "/aside/2/F13", name: "F13", folder: "~/w", size: nil, reason: "r", gone: false,
+                         aside: true, isFolder: true),
+            ApprovalItem(path: "/w/F13", name: "F13", folder: "~/w", size: nil, reason: "r", gone: false, isFolder: true),
+        ]
+        XCTAssertEqual(rows.map(\.tickLabel), [
+            "Delete F13, set aside at /aside/1/F13", "Delete F13, set aside at /aside/2/F13", "Delete F13 in ~/w",
+        ])
+        XCTAssertEqual(rows.map { $0.tickIdentifier(in: "rm-approve") }, [
+            "rm-approve-tick-/aside/1/F13", "rm-approve-tick-/aside/2/F13", "rm-approve-tick-/w/F13",
+        ])
+    }
+
     func testPendingIntentCannotApproveAnEmptySelection() {
         let item = ApprovalItem(path: "/tmp/example", name: "example", folder: "/tmp", size: nil,
                                 reason: "test", gone: false, isFolder: false)

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://github.com/genesiscz/GenesisTools/security/advisories/new
+    about: Report a vulnerability or a leaked secret in private. Do not open a public issue.
+  - name: Contributing guide
+    url: https://github.com/genesiscz/GenesisTools/blob/master/CONTRIBUTING.md
+    about: How to set up, test and send a pull request.

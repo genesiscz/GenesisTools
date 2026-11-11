@@ -250,6 +250,8 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
         }
         // A review window shows one review: its own renderer, and no spare kept for a next one.
         let model = ReviewModel(repo: repo, options: options, session: launch.session, renderer: PierreWebDiffRenderer())
+        // `--style` is a pick for this review: the pane's width no longer changes it.
+        if let style = launch.style { model.setStyle(style) }
         model.scope = scope
         // A PR without a local worktree (`openInReviewWindow`): its files open on the host, as in the hub.
         model.remoteHead = ReviewRemoteHead(launchArguments: launch.args)
@@ -555,6 +557,14 @@ final class ReviewModel: ObservableObject {
     @Published var collapsed: Set<String> = [] {
         didSet { fileListRowsCache = nil }
     }
+    /// Folders the reader opened that started folded by their size (`HubFileTreeFold`); they stay open.
+    @Published var opened: Set<String> = [] {
+        didSet { fileListRowsCache = nil }
+    }
+    /// A folder with more changed files than this starts folded (Settings → Hub → Panes → Files; 0 never folds).
+    @Published var foldAbove = HubFileTreeFold.stored(in: HubDefaults.store) {
+        didSet { if foldAbove != oldValue { fileListRowsCache = nil } }
+    }
     /// Set only when the diff moves to a file on its own (a find match), so a click in the list never scrolls the list.
     @Published var sidebarScrollTarget: String?
     /// PR thread ids picked for "Fix threads": the cards' Fix checkboxes, the threads list, and x.
@@ -663,6 +673,8 @@ final class ReviewModel: ObservableObject {
     /// Root folders that have a fresh answer for this scope: a cached snapshot never replaces one.
     private var freshFolders: Set<String> = []
     var showingCache: Bool { !cachedFolders.isEmpty }
+    /// The scope on screen has its files on the page: the page answered the last push of them (HubBench `commitlink`).
+    var diffOnPage: Bool { rendered && renderStart == nil && !files.isEmpty }
     private var rendered = false
     /// A file asked for by `reveal(path:)` before the diff had it.
     private(set) var pendingRevealPath: String?
@@ -696,10 +708,62 @@ final class ReviewModel: ObservableObject {
             if let error = store.saveError { self.notice = error }
             if self.builtRenderer != nil { self.pushComments() }
         }
+        // The hub's session header has the one reload button of the session view: its click reloads this
+        // Changes pane too, so the diff toolbar shows no second one (`headerReloads`).
+        if let session {
+            sessionReloadObserver = NotificationCenter.default.addObserver(forName: Self.sessionReload, object: nil, queue: .main) { [weak self] note in
+                guard let self, self.embedded, note.object as? String == session else { return }
+                self.reloadAll()
+            }
+            sessionHeaderObserver = NotificationCenter.default.addObserver(forName: Self.sessionHeaderChanged, object: nil, queue: .main) { [weak self] note in
+                guard let self, note.object as? String == session else { return }
+                self.objectWillChange.send()
+            }
+        }
     }
 
     deinit {
         if let commentsObserver { NotificationCenter.default.removeObserver(commentsObserver) }
+        if let sessionReloadObserver { NotificationCenter.default.removeObserver(sessionReloadObserver) }
+        if let sessionHeaderObserver { NotificationCenter.default.removeObserver(sessionHeaderObserver) }
+    }
+
+    /// Posted by the hub's session header reload, with the session id as the object.
+    static let sessionReload = Notification.Name("hub.session.reload")
+    private var sessionReloadObserver: NSObjectProtocol?
+    private var sessionHeaderObserver: NSObjectProtocol?
+    /// Posted when a hub session header comes on screen or leaves it, with the session id as the object.
+    static let sessionHeaderChanged = Notification.Name("hub.session.header")
+    /// Hub session headers on screen, by session id (a count: a session can show in two places at once).
+    private static var headersOnScreen: [String: Int] = [:]
+
+    /// The hub's session detail tells which session's header (and so its reload button) is on screen.
+    static func sessionHeader(_ id: String, onScreen: Bool) {
+        let count = (headersOnScreen[id] ?? 0) + (onScreen ? 1 : -1)
+        headersOnScreen[id] = count > 0 ? count : nil
+        NotificationCenter.default.post(name: sessionHeaderChanged, object: id)
+    }
+
+    /// The session's header is on screen beside this diff: its reload covers the diff too, so the diff toolbar
+    /// has none of its own. With the transcript pane hidden, the toolbar keeps its reload.
+    var headerReloads: Bool {
+        guard embedded, let session else { return false }
+        return Self.headersOnScreen[session] != nil
+    }
+
+    /// The reload button: the diff, and on a PR its threads and stored agent reviews as well, so one button
+    /// refreshes everything the window shows (the PR bar had a second one).
+    func reloadAll() {
+        reload()
+        if let pr {
+            pr.load(noCache: true)
+            lookupStoredProposals()
+        }
+    }
+
+    /// The reload button's tooltip, naming what it reloads.
+    var reloadTooltip: String {
+        pr == nil ? "Reload the diff" : "Reload the diff, the PR threads and the stored agent reviews"
     }
 
     /// Built on first use, not in `init`: the hub makes a review for every session it selects, even
@@ -752,7 +816,8 @@ final class ReviewModel: ObservableObject {
         if let fileListRowsCache {
             return fileListRowsCache
         }
-        let made = ChangedFilesTree.rows(filteredFiles, tree: fileListIsTree, collapsed: collapsed, roots: fileListTreeRoots)
+        let made = ChangedFilesTree.rows(
+            filteredFiles, tree: fileListIsTree, collapsed: collapsed, roots: fileListTreeRoots, foldAbove: foldAbove, opened: opened)
         fileListRowsCache = made
         return made
     }
@@ -1078,6 +1143,19 @@ final class ReviewModel: ObservableObject {
         }
     }
 
+    /// The scope as words in a sentence: "uncommitted changes", "commit 1a2b3c4", "the last 3 turns".
+    var scopeWords: String {
+        switch scope {
+        case .uncommitted: return "uncommitted changes"
+        case .unstaged: return "unstaged changes"
+        case .staged: return "staged changes"
+        case .lastTurns(let count): return count == 1 ? "the last turn's changes" : "the last \(count) turns' changes"
+        case .commit(let sha, _): return "commit \(sha.prefix(7))"
+        case .branch: return "the branch vs \(base ?? "its base")"
+        case .range(_, _, let label, _), .compare(_, _, let label, _): return label
+        }
+    }
+
     /// Loads every shown root again (a new scope, new roots, the refresh button).
     func reload() {
         refsStale = true
@@ -1254,6 +1332,10 @@ final class ReviewModel: ObservableObject {
                     if !results.isEmpty {
                         self.lastLoaded = Date()
                         self.apply(results)
+                        for refused in self.largeAsks.answer(results, readWith: fullFiles) {
+                            HubPerf.log("review.showLarge \(refused.fileID) failed: \(refused.reason)")
+                            self.renderer.largeFileFailed(id: refused.fileID, reason: refused.reason)
+                        }
                     }
                 }
                 if self.reloadAgain {
@@ -1665,6 +1747,8 @@ final class ReviewModel: ObservableObject {
     private(set) var branchTarget: String?
     /// Files skipped for their size that the reader asked to see anyway, repository-relative, per root folder.
     private var fullFiles: [String: Set<String>] = [:]
+    /// Those asks until a load answers them: a failed load tells the page, so its button does not stay on "Loading…".
+    private var largeAsks = ReviewLargeAsks()
 
     /// Sets `branchTarget` from a branch name; reloads when it changes the base in use.
     func useBranchTarget(_ branch: String?) {
@@ -1784,6 +1868,21 @@ final class ReviewModel: ObservableObject {
         restartLoad()
     }
 
+    /// The same diff at a newer push or base of its PR (`PRsModel.moveHead`): the files on screen stay until the new
+    /// answer replaces them, so the pane never blanks, and the page keeps its place and parses again only the files
+    /// whose text changed (web/diff-viewer `parsed`). git reads the new diff in full, so a force push or a moved base
+    /// shows as it is. `head` replaces the remote head (a fresh fetch); nil moves it with the scope, as `setScope` does.
+    func follow(_ next: DiffScope, remoteHead head: ReviewRemoteHead?) {
+        if let head { remoteHead = head }
+        guard next != scope else { return }
+        scope = next
+        if head == nil { remoteHead = remoteHead?.following(next) }
+        workingMarks = [:]
+        pendingRefresh = [:]
+        updateNews()
+        reload()
+    }
+
     /// A new question for the same window (scope, base, checkout): nothing of the old answer stays.
     private func restartLoad() {
         defer { updateNews() }
@@ -1799,9 +1898,31 @@ final class ReviewModel: ObservableObject {
         reload()
     }
 
+    /// The reader's pick for this review (header button, View menu): from then on neither the width nor the Diff
+    /// layout setting changes it.
     func setStyle(_ style: DiffViewOptions.Style) {
+        styleChosen = true
+        guard options.diffStyle != style else { return }
         options.diffStyle = style
-        DiffViewOptions.remember(style)
+        renderer.apply(options)
+    }
+
+    /// The reader picked Split or Unified in this review; a change of the Diff layout setting clears it.
+    private var styleChosen = false
+    /// The last width the diff pane reported: too narrow for two sides of `HubDiffLayout.autoSideWidth`.
+    private var narrowForSplit = false
+
+    /// The Diff layout setting and the pane's width pick the style, until the reader picks one here. `narrow`: the
+    /// pane crossed `HubDiffLayout.autoSplitBelow`; `layout`: the setting changed, which also undoes the reader's pick.
+    func fitStyle(narrow: Bool? = nil, layout changed: HubDiffLayout? = nil, store: UserDefaults = HubDefaults.store) {
+        if let narrow { narrowForSplit = narrow }
+        if changed != nil { styleChosen = false }
+        guard !styleChosen else { return }
+        let layout = changed ?? HubDiffLayout.stored(in: store)
+        let style: DiffViewOptions.Style = layout.unified(narrow: narrowForSplit) ? .unified : .split
+        guard options.diffStyle != style else { return }
+        options.diffStyle = style
+        HubPerf.log("review.style \(style.rawValue) (\(layout.rawValue), pane \(narrowForSplit ? "narrow" : "wide"))")
         renderer.apply(options)
     }
 
@@ -2115,8 +2236,13 @@ final class ReviewModel: ObservableObject {
             MainActor.assumeIsolated { PRRefMenu.open(url, model: self) }
         case .showLargeFile(let id):
             // The reader asked for a file skipped for its size: read it up to GitWorkingTreeSource.maxShownBytes.
-            guard let found = locate(fileID: id) else { return }
+            guard let found = locate(fileID: id) else {
+                HubPerf.log("review.showLarge unknown file \(id)")
+                renderer.largeFileFailed(id: id, reason: "the file is no longer in this diff")
+                return
+            }
             fullFiles[found.root.folder, default: []].insert(found.file.path)
+            largeAsks.add(fileID: id, path: found.file.path, folder: found.root.folder)
             HubPerf.log("review.showLarge \(found.file.path)")
             reload()
         case .focusFile(let id):
@@ -2787,6 +2913,8 @@ struct ReviewRootView: View {
     private static let contextMinWidth: CGFloat = 320
     /// Below this width long diff lines wrap, unless the reader chose (`ReviewModel.fitWrap`).
     static let wrapBelow: CGFloat = 680
+    /// Settings, Hub, Panes, Diff layout: read here so a change reaches the open review at once.
+    @AppStorage(HubDiffLayout.key, store: HubDefaults.store) private var diffLayout = HubDiffLayout.auto.rawValue
 
     private var showsContext: Bool { !model.embedded }
     private var contextSqueezed: Bool { width > 0 && width * Self.contextFraction < Self.contextMinWidth }
@@ -2833,6 +2961,10 @@ struct ReviewRootView: View {
                 .freezesWidthWhileResizing(heavy: false, neighbourOf: "review.files")
                 // The diff's own width decides; only a crossing of the threshold re-renders.
                 .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < Self.wrapBelow }) { model.fitWrap(narrow: $0) }
+                .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < HubDiffLayout.autoSplitBelow }) {
+                    model.fitStyle(narrow: $0)
+                }
+                .onChange(of: diffLayout) { _, raw in model.fitStyle(layout: HubDiffLayout(rawValue: raw) ?? .auto) }
             if showsFileList {
                 ResizableSidePanel(key: "review.files", edge: .trailing, title: "Files", defaultWidth: 320,
                                    minWidth: Self.listMinWidth, maxWidth: max(Self.listMinWidth, room),
@@ -3152,8 +3284,8 @@ private struct ReviewHeader: View {
                     .font(.system(size: 12, weight: .semibold))
                     .fixedSize()
             }
-            .disabled(model.unsentCount == 0)
-            .instantTooltip(model.unsentCount > 0 ? "Pick the agent session that gets the \(Plural.count(model.unsentCount, "queued comment"))" : "No comments waiting for an agent")
+            .modifier(DisabledReason(reason: sendDisabledReason,
+                                     tooltip: "Pick the agent session that gets the \(Plural.count(model.unsentCount, "queued comment"))"))
             .popover(isPresented: live ? $pickingAgent : .constant(false), arrowEdge: .bottom) {
                 AgentSendForm(model: model) { pickingAgent = false }
             }
@@ -3164,21 +3296,58 @@ private struct ReviewHeader: View {
                     .font(.system(size: 12, weight: .semibold))
                     .fixedSize()
             }
-            .instantTooltip(model.options.diffStyle == .split ? "Side by side (click for one column)" : "One column (click for side by side)")
-            HStack(spacing: 0) {
-                IconButton(systemName: "textformat.size.smaller", tooltip: "Smaller diff text") { model.stepFont(-1) }
-                Text(verbatim: "\(Int(model.options.fontSize))")
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundColor(ReviewPalette.dim)
-                    .frame(width: 18)
-                IconButton(systemName: "textformat.size.larger", tooltip: "Larger diff text") { model.stepFont(1) }
-            }
+            .instantTooltip(model.options.diffStyle == .split ? "Side by side (click for one column in this review; Settings, Hub, Panes sets the default)" : "One column (click for side by side in this review; Settings, Hub, Panes sets the default)")
             IconButton(
                 systemName: model.options.wrap ? "text.alignleft" : "arrow.left.and.right.text.vertical",
                 tooltip: model.options.wrap ? "Long lines wrap (click to scroll instead)" : "Long lines scroll (click to wrap)"
             ) { model.toggleWrap() }
             findButton
-            IconButton(systemName: "arrow.clockwise", tooltip: "Reload the diff") { model.reload() }
+            // The text size is a rare setting: one menu, not a stepper in the row ("A 13 A" read as three letters).
+            textSizeMenu
+            reloadButton
+    }
+
+    /// Why Send is off, or nil while it works. A greyed Send with no reason was a dead end.
+    private var sendDisabledReason: String? {
+        model.unsentCount > 0 ? nil : "Nothing to send yet. Comment on a line of the diff first; Send then gives the queued comments to an agent."
+    }
+
+    /// The one reload of what this view shows. In the hub's session view the session header's reload does it, so
+    /// none here (two reload buttons on one screen, hub UX pass C16).
+    @ViewBuilder
+    private var reloadButton: some View {
+        if !model.headerReloads {
+            IconButton(systemName: "arrow.clockwise", tooltip: model.reloadTooltip) { model.reloadAll() }
+        }
+    }
+
+    /// "13" with the text-size glyph: a menu with larger, smaller and the standard size. The View menu has the
+    /// same three with ⌘+, ⌘− and ⌘0 in the hub.
+    private var textSizeMenu: some View {
+        let model = model
+        let size = Int(model.options.fontSize)
+        let standard = Int(DiffViewOptions().fontSize)
+        let keys = model.embedded ? " (⌘+, ⌘−, ⌘0 in the View menu)" : ""
+        return MenuButton(style: .genHoverPlain()) {
+            [
+                .action("Larger Text", enabled: size < 20) { model.stepFont(1) },
+                .action("Smaller Text", enabled: size > 10) { model.stepFont(-1) },
+                .divider,
+                .action("Standard Size (\(standard) pt)", checked: size == standard) { model.stepFont(Double(standard - size)) },
+            ]
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "textformat.size")
+                    .font(.system(size: 11))
+                Text(verbatim: "\(size)")
+                    .font(.system(size: 11, design: .monospaced))
+            }
+            .foregroundColor(ReviewPalette.dim)
+            .fixedSize()
+        }
+        .fixedSize()
+        .instantTooltip("Diff text size: \(size) pt. Click for larger, smaller or the standard size\(keys).")
+        .accessibilityLabel(Text("Diff text size, \(size) points"))
     }
 
     private var findButton: some View {
@@ -3187,10 +3356,10 @@ private struct ReviewHeader: View {
 
     private func sendButton(live: Bool) -> some View {
         IconButton(systemName: "paperplane",
-                   tooltip: model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "queued comment")) to an agent…" : "No comments waiting for an agent") {
+                   tooltip: model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "queued comment")) to an agent…" : "Send to an agent") {
             pickingAgent = true
         }
-        .disabled(model.unsentCount == 0)
+        .modifier(DisabledReason(reason: sendDisabledReason))
         .popover(isPresented: live ? $pickingAgent : .constant(false), arrowEdge: .bottom) {
             AgentSendForm(model: model) { pickingAgent = false }
         }
@@ -3210,7 +3379,7 @@ private struct ReviewHeader: View {
         ) { model.toggleWrap() }
         findButton
         viewMenu
-        IconButton(systemName: "arrow.clockwise", tooltip: "Reload the diff") { model.reload() }
+        reloadButton
     }
 
     /// The narrowest pane: send, and everything else in one menu.
@@ -3230,11 +3399,12 @@ private struct ReviewHeader: View {
                 .action("One column", checked: model.options.diffStyle == .unified) { model.setStyle(.unified) },
                 .action("Wrap long lines", checked: model.options.wrap) { model.toggleWrap() },
                 .divider,
-                .action("Larger text") { model.stepFont(1) },
-                .action("Smaller text") { model.stepFont(-1) },
+                .action("Larger Text") { model.stepFont(1) },
+                .action("Smaller Text") { model.stepFont(-1) },
+                .action("Standard Text Size") { model.stepFont(DiffViewOptions().fontSize - model.options.fontSize) },
                 .divider,
                 .action("Find in the Diff…") { model.find() },
-                .action("Reload") { model.reload() },
+                .action(model.pr == nil ? "Reload" : "Reload the Diff and Threads") { model.reloadAll() },
             ]
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -3244,6 +3414,41 @@ private struct ReviewHeader: View {
         .fixedSize()
         .instantTooltip("Layout, wrap, text size, find, reload")
         .accessibilityLabel(Text("Layout, wrap, text size, find, reload"))
+    }
+}
+
+/// A control that says why it is off. SwiftUI gives a disabled view no hover, so a tooltip inside it never shows
+/// (a greyed Send with no reason, hub UX pass C24): while it is off, the reason sits on a clear layer over it.
+/// `tooltip` is the hover text while it is on.
+struct DisabledReason: ViewModifier {
+    let reason: String?
+    var tooltip: String?
+
+    func body(content: Content) -> some View {
+        content
+            .disabled(reason != nil)
+            .modifier(OptionalTooltip(text: reason == nil ? tooltip : nil))
+            .overlay {
+                if let reason {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .instantTooltip(reason)
+                }
+            }
+            .accessibilityHint(Text(verbatim: reason ?? ""))
+    }
+}
+
+/// `.instantTooltip` when there is a text.
+private struct OptionalTooltip: ViewModifier {
+    let text: String?
+
+    func body(content: Content) -> some View {
+        if let text {
+            content.instantTooltip(text)
+        } else {
+            content
+        }
     }
 }
 
@@ -3426,6 +3631,7 @@ struct ScopeMenu: View {
         switch model.scope {
         case .branch: return "Branch vs \(model.base ?? "base")"
         case .commit(let sha, let title): return "\(sha.prefix(7)) \(title.prefix(40))"
+        case .uncommitted, .unstaged, .staged: return "\(model.scopeWords) in \(model.repo.path)"
         default: return model.scope.title
         }
     }
@@ -3435,6 +3641,9 @@ struct ScopeMenu: View {
         switch model.scope {
         case .branch: return ("Branch", "vs \(model.base ?? "base")", false)
         case .commit(let sha, let title): return (String(sha.prefix(7)), title, true)
+        // The working tree's scopes name the checkout: "Uncommitted" alone sat over a PR's threads and read as the
+        // PR's diff (hub UX pass C49).
+        case .uncommitted, .unstaged, .staged: return (model.scope.title, "in \(model.repo.lastPathComponent)", false)
         default: return (model.scope.title, nil, false)
         }
     }
@@ -3591,15 +3800,20 @@ struct FileSidebar: View {
     @GenReduceMotion private var reduceMotion
     /// The table's scroll view, for `sidebarScrollTarget`.
     @State private var box = GenTreeScrollBox()
+    /// The size above which a folder starts folded; a change in Settings reaches an open list.
+    @AppStorage(HubFileTreeFold.key, store: HubDefaults.store) private var foldAbove = HubFileTreeFold.defaultAbove
 
-    /// Folds or opens a folder in one `GenMotion` animation (the list is lazy: only the rows on screen move).
+    /// Folds or opens a folder in one `GenMotion` animation (the list is lazy: only the rows on screen move). A folder
+    /// can start folded by its size, so its row's state decides, not `collapsed` alone.
     private func toggleFolder(_ id: String) {
-        let opening = model.collapsed.contains(id)
+        let opening = !(model.fileListRows.first { $0.id == id }?.expanded ?? !model.collapsed.contains(id))
         GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) {
             if opening {
                 model.collapsed.remove(id)
+                model.opened.insert(id)
             } else {
                 model.collapsed.insert(id)
+                model.opened.remove(id)
             }
         }
     }
@@ -3646,10 +3860,13 @@ struct FileSidebar: View {
             list.equatable()
                 .onChange(of: model.sidebarScrollTarget) { id in
                     guard let id else { return }
-                    // Unfold the folders above the target so the row exists, then scroll only as far as needed.
+                    // Unfold the folders above the target so the row exists, then scroll only as far as needed. A folder
+                    // folded by its size opens too: every folder on the path counts as opened by the reader.
                     for folder in model.collapsed where id.hasPrefix(String(folder.dropFirst(4)) + "/") {
                         model.collapsed.remove(folder)
                     }
+                    let parts = id.split(separator: "/").dropLast()
+                    model.opened.formUnion(parts.indices.map { "dir:" + parts[...$0].joined(separator: "/") })
                     DispatchQueue.main.async {
                         guard let index = model.fileListRows.firstIndex(where: { $0.id == id }),
                               let table = box.scrollView?.documentView as? NSTableView, index < table.numberOfRows else { return }
@@ -3658,6 +3875,7 @@ struct FileSidebar: View {
                 }
         }
         .hubSurface(.chrome)
+        .onChange(of: foldAbove) { _, above in model.foldAbove = above }
         // ⌘F with the keyboard in the file list focuses its filter (Hub/HubPanelFind.swift).
         .panelFindNative("files") { filterFocused = true }
     }
@@ -4081,8 +4299,11 @@ private struct FileRow: View, Equatable {
 /// takes it only from a container that is no longer in a window.
 private struct RendererHost: NSViewRepresentable {
     let renderer: DiffRenderer
+    /// The page's scroll bar follows Settings → Hub → Appearance → Scroll bars.
+    @AppStorage(GenScrollBarStyle.key) private var scrollBars = GenScrollBarStyle.genesis.rawValue
 
     func makeNSView(context: Context) -> RendererContainer {
+        renderer.setScrollBars(GenScrollBarStyle(stored: scrollBars))
         let container = RendererContainer()
         container.renderer = renderer
         if renderer.view.window == nil { container.claim() }
@@ -4090,6 +4311,7 @@ private struct RendererHost: NSViewRepresentable {
     }
 
     func updateNSView(_ container: RendererContainer, context: Context) {
+        renderer.setScrollBars(GenScrollBarStyle(stored: scrollBars))
         container.renderer = renderer
         if renderer.view.superview !== container, container.window != nil, renderer.view.window == nil {
             container.claim()
@@ -4285,6 +4507,41 @@ enum ReviewSnapshot {
 }
 
 /// The review's folder is gone from disk (deleted checkout or session folder).
+/// Large files the reader asked to see whole (`DiffRendererEvent.showLargeFile`) whose load has not answered, per
+/// root folder. Only a load that read the root with the asked path allowed (`readWith`, its `fullFiles`) answers an
+/// ask, so a load that started before the ask never ends it. A failed load refuses its asks; a successful one brought
+/// the file, and the page ends the ask when the file arrives.
+struct ReviewLargeAsks {
+    struct Refused: Equatable {
+        let fileID: String
+        let reason: String
+    }
+
+    /// Root folder, then file id, then repository-relative path.
+    private var waiting: [String: [String: String]] = [:]
+
+    mutating func add(fileID: String, path: String, folder: String) {
+        waiting[folder, default: [:]][fileID] = path
+    }
+
+    /// Ends the asks these results answer and returns the refused ones, with their load's error, by file id.
+    mutating func answer(_ results: [String: Result<GitWorkingTreeSource.Snapshot, Error>], readWith: [String: Set<String>]) -> [Refused] {
+        var refused: [Refused] = []
+        for (folder, result) in results {
+            guard var asks = waiting[folder] else { continue }
+            let allowed = readWith[folder] ?? []
+            for (fileID, path) in asks where allowed.contains(path) {
+                asks[fileID] = nil
+                if case .failure(let error) = result {
+                    refused.append(Refused(fileID: fileID, reason: "\(error)"))
+                }
+            }
+            waiting[folder] = asks.isEmpty ? nil : asks
+        }
+        return refused.sorted { $0.fileID < $1.fileID }
+    }
+}
+
 struct MissingReviewFolder: Error, CustomStringConvertible {
     let path: String
     var description: String { "This folder no longer exists: \(path)" }

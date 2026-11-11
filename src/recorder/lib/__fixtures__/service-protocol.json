@@ -1218,7 +1218,10 @@
         "jsonrpc": "2.0",
         "id": 25,
         "result": {
-          "started": true
+          "started": true,
+          "windowIds": [
+            4242
+          ]
         }
       }
     },

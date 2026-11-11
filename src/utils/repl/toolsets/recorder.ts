@@ -20,6 +20,7 @@ import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/
 import { type LiveNotification, listLiveRecordings, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import {
     FRAME_FLUSHES,
+    FRAMES_START_LIMITS,
     type LibraryRecording,
     type StartRecordingOptions,
     startRecording,
@@ -37,7 +38,7 @@ export const recorderStartSchema = z
         audio: z
             .object({ mic: z.boolean().optional(), system: z.boolean().optional(), micDeviceId: z.string().optional() })
             .optional(),
-        fps: z.number().min(0.5).max(120).optional(),
+        fps: z.number().min(FRAMES_START_LIMITS.fps.min).max(FRAMES_START_LIMITS.fps.max).optional(),
         idleFps: z.number().min(0.1).max(5).optional(),
         threshold: z.number().min(0).max(100).optional(),
         maxLongSide: z.number().int().min(320).max(16_384).optional(),
@@ -61,7 +62,11 @@ export const recorderStartSchema = z
             })
             .strict()
             .optional(),
-        maxDurationSec: z.number().min(1).max(7200).optional(),
+        maxDurationSec: z
+            .number()
+            .min(FRAMES_START_LIMITS.maxDurationSec.min)
+            .max(FRAMES_START_LIMITS.maxDurationSec.max)
+            .optional(),
         pieceSec: z.number().min(5).max(180).optional(),
     })
     .strict();
@@ -79,7 +84,7 @@ export function libraryStartOptions(
 /** `set` takes `fps` for the active rate, as `start` does. */
 export const recorderSetSchema = recorderSettingsPatchSchema
     .omit({ activeFps: true })
-    .extend({ fps: z.number().min(0.5).max(120).optional() });
+    .extend({ fps: z.number().min(FRAMES_START_LIMITS.fps.min).max(FRAMES_START_LIMITS.fps.max).optional() });
 
 /** What every toolset that controls a live recording says about reading and changing its settings. */
 export const RECORDER_SETTINGS_DOC = "The live settings and the audio state.";

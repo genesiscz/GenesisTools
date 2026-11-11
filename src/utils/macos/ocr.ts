@@ -166,7 +166,9 @@ export function mergeTiledOcrResults(parts: TilePart[], fullHeight: number): Ocr
 }
 
 /**
- * The longest side of one tile of a `tiles` read, in image pixels. Vision reads each region at its own working size, so
+ * The longest side of one grid cell of a `tiles` read, in image pixels, before the overlap: a tile is its cell plus
+ * `TILE_OVERLAP` of the image past each inner edge (a 2880 px wide frame's middle tile is 1133 px, not 960). The grid
+ * counts below were measured with that overlap. Vision reads each region at its own working size, so
  * a smaller tile reads smaller text, and each tile is one more request. Measured 2026-11-09 on 12 kept meeting frames
  * (2880×1205, 2880×1861 and 2560×1440), as the share of every dictionary word any grid read: one read 42 %, two
  * vertical strips 80 % (the rule before, and only for frames twice as wide as tall), a 3×2 grid 86 % at about 770 ms,
@@ -176,8 +178,13 @@ export const DEFAULT_OCR_TILE_PX = 960;
 /** Each tile reaches this share of the image past its inner edges, so a line on a seam is whole in one tile. */
 const TILE_OVERLAP = 0.03;
 
-/** The regions of a `tiles` read: a grid whose tiles are at most `tilePx` on their longest side, with overlap. */
-export function planOcrTiles({ width, height }: ImageDimensions, tilePx = DEFAULT_OCR_TILE_PX) {
+/**
+ * The regions of a `tiles` read: a grid whose cells are at most `tilePx` on their longest side, each tile reaching
+ * `TILE_OVERLAP` past its inner edges. A `tilePx` below 1 or not finite reads at `DEFAULT_OCR_TILE_PX`: 0 made an
+ * endless loop and NaN an empty read.
+ */
+export function planOcrTiles({ width, height }: ImageDimensions, requestedTilePx = DEFAULT_OCR_TILE_PX) {
+    const tilePx = Number.isFinite(requestedTilePx) && requestedTilePx >= 1 ? requestedTilePx : DEFAULT_OCR_TILE_PX;
     const cols = Math.max(1, Math.ceil(width / tilePx));
     const rows = Math.max(1, Math.ceil(height / tilePx));
     const span = (index: number, count: number) => {
@@ -203,6 +210,8 @@ export function planOcrTiles({ width, height }: ImageDimensions, tilePx = DEFAUL
 /** Region OCR already answers in full-image, bottom-left coordinates. Never scale those bounds again. */
 export function mergeRegionOcrResults(parts: OcrResult[]): OcrResult {
     const blocks: OcrBlock[] = [];
+    // Each kept block's folded text, folded once: a frame has hundreds of blocks and every new one is compared to all.
+    const folded: string[] = [];
     const fold = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
     const overlapShare = (a: OcrBlock["bounds"], b: OcrBlock["bounds"]) => {
         const overlapWidth = Math.max(0, Math.min(+a.x + +a.width, +b.x + +b.width) - Math.max(+a.x, +b.x));
@@ -215,8 +224,8 @@ export function mergeRegionOcrResults(parts: OcrResult[]): OcrResult {
         for (const block of part.blocks) {
             const text = fold(block.text);
             // The same line read twice, or a seam tile's cut piece of a line another tile read whole.
-            const duplicate = blocks.findIndex((other) => {
-                const otherText = fold(other.text);
+            const duplicate = blocks.findIndex((other, index) => {
+                const otherText = folded[index]!;
                 return (
                     (otherText.includes(text) || text.includes(otherText)) &&
                     overlapShare(other.bounds, block.bounds) > 0.5
@@ -225,15 +234,17 @@ export function mergeRegionOcrResults(parts: OcrResult[]): OcrResult {
 
             if (duplicate < 0) {
                 blocks.push(block);
+                folded.push(text);
                 continue;
             }
 
-            const kept = fold(blocks[duplicate].text);
+            const kept = folded[duplicate]!;
             const longer = text.length > kept.length;
             const sameText = text === kept;
 
             if (longer || (sameText && block.confidence > blocks[duplicate].confidence)) {
                 blocks[duplicate] = block;
+                folded[duplicate] = text;
             }
         }
     }
