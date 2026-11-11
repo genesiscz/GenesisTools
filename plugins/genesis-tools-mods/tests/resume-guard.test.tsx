@@ -251,6 +251,11 @@ test("resume guard: a finished agent the engine no longer lists is found by its 
     expect(await guardResume(host, send("a1b2c3d4e5f60789"))).toContain("is idle for 9 min");
     expect(await guardResume(host, send("a1b2c3d4e5f60789"))).toBeUndefined();
     expect(guardLog(lines).map((record) => record.decision)).toEqual(["refused", "passed-after-refusal"]);
+    // The send after the refusal is counted too, though the clock never saw this agent.
+    expect(resumeEvents(lines).map((event) => (event.dims as { outcome: string }).outcome)).toEqual([
+        "refused",
+        "resent",
+    ]);
     // A name that is no agent id and has no transcript is still another session's.
     expect(await guardResume(host, send("some-other-session"))).toBeUndefined();
     expect(guardLog(lines).at(-1)).toMatchObject({ decision: "skipped", reason: "not-an-agent" });

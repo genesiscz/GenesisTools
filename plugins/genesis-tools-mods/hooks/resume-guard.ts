@@ -32,7 +32,7 @@ export type ResumeSettings = ModsSettings["resumeGuard"];
 /** Each agent's context at its last model call, from `turn.step`'s usage, by agent id. */
 const contexts = new Map<string, number>();
 /** The refusals the agent has not yet answered by running: when, and the size the refusal named, by agent id. */
-const refusals = new Map<string, { at: number; tokens: number }>();
+const refusals = new Map<string, { at: number; tokens: number; idleMs: number }>();
 
 /** A loop in these states makes its calls now, so its cache is warm. */
 const RUNNING = new Set(["pending", "running"]);
@@ -398,7 +398,9 @@ export async function guardResume(host: Host, e: ToolCallInput): Promise<string 
     }
 
     const tokens = facts.tokens ?? held?.tokens;
-    const idleMs = facts.idleMs ?? (RUNNING.has(agent.status) ? 0 : undefined);
+    // A send after a refusal passes before its idle time is asked for: it is the refusal's, plus the time since.
+    const idleMs =
+        facts.idleMs ?? (isRefused && held ? held.idleMs + (now - held.at) : RUNNING.has(agent.status) ? 0 : undefined);
     await log({
         decision: decision.refuse ? "refused" : decision.outcome === "resent" ? "passed-after-refusal" : "skipped",
         reason: decision.reason,
@@ -419,7 +421,7 @@ export async function guardResume(host: Host, e: ToolCallInput): Promise<string 
         return undefined;
     }
 
-    refusals.set(agent.id, { at: now, tokens: facts.tokens });
+    refusals.set(agent.id, { at: now, tokens: facts.tokens, idleMs: facts.idleMs });
 
     return refusalText({ name: agent.name ?? to ?? agent.id, idleMs: facts.idleMs, tokens: facts.tokens, settings });
 }
