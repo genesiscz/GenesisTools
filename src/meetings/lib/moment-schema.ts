@@ -42,7 +42,7 @@ export const MOMENT_ERROR_CODES = [
     "unknown-line",
     "no-speech",
     "past-the-end",
-    /** An item's or a speaker turn's stretch is longer than `playback.listen.longestClipSec`: show it, do not play it. */
+    /** Kept for older answers: since 2026-11-11 a longer item or speaker turn plays its first `longestClipSec` instead. */
     "too-long",
 ] as const;
 export type MomentErrorCode = (typeof MOMENT_ERROR_CODES)[number];

@@ -18,7 +18,6 @@ import {
     clipMoment,
     clipPlan,
     cutMoment,
-    MomentError,
     type MomentTarget,
     momentCacheDir,
     momentCachePath,
@@ -714,14 +713,18 @@ describe("a Moment of a saved meeting", () => {
 });
 
 describe("a Moment that is too long, and the frame that shows its words", () => {
-    test("an item or a speaker turn longer than longestClipSec is refused as too-long; a range is the caller's", () => {
+    test("an item or a speaker turn longer than longestClipSec plays its first longestClipSec, and says so; a range is the caller's", () => {
         const short = meetingsConfigSchema.parse({ global: { playback: { listen: { longestClipSec: 5 } } } });
         const long = record([{ id: "i9", kind: "speaker-range", label: "Speaker 2", fromSec: 30, toSec: 50 }]);
         const planLong = (target: MomentTarget) =>
             planMoment({ record: long, transcript, listen: short.global.playback.listen, target });
 
-        expect(() => planLong({ kind: "item", id: "i9" })).toThrow("longer than the 5 s a Moment plays");
-        expect(() => planLong({ kind: "stretch", atSec: 30 })).toThrow(MomentError);
+        const item = planLong({ kind: "item", id: "i9" });
+        expect(item).toMatchObject({ fromSec: 30, toSec: 35 });
+        expect(item.label).toContain("(first 5 s of 00:20)");
+        expect(
+            planLong({ kind: "stretch", atSec: 30 }).toSec - planLong({ kind: "stretch", atSec: 30 }).fromSec
+        ).toBeLessThanOrEqual(5);
         expect(planLong({ kind: "range", fromSec: 30, toSec: 50 }).toSec).toBe(50);
         expect(listen.longestClipSec).toBe(30);
     });

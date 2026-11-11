@@ -110,7 +110,7 @@ struct SpeakersTab: View {
     }
 
     /// `global.playback.listen.longestClipSec` (30 when the config does not say): a range longer than that is a "Show"
-    /// chip, because the engine refuses a longer Moment (`too-long`).
+    /// chip, because the engine plays only its first `longestClipSec` seconds.
     private var longestClipSec: Double {
         if case .number(let value) = detail.window?.settingsRaw?.at(["global", "playback", "listen", "longestClipSec"]), value > 0 {
             return value

@@ -484,26 +484,32 @@ export function planMoment(input: MomentInput & { target: MomentTarget }): Momen
         input.lengthSec === undefined
             ? whole
             : { ...whole, toSec: Math.min(whole.toSec, whole.fromSec + input.lengthSec) };
-    refuseTooLong(input.record, input.target, span, input.listen.longestClipSec);
-    return momentOf(input, input.target, span);
+    return momentOf(input, input.target, clampTooLong(input.record, input.target, span, input.listen.longestClipSec));
 }
 
 /**
- * A stretch the data names (an item, a speaker's turn) longer than `longestSec` is refused: a 51-minute hint range is
- * a thing to look at, not a clip. A question plays its own clip, and a range or a selection is bounded by the caller.
+ * A stretch the data names (an item, a speaker's turn) longer than `longestSec` plays its first `longestSec`: a play
+ * button always plays, and hearing the start is how a look-alike or a hint range is checked. The label says it is the
+ * start ("first 30 s of 00:50"). It refused with `too-long` until 2026-11-11, which left the play button of a long
+ * look-alike in "This also affects" with an error notice.
+ * A question plays its own clip, and a range or a selection is bounded by the caller.
  */
-function refuseTooLong(record: MeetingRecord, target: MomentTarget, span: Span, longestSec: number): void {
+function clampTooLong(record: MeetingRecord, target: MomentTarget, span: Span, longestSec: number): Span {
     const capped =
         target.kind === "stretch" ||
         (target.kind === "item" &&
             record.items.find((item) => item.id === questionIdOf(record, target.id))?.kind !== "question");
 
-    if (capped && span.toSec - span.fromSec > longestSec) {
-        throw new MomentError(
-            "too-long",
-            `${span.label} lasts ${formatClock(span.toSec - span.fromSec)}, longer than the ${longestSec} s a Moment plays (playback.listen.longestClipSec); show it instead.`
-        );
+    if (!capped || span.toSec - span.fromSec <= longestSec) {
+        return span;
     }
+
+    return {
+        ...span,
+        label: `${span.label} (first ${longestSec} s of ${formatClock(span.toSec - span.fromSec)})`,
+        toSec: span.fromSec + longestSec,
+        spotSec: Math.min(span.spotSec, span.fromSec + longestSec),
+    };
 }
 
 /**
