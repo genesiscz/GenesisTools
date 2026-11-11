@@ -29,6 +29,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RmRequest } from "@genesiscz/utils/rm";
+import { AREA_RULES_DEFAULTS, mergeAreaRules } from "../../../../plugins/genesis-tools/hooks/area-rules";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
 import {
     DEFAULT_HOOKS_CONFIG,
@@ -663,6 +664,7 @@ describe("the hook sections", () => {
             "diff per harness",
             "questions per harness",
             "agentsTalk.hint",
+            "areaRules",
             "decisions.stopHook",
             "decisions.questionNudge",
             "decisions.chatAnswers",
@@ -673,6 +675,9 @@ describe("the hook sections", () => {
         ]);
         expect(rows.find(([label]) => label === "guard rules")?.[1]).toBe("3 built-in, 1 custom");
         expect(rows.find(([label]) => label === "rules switched off")?.[1]).toBe("none");
+        expect(rows.find(([label]) => label === "areaRules")?.[1]).toBe(
+            "read pointer, write full, agents same; claude: read off, write off"
+        );
     });
 
     it("the default config wires the guard, the diff and the unpushed reminder's Stop entry, and nothing else", () => {
@@ -980,6 +985,38 @@ describe("applySetting", () => {
         expect(loadHooksConfig(path).agentsTalk.hint).toBe(false);
         writeFileSync(path, SafeJSON.stringify({ agentsTalk: { hint: "no" } }));
         expect(loadHooksConfig(path).agentsTalk.hint).toBe(true);
+    });
+
+    it("areaRules: per-harness levels, named values, the plugin hook's own reader agrees", () => {
+        expect(DEFAULT_HOOKS_CONFIG.areaRules).toEqual(AREA_RULES_DEFAULTS);
+        expect(DEFAULT_HOOKS_CONFIG.areaRules.harnesses.claude).toEqual({ read: "off", write: "off" });
+
+        const old = applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.claude.read", "full");
+        expect(old.areaRules.harnesses.claude).toEqual({ read: "full", write: "off" });
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents", "off").areaRules.agents).toBe("off");
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.write", "pointer").areaRules.write).toBe("pointer");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.read", "same")).toThrow("full, pointer or off");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents", "full")).toThrow("same, pointer or off");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.vim.read", "full")).toThrow("unknown key");
+
+        const described = describeSetting(old, "areaRules.harnesses.claude.read");
+        expect(described).toMatchObject({ value: "full", defaultValue: "off", named: "full" });
+        expect(described.presets.map((preset) => preset.name)).toEqual(["pointer", "full", "off"]);
+        expect(describeSetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents").presets).toHaveLength(3);
+
+        const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-area-")), "hooks.json");
+        const stored = {
+            areaRules: { read: "loud", agents: "pointer", harnesses: { codex: { write: "pointer" }, claude: 3 } },
+        };
+        writeFileSync(path, SafeJSON.stringify(stored));
+        const loaded = loadHooksConfig(path).areaRules;
+        expect(loaded).toEqual({
+            ...AREA_RULES_DEFAULTS,
+            agents: "pointer",
+            harnesses: { ...AREA_RULES_DEFAULTS.harnesses, codex: { write: "pointer" } },
+        });
+        expect(lastConfigProblems()).toEqual(['areaRules.read is "loud", not full, pointer or off; ignored']);
+        expect(mergeAreaRules(stored)).toEqual(loaded);
     });
 
     it("refuses a count outside its domain, in set and on load alike", () => {
@@ -2087,6 +2124,12 @@ describe("hook state across processes", () => {
             const written = SafeJSON.parse(readFileSync(path, "utf8"));
             expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 }, explained: {} } });
             expect(migrateHookState(written)).toEqual(written);
+            // A version 2 file from before `explained` existed reads as nothing explained, and keeps what it has.
+            expect(migrateHookState({ ...written, guard: { contextNotes: { "rule-x": 4 } } })).toEqual(written);
+            expect(
+                migrateHookState({ ...written, guard: { contextNotes: {}, explained: { main: { r: 5, bad: "x" } } } })
+                    .guard.explained
+            ).toEqual({ main: { r: 5 } });
         });
     });
 
@@ -2124,12 +2167,6 @@ describe("capture paths refuse an unsafe identifier", () => {
 
     const ok = ["toolu_01SXXfskEYtYHLfrtKWRopWL", "a503b06c-e677-45a8-b46e-ce1757edaa9f", "bench", "t1"];
 
-    // A version 2 file from before `explained` existed reads as nothing explained, and keeps what it has.
-    expect(migrateHookState({ ...written, guard: { contextNotes: { "rule-x": 4 } } })).toEqual(written);
-    expect(
-        migrateHookState({ ...written, guard: { contextNotes: {}, explained: { main: { r: 5, bad: "x" } } } }).guard
-            .explained
-    ).toEqual({ main: { r: 5 } });
     it.each(ok)("accepts the real shape %j", (value) => {
         expect(safeSegment(value)).toBe(value);
         expect(callDir("claude", "sess", value).endsWith(`/diff/${value}`)).toBe(true);
@@ -2788,6 +2825,8 @@ describe("HARNESS_HOOK_FACTS", () => {
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: true,
             compactBoundaryRows: true,
+            compactedSince: claudeCompactedSince,
+            loadsRuleFilesItself: true,
             homeBindsAccount: false,
             launchAuthFromAncestor: true,
             journalOmitsProvider: true,
@@ -2807,6 +2846,8 @@ describe("HARNESS_HOOK_FACTS", () => {
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: false,
             compactBoundaryRows: false,
+            compactedSince: expect.any(Function),
+            loadsRuleFilesItself: false,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,
@@ -2825,8 +2866,9 @@ describe("HARNESS_HOOK_FACTS", () => {
             runsClaudeSettingsHooks: false,
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: false,
-            compactedSince: claudeCompactedSince,
             compactBoundaryRows: false,
+            compactedSince: codexCompactedSince,
+            loadsRuleFilesItself: false,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,
@@ -2845,7 +2887,6 @@ describe("rm request notice", () => {
         kind: "delete",
         createdAt: new Date(now.getTime() - minutesAgo * 60_000).toISOString(),
         caller: { agent: "claude-code", sessionId: session, isInAgent: true },
-        compactedSince: expect.any(Function),
         cwd: "/work/shop",
         reason: null,
         targets: [{ path: "/work/shop/.smoke.tmp.ts", kind: "file", rule: "default", reason: "no rule allows it" }],
@@ -2865,15 +2906,15 @@ describe("rm request notice", () => {
                 tool_response: { stdout, stderr: "" },
             })
         );
-    compactedSince: codexCompactedSince,
-        it("repeats a request the call opened when its output was cut", async () => {
-            const payload = payloadOf("tools rm ./.smoke.tmp.ts > /dev/null 2>&1");
-            const notice = payload ? await rmRequestNotice(payload, deps) : null;
 
-            expect(notice).toContain("rm request k7m2qd: 1 path waits for the user. Do not run approve yourself.");
-            expect(notice).not.toContain("old111");
-            expect(notice).not.toContain("othr22");
-        });
+    it("repeats a request the call opened when its output was cut", async () => {
+        const payload = payloadOf("tools rm ./.smoke.tmp.ts > /dev/null 2>&1");
+        const notice = payload ? await rmRequestNotice(payload, deps) : null;
+
+        expect(notice).toContain("rm request k7m2qd: 1 path waits for the user. Do not run approve yourself.");
+        expect(notice).not.toContain("old111");
+        expect(notice).not.toContain("othr22");
+    });
 
     it("stays quiet when the output already named the request, and for any other command", async () => {
         const shown = payloadOf("tools rm ./.smoke.tmp.ts", "rm request k7m2qd: 1 path waits for the user.");

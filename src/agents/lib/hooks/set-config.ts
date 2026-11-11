@@ -35,6 +35,7 @@ export const SETTABLE_KEYS: readonly string[] = [
     ...HOOK_CONFIG_SECTIONS.decisions.settable,
     ...HOOK_CONFIG_SECTIONS.questions.settable,
     ...HOOK_CONFIG_SECTIONS.agentsTalk.settable,
+    ...HOOK_CONFIG_SECTIONS.areaRules.settable,
     ...HOOK_CONFIG_SECTIONS.mods.settable,
 ];
 

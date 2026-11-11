@@ -779,6 +779,30 @@ more than `unpushed.maxCommits` (3) commits are unpushed, or when the oldest unp
 `agentsTalk.hint` (on) lets the genesis-tools plugin's SessionStart hook remind the session about the `agents-talk`
 skill. The plugin hook reads the key itself, so these hooks wire nothing for it.
 
+### Area rules
+
+The genesis-tools plugin's PostToolUse hook (`plugins/genesis-tools/hooks/area-rules.ts`) tells an agent about the
+`.claude/rules/*.md` file and the folder `CLAUDE.md` of each project area a Grep, Glob or Bash call touched, once per
+agent. It has two levels. `full` adds the file's text. `pointer` adds one line,
+`Area rules (pointer): <path> (<n> lines): <scope>`, and an instruction to read the file before changing code in that
+area. A Bash command that writes into the area (a `>` or `>>` redirect, `tee`, `sed -i`, `perl -i`, `mv`, `cp` or
+`ln` into it, `git apply`, `git am`, `patch`, `git checkout|restore -- <path>`, `biome --write`, `prettier --write`,
+fable-replace, `touch`, `mkdir`) is a write; every other call is a read. A pointer is not repeated, a later write
+upgrades it to the text once, and a compaction clears what the compacting agent was given.
+
+The `areaRules` keys set the level per harness. `read` (`pointer`), `write` (`full`) and `agents` (`same`; `pointer`
+caps a subagent at pointer lines, `off` gives it nothing) apply to every harness, and
+`areaRules.harnesses.<claude|codex|grok>.<read|write|agents>` overrides one harness. Claude ships with `read` and
+`write` off: Claude Code loads a rule file by itself only on a Read, Write or Edit of a matching file, so with `off`
+a Claude agent that only searches or runs shell commands in an area does not see that area's rules until it reads or
+edits a file there. That is a deliberate choice. Codex and Grok load no rule file by themselves, so they keep the
+shared levels. `config set areaRules.harnesses.claude.read full --write` brings back the old behavior (the whole file
+on every first touch) for Claude. `config describe <key>` gives each value's reason.
+
+Measured on 2026-11-11 by replaying the tool calls of two large sessions (17,860 Grep, Glob and Bash calls, 7,041 of
+them in subagents): the old hook pushed 5.49 M characters in 437 injections. `read pointer, write full` pushes 2.64 M
+(52% less; 85% less in subagents), `read pointer, write pointer` 0.27 M (95% less), and the Claude default nothing.
+
 ### The Claude Code mods
 
 `tools agents hooks mods install --write` installs the plugin `genesis-tools-mods` from this repository's marketplace
@@ -1131,6 +1155,8 @@ the config in effect. `doctor` reports a value that does not parse, and the defa
 | `questions`, `questions.<harness>` | off | See [Structural questions](#structural-questions-questions). |
 | `questions.notify` | `true` | Banner for a new open question. |
 | `agentsTalk.hint` | `true` | The agents-talk SessionStart reminder. |
+| `areaRules.read` / `.write` / `.agents` | `pointer` / `full` / `same` | See [Area rules](#area-rules). |
+| `areaRules.harnesses.<harness>.<field>` | Claude: `read` and `write` `off` | Per-harness area-rules levels. |
 | `mods.*` | see above | See [The Claude Code mods](#the-claude-code-mods). |
 
 `config set --help` prints the full key list. Keys in the file that `set` does not take: `logPath` (the decision log,
