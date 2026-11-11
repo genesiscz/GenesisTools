@@ -750,6 +750,8 @@ export interface OpenMomentOptions {
      * when `playback.listen.tone.enabled` is off: the caller asked for it.
      */
     toneSound?: ToneSoundSetting;
+    /** Overrides whether this call has a tone. False wins over an explicit sound without changing saved settings. */
+    tone?: boolean;
     /** Reads a tone file's length (tests pass a fake); ffprobe by default. */
     probeTone?: (path: string) => Promise<{ durationSec: number }>;
     /** At most this long from the span's start (`MomentInput.lengthSec`). */
@@ -763,9 +765,9 @@ async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Prom
     const { store, record } = options;
     const [meeting, config] = await Promise.all([opened.meeting(), opened.config()]);
     const saved = config.global.playback.listen;
-    // A tone the caller names turns the tone on for this call; the saved setting stays as it is.
-    const listen =
-        options.toneSound && !saved.tone.enabled ? { ...saved, tone: { ...saved.tone, enabled: true } } : saved;
+    // An explicit sound enables this call unless the caller explicitly asks for silence. Never mutate the config.
+    const enabled = options.tone ?? (options.toneSound !== undefined || saved.tone.enabled);
+    const listen = enabled === saved.tone.enabled ? saved : { ...saved, tone: { ...saved.tone, enabled } };
     const toneSound = listen.tone.enabled
         ? await resolveToneSound(options.toneSound ?? listen.tone.sound, { probe: options.probeTone ?? probeAudio })
         : undefined;

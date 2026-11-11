@@ -30,6 +30,7 @@ function momentOptions(params: MeetingsParsedParams<"moment.plan">, deps: Meetin
         ...(params.padSec === undefined ? {} : { padSec: params.padSec }),
         ...(params.padAfterSec === undefined ? {} : { padAfterSec: params.padAfterSec }),
         ...(params.toneSound === undefined ? {} : { toneSound: params.toneSound }),
+        ...(params.tone === undefined ? {} : { tone: params.tone }),
         ...(params.lengthSec === undefined ? {} : { lengthSec: params.lengthSec }),
         ...(params.screen === undefined ? {} : { screen: params.screen }),
         ...(deps.probe ? { probeTone: deps.probe } : {}),

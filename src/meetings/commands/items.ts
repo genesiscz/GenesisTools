@@ -30,6 +30,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { decideResult, decisionOf, reopenResult } from "../lib/decide";
+import { decisionActionSchema } from "../lib/decision-actions";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
@@ -699,6 +700,35 @@ async function transcript(
 }
 
 export function registerItemCommands(program: Command): void {
+    program
+        .command("decide")
+        .argument("<meeting>", MEETING_REF)
+        .description("Plan or apply a typed decision through the same journal as the Meetings window")
+        .requiredOption("--action <json>", "a decision action, including kind and its fields")
+        .option("--reason <text>", "why this decision is made; kept in the journal")
+        .option("--plan", "show what the decision would change, without writing")
+        .option("--json", "print the typed decision result")
+        .action(
+            async (meeting: string, options: { action: string; reason?: string; plan?: boolean; json?: boolean }) => {
+                try {
+                    const action = decisionActionSchema.parse(SafeJSON.parse(options.action, { strict: true }));
+                    const params = { meeting, action, ...(options.reason ? { reason: options.reason } : {}) };
+                    const result = await withMeetingsClient(async (client) =>
+                        options.plan
+                            ? await client.call("decision.plan", params)
+                            : await client.call("decision.apply", { ...params, onDecided: "refuse" })
+                    );
+                    if (options.json) {
+                        out.result(SafeJSON.stringify(result));
+                    } else {
+                        out.print(SafeJSON.stringify(result, null, 2));
+                    }
+                } catch (error) {
+                    fail(error);
+                }
+            }
+        );
+
     program
         .command("suggest")
         .argument("<meeting>", MEETING_REF)

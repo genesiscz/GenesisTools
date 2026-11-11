@@ -630,6 +630,30 @@ describe("a Moment of a saved meeting", () => {
         );
     });
 
+    test("Wave E: an explicit silent Moment never resolves a tone or changes the saved setting", async () => {
+        const { store, saved, opened } = await savedMeeting("meetings-moment-silent", recording("silent"));
+        const config = meetingsConfigSchema.parse({
+            version: 5,
+            global: { playback: { listen: { tone: { enabled: true, sound: { file: "/missing/tone.wav" } } } } },
+        });
+        spyOn(opened, "config").mockResolvedValue(config);
+        const probeTone = async () => {
+            throw new Error("a silent Moment must not read its tone file");
+        };
+        const result = await openMoment({
+            store,
+            record: saved,
+            target: { kind: "item", id: "Q1" },
+            opened,
+            tone: false,
+            toneSound: { file: "/missing/explicit.wav", volume: 0.6 },
+            probeTone,
+        });
+        expect(result.tone).toBeUndefined();
+        expect(config.global.playback.listen.tone.enabled).toBe(true);
+        expect(config.global.playback.listen.tone.sound).toEqual({ file: "/missing/tone.wav", volume: 0.6 });
+    });
+
     test("a recording with two tracks is cut with both, and another recording file is another clip", async () => {
         const { store, saved, opened } = await savedMeeting("meetings-moment-tracks", recording("tracks"));
         const cuts: Array<Parameters<typeof cutClip>[0]> = [];

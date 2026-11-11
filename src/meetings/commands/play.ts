@@ -31,7 +31,7 @@ interface PlayOptions {
     clip?: boolean;
     moment?: boolean;
     before?: string;
-    tone?: string;
+    tone?: string | false;
     player?: string;
     json?: boolean;
     start?: boolean;
@@ -150,7 +150,7 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
         return;
     }
 
-    const tone = opts.tone === undefined ? undefined : toneFlag(opts.tone);
+    const tone = typeof opts.tone === "string" ? toneFlag(opts.tone) : undefined;
 
     if (tone && "error" in tone) {
         fail(tone.error);
@@ -161,7 +161,12 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
 
     if (!opts.clip && opts.start === false) {
         const planned = await withMeetingsClient((client) =>
-            client.call("moment.plan", { meeting: record.id, target, ...(toneSound ? { toneSound } : {}) })
+            client.call("moment.plan", {
+                meeting: record.id,
+                target,
+                ...(toneSound ? { toneSound } : {}),
+                ...(opts.tone === false ? { tone: false } : {}),
+            })
         );
 
         if (!planned.moment) {
@@ -199,7 +204,12 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
     }
 
     const cut = await withMeetingsClient((client) =>
-        client.call("moment.clip", { meeting: record.id, target, ...(toneSound ? { toneSound } : {}) })
+        client.call("moment.clip", {
+            meeting: record.id,
+            target,
+            ...(toneSound ? { toneSound } : {}),
+            ...(opts.tone === false ? { tone: false } : {}),
+        })
     );
 
     if (!player) {
@@ -334,6 +344,7 @@ export function registerPlayCommand(program: Command): void {
             "--tone <sound>",
             `a Moment's tone for this call: a preset (${TONE_PRESET_NAMES.join(", ")}), a sound file, or JSON ({"hz":440,"sec":0.2}); default playback.listen.tone.sound. It sounds even when playback.listen.tone.enabled is off`
         )
+        .option("--no-tone", "suppress the tone for this Moment without changing the saved setting")
         .option(
             "--player <id>",
             `this player for one call: ${MEETING_PLAYERS.join(", ")} for --at alone, ${LISTEN_PLAYERS.join(", ")} for a Moment`

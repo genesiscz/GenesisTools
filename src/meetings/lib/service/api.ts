@@ -343,6 +343,8 @@ const momentParams = z
          * for this call even when `playback.listen.tone.enabled` is off.
          */
         toneSound: toneSoundSettingSchema.optional(),
+        /** Overrides the saved tone for this call. False suppresses even an explicitly supplied toneSound. */
+        tone: z.boolean().optional(),
         /** False skips the screen frames at the spot. */
         screen: z.boolean().optional(),
         /** At most this long from the span's start (the window's "Clip 5s" on a selection: 5); the pad stays. */

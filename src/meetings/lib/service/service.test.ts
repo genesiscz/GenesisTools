@@ -662,6 +662,15 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
     });
 
+    test("Wave E: the Moment service preserves an explicit request for no tone", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const params = { meeting: REVIEW.id, target: { kind: "item" as const, id: "i1" }, tone: false };
+        const planned = await client.call("moment.plan", params);
+        expect(planned.moment?.tone).toBeUndefined();
+        const clipped = await client.call("moment.clip", params);
+        expect(clipped.tone).toBeUndefined();
+    });
+
     test("moment.plan answers the Moment, or the target's refusal; moment.clip cuts it into the cache once", async () => {
         const { client } = await ADAPTERS[kind]();
         const missing = await client.call("moment.plan", { meeting: REVIEW.id, target: { kind: "item", id: "i9" } });

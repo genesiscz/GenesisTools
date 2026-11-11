@@ -510,19 +510,19 @@ describe("rows --json: the review rows (F3)", () => {
         expect([speaker.edit, speaker.needs, speaker.target]).toEqual(["answer", "listen", { kind: "item", id: "i4" }]);
     });
 
-    test("choices are typed with confidence: the earlier answer first, then scored ones, then the rest, then the actions", async () => {
+    test("choices are typed with confidence: highest scores first including earlier answers, then unscored actions", async () => {
         const { reviewRow } = await import("./review-rows");
         const term = reviewRow(record, record.items[2]!);
         const speaker = reviewRow(record, record.items[3]!);
 
         expect(term.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
-            ["earlier", "EMP", 0.7],
             ["presumed", "AMP", 0.82],
+            ["earlier", "EMP", 0.7],
             ["heard", "OMP", 0.4],
             ["none", "none of these", undefined],
             ["skip", "skip", undefined],
         ]);
-        expect(term.choices[0]).toMatchObject({ hint: "as at 00:30", action: { kind: "answer", answer: "EMP" } });
+        expect(term.choices[1]).toMatchObject({ hint: "as at 00:30", action: { kind: "answer", answer: "EMP" } });
         expect(speaker.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
             ["suggested", "Alice Example", 0.6],
             ["candidate", "Bob Example", undefined],
@@ -580,6 +580,37 @@ describe("rows --json: the review rows (F3)", () => {
             { term: "EMP", confidence: 0.7 },
             { term: "OMP", confidence: 0.4 },
         ]);
+    });
+
+    test("Wave E: a better-scoring speaker candidate precedes the suggestion without changing its action", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const item = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i90",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    suggestedAt: at,
+                    fromSec: 10,
+                    toSec: 20,
+                    label: "Speaker 1",
+                    speaker: "Alice Example",
+                    candidates: ["Alice Example", "Bob Example"],
+                    confidence: 0.4,
+                    evidence: {
+                        candidateScores: [
+                            { speaker: "Alice Example", confidence: 0.4, evidence: [] },
+                            { speaker: "Bob Example", confidence: 0.9, evidence: [] },
+                        ],
+                    },
+                },
+            ],
+        }).items[0]!;
+        const row = reviewRow(record, item);
+        expect(row.choices.map((choice) => choice.value)).toEqual(["Bob Example", "Alice Example", "none of these"]);
+        expect(row.choices[0]?.action).toEqual({ kind: "confirm", speaker: "Bob Example" });
+        expect(row.choices[1]?.action).toEqual({ kind: "confirm" });
     });
 
     test("speaker choices carry the range's typed candidate scores (G31): highest first, none without a score", async () => {
@@ -737,6 +768,67 @@ describe("rows --json: the review rows (F3)", () => {
 });
 
 describe("listen answers without a service", () => {
+    test("Wave E: decide plans without writing and applies a typed action through the fallback adapter", async () => {
+        const at = "2026-11-02T14:00:00.000Z";
+        const store = new MeetingStore();
+        const meeting = await store.create(
+            {
+                title: "Decision command",
+                start: at,
+                createdBy: "new",
+                items: [
+                    {
+                        id: "i1",
+                        kind: "term",
+                        status: "suggested",
+                        heard: "Atlas",
+                        proposed: "Aster",
+                        confidence: 0.8,
+                        rules: [],
+                        suggestedAt: at,
+                    },
+                ],
+            },
+            { command: "test", change: "fixture" }
+        );
+        const printed: unknown[] = [];
+        const output = spyOn(out, "result").mockImplementation((value) => {
+            printed.push(value);
+        });
+        const action = SafeJSON.stringify({ kind: "respell", item: "i1", text: "Azure" });
+        const execute = async (plan: boolean) => {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "decide" });
+            await program.parseAsync(
+                [
+                    "decide",
+                    meeting.id,
+                    "--action",
+                    action,
+                    "--reason",
+                    "confirmed spelling",
+                    "--json",
+                    ...(plan ? ["--plan"] : []),
+                ],
+                { from: "user" }
+            );
+        };
+        try {
+            await execute(true);
+            expect(new MeetingStore().read(meeting.id)?.items[0]?.status).toBe("suggested");
+            await execute(false);
+            expect(new MeetingStore().read(meeting.id)?.items[0]).toMatchObject({
+                status: "confirmed",
+                proposed: "Azure",
+                decision: { entry: { reason: "confirmed spelling" } },
+            });
+            expect(printed).toHaveLength(2);
+        } finally {
+            output.mockRestore();
+            process.exitCode = 0;
+        }
+    });
+
     test("--except stays open and --replaces changes an answered question atomically", async () => {
         const store = new MeetingStore();
         const at = "2026-11-02T14:00:00.000Z";

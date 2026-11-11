@@ -229,14 +229,13 @@ function earlierAnswer(record: MeetingRecord, question: QuestionItem): { answer:
     return earlier?.answer === undefined ? undefined : { answer: earlier.answer, atSec: earlier.fromSec };
 }
 
-/** G32: the earlier answer, then the scored choices by confidence, then the unscored ones in engine order. */
+/** R49: every scored choice is highest first, regardless of its role; unscored actions keep their engine order. */
 function ordered(choices: RowChoice[]): RowChoice[] {
-    const earlier = choices.filter((choice) => choice.role === "earlier");
     const scored = choices
-        .filter((choice) => choice.role !== "earlier" && choice.confidence !== undefined)
+        .filter((choice) => choice.confidence !== undefined)
         .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
-    const unscored = choices.filter((choice) => choice.role !== "earlier" && choice.confidence === undefined);
-    return [...earlier, ...scored, ...unscored];
+    const unscored = choices.filter((choice) => choice.confidence === undefined);
+    return [...scored, ...unscored];
 }
 
 function confidenceOf(value: number | undefined): { confidence?: number } {
@@ -297,7 +296,7 @@ function scoreOf(scores: Map<string, number>, name: string): number | undefined 
 function rangeChoices(item: Extract<MeetingItem, { kind: "speaker-range" }>): RowChoice[] {
     const others = (item.candidates ?? []).filter((name) => name !== item.speaker);
     const scores = speakerChoiceScores([item]);
-    return [
+    return ordered([
         ...(item.speaker
             ? [
                   {
@@ -319,7 +318,7 @@ function rangeChoices(item: Extract<MeetingItem, { kind: "speaker-range" }>): Ro
             }))
         ),
         { value: NONE_OF_THESE, label: "None of these", role: "none" as const, action: { kind: "reject" as const } },
-    ];
+    ]);
 }
 
 function plainChoices(item: MeetingItem, label: string): RowChoice[] {
