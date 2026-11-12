@@ -36,6 +36,28 @@ function store(): MeetingsConfigStore {
 }
 
 describe("meetings config", () => {
+    test("reading legacy settings migrates in memory without rewriting the config file", async () => {
+        const config = store();
+        mkdirSync(dirname(config.path), { recursive: true });
+        const original =
+            '{ "version": 5, "global": { "playback": { "listen": { "repeat": false, "repeatGapSec": 2.5 } } } }\n';
+        writeFileSync(config.path, original);
+        const before = fs.statSync(config.path).mtimeMs;
+        const read = await new MeetingsConfigStore(config.storage).read();
+        expect(read.version).toBe(MEETINGS_CONFIG_VERSION);
+        expect(read.global.playback.listen.repeat).toEqual({ enabled: false, gapSec: 2.5 });
+        expect(fs.readFileSync(config.path, "utf8")).toBe(original);
+        expect(fs.statSync(config.path).mtimeMs).toBe(before);
+        await config.update((raw) => {
+            raw.futureKey = { keep: true };
+        });
+        const reopened = await config.storage.getConfig();
+        expect(reopened).toMatchObject({
+            version: MEETINGS_CONFIG_VERSION,
+            global: { playback: { listen: { repeat: false, repeatGapSec: 2.5 } } },
+            futureKey: { keep: true },
+        });
+    });
     test("invalid legacy migration preserves the original bytes", async () => {
         const config = store();
         mkdirSync(dirname(config.path), { recursive: true });
@@ -363,7 +385,10 @@ describe("meetings config", () => {
             global: { playback: { listen: { repeat: { enabled: false, gapSec: 2.5 } } } },
             futureKey: { keep: true },
         });
+        const original = fs.readFileSync(config.path, "utf8");
         expect((await config.read()).global.playback.listen.repeat).toEqual({ enabled: false, gapSec: 2.5 });
+        expect(fs.readFileSync(config.path, "utf8")).toBe(original);
+        await config.setListenPads({ beforeSec: 3, afterSec: 4 });
         const saved = await config.storage.getConfig();
         expect(legacyConfig.parse(saved).global.playback.listen).toEqual({ repeat: false, repeatGapSec: 2.5 });
         const bytes = fs.readFileSync(config.path, "utf8");
@@ -389,6 +414,8 @@ describe("meetings config", () => {
         });
         const read = await config.read();
         expect(read.global.playback.listen.repeat).toEqual({ enabled: false, gapSec: 2.5 });
+        expect(await config.storage.getConfig()).toMatchObject({ version: 5 });
+        await config.setListenPads({ beforeSec: 3, afterSec: 4 });
         const reopened = await config.storage.getConfig();
         expect(reopened).toMatchObject({
             version: MEETINGS_CONFIG_VERSION,
@@ -424,24 +451,30 @@ describe("meetings config", () => {
         const config = store();
         await config.storage.setConfig(v3);
         expect((await config.read()).global.playback.listen.tone.leadSec).toBe(0.8);
+        expect(await config.storage.getConfig()).toEqual(v3);
+        await config.update(() => {});
         expect(await config.storage.getConfig()).toEqual({
             version: MEETINGS_CONFIG_VERSION,
             global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: false } } },
         });
     });
 
-    test("a version 1 file on disk is rewritten once, and a later change keeps the new shape", async () => {
+    test("a version 1 file stays unchanged on read and an explicit edit saves the new shape", async () => {
         const config = store();
         await config.storage.setConfig({ version: 1, global: { playback: { listen: { budget: 5 } } } });
 
         expect((await config.read()).global.playback.listen.roundCap).toBe(5);
         expect(await config.storage.getConfig()).toEqual({
-            version: MEETINGS_CONFIG_VERSION,
-            global: { playback: { listen: { roundCap: 5 } }, suggest: { questionCap: 5 } },
+            version: 1,
+            global: { playback: { listen: { budget: 5 } } },
         });
         await config.setListenPads({ beforeSec: 3, afterSec: 4 });
-        expect(await config.storage.getConfig()).toMatchObject({
-            global: { playback: { listen: { padBeforeSec: 3, padAfterSec: 4, roundCap: 5 } } },
+        expect(await config.storage.getConfig()).toEqual({
+            version: MEETINGS_CONFIG_VERSION,
+            global: {
+                playback: { listen: { padBeforeSec: 3, padAfterSec: 4, roundCap: 5 } },
+                suggest: { questionCap: 5 },
+            },
         });
     });
 
@@ -471,6 +504,8 @@ describe("meetings config", () => {
         const config = store();
         await config.storage.setConfig(v4);
         expect(listenPads((await config.read()).global.playback.listen)).toEqual({ beforeSec: 7, afterSec: 7 });
+        expect(await config.storage.getConfig()).toEqual(v4);
+        await config.update(() => {});
         expect(await config.storage.getConfig()).toEqual({
             version: MEETINGS_CONFIG_VERSION,
             global: { playback: { listen: { padBeforeSec: 7, padAfterSec: 7, tone: { sound: { hz: 440 } } } } },
