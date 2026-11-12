@@ -323,6 +323,7 @@ function protectedEntries(): Protection {
     return { ids: [...new Set(ids)], paths: [...new Set(paths)] };
 }
 
+// lint-rules-ignore: deletion refuses any lsof stderr and includes mapped files; the compressor's openPaths has a different validation contract.
 export function openPaths(): string[] {
     // lint-rules-ignore: a deletion guard needs every open AND mapped file (lsof's mem rows), which the process layer does not read
     const p = Bun.spawnSync(["lsof", "-n", "-Fn", "-w"], { stdout: "pipe", stderr: "pipe" });

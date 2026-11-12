@@ -23,6 +23,7 @@ export function snapshotFilePath(runId: string, manager: string): string {
     return toPosixPath(join(SNAPSHOTS_DIR, `${runId}-${manager}.json`));
 }
 
+// lint-rules-ignore: existing doctor snapshot IDs are UTC timestamp-only filenames; eval run IDs use local time plus a label.
 export function makeRunId(now: Date = new Date()): string {
     return now.toISOString().replace(/[:.]/g, "-");
 }

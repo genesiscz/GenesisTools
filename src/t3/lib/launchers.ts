@@ -34,6 +34,7 @@ export interface LauncherSpec {
 }
 
 /** The file name of an account inside a launcher name: unsafe characters become `-`. */
+// lint-rules-ignore: persistent launcher filenames retain this primitive; the separately vendored eval core's slug is not a launcher dependency.
 export function accountFileSlug(account: string): string {
     return account.replace(/[^A-Za-z0-9._-]+/g, "-");
 }

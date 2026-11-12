@@ -109,6 +109,7 @@ export function fillArgv(templates: readonly string[], values: Record<string, st
     return templates.map((template) => fill(template, values));
 }
 
+// lint-rules-ignore: extension single-brace tokens reject missing values; eval typed double-brace bindings preserve unknown text.
 export function fillText(template: string, values: Record<string, string>): string {
     return fill(template, values);
 }
