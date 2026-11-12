@@ -11,6 +11,10 @@ struct InboxFindHost: View {
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
     @State private var find = PanelFindModel(scope: "inbox", title: "the inbox")
 
+    static func cardFields(session: InboxSession, item: InboxItem) -> [PanelFindField] {
+        session.findFields.map { PanelFindField("session.\($0.key)", $0.text, markdown: $0.markdown) } + item.findFields
+    }
+
     var body: some View {
         // The same sessions, order and sidebar filter as InboxMain, so no hit points at a hidden card:
         // InboxMain shows the queued-only sessions after the others, under their own heading.
@@ -37,7 +41,7 @@ struct InboxFindHost: View {
             .panelFind(find, revision: sessions) {
                 sessions.flatMap { session in
                     if HubLayout.option("lists") != nil {
-                        return session.items.map { PanelFindRow(id: $0.id, fields: session.findFields + $0.findFields) }
+                        return session.items.map { PanelFindRow(id: $0.id, fields: Self.cardFields(session: session, item: $0)) }
                     }
                     return [PanelFindRow(id: "session:\(session.id)", fields: session.findFields, container: session.id)]
                         + session.items.map { PanelFindRow(id: $0.id, fields: $0.findFields, container: session.id) }
