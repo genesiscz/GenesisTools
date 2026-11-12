@@ -102,8 +102,16 @@ tools ai config doctor [--live] [--json]        # master key, vault, credentials
   missing one exits 1.
 - `account edit` also takes `--endpoint`, `--use-env`, `--auth-file`, `--data-dir` and `--api-key-stdin`.
   `--rename` keeps the id, so every reference stays valid. `--tag` replaces the existing set.
-- `account rm` refuses while something still references the account; `--force` removes it anyway. It also checks the
-  accounts the ai-proxy config bills, so it cannot delete an account the running proxy still routes to.
+- `account rm` refuses while something still references the account, the accounts that the ai-proxy config bills
+  included, so it does not delete an account the running proxy still routes to. That check reads only the proxy's
+  `account: "@account/<id>"` refs. A proxy account linked only by an old name field (`grok.accountName`,
+  `anthropicSub.accountName`, `openaiSub.accountName`) gets its ref when `tools ai-proxy serve` starts; until then,
+  or when that rewrite failed, the check does not see it, so look for those fields in the proxy config before you
+  remove an account. A proxy config that cannot be read counts as no references at all, so the removal goes ahead
+  without `--force` when nothing else holds the account: check that `tools ai-proxy` reads its config before you
+  remove an account it might use. `--force` skips that check too: it
+  removes the account and its vault entries anyway, and the proxy config can keep a reference to an account that is
+  gone.
 - `secret set` does not link the value to an account. `rotate`, `export` and `import` need `--yes` or
   `--passphrase-env` without a TTY.
 - `default set` tasks: `chat`, `embed`, `transcribe`, `tts`, `summarize`, `translate`, `classify`, `sentiment`,
@@ -699,8 +707,9 @@ site. `doctor --live` and `account test --live` add the plugin's health probe, w
 
 ## Troubleshooting
 
-- **`--provider` on `summarize` or `classify` changes nothing.** The flag is ignored (see Text verbs). Set a task
-  default with `tools ai config default set summarize <model-ref>` instead.
+- **`--provider` on `summarize` or `classify` changes nothing.** The flag is ignored (see Text verbs). For
+  `summarize`, set a task default with `tools ai config default set summarize <model-ref>` instead. `classify` has no
+  workaround: it always runs the macOS classification helper, and it reads no task default, account or model.
 - **`image` says "Hugging Face token required".** Export `HUGGINGFACE_TOKEN` (or `HF_TOKEN`).
 - **`tokens --method claude-api` fails at once.** It needs `ANTHROPIC_API_KEY`; it never borrows a subscription
   account.

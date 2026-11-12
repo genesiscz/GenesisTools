@@ -367,9 +367,11 @@ await presets.remove("settings-demo");                 // { trash }
 `vm`'s own timeout only bounds synchronous code. A turn that loops on `await Promise.resolve()` starves the event
 loop with microtasks and defeats every in-process timer, including a `setTimeout` race in the same process. So the
 REPL scope is the global scope of `lib/worker.ts`, a child of the MCP server, and `lib/engine.ts` enforces
-`timeout_ms` from the parent by killing and respawning it. A killed turn reports that every binding is gone, and the
-processes it started (a `Bun.spawn`, a build) get SIGTERM with the worker, because nothing holds their handles any
-more. `js_reset` is the same operation on purpose. There is no separate `vm` context: the process is the sandbox,
+`timeout_ms` from the parent by killing and respawning it. A killed turn reports that every binding is gone. Before
+the kill the engine sends SIGTERM to the worker's process tree, so the processes the turn started (a `Bun.spawn`, a
+build) are asked to stop too, because nothing holds their handles anymore. That is best effort: the engine sends
+SIGTERM once, and it neither waits for the tree to exit nor sends SIGKILL. A child that ignores SIGTERM keeps
+running after the timeout, and so does one that left the tree, or every child when the process list cannot be read. `js_reset` is the same operation on purpose. There is no separate `vm` context: the process is the sandbox,
 and a second realm only makes `Bun.inspect` print every object with its prototype.
 
 - Turns run one at a time, in order. A turn's clock starts after the worker has booted, so bun's start (100 to
@@ -394,7 +396,13 @@ is what a REPL means by it. TypeScript is stripped first with `Bun.Transpiler`.
   `tools github` libraries. They use the GitHub token that `tools github` uses (the environment token or the gh CLI
   login), and fail without one; see [github](../github/README.md).
 - A `movies` transcript that is not cached yet is a paid transcription and may ask the user for the AI vault key.
-  Its method carries the `· paid` label. Plain JavaScript and every `[read]` method cost nothing.
+  Its method carries the `· paid` label. Plain JavaScript costs nothing, and so does a `[read]` method in its
+  default exact mode. `computer.resolve_target` and `computer.resolve_visual_target` are `[read]` too, but with
+  `chooser: "jev"` or `"auto"` they call Jev, which is paid. `computer.verify_state` and `computer.await_condition`
+  have no default mode: pass `exact` for a free readback, or `jev: true` for a semantic check, which calls Jev and is
+  paid. Without either, `verify_state` throws `JEV_NOT_ENABLED` and `await_condition` is refused. A semantic
+  `await_condition` pays for one evaluation of the first observation and one per meaningful state change after it,
+  up to `max_requests` (12 by default), so a wait whose state never changes still costs one.
 
 ## Configuration
 
