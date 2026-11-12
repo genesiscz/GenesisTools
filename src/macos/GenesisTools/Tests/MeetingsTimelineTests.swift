@@ -9,6 +9,30 @@ import XCTest
 final class MeetingsTimelineTests: XCTestCase {
     // MARK: - Pure rules
 
+    func testScreenThumbnailsRefreshChangedFilesAndDoNotReturnDeletedFiles() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-frame-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("frame.png")
+        func write(width: Int, height: Int) throws {
+            let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            let image = try XCTUnwrap(context.makeImage())
+            let data = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            try data.write(to: file, options: .atomic)
+        }
+        let thumbnails = FrameThumbnails()
+        try write(width: 32, height: 16)
+        let first = await thumbnails.image(path: file.path, maxPixel: 128)
+        XCTAssertEqual(try XCTUnwrap(first).size, NSSize(width: 32, height: 16))
+        try write(width: 16, height: 32)
+        let replaced = await thumbnails.image(path: file.path, maxPixel: 128)
+        XCTAssertEqual(try XCTUnwrap(replaced).size, NSSize(width: 16, height: 32))
+        try FileManager.default.removeItem(at: file)
+        let deleted = await thumbnails.image(path: file.path, maxPixel: 128)
+        XCTAssertNil(deleted)
+    }
+
     /// G-PLAY-3: a flag click plays from 0.3 s before the tone, so the tone is heard whole; from the spot without a
     /// tone; never before the clip starts.
     func testAFlagClickPlaysFromThreeTenthsOfASecondBeforeTheTone() {

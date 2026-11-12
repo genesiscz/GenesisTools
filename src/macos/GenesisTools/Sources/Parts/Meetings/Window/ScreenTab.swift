@@ -156,24 +156,18 @@ struct FrameThumbnail: View {
     }
 }
 
-actor FrameThumbnails {
+/// The Screen tab and playback dock share file-aware, byte-bounded decoding with the rest of the kit.
+/// ImageIO runs off the main thread; NSImage is only assembled on the UI actor after the decode returns.
+@MainActor
+final class FrameThumbnails {
     static let shared = FrameThumbnails()
-    private let cache = NSCache<NSString, NSImage>()
+    private let cache = MediaThumbnailCache(byteLimit: 64 << 20, concurrency: 2, deadline: .seconds(5))
 
-    init() { cache.countLimit = 160 }
-
-    func image(path: String, maxPixel: Int) -> NSImage? {
-        let key = "\(path)@\(maxPixel)" as NSString
-        if let hit = cache.object(forKey: key) { return hit }
-        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                  kCGImageSourceCreateThumbnailFromImageAlways: true,
-                  kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-                  kCGImageSourceCreateThumbnailWithTransform: true,
-              ] as CFDictionary) else { return nil }
-        let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-        cache.setObject(image, forKey: key)
-        return image
+    func image(path: String, maxPixel: Int) async -> NSImage? {
+        guard case .ready(let thumbnail) = await cache.thumbnail(path: path, maxPixels: CGFloat(maxPixel), kind: .image) else {
+            return nil
+        }
+        return NSImage(cgImage: thumbnail.image, size: NSSize(width: thumbnail.image.width, height: thumbnail.image.height))
     }
 }
 
