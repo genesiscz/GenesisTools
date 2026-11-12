@@ -77,6 +77,7 @@ final class HubPreferencesTests: XCTestCase {
         XCTAssertEqual(scripted.choice(.lists), .compact)
         let changed = expectation(description: "scripted changes do not reach an open reader")
         changed.isInverted = true
+        // lint-rules-ignore: one-shot inverted observation; any notification is a failure.
         withObservationTracking {
             _ = reader.choice(.lists)
         } onChange: {
