@@ -155,7 +155,10 @@ final class WorktreeCleanupStore: ObservableObject {
     @Published private(set) var sizing = Set<String>()
     @Published private(set) var removing: (done: Int, total: Int)?
     @Published var selected = Set<String>()
-    @Published var notice: (text: String, isError: Bool)?
+    let notices = NoticeStackModel()
+    @Published var notice: (text: String, isError: Bool)? {
+        didSet { if let notice { notices.push(HubNotice(notice.text, notice.isError ? .error : .success).stacked) } }
+    }
     @Published private(set) var moving: (done: Int, total: Int)?
     /// The last move-aside's outcomes: the bar under the header offers their restore commands.
     @Published var lastMoved: [MoveAsideOutcome] = []
@@ -487,6 +490,7 @@ struct WorktreeCleanupView: View {
         }
         .hubSurface(.content)
         .panelFind(find, revision: shown) { groups(shown).flatMap(\.rows).map(Self.searchable) }
+        .noticeStack(store.notices)
         .onAppear { HubMainBusy.measure("worktrees.cleanup.open") }
         .task(id: repos) { store.load(repos: repos) }
         .onChange(of: store.olderThanDays) {
@@ -628,9 +632,7 @@ struct WorktreeCleanupView: View {
                 }
                 .titlebarLabel()
                 Spacer()
-                if let notice = store.notice {
-                    NoticePill(text: notice.text, isError: notice.isError) { store.notice = nil }
-                }
+
                 if let progress = store.removing {
                     ProgressView().controlSize(.small)
                     Text(verbatim: "Removing \(progress.done) of \(progress.total)…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)

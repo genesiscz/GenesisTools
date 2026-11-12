@@ -528,10 +528,31 @@ private final class HubAppDelegate: NSObject, NSApplicationDelegate {
 struct HubNotice: Equatable {
     let text: String
     let tone: NoticePill.Tone
+    /// An error's report, for the notice's Details (the failure window, Report a bug): the one passed, or one made
+    /// from the words.
+    let report: FailureReport?
 
-    init(_ text: String, _ tone: NoticePill.Tone) {
+    init(_ text: String, _ tone: NoticePill.Tone, report: FailureReport? = nil) {
         self.text = text
         self.tone = tone
+        if let report {
+            self.report = report
+        } else if tone == .error {
+            var made = FailureReport.unexpected(text, outcome: "A hub action failed", action: "Use the hub", area: "hub", app: .launch)
+            made.headline = FailureLog.sentence(text) ?? text
+            self.report = made
+        } else {
+            self.report = nil
+        }
+    }
+
+    /// "Details" under an error note.
+    @MainActor
+    var fixes: [NoticeFix] { report.map { [NoticeFix.details($0)] } ?? [] }
+
+    @MainActor
+    var stacked: StackedNotice {
+        StackedNotice(text: text, tone: tone, actions: fixes.map { .init(fix: $0) })
     }
 
     /// A note set as plain text (`model.notice = "…"`) by a pane not moved to `post(_:_:)` yet: the words the
@@ -645,6 +666,9 @@ final class HubModel {
     /// Sessions the last refresh added or moved; their rows flash once.
     private(set) var changedSessions = Set<String>()
     var error: String?
+    /// The last session list read that failed: the pane's placeholder while no list is on screen, a strip over the
+    /// list while an older one stays (a failed minute refresh used to only log and keep the stale rows).
+    var sessionsFailure: FailureReport?
     /// The sidebar's filter text, which every mode's list applies.
     var filter = "" {
         didSet {
@@ -719,6 +743,8 @@ final class HubModel {
     var loadingDecisions = false
     /// Bumped per decisions load: only the newest one may publish (Hub/HubDecisionsSource.swift).
     var decisionsRequest = 0
+    /// The newest decisions load failed: the pane shows it with Try again instead of "no decisions".
+    var decisionsFailure: FailureReport?
     var review: ReviewModel? {
         // A worktree or a timeline commit that replaces the session's review makes the next click on that
         // session set it up again, or the Changes pane kept the worktree's or the commit's diff.
@@ -739,8 +765,16 @@ final class HubModel {
     private var worktreeSessions: [String: [HubSession]]?
     var loadingWorktrees = false
     var selectedWorktree: String?
-    /// The note in the panes' headers, with the tone the code that posted it knows (`post(_:_:)`).
-    var headerNotice: HubNotice?
+    /// Independent action results stay visible across pane and selection changes.
+    @ObservationIgnored @MainActor lazy var notices = NoticeStackModel()
+    private var latestNotice: HubNotice?
+    var headerNotice: HubNotice? {
+        get { latestNotice }
+        set {
+            latestNotice = newValue
+            if let newValue { MainActor.assumeIsolated { notices.push(newValue.stacked) } }
+        }
+    }
     /// The note as plain text, for panes that still set a `String`: it gets the tone the headers used to guess.
     var notice: String? {
         get { headerNotice?.text }
@@ -748,8 +782,12 @@ final class HubModel {
     }
 
     /// Shows `text` in the panes' headers with `tone`; any hub file in this module posts through it (Activity included).
-    func post(_ text: String, _ tone: NoticePill.Tone) {
-        headerNotice = HubNotice(text, tone)
+    @discardableResult
+    func post(_ text: String, _ tone: NoticePill.Tone, report: FailureReport? = nil,
+              replacing id: StackedNotice.ID? = nil) -> StackedNotice.ID {
+        let notice = HubNotice(text, tone, report: report)
+        latestNotice = notice
+        return MainActor.assumeIsolated { notices.push(notice.stacked, replacing: id) }
     }
 
     /// Only the latest commit lookup may navigate, and any later selection invalidates it.
@@ -1515,8 +1553,9 @@ final class HubModel {
         let generation = sessionsGeneration
         loadingSessions = true
         let hours = Self.recentHours
+        let ledger = ToolsCallLedger()
         Task { @MainActor in
-            let fetch = Task { try await readSessions(hours) }
+            let fetch = Task { try await ledger.record { try await readSessions(hours) } }
             // The last run's list paints at once and the window settles on it, unless a scripted
             // `--session` names one it does not hold; the fresh list then slides in behind it.
             if sessions.isEmpty, let cached = await readSessionCache(hours), !cached.isEmpty,
@@ -1536,6 +1575,7 @@ final class HubModel {
                 PerfLog.markOnce("hub.sessions.first-loaded")
                 loadingSessions = false
                 showingCachedSessions = false
+                sessionsFailure = nil
                 writeSessionCache(rows, hours)
                 applySessions(rows)
                 settleSessions()
@@ -1545,6 +1585,7 @@ final class HubModel {
                 loadingSessions = false
                 showingCachedSessions = false
                 self.error = "\(error)"
+                reportSessionsFailure(error, ledger: ledger, hours: hours, generation: generation)
                 if !didSettleLaunch {
                     onSettled?()
                 }
@@ -1666,19 +1707,40 @@ final class HubModel {
                 await HubVisibility.shared.untilVisible()
                 guard let self, !self.loadingSessions else { continue }
                 let generation = self.sessionsGeneration
+                let ledger = ToolsCallLedger()
+                let read = self.readSessions
                 do {
-                    let rows = try await self.readSessions(Self.recentHours)
+                    let rows = try await ledger.record { try await read(Self.recentHours) }
                     guard generation == self.sessionsGeneration else { continue }
+                    self.sessionsFailure = nil
                     self.applySessions(rows, flash: false)
                     self.writeSessionCache(rows, Self.recentHours)
                 } catch {
                     PerfLog.mark("hub.sessions.refresh failed: \(error)")
+                    guard !(error is CancellationError), generation == self.sessionsGeneration else { continue }
+                    self.reportSessionsFailure(error, ledger: ledger, hours: Self.recentHours, generation: generation)
                 }
             }
         }
     }
 
     private var sessionRefresh: Task<Void, Never>?
+
+    /// A failed session list read as a report, its log read after it shows.
+    @MainActor
+    private func reportSessionsFailure(_ error: Error, ledger: ToolsCallLedger, hours: Int, generation: Int) {
+        let report = FailureReport.toolsCall(
+            error, outcome: sessions.isEmpty ? "The session list did not load" : "The session list did not refresh",
+            action: "List the recent sessions", call: ledger.failed,
+            argv: [SessionListClient.subcommand] + SessionListClient.arguments(hours: hours),
+            title: "Session list failed", area: "hub", expected: "The sidebar lists the sessions of the last \(hours) hours.")
+        sessionsFailure = report
+        Task { @MainActor [weak self] in
+            let full = await report.addingCallLog()
+            guard let self, generation == self.sessionsGeneration, self.sessionsFailure == report else { return }
+            self.sessionsFailure = full
+        }
+    }
 
     /// The spring for a small change of the worktree rows, nil (instant) for a page of them.
     private static func worktreesAnimation(from old: [HubWorktree], to new: [HubWorktree]) -> Animation? {
@@ -1900,17 +1962,15 @@ final class HubModel {
             // openInTerminal blocks on the terminal host's CLI (up to its timeout): never on the main actor.
             let name = (path as NSString).lastPathComponent
             let starting = "Starting a new Claude session in \(name)…"
-            post(starting, .success)
+            let startingID = post(starting, .success)
             Task.detached(priority: .userInitiated) {
                 let failure = AgentLauncher.openInTerminal(name: name, cwd: path, command: ["tools", "claude", "run"])
-                // Only over its own "Starting…" line: a newer notice (a copied id, say) stays on screen.
+                // Replace this operation's progress, preserving results posted while it ran.
                 await MainActor.run {
-                    if self.headerNotice?.text == starting {
-                        if let failure {
-                            self.post(failure, .error)
-                        } else {
-                            self.post("Started a new Claude session in \(name).", .success)
-                        }
+                    if let failure {
+                        self.post(failure, .error, replacing: startingID)
+                    } else {
+                        self.post("Started a new Claude session in \(name).", .success, replacing: startingID)
                     }
                 }
             }
@@ -2406,6 +2466,8 @@ struct HubRootView: View {
             } else if model.loadingSessions {
                 TranscriptSkeleton()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            } else if let failure = model.sessionsFailure, model.sessions.isEmpty {
+                FailureInline(failure, form: .pane, identifier: "sessions.failure") { model.loadSessions() }
             } else {
                 Text(model.error ?? "No sessions in the last \(HubModel.recentHours) hours")
                     .foregroundColor(ReviewPalette.dim)
@@ -2453,6 +2515,9 @@ struct HubRootView: View {
         // `tools hub --handoff`: the composer over every pane (Hub/HubHandoffComposer.swift).
         .hubHandoff(model: model)
         .widgetDestination(model: model)
+        .noticeStack(model.notices)
+        // Pane results share the window's stack area instead of covering each other.
+        .noticeStackViewport()
     }
 }
 
@@ -2771,6 +2836,13 @@ private struct SessionListView: View {
             .padding(.horizontal, 10)
             .padding(.top, 8)
             .padding(.bottom, 8)
+
+            // A refresh that failed under a list still on screen: the rows are the last good read.
+            if model.mode == .sessions, let failure = model.sessionsFailure, !model.sessions.isEmpty {
+                FailureInline(failure, form: .compact, identifier: "sessions.refresh-failure") { model.loadSessions() }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+            }
 
             if model.mode == .worktrees {
                 WorktreeListView(model: model)
@@ -3263,9 +3335,7 @@ struct SessionDetailView: View {
             HStack(spacing: 8) {
                 AgentChildTitle(agents: agent.agents, parent: agent.parent, node: node)
                 Spacer()
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
-                }
+
                 paneToggles
                 AgentCopyIdButton(model: model, node: node)
             }
@@ -3308,9 +3378,7 @@ struct SessionDetailView: View {
                     HubForecastChip(account: session.account, provider: Harness(rawValue: session.provider)?.plugin)
                         .layoutPriority(-1)
                 }
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
-                }
+
                 paneToggles
                 IconButton(systemName: "doc.richtext", tooltip: "Copy as Markdown (json2md): session, changes, decisions, recent turns") {
                     // The export answers in words only (HubMarkdownExport, Hub/HubWorktrees.swift): its tone is guessed.

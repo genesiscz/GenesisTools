@@ -1,7 +1,8 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { logger } from "@genesiscz/utils/logger";
+import { currentToolName } from "@genesiscz/utils/security/vault-purpose";
 import { z } from "zod";
-import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
+import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError, rpcErrorBody } from "./errors";
 
 /**
  * One side of a newline-delimited JSON-RPC 2.0 connection, the same on the server and on the client: it answers the
@@ -55,7 +56,15 @@ const rpcReply = z.object({
     jsonrpc: z.literal("2.0"),
     id: z.union([z.string(), z.number(), z.null()]).optional(),
     result: z.unknown().optional(),
-    error: z.object({ code: z.number(), message: z.string(), data: z.unknown().optional() }).optional(),
+    error: z
+        .object({
+            code: z.number(),
+            message: z.string(),
+            data: z.unknown().optional(),
+            stack: z.string().optional(),
+            issue: z.object({ tool: z.string(), title: z.string().optional() }).optional(),
+        })
+        .optional(),
 });
 const idParams = z.object({ id: z.union([z.string(), z.number()]) }).passthrough();
 const progressParams = z.object({
@@ -190,6 +199,8 @@ export interface RpcPeerOptions {
     log: RpcLog;
     /** Names the connection in log lines: `live recording` gives "live recording call refused". */
     label: string;
+    /** The tool named by an error reply; the current process tool when absent. */
+    tool?: string;
     logFields?: Record<string, unknown>;
     defaultTimeoutMs?: number;
     /** The other side stopped reading and its unsent messages reached `OUTBOX_LIMIT_BYTES`: end the socket here. */
@@ -430,7 +441,12 @@ export class RpcPeer {
         this.drop(id, waiting);
 
         if (reply.error) {
-            waiting.reject(new RpcError(reply.error.code, reply.error.message, reply.error.data));
+            waiting.reject(
+                new RpcError(reply.error.code, reply.error.message, reply.error.data, {
+                    stack: reply.error.stack,
+                    issue: reply.error.issue,
+                })
+            );
         } else {
             waiting.resolve(reply.result);
         }
@@ -529,20 +545,11 @@ export class RpcPeer {
                 this.send({ id, result: result ?? null });
             }
         } catch (error) {
-            const code = error instanceof RpcError ? error.code : JSON_RPC_ERRORS.internal;
             const level = failedCallLevel(error, id === undefined);
             log[level]({ ...logFields, method, error }, `${label} call ${level === "warn" ? "failed" : "refused"}`);
 
             if (id !== undefined) {
-                const data = error instanceof RpcError ? error.data : undefined;
-                this.send({
-                    id,
-                    error: {
-                        code,
-                        message: error instanceof Error ? error.message : String(error),
-                        ...(data !== undefined ? { data } : {}),
-                    },
-                });
+                this.send({ id, error: rpcErrorBody(error, this.options.tool ?? currentToolName()) });
             }
         }
     }

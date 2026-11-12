@@ -235,12 +235,16 @@ struct PromptPickerView: View {
     @State private var active = 0
     @State private var chosen: HubPrompt?
     @State private var values: [String: String] = [:]
-    @State private var notice: (text: String, isError: Bool)?
+    @State private var notices = NoticeStackModel()
     @State private var composing = false
     @State private var newName = ""
     @State private var newText = ""
     @State private var newDescription = ""
     @FocusState private var searchFocused: Bool
+
+    private func post(_ text: String, isError: Bool) {
+        notices.push(HubNotice(text, isError ? .error : .success).stacked)
+    }
 
     private var matches: [HubPrompt] {
         let needle = query.trimmed.lowercased()
@@ -264,14 +268,12 @@ struct PromptPickerView: View {
                 } else {
                     list
                 }
-                if let notice {
-                    NoticePill(text: notice.text, isError: notice.isError) { self.notice = nil }
-                        .padding(10)
-                }
+
             }
             .frame(width: 640)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.settingsBackground))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.jarvisTeal.opacity(0.28), lineWidth: 1))
+            .noticeStack(notices)
             .shadow(color: Color.jarvisTeal.opacity(0.12), radius: 28, y: 12)
             .padding(.top, 90)
         }
@@ -422,10 +424,10 @@ struct PromptPickerView: View {
                 Button("Delete") {
                     Task {
                         if let error = await store.remove(prompt) {
-                            notice = ("Delete failed: \(error)", true)
+                            post("Delete failed: \(error)", isError: true)
                         } else {
                             chosen = nil
-                            notice = ("Deleted \(prompt.name)", false)
+                            post("Deleted \(prompt.name)", isError: false)
                         }
                     }
                 }
@@ -474,10 +476,10 @@ struct PromptPickerView: View {
                 Button {
                     Task {
                         if let error = await store.add(name: newName.trimmed, text: newText, description: newDescription) {
-                            notice = ("Not saved: \(error)", true)
+                            post("Not saved: \(error)", isError: true)
                         } else {
                             composing = false
-                            notice = ("Saved \(newName.trimmed)", false)
+                            post("Saved \(newName.trimmed)", isError: false)
                         }
                     }
                 } label: {
@@ -511,7 +513,7 @@ struct PromptPickerView: View {
                 sentNotice(result.mode == "file" ? "Sent \(result.name) through \((result.file ?? "") as NSString).lastPathComponent)" : "Sent \(result.name)")
                 isPresented = false
             case .failure(let error):
-                notice = ("Not sent: \(error)", true)
+                post("Not sent: \(error)", isError: true)
             }
         }
     }

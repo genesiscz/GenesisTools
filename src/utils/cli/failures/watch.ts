@@ -481,6 +481,11 @@ export function agentCaller(): FailureCaller | null {
     return typeof found === "object" && found !== null && "agent" in found ? (found as FailureCaller) : null;
 }
 
+/** Masks message text using the live run's raw credentials, without exposing those values to callers. */
+export function redactCurrentRunText(text: string): string {
+    return redactRunText(text, run?.argv ?? [], run?.secrets() ?? {});
+}
+
 function caller(): FailureCaller | null {
     try {
         return run?.caller() ?? null;

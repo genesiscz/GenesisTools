@@ -70,6 +70,11 @@ struct DecisionsView: View {
                         .skeletonShimmer()
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("Reading the decisions")
+                    } else if model.decisions.isEmpty, let failure = model.decisionsFailure {
+                        FailureInline(failure, form: .compact, identifier: "decisions.failure") {
+                            if let id = model.selected?.sessionId { model.loadDecisions(for: id) }
+                        }
+                        .padding(.top, 12)
                     } else if shown.isEmpty {
                         Text(Self.emptyText(filter: filter, hasAny: !model.decisions.isEmpty))
                             .font(.system(size: 12.5))

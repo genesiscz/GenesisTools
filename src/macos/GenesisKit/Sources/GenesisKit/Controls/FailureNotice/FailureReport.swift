@@ -84,14 +84,19 @@ public struct FailureReport: Equatable, Sendable {
     public var expected: String?
     /// The bug form's "Affected tool" ("recorder").
     public var area: String?
-    /// The environment `tools genesis-tools env --json` reported, nil until it answered (or when it could not).
+    /// The environment `tools genesis-tools triage --json` reported, nil until it answered (or when it could not).
     public var environment: FailureEnvironment?
+    /// The failed `tools` call, from the task's `ToolsCallLedger`: its trace id, argv, how it ran and its stderr.
+    public var call: ToolsCallLedger.Call?
+    /// The remote failure evidence, retained in Details and the context copied for agents.
+    public var stack: String?
+    public var issue: FailureIssue?
 
     public init(title: String = "Failed", headline: String, summary: String? = nil, nextStep: String? = nil,
                 action: String? = nil, command: String? = nil, exitStatus: Int32? = nil, folder: String? = nil,
                 logFile: String? = nil, logLine: Int? = nil, dayLog: String? = nil, log: String = "", time: Date = Date(),
                 app: FailureAppFacts? = nil, expected: String? = nil, area: String? = nil,
-                environment: FailureEnvironment? = nil) {
+                environment: FailureEnvironment? = nil, stack: String? = nil, issue: FailureIssue? = nil) {
         self.title = title
         self.headline = headline
         self.summary = summary
@@ -109,9 +114,14 @@ public struct FailureReport: Equatable, Sendable {
         self.expected = expected
         self.area = area
         self.environment = environment
+        self.stack = stack
+        self.issue = issue
     }
 
-    public var hasLog: Bool { !log.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    public var hasLog: Bool {
+        !log.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !(stack ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     /// `<home>/.genesis-tools/logs/<local date>.log`, the file every `tools` process and the app log to that day.
     public static func dayLogPath(home: String = NSHomeDirectory(), time: Date = Date(), timeZone: TimeZone = .current) -> String {
@@ -131,7 +141,17 @@ public struct FailureReport: Equatable, Sendable {
         if let environment, !environment.fields.isEmpty, !environment.markdown.isEmpty {
             text += "\n### All environment facts\n\n" + environment.markdown + "\n"
         }
-        return text
+        return PathDisplay.shortenHome(in: text)
+    }
+
+    /// Everything the report knows as one plain text, for "Raw log" and "Copy log": the error, the command, where the
+    /// logs are, the time, the whole output, the whole stack, and the environment once it arrived.
+    public func rawText(timeZone: TimeZone = .current) -> String {
+        var text = actual(timeZone: timeZone)
+        if let environment, !environment.markdown.isEmpty {
+            text += "\n\nenvironment:\n" + environment.markdown.trimmingCharacters(in: .newlines)
+        }
+        return PathDisplay.shortenHome(in: text)
     }
 
     /// The issue body in the bug form's sections, in its order and with its names (`.github/ISSUE_TEMPLATE/
@@ -198,6 +218,12 @@ public struct FailureReport: Equatable, Sendable {
         formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss zzz"
         var lines = ["error: \(headline)"]
+        if let issue {
+            lines.append("tool: \(issue.tool)" + (issue.title.map { " (issue: \($0))" } ?? ""))
+        }
+        if let command {
+            lines.append("command: \(command)" + (exitStatus.map { " (exit \($0))" } ?? ""))
+        }
         if let logFile {
             lines.append("log: \(logFile)" + (logLine.map { " (from line \($0))" } ?? ""))
         }
@@ -207,9 +233,15 @@ public struct FailureReport: Equatable, Sendable {
         if let folder {
             lines.append("folder: \(folder)" + (FileManager.default.fileExists(atPath: folder) ? "" : " (no longer on disk)"))
         }
+        if let call {
+            lines.append("trace: t=\(call.traceId)" + (call.via.map { " (via \($0))" } ?? ""))
+        }
         lines.append("time: \(formatter.string(from: time))")
         if hasLog {
             lines += ["", log.trimmingCharacters(in: .newlines)]
+        }
+        if let stack = stack?.trimmingCharacters(in: .newlines), !stack.isEmpty {
+            lines += ["", "stack:", stack]
         }
         return lines.joined(separator: "\n")
     }
@@ -229,6 +261,9 @@ public struct FailureReport: Equatable, Sendable {
     public func detailsMarkdown() -> String {
         let events = FailureLog.events(in: log)
         var lines: [String] = []
+        if let stack = stack?.trimmingCharacters(in: .newlines), !stack.isEmpty {
+            lines += ["### Stack", "", fenced(stack, "text"), ""]
+        }
 
         let warnings = events.filter { $0.level == .warning || ($0.level == .error && (!$0.fields.isEmpty || !$0.stack.isEmpty)) }
         if !warnings.isEmpty {
@@ -328,7 +363,7 @@ public struct FailureReport: Equatable, Sendable {
     }
 }
 
-/// What `tools genesis-tools env --json` answered: the environment bullets, the bug form's fields in order (empty when
+/// What `tools genesis-tools triage --json` (or `env --json`) answered: the environment bullets, the bug form's fields in order (empty when
 /// the checkout has no `.github/ISSUE_TEMPLATE/bug_report.yml`), and the environment answers by field id.
 public struct FailureEnvironment: Equatable, Sendable {
     public struct Field: Equatable, Sendable {
@@ -367,10 +402,34 @@ public struct FailureEnvironment: Equatable, Sendable {
                                   values: issue?["values"] as? [String: String] ?? [:])
     }
 
-    /// Runs `tools genesis-tools env --json`; nil when it fails.
+    /// Runs `tools genesis-tools triage --json`: the build facts of `env` and the state of the Mac at this moment
+    /// (load, memory pressure, top CPU and memory, whether the hub server answers, the app faces, the commands that
+    /// failed and the calls that were slow just before). A checkout without `triage` answers through `env --json`,
+    /// which has the same shape without the state. Nil when both fail.
     public static func load(bridge: ToolsBridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())) async -> FailureEnvironment? {
-        guard let run = try? await bridge.run(subcommand: "genesis-tools", args: ["env", "--json"], timeoutSeconds: 20),
-              run.exitCode == 0 else { return nil }
-        return parse(json: run.stdout)
+        for command in ["triage", "env"] {
+            if let run = try? await bridge.run(subcommand: "genesis-tools", args: [command, "--json"], timeoutSeconds: 20),
+               run.exitCode == 0, let environment = parse(json: run.stdout) {
+                return environment
+            }
+        }
+        return nil
+    }
+}
+
+public struct FailureIssue: Codable, Equatable, Sendable {
+    public var tool: String
+    public var title: String?
+
+    public init(tool: String, title: String? = nil) {
+        self.tool = tool
+        self.title = title
+    }
+
+    /// The `issue` member of a JSON-RPC error; nil when there is none or it names no tool.
+    public init?(json: Any?) {
+        guard let object = json as? [String: Any], let tool = object["tool"] as? String, !tool.isEmpty else { return nil }
+        let title = (object["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.init(tool: tool, title: title?.isEmpty == false ? title : nil)
     }
 }

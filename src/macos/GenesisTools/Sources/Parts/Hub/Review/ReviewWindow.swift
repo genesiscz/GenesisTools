@@ -1,5 +1,6 @@
 import AppKit
 import CoreServices
+import GenesisKitDisk
 import SwiftUI
 import WebKit
 
@@ -543,11 +544,23 @@ final class ReviewModel: ObservableObject {
     @Published var fileInViewID: String?
     @Published var options: DiffViewOptions
     @Published var error: String?
+    /// `error` as a report for the pane (`FailureInline` with Try again), made when the error changes.
+    @Published private(set) var errorReport: FailureReport?
     @Published var loading = false
     @Published var lastLoaded: Date?
     @Published var commentCount = 0
     @Published var unsentCount = 0
-    @Published var notice: String?
+    @MainActor lazy var notices = NoticeStackModel()
+    @Published var notice: String? {
+        didSet {
+            guard let notice else { return }
+            // Review results, like the rest of the published UI state, land on the main queue.
+            MainActor.assumeIsolated {
+                let failed = notice.lowercased().contains("could not") || notice.contains("failed")
+                notices.push(HubNotice(notice, failed ? .error : .success).stacked)
+            }
+        }
+    }
     /// The Files list as a tree or flat. Its click measures itself (`review.files.tree`, at the toggle): measured
     /// here, every launch's session-state restore logged the whole launch as the tree's cost ("897 ms of 600 ms",
     /// six at a time from parallel snapshot runs, 2026-10-10).
@@ -1472,6 +1485,14 @@ final class ReviewModel: ObservableObject {
             roots = next
         }
         error = roots.count == 1 ? roots[0].error : nil
+        if error == nil {
+            if errorReport != nil { errorReport = nil }
+        } else if errorReport?.log != error {
+            errorReport = error.map {
+                FailureReport.unexpected($0, outcome: "The changes did not load", action: "List the changes of the checkout",
+                                         title: "Changes did not load", area: "hub")
+            }
+        }
         if started { watchRoots() }
 
         let merged = ReviewRoots.merge(roots)
@@ -3004,20 +3025,11 @@ struct ReviewRootView: View {
                         .padding(.top, 8)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                if let notice = model.notice {
-                    NoticePill(text: notice, isError: notice.lowercased().contains("could not") || notice.contains("failed")) {
-                        model.notice = nil
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                }
-                if let error = model.error {
-                    Text(error)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(ReviewPalette.removed)
-                        .textSelection(.enabled)
-                        .padding(8)
+
+                if let report = model.errorReport {
+                    FailureInline(report, form: .compact, identifier: "review.failure") { model.reload() }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 // An error is the answer: "No changes against HEAD" under it contradicted it.
@@ -3048,6 +3060,7 @@ struct ReviewRootView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity)
             .clipped()
+            .noticeStack(model.notices)
             .sheet(isPresented: $model.showsComparePicker) {
                 if let store = model.versions {
                     ComparePushesSheet(model: model, store: store)
@@ -4106,11 +4119,19 @@ private struct RootFolderRow: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 10))
                         .foregroundColor(ReviewPalette.removed)
+                        .accessibilityLabel("Error")
                     Text(error)
                         .font(.system(size: 10.5))
                         .foregroundColor(ReviewPalette.removed)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .help(error)
+                    // The row has no room for the whole error: the failure window holds it, with Copy and Report a bug.
+                    IconButton(systemName: "doc.text.magnifyingglass", tooltip: "Details of this failure", size: 10) {
+                        FailureReporter.shared.showDetails(
+                            FailureReport.unexpected(error, outcome: "The changes of \(root.prefix) did not load",
+                                                     action: "List the changes of the checkout", area: "hub"))
+                    }
                 } else if !root.shown {
                     Text("not in Changes").font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
                 }
@@ -4343,81 +4364,136 @@ private final class RendererContainer: NSView {
 
 // MARK: - Live reload
 
-/// FSEvents on the checkout and its actual Git directories, including shared refs of linked worktrees.
-/// The stream's latency coalesces writes; object database and build output noise is ignored.
-/// The stream holds this box (retained, released by the stream), never the watcher itself, so an
-/// event queued after the watcher is gone finds a nil reference instead of freed memory.
-private final class RepoWatcherBox {
-    weak var watcher: RepoWatcher?
-
-    init(_ watcher: RepoWatcher) {
-        self.watcher = watcher
-    }
+/// The disk stream's synchronous API is called only on the review watcher's owner queue.
+protocol RepoWatchStream: AnyObject, Sendable {
+    func start(since eventID: UInt64?) -> Bool
+    func stop()
 }
 
-private final class RepoWatcher {
-    private var stream: FSEventStreamRef?
-    /// Told each batch of events that can change the diff (`ReviewRepositoryLayout.classify`).
-    private let onChange: (ReviewWatchBatch) -> Void
-    private let layout: ReviewRepositoryLayout
+extension FileEventStream: RepoWatchStream {}
 
-    init(layout: ReviewRepositoryLayout, onChange: @escaping (ReviewWatchBatch) -> Void) {
-        self.layout = layout
-        self.onChange = onChange
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passRetained(RepoWatcherBox(self)).toOpaque(),
-            retain: nil,
-            release: { info in
-                if let info {
-                    Unmanaged<RepoWatcherBox>.fromOpaque(info).release()
+/// FSEvents on the checkout and its Git directories. Native lifecycle stays off main; classification and delivery
+/// keep the Review model's main-thread contract. A queued callback cannot outlive stop or this facade.
+final class RepoWatcher {
+    typealias StreamFactory = @Sendable (FileEventStream.Configuration, @escaping @Sendable (FileEventBatch) -> Void) -> any RepoWatchStream
+
+    private final class Delivery: @unchecked Sendable {
+        private let lock = NSRecursiveLock()
+        private var stopped = false
+        private let layout: ReviewRepositoryLayout
+        private let onChange: (ReviewWatchBatch) -> Void
+
+        init(layout: ReviewRepositoryLayout, onChange: @escaping (ReviewWatchBatch) -> Void) {
+            self.layout = ReviewRepositoryLayout(
+                root: URL(fileURLWithPath: DirectoryWatcher.normalizedEventPath(layout.root.path)),
+                gitDirectory: URL(fileURLWithPath: DirectoryWatcher.normalizedEventPath(layout.gitDirectory.path)),
+                commonDirectory: URL(fileURLWithPath: DirectoryWatcher.normalizedEventPath(layout.commonDirectory.path)))
+            self.onChange = onChange
+        }
+
+        var isStopped: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return stopped
+        }
+
+        func cancel() {
+            lock.lock()
+            stopped = true
+            lock.unlock()
+        }
+
+        func enqueue(_ events: FileEventBatch) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard !self.stopped else { return }
+                var batch = ReviewWatchBatch()
+                if !events.rescanRoots.isEmpty { batch.add(.rescan) }
+                for event in events.events {
+                    if let classified = self.layout.classify(event.path, flags: event.flags.rawValue) {
+                        batch.add(classified)
+                    }
                 }
-            },
-            copyDescription: nil
-        )
-        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
-            guard let info, let watcher = Unmanaged<RepoWatcherBox>.fromOpaque(info).takeUnretainedValue().watcher else { return }
-            let list = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
-            var batch = ReviewWatchBatch()
-            for index in 0..<min(count, list.count) {
-                if let event = watcher.layout.classify(list[index], flags: flags[index]) {
-                    batch.add(event)
-                }
-            }
-            if !batch.isEmpty {
-                watcher.onChange(batch)
+                if !batch.isEmpty { self.onChange(batch) }
             }
         }
-        stream = FSEventStreamCreate(
-            nil,
-            callback,
-            &context,
-            layout.watchPaths as CFArray,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            0.35,
-            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
-        )
-        if let stream {
-            FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
-            FSEventStreamStart(stream)
+
+        func failedToStart() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard !self.stopped else { return }
+                HubPerf.log("review.watch failed to start for \(self.layout.root.path)")
+            }
         }
     }
 
-    deinit {
-        if let stream {
-            FSEventStreamStop(stream)
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
+    private final class Owner: @unchecked Sendable {
+        private let queue = DispatchQueue(label: "genesis.review.file-events", qos: .utility)
+        private let delivery: Delivery
+        private var stream: (any RepoWatchStream)?
+
+        init(delivery: Delivery, configuration: FileEventStream.Configuration, since eventID: UInt64,
+             makeStream: @escaping StreamFactory) {
+            self.delivery = delivery
+            queue.async { [self] in
+                guard !delivery.isStopped else { return }
+                let created = makeStream(configuration) { [delivery] in delivery.enqueue($0) }
+                stream = created
+                if !created.start(since: eventID) {
+                    stream = nil
+                    delivery.failedToStart()
+                }
+            }
+        }
+
+        func stop() {
+            delivery.cancel()
+            queue.async { [self] in
+                stream?.stop()
+                stream = nil
+            }
         }
     }
+
+    private let owner: Owner
+
+    init(layout: ReviewRepositoryLayout,
+         makeStream: @escaping StreamFactory = { FileEventStream(configuration: $0, onBatch: $1) },
+         onChange: @escaping (ReviewWatchBatch) -> Void) {
+        let since = FileEventStream.currentEventId
+        let delivery = Delivery(layout: layout, onChange: onChange)
+        owner = Owner(delivery: delivery, configuration: .init(paths: layout.watchPaths, latency: 0.35, ignoreSelf: false),
+                      since: since, makeStream: makeStream)
+    }
+
+    func stop() { owner.stop() }
+
+    deinit { owner.stop() }
 }
 
 // MARK: - Snapshot
 
-/// Writes the window as a PNG without Screen Recording: the SwiftUI chrome through
-/// `cacheDisplay`, the web content through WKWebView's own snapshot, composited at its frame.
+/// Captures the actual window layers when permitted. Without Screen Recording, composites WebKit and restores
+/// floating controls over it, so a notice or dialog is never painted underneath the diff in the saved image.
 enum ReviewSnapshot {
     static func write(window: NSWindow, webView: WKWebView?, to path: String, done: @escaping () -> Void) {
+        Task { @MainActor in
+            if let capture = await WindowSnapshot.capture(window), capture.method == "window server",
+               let png = capture.image.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: path))
+                FileHandle.standardError.write(Data("hub snapshot: window server layers\n".utf8))
+                done()
+                return
+            }
+            writeFallback(window: window, webView: webView, to: path, done: done)
+        }
+    }
+
+    private static func writeFallback(window: NSWindow, webView: WKWebView?, to path: String, done: @escaping () -> Void) {
         guard let content = window.contentView else {
             done()
             return
@@ -4450,12 +4526,39 @@ enum ReviewSnapshot {
                 image.draw(in: bounds)
                 webImage.draw(in: frame)
                 composed.unlockFocus()
-                save(withSheet(composed, window: window), to: path)
+                save(withSheet(withFloatingOverlays(composed, coveredBy: frame, in: content), window: window), to: path)
             } else {
                 save(withSheet(image, window: window), to: path)
             }
             done()
         }
+    }
+
+    /// WebKit's bitmap was painted last; restore only the portions of floating controls it covered.
+    static func withFloatingOverlays(_ image: NSImage, coveredBy cover: NSRect, in content: NSView) -> NSImage {
+        func floating(in view: NSView) -> [NSView] {
+            if let host = view as? GenOverlayContentView { return host.floatingOverlays }
+            return view.subviews.flatMap { floating(in: $0) }
+        }
+        let overlays = floating(in: content)
+        guard !overlays.isEmpty else { return image }
+        let composed = NSImage(size: image.size)
+        composed.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: cover).addClip()
+        for view in overlays {
+            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let layer = NSImage(size: view.bounds.size)
+            layer.addRepresentation(bitmap)
+            var frame = view.convert(view.bounds, to: content)
+            if content.isFlipped { frame.origin.y = content.bounds.height - frame.maxY }
+            layer.draw(in: frame)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        composed.unlockFocus()
+        return composed
     }
 
     /// A sheet (the handoff composer) is its own window, so `cacheDisplay` of the main one left it out.

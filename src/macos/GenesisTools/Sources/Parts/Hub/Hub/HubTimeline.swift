@@ -219,11 +219,11 @@ final class HubTimelineModel: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var loadingOlder = false
     @Published private(set) var loadedAt: Date?
-    @Published private(set) var error: String?
+    @Published private(set) var error: FailureReport?
     @Published private(set) var hasMore = false
     /// Why the last "Load older" failed, as the CLI said it; the footer shows one sentence beside the button and this
     /// behind Details (the page is not empty, so the list's own failure note never renders then).
-    @Published private(set) var olderError: String?
+    @Published private(set) var olderError: FailureReport?
     private var nextBefore: String?
     /// The page on screen is the last run's for this range and filters, from disk; the fresh one is loading.
     @Published private(set) var showingCache = false
@@ -415,8 +415,9 @@ final class HubTimelineModel: ObservableObject {
                     }
                 }
             }
+            let ledger = ToolsCallLedger()
             let result = Result { () -> TimelineEnvelope in
-                let data = try ToolsCLIRunner.run(args)
+                let data = try ledger.recordSync { try ToolsCLIRunner.run(args) }
                 let envelope = try JSONDecoder().decode(TimelineEnvelope.self, from: data)
                 cache.writeData(data, key: key)
                 return envelope
@@ -437,7 +438,10 @@ final class HubTimelineModel: ObservableObject {
                         // The next run's "since my last visit" starts at the last look of this one.
                         HubDefaults.store.set(Date(), forKey: "hub.timeline.lastVisit")
                     case .failure(let failure):
-                        self.error = "\(failure)"
+                        FailureReport.toolsCall(failure, outcome: self.events.isEmpty ? "The activity did not load" : "The activity did not refresh",
+                                                action: "Read the activity feed", call: ledger.failed, argv: args,
+                                                title: "Activity did not load", area: "hub")
+                            .deliver({ [weak self] in self?.error = $0 }, isCurrent: { [weak self] in self?.error == $0 && self?.generation == mine })
                     }
                     self.runOpenRequest()
                     let done = self.onLoaded
@@ -503,7 +507,8 @@ final class HubTimelineModel: ObservableObject {
         let args = Self.arguments(interval: interval, before: cursor, limit: Self.pageSize, author: author, needsMe: needsMe, fresh: false)
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("timeline.older", "before \(cursor)")
-            let result = Result { try JSONDecoder().decode(TimelineEnvelope.self, from: ToolsCLIRunner.run(args)) }
+            let ledger = ToolsCallLedger()
+            let result = Result { try JSONDecoder().decode(TimelineEnvelope.self, from: ledger.recordSync { try ToolsCLIRunner.run(args) }) }
             span.end((try? result.get()).map { "\($0.events.count) events" } ?? "failed")
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
@@ -518,7 +523,10 @@ final class HubTimelineModel: ObservableObject {
                         self.hasMore = envelope.hasMore ?? false
                         self.nextBefore = envelope.nextBefore
                     case .failure(let failure):
-                        self.olderError = "\(failure)"
+                        FailureReport.toolsCall(failure, outcome: "Older activity did not load", action: "Load older activity",
+                                                call: ledger.failed, argv: args, title: "Older activity did not load", area: "hub")
+                            .deliver({ [weak self] in self?.olderError = $0 },
+                                     isCurrent: { [weak self] in self?.olderError == $0 && self?.generation == mine })
                     }
                 }
             }
@@ -1353,13 +1361,7 @@ struct TimelineMain: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // A failed read lands after the click or refresh that asked for it, so VoiceOver hears it.
-        .onChange(of: timeline.error) { _, failure in
-            if failure != nil { GenAnnounce.post(timeline.events.isEmpty ? Self.loadFailedText : Self.refreshFailedText) }
-        }
-        .onChange(of: timeline.olderError) { _, failure in
-            if failure != nil { GenAnnounce.post(Self.olderFailedText) }
-        }
+        // A failed read lands after the click or refresh that asked for it; `FailureInline` announces its headline.
         // Only the flag is state: a resize step on the same side of the threshold changes nothing.
         .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.compactWidth }) { compact = $0 }
         // The find re-runs when the shown rows change, a row folds open or closed, or a detail lands.
@@ -1377,16 +1379,10 @@ struct TimelineMain: View {
             + (commitPrefix ? "\u{3}" : "")
     }
 
-    static let loadFailedText = "The activity could not be read."
-    static let refreshFailedText = "The activity could not be refreshed. The list shows the last page read."
-    static let olderFailedText = "Older activity could not be read."
-
-    private func loadFailure(_ failure: String) -> some View {
-        NoticePill(
-            text: timeline.events.isEmpty ? Self.loadFailedText : Self.refreshFailedText,
-            more: failure, tone: .error,
-            fixes: [.button("Retry", symbol: "arrow.clockwise") { timeline.load(fresh: true) }]
-        )
+    private func loadFailure(_ failure: FailureReport) -> some View {
+        FailureInline(failure, form: timeline.events.isEmpty ? .pane : .compact, identifier: "timeline.failure") {
+            timeline.load(fresh: true)
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
@@ -1476,8 +1472,7 @@ struct TimelineMain: View {
                 if timeline.loadingOlder {
                     ProgressView().controlSize(.small)
                 } else if let failure = timeline.olderError {
-                    // "Load older" beside it is the retry; the CLI's own words wait behind Details, never cut.
-                    NoticePill(text: Self.olderFailedText, more: failure, tone: .error)
+                    FailureInline(failure, form: .compact, identifier: "timeline.older-failure") { timeline.loadOlder() }
                 }
                 if !timeline.truncated.isEmpty {
                     Text("A page ends where its busiest source stopped reading: \(timeline.truncated.joined(separator: ", ")).")
@@ -1515,9 +1510,7 @@ struct TimelineMain: View {
                 }
                 .titlebarLabel()
                 Spacer()
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
-                }
+
                 if !timeline.warnings.isEmpty {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(ReviewPalette.modified)

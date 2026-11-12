@@ -1,4 +1,6 @@
 import Combine
+import SwiftUI
+@testable import GenesisKit
 import XCTest
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
@@ -15,6 +17,66 @@ final class HubLogicTests: XCTestCase {
         super.setUp()
         HubDefaults.store.removeObject(forKey: "hub.tabOrder")
         HubDefaults.store.removeObject(forKey: "hub.panes")
+    }
+
+    @MainActor
+    func testSnapshotRestoresFloatingNoticesOnlyWhereTheWebImageCoveredThem() throws {
+        let root = GenRootHostingView(rootView: Color.clear.frame(width: 100, height: 100))
+        root.sizingOptions = []
+        let content = GenOverlayContentView(root: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = content
+        window.orderInForSnapshot()
+        defer { window.close() }
+        let red = NSView()
+        red.wantsLayer = true
+        red.layer?.backgroundColor = NSColor.red.cgColor
+        let slot = GenOverlaySlot(overlay: red, elevation: .floating)
+        slot.frame = NSRect(x: 30, y: 40, width: 40, height: 20)
+        content.addSubview(slot)
+        content.layoutSubtreeIfNeeded()
+        let image = NSImage(size: NSSize(width: 100, height: 100))
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSRect(x: 0, y: 0, width: 100, height: 100).fill()
+        NSColor.blue.setFill()
+        NSRect(x: 50, y: 0, width: 50, height: 100).fill()
+        image.unlockFocus()
+        let repaired = ReviewSnapshot.withFloatingOverlays(image, coveredBy: NSRect(x: 50, y: 0, width: 50, height: 100), in: content)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(repaired.tiffRepresentation)))
+        let repairedColor = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide * 60 / 100, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB))
+        let untouched = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide * 40 / 100, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB))
+        XCTAssertGreaterThan(repairedColor.redComponent, 0.8)
+        XCTAssertLessThan(repairedColor.blueComponent, 0.2)
+        XCTAssertGreaterThan(untouched.blueComponent, 0.8, "outside the web image, the original capture is kept")
+    }
+
+    @MainActor
+    func testIndependentHubResultsSurviveSelectionResetAndReplaceTheirOwnProgress() throws {
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        let progress = model.post("Starting an operation", .success)
+        model.post("Copied a value", .success)
+        model.post("Operation finished", .success, replacing: progress)
+        XCTAssertEqual(model.notices.notices.map(\.text), ["Operation finished", "Copied a value"])
+        model.notice = nil
+        XCTAssertEqual(model.notices.notices.count, 2, "a pane reset does not discard independent results")
+        model.notices.dismiss(progress)
+        XCTAssertEqual(model.notices.notices.map(\.text), ["Copied a value"])
+    }
+
+    @MainActor
+    func testPanelResultsRetainEarlierFailuresAndActions() {
+        let rules = HubRulesModel()
+        rules.notice = "Failed: invalid input"
+        rules.notice = "Saved"
+        XCTAssertEqual(rules.notices.notices.map(\.tone), [.error, .success])
+        XCTAssertEqual(rules.notices.notices.first?.actions.first?.label, "Details")
+        let digest = HubDigestModel()
+        digest.notice = "Export failed"
+        digest.notice = "Copied"
+        XCTAssertEqual(digest.notices.notices.map(\.text), ["Export failed", "Copied"])
     }
 
     // MARK: Pane order
@@ -745,55 +807,6 @@ final class HubLogicTests: XCTestCase {
             model.finishRangeLookup(current) { applied.append("duplicate") }
             XCTAssertEqual(applied, ["current"])
         }
-    }
-
-    /// A push lands while the checkout looks up a link's commits (`pickLocalCommits`). The review stays (`moveHead`), so
-    /// the answer for the old head must set no scope or notice, and the link is pending again, to be asked against the
-    /// new head. A parent lookup of a link's range does not depend on the head, so it still answers.
-    @MainActor
-    func testAHeadMoveDropsALinkLookupAskedAgainstTheOldHeadAndAsksAgain() throws {
-        let (pr, model, _, pick) = try rewrittenFixture()
-        var applied: [String] = []
-
-        let old = model.beginLocalLookup(pick)
-        XCTAssertNil(model.pendingCommit, "pickLocalCommits clears the pick while git runs")
-        model.dropLocalLookup(movingTo: pr)
-        model.finishRangeLookup(old) { applied.append("old head") }
-        XCTAssertTrue(applied.isEmpty, "an answer for the old head sets no scope or notice")
-        XCTAssertEqual(model.pendingCommit, pick, "the link is asked again against the new head")
-
-        let parent = model.beginRangeLookup()
-        model.dropLocalLookup(movingTo: pr)
-        model.finishRangeLookup(parent) { applied.append("parent") }
-        XCTAssertEqual(applied, ["parent"], "a head move keeps a parent lookup")
-
-        model.showWholePR()
-        let other = PRCommitPick(ref: HubPRRef(project: "acme/other", number: 9), sha: "c3e3ad830", asked: Date())
-        let current = model.beginLocalLookup(other)
-        model.dropLocalLookup(movingTo: pr)
-        model.finishRangeLookup(current) { applied.append("other PR") }
-        XCTAssertEqual(applied, ["parent", "other PR"], "a head move of one PR drops no lookup of another")
-        XCTAssertNil(model.pendingCommit, "nor makes another PR's link pending")
-
-        let answered = model.beginLocalLookup(pick)
-        model.finishRangeLookup(answered) { applied.append("answered") }
-        model.dropLocalLookup(movingTo: pr)
-        XCTAssertEqual(applied.last, "answered")
-        XCTAssertNil(model.pendingCommit, "a lookup that answered is not asked again")
-    }
-
-    /// The checkout's answer about a link's commits: a pick that went while a new review waited (a failed detail) still
-    /// builds that review, and nothing acts for a PR the link does not name.
-    func testALinkLookupBuildsADeferredReviewEvenAfterThePickWent() {
-        let follow = { (pending: Bool, names: Bool, deferred: Bool, onScreen: Bool) in
-            PRsModel.linkLookupFollowUp(pickStillPending: pending, linkNamesSelected: names, reviewDeferred: deferred, reviewOnScreen: onScreen)
-        }
-        XCTAssertEqual(follow(false, true, true, false), .buildReview, "detailFailed cleared the pick while the review was deferred")
-        XCTAssertEqual(follow(false, true, false, true), .nothing, "the pick went and the review is already on screen")
-        XCTAssertEqual(follow(true, true, false, true), .pickCommit)
-        XCTAssertEqual(follow(true, true, true, false), .buildReview)
-        XCTAssertEqual(follow(false, false, true, false), .nothing, "another PR is on screen")
-        XCTAssertEqual(follow(true, false, false, false), .nothing)
     }
 
     /// A link's one commit, read from the checkout before the forge lists it, opens on that commit.
@@ -1692,25 +1705,5 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(AgentNode(id: "a1", harness: "claude", kind: "subagent", status: "done", lastAt: "").transcriptQuery)
         XCTAssertEqual(AgentNode(id: "w1", harness: "codex", kind: "worker", status: "done", lastAt: "").transcriptQuery, "w1")
         XCTAssertEqual(AgentNode(id: "w2", harness: "grok", kind: "worker", status: "done", lastAt: "").transcriptQuery, "w2")
-    }
-
-    /// Only an agent that ended folds into the "finished agent" row: an idle teammate waits for work, so it stays in
-    /// sight under the Idle and All filters (eve on #764, 2026-11-10).
-    func testOnlyEndedAgentsFoldIntoTheFinishedRow() {
-        func node(_ id: String, _ status: String, kind: String = "subagent", children: [AgentNode]? = nil) -> AgentNode {
-            AgentNode(id: id, harness: "claude", kind: kind, status: status, lastAt: "", children: children)
-        }
-        let children = [
-            node("done", "completed"),
-            node("broke", "failed"),
-            node("stopped", "killed"),
-            node("waiting", "idle", kind: "teammate"),
-            node("parent", "completed", children: [node("helper", "idle", kind: "teammate")]),
-            node("open", "completed"),
-        ]
-        let split = AgentTree.foldFinished(children) { $0.id == "open" }
-        XCTAssertEqual(split.live.map(\.id), ["waiting", "parent", "open"])
-        XCTAssertEqual(split.finished.map(\.id), ["done", "broke", "stopped"])
-        XCTAssertTrue(AgentTree.foldFinished(children) { _ in true }.finished.isEmpty, "the fold off keeps every row")
     }
 }

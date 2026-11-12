@@ -136,6 +136,13 @@ export interface RunToolOpts {
      * real CLI run: process.argv is not touched.
      */
     rewriteArgs?: (args: string[]) => string[];
+    /** Formats an action failure; undefined keeps the standard error report. */
+    formatError?: (error: unknown) => ToolErrorReport | undefined;
+}
+
+export interface ToolErrorReport {
+    message: string;
+    exitCode?: number;
 }
 
 export interface RunToolResult {
@@ -211,6 +218,25 @@ export function reportUnhandledToolError(error: unknown): void {
     noteToolError(error);
     process.stderr.write(`ERROR: ${message}\n`);
     process.exitCode = 1;
+}
+
+function reportToolError(error: unknown, formatError: RunToolOpts["formatError"]): void {
+    let report: ToolErrorReport | undefined;
+    try {
+        report = formatError?.(error);
+    } catch (formatterError) {
+        logger.debug({ err: formatterError }, "formatError threw; using the default report");
+    }
+
+    if (!report) {
+        reportUnhandledToolError(error);
+        return;
+    }
+
+    logger.debug({ err: error }, "unhandled tool error");
+    noteToolError(error);
+    process.stderr.write(report.message.endsWith("\n") ? report.message : `${report.message}\n`);
+    process.exitCode = report.exitCode ?? 1;
 }
 
 /** `agents changes` for the action command of a run: the names from the root down, never argument values. */
@@ -324,7 +350,7 @@ export async function runTool(
             throw error;
         }
 
-        reportUnhandledToolError(error);
+        reportToolError(error, opts.formatError);
     }
 
     return { tool, verbosity: _verbosity, isVerbose: _verbosity >= 1, command: program };

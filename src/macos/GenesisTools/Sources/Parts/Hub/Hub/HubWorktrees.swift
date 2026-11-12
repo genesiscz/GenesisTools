@@ -205,6 +205,7 @@ enum ToolsCLIRunner {
         // Its span is `srv.…`, so app-perf.log shows which path answered.
         let traceId = ToolsCallTrace.newId()
         let started = Date()
+        ToolsCallTrace.began(traceId: traceId, argv: args, started: started)
         if let server = HubSource.server {
             let start = CFAbsoluteTimeGetCurrent()
             if let result = server.callSync(argv: args, timeout: timeout, traceId: traceId) {
@@ -242,6 +243,7 @@ enum ToolsCLIRunner {
     static func captureStoppable(_ args: [String], timeout: TimeInterval = 60) async throws -> (capture: ProcessCapture, stopped: Bool) {
         let traceId = ToolsCallTrace.newId()
         let started = Date()
+        ToolsCallTrace.began(traceId: traceId, argv: args, started: started)
         if let server = HubSource.server {
             let start = CFAbsoluteTimeGetCurrent()
             let result = await server.call(argv: args, timeoutSeconds: Int(timeout), traceId: traceId)
@@ -271,10 +273,12 @@ enum ToolsCLIRunner {
         _ work: @escaping @Sendable (ProcessCancelHandle) throws -> T
     ) async throws -> (value: T, stopped: Bool) {
         let handle = ProcessCancelHandle()
+        // The queue hop leaves the task: the caller's call ledger goes along by hand.
+        let ledger = ToolsCallTrace.ledger
         let value = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
                 DispatchQueue.global(qos: .userInitiated).async {
-                    continuation.resume(with: Result { try work(handle) })
+                    continuation.resume(with: Result { try ToolsCallTrace.$ledger.withValue(ledger) { try work(handle) } })
                 }
             }
         } onCancel: {
@@ -497,9 +501,7 @@ struct WorktreeDetailView: View {
                     ExternalLink(text: worktree.repo, url: facts?.webURL)
                     PullRequestLink(facts: facts)
                     Spacer()
-                    if let notice = model.notice {
-                        NoticePill(text: notice, isError: notice.hasPrefix("cmux:")) { model.notice = nil }
-                    }
+
                     Button {
                         launchingNew = true
                     } label: {

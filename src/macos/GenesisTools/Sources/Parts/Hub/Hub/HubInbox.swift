@@ -404,7 +404,9 @@ final class HubInboxModel: ObservableObject {
     }
     @Published private(set) var loading = false
     @Published private(set) var loadedAt: Date?
-    @Published private(set) var error: String?
+    /// The last read that failed, as a report: the list's placeholder while it is empty, a strip over the rows while
+    /// the last good read stays.
+    @Published private(set) var error: FailureReport?
     /// The session the sidebar picked; the main list scrolls to it.
     @Published var selectedID: String?
     /// The sidebar's fold of sessions quiet for three days is open. One state for the list and its arrow keys, so Down
@@ -532,7 +534,10 @@ final class HubInboxModel: ObservableObject {
         loading = true
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("inbox.load")
-            let result = Result { try JSONDecoder().decode(InboxEnvelope.self, from: ToolsCLIRunner.run(["question", "inbox", "--json"])) }
+            let ledger = ToolsCallLedger()
+            let result = Result {
+                try JSONDecoder().decode(InboxEnvelope.self, from: ledger.recordSync { try ToolsCLIRunner.run(["question", "inbox", "--json"]) })
+            }
             span.end((try? result.get()).map { "\($0.sessions.count) sessions, tools \($0.elapsedMs ?? -1) ms" } ?? "failed")
             let preferences = WidgetPreferencesFile.shared.current()
             DispatchQueue.main.async { [weak self] in
@@ -562,7 +567,10 @@ final class HubInboxModel: ObservableObject {
                         self.pruneFormImages()
                         self.applyReveal()
                     case .failure(let failure):
-                        self.error = "\(failure)"
+                        FailureReport.toolsCall(failure, outcome: "The waiting sessions did not load", action: "Read the Inbox",
+                                                call: ledger.failed, argv: ["question", "inbox", "--json"],
+                                                title: "Inbox did not load", area: "hub")
+                            .deliver({ [weak self] in self?.error = $0 }, isCurrent: { [weak self] in self?.error == $0 })
                     }
                     self.finishLoad()
                 }
@@ -1400,13 +1408,19 @@ struct InboxListView: View {
             .padding(.bottom, 6)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
+                    // A refresh that failed while the last good read stays on screen.
+                    if !rows.isEmpty, let failure = inbox.error {
+                        InboxLoadFailure(report: failure) { inbox.load() }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                    }
                     if rows.isEmpty, inbox.loading {
                         SkeletonRows(count: 6, leading: .avatar)
                             .skeletonShimmer()
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel("Looking for waiting sessions")
                     } else if rows.isEmpty, let failure = inbox.error {
-                        InboxLoadFailure(raw: failure) { inbox.load() }
+                        InboxLoadFailure(report: failure) { inbox.load() }
                             .padding(14)
                     } else if rows.isEmpty, !inbox.sessions.isEmpty, !model.filter.trimmed.isEmpty {
                         EmptyState(
@@ -1461,16 +1475,13 @@ struct InboxListView: View {
     }
 }
 
-/// A failed load of the Inbox: one sentence and a retry; the raw failure sits behind Details.
+/// A failed load of the Inbox: the kit's inline failure (Try again, Details, Report a bug).
 private struct InboxLoadFailure: View {
-    let raw: String
-    let retry: () -> Void
+    let report: FailureReport
+    let retry: @MainActor () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            NoticePill(text: "Could not load the waiting sessions.", more: raw, tone: .error)
-            GhostButton("Try again", symbol: "arrow.clockwise", tooltip: "Look for waiting sessions again", action: retry)
-        }
+        FailureInline(report, form: .compact, identifier: "inbox.failure", retry: retry)
     }
 }
 
@@ -1589,7 +1600,7 @@ struct InboxMain: View {
                         if rows.isEmpty, inbox.loading {
                             PaneSkeleton("Looking for waiting sessions")
                         } else if rows.isEmpty, let failure = inbox.error {
-                            InboxLoadFailure(raw: failure) { inbox.load() }
+                            InboxLoadFailure(report: failure) { inbox.load() }
                                 .frame(maxWidth: .infinity)
                                 .padding(.top, 40)
                         } else if rows.isEmpty, !inbox.sessions.isEmpty, !model.filter.trimmed.isEmpty {
@@ -1799,9 +1810,7 @@ struct InboxMain: View {
                 }
                 .titlebarLabel()
                 Spacer()
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
-                }
+
                 if let missing = inbox.revealMissing {
                     // Not an error: the decision moved on. It names the decision and offers the way to it (F18).
                     NoticePill(text: missing.text, tone: .warning, fixes: revealFixes) {

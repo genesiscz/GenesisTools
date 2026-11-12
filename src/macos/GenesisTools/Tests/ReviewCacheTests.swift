@@ -1,4 +1,5 @@
 import XCTest
+import GenesisKitDisk
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
 
@@ -129,4 +130,140 @@ final class ReviewCacheTests: XCTestCase {
         XCTAssertTrue(layout.movesRefs("/repo/main/.git/worktrees/new"))
     }
 
+}
+
+private final class RepoWatcherProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var callback: (@Sendable (FileEventBatch) -> Void)?
+    private var operations: [(String, Bool)] = []
+    private var boundary: UInt64?
+
+    func attach(_ callback: @escaping @Sendable (FileEventBatch) -> Void) {
+        lock.lock()
+        self.callback = callback
+        lock.unlock()
+    }
+
+    func record(_ operation: String, since: UInt64? = nil) {
+        lock.lock()
+        operations.append((operation, Thread.isMainThread))
+        if let since { boundary = since }
+        lock.unlock()
+    }
+
+    func emit(_ batch: FileEventBatch) {
+        lock.lock()
+        let callback = callback
+        lock.unlock()
+        callback?(batch)
+    }
+
+    var state: (operations: [String], onMain: [Bool], boundary: UInt64?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (operations.map(\.0), operations.map(\.1), boundary)
+    }
+}
+
+private final class ControlledRepoStream: RepoWatchStream, @unchecked Sendable {
+    let onStart: @Sendable (UInt64?) -> Bool
+    let onStop: @Sendable () -> Void
+
+    init(onStart: @escaping @Sendable (UInt64?) -> Bool, onStop: @escaping @Sendable () -> Void) {
+        self.onStart = onStart
+        self.onStop = onStop
+    }
+
+    func start(since eventID: UInt64?) -> Bool { onStart(eventID) }
+    func stop() { onStop() }
+}
+
+extension ReviewCacheTests {
+    @MainActor
+    func testRepoWatcherNeverWaitsOnMainForStartOrStopAndDropsQueuedCallbacksAfterDeinit() async {
+        let root = URL(fileURLWithPath: "/repo/watch-fixture")
+        let layout = ReviewRepositoryLayout(root: root, gitDirectory: root.appendingPathComponent(".git"),
+                                             commonDirectory: root.appendingPathComponent(".git"))
+        let probe = RepoWatcherProbe()
+        let entered = expectation(description: "background start entered")
+        let stopped = expectation(description: "background stop completed")
+        let mainRan = expectation(description: "main runs while native start is held")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        var delivered = 0
+        var watcher: RepoWatcher? = RepoWatcher(layout: layout, makeStream: { configuration, callback in
+            XCTAssertFalse(configuration.ignoreSelf)
+            XCTAssertEqual(configuration.latency, 0.35)
+            probe.attach(callback)
+            return ControlledRepoStream(onStart: { boundary in
+                probe.record("start", since: boundary)
+                entered.fulfill()
+                if release.wait(timeout: .now() + 5) == .timedOut { XCTFail("start gate was not released") }
+                return true
+            }, onStop: {
+                probe.record("stop")
+                stopped.fulfill()
+            })
+        }) { _ in delivered += 1 }
+        XCTAssertNotNil(watcher)
+        await fulfillment(of: [entered], timeout: 2)
+        probe.emit(.init(rescanRoots: [root.path]))
+        watcher = nil
+        DispatchQueue.main.async { mainRan.fulfill() }
+        await fulfillment(of: [mainRan], timeout: 2)
+        XCTAssertEqual(probe.state.operations, ["start"], "deinit returned while native start is held")
+        XCTAssertEqual(delivered, 0, "the main-queue callback was cancelled before it ran")
+        release.signal()
+        await fulfillment(of: [stopped], timeout: 2)
+        XCTAssertEqual(probe.state.operations, ["start", "stop"])
+        XCTAssertEqual(probe.state.onMain, [false, false])
+        XCTAssertNotNil(probe.state.boundary, "startup uses the event id captured before it was queued")
+    }
+
+    @MainActor
+    func testRepoWatcherPreservesFlagsAndMainQueueBatchOrderAndCancelsAfterStop() async {
+        let root = URL(fileURLWithPath: "/private/tmp/repo-watch-fixture")
+        let reportedRoot = URL(fileURLWithPath: "/tmp/repo-watch-fixture")
+        let layout = ReviewRepositoryLayout(root: root, gitDirectory: root.appendingPathComponent(".git"),
+                                             commonDirectory: root.appendingPathComponent(".git"))
+        let probe = RepoWatcherProbe()
+        let started = expectation(description: "background start")
+        let stopped = expectation(description: "background stop")
+        let changed = expectation(description: "ordered batches on main")
+        changed.expectedFulfillmentCount = 2
+        var batches: [ReviewWatchBatch] = []
+        var watcher: RepoWatcher?
+        defer { watcher = nil }
+        watcher = RepoWatcher(layout: layout, makeStream: { _, callback in
+            probe.attach(callback)
+            return ControlledRepoStream(onStart: { _ in started.fulfill(); return true }, onStop: { stopped.fulfill() })
+        }) { batch in
+            XCTAssertTrue(Thread.isMainThread)
+            batches.append(batch)
+            if batches.count == 2 { watcher?.stop() }
+            changed.fulfill()
+        }
+        await fulfillment(of: [started], timeout: 2)
+        probe.emit(.init(events: [
+            .init(path: reportedRoot.appendingPathComponent("a.swift").path, flags: [.itemModified], id: 1),
+            .init(path: reportedRoot.appendingPathComponent(".git/index").path, flags: [.itemModified], id: 2),
+        ]))
+        probe.emit(.init(events: [
+            .init(path: reportedRoot.appendingPathComponent(".git/refs/heads/topic").path, flags: [.itemModified], id: 3),
+        ], rescanRoots: [root.path], dropped: true))
+        await fulfillment(of: [changed], timeout: 2)
+        XCTAssertEqual(batches.count, 2)
+        XCTAssertEqual(batches[0].paths, ["a.swift"])
+        XCTAssertTrue(batches[0].index)
+        XCTAssertFalse(batches[0].refs)
+        XCTAssertTrue(batches[1].refs)
+        XCTAssertTrue(batches[1].rescan)
+        probe.emit(.init(rescanRoots: [root.path]))
+        watcher?.stop()
+        await fulfillment(of: [stopped], timeout: 2)
+        let drained = expectation(description: "main queue drained")
+        DispatchQueue.main.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 2)
+        XCTAssertEqual(batches.count, 2)
+    }
 }

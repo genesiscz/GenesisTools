@@ -112,7 +112,8 @@ struct HubUsageDigestSummary: View {
 
     var body: some View {
         if let error = store.error {
-            Text(verbatim: error).font(.system(size: 11)).foregroundColor(ReviewPalette.removed)
+            FailureInline(message: error, outcome: "The usage digest did not load", action: "Read the usage digest",
+                          area: "hub", identifier: "usage-digest.failure")
         } else if let digest = store.digest?.data {
             VStack(alignment: .leading, spacing: 6) {
                 if !store.warnings.isEmpty {

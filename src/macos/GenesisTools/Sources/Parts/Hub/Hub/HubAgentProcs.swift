@@ -160,7 +160,10 @@ final class AgentProcsStore: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var stopping = Set<Int>()
     @Published var expanded = Set<String>()
-    @Published var notice: (text: String, isError: Bool)?
+    let notices = NoticeStackModel()
+    @Published var notice: (text: String, isError: Bool)? {
+        didSet { if let notice { notices.push(HubNotice(notice.text, notice.isError ? .error : .success).stacked) } }
+    }
     /// Settings → Hub → Panes edits the same value (`HubPreferences.processEnergy`); a change there reaches this
     /// store's views through `preferenceChanges`.
     var energy: Bool {
@@ -318,6 +321,7 @@ struct AgentProcsView: View {
         }
         .hubSurface(.content)
         .panelFind(find, revision: groups) { groups.map(Self.searchable) }
+        .noticeStack(store.notices)
         .onAppear { HubMainBusy.measure("procs.open") }
         .task { await store.poll() }
         .task(id: store.energy) {
@@ -393,9 +397,7 @@ struct AgentProcsView: View {
                 }
                 .titlebarLabel()
                 Spacer()
-                if let notice = store.notice {
-                    NoticePill(text: notice.text, isError: notice.isError) { store.notice = nil }
-                }
+
                 Toggle("Energy", isOn: $store.energy)
                     .toggleStyle(.checkbox)
                     .font(.system(size: 12))

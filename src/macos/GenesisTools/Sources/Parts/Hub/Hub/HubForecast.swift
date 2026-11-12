@@ -251,7 +251,8 @@ struct HubForecastList: View {
         let accounts = store.accounts.filter { !$0.current.isEmpty }
         VStack(alignment: .leading, spacing: 4) {
             if let error = store.error {
-                Text(verbatim: error).font(.system(size: 11)).foregroundColor(ReviewPalette.removed)
+                FailureInline(message: error, outcome: "The usage forecast did not load", action: "Read the usage forecast",
+                              area: "hub", identifier: "forecast.failure")
             }
             if accounts.isEmpty, store.error == nil {
                 Text(store.loading ? "Reading usage snapshots…" : "No recorded usage in a current window (the usage poller records it).")

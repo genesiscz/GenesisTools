@@ -128,7 +128,9 @@ struct HubHistorySection: View {
         if history.running || !hits.isEmpty || history.error != nil {
             Section {
                 if let error = history.error {
-                    Text(verbatim: error).font(.system(size: 11)).foregroundColor(ReviewPalette.removed).padding(.horizontal, 14)
+                    FailureInline(message: error, outcome: "The history search failed", action: "Search every project's history",
+                                  area: "hub", identifier: "history.failure")
+                        .padding(.horizontal, 14)
                 }
                 ForEach(hits) { hit in
                     Button { model.openHistory(hit) } label: {
