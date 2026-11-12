@@ -5,8 +5,11 @@ import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
 import appStatusOutsidePermissions from "./app-status-outside-permissions.definition";
 import cdpConnOutsideConnect from "./cdp-conn-outside-connect.definition";
 import cdpSocketOutsideConnect from "./cdp-socket-outside-connect.definition";
+import chooseCostOutsidePricedUsage from "./choose-cost-outside-priced-usage.definition";
+import clarityFillOutsideMonthFill from "./clarity-fill-outside-month-fill.definition";
 import cmuxSendOutsideSurfaceInput from "./cmux-send-outside-surface-input.definition";
 import cmuxTreeOutsideReader from "./cmux-tree-outside-reader.definition";
+import cmuxTreeParseOutsideReader from "./cmux-tree-parse-outside-reader.definition";
 import type { RosterDefinition } from "./define";
 import doctorDirectDelete from "./doctor-direct-delete.definition";
 import launchctlOutsideLaunchdAgent from "./launchctl-outside-launchd-agent.definition";
@@ -15,6 +18,7 @@ import mcpBackupPromptOutsideCycle from "./mcp-backup-prompt-outside-cycle.defin
 import mcpProviderWriteOutsideCycle from "./mcp-provider-write-outside-cycle.definition";
 import providerFetchOutsideExchange from "./provider-fetch-outside-exchange.definition";
 import providerPoolOutsideLifecycle from "./provider-pool-outside-lifecycle.definition";
+import questionItemsOutsideVerbs from "./question-items-outside-verbs.definition";
 import sessionListingOutsideClaude from "./session-listing-outside-claude.definition";
 
 /** Every roster. A new one is a `<name>.definition.ts` file in this folder plus one line here. */
@@ -22,9 +26,12 @@ export const ROSTER_DEFINITIONS: readonly RosterDefinition[] = [
     adoFetchOutsideApi,
     appStatusOutsidePermissions,
     cdpConnOutsideConnect,
+    chooseCostOutsidePricedUsage,
+    clarityFillOutsideMonthFill,
     cdpSocketOutsideConnect,
     cmuxSendOutsideSurfaceInput,
     cmuxTreeOutsideReader,
+    cmuxTreeParseOutsideReader,
     doctorDirectDelete,
     launchctlOutsideLaunchdAgent,
     lockUnlinkOutsidePidfile,
@@ -32,6 +39,7 @@ export const ROSTER_DEFINITIONS: readonly RosterDefinition[] = [
     mcpProviderWriteOutsideCycle,
     providerFetchOutsideExchange,
     providerPoolOutsideLifecycle,
+    questionItemsOutsideVerbs,
     sessionListingOutsideClaude,
 ];
 
