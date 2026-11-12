@@ -18,6 +18,7 @@ import { measureDepth } from "./depth";
 import { UsageError } from "./format";
 import { buildGraph, isLoadTimeEdge, isMeasuredEdge, labelFor, packageNameOf, postOrder, reachableFrom } from "./graph";
 import { buildImportIndex, importersOf } from "./import-index";
+import { type FunctionFact, fingerprint, sharedCopies } from "./inventory";
 import { findLazyCandidates, type LazyCandidate } from "./lazy";
 import { loadFiles } from "./load";
 import type { WorkerSample } from "./measure";
@@ -2253,6 +2254,51 @@ describe("the import index, areas and depth", () => {
         ]);
         expect(report.recurring).toEqual([
             { module: "lib/shared.ts", entries: 2, totalMs: 60, maxMs: 35, paidBy: ["a", "b"] },
+        ]);
+    });
+});
+
+describe("sharedCopies: a shared helper written again", () => {
+    const fact = (over: Partial<FunctionFact>): FunctionFact => ({
+        file: "src/port/lib/a.ts",
+        line: 1,
+        name: "helper",
+        exported: false,
+        fingerprint: "",
+        ...over,
+    });
+    const body = fingerprint("{ return typeof value === 'object' && value !== null && !Array.isArray(value); }", [
+        "value",
+    ]);
+
+    it("names the same name, a copy's name and a copied body, each once, with the owner nearest the root", () => {
+        const copies = sharedCopies(
+            {
+                imports: [],
+                functions: [
+                    fact({ file: "src/utils/deep/format.ts", name: "formatDuration", exported: true }),
+                    fact({ file: "src/utils/format.ts", name: "formatDuration", exported: true }),
+                    fact({ file: "src/utils/object.ts", name: "isObject", exported: true, fingerprint: body }),
+                    fact({ name: "formatDuration", line: 2 }),
+                    fact({ name: "myFormatDuration", line: 3 }),
+                    fact({
+                        name: "isJsonRecord",
+                        line: 4,
+                        fingerprint: fingerprint(
+                            "{ return typeof v === 'object' && v !== null && !Array.isArray(v); }",
+                            ["v"]
+                        ),
+                    }),
+                    fact({ name: "unrelatedHelper", line: 5 }),
+                ],
+            },
+            "src/utils"
+        );
+
+        expect(copies.map((copy) => [copy.line, copy.how, copy.owner.file])).toEqual([
+            [2, "same-name", "src/utils/format.ts"],
+            [3, "renamed", "src/utils/format.ts"],
+            [4, "same-body", "src/utils/object.ts"],
         ]);
     });
 });

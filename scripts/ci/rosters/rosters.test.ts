@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { copyNames, type FunctionFact, fingerprint, isDistinctName } from "@app/ts/lib/inventory";
 import { Lang, parse } from "@ast-grep/napi";
 import { maskSwiftNonCode } from "../lint-rules";
 import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
@@ -16,12 +17,8 @@ import mcpProviderWriteOutsideCycle from "./mcp-provider-write-outside-cycle.def
 import providerFetchOutsideExchange from "./provider-fetch-outside-exchange.definition";
 import { SWIFT_ROSTERS, swiftRosterApplies, swiftRosterLines } from "./swift";
 import {
-    copyNames,
     countByKey,
     FUNCTION_BODY_COPIED,
-    type FunctionFact,
-    fingerprint,
-    isDistinctName,
     SHARED_EXPORT_REDECLARED,
     TOOL_DEPENDENCY_ADDED,
     toolOf,
