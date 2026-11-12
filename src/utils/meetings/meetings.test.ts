@@ -681,6 +681,46 @@ describe("meeting records", () => {
         return new MeetingStore(new Storage(`meetings-test-${stores}`));
     }
 
+    test("a saved edit makes legacy interrupted spans readable by older builds", async () => {
+        const store = records();
+        const created = await store.create(
+            { title: "Recovered recorder", start: "2026-11-05T11:00:00.000Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const span = { from: created.start, to: created.start, stopReason: "interrupted" };
+        fs.writeFileSync(
+            store.path(created.id),
+            SafeJSON.stringify({
+                ...created,
+                recording: {
+                    stopReason: "interrupted",
+                    spans: [span],
+                    displaySpans: [{ ...span, displayId: 1 }],
+                },
+            })
+        );
+        await store.update(created.id, { command: "set", change: "title" }, (record) => {
+            record.title = "Recovered meeting";
+        });
+        const legacyReason = z.enum(["requested", "paused", "failed", "error"]);
+        const legacy = z.object({
+            recording: z.object({
+                stopReason: legacyReason,
+                spans: z.array(z.object({ stopReason: legacyReason })),
+                displaySpans: z.array(z.object({ stopReason: legacyReason, displayId: z.number() })),
+            }),
+        });
+        expect(legacy.parse(SafeJSON.parse(fs.readFileSync(store.path(created.id), "utf8"))).recording).toEqual({
+            stopReason: "error",
+            spans: [{ stopReason: "error" }],
+            displaySpans: [{ stopReason: "error", displayId: 1 }],
+        });
+        const saved = new MeetingStore(store.storage).read(created.id)!;
+        expect(saved.recording?.interrupted).toBe(true);
+        expect(saved.recording?.spans?.[0]).toMatchObject({ stopReason: "error", interrupted: true });
+        expect(saved.recording?.displaySpans?.[0]).toMatchObject({ stopReason: "error", interrupted: true });
+    });
+
     test("future recording stop reasons stay readable and survive a saved edit", async () => {
         const store = records();
         const created = await store.create(

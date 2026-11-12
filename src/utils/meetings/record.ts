@@ -830,6 +830,16 @@ export class MeetingStore {
     }
 
     private write(record: MeetingRecord): void {
+        const recording = record.recording;
+        if (recording) {
+            for (const span of [recording, ...(recording.spans ?? []), ...(recording.displaySpans ?? [])]) {
+                if (span.stopReason === "interrupted") {
+                    span.stopReason = "error";
+                    span.interrupted = true;
+                }
+            }
+        }
+
         // A store made before the owner-only rule is tightened at its next write.
         chmodSync(this.root, 0o700);
         chmodSync(this.folder(record.id), 0o700);
