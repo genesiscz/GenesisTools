@@ -91,7 +91,7 @@ export function createLimiter(options: {
             if (wait > 0) {
                 if (!s.waking) {
                     s.waking = true;
-                    void abortableSleep(options.clock, wait, options.signal).then(() => {
+                    void waitOnEvalClock(options.clock, wait, options.signal).then(() => {
                         s.waking = false;
                         pump(key);
                     });
@@ -164,7 +164,7 @@ export function createLimiter(options: {
     };
 }
 
-async function abortableSleep(clock: Clock, ms: number, signal?: AbortSignal): Promise<void> {
+async function waitOnEvalClock(clock: Clock, ms: number, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) {
         return;
     }
@@ -383,7 +383,7 @@ export async function runPlan<TResolved, TSignals, THandle>(
                     if (error.kind !== "rate-limit") {
                         open.release();
                         held = false;
-                        await abortableSleep(
+                        await waitOnEvalClock(
                             options.clock,
                             error.detail.retryAfterMs ?? Math.min(MaxPauseMs, 1000 * 2 ** (attempt - 1)),
                             options.signal
