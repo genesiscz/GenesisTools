@@ -2834,7 +2834,17 @@ private struct SessionListView: View {
                         .modifier(SidebarArrowKeys(
                             ids: { Self.inboxKeyOrder(model.inbox, sort: sort, filter: model.filter) },
                             selection: { model.inbox.selectedID },
-                            select: { model.inbox.selectedID = $0 },
+                            select: { id in
+                                model.inbox.selectedID = id
+                                if HubLayout.option("lists") != nil,
+                                   let session = model.inbox.sessions.first(where: { $0.id == id }),
+                                   let item = session.items.first(where: { $0.isOpen }) ?? session.items.first {
+                                    model.inbox.keyCardID = item.id
+                                    ListsSketchB.InboxPick.shared.bucket = nil
+                                    ListsSketchB.InboxPick.shared.project = nil
+                                    ListsSketchB.InboxPick.shared.open = item.id
+                                }
+                            },
                             proxy: proxy, focused: $listFocused, focusOnClick: true))
                 }
             } else if model.mode == .timeline {

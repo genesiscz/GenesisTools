@@ -638,6 +638,12 @@ extension ListsSketchB {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onChange(of: inbox.focusRequest, initial: true) { _, _ in
+                guard let id = inbox.focusedItemID, all.contains(where: { $0.id == id }) else { return }
+                pick.bucket = nil
+                pick.project = nil
+                pick.open = id
+            }
         }
 
         @ViewBuilder
