@@ -28,9 +28,11 @@ struct InboxFindHost: View {
                       let session = sessions.first(where: { $0.items.contains(where: { $0.id == hit.row }) }) else { return }
                 inbox.selectedID = session.id
                 inbox.keyCardID = hit.row
-                ListsSketchB.InboxPick.shared.bucket = nil
-                ListsSketchB.InboxPick.shared.project = nil
-                ListsSketchB.InboxPick.shared.open = hit.row
+                if HubLayout.option("lists") == "b" {
+                    ListsSketchB.InboxPick.shared.bucket = nil
+                    ListsSketchB.InboxPick.shared.project = nil
+                    ListsSketchB.InboxPick.shared.open = hit.row
+                }
             }
             .panelFind(find, revision: sessions) {
                 sessions.flatMap { session in

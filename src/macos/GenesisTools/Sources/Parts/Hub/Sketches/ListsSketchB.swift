@@ -646,6 +646,9 @@ extension ListsSketchB {
             VStack(spacing: 0) {
                 header(all: all, shown: shown.count)
                 PanelFindBarSlot()
+                if let failure = inbox.error {
+                    ListVariantLoadFailure(failure) { inbox.load() }
+                }
                 ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
