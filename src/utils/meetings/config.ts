@@ -40,7 +40,7 @@ export const projectNameSchema = z
 
 const strings = z.array(z.string().trim().min(1)).default([]);
 
-/** The config shape this code writes. Older files are migrated on the first read (`migrateMeetingsConfig`). */
+/** The config shape this code writes. Reads migrate in memory; explicit edits persist the current shape. */
 export const MEETINGS_CONFIG_VERSION = 7;
 
 /**
@@ -859,26 +859,11 @@ export class MeetingsConfigStore {
     }
 
     /**
-     * The config with every default filled in. A missing file is the defaults; an invalid one throws with each issue.
-     * An older file is rewritten in the current shape once, under the lock.
+     * The config with defaults and legacy migration applied in memory. Reads, including diagnostics, never rewrite
+     * the file. An explicit update migrates the saved shape under its existing lock.
      */
     async read(): Promise<MeetingsConfig> {
-        let raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
-
-        if (Object.keys(raw).length > 0 && migrateMeetingsConfig(structuredClone(raw))) {
-            raw = await this.storage.atomicConfigUpdate<Record<string, unknown>>((current) => {
-                if (migrateMeetingsConfig(current)) {
-                    const parsed = meetingsConfigSchema.safeParse(current);
-
-                    if (!parsed.success) {
-                        throw new Error(formatIssues(parsed.error, this.path));
-                    }
-
-                    log.debug({ path: this.path, version: MEETINGS_CONFIG_VERSION }, "meetings config migrated");
-                }
-            });
-        }
-
+        const raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
         const parsed = meetingsConfigSchema.safeParse(raw);
 
         if (!parsed.success) {

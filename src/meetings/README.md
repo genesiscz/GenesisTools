@@ -527,7 +527,8 @@ code. An older file without these keys reads with the values above.
 (`ocr`, `render.unclearLabel`, `readAloudLabel`, `lineLabel`). `global.language` picks the block that labels the
 transcript and reads the screen.
 
-A version 1 file is rewritten once on the first read: `global.render` moves to `languages.cs.render`,
+Older settings are migrated in memory when read; `config show` and other reads do not rewrite the file.
+An explicit edit saves the migrated shape under the config lock. For version 1, `global.render` moves to `languages.cs.render`,
 `playback.listen.budget` to both `global.suggest.questionCap` and `playback.listen.roundCap`, and
 `projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. A version 2 file moves
 `projects.<p>.match.calendar.titles` to `projects.<p>.match.title.words`, since the words test the meeting title from
