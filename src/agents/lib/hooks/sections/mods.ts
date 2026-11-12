@@ -14,7 +14,7 @@ import type { ModsConfig } from "../config";
 
 // Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`.
 const DEFAULT_MODS: ModsConfig = {
-    diff: { fullDiff: true, collapseGitSync: true },
+    diff: { fullDiff: true, collapseGitSync: true, bottomRow: true, filesOnly: false },
     idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
     agentModel: { enabled: false, format: "label" },
     agentRow: { enabled: false, format: "version", effort: true },
@@ -77,6 +77,8 @@ function mergeMods(stored: unknown, problems: string[]): ModsConfig {
         diff: {
             fullDiff: boolOr(diff.fullDiff, boolOr(held.fullDiff, base.diff.fullDiff)),
             collapseGitSync: boolOr(diff.collapseGitSync, boolOr(held.collapseGitSync, base.diff.collapseGitSync)),
+            bottomRow: boolOr(diff.bottomRow, base.diff.bottomRow),
+            filesOnly: boolOr(diff.filesOnly, base.diff.filesOnly),
         },
         idleCompact: {
             enabled: boolOr(idle.enabled, legacyIdle ?? base.idleCompact.enabled),
@@ -357,7 +359,7 @@ export const MODS_HOOK_SECTION: HookConfigSection<ModsConfig> = {
     defaults: () => structuredClone(DEFAULT_MODS),
     merge: mergeMods,
     settable: [
-        "mods.diff.<fullDiff|collapseGitSync>",
+        "mods.diff.<fullDiff|collapseGitSync|bottomRow|filesOnly>",
         "mods.idleCompact.<enabled|minutes|minTokens>",
         "mods.agentModel.<enabled|format>",
         "mods.agentRow.<enabled|format|effort>",

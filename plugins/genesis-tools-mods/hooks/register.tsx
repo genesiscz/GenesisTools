@@ -12,7 +12,7 @@ import type {
     UiPane,
 } from "claude-code";
 import { atom, read, update } from "claude-code";
-import type { FlippedFiles, ShownCalls } from "../types";
+import type { FlippedFiles, FoldAll, ShownCalls } from "../types";
 import { agentClock } from "./agent-clock";
 import { agentModelStep, spawnWithModel } from "./agent-model";
 import { agentsBand, agentsRow, noteTranscript, recordSpawn } from "./agents-band";
@@ -45,6 +45,8 @@ import {
     type CallSection,
     collapseGitSyncEnabled,
     commandOf,
+    diffRowSettings,
+    fromTop,
     fullDiffEnabled,
     gitSyncOf,
     isDeletion,
@@ -87,6 +89,10 @@ interface Diffs {
     syncs: Map<string, string>;
     /** The notes of the calls past `MAX_CHARS` (`sectionsOfCalls`), named under the diffs so none goes without a trace. */
     omitted: string[];
+    /** `mods.diff.bottomRow`: the second row of buttons under an open diff. */
+    bottomRow: boolean;
+    /** `mods.diff.filesOnly`: every block starts as its file names, until the session's own answer (`foldAll`). */
+    filesOnly: boolean;
 }
 
 /**
@@ -112,7 +118,7 @@ async function hooksFileOf(host: Host, dir: string): Promise<string | undefined>
 }
 
 async function fullDiffs($: EngineInterface, calls: readonly { id: string; input: unknown }[]): Promise<Diffs> {
-    const none: Diffs = { sections: [], syncs: new Map(), omitted: [] };
+    const none: Diffs = { sections: [], syncs: new Map(), omitted: [], bottomRow: false, filesOnly: false };
     const host = hostOf($);
     const dir = calls.length > 0 ? await agentsDir(host) : undefined;
 
@@ -161,7 +167,7 @@ async function fullDiffs($: EngineInterface, calls: readonly { id: string; input
         }
     }
 
-    return { sections, syncs, omitted: omitted.map(note) };
+    return { sections, syncs, omitted: omitted.map(note), ...diffRowSettings(hooksFile) };
 }
 
 // The idle-compaction mod. Claude Code's own idle compaction fires once, 54 minutes after the last
@@ -223,13 +229,21 @@ function fileKey(row: string, section: CallSection): string {
     return `${row}|${section.call}|${section.path}`;
 }
 
+/**
+ * `files only (everywhere)`: the session's answer for every diff block, the drawn ones and the later ones. While it
+ * is true a file starts folded, and `flipped` then holds the files the person opened against that.
+ */
+const foldAll = atom({ plugin: "genesis-tools-mods", key: "foldAll" } as const, null as FoldAll);
+
 /** The git-sync calls whose hidden diff the person opened, as `<row>|<call>`; the newest 500. */
 const shownCalls = atom({ plugin: "genesis-tools-mods", key: "shown" } as const, [] as ShownCalls);
 
 /**
  * The full diffs under a row. The diff of a call that runs a git sync (`git pull`, …) starts hidden behind one
  * `show diff from git pull` Button, and a `hide diff from git pull` Button folds it back. Each file has its own `[-]`/`[+]` Button that folds its diff to its name and
- * back; the row's Button folds every file, or opens them all once every file is folded. A click elsewhere on the
+ * back; the row's Button folds every file, or opens them all once every file is folded. `files only (everywhere)`
+ * does that for every block of the session (`foldAll`). Under an open diff the same buttons stand again beside
+ * `↑ top` (`mods.diff.bottomRow`), and they scroll to the block's top before they fold. A click elsewhere on the
  * drawing reaches the engine's row, which opens the group's calls (the person's "expansion in expansion").
  *
  * The inner Box's `width="100%"` stretches the diffs to the transcript's width: without it they were as wide as
@@ -258,7 +272,9 @@ async function drawDiffs(
     };
     const flips = new Set(await read($, flipped));
     const keys = sections.map((section) => fileKey(row, section));
-    const defaults = openByDefault(sections);
+    const everywhere = (await read($, foldAll)) ?? diffs.filesOnly;
+    // Folded everywhere: no file starts open, also not the ones `openByDefault` would open.
+    const defaults = everywhere ? sections.map(() => false) : openByDefault(sections);
     const isOpen = (index: number) => (defaults[index] ?? true) !== flips.has(keys[index] ?? "");
     const isAllFolded = keys.every((_, index) => !isOpen(index));
     const totals = (of: readonly CallSection[]) => ({
@@ -285,6 +301,19 @@ async function drawDiffs(
         void update($, flipped, (list) => [...list.filter((key) => !targets.includes(key)), ...flip].slice(-500));
     };
     const all = keys.map((_, index) => index);
+    const toTop = (target: string) => hostOf($).scroll(target);
+    /** Every block of the session, drawn or not yet: the files flipped one by one before are forgotten with it. */
+    const setEverywhere = (folded: boolean) =>
+        fromTop(toTop, row, async () => {
+            await update($, flipped, () => []);
+            await update($, foldAll, () => folded);
+        });
+    const everywhereButton = (key: string) => (
+        <Button key={key} dimColor onPress={() => setEverywhere(!everywhere)}>
+            {everywhere ? "show diff (everywhere)" : "files only (everywhere)"}
+        </Button>
+    );
+    const hasOpen = keys.some((_, index) => isOpen(index));
 
     return (
         <Box flexDirection="column">
@@ -303,6 +332,7 @@ async function drawDiffs(
                         <Button key={`${row}:fold`} dimColor onPress={() => setOpen(all, isAllFolded)}>
                             {isAllFolded ? "show diff" : "files only"}
                         </Button>
+                        {everywhereButton(`${row}:everywhere`)}
                         {counts(totals(sections))}
                     </Box>
                 )}
@@ -336,6 +366,21 @@ async function drawDiffs(
                         </Box>
                     );
                 })}
+                {diffs.bottomRow && hasOpen ? (
+                    <Box flexDirection="row" gap={1}>
+                        <Button key={`${row}:top`} dimColor onPress={() => fromTop(toTop, row, () => undefined)}>
+                            ↑ top
+                        </Button>
+                        <Button
+                            key={`${row}:fold-below`}
+                            dimColor
+                            onPress={() => fromTop(toTop, row, () => setOpen(all, false))}
+                        >
+                            files only
+                        </Button>
+                        {everywhereButton(`${row}:everywhere-below`)}
+                    </Box>
+                ) : null}
                 {diffs.omitted.map((path) => (
                     <Text key={`${row}|${path}:omitted`} dimColor>
                         past the view's budget, full diff: {path}

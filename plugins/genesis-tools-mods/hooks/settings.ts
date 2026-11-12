@@ -11,7 +11,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
  * equal, since this plugin runs outside the repository and cannot import it.
  */
 export interface ModsSettings {
-    diff: { fullDiff: boolean; collapseGitSync: boolean };
+    diff: { fullDiff: boolean; collapseGitSync: boolean; bottomRow: boolean; filesOnly: boolean };
     idleCompact: { enabled: boolean; minutes: number; minTokens: number };
     agentModel: { enabled: boolean; format: "label" | "short" | "version" };
     /** Read by the CLI's agents panel command (`hooks/agent-row.ts`), not by a hook of this plugin. */
@@ -58,7 +58,7 @@ export interface ModsSettings {
 
 /** Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`. */
 export const MODS_DEFAULTS: ModsSettings = {
-    diff: { fullDiff: true, collapseGitSync: true },
+    diff: { fullDiff: true, collapseGitSync: true, bottomRow: true, filesOnly: false },
     idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
     agentModel: { enabled: false, format: "label" },
     agentRow: { enabled: false, format: "version", effort: true },
@@ -171,6 +171,8 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
         diff: {
             fullDiff: bool(diff.fullDiff, bool(held.fullDiff, d.diff.fullDiff)),
             collapseGitSync: bool(diff.collapseGitSync, bool(held.collapseGitSync, d.diff.collapseGitSync)),
+            bottomRow: bool(diff.bottomRow, d.diff.bottomRow),
+            filesOnly: bool(diff.filesOnly, d.diff.filesOnly),
         },
         idleCompact: {
             enabled: bool(idle.enabled, legacyIdle ?? d.idleCompact.enabled),

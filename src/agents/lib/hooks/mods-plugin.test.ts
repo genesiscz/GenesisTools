@@ -282,7 +282,7 @@ describe("the mods section", () => {
             })
         );
 
-        expect(read.diff).toEqual({ fullDiff: false, collapseGitSync: false });
+        expect(read.diff).toEqual({ fullDiff: false, collapseGitSync: false, bottomRow: true, filesOnly: false });
         expect(read.idleCompact).toEqual({ enabled: false, minutes: 40, minTokens: 200_000 });
         expect(read.agentModel).toEqual({ enabled: false, format: "short" });
         // Out of range keeps the default, as the CLI does.
