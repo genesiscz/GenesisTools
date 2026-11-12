@@ -1,6 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { HUB_SERVER_DOORS } from "@app/hub/server/doors";
+import { doorlessPrefix } from "@app/hub/server/doors/types";
 import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as ocrBoxes from "@genesiscz/utils/macos/ocr-boxes";
@@ -1256,5 +1258,19 @@ describe("the suggestions badge counts what a bulk confirm can take (R2-MC13)", 
         });
 
         expect(meetingBadges(meeting, 0.5)).toMatchObject({ suggestedAboveApply: 2, suggested: 5 });
+    });
+});
+
+describe("Meetings service boundary", () => {
+    test("the resident hub has no Meetings door; the dedicated service owns those reads", () => {
+        expect(HUB_SERVER_DOORS.filter((door) => door.command[0] === "meetings")).toEqual([]);
+    });
+
+    test("a screen read always goes to the process, so a remote source cannot run inside the resident hub", () => {
+        for (const ref of ["last", "fixture-record", "wisprflow:fixture-call"]) {
+            expect(doorlessPrefix(["meetings", "screen", ref, "--timeline", "--json"], HUB_SERVER_DOORS)).toEqual([
+                "meetings",
+            ]);
+        }
     });
 });
