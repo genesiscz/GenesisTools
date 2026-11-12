@@ -111,9 +111,7 @@ struct PRDetailSketchA: View {
                 PRHeaderState(pr: pr, mergeable: detail?.mergeable)
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
                 Spacer()
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
-                }
+
                 if prs.review == nil, let fetch = prs.fetchState(pr) {
                     PRFetchStatus(pr: pr, state: fetch) { prs.retryFetch(pr) }
                 }
@@ -172,10 +170,7 @@ struct PRDetailSketchA: View {
             .font(.system(size: 11.5))
             .foregroundColor(ReviewPalette.dim)
             .lineLimit(1)
-            if let notice = prs.notice, notice.ref.matches(pr) {
-                NoticePill(text: notice.text, isError: notice.isError) { prs.notice = nil }
-                    .padding(.top, 6)
-            }
+
         }
     }
 

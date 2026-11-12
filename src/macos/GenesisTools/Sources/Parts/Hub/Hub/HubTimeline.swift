@@ -1510,9 +1510,7 @@ struct TimelineMain: View {
                 }
                 .titlebarLabel()
                 Spacer()
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone, fixes: notice.fixes) { model.headerNotice = nil }
-                }
+
                 if !timeline.warnings.isEmpty {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(ReviewPalette.modified)

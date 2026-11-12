@@ -1,4 +1,6 @@
 import Combine
+import SwiftUI
+@testable import GenesisKit
 import XCTest
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
@@ -15,6 +17,66 @@ final class HubLogicTests: XCTestCase {
         super.setUp()
         HubDefaults.store.removeObject(forKey: "hub.tabOrder")
         HubDefaults.store.removeObject(forKey: "hub.panes")
+    }
+
+    @MainActor
+    func testSnapshotRestoresFloatingNoticesOnlyWhereTheWebImageCoveredThem() throws {
+        let root = GenRootHostingView(rootView: Color.clear.frame(width: 100, height: 100))
+        root.sizingOptions = []
+        let content = GenOverlayContentView(root: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = content
+        window.orderInForSnapshot()
+        defer { window.close() }
+        let red = NSView()
+        red.wantsLayer = true
+        red.layer?.backgroundColor = NSColor.red.cgColor
+        let slot = GenOverlaySlot(overlay: red, elevation: .floating)
+        slot.frame = NSRect(x: 30, y: 40, width: 40, height: 20)
+        content.addSubview(slot)
+        content.layoutSubtreeIfNeeded()
+        let image = NSImage(size: NSSize(width: 100, height: 100))
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSRect(x: 0, y: 0, width: 100, height: 100).fill()
+        NSColor.blue.setFill()
+        NSRect(x: 50, y: 0, width: 50, height: 100).fill()
+        image.unlockFocus()
+        let repaired = ReviewSnapshot.withFloatingOverlays(image, coveredBy: NSRect(x: 50, y: 0, width: 50, height: 100), in: content)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(repaired.tiffRepresentation)))
+        let repairedColor = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide * 60 / 100, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB))
+        let untouched = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide * 40 / 100, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB))
+        XCTAssertGreaterThan(repairedColor.redComponent, 0.8)
+        XCTAssertLessThan(repairedColor.blueComponent, 0.2)
+        XCTAssertGreaterThan(untouched.blueComponent, 0.8, "outside the web image, the original capture is kept")
+    }
+
+    @MainActor
+    func testIndependentHubResultsSurviveSelectionResetAndReplaceTheirOwnProgress() throws {
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        let progress = model.post("Starting an operation", .success)
+        model.post("Copied a value", .success)
+        model.post("Operation finished", .success, replacing: progress)
+        XCTAssertEqual(model.notices.notices.map(\.text), ["Operation finished", "Copied a value"])
+        model.notice = nil
+        XCTAssertEqual(model.notices.notices.count, 2, "a pane reset does not discard independent results")
+        model.notices.dismiss(progress)
+        XCTAssertEqual(model.notices.notices.map(\.text), ["Copied a value"])
+    }
+
+    @MainActor
+    func testPanelResultsRetainEarlierFailuresAndActions() {
+        let rules = HubRulesModel()
+        rules.notice = "Failed: invalid input"
+        rules.notice = "Saved"
+        XCTAssertEqual(rules.notices.notices.map(\.tone), [.error, .success])
+        XCTAssertEqual(rules.notices.notices.first?.actions.first?.label, "Details")
+        let digest = HubDigestModel()
+        digest.notice = "Export failed"
+        digest.notice = "Copied"
+        XCTAssertEqual(digest.notices.notices.map(\.text), ["Export failed", "Copied"])
     }
 
     // MARK: Pane order

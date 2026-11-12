@@ -120,24 +120,6 @@ struct PRReviewBar: View {
             .buttonStyle(.genHoverPlain())
             .padding(.horizontal, 14)
             .frame(height: 34)
-            // Under the row, not in it: as the row's lowest-priority item a full row squeezed the pill into
-            // a narrow column that wrapped over the bar ("Draft reply saved; Submit review publishes it."
-            // on three lines, 2026-10-08). A success note leaves on its own; an error stays until dismissed.
-            .overlay(alignment: .topTrailing) {
-                if let notice = store.notice {
-                    let isError = notice.hasPrefix("Failed")
-                    NoticePill(text: notice, isError: isError) { store.notice = nil }
-                        .fixedSize()
-                        .padding(.trailing, 14)
-                        .offset(y: 38)
-                        .task(id: notice) {
-                            guard !isError else { return }
-                            // A cancelled sleep (the overlay went away) must not clear the notice early.
-                            do { try await Task.sleep(for: .seconds(6)) } catch { return }
-                            if store.notice == notice { store.notice = nil }
-                        }
-                }
-            }
             if model.showsAgentSendInline {
                 // A `--snapshot --agent-send` run: the header's "Send N…" form as its popover shows it.
                 AgentSendForm(model: model, previewOpen: true) { model.showsAgentSendInline = false }
@@ -154,6 +136,7 @@ struct PRReviewBar: View {
         }
         .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
         // s and f from the diff: the same forms the buttons open, each still asking before it sends.
+        .noticeStack(store.notices, alignment: .topTrailing)
         .onChange(of: model.submitRequests) { _, _ in
             if store.canWrite, store.busy == nil { submitting = true }
         }

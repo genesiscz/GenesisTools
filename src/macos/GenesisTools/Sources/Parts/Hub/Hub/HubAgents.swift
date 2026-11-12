@@ -1720,9 +1720,7 @@ private struct AgentDetailView: View {
                 HStack(spacing: 8) {
                     AgentChildTitle(agents: agents, parent: nil, node: node)
                     Spacer()
-                    if let notice = model.notice {
-                        NoticePill(text: notice, isError: notice.contains("not in")) { model.notice = nil }
-                    }
+
                     AgentCopyIdButton(model: model, node: node)
                 }
             } details: {

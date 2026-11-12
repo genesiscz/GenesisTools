@@ -81,9 +81,7 @@ struct PRDetailSketchB: View {
                 PRHeaderState(pr: pr, mergeable: detail?.mergeable)
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
                 Spacer()
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
-                }
+
                 if prs.review == nil, let fetch = prs.fetchState(pr) {
                     PRFetchStatus(pr: pr, state: fetch) { prs.retryFetch(pr) }
                 }
@@ -114,9 +112,7 @@ struct PRDetailSketchB: View {
         } details: {
             VStack(alignment: .leading, spacing: 8) {
                 facts
-                if let notice = prs.notice, notice.ref.matches(pr) {
-                    NoticePill(text: notice.text, isError: notice.isError) { prs.notice = nil }
-                }
+
                 HStack(spacing: 12) {
                     GenSegmentedTabs("PR", items: DocumentTab.allCases.map { GenSegmentedTabs.Item($0, title($0)) },
                                      selection: $tab, minSegmentWidth: 64, identifier: "prDetail.tabs")

@@ -146,7 +146,7 @@ struct HandoffSidebarRow: View {
     let thresholds: StuckThresholds?
     let onCompose: () -> Void
     @ObservedObject private var stuck = HubStuckStore.shared
-    @State private var notice: String?
+    @State private var notices = NoticeStackModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -168,15 +168,14 @@ struct HandoffSidebarRow: View {
             .instantTooltip("A markdown brief of the last prompts or a range (goal, what happened, files, open items), to copy, save or post")
             .accessibilityIdentifier("session-details-handoff")
             StuckThresholdsMenu(thresholds: stuck.thresholds ?? thresholds) { minutes, repeats in
-                Task { notice = await stuck.save(toolMinutes: minutes, repeats: repeats) }
-            }
-            if let notice {
-                Text(verbatim: notice)
-                    .font(.system(size: 11))
-                    .foregroundStyle(SessionPalette.red)
-                    .textSelection(.enabled)
+                Task {
+                    if let error = await stuck.save(toolMinutes: minutes, repeats: repeats) {
+                        notices.push(HubNotice(error, .error).stacked)
+                    }
+                }
             }
         }
+        .noticeStack(notices)
     }
 }
 
@@ -198,8 +197,7 @@ struct HandoffComposerSheet: View {
     @State private var error: String?
     @State private var loading = false
     @State private var busy = false
-    @State private var notice: String?
-    @State private var noticeIsError = false
+    @State private var notices = NoticeStackModel()
     @State private var confirmingPost = false
 
     init(request: HandoffComposerRequest, onClose: @escaping () -> Void) {
@@ -230,6 +228,7 @@ struct HandoffComposerSheet: View {
         .frame(width: 680, height: 580)
         .background(SessionPalette.background)
         .environment(\.colorScheme, .dark)
+        .noticeStack(notices)
         .task { await loadPromptsIfMissing() }
         .task(id: range) {
             // One read per pause in the stepper, not per click.
@@ -394,9 +393,7 @@ struct HandoffComposerSheet: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
-            if let notice {
-                NoticePill(text: notice, isError: noticeIsError) { self.notice = nil }
-            }
+
             Spacer(minLength: 8)
             action("Copy", symbol: "doc.on.doc", tip: "Copy the markdown") {
                 guard let draft else { return }
@@ -511,7 +508,6 @@ struct HandoffComposerSheet: View {
     }
 
     private func show(_ text: String, error: Bool) {
-        notice = text
-        noticeIsError = error
+        notices.push(HubNotice(text, error ? .error : .success).stacked)
     }
 }

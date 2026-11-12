@@ -559,6 +559,11 @@ struct HubNotice: Equatable {
     @MainActor
     var fixes: [NoticeFix] { report.map { [NoticeFix.details($0)] } ?? [] }
 
+    @MainActor
+    var stacked: StackedNotice {
+        StackedNotice(text: text, tone: tone, actions: fixes.map { .init(fix: $0) })
+    }
+
     /// A note set as plain text (`model.notice = "…"`) by a pane not moved to `post(_:_:)` yet: the words the
     /// headers read before, in one place. Goes away with the last `String` setter.
     init(guessing text: String) {
@@ -769,8 +774,16 @@ final class HubModel {
     private var worktreeSessions: [String: [HubSession]]?
     var loadingWorktrees = false
     var selectedWorktree: String?
-    /// The note in the panes' headers, with the tone the code that posted it knows (`post(_:_:)`).
-    var headerNotice: HubNotice?
+    /// Independent action results stay visible across pane and selection changes.
+    @ObservationIgnored @MainActor lazy var notices = NoticeStackModel()
+    private var latestNotice: HubNotice?
+    var headerNotice: HubNotice? {
+        get { latestNotice }
+        set {
+            latestNotice = newValue
+            if let newValue { MainActor.assumeIsolated { notices.push(newValue.stacked) } }
+        }
+    }
     /// The note as plain text, for panes that still set a `String`: it gets the tone the headers used to guess.
     var notice: String? {
         get { headerNotice?.text }
@@ -778,8 +791,12 @@ final class HubModel {
     }
 
     /// Shows `text` in the panes' headers with `tone`; any hub file in this module posts through it (Activity included).
-    func post(_ text: String, _ tone: NoticePill.Tone, report: FailureReport? = nil) {
-        headerNotice = HubNotice(text, tone, report: report)
+    @discardableResult
+    func post(_ text: String, _ tone: NoticePill.Tone, report: FailureReport? = nil,
+              replacing id: StackedNotice.ID? = nil) -> StackedNotice.ID {
+        let notice = HubNotice(text, tone, report: report)
+        latestNotice = notice
+        return MainActor.assumeIsolated { notices.push(notice.stacked, replacing: id) }
     }
 
     /// Only the latest commit lookup may navigate, and any later selection invalidates it.
@@ -1954,17 +1971,15 @@ final class HubModel {
             // openInTerminal blocks on the terminal host's CLI (up to its timeout): never on the main actor.
             let name = (path as NSString).lastPathComponent
             let starting = "Starting a new Claude session in \(name)…"
-            post(starting, .success)
+            let startingID = post(starting, .success)
             Task.detached(priority: .userInitiated) {
                 let failure = AgentLauncher.openInTerminal(name: name, cwd: path, command: ["tools", "claude", "run"])
-                // Only over its own "Starting…" line: a newer notice (a copied id, say) stays on screen.
+                // Replace this operation's progress, preserving results posted while it ran.
                 await MainActor.run {
-                    if self.headerNotice?.text == starting {
-                        if let failure {
-                            self.post(failure, .error)
-                        } else {
-                            self.post("Started a new Claude session in \(name).", .success)
-                        }
+                    if let failure {
+                        self.post(failure, .error, replacing: startingID)
+                    } else {
+                        self.post("Started a new Claude session in \(name).", .success, replacing: startingID)
                     }
                 }
             }
@@ -2523,6 +2538,9 @@ struct HubRootView: View {
         // `tools hub --handoff`: the composer over every pane (Hub/HubHandoffComposer.swift).
         .hubHandoff(model: model)
         .widgetDestination(model: model)
+        .noticeStack(model.notices)
+        // Pane results share the window's stack area instead of covering each other.
+        .noticeStackViewport()
     }
 }
 
@@ -3370,9 +3388,7 @@ struct SessionDetailView: View {
             HStack(spacing: 8) {
                 AgentChildTitle(agents: agent.agents, parent: agent.parent, node: node)
                 Spacer()
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone, fixes: notice.fixes) { model.headerNotice = nil }
-                }
+
                 paneToggles
                 AgentCopyIdButton(model: model, node: node)
             }
@@ -3415,9 +3431,7 @@ struct SessionDetailView: View {
                     HubForecastChip(account: session.account, provider: Harness(rawValue: session.provider)?.plugin)
                         .layoutPriority(-1)
                 }
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone, fixes: notice.fixes) { model.headerNotice = nil }
-                }
+
                 paneToggles
                 IconButton(systemName: "doc.richtext", tooltip: "Copy as Markdown (json2md): session, changes, decisions, recent turns") {
                     // The export answers in words only (HubMarkdownExport, Hub/HubWorktrees.swift): its tone is guessed.

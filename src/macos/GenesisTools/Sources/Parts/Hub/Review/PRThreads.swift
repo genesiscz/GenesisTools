@@ -444,7 +444,16 @@ final class PRThreadsStore: ObservableObject {
     @Published private(set) var changed: Set<String> = []
     /// A write in flight ("Resolving…"); the thread buttons wait for it.
     @Published private(set) var busy: String?
-    @Published var notice: String?
+    @MainActor lazy var notices = NoticeStackModel()
+    @Published var notice: String? {
+        didSet {
+            guard let notice else { return }
+            // Like the store's other published results, writes arrive on the main queue.
+            MainActor.assumeIsolated {
+                notices.push(HubNotice(notice, notice.hasPrefix("Failed") ? .error : .success).stacked)
+            }
+        }
+    }
     /// The last threads read that failed, as a report; nil after one that worked.
     @Published private(set) var error: FailureReport?
     /// Called on the main thread after new threads land (the model re-renders the diff's cards).

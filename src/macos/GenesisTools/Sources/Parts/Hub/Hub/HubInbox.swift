@@ -1810,9 +1810,7 @@ struct InboxMain: View {
                 }
                 .titlebarLabel()
                 Spacer()
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone, fixes: notice.fixes) { model.headerNotice = nil }
-                }
+
                 if let missing = inbox.revealMissing {
                     // Not an error: the decision moved on. It names the decision and offers the way to it (F18).
                     NoticePill(text: missing.text, tone: .warning, fixes: revealFixes) {

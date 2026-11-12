@@ -104,7 +104,14 @@ final class HubRulesModel: ObservableObject {
     @Published private(set) var list: HubRulesList?
     @Published private(set) var test: HubRulesRun?
     @Published private(set) var busy = false
-    @Published var notice: String?
+    let notices = NoticeStackModel()
+    @Published var notice: String? {
+        didSet {
+            guard let notice else { return }
+            let failed = notice.hasPrefix("Failed") || notice.hasPrefix("Could not") || notice.hasPrefix("Test failed")
+            notices.push(HubNotice(notice, failed ? .error : .success).stacked)
+        }
+    }
     /// The PR lookup cache setting shown in the same panel (the hub has no other settings view).
     @Published var prCacheSeconds = ""
 
@@ -226,11 +233,7 @@ struct HubRulesPanel: View {
                 .foregroundColor(.settingsTextMuted)
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
-            if let notice = model.notice {
-                NoticePill(text: notice, isError: notice.hasPrefix("Failed") || notice.hasPrefix("Could not") || notice.hasPrefix("Test failed")) { model.notice = nil }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-            }
+
             Divider().background(Color.jarvisBorder)
             VStack(alignment: .leading, spacing: 2) {
                 if let rules = model.list?.rules, !rules.isEmpty {
@@ -271,6 +274,7 @@ struct HubRulesPanel: View {
             }
             .padding(12)
         }
+        .noticeStack(model.notices)
         .onAppear { model.load() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Notification rules"))

@@ -508,7 +508,7 @@ extension HubModel {
         let request = UUID()
         commitLinkRequest = request
         guard let span = HubCommitSpan(raw) else {
-            notice = HubCommitSha.invalid(raw)
+            post(HubCommitSha.invalid(raw), .error)
             return
         }
         guard let repo, !repo.trimmed.isEmpty else {

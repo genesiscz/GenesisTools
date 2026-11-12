@@ -549,7 +549,17 @@ final class ReviewModel: ObservableObject {
     @Published var lastLoaded: Date?
     @Published var commentCount = 0
     @Published var unsentCount = 0
-    @Published var notice: String?
+    @MainActor lazy var notices = NoticeStackModel()
+    @Published var notice: String? {
+        didSet {
+            guard let notice else { return }
+            // Review results, like the rest of the published UI state, land on the main queue.
+            MainActor.assumeIsolated {
+                let failed = notice.lowercased().contains("could not") || notice.contains("failed")
+                notices.push(HubNotice(notice, failed ? .error : .success).stacked)
+            }
+        }
+    }
     /// The Files list as a tree or flat. Its click measures itself (`review.files.tree`, at the toggle): measured
     /// here, every launch's session-state restore logged the whole launch as the tree's cost ("897 ms of 600 ms",
     /// six at a time from parallel snapshot runs, 2026-10-10).
@@ -3010,14 +3020,7 @@ struct ReviewRootView: View {
                         .padding(.top, 8)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                if let notice = model.notice {
-                    NoticePill(text: notice, isError: notice.lowercased().contains("could not") || notice.contains("failed")) {
-                        model.notice = nil
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                }
+
                 if let report = model.errorReport {
                     FailureInline(report, form: .compact, identifier: "review.failure") { model.reload() }
                         .padding(.horizontal, 12)
@@ -3052,6 +3055,7 @@ struct ReviewRootView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity)
             .clipped()
+            .noticeStack(model.notices)
             .sheet(isPresented: $model.showsComparePicker) {
                 if let store = model.versions {
                     ComparePushesSheet(model: model, store: store)
@@ -4426,10 +4430,23 @@ private final class RepoWatcher {
 
 // MARK: - Snapshot
 
-/// Writes the window as a PNG without Screen Recording: the SwiftUI chrome through
-/// `cacheDisplay`, the web content through WKWebView's own snapshot, composited at its frame.
+/// Captures the actual window layers when permitted. Without Screen Recording, composites WebKit and restores
+/// floating controls over it, so a notice or dialog is never painted underneath the diff in the saved image.
 enum ReviewSnapshot {
     static func write(window: NSWindow, webView: WKWebView?, to path: String, done: @escaping () -> Void) {
+        Task { @MainActor in
+            if let capture = await WindowSnapshot.capture(window), capture.method == "window server",
+               let png = capture.image.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: path))
+                FileHandle.standardError.write(Data("hub snapshot: window server layers\n".utf8))
+                done()
+                return
+            }
+            writeFallback(window: window, webView: webView, to: path, done: done)
+        }
+    }
+
+    private static func writeFallback(window: NSWindow, webView: WKWebView?, to path: String, done: @escaping () -> Void) {
         guard let content = window.contentView else {
             done()
             return
@@ -4462,12 +4479,39 @@ enum ReviewSnapshot {
                 image.draw(in: bounds)
                 webImage.draw(in: frame)
                 composed.unlockFocus()
-                save(withSheet(composed, window: window), to: path)
+                save(withSheet(withFloatingOverlays(composed, coveredBy: frame, in: content), window: window), to: path)
             } else {
                 save(withSheet(image, window: window), to: path)
             }
             done()
         }
+    }
+
+    /// WebKit's bitmap was painted last; restore only the portions of floating controls it covered.
+    static func withFloatingOverlays(_ image: NSImage, coveredBy cover: NSRect, in content: NSView) -> NSImage {
+        func floating(in view: NSView) -> [NSView] {
+            if let host = view as? GenOverlayContentView { return host.floatingOverlays }
+            return view.subviews.flatMap { floating(in: $0) }
+        }
+        let overlays = floating(in: content)
+        guard !overlays.isEmpty else { return image }
+        let composed = NSImage(size: image.size)
+        composed.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: cover).addClip()
+        for view in overlays {
+            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let layer = NSImage(size: view.bounds.size)
+            layer.addRepresentation(bitmap)
+            var frame = view.convert(view.bounds, to: content)
+            if content.isFlipped { frame.origin.y = content.bounds.height - frame.maxY }
+            layer.draw(in: frame)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        composed.unlockFocus()
+        return composed
     }
 
     /// A sheet (the handoff composer) is its own window, so `cacheDisplay` of the main one left it out.
