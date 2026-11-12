@@ -2234,39 +2234,44 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
     };
 
     for (const [lang, paths] of byLang) {
-        const processToolPass = findInFiles(
-            lang,
-            { paths, matcher: PROCESS_TOOL_CALL_MATCHER },
-            guard((nodes) => {
-                recordProcessToolSpawns(nodes, (node) => node.getRoot().filename(), push);
-            })
-        );
+        const processToolPass = () =>
+            findInFiles(
+                lang,
+                { paths, matcher: PROCESS_TOOL_CALL_MATCHER },
+                guard((nodes) => {
+                    recordProcessToolSpawns(nodes, (node) => node.getRoot().filename(), push);
+                })
+            );
 
         if (options.processToolOnly) {
-            await processToolPass;
+            await processToolPass();
             continue;
         }
 
-        await Promise.all([
-            findInFiles(
-                lang,
-                { paths, matcher: { rule: { any: LITERAL_KINDS.map((kind) => ({ kind })) } } },
-                guard((nodes) => {
-                    for (const node of nodes) {
-                        const text = node.text();
+        // One pass at a time, with a full collection after each: a matched node keeps its file's native tree alive,
+        // and the collector does not count that memory, so nothing was freed. All passes at once peaked at 18.5 GB
+        // on 10,650 files, and several runs at once swapped the Mac (2026-11-12); this way the peak is 2.8 GB.
+        const passes: Array<() => Promise<number>> = [
+            () =>
+                findInFiles(
+                    lang,
+                    { paths, matcher: { rule: { any: LITERAL_KINDS.map((kind) => ({ kind })) } } },
+                    guard((nodes) => {
+                        for (const node of nodes) {
+                            const text = node.text();
 
-                        for (const rule of RULES) {
-                            if (
-                                !rule.matcher &&
-                                ruleApplies(rule, node.getRoot().filename()) &&
-                                rule.test(text, node)
-                            ) {
-                                push(node, rule);
+                            for (const rule of RULES) {
+                                if (
+                                    !rule.matcher &&
+                                    ruleApplies(rule, node.getRoot().filename()) &&
+                                    rule.test(text, node)
+                                ) {
+                                    push(node, rule);
+                                }
                             }
                         }
-                    }
-                })
-            ),
+                    })
+                ),
             ...RULES.flatMap((rule) => {
                 const matcher = rule.matcher;
                 const scoped = paths.filter((path) => ruleApplies(rule, path));
@@ -2276,65 +2281,75 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                 }
 
                 return [
-                    findInFiles(
-                        lang,
-                        { paths: scoped, matcher },
-                        guard((nodes) => {
-                            for (const node of nodes) {
-                                if (rule.test(node.text(), node)) {
-                                    push(node, rule);
+                    () =>
+                        findInFiles(
+                            lang,
+                            { paths: scoped, matcher },
+                            guard((nodes) => {
+                                for (const node of nodes) {
+                                    if (rule.test(node.text(), node)) {
+                                        push(node, rule);
+                                    }
                                 }
-                            }
-                        })
-                    ),
+                            })
+                        ),
                 ];
             }),
-            findInFiles(
-                lang,
-                { paths, matcher: INTERVAL_CALL_MATCHER },
-                guard((nodes) => {
-                    recordIntervalFindings(nodes, push);
-                })
-            ),
-            findInFiles(
-                lang,
-                { paths, matcher: SLEEP_SYNC_IN_LOOP_MATCHER },
-                guard((nodes) => {
-                    recordSleepSyncFindings(nodes, push);
-                })
-            ),
+            () =>
+                findInFiles(
+                    lang,
+                    { paths, matcher: INTERVAL_CALL_MATCHER },
+                    guard((nodes) => {
+                        recordIntervalFindings(nodes, push);
+                    })
+                ),
+            () =>
+                findInFiles(
+                    lang,
+                    { paths, matcher: SLEEP_SYNC_IN_LOOP_MATCHER },
+                    guard((nodes) => {
+                        recordSleepSyncFindings(nodes, push);
+                    })
+                ),
             processToolPass,
-            findInFiles(
-                lang,
-                { paths, matcher: { rule: { pattern: "$FN($$$ARGS)" } } },
-                guard((nodes) => {
-                    recordHandJoinedStorage(nodes, (node) => node.getRoot().filename(), push);
-                })
-            ),
-            findInFiles(
-                lang,
-                { paths, matcher: { rule: { pattern: "$OBJ.$METHOD($$$ARGS)" } } },
-                guard((nodes) => {
-                    for (const node of nodes) {
-                        const object = node.getMatch("OBJ")?.text();
-                        const method = node.getMatch("METHOD")?.text();
+            () =>
+                findInFiles(
+                    lang,
+                    { paths, matcher: { rule: { pattern: "$FN($$$ARGS)" } } },
+                    guard((nodes) => {
+                        recordHandJoinedStorage(nodes, (node) => node.getRoot().filename(), push);
+                    })
+                ),
+            () =>
+                findInFiles(
+                    lang,
+                    { paths, matcher: { rule: { pattern: "$OBJ.$METHOD($$$ARGS)" } } },
+                    guard((nodes) => {
+                        for (const node of nodes) {
+                            const object = node.getMatch("OBJ")?.text();
+                            const method = node.getMatch("METHOD")?.text();
 
-                        if (object && method && PROMPT_BACKENDS.has(object) && PROMPT_METHODS.has(method)) {
-                            push(node, PROMPT_BACKEND_RULE);
-                            continue;
-                        }
+                            if (object && method && PROMPT_BACKENDS.has(object) && PROMPT_METHODS.has(method)) {
+                                push(node, PROMPT_BACKEND_RULE);
+                                continue;
+                            }
 
-                        if (object === "mock" && method === "module") {
-                            const specifier = node.getMultipleMatches("ARGS")[0]?.text();
+                            if (object === "mock" && method === "module") {
+                                const specifier = node.getMultipleMatches("ARGS")[0]?.text();
 
-                            if (specifier && MOCKED_PROMPT_MODULE.test(specifier)) {
-                                push(node, MOCK_MODULE_RULE);
+                                if (specifier && MOCKED_PROMPT_MODULE.test(specifier)) {
+                                    push(node, MOCK_MODULE_RULE);
+                                }
                             }
                         }
-                    }
-                })
-            ),
-        ]);
+                    })
+                ),
+        ];
+
+        for (const pass of passes) {
+            await pass();
+            Bun.gc(true);
+        }
     }
 
     // Test files and Swift sources carry other rules only.
