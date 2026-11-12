@@ -1,53 +1,23 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { RECORDING_MANIFEST, type RecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
-
-const { log } = logger.scoped("meetings-recording-manifest");
-
-/** A frame line of `ocr.jsonl`: every frame the recorder kept has one, with its exact time (older rows lack the change). */
-interface OcrLine {
-    file?: unknown;
-    at?: unknown;
-    displayId?: unknown;
-    changePercent?: unknown;
-    reason?: unknown;
-}
-
-function isOcrLine(value: unknown): value is OcrLine {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** One `ocr.jsonl` row, or undefined for a row an interrupted run cut short (its frame then takes its file time). */
-function parseOcrLine(line: string, ocrPath: string): OcrLine | undefined {
-    let row: unknown;
-
-    try {
-        row = SafeJSON.parse(line);
-    } catch (error) {
-        log.debug({ ocrPath, error }, "skipped an unreadable ocr.jsonl row");
-        return undefined;
-    }
-
-    if (!isOcrLine(row)) {
-        log.debug({ ocrPath, row }, "skipped an ocr.jsonl row that is not an object");
-        return undefined;
-    }
-
-    return row;
-}
+import { readFrameIndex } from "./frame-index";
 
 interface TimedFrame {
     at: number;
     displayId?: number;
+    focusedDisplayId?: number;
     changePercent: number;
     reason: string;
 }
 
-/** When each kept frame was taken: its `ocr.jsonl` row, else its file time; undefined without a `frames/` folder. */
+/**
+ * When each kept frame was taken: its line in the frame index (`frames.jsonl`, or `ocr.jsonl` for a meeting from before
+ * it), else its file time; undefined without a `frames/` folder.
+ */
 function frameTimes(folder: string): Map<string, TimedFrame> | undefined {
     const framesDir = join(folder, "frames");
 
@@ -56,30 +26,18 @@ function frameTimes(folder: string): Map<string, TimedFrame> | undefined {
     }
 
     const timed = new Map<string, TimedFrame>();
-    const ocrPath = join(folder, "ocr.jsonl");
 
-    if (existsSync(ocrPath)) {
-        for (const line of readFileSync(ocrPath, "utf8").split("\n")) {
-            if (!line.trim()) {
-                continue;
-            }
+    for (const row of readFrameIndex(folder)) {
+        const at = Date.parse(row.at);
 
-            const row = parseOcrLine(line, ocrPath);
-
-            if (!row) {
-                continue;
-            }
-
-            const at = typeof row.at === "string" ? Date.parse(row.at) : Number.NaN;
-
-            if (typeof row.file === "string" && Number.isFinite(at)) {
-                timed.set(row.file, {
-                    at,
-                    displayId: typeof row.displayId === "number" ? row.displayId : undefined,
-                    changePercent: typeof row.changePercent === "number" ? row.changePercent : 0,
-                    reason: typeof row.reason === "string" ? row.reason : "change",
-                });
-            }
+        if (Number.isFinite(at)) {
+            timed.set(row.file, {
+                at,
+                displayId: row.displayId,
+                ...(row.focusedDisplayId !== undefined ? { focusedDisplayId: row.focusedDisplayId } : {}),
+                changePercent: row.changePercent,
+                reason: row.reason,
+            });
         }
     }
 
@@ -117,7 +75,7 @@ export function meetingMovieZeroMs(folder: string, startedAt: string): number {
 /**
  * Writes `recording.json` into a meeting folder, so the recorder's menu, its library window and the editor list the
  * meeting's screen recording beside the library recordings (`tools recorder open <folder>` makes the proxy movie).
- * Frame times come from `ocr.jsonl`; a frame it lacks takes its file time. The record's markers go into
+ * Frame times come from the frame index (`readFrameIndex`); a frame it lacks takes its file time. The record's markers go into
  * `settings.markers` at their movie time. Returns undefined when there are no frames.
  */
 export function writeMeetingRecordingManifest(folder: string, record: MeetingRecord): RecordingManifest | undefined {
@@ -147,6 +105,7 @@ export function writeMeetingRecordingManifest(folder: string, record: MeetingRec
                 file,
                 atMs: Math.max(0, Math.round(frame.at - started)),
                 ...(frame.displayId === undefined ? {} : { displayId: frame.displayId }),
+                ...(frame.focusedDisplayId === undefined ? {} : { focusedDisplayId: frame.focusedDisplayId }),
                 changePercent: frame.changePercent,
                 reason: frame.reason,
             })),

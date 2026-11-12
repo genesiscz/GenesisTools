@@ -345,6 +345,29 @@ describe("dictionary", () => {
 });
 
 describe("applyCorrections", () => {
+    test("selected spelling lines produce one outcome and refuse an unresolved address together", () => {
+        const source = [line("Alex", 5, "Ada one"), line("Jordan", 10, "Ada two"), line("Alex", 15, "Ada three")];
+        const fix = {
+            item: "i1",
+            heard: "Ada",
+            replacement: "ADA",
+            lines: [
+                { atSec: 5, line: 0 },
+                { atSec: 15, line: 2 },
+                { atSec: 5, line: 0 },
+            ],
+        };
+        const selected = applyCorrections(source, { terms: [fix] });
+        expect(selected.entries.map((entry) => entry.text)).toEqual(["ADA one", "Ada two", "ADA three"]);
+        expect(selected.outcomes).toHaveLength(1);
+        expect(selected.outcomes[0]).toMatchObject({ status: "applied", lines: [{ index: 0 }, { index: 2 }] });
+        const unresolved = applyCorrections(source, {
+            terms: [{ ...fix, lines: [{ atSec: 5, line: 0 }, { atSec: 999 }] }],
+        });
+        expect(unresolved.entries.map((entry) => entry.text)).toEqual(source.map((entry) => entry.text));
+        expect(unresolved.outcomes[0]).toMatchObject({ status: "not-found" });
+    });
+
     const lines = [
         line("Alice Example", 0, "Začneme s UVČ."),
         line("Speaker 5", 20, "jak já vlastně dot"),

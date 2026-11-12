@@ -6,7 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { OcrLine } from "./screen";
-import { readOcrRows } from "./screen-boxes";
+import { readScreenRows } from "./screen-boxes";
 
 const { log } = logger.scoped("meetings-screen-note");
 
@@ -27,6 +27,8 @@ export interface ScreenNoteResult extends PlacedFrames {
     framesDir: string;
     frames: number;
     shown: number;
+    /** Kept frames the OCR worker has not read yet: the note leaves them out until a later run. */
+    pending: number;
 }
 
 /** The folder beside a note that holds its pictures: `<note name>.frames/`. */
@@ -172,7 +174,8 @@ export function writeScreenNote({
     }
 
     const ocrPath = join(meetingFolder, "ocr.jsonl");
-    const rows = readOcrRows(ocrPath);
+    const screen = readScreenRows(meetingFolder);
+    const rows = screen.rows.filter((row) => !row.pending);
     const shownFiles = shownRows(rows).map((row) => row.file);
     const placed = placeNoteFrames({
         meetingFolder,
@@ -193,7 +196,7 @@ export function writeScreenNote({
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, markdown);
     log.debug({ notePath: target, frames: rows.length, shown }, "screen note written");
-    return { ...placed, notePath: target, framesDir, frames: rows.length, shown };
+    return { ...placed, notePath: target, framesDir, frames: rows.length, shown, pending: screen.pending };
 }
 
 /** The rows the note shows: a frame whose text is the same as the display's frame before is left out. */

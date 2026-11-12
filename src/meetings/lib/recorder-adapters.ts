@@ -20,9 +20,10 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 const { log } = logger.scoped("meetings-recorder");
 
 /**
- * Claims the store's one recorder. A claim whose owner is dead, a reused pid of another program and an unreadable
- * (empty or corrupt) file are taken over, as the daemon and chrome-devtools do; a live recorder's claim and this
- * process's own are left as they are, and the start fails, so one process never runs two meeting recordings.
+ * Claims the store's one recorder. A claim whose owner is dead and a reused pid of another program are taken over, as
+ * the daemon and chrome-devtools do; a live recorder's claim and this process's own are left as they are, and the
+ * start fails, so one process never runs two meeting recordings. An empty or corrupt file follows the shared claim's
+ * one rule (`EMPTY_HOLDER_GRACE_MS` in pidfile.ts).
  */
 export async function claimRecorderPid(path: string): Promise<{ release: () => void }> {
     const claim = await claimPidFile(path, {
@@ -82,8 +83,11 @@ export class RecordingRecord {
         const open = this.spans.at(-1);
 
         if (open && !open.to) {
-            open.to = at;
-            open.stopReason = stopReason;
+            open.to = Date.parse(at) < Date.parse(open.from) ? open.from : at;
+            open.stopReason = stopReason === "interrupted" ? "error" : stopReason;
+            if (stopReason === "interrupted") {
+                open.interrupted = true;
+            }
         }
     }
 
@@ -114,6 +118,7 @@ export class RecordingRecord {
                 delete current.recording.stopReason;
                 // The last run's warning ("No frame was recorded") is not this run's; this run sets its own.
                 delete current.recording.warning;
+                delete current.recording.ocrWarning;
             }
         );
     }

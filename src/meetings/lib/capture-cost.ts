@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { frameIndexPath, readFrameIndex } from "./frame-index";
 import { readOcrRows } from "./screen-boxes";
 
 /**
@@ -69,15 +70,14 @@ function newestChangePercents(store: MeetingStore, records: MeetingRecord[]): nu
         .slice(0, 5);
 
     for (const record of recent) {
-        const path = join(store.folder(record.id), "ocr.jsonl");
-
-        if (!existsSync(path)) {
-            continue;
-        }
-
-        const percents = readOcrRows(path).flatMap((row) =>
-            row.changePercent !== undefined ? [row.changePercent] : []
-        );
+        const folder = store.folder(record.id);
+        const path = join(folder, "ocr.jsonl");
+        // The frame index lists every kept frame with its change, read or not; older meetings have only ocr.jsonl.
+        const percents = existsSync(frameIndexPath(folder))
+            ? readFrameIndex(folder).map((row) => row.changePercent)
+            : existsSync(path)
+              ? readOcrRows(path).flatMap((row) => (row.changePercent !== undefined ? [row.changePercent] : []))
+              : [];
 
         if (percents.length > 0) {
             return percents;

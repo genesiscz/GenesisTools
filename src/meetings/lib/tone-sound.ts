@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { logger } from "@genesiscz/utils/logger";
 import {
     TONE_MAX_SEC,
     TONE_PRESETS,
@@ -19,6 +20,8 @@ export interface ToneSound {
     volume: number;
     file?: string;
     preset?: TonePresetName;
+    /** Why a requested file was replaced with a beep; shown by playback callers. */
+    fallback?: string;
 }
 
 /** The volume a setting plays at: its own, else its preset's. */
@@ -66,6 +69,22 @@ const fileLengths = new Map<string, number>();
  */
 export async function resolveToneSound(
     setting: ToneSoundSetting,
+    options: { probe: (path: string) => Promise<Pick<AudioProbe, "durationSec">>; onMissing?: "beep" | "error" }
+): Promise<ToneSound> {
+    try {
+        return await readToneSound(setting, options);
+    } catch (error) {
+        if (options.onMissing !== "beep") {
+            throw error;
+        }
+        const fallback = "Using a beep for this clip because the selected tone could not be read.";
+        logger.scoped("meetings-tone").log.warn({ error, file: toneSoundFile(setting) }, fallback);
+        return { hz: 880, sec: 0.15, volume: toneVolume(setting), preset: "beep", fallback };
+    }
+}
+
+async function readToneSound(
+    setting: ToneSoundSetting,
     options: { probe: (path: string) => Promise<Pick<AudioProbe, "durationSec">> }
 ): Promise<ToneSound> {
     const sine = sineToneSound(setting);
@@ -88,10 +107,12 @@ export async function resolveToneSound(
 
     if (lengthSec === undefined) {
         lengthSec = (await options.probe(file)).durationSec;
-        fileLengths.set(key, lengthSec);
+        if (Number.isFinite(lengthSec) && lengthSec > 0) {
+            fileLengths.set(key, lengthSec);
+        }
     }
 
-    if (!(lengthSec > 0)) {
+    if (!Number.isFinite(lengthSec) || !(lengthSec > 0)) {
         throw new Error(`The tone's sound file ${file} holds no sound ffmpeg reads; pick another.`);
     }
 
