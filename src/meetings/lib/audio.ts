@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { CONTAINER_CLOCK_FILTER } from "@genesiscz/utils/audio/converter";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { DEFAULT_TONE_SOUND, type LISTEN_PLAYERS } from "@genesiscz/utils/meetings/config";
@@ -132,16 +133,19 @@ export async function cutClip(options: ClipPlan & CutControl & { audioPath: stri
         options.toneAtSec === undefined ? undefined : Math.round(Math.max(0, options.toneAtSec - startSec) * 1000);
     const sound = options.toneSound ?? DEFAULT_TONE_SOUND;
     const tracks = options.tracks ?? 1;
-    // The speech: one stream as it is, several mixed at their own level.
-    const speech =
-        tracks > 1
-            ? `${Array.from({ length: tracks }, (_, index) => `[0:a:${index}]`).join("")}amix=inputs=${tracks}:duration=longest:normalize=0`
-            : "[0:a]anull";
+    // Preserve each track's timestamp gaps before mixing; padding only the mixed result
+    // loses the offset between tracks. After input seeking, zero is the clip's start.
+    const clockedTracks = Array.from(
+        { length: tracks },
+        (_, index) => `[0:a:${index}]${CONTAINER_CLOCK_FILTER}[a${index}]`
+    ).join(";");
+    const inputs = Array.from({ length: tracks }, (_, index) => `[a${index}]`).join("");
+    const speech = `${clockedTracks};${inputs}${
+        tracks > 1 ? `amix=inputs=${tracks}:duration=longest:normalize=0` : "anull"
+    }`;
     const graph =
         toneMs === undefined
-            ? tracks > 1
-                ? ["-filter_complex", `${speech}[out]`, "-map", "[out]"]
-                : []
+            ? ["-filter_complex", `${speech}[out]`, "-map", "[out]"]
             : [
                   ...toneInput(sound),
                   "-filter_complex",

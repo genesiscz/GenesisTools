@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { beforeAll, describe, expect, spyOn, test } from "bun:test";
 import {
     chmodSync,
     existsSync,
@@ -5151,6 +5151,128 @@ test("audio processing kills expired children and names the affected audio", asy
         spawn.mockRestore();
         which.mockRestore();
     }
+});
+
+describe.skipIf(!Bun.which("ffmpeg"))("audio clip source clock", () => {
+    let movie: string;
+    let silence: string;
+    let folder: string;
+
+    beforeAll(async () => {
+        folder = new MeetingStore(new Storage("audio-clip-clock-fixture")).root;
+        mkdirSync(folder, { recursive: true });
+        movie = join(folder, "delayed-tracks.mkv");
+        silence = join(folder, "silence.wav");
+        const make = async (args: string[]) => {
+            const process = Bun.spawn(["ffmpeg", "-y", "-v", "error", ...args], {
+                stdin: "ignore",
+                stdout: "ignore",
+                stderr: "pipe",
+                timeout: 10_000,
+            });
+            const [code, stderr] = await Promise.all([process.exited, new Response(process.stderr).text()]);
+            if (code !== 0) {
+                throw new Error(`audio clock fixture failed: ${stderr}`);
+            }
+        };
+        await make([
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=16x16:r=2:d=4",
+            "-itsoffset",
+            "0.5",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=16000:duration=3",
+            "-itsoffset",
+            "1.5",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:sample_rate=16000:duration=2",
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-map",
+            "2:a",
+            "-c:v",
+            "ffv1",
+            "-c:a",
+            "pcm_s16le",
+            movie,
+        ]);
+        await make(["-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "3", "-c:a", "pcm_s16le", silence]);
+    });
+
+    async function clip(
+        name: string,
+        options: {
+            fromSec: number;
+            toSec: number;
+            tracks?: number;
+            padSec?: number;
+            toneAtSec?: number;
+            silent?: boolean;
+        }
+    ) {
+        const { cutClip } = await import("./lib/audio");
+        const { toFloat32Audio } = await import("@genesiscz/utils/audio/converter");
+        const outPath = join(folder, `${name}.wav`);
+        await cutClip({ audioPath: options.silent ? silence : movie, outPath, padSec: 0, ...options });
+        return toFloat32Audio(outPath);
+    }
+
+    function frequencyOnset(samples: Float32Array, frequency: number): number {
+        const size = 320; // 20 ms at 16 kHz; enough to distinguish the two fixture tones.
+        for (let start = 0; start + size <= samples.length; start += 80) {
+            let real = 0,
+                imaginary = 0;
+            for (let index = 0; index < size; index++) {
+                const angle = (2 * Math.PI * frequency * index) / 16_000;
+                real += samples[start + index] * Math.cos(angle);
+                imaginary += samples[start + index] * Math.sin(angle);
+            }
+            if ((2 * Math.hypot(real, imaginary)) / size > 0.04) {
+                return start / 16_000;
+            }
+        }
+        return Infinity;
+    }
+
+    test("a cut before a delayed track preserves its leading silence", async () => {
+        const samples = await clip("before", { fromSec: 0.25, toSec: 2.25 });
+        expect(Math.abs(frequencyOnset(samples, 440) - 0.25)).toBeLessThan(0.03);
+        expect(Math.abs(samples.length / 16_000 - 2)).toBeLessThan(0.03);
+    });
+
+    test("a cut after onset does not add the original delay again", async () => {
+        const samples = await clip("after", { fromSec: 0.75, toSec: 2.25 });
+        expect(frequencyOnset(samples, 440)).toBeLessThan(0.03);
+        expect(Math.abs(samples.length / 16_000 - 1.5)).toBeLessThan(0.03);
+    });
+
+    test("each delayed track retains its own clock before mixing", async () => {
+        const samples = await clip("mixed", { fromSec: 0.25, toSec: 2.75, tracks: 2 });
+        expect(Math.abs(frequencyOnset(samples, 440) - 0.25)).toBeLessThan(0.03);
+        expect(Math.abs(frequencyOnset(samples, 880) - 1.25)).toBeLessThan(0.03);
+        expect(Math.abs(samples.length / 16_000 - 2.5)).toBeLessThan(0.03);
+    });
+
+    test("zero-start audio keeps the tone relative to the padded clip start", async () => {
+        const samples = await clip("tone", { fromSec: 0.5, toSec: 1.5, padSec: 0.25, toneAtSec: 0.9, silent: true });
+        let onset = Infinity;
+        for (let index = 0; index < samples.length; index++) {
+            if (Math.abs(samples[index]) > 0.01) {
+                onset = index / 16_000;
+                break;
+            }
+        }
+        expect(Math.abs(onset - 0.65)).toBeLessThan(0.03);
+        expect(Math.abs(samples.length / 16_000 - 1.5)).toBeLessThan(0.03);
+    });
 });
 
 test("uncertain attendance ends neither exclude speakers nor prove a sole attendee", () => {
